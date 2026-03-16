@@ -12,6 +12,23 @@ echo "🚀 AI SOC - Development Setup"
 echo "=========================================="
 echo ""
 
+# Require Python 3.10+ (claude-agent-sdk and other deps need it)
+PYTHON=""
+for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
+    if command -v "$candidate" &> /dev/null; then
+        ver=$("$candidate" -c 'import sys; print(sys.version_info >= (3,10))' 2>/dev/null)
+        if [ "$ver" = "True" ]; then
+            PYTHON="$candidate"
+            break
+        fi
+    fi
+done
+if [ -z "$PYTHON" ]; then
+    echo "❌ Python 3.10+ is required but not found."
+    echo "   Install it from https://python.org or via your package manager."
+    exit 1
+fi
+
 # Step 1: Copy environment files
 echo "📝 Setting up environment files..."
 if [ ! -f .env ]; then
@@ -28,7 +45,7 @@ echo ""
 echo "🐍 Checking Python environment..."
 if [ ! -d "venv" ]; then
     echo "Creating Python virtual environment..."
-    python3 -m venv venv
+    "$PYTHON" -m venv venv
     echo "✅ Virtual environment created"
 else
     echo "✅ Virtual environment exists"

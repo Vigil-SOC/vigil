@@ -1,10 +1,12 @@
 # Submodules (editable installs)
+# NOTE: These are only installed when submodules are initialized.
+# Run: git submodule update --init --recursive
 -e ./deeptempo-core
 -e ./mcp-servers
 
 
 # DeepTempo AI SOC - Requirements
-# Python 3.10+ required
+# Python 3.10+ required (claude-agent-sdk requires >=3.10)
 
 # Core
 numpy>=1.26.0

@@ -7,6 +7,23 @@ echo "=========================================="
 echo "DeepTempo AI SOC v2.0 - Startup"
 echo "=========================================="
 
+# Require Python 3.10+ (claude-agent-sdk and other deps need it)
+PYTHON=""
+for candidate in python3.13 python3.12 python3.11 python3.10 python3 python; do
+    if command -v "$candidate" &> /dev/null; then
+        ver=$("$candidate" -c 'import sys; print(sys.version_info >= (3,10))' 2>/dev/null)
+        if [ "$ver" = "True" ]; then
+            PYTHON="$candidate"
+            break
+        fi
+    fi
+done
+if [ -z "$PYTHON" ]; then
+    echo "❌ Python 3.10+ is required but not found."
+    echo "   Install it from https://python.org or via your package manager."
+    exit 1
+fi
+
 # Initialize git submodules if needed
 if [ -d ".git" ]; then
     if [ ! -f "deeptempo-core/setup.py" ] && [ ! -f "deeptempo-core/pyproject.toml" ]; then
@@ -42,7 +59,7 @@ _filtered_reqs() {
 # Check if venv exists
 if [ ! -d "venv" ]; then
     echo "Virtual environment not found. Creating..."
-    python3 -m venv venv
+    "$PYTHON" -m venv venv
 fi
 
 # Activate venv
