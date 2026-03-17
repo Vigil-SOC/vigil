@@ -1,5 +1,5 @@
 #!/bin/bash
-# Complete shutdown for DeepTempo AI SOC v2.0
+# Complete shutdown for Vigil SOC v2.0
 # Usage: ./shutdown_all.sh [-d|--docker] [--full]
 #   -d, --docker : Also shutdown Docker containers
 #   --full       : When used with --docker, removes containers and volumes (clean slate)
@@ -25,7 +25,7 @@ for arg in "$@"; do
 done
 
 echo "=========================================="
-echo "DeepTempo AI SOC v2.0 - Complete Shutdown"
+echo "Vigil SOC v2.0 - Complete Shutdown"
 if [ "$DOCKER_SHUTDOWN" == "true" ]; then
     echo "(Docker shutdown enabled)"
     if [ "$FULL_CLEANUP" == "true" ]; then

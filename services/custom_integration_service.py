@@ -156,7 +156,7 @@ Please analyze this documentation and generate:
 
 2. **MCP Server Code** (Python):
    - Complete, production-ready MCP server implementation
-   - Follow the DeepTempo AI SOC patterns
+   - Follow the Vigil SOC patterns
    - Include proper error handling
    - Use config_utils.py for configuration loading
    - Define tools based on the API's capabilities

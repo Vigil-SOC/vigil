@@ -1,5 +1,5 @@
 """
-SQLAlchemy Database Models for DeepTempo AI SOC
+SQLAlchemy Database Models for Vigil SOC
 
 Defines the database schema for cases, findings, and related entities.
 """

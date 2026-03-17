@@ -29,7 +29,7 @@ def init_default_credentials():
     """Initialize default roles and admin user in the database."""
     
     print("=" * 50)
-    print("DeepTempo AI SOC - Default Credentials Setup")
+    print("Vigil SOC - Default Credentials Setup")
     print("=" * 50)
     
     # Initialize database connection

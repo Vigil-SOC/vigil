@@ -355,7 +355,7 @@ For each phase:
             logger.debug(f"Could not get MCP tools from registry: {e}")
         
         # Build a composite system prompt incorporating all agent roles
-        system_prompt = f"""You are the DeepTempo AI SOC Workflow Engine executing the "{skill.name}" skill.
+        system_prompt = f"""You are the Vigil SOC Workflow Engine executing the "{skill.name}" skill.
 
 You have access to all SOC tools and will execute a multi-phase workflow, 
 adopting different specialist agent roles for each phase.

@@ -1,5 +1,5 @@
 """
-Secrets Manager for DeepTempo AI SOC
+Secrets Manager for Vigil SOC
 
 Provides pluggable secrets storage backends with priority fallback:
 1. Environment variables (best for server deployments)
@@ -131,7 +131,7 @@ class DotEnvBackend(SecretsBackend):
             
             # Write all secrets to file
             with open(self.env_file, 'w') as f:
-                f.write("# DeepTempo AI SOC Secrets\n")
+                f.write("# Vigil SOC Secrets\n")
                 f.write("# This file contains sensitive credentials - keep it secure!\n\n")
                 for k, v in self._cache.items():
                     # Escape quotes in value
@@ -155,7 +155,7 @@ class DotEnvBackend(SecretsBackend):
                 
                 # Rewrite file without this secret
                 with open(self.env_file, 'w') as f:
-                    f.write("# DeepTempo AI SOC Secrets\n\n")
+                    f.write("# Vigil SOC Secrets\n\n")
                     for k, v in self._cache.items():
                         escaped_value = v.replace('"', '\\"')
                         f.write(f'{k}="{escaped_value}"\n')

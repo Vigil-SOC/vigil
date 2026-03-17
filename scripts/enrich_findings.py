@@ -3,7 +3,7 @@
 Finding Enrichment Script
 
 This script demonstrates how to enrich findings with MITRE ATT&CK techniques
-after they've been imported into DeepTempo AI SOC.
+after they've been imported into Vigil SOC.
 
 Usage:
     python scripts/enrich_findings.py --help

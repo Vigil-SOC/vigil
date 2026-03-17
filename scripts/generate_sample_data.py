@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sample Data Generator for DeepTempo AI SOC
+Sample Data Generator for Vigil SOC
 
 Generates realistic sample findings and cases for testing.
 
@@ -334,7 +334,7 @@ def print_sample(findings: List[Dict], cases: List[Dict]):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate sample data for DeepTempo AI SOC")
+    parser = argparse.ArgumentParser(description="Generate sample data for Vigil SOC")
     parser.add_argument("--count", "-n", type=int, default=20, help="Number of findings to generate")
     parser.add_argument("--cases", "-c", type=int, default=3, help="Number of cases to generate")
     parser.add_argument("--api", action="store_true", help="Ingest via API")
@@ -343,7 +343,7 @@ def main():
     args = parser.parse_args()
     
     print("\n" + "="*60)
-    print(" DeepTempo AI SOC - Sample Data Generator")
+    print(" Vigil SOC - Sample Data Generator")
     print("="*60)
     
     # Generate data

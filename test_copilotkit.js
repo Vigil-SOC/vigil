@@ -74,7 +74,7 @@ const fs = require('fs');
             continue;
           }
           
-          if (isVisible && (outerHTML.toLowerCase().includes('chat') || outerHTML.toLowerCase().includes('copilot') || outerHTML.includes('DeepTempo AI'))) {
+          if (isVisible && (outerHTML.toLowerCase().includes('chat') || outerHTML.toLowerCase().includes('copilot') || outerHTML.includes('Vigil'))) {
             console.log(`  Attempting to click element ${i} using force click`);
             chatButton = element;
             

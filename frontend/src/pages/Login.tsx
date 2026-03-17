@@ -95,7 +95,7 @@ export default function Login() {
         <Box sx={{ textAlign: 'center', mb: 3 }}>
           <SecurityIcon sx={{ fontSize: 48, color: 'primary.main', mb: 1 }} />
           <Typography variant="h4" component="h1" gutterBottom fontWeight="bold">
-            DeepTempo AI SOC
+            Vigil SOC
           </Typography>
           <Typography variant="body2" color="text.secondary">
             {showMfa ? 'Two-factor authentication required' : 'Sign in to your account'}

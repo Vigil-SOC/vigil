@@ -57,7 +57,7 @@ export default function MainLayout() {
             gap: 0.5,
           }}
         >
-          <Tooltip title="DeepTempo AI Chat">
+          <Tooltip title="Vigil Chat">
             <IconButton
               onClick={() => setClaudeOpen(!claudeOpen)}
               sx={{

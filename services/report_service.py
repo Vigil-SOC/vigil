@@ -93,7 +93,7 @@ class ReportService:
             story = []
             
             # Title
-            story.append(Paragraph("DeepTempo AI SOC - Overall Report", self.styles['CustomTitle']))
+            story.append(Paragraph("Vigil SOC - Overall Report", self.styles['CustomTitle']))
             story.append(Spacer(1, 0.2*inch))
             
             # Report metadata

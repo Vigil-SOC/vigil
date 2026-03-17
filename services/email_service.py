@@ -151,7 +151,7 @@ Priority: {case_priority}
 Please review and take appropriate action.
 
 --
-DeepTempo AI SOC
+Vigil SOC
 """
         
         body_html = f"""
@@ -178,7 +178,7 @@ DeepTempo AI SOC
     <p>Please review and take appropriate action.</p>
     
     <hr style="margin-top: 30px; border: none; border-top: 1px solid #ccc;">
-    <p style="font-size: 12px; color: #666;">DeepTempo AI SOC</p>
+    <p style="font-size: 12px; color: #666;">Vigil SOC</p>
 </body>
 </html>
 """
@@ -228,7 +228,7 @@ Elapsed: {breach_percent}%
 Immediate attention required.
 
 --
-DeepTempo AI SOC
+Vigil SOC
 """
         
         body_html = f"""
@@ -262,7 +262,7 @@ DeepTempo AI SOC
     <p style="font-weight: bold; color: #d32f2f;">Immediate attention required.</p>
     
     <hr style="margin-top: 30px; border: none; border-top: 1px solid #ccc;">
-    <p style="font-size: 12px; color: #666;">DeepTempo AI SOC</p>
+    <p style="font-size: 12px; color: #666;">Vigil SOC</p>
 </body>
 </html>
 """
@@ -306,7 +306,7 @@ Case: {case_title}
 Comment: {comment_excerpt}
 
 --
-DeepTempo AI SOC
+Vigil SOC
 """
         
         body_html = f"""
@@ -321,7 +321,7 @@ DeepTempo AI SOC
     </div>
     
     <hr style="margin-top: 30px; border: none; border-top: 1px solid #ccc;">
-    <p style="font-size: 12px; color: #666;">DeepTempo AI SOC</p>
+    <p style="font-size: 12px; color: #666;">Vigil SOC</p>
 </body>
 </html>
 """
@@ -371,7 +371,7 @@ Reason: {escalation_reason}
 Please review immediately.
 
 --
-DeepTempo AI SOC
+Vigil SOC
 """
         
         body_html = f"""
@@ -405,7 +405,7 @@ DeepTempo AI SOC
     <p style="font-weight: bold; color: #ff5722;">Please review immediately.</p>
     
     <hr style="margin-top: 30px; border: none; border-top: 1px solid #ccc;">
-    <p style="font-size: 12px; color: #666;">DeepTempo AI SOC</p>
+    <p style="font-size: 12px; color: #666;">Vigil SOC</p>
 </body>
 </html>
 """

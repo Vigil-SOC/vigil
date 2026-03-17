@@ -1,10 +1,10 @@
 #!/bin/bash
-# Start PostgreSQL database for DeepTempo AI SOC v2.0
+# Start PostgreSQL database for Vigil SOC v2.0
 
 set -e
 
 echo "=================================================="
-echo "DeepTempo AI SOC v2.0 - Database Startup"
+echo "Vigil SOC v2.0 - Database Startup"
 echo "=================================================="
 
 # Check Docker

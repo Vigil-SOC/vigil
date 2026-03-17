@@ -1,5 +1,5 @@
 """
-Data Ingestion Service for DeepTempo AI SOC
+Data Ingestion Service for Vigil SOC
 
 Handles ingestion of findings and cases from various formats:
 - JSON files

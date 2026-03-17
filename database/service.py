@@ -1,5 +1,5 @@
 """
-Database service layer for DeepTempo AI SOC.
+Database service layer for Vigil SOC.
 
 Provides high-level database operations for cases, findings, and related entities.
 """

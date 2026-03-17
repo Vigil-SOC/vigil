@@ -5,7 +5,7 @@
 -e ./mcp-servers
 
 
-# DeepTempo AI SOC - Requirements
+# Vigil SOC - Requirements
 # Python 3.10+ required (claude-agent-sdk requires >=3.10)
 
 # Core

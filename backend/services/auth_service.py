@@ -269,7 +269,7 @@ class AuthService:
             totp = pyotp.TOTP(user.mfa_secret)
             uri = totp.provisioning_uri(
                 name=user.email,
-                issuer_name="DeepTempo AI SOC"
+                issuer_name="Vigil SOC"
             )
             return uri
         

@@ -1480,7 +1480,7 @@ export default function Settings() {
         <DialogTitle>How to Configure Your S3 Bucket in AWS</DialogTitle>
         <DialogContent>
           <Box sx={{ '& > *': { mb: 3 } }}>
-            <Alert severity="info">Follow these steps to create and configure an S3 bucket for DeepTempo AI SOC to store findings and cases.</Alert>
+            <Alert severity="info">Follow these steps to create and configure an S3 bucket for Vigil SOC to store findings and cases.</Alert>
             <Box>
               <Typography variant="h6" gutterBottom>Step 1: Create an S3 Bucket</Typography>
               <Typography variant="body2" component="div">

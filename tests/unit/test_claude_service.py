@@ -76,7 +76,7 @@ class TestClaudeServicePrompts:
         service = ClaudeService()
         prompt = service._get_default_system_prompt()
         
-        assert "DeepTempo AI SOC" in prompt
+        assert "Vigil SOC" in prompt
         assert "default_to_action" in prompt
         assert "use_parallel_tool_calls" in prompt
         assert "investigate_before_answering" in prompt

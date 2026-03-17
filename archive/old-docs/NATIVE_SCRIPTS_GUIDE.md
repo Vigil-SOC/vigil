@@ -78,7 +78,7 @@ All scripts are now **executable** and ready to use! ✅
 **What you'll see:**
 ```
 ==========================================
-DeepTempo AI SOC v2.0 - Startup
+Vigil SOC v2.0 - Startup
 ==========================================
 ✓ Loading environment variables from .env
 ✓ PostgreSQL is already running
@@ -88,7 +88,7 @@ Starting backend API server...
 Starting frontend dev server...
 
 ==========================================
-✅ DeepTempo AI SOC v2.0 - Ready!
+✅ Vigil SOC v2.0 - Ready!
 ==========================================
 Backend API:   http://localhost:6987
 Frontend UI:   http://localhost:6988

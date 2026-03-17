@@ -1,10 +1,10 @@
 #!/bin/bash
-# Stop PostgreSQL database for DeepTempo AI SOC v2.0
+# Stop PostgreSQL database for Vigil SOC v2.0
 
 set -e
 
 echo "=================================================="
-echo "DeepTempo AI SOC v2.0 - Database Shutdown"
+echo "Vigil SOC v2.0 - Database Shutdown"
 echo "=================================================="
 
 # Check Docker Compose

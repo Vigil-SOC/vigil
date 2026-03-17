@@ -1,5 +1,5 @@
 """
-Database connection management for DeepTempo AI SOC.
+Database connection management for Vigil SOC.
 
 Handles database connections, session management, and connection pooling.
 """

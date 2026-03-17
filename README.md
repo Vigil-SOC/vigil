@@ -1,4 +1,4 @@
-# DeepTempo AI SOC
+# Vigil SOC
 
 AI-powered Security Operations Center built on three pillars: **Data Sources** for ingesting and analyzing security telemetry, **Skills** for orchestrated multi-agent workflows, and **MCP** for extensible tool integration across your entire security stack.
 

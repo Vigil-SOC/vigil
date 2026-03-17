@@ -21,7 +21,7 @@ const fs = require('fs');
   console.log('Step 3: Looking for and clicking chat button...');
   
   // Find and click the chat button
-  const chatButton = await page.$('button[aria-label="DeepTempo AI Chat"]');
+  const chatButton = await page.$('button[aria-label="Vigil Chat"]');
   if (chatButton) {
     console.log('Found chat button, clicking with force...');
     await chatButton.evaluate(el => el.click());

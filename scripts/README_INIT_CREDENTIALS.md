@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This script ensures that default admin credentials are inserted into PostgreSQL, allowing first-time login to the DeepTempo AI SOC system.
+This script ensures that default admin credentials are inserted into PostgreSQL, allowing first-time login to the Vigil SOC system.
 
 ## Default Credentials
 
@@ -39,7 +39,7 @@ python3 scripts/init_default_credentials.py
 
 ```
 ==================================================
-DeepTempo AI SOC - Default Credentials Setup
+Vigil SOC - Default Credentials Setup
 ==================================================
 ✓ Database connection established
 ✓ Roles table ready

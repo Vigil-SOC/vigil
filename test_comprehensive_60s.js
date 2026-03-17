@@ -28,7 +28,7 @@ const fs = require('fs');
     
     // Open chat
     console.log('[SETUP] Opening CopilotKit chat...');
-    const chatButton = await page.$('button[aria-label*="DeepTempo AI Chat"]');
+    const chatButton = await page.$('button[aria-label*="Vigil Chat"]');
     
     if (!chatButton) {
       console.log('        ✗ ERROR: Chat button not found!');

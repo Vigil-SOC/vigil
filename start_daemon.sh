@@ -1,8 +1,8 @@
 #!/bin/bash
-# Start DeepTempo AI SOC in daemon mode (background) - Updated for v2.0
+# Start Vigil SOC in daemon mode (background) - Updated for v2.0
 
 echo "=========================================="
-echo "DeepTempo AI SOC v2.0 - Background Mode"
+echo "Vigil SOC v2.0 - Background Mode"
 echo "=========================================="
 
 # Require Python 3.10+ (claude-agent-sdk and other deps need it)

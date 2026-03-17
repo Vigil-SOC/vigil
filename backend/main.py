@@ -1,5 +1,5 @@
 """
-FastAPI Backend for DeepTempo AI SOC Web Application
+FastAPI Backend for Vigil SOC Web Application
 
 Main application entry point for the REST API server.
 """
@@ -83,8 +83,8 @@ logger = logging.getLogger(__name__)
 
 # Create FastAPI app
 app = FastAPI(
-    title="DeepTempo AI SOC API",
-    description="REST API for DeepTempo AI SOC Application",
+    title="Vigil SOC API",
+    description="REST API for Vigil SOC Application",
     version="1.0.0"
 )
 
@@ -151,7 +151,7 @@ app.include_router(sla_policies_router, prefix="/api/sla-policies", tags=["sla-p
 async def startup_event():
     """Initialize database, MCP tools and check integration compatibility on startup."""
     logger.info("=" * 60)
-    logger.info("Starting DeepTempo AI SOC Backend")
+    logger.info("Starting Vigil SOC Backend")
     logger.info("=" * 60)
     
     # Load secrets into environment for MCP servers
@@ -407,7 +407,7 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
 if __name__ == "__main__":
     import uvicorn
     
-    logger.info("Starting DeepTempo AI SOC API server...")
+    logger.info("Starting Vigil SOC API server...")
     uvicorn.run(
         "backend.main:app",
         host="0.0.0.0",

@@ -22,7 +22,7 @@ const fs = require('fs');
     await page.screenshot({ path: 'mcp-test-1-loaded.png', fullPage: true });
     
     console.log('Step 3: Looking for CopilotKit chat button...');
-    const chatButton = await page.$('button[aria-label="DeepTempo AI Chat"]');
+    const chatButton = await page.$('button[aria-label="Vigil Chat"]');
     if (!chatButton) {
       console.log('ERROR: Chat button not found!');
       await page.screenshot({ path: 'mcp-test-error.png', fullPage: true });

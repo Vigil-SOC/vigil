@@ -23,7 +23,7 @@ else
 fi
 
 echo "=================================================="
-echo "Running DeepTempo AI-SOC Test Suite"
+echo "Running Vigil-SOC Test Suite"
 echo "=================================================="
 echo ""
 

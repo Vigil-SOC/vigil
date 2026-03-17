@@ -1,10 +1,10 @@
 #!/bin/bash
-# Start DeepTempo AI SOC Web Application (Updated for 2.0)
+# Start Vigil SOC Web Application (Updated for 2.0)
 
 set -e
 
 echo "=========================================="
-echo "DeepTempo AI SOC v2.0 - Startup"
+echo "Vigil SOC v2.0 - Startup"
 echo "=========================================="
 
 # Require Python 3.10+ (claude-agent-sdk and other deps need it)
@@ -246,7 +246,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "✅ DeepTempo AI SOC v2.0 - Ready!"
+echo "✅ Vigil SOC v2.0 - Ready!"
 echo "=========================================="
 echo "Backend API:   http://localhost:6987"
 echo "Frontend UI:   http://localhost:6988"

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Schema migration script for DeepTempo AI SOC.
+Schema migration script for Vigil SOC.
 
 Brings an existing database up to date with the current SQLAlchemy models
 defined in database/models.py. Safe to run multiple times (idempotent).

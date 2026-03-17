@@ -1,2 +1,2 @@
-"""Database package for DeepTempo AI SOC."""
+"""Database package for Vigil SOC."""
 

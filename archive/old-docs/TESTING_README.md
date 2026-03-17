@@ -1,4 +1,4 @@
-# Testing Guide - DeepTempo AI-SOC
+# Testing Guide - Vigil-SOC
 
 This guide explains how to run tests, interpret results, and use test feedback with Cursor.
 

@@ -1,4 +1,4 @@
-# DeepTempo AI SOC
+# Vigil SOC
 
 AI-powered Security Operations Center using Claude and MCP (Model Context Protocol).
 

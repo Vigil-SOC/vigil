@@ -20,7 +20,7 @@ const { chromium } = require('playwright');
   await page.screenshot({ path: 'test-mcp-1-initial.png', fullPage: true });
   
   console.log('Step 3: Looking for chat button...');
-  const chatButton = await page.$('button[aria-label="DeepTempo AI Chat"]');
+  const chatButton = await page.$('button[aria-label="Vigil Chat"]');
   if (chatButton) {
     console.log('Found chat button, clicking...');
     await chatButton.evaluate(el => el.click());

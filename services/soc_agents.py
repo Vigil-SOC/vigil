@@ -19,7 +19,7 @@ class AgentProfile:
     enable_thinking: bool = False
 
 
-BASE_PROMPT = """You are a SOC {role} in the DeepTempo AI SOC platform.
+BASE_PROMPT = """You are a SOC {role} in the Vigil SOC platform.
 
 <entity_recognition>
 - Finding IDs (f-YYYYMMDD-XXXXXXXX): Use get_finding tool

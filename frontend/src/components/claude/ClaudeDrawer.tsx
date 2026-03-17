@@ -680,7 +680,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
     <Drawer anchor="right" open={open} onClose={onClose} sx={{ '& .MuiDrawer-paper': { width: { xs: '100%', sm: 420, md: 480 }, bgcolor: 'background.default' } }}>
       <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: 'background.paper' }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>DeepTempo AI</Typography>
+          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Vigil</Typography>
           <Box>
             <IconButton 
               size="small" 

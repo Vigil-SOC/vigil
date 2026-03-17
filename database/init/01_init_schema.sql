@@ -1,4 +1,4 @@
--- DeepTempo AI SOC Database Initialization
+-- Vigil SOC Database Initialization
 -- This script is automatically run when the PostgreSQL container first starts
 
 -- Enable required extensions
@@ -13,6 +13,6 @@ SET timezone = 'UTC';
 -- Log initialization
 DO $$
 BEGIN
-    RAISE NOTICE 'DeepTempo AI SOC database initialized successfully';
+    RAISE NOTICE 'Vigil SOC database initialized successfully';
 END $$;
 
