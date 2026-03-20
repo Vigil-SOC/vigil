@@ -1,6 +1,6 @@
 # Vigil 
 
-Vigil is a community built AI-Native Security Operations Center built on three pillars: **Agents** for performing specific capabilities, **Workflows** for orchestrated multi-agent workflows, and **Integrations** for data integestion, tools and integrations to other open source projects.  Actuall the most important pillar is you - this is your project, please contribute via feedback, code, a repo star, memes on Discord or otherwise.  
+Vigil is a community built AI-Native Security Operations Center built on three pillars: **Agents** for performing specific capabilities, **Workflows** for orchestrated multi-agent workflows, and **Integrations** for data integestion, tools and integrations to other open source projects.  Actually the most important pillar is **YOU** - this is your project, please contribute via feedback, code, a repo star, memes on Discord or otherwise.  
 
 ---
 
