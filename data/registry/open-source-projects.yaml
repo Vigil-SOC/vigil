@@ -45,6 +45,54 @@
     7,200+ detection rules. Built on Claude via Anthropic API.
     Headless daemon for 24/7 autonomous operation.
 
+# --- Detection Intelligence / Foundation Models ---
+
+- name: LogLM
+  repo: https://deeptempo.ai
+  focus: Foundation model for log-based threat detection
+  domain: defensive
+  license: Commercial (DeepTempo)
+  status: active
+  type: foundation-model
+  capabilities:
+    - anomaly-detection
+    - log-analysis
+    - behavioral-analytics
+    - compound-detection
+    - zero-day-detection
+    - novel-variant-detection
+  integrations:
+    - Splunk
+    - Snowflake
+    - Cribl
+    - Vigil (via findings pipeline)
+  architecture:
+    model_type: encoder-only transformer with self-attention
+    detection_method: high-dimensional embedding followed by purpose-built classifiers
+    training: diverse data for generalization, monthly revisions
+    adaptation: base-layer fine-tuning (no labels needed at classifier level)
+    deployment: BYOC via federated learning (gradient deltas ~40KB/week)
+  notes: >
+    LogLM is a vertical foundation model purpose-built for security log
+    analysis. Unlike rule-based detection (Sigma, Splunk SPL) which requires
+    a signature for every known threat, LogLM performs compound detections
+    on raw log data — identifying novel attack patterns, zero-day behaviors,
+    and subtle anomalies that no rule exists for. It addresses the fundamental
+    "detection gap" between the rate at which AI-powered attacks are generated
+    and the rate at which human-authored signatures can be created.
+
+    LogLM complements Vigil's rule-based detection engineering (7,200+ rules)
+    by providing a foundation-model detection layer underneath. Rules catch
+    known patterns; LogLM catches what rules miss.
+
+    Key differentiator for BYOC deployments: federated learning keeps customer
+    data in the customer's environment while still improving the model.
+    Gradient deltas (~40KB/week with sparsification and quantization) are
+    functionally equivalent to standard software telemetry.
+
+    Production deployments include Deutsche Telekom, Stanford University,
+    and others.
+
 # --- Offensive / Red Teaming ---
 
 - name: ARTEMIS

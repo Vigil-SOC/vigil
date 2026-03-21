@@ -66,6 +66,14 @@ categories:
       - id: endpoint-detection
         name: Endpoint detection
         description: Detection of threats on endpoint systems (EDR-like)
+      - id: foundation-model-detection
+        name: Foundation model detection
+        description: >
+          Detection using a purpose-built foundation model trained on log data,
+          performing compound detections via high-dimensional embeddings rather
+          than signatures. Addresses novel attack patterns, zero-day behaviors,
+          and subtle anomalies that rule-based detection cannot cover because
+          no signature exists. DeepTempo's LogLM is the reference implementation.
 
   - id: triage
     name: Triage
