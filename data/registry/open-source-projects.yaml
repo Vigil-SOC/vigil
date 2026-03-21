@@ -1,0 +1,274 @@
+# Open-Source Security Project Registry
+# Used by the Auto-Contributor skill to check for existing open-source coverage
+# before flagging gaps against proprietary platforms.
+#
+# Maintainers: Update this file when discovering new relevant projects.
+# Last updated: 2026-03-20
+
+# --- AI SOC / Security Operations ---
+
+- name: Vigil
+  repo: https://github.com/DeepTempo/vigil
+  focus: AI-powered Security Operations Center
+  domain: defensive
+  license: Apache-2.0
+  status: active
+  capabilities:
+    - alert-triage
+    - investigation
+    - incident-response
+    - threat-hunting
+    - forensic-analysis
+    - detection-engineering
+    - case-management
+    - mitre-attack-mapping
+    - compliance-assessment
+    - reporting
+    - multi-agent-orchestration
+    - mcp-integrations
+  integrations:
+    - Splunk
+    - CrowdStrike
+    - VirusTotal
+    - Shodan
+    - AlienVault OTX
+    - MISP
+    - Hybrid Analysis
+    - Joe Sandbox
+    - ANY.RUN
+    - Timesketch
+    - Jira
+    - Slack
+    - Cribl
+  notes: >
+    12 specialized agents, 4 multi-agent skills, 30+ MCP integrations,
+    7,200+ detection rules. Built on Claude via Anthropic API.
+    Headless daemon for 24/7 autonomous operation.
+
+# --- Offensive / Red Teaming ---
+
+- name: ARTEMIS
+  repo: https://github.com/Stanford-Trinity/ARTEMIS
+  focus: Autonomous multi-agent penetration testing
+  domain: offensive
+  license: Apache-2.0
+  status: active
+  capabilities:
+    - autonomous-penetration-testing
+    - multi-agent-exploitation
+    - vulnerability-discovery
+    - automatic-triaging
+    - parallel-execution
+    - long-horizon-operation
+  integrations: []
+  notes: >
+    Supervisor + sub-agent + triager architecture. Validated on live enterprise
+    network (~8,000 hosts). Placed 2nd overall vs 10 human pentesters.
+    82% valid submission rate. ~$18/hour operating cost. Built on OpenAI Codex fork.
+
+- name: Caldera
+  repo: https://github.com/mitre/caldera
+  focus: Adversary emulation and red team automation
+  domain: offensive
+  license: Apache-2.0
+  status: active
+  capabilities:
+    - adversary-emulation
+    - automated-attack-execution
+    - attack-chain-simulation
+    - plugin-extensibility
+  integrations: []
+  notes: >
+    MITRE-maintained. Uses ATT&CK-based adversary profiles.
+    Agent-based with C2 capabilities. Good for testing detection coverage.
+
+- name: Atomic Red Team
+  repo: https://github.com/redcanaryco/atomic-red-team
+  focus: Attack simulation test library
+  domain: offensive
+  license: MIT
+  status: active
+  capabilities:
+    - attack-simulation
+    - detection-validation
+    - mitre-attack-coverage
+  integrations: []
+  notes: >
+    Library of small, portable detection tests mapped to ATT&CK.
+    Not autonomous — designed for manual or scripted execution.
+    Good complement to Caldera or ARTEMIS for specific technique testing.
+
+# --- SIEM / Log Management ---
+
+- name: Wazuh
+  repo: https://github.com/wazuh/wazuh
+  focus: Open-source SIEM, XDR, and compliance
+  domain: defensive
+  license: GPL-2.0
+  status: active
+  capabilities:
+    - log-collection
+    - intrusion-detection
+    - vulnerability-detection
+    - compliance-monitoring
+    - file-integrity-monitoring
+    - endpoint-detection
+  integrations:
+    - Elastic Stack
+    - Splunk
+    - AWS
+    - Azure
+    - GCP
+  notes: >
+    Full SIEM/XDR platform. Strong on compliance (PCI-DSS, HIPAA, GDPR).
+    Agent-based endpoint monitoring. Can serve as a data source for Vigil.
+
+# --- Incident Response ---
+
+- name: TheHive
+  repo: https://github.com/TheHive-Project/TheHive
+  focus: Incident response and case management
+  domain: defensive
+  license: AGPL-3.0
+  status: active
+  capabilities:
+    - case-management
+    - alert-management
+    - observable-enrichment
+    - task-management
+    - collaboration
+  integrations:
+    - Cortex (enrichment/response)
+    - MISP
+  notes: >
+    Mature case management platform. Vigil has its own case management
+    but TheHive could serve as an alternative backend via MCP.
+
+# --- Threat Intelligence ---
+
+- name: MISP
+  repo: https://github.com/MISP/MISP
+  focus: Threat intelligence sharing and analysis
+  domain: defensive
+  license: AGPL-3.0
+  status: active
+  capabilities:
+    - ioc-management
+    - threat-sharing
+    - feed-aggregation
+    - correlation
+    - taxonomies
+  integrations:
+    - TheHive
+    - Splunk
+    - Many SIEM/SOAR platforms
+  notes: >
+    De facto standard for threat intelligence sharing.
+    Vigil already integrates via MCP server.
+
+- name: OpenCTI
+  repo: https://github.com/OpenCTI-Platform/opencti
+  focus: Threat intelligence platform with knowledge graph
+  domain: defensive
+  license: Apache-2.0
+  status: active
+  capabilities:
+    - threat-intelligence-management
+    - knowledge-graph
+    - stix-support
+    - feed-integration
+    - actor-tracking
+  integrations:
+    - MISP
+    - TheHive
+    - Elastic
+    - Splunk
+  notes: >
+    Knowledge-graph approach to threat intel. Stronger on actor/campaign
+    tracking than MISP. Could complement Vigil's Threat Intel agent.
+
+# --- Detection Engineering ---
+
+- name: Sigma
+  repo: https://github.com/SigmaHQ/sigma
+  focus: Generic detection rule format
+  domain: defensive
+  license: LGPL-2.1
+  status: active
+  capabilities:
+    - detection-rule-format
+    - rule-conversion
+    - multi-siem-support
+    - community-rules
+  integrations:
+    - Splunk
+    - Elastic
+    - Microsoft Sentinel
+    - QRadar
+    - Many others
+  notes: >
+    Standard for portable detection rules. Vigil's Detection Engineering
+    module includes Sigma rules in its 7,200+ rule library.
+
+# --- SOAR / Automation ---
+
+- name: Shuffle
+  repo: https://github.com/shuffle/shuffle
+  focus: SOAR automation platform
+  domain: defensive
+  license: AGPL-3.0
+  status: active
+  capabilities:
+    - playbook-automation
+    - workflow-orchestration
+    - app-integrations
+    - case-management
+  integrations:
+    - TheHive
+    - MISP
+    - Splunk
+    - Many via OpenAPI
+  notes: >
+    Open-source SOAR. Vigil's Skills system serves a similar role
+    but is AI-native rather than playbook-based. Could be complementary
+    for deterministic workflows.
+
+# --- Vulnerability Management ---
+
+- name: Nuclei
+  repo: https://github.com/projectdiscovery/nuclei
+  focus: Vulnerability scanning with community templates
+  domain: offensive
+  license: MIT
+  status: active
+  capabilities:
+    - vulnerability-scanning
+    - template-based-detection
+    - network-scanning
+    - web-scanning
+  integrations: []
+  notes: >
+    Fast, template-based vulnerability scanner. Could feed findings
+    into Vigil for triage. Not autonomous — runs specific checks.
+
+# --- Network Analysis ---
+
+- name: Zeek
+  repo: https://github.com/zeek/zeek
+  focus: Network security monitoring
+  domain: defensive
+  license: BSD
+  status: active
+  capabilities:
+    - network-monitoring
+    - protocol-analysis
+    - connection-logging
+    - file-extraction
+    - custom-scripting
+  integrations:
+    - Splunk
+    - Elastic
+    - Wazuh
+  notes: >
+    Industry-standard network monitor. Could serve as a data source
+    for Vigil's Network Analyst agent.
