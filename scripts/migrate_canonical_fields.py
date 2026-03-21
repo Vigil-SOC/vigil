@@ -3,7 +3,9 @@
 Adds 8 new columns (src_ip, dst_ip, hostname, username, process_name,
 file_hash, alert_category, raw_fields) and creates indexes.
 
-Safe to run multiple times — uses IF NOT EXISTS throughout.
+Safe to run multiple times — checks information_schema / pg_indexes before
+each ALTER TABLE / CREATE INDEX so already-existing columns and indexes are
+skipped rather than causing an error.
 
 Usage:
     source venv/bin/activate

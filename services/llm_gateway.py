@@ -35,6 +35,25 @@ QUEUE_INSIGHTS    = "arq:llm:insights"
 # Legacy alias so imports of QUEUE_NAME keep working
 QUEUE_NAME = QUEUE_CHAT
 
+# ---------------------------------------------------------------------------
+# Compatibility / single-queue mode
+#
+# Set LLM_SINGLE_QUEUE=true (or LLM_WORKER_QUEUE to any non-empty value) to
+# route ALL requests to the single queue specified by LLM_WORKER_QUEUE
+# (default: arq:llm:chat).  This lets a single worker drain every job type,
+# which is useful in development or resource-constrained environments where
+# you don't want to run four separate worker processes.
+# ---------------------------------------------------------------------------
+_single_queue_env = os.getenv("LLM_SINGLE_QUEUE", "").lower()
+_worker_queue_env = os.getenv("LLM_WORKER_QUEUE", "")
+SINGLE_QUEUE_MODE: bool = _single_queue_env in ("1", "true", "yes") or bool(_worker_queue_env)
+_COMPAT_QUEUE: str = _worker_queue_env or QUEUE_CHAT
+
+
+def _resolve_queue(preferred: str) -> str:
+    """Return the actual queue name, respecting single-queue compatibility mode."""
+    return _COMPAT_QUEUE if SINGLE_QUEUE_MODE else preferred
+
 # Dead-letter queue key (Redis list, not an ARQ queue)
 DLQ_KEY = "arq:llm:dlq"
 
@@ -147,15 +166,24 @@ class LLMRequest:
 class LLMGateway:
     """Enqueues LLM requests into ARQ priority queues.
 
-    Each priority tier is a separate named queue consumed by a dedicated
-    worker process.  Start workers with::
+    **Multi-queue mode (default):** Each priority tier is a separate named queue
+    consumed by a dedicated worker process.  Start all four workers with::
+
+        scripts/start_llm_workers.sh
+
+    or individually::
 
         LLM_WORKER_QUEUE=arq:llm:triage      python -m arq services.llm_worker.WorkerSettings
         LLM_WORKER_QUEUE=arq:llm:investigation python -m arq services.llm_worker.WorkerSettings
         LLM_WORKER_QUEUE=arq:llm:chat         python -m arq services.llm_worker.WorkerSettings
         LLM_WORKER_QUEUE=arq:llm:insights     python -m arq services.llm_worker.WorkerSettings
 
-    Or use ``scripts/start_llm_workers.sh`` which starts all four.
+    **Single-queue compatibility mode:** Set ``LLM_SINGLE_QUEUE=true`` (or set
+    ``LLM_WORKER_QUEUE`` to the desired queue name) to route *all* job types to a
+    single queue.  A single worker then drains everything, which is convenient for
+    development or resource-constrained environments::
+
+        LLM_SINGLE_QUEUE=true python -m arq services.llm_worker.WorkerSettings
 
     Usage::
 
@@ -201,7 +229,7 @@ class LLMGateway:
             tools=None,
             temperature=None,
             job_type="triage",
-            _queue_name=QUEUE_TRIAGE,
+            _queue_name=_resolve_queue(QUEUE_TRIAGE),
         )
         return await job.result(timeout=timeout)
 
@@ -230,7 +258,7 @@ class LLMGateway:
             tools=tools,
             temperature=None,
             job_type="investigation",
-            _queue_name=QUEUE_INVESTIGATION,
+            _queue_name=_resolve_queue(QUEUE_INVESTIGATION),
         )
         return await job.result(timeout=timeout)
 
@@ -257,7 +285,7 @@ class LLMGateway:
             tools=tools,
             temperature=None,
             job_type="investigation",
-            _queue_name=QUEUE_INVESTIGATION,
+            _queue_name=_resolve_queue(QUEUE_INVESTIGATION),
         )
         return await job.result(timeout=timeout)
 
@@ -286,7 +314,7 @@ class LLMGateway:
             tools=None,
             temperature=None,
             job_type="chat",
-            _queue_name=QUEUE_CHAT,
+            _queue_name=_resolve_queue(QUEUE_CHAT),
         )
         return await job.result(timeout=timeout)
 
@@ -312,7 +340,7 @@ class LLMGateway:
             tools=None,
             temperature=temperature,
             job_type="insights",
-            _queue_name=QUEUE_INSIGHTS,
+            _queue_name=_resolve_queue(QUEUE_INSIGHTS),
         )
         return await job.result(timeout=timeout)
 

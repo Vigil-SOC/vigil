@@ -9,7 +9,7 @@ Primary security observation with embeddings and MITRE predictions.
 ```json
 {
   "finding_id": "f-2024-01-15-001",
-  "embedding": [0.123, -0.456, "..."],
+  "embedding": [0.123, -0.456, 0.789, 0.012],
   "mitre_predictions": {"T1071.001": 0.85, "T1048.003": 0.72},
   "anomaly_score": 0.92,
   "entity_context": {
@@ -24,6 +24,8 @@ Primary security observation with embeddings and MITRE predictions.
   "status": "new"
 }
 ```
+
+> **Note:** `embedding` is a numeric array (typically 1536 floats for OpenAI embeddings or 1024 for Claude); only the first few values are shown above.
 
 ### Case
 

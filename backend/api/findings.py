@@ -384,10 +384,10 @@ async def get_or_generate_enrichment(finding_id: str, force_regenerate: bool = Q
         
         # Build entity context string from canonical fields (with entity_context fallback)
         entity_str = ""
-        src_ip   = finding.get('src_ip') or entity_context.get('src_ip') or entity_context.get('src_ips', [None])[0] if entity_context else None
-        dst_ip   = finding.get('dst_ip') or entity_context.get('dst_ip') or entity_context.get('dst_ips', [None])[0] if entity_context else None
-        hostname = finding.get('hostname') or entity_context.get('hostname') if entity_context else None
-        username = finding.get('username') or entity_context.get('username') or entity_context.get('user') if entity_context else None
+        src_ip   = finding.get('src_ip') or (entity_context.get('src_ip') or entity_context.get('src_ips', [None])[0] if entity_context else None)
+        dst_ip   = finding.get('dst_ip') or (entity_context.get('dst_ip') or entity_context.get('dst_ips', [None])[0] if entity_context else None)
+        hostname = finding.get('hostname') or (entity_context.get('hostname') if entity_context else None)
+        username = finding.get('username') or (entity_context.get('username') or entity_context.get('user') if entity_context else None)
         if src_ip:
             entity_str += f"Source IP: {src_ip}\n"
         if dst_ip:
