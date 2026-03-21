@@ -180,7 +180,7 @@ cleanup() {
     echo "Shutting down servers..."
     
     if [ ! -z "$WORKER_PID" ]; then
-        echo "Stopping LLM worker (PID: $WORKER_PID)..."
+        echo "Stopping LLM workers (launcher PID: $WORKER_PID)..."
         kill $WORKER_PID 2>/dev/null
         wait $WORKER_PID 2>/dev/null
     fi
@@ -226,8 +226,8 @@ uvicorn backend.main:app \
 BACKEND_PID=$!
 sleep 2
 
-# Start ARQ LLM worker (processes queued LLM requests)
-echo "Starting LLM worker (ARQ)..."
+# Start ARQ LLM workers (one per priority queue: triage, investigation, chat, insights)
+echo "Starting LLM workers (ARQ)..."
 python3 -m services.run_llm_worker &
 WORKER_PID=$!
 sleep 1

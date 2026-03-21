@@ -148,7 +148,11 @@ class LLMGateway:
     """Enqueues LLM requests into ARQ priority queues.
 
     Each priority tier is a separate named queue consumed by a dedicated
-    worker process.  Start workers with::
+    worker process.  The default dev startup (``start_web.sh`` or
+    ``python -m services.run_llm_worker``) automatically launches all four
+    workers so every queue is drained without any extra configuration.
+
+    To start workers manually::
 
         LLM_WORKER_QUEUE=arq:llm:triage      python -m arq services.llm_worker.WorkerSettings
         LLM_WORKER_QUEUE=arq:llm:investigation python -m arq services.llm_worker.WorkerSettings
