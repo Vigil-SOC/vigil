@@ -62,7 +62,7 @@ for queue in "${QUEUES[@]}"; do
     else
         LLM_WORKER_QUEUE="$queue" \
             python -m arq services.llm_worker.WorkerSettings \
-            2>&1 | sed "s/^/[$type] /" &
+            > >(sed "s/^/[$type] /") 2>&1 &
     fi
 
     PIDS+=($!)
