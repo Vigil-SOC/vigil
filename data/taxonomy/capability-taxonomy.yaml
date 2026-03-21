@@ -1,0 +1,290 @@
+# Capability Taxonomy for AI Security Platforms
+# Used by the Auto-Contributor skill to normalize vendor claims
+# into comparable categories across proprietary and open-source platforms.
+#
+# Each category has a unique ID, description, and list of sub-capabilities.
+# When extracting capabilities from a vendor's website, map each claim
+# to the most specific sub-capability that fits.
+#
+# Maintainers: Add new categories when you encounter capabilities
+# that don't fit the existing taxonomy. Keep IDs stable — downstream
+# reports reference them.
+#
+# Last updated: 2026-03-20
+
+categories:
+
+  - id: offensive-testing
+    name: Offensive Testing
+    description: >
+      Capabilities that simulate attacker behavior to discover
+      vulnerabilities and validate exploitability.
+    sub_capabilities:
+      - id: vulnerability-scanning
+        name: Vulnerability scanning
+        description: Automated scanning for known vulnerabilities (CVEs, misconfigurations)
+      - id: penetration-testing
+        name: Penetration testing
+        description: Active exploitation of discovered vulnerabilities to prove impact
+      - id: red-teaming
+        name: Red teaming
+        description: Goal-oriented adversary simulation testing detection and response
+      - id: attack-simulation
+        name: Attack simulation
+        description: Replay of known attack techniques (e.g., ATT&CK-based) to test defenses
+      - id: continuous-testing
+        name: Continuous testing
+        description: Always-on offensive testing, not periodic or episodic
+      - id: multi-modal-attack
+        name: Multi-modal attack
+        description: Coordinated testing across web, network, cloud, internal, and social vectors
+      - id: adversary-emulation
+        name: Adversary emulation
+        description: Simulation of specific threat actor TTPs
+
+  - id: detection
+    name: Detection
+    description: >
+      Capabilities that identify threats, anomalies, or suspicious activity
+      in security telemetry.
+    sub_capabilities:
+      - id: rule-based-detection
+        name: Rule-based detection
+        description: Detection using signatures, Sigma rules, YARA rules, or similar
+      - id: anomaly-detection
+        name: Anomaly detection
+        description: ML/statistical detection of deviations from baseline behavior
+      - id: behavioral-analytics
+        name: Behavioral analytics
+        description: Detection based on entity behavior patterns (UEBA)
+      - id: log-analysis
+        name: Log analysis
+        description: Processing and analyzing log data for security-relevant events
+      - id: network-detection
+        name: Network detection
+        description: Detection of threats in network traffic and flow data
+      - id: endpoint-detection
+        name: Endpoint detection
+        description: Detection of threats on endpoint systems (EDR-like)
+
+  - id: triage
+    name: Triage
+    description: >
+      Capabilities that assess, score, and prioritize security findings
+      before human review.
+    sub_capabilities:
+      - id: alert-scoring
+        name: Alert scoring
+        description: Severity and confidence scoring of alerts and findings
+      - id: false-positive-filtering
+        name: False-positive filtering
+        description: Automated identification and suppression of false positives
+      - id: priority-ranking
+        name: Priority ranking
+        description: Ordering findings by urgency, impact, or business relevance
+      - id: finding-validation
+        name: Finding validation
+        description: Confirming that a finding is real and exploitable before reporting
+      - id: deduplication
+        name: Deduplication
+        description: Identifying and merging duplicate or overlapping findings
+
+  - id: investigation
+    name: Investigation
+    description: >
+      Capabilities that analyze security events to determine root cause,
+      scope, and impact.
+    sub_capabilities:
+      - id: root-cause-analysis
+        name: Root cause analysis
+        description: Determining the origin and cause of a security incident
+      - id: timeline-reconstruction
+        name: Timeline reconstruction
+        description: Building a chronological sequence of events in an incident
+      - id: evidence-collection
+        name: Evidence collection
+        description: Gathering artifacts, logs, and data relevant to an investigation
+      - id: cross-source-correlation
+        name: Cross-source correlation
+        description: Linking events across multiple data sources (SIEM, EDR, network, cloud)
+      - id: entity-mapping
+        name: Entity mapping
+        description: Mapping relationships between hosts, users, IPs, and other entities
+
+  - id: response
+    name: Response
+    description: >
+      Capabilities that contain, remediate, or mitigate security incidents.
+    sub_capabilities:
+      - id: containment
+        name: Containment
+        description: Isolating affected systems to prevent spread
+      - id: remediation-guidance
+        name: Remediation guidance
+        description: Recommending specific fixes for identified vulnerabilities
+      - id: automated-remediation
+        name: Automated remediation
+        description: Executing fixes without human intervention
+      - id: kill-chain-prioritized-remediation
+        name: Kill-chain-prioritized remediation
+        description: Ranking fixes by how many attack paths they eliminate
+      - id: rollback
+        name: Rollback
+        description: Reverting changes made during an incident or failed remediation
+      - id: approval-workflow
+        name: Approval workflow
+        description: Human-in-the-loop review before executing response actions
+
+  - id: threat-intelligence
+    name: Threat Intelligence
+    description: >
+      Capabilities that enrich findings with external threat data
+      and track adversary activity.
+    sub_capabilities:
+      - id: ioc-enrichment
+        name: IOC enrichment
+        description: Looking up indicators (IPs, hashes, domains) against threat feeds
+      - id: actor-attribution
+        name: Actor attribution
+        description: Linking activity to known threat actors or campaigns
+      - id: campaign-tracking
+        name: Campaign tracking
+        description: Monitoring ongoing adversary campaigns across targets
+      - id: feed-aggregation
+        name: Feed aggregation
+        description: Consuming and normalizing multiple threat intelligence feeds
+      - id: osint-integration
+        name: OSINT integration
+        description: Incorporating open-source intelligence into analysis
+
+  - id: detection-engineering
+    name: Detection Engineering
+    description: >
+      Capabilities that create, manage, and optimize detection rules.
+    sub_capabilities:
+      - id: rule-creation
+        name: Rule creation
+        description: Writing new detection rules (Sigma, Splunk SPL, KQL, etc.)
+      - id: coverage-analysis
+        name: Coverage analysis
+        description: Assessing what ATT&CK techniques are covered by existing rules
+      - id: gap-identification
+        name: Gap identification
+        description: Finding techniques or attack patterns with no detection coverage
+      - id: auto-rule-generation
+        name: Automated rule generation
+        description: AI-generated detection rules from observed attack behavior
+      - id: rule-tuning
+        name: Rule tuning
+        description: Optimizing rules to reduce false positives and improve accuracy
+
+  - id: case-management
+    name: Case Management
+    description: >
+      Capabilities that track incidents through their lifecycle.
+    sub_capabilities:
+      - id: incident-tracking
+        name: Incident tracking
+        description: Creating, updating, and closing incident records
+      - id: evidence-management
+        name: Evidence management
+        description: Organizing and preserving evidence with chain of custody
+      - id: collaboration
+        name: Collaboration
+        description: Multi-person workflows on shared incidents
+      - id: audit-trail
+        name: Audit trail
+        description: Complete history of actions taken during an incident
+
+  - id: reporting
+    name: Reporting
+    description: >
+      Capabilities that produce documentation for different audiences.
+    sub_capabilities:
+      - id: technical-reporting
+        name: Technical reporting
+        description: Detailed reports for security engineers and analysts
+      - id: executive-reporting
+        name: Executive reporting
+        description: Summary reports for management and leadership
+      - id: board-reporting
+        name: Board-grade reporting
+        description: Risk-posture reports designed for board presentation
+      - id: compliance-reporting
+        name: Compliance reporting
+        description: Reports mapped to regulatory frameworks
+      - id: decision-grade-proof
+        name: Decision-grade proof
+        description: Outputs designed to enable executive action (not just inform)
+
+  - id: orchestration
+    name: Orchestration
+    description: >
+      Capabilities that coordinate multiple tools, agents, or workflows.
+    sub_capabilities:
+      - id: multi-agent-coordination
+        name: Multi-agent coordination
+        description: Multiple AI agents working together on a shared task
+      - id: workflow-automation
+        name: Workflow automation
+        description: Automated sequencing of security operations steps
+      - id: tool-integration
+        name: Tool integration
+        description: Connecting to external tools (SIEM, EDR, ticketing, etc.)
+      - id: swarm-architecture
+        name: Swarm architecture
+        description: Large-scale parallel agent execution with inter-agent communication
+      - id: adaptive-learning
+        name: Adaptive learning
+        description: System improves over time from accumulated findings and feedback
+
+  - id: compliance
+    name: Compliance
+    description: >
+      Capabilities that map security posture to regulatory frameworks.
+    sub_capabilities:
+      - id: framework-mapping
+        name: Framework mapping
+        description: Mapping findings to NIST, ISO, PCI-DSS, HIPAA, GDPR, SOC 2
+      - id: control-assessment
+        name: Control assessment
+        description: Evaluating the effectiveness of security controls
+      - id: audit-support
+        name: Audit support
+        description: Generating evidence and documentation for auditors
+
+  - id: attack-path-analysis
+    name: Attack Path Analysis
+    description: >
+      Capabilities that map and prioritize multi-step attack paths.
+    sub_capabilities:
+      - id: kill-chain-mapping
+        name: Kill chain mapping
+        description: Reconstructing the full sequence of steps in an attack
+      - id: blast-radius-estimation
+        name: Blast radius estimation
+        description: Assessing the potential impact scope of a vulnerability or breach
+      - id: attack-graph-construction
+        name: Attack graph construction
+        description: Building a graph of all possible attack paths through an environment
+      - id: critical-path-identification
+        name: Critical path identification
+        description: Identifying the highest-impact attack paths that need immediate attention
+
+  - id: safety-controls
+    name: Safety Controls
+    description: >
+      Capabilities that prevent the security platform itself from causing harm.
+    sub_capabilities:
+      - id: scoped-execution
+        name: Scoped execution
+        description: Limiting offensive actions to authorized targets and methods
+      - id: human-in-the-loop
+        name: Human-in-the-loop
+        description: Requiring human approval for high-risk actions
+      - id: confidence-scoring
+        name: Confidence scoring
+        description: Assigning confidence levels to automated decisions
+      - id: guardrails
+        name: Guardrails
+        description: Hard limits on what automated systems can do
