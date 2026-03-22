@@ -1,6 +1,6 @@
 """Plan generator for autonomous investigations.
 
-Converts skill definitions and finding context into structured plan.md
+Converts workflow definitions and finding context into structured plan.md
 files that sub-agents consume and modify during execution.
 """
 
@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-SKILL_STEP_MAP = {
+WORKFLOW_STEP_MAP = {
     "incident-response": [
         {"title": "Initial Triage", "description": "Retrieve finding details, assess severity, determine if false positive"},
         {"title": "Deep Investigation", "description": "Gather evidence, correlate related findings, build entity timeline"},
@@ -67,8 +67,8 @@ DEFAULT_STEPS = [
 ]
 
 
-def select_skill(finding: Dict[str, Any]) -> str:
-    """Select the most appropriate skill for a finding based on its characteristics."""
+def select_workflow(finding: Dict[str, Any]) -> str:
+    """Select the most appropriate workflow for a finding based on its characteristics."""
     severity = (finding.get("severity") or "").lower()
     recommended = (finding.get("recommended_action") or "").lower()
     category = (finding.get("category") or "").lower()
@@ -129,22 +129,22 @@ def _format_mitre(finding: Dict[str, Any]) -> str:
 
 def generate_plan(
     investigation_id: str,
-    skill_id: str,
+    workflow_id: str,
     findings: List[Dict[str, Any]],
     case_id: Optional[str] = None,
     hypothesis: Optional[str] = None,
 ) -> str:
     """Generate a plan.md for an investigation."""
-    steps = SKILL_STEP_MAP.get(skill_id, DEFAULT_STEPS)
+    steps = WORKFLOW_STEP_MAP.get(workflow_id, DEFAULT_STEPS)
     primary = findings[0] if findings else {}
-    
-    title = _infer_title(primary, skill_id)
-    
+
+    title = _infer_title(primary, workflow_id)
+
     lines = [
         "---",
         f"investigation_id: {investigation_id}",
         f"case_id: {case_id or 'pending'}",
-        f"skill: {skill_id}",
+        f"workflow: {workflow_id}",
         f"priority: {primary.get('severity', 'medium')}",
         f"created: {datetime.utcnow().isoformat()}Z",
         "status: planning",
@@ -206,13 +206,13 @@ def generate_case_review_plan(
     priority: str = "medium",
 ) -> str:
     """Generate a plan.md for a case-review investigation."""
-    steps = SKILL_STEP_MAP["case-review"]
+    steps = WORKFLOW_STEP_MAP["case-review"]
 
     lines = [
         "---",
         f"investigation_id: {investigation_id}",
         f"case_id: {case_id}",
-        "skill: case-review",
+        "workflow: case-review",
         f"priority: {priority}",
         f"created: {datetime.utcnow().isoformat()}Z",
         "status: planning",
@@ -272,44 +272,44 @@ def generate_case_review_context(case_id: str, case_title: str, finding_ids: Lis
     return "\n".join(lines)
 
 
-def _infer_title(finding: Dict[str, Any], skill_id: str) -> str:
+def _infer_title(finding: Dict[str, Any], workflow_id: str) -> str:
     mitre = finding.get("mitre_predictions") or {}
     desc = finding.get("description") or ""
     ctx = finding.get("entity_context") or {}
-    
+
     subject_parts = []
     hostnames = ctx.get("hostnames") or ([ctx["hostname"]] if ctx.get("hostname") else [])
     if hostnames:
         subject_parts.append(hostnames[0])
-    
+
     src_ips = ctx.get("src_ips") or ([ctx["src_ip"]] if ctx.get("src_ip") else [])
     if src_ips and not subject_parts:
         subject_parts.append(src_ips[0])
-    
+
     subject = subject_parts[0] if subject_parts else "Unknown Entity"
-    
+
     if mitre:
         top_technique = max(mitre, key=mitre.get)
         return f"Suspicious Activity on {subject} ({top_technique})"
-    
+
     if desc:
         short = desc[:60].rstrip()
         if len(desc) > 60:
             short += "..."
         return short
-    
-    skill_names = {
+
+    workflow_names = {
         "incident-response": "Incident Response",
         "full-investigation": "Full Investigation",
         "threat-hunt": "Threat Hunt",
         "forensic-analysis": "Forensic Analysis",
     }
-    return f"{skill_names.get(skill_id, 'Investigation')} - {subject}"
+    return f"{workflow_names.get(workflow_id, 'Investigation')} - {subject}"
 
 
 def generate_initial_state(
     investigation_id: str,
-    skill_id: str,
+    workflow_id: str,
     case_id: Optional[str],
     findings: List[Dict[str, Any]],
     total_steps: int,
@@ -317,7 +317,7 @@ def generate_initial_state(
     """Generate the initial state.json for an investigation."""
     return {
         "investigation_id": investigation_id,
-        "skill_id": skill_id,
+        "workflow_id": workflow_id,
         "case_id": case_id,
         "status": "executing",
         "current_step": 1,
@@ -350,5 +350,5 @@ def generate_initial_context(findings: List[Dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def count_steps(skill_id: str) -> int:
-    return len(SKILL_STEP_MAP.get(skill_id, DEFAULT_STEPS))
+def count_steps(workflow_id: str) -> int:
+    return len(WORKFLOW_STEP_MAP.get(workflow_id, DEFAULT_STEPS))

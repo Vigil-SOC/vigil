@@ -1,6 +1,6 @@
 [submodule "deeptempo-core"]
 	path = deeptempo-core
-	url = https://github.com/mando222/deeptempo-core.git
+	url = https://github.com/DeepTempo/deeptempo-core.git
 [submodule "mcp-servers"]
 	path = mcp-servers
-	url = https://github.com/mando222/deeptempo-mcp-servers.git
+	url = https://github.com/DeepTempo/deeptempo-mcp-servers.git

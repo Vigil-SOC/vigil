@@ -27,7 +27,7 @@ from daemon.plan_generator import (
     generate_initial_context,
     generate_initial_state,
     generate_plan,
-    select_skill,
+    select_workflow,
 )
 from daemon.shared_intel import SharedIntelligence
 from daemon.workdir import WorkdirManager
@@ -210,16 +210,16 @@ class Orchestrator:
             )
             return
 
-        skill_id = select_skill(finding)
+        workflow_id = select_workflow(finding)
         self._log_ai_decision(
             decision_type="skill_selection",
             inv_id=finding_id,
-            reasoning=f"Selected skill '{skill_id}' for finding {finding_id} (severity={severity}, title={finding.get('title', 'N/A')[:100]})",
-            action=f"assign_skill:{skill_id}",
+            reasoning=f"Selected workflow '{workflow_id}' for finding {finding_id} (severity={severity}, title={finding.get('title', 'N/A')[:100]})",
+            action=f"assign_workflow:{workflow_id}",
             confidence=0.85,
         )
         await self._create_investigation(
-            skill_id=skill_id,
+            workflow_id=workflow_id,
             findings=[finding],
             trigger_type="finding",
             priority=severity or "medium",
@@ -228,7 +228,7 @@ class Orchestrator:
 
     async def _create_manual_investigation(self, item: Dict, shutdown_event: asyncio.Event):
         """Create an investigation from a manual request."""
-        skill_id = item.get("skill_id", "incident-response")
+        workflow_id = item.get("workflow_id", "incident-response")
         finding_ids = item.get("finding_ids", [])
         case_id = item.get("case_id")
         hypothesis = item.get("hypothesis")
@@ -241,7 +241,7 @@ class Orchestrator:
                     findings.append(f)
 
         await self._create_investigation(
-            skill_id=skill_id,
+            workflow_id=workflow_id,
             findings=findings,
             trigger_type="manual",
             priority=item.get("priority", "medium"),
@@ -252,7 +252,7 @@ class Orchestrator:
 
     async def _create_investigation(
         self,
-        skill_id: str,
+        workflow_id: str,
         findings: List[Dict],
         trigger_type: str,
         priority: str,
@@ -262,14 +262,14 @@ class Orchestrator:
     ):
         """Core investigation creation logic."""
         inv_id = f"inv-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
-        total_steps = count_steps(skill_id)
+        total_steps = count_steps(workflow_id)
 
         workdir = self.workdir.create(inv_id)
 
-        plan_md = generate_plan(inv_id, skill_id, findings, case_id, hypothesis)
+        plan_md = generate_plan(inv_id, workflow_id, findings, case_id, hypothesis)
         self.workdir.write_file(inv_id, "plan.md", plan_md)
 
-        state = generate_initial_state(inv_id, skill_id, case_id, findings, total_steps)
+        state = generate_initial_state(inv_id, workflow_id, case_id, findings, total_steps)
         self.workdir.write_state(inv_id, state)
 
         context_md = generate_initial_context(findings)
@@ -287,7 +287,7 @@ class Orchestrator:
         inv_record = {
             "investigation_id": inv_id,
             "case_id": case_id,
-            "skill_id": skill_id,
+            "workflow_id": workflow_id,
             "trigger_type": trigger_type,
             "trigger_ids": [f.get("finding_id") for f in findings if f.get("finding_id")],
             "status": "assigned" if can_start_now else "queued",
@@ -305,12 +305,12 @@ class Orchestrator:
 
         self.workdir.append_log(inv_id, {
             "event": "investigation_created",
-            "skill_id": skill_id,
+            "workflow_id": workflow_id,
             "trigger_type": trigger_type,
             "finding_count": len(findings),
         })
 
-        logger.info(f"Created investigation {inv_id} (skill={skill_id}, priority={priority}, steps={total_steps})")
+        logger.info(f"Created investigation {inv_id} (workflow={workflow_id}, priority={priority}, steps={total_steps})")
 
         await self._check_cross_correlations(inv_id)
 
@@ -518,7 +518,7 @@ class Orchestrator:
                         await self._create_approval_action(inv_id, action)
 
             case_id = state.get("case_id")
-            if case_id and state.get("skill_id") != "case-review":
+            if case_id and state.get("workflow_id") != "case-review":
                 await self._maybe_trigger_case_review(case_id)
 
         else:
@@ -591,7 +591,7 @@ class Orchestrator:
                 existing = (
                     session.query(InvModel)
                     .filter(
-                        InvModel.skill_id == "case-review",
+                        InvModel.workflow_id == "case-review",
                         InvModel.case_id == case_id,
                         InvModel.status.notin_(["failed"]),
                     )
@@ -629,7 +629,7 @@ class Orchestrator:
             inv_record = {
                 "investigation_id": inv_id,
                 "case_id": case_id,
-                "skill_id": "case-review",
+                "workflow_id": "case-review",
                 "trigger_type": "case_review",
                 "trigger_ids": finding_ids[:10],
                 "status": "assigned",
@@ -646,7 +646,7 @@ class Orchestrator:
 
             self.workdir.append_log(inv_id, {
                 "event": "investigation_created",
-                "skill_id": "case-review",
+                "workflow_id": "case-review",
                 "trigger_type": "case_review",
                 "case_id": case_id,
             })
@@ -862,7 +862,7 @@ class Orchestrator:
                 inv = Investigation(
                     investigation_id=inv_record["investigation_id"],
                     case_id=inv_record.get("case_id"),
-                    skill_id=inv_record["skill_id"],
+                    workflow_id=inv_record["workflow_id"],
                     trigger_type=inv_record["trigger_type"],
                     trigger_ids=inv_record.get("trigger_ids", []),
                     status=inv_record.get("status", "queued"),

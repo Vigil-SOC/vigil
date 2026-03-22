@@ -88,7 +88,7 @@ Contributions are welcome across all areas:
 
 - **New MCP integrations** — connect Vigil to additional security tools (EDR, SIEM, cloud, ticketing)
 - **Agent improvements** — enhance agent prompts, reasoning, or tool usage
-- **New Skills** — define new multi-agent workflows in `skills/`
+- **New Workflows** — define new multi-agent workflows in `workflows/`
 - **Detection rules** — add Sigma, Splunk, Elastic, or KQL rules
 - **Bug fixes** — check the issue tracker
 - **Documentation** — improve docs, add examples, fix errors
@@ -100,7 +100,7 @@ Contributions are welcome across all areas:
 
 ```
 vigil/
-├── skills/          # Multi-agent workflow definitions (SKILL.md files)
+├── workflows/       # Multi-agent workflow definitions (WORKFLOW.md files)
 ├── contrib/         # Community development tools (not runtime)
 ├── mcp-servers/     # MCP server implementations
 ├── backend/         # FastAPI backend + Agent SDK
@@ -117,7 +117,7 @@ vigil/
 
 - Python: follow existing patterns in `backend/`. Use type hints.
 - TypeScript/React: follow existing patterns in `frontend/`.
-- Skills: follow the format of existing `skills/*/SKILL.md` files.
+- Workflows: follow the format of existing `workflows/*/WORKFLOW.md` files.
 - MCP servers: follow the patterns in `mcp-servers/`.
 
 ### Testing

@@ -38,30 +38,30 @@ All agents have access to tools through two integration methods:
 | Network Analyst | Balanced | Yes | Traffic analysis |
 | Auto-Responder | Balanced | Yes | Autonomous actions |
 
-## Skills (Workflows)
+## Workflows
 
-These workflows are formalized as **Skills** -- executable multi-agent playbooks in the [`/skills/`](/skills/) directory. Each skill has a `SKILL.md` file with YAML frontmatter metadata and detailed phase-by-phase instructions.
+These are executable multi-agent playbooks defined in the [`/workflows/`](/workflows/) directory. Each workflow has a `WORKFLOW.md` file with YAML frontmatter metadata and detailed phase-by-phase instructions.
 
-Skills can be executed from the **Skills** page in the UI or via the `/api/skills/{id}/execute` API endpoint.
+Workflows can be executed from the **Workflows** page in the UI or via the `/api/workflows/{id}/execute` API endpoint.
 
-| Skill | Agents | Use Case | Skill File |
-|-------|--------|----------|------------|
-| **Incident Response** | Triage -> Investigator -> Responder -> Reporter | Active incident handling | [`skills/incident-response/SKILL.md`](/skills/incident-response/SKILL.md) |
-| **Full Investigation** | Investigator -> MITRE Analyst -> Correlator -> Responder -> Reporter | Deep-dive analysis with ATT&CK mapping | [`skills/full-investigation/SKILL.md`](/skills/full-investigation/SKILL.md) |
-| **Threat Hunt** | Threat Hunter -> Network Analyst -> Malware Analyst -> Threat Intel -> Reporter | Proactive hypothesis-driven hunting | [`skills/threat-hunt/SKILL.md`](/skills/threat-hunt/SKILL.md) |
-| **Forensic Analysis** | Forensics -> Malware Analyst -> Network Analyst -> Reporter | Post-incident forensics with chain of custody | [`skills/forensic-analysis/SKILL.md`](/skills/forensic-analysis/SKILL.md) |
+| Workflow | Agents | Use Case | Workflow File |
+|----------|--------|----------|---------------|
+| **Incident Response** | Triage -> Investigator -> Responder -> Reporter | Active incident handling | [`workflows/incident-response/WORKFLOW.md`](/workflows/incident-response/WORKFLOW.md) |
+| **Full Investigation** | Investigator -> MITRE Analyst -> Correlator -> Responder -> Reporter | Deep-dive analysis with ATT&CK mapping | [`workflows/full-investigation/WORKFLOW.md`](/workflows/full-investigation/WORKFLOW.md) |
+| **Threat Hunt** | Threat Hunter -> Network Analyst -> Malware Analyst -> Threat Intel -> Reporter | Proactive hypothesis-driven hunting | [`workflows/threat-hunt/WORKFLOW.md`](/workflows/threat-hunt/WORKFLOW.md) |
+| **Forensic Analysis** | Forensics -> Malware Analyst -> Network Analyst -> Reporter | Post-incident forensics with chain of custody | [`workflows/forensic-analysis/WORKFLOW.md`](/workflows/forensic-analysis/WORKFLOW.md) |
 
-### Adding Custom Skills
+### Adding Custom Workflows
 
-Create a new directory under `skills/` with a `SKILL.md` file:
+Create a new directory under `workflows/` with a `WORKFLOW.md` file:
 
 ```
-skills/
+workflows/
   my-custom-workflow/
-    SKILL.md    # YAML frontmatter + markdown workflow definition
+    WORKFLOW.md    # YAML frontmatter + markdown workflow definition
 ```
 
-The backend discovers skills automatically on startup. Use `POST /api/skills/reload` to pick up changes without restart.
+The backend discovers workflows automatically on startup. Use `POST /api/workflows/reload` to pick up changes without restart.
 
 ## Agent Capabilities
 

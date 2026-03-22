@@ -33,7 +33,7 @@ from api import (
     storage_status_router,
     ai_decisions_router,
     logs_router,
-    skills_router,
+    workflows_router,
 )
 from api.local_services import router as local_services_router
 from api.integrations_compatibility import router as compatibility_router
@@ -134,8 +134,8 @@ app.include_router(logs_router, prefix="/api/logs", tags=["logs"])
 app.include_router(local_services_router, prefix="/api/services", tags=["local-services"])
 app.include_router(detection_rules_router, prefix="/api/detection-rules", tags=["detection-rules"])
 
-# Skills workflow engine
-app.include_router(skills_router, prefix="/api", tags=["skills"])
+# Workflows engine
+app.include_router(workflows_router, prefix="/api", tags=["workflows"])
 
 # Autonomous orchestrator
 app.include_router(orchestrator_router, prefix="/api/orchestrator", tags=["orchestrator"])

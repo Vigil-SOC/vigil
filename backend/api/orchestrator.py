@@ -37,7 +37,7 @@ def _get_orchestrator():
 
 
 class InvestigationCreateRequest(BaseModel):
-    skill_id: str = "incident-response"
+    workflow_id: str = "incident-response"
     finding_ids: list = []
     case_id: Optional[str] = None
     hypothesis: Optional[str] = None
@@ -382,7 +382,7 @@ async def create_investigation(request: InvestigationCreateRequest):
         
         orch.investigation_queue.put_nowait({
             "type": "manual",
-            "skill_id": request.skill_id,
+            "workflow_id": request.workflow_id,
             "finding_ids": request.finding_ids,
             "case_id": request.case_id,
             "hypothesis": request.hypothesis,
@@ -392,7 +392,7 @@ async def create_investigation(request: InvestigationCreateRequest):
         return {
             "success": True,
             "message": "Investigation queued for creation",
-            "skill_id": request.skill_id,
+            "workflow_id": request.workflow_id,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -450,7 +450,7 @@ async def scan_existing_findings(request: ScanFindingsRequest):
             for finding_data in to_investigate:
                 try:
                     await orch._create_investigation(
-                        skill_id="incident-response",
+                        workflow_id="incident-response",
                         findings=[finding_data],
                         trigger_type="scan",
                         priority=finding_data.get("severity", "medium"),

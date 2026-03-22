@@ -145,7 +145,7 @@ User: "Conduct forensic analysis on the compromised host findings in case CASE-2
 
 ```json
 {
-  "skill": "forensic-analysis",
+  "workflow": "forensic-analysis",
   "phases_completed": ["evidence-acquisition", "malware-analysis", "network-forensics", "report"],
   "artifacts_examined": 12,
   "chain_of_custody_entries": 28,

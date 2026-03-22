@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from daemon.config import OrchestratorConfig
-from daemon.plan_generator import SKILL_STEP_MAP, DEFAULT_STEPS
+from daemon.plan_generator import WORKFLOW_STEP_MAP, DEFAULT_STEPS
 from daemon.workdir import WorkdirManager
 
 logger = logging.getLogger(__name__)
@@ -244,8 +244,8 @@ class AgentRunner:
             await self.stop_agent(inv_id)
 
     @staticmethod
-    def _get_step_title(skill_id: str, step_num: int) -> str:
-        steps = SKILL_STEP_MAP.get(skill_id, DEFAULT_STEPS)
+    def _get_step_title(workflow_id: str, step_num: int) -> str:
+        steps = WORKFLOW_STEP_MAP.get(workflow_id, DEFAULT_STEPS)
         idx = max(0, step_num - 1)
         if idx < len(steps):
             return steps[idx]["title"]
@@ -299,8 +299,8 @@ class AgentRunner:
                     "cost_usd": round(total_cost, 4),
                 })
 
-                skill_id = investigation.get("skill_id") or state.get("skill_id", "")
-                step_title = self._get_step_title(skill_id, state.get("current_step", 1))
+                workflow_id = investigation.get("workflow_id") or state.get("workflow_id", "")
+                step_title = self._get_step_title(workflow_id, state.get("current_step", 1))
                 self._update_db_record(inv_id, {"current_activity": step_title})
 
                 plan = self.workdir.read_file(inv_id, "plan.md")
@@ -384,11 +384,11 @@ class AgentRunner:
 
         current_step = state.get("current_step", 1)
         total_steps = state.get("total_steps", 0)
-        skill_id = state.get("skill_id", "unknown")
+        workflow_id = state.get("workflow_id", "unknown")
         budget_remaining = self.config.max_cost_per_investigation - state.get("cost_usd", 0.0)
 
         case_id = state.get("case_id")
-        is_case_review = skill_id == "case-review"
+        is_case_review = workflow_id == "case-review"
 
         if is_case_review:
             preamble = f"""You are an autonomous SOC case-review agent reviewing case {case_id}.
@@ -420,7 +420,7 @@ analysis, and recommendations based on all the evidence gathered by investigatio
 After each tool call, analyze the results and decide your next action.
 Do NOT repeat tool calls you've already made unless checking for updates."""
         else:
-            preamble = f"""You are an autonomous SOC investigation agent running the "{skill_id}" skill.
+            preamble = f"""You are an autonomous SOC investigation agent running the "{workflow_id}" workflow.
 You are on iteration {iteration} of your investigation loop.
 
 CRITICAL RULES:

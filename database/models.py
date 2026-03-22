@@ -1878,7 +1878,7 @@ class Investigation(Base):
         ForeignKey('cases.case_id', ondelete='SET NULL'),
         nullable=True
     )
-    skill_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    workflow_id: Mapped[str] = mapped_column(String(50), nullable=False)
     
     trigger_type: Mapped[str] = mapped_column(String(30), nullable=False)
     trigger_ids: Mapped[List[dict]] = mapped_column(JSONB, nullable=False, default=[])
@@ -1918,14 +1918,14 @@ class Investigation(Base):
         Index('idx_investigation_case_id', 'case_id'),
         Index('idx_investigation_priority', 'priority'),
         Index('idx_investigation_created_at', 'created_at'),
-        Index('idx_investigation_skill_id', 'skill_id'),
+        Index('idx_investigation_workflow_id', 'workflow_id'),
     )
     
     def to_dict(self) -> dict:
         return {
             'investigation_id': self.investigation_id,
             'case_id': self.case_id,
-            'skill_id': self.skill_id,
+            'workflow_id': self.workflow_id,
             'trigger_type': self.trigger_type,
             'trigger_ids': self.trigger_ids,
             'status': self.status,

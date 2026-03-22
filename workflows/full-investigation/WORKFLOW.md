@@ -142,7 +142,7 @@ User: "Run full investigation on finding f-20260215-deadbeef"
 
 ```json
 {
-  "skill": "full-investigation",
+  "workflow": "full-investigation",
   "phases_completed": ["evidence-gathering", "attack-mapping", "correlation", "response-planning", "report"],
   "entities_discovered": {
     "hosts": ["HOST-42", "HOST-17", "DC-01"],

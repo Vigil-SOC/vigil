@@ -197,6 +197,17 @@ else
     echo "⚠️  SOC Daemon failed. Check logs/daemon.log"
 fi
 
+# Install frontend dependencies if needed
+if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
+    if [ ! -d "frontend/node_modules" ]; then
+        echo "Installing frontend dependencies..."
+        cd frontend
+        npm install --silent
+        cd ..
+        echo "✓ Frontend dependencies installed"
+    fi
+fi
+
 # Start frontend if available
 if [ -d "frontend/node_modules" ]; then
     echo "Starting frontend server..."

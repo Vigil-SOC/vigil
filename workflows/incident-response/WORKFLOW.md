@@ -120,7 +120,7 @@ User: "Run incident response on finding f-20260215-a1b2c3d4"
 
 ```json
 {
-  "skill": "incident-response",
+  "workflow": "incident-response",
   "phases_completed": ["triage", "investigation", "response", "report"],
   "severity": "critical",
   "category": "malware",

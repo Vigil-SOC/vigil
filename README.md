@@ -27,8 +27,8 @@ Every agent has access to 19 backend tools via Agent SDK and 100+ additional too
 
 Workflows are the operational core of Vigil. Each worfklow chains multiple specialized AI agents into an end-to-end playbook that executes with a single command. No manual hand-offs, no copy-pasting between tools — the agents coordinate automatically.  
 
-| Skill | Agents | What It Does |
-|-------|--------|-------------|
+| Workflow | Agents | What It Does |
+|----------|--------|-------------|
 | **Incident Response** | Triage → Investigator → Responder → Reporter | NIST IR framework: triage an alert, investigate root cause, contain the threat, produce an audit-ready report |
 | **Full Investigation** | Investigator → MITRE Analyst → Correlator → Responder → Reporter | Deep-dive with ATT&CK mapping, cross-signal correlation, response planning, and comprehensive documentation |
 | **Threat Hunt** | Threat Hunter → Network Analyst → Malware Analyst → Threat Intel → Reporter | Hypothesis-driven hunting across network, endpoint, and threat intel — with IOC enrichment and detection recommendations |
@@ -36,14 +36,14 @@ Workflows are the operational core of Vigil. Each worfklow chains multiple speci
 
 **How it works:** Say `"Run incident response on finding f-20260215-abc123"` and the system sequences four agents — triage scores the alert, investigator digs into root cause, responder submits containment actions with confidence-based approval, and reporter generates the final documentation.
 
-Agents are defined as `SKILL.md` files in the `skills/` directory and are fully customizable. Create your own by defining the agent sequence, tools used, and phase-by-phase instructions.
+Workflows are defined as `WORKFLOW.md` files in the `workflows/` directory and are fully customizable. Create your own by defining the agent sequence, tools used, and phase-by-phase instructions.
 
 ```
-skills/
-├── incident-response/SKILL.md
-├── full-investigation/SKILL.md
-├── threat-hunt/SKILL.md
-└── forensic-analysis/SKILL.md
+workflows/
+├── incident-response/WORKFLOW.md
+├── full-investigation/WORKFLOW.md
+├── threat-hunt/WORKFLOW.md
+└── forensic-analysis/WORKFLOW.md
 ```
 
 ---
@@ -199,7 +199,7 @@ python daemon/main.py
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                        Skills Layer                               │
+│                       Workflows Layer                             │
 │  Incident Response │ Full Investigation │ Threat Hunt │ Forensics │
 │              (Multi-agent workflow orchestration)                  │
 └──────────────────────────────────────────────────────────────────┘
@@ -243,11 +243,11 @@ python daemon/main.py
 
 ```
 ai-opensoc/
-├── skills/            # SKILL.md definitions (4 built-in)
+├── workflows/         # WORKFLOW.md definitions (4 built-in)
 ├── mcp-servers/       # MCP server implementations (30+)
 ├── backend/           # FastAPI backend API + Agent SDK tools
 ├── frontend/          # React + MUI frontend
-├── services/          # Business logic (skills service, etc.)
+├── services/          # Business logic (workflows service, etc.)
 ├── daemon/            # Headless autonomous SOC service
 ├── tools/             # Additional tool implementations
 ├── database/          # PostgreSQL models and migrations

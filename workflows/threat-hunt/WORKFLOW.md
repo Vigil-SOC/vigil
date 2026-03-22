@@ -142,7 +142,7 @@ User: "Validate whether this DeepTempo C2 alert is real by checking all threat i
 
 ```json
 {
-  "skill": "threat-hunt",
+  "workflow": "threat-hunt",
   "phases_completed": ["hypothesis-hunt", "network-analysis", "artifact-analysis", "intel-enrichment", "report"],
   "hypothesis": "Suspected C2 communication with 185.220.101.1",
   "hypothesis_status": "confirmed",
