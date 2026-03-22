@@ -75,7 +75,7 @@ MCP servers live in `mcp-servers/` and are configured via the Settings UI or `mc
 
 ```bash
 git clone --recurse-submodules https://github.com/Vigil-Soc/vigil.git
-cd Vigil-Soc
+cd vigil
 ./start_web.sh
 ```
 
