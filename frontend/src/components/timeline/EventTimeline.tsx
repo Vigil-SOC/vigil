@@ -36,7 +36,7 @@ import {
   PlayArrow as PlayIcon,
   Pause as PauseIcon,
 } from '@mui/icons-material'
-import moment from 'moment'
+import { format } from 'date-fns'
 import 'vis-timeline/styles/vis-timeline-graph2d.css'
 
 export interface TimelineEvent {
@@ -373,7 +373,7 @@ const EventTimeline = memo(function EventTimeline({
     const url = URL.createObjectURL(dataBlob)
     const link = document.createElement('a')
     link.href = url
-    link.download = `timeline-events-${moment().format('YYYY-MM-DD-HHmmss')}.json`
+    link.download = `timeline-events-${format(new Date(), 'yyyy-MM-dd-HHmmss')}.json`
     link.click()
     URL.revokeObjectURL(url)
   }, [filteredEvents])

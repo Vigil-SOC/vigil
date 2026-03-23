@@ -47,7 +47,7 @@ import {
   AccountTree as GraphIcon,
   Code as CodeIcon,
 } from '@mui/icons-material'
-import moment from 'moment'
+import { format } from 'date-fns'
 import { timelineApi } from '../../services/api'
 import EntityGraph from '../graph/EntityGraph'
 
@@ -242,7 +242,7 @@ export default function EventVisualizationDialog({
                             Timestamp
                           </Typography>
                           <Typography>
-                            {moment(vizData.event.start).format('YYYY-MM-DD HH:mm:ss')}
+                            {format(new Date(vizData.event.start), 'yyyy-MM-dd HH:mm:ss')}
                           </Typography>
                         </Grid>
                         <Grid item xs={12} sm={6}>
@@ -370,7 +370,7 @@ export default function EventVisualizationDialog({
                                 primary={event.content}
                                 secondary={
                                   <>
-                                    {moment(event.start).format('HH:mm:ss')}
+                                    {format(new Date(event.start), 'HH:mm:ss')}
                                     {event.severity && (
                                       <Chip
                                         label={event.severity}
