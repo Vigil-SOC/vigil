@@ -102,7 +102,7 @@ python scripts/test_splunk_claude_integration.py \
   ```
   ANTHROPIC_API_KEY=sk-ant-api03-...
   ```
-- Database running (`./start_database.sh`)
+- Database running (`./scripts/start_database.sh`)
 
 ## Script Reference
 
@@ -193,7 +193,7 @@ Here's a complete end-to-end testing workflow:
 
 ```bash
 # Ensure database is running
-./start_database.sh
+./scripts/start_database.sh
 
 # Configure Splunk credentials
 cat >> .env << EOF

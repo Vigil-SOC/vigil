@@ -29,7 +29,7 @@ cd ..
 echo ""
 echo "✓ Database stopped"
 echo ""
-echo "To start: ./start_database.sh"
+echo "To start: ./scripts/start_database.sh"
 echo "To remove: cd docker && $DOCKER_COMPOSE down -v"
 echo ""
 

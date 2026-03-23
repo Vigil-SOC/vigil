@@ -125,7 +125,7 @@ vigil/
 Run the test suite before submitting:
 
 ```bash
-./run_tests.sh
+./scripts/run_tests.sh
 ```
 
 New features should include tests. Place them in `tests/` following existing naming conventions.

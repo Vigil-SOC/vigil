@@ -21,7 +21,7 @@ This script ensures that default admin credentials are inserted into PostgreSQL,
 2. **Start PostgreSQL**:
    ```bash
    cd /Users/mando222/Github/ai-opensoc
-   ./start_database.sh
+   ./scripts/start_database.sh
    ```
 
 ### Run the Initialization Script
@@ -93,7 +93,7 @@ The script:
 **Solution**: 
 ```bash
 # Start Docker Desktop first, then:
-./start_database.sh
+./scripts/start_database.sh
 ```
 
 ### "Authentication verification failed"

@@ -40,14 +40,14 @@ def init_default_credentials():
         if not db_manager.health_check():
             print("❌ Database connection failed")
             print("   Make sure PostgreSQL is running:")
-            print("   ./start_database.sh")
+            print("   ./scripts/start_database.sh")
             return False
-        
+
         print("✓ Database connection established")
     except Exception as e:
         print(f"❌ Failed to connect to database: {e}")
         print("   Make sure PostgreSQL is running:")
-        print("   ./start_database.sh")
+        print("   ./scripts/start_database.sh")
         return False
     
     # SQL to create tables if they don't exist

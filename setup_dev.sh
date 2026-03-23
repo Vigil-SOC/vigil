@@ -95,10 +95,10 @@ cd ..
 echo ""
 echo "🗄️  Starting PostgreSQL database..."
 if command -v docker &> /dev/null; then
-    ./start_database.sh
+    ./scripts/start_database.sh
     echo "✅ Database started"
 else
-    echo "⚠️  Docker not found. Please install Docker and run: ./start_database.sh"
+    echo "⚠️  Docker not found. Please install Docker and run: ./scripts/start_database.sh"
 fi
 
 # Step 5.5: Setup detection rule repositories

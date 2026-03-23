@@ -50,7 +50,7 @@ SPLUNK_HEC_INDEX=deeptempo
 Make sure your PostgreSQL database is running:
 
 ```bash
-./start_database.sh
+./scripts/start_database.sh
 ```
 
 ## Usage
@@ -312,7 +312,7 @@ After exporting data to Splunk:
 For issues or questions:
 - Check the logs: Look at the script output for detailed error messages
 - Review Splunk HEC logs: `index=_internal sourcetype=splunkd HEC`
-- Verify database connectivity: `./start_database.sh`
+- Verify database connectivity: `./scripts/start_database.sh`
 
 ## Example Workflow
 
@@ -320,7 +320,7 @@ Here's a complete example workflow:
 
 ```bash
 # 1. Ensure database is running
-./start_database.sh
+./scripts/start_database.sh
 
 # 2. Export data to file for review (optional)
 python scripts/export_postgres_to_splunk.py --save-to-file review_export.json

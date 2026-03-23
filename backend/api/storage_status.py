@@ -71,7 +71,7 @@ def _get_recommendations(backend_info: dict) -> list:
         recommendations.append({
             'title': 'Enable PostgreSQL for Production',
             'description': 'Currently using JSON file storage. For better performance and reliability, enable PostgreSQL.',
-            'action': 'Start database with: ./start_database.sh',
+            'action': 'Start database with: ./scripts/start_database.sh',
             'priority': 'medium'
         })
     
@@ -193,7 +193,7 @@ async def reconnect_database():
                 'backend': 'json',
                 'message': 'Database reconnection failed. Health check did not pass.',
                 'database_available': False,
-                'recommendation': 'Ensure PostgreSQL is running: ./start_database.sh'
+                'recommendation': 'Ensure PostgreSQL is running: ./scripts/start_database.sh'
             }
     
     except Exception as e:

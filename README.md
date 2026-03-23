@@ -73,16 +73,6 @@ MCP servers live in `mcp-servers/` and are configured via the Settings UI or `mc
 
 ## Quick Start
 
-```bash
-git clone --recurse-submodules https://github.com/Vigil-Soc/vigil.git
-cd vigil
-./start_web.sh
-```
-
-> **Note:** Docker must be running before you start. The startup script handles everything else: creates the Python virtual environment, installs dependencies, starts PostgreSQL, initializes the database with a default admin user, installs frontend packages, and launches both backend and frontend servers.
-
-Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full auth is WIP and while it will turn on it is untested. To activate auth set `DEV_MODE=false`.
-
 ### Prerequisites
 
 - **Python 3.10+**
@@ -91,24 +81,31 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 - **Git** (with submodule support)
 - Claude API key from [console.anthropic.com](https://console.anthropic.com/) *(optional for initial testing)*
 
-### Default Login Credentials
+### Step 1: Clone & start the platform
 
-| | |
+```bash
+git clone --recurse-submodules https://github.com/Vigil-Soc/vigil.git
+cd vigil
+./start_web.sh
+```
+
+This starts PostgreSQL, Redis, the FastAPI backend (port 6987), LLM worker, and React frontend (port 6988). The startup script handles everything: creates the Python virtual environment, installs dependencies, starts PostgreSQL, initializes the database with a default admin user, installs frontend packages, and launches both servers.
+
+Default login: **admin** / **admin123** (auth is bypassed when `DEV_MODE=true`, which is the default).
+
+| | URL |
 |---|---|
-| **Username** | `admin` |
-| **Password** | `admin123` |
-
-> Change these in production!
-
-### Manual Install
+| **Frontend** | http://localhost:6988 |
+| **API** | http://localhost:6987 |
+| **API Docs** | http://localhost:6987/docs |
 
 <details>
-<summary>Click to expand manual setup steps</summary>
+<summary>Manual install (if you need to set up step-by-step)</summary>
 
 ```bash
 # Clone with submodules
-git clone --recurse-submodules https://github.com/deeptempo/ai-opensoc.git
-cd ai-opensoc
+git clone --recurse-submodules https://github.com/Vigil-Soc/vigil.git
+cd vigil
 
 # If you already cloned without --recurse-submodules:
 git submodule update --init --recursive
@@ -130,67 +127,100 @@ cd ..
 
 </details>
 
-### Run
+### Step 2: Add your API key
 
-**Option A: All-in-one (recommended)**
+Edit `.env` and set:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Restart after changing.
+
+### Step 3: Ingest data
+
+You have several options:
+
+**Option A — Generate sample data (quickest way to test):**
 
 ```bash
-# Interactive mode (keeps terminal attached, Ctrl+C to stop)
-./start_web.sh
+source venv/bin/activate
+python scripts/generate_sample_data.py --count 50
+```
 
-# OR background mode (frees terminal)
+**Option B — Upload your own file (JSON, JSONL, CSV, or Parquet):**
+
+Go to http://localhost:6988 → Settings → Import and upload a file with security findings.
+
+**Option C — API upload:**
+
+```bash
+curl -X POST http://localhost:6987/api/ingestion/upload \
+  -F "file=@your_findings.json" \
+  -F "data_type=finding" \
+  -F "format=json"
+```
+
+A finding looks like:
+
+```json
+{
+  "finding_id": "f-001",
+  "description": "Suspicious PowerShell activity detected on WORKSTATION-42",
+  "severity": "critical",
+  "status": "new",
+  "data_source": "edr",
+  "anomaly_score": 0.87,
+  "mitre_predictions": {"T1059.001": 0.92},
+  "entity_context": {"source_ip": "192.168.1.100", "hostname": "WORKSTATION-42"},
+  "timestamp": "2026-03-21T15:30:00Z"
+}
+```
+
+### Step 4: Configure integrations (optional)
+
+In the UI: Settings → Integrations, or set in `.env`:
+
+| Integration | Env Vars |
+|-------------|----------|
+| **Splunk** | `SPLUNK_URL`, `SPLUNK_USERNAME`, `SPLUNK_PASSWORD` |
+| **CrowdStrike** | `CROWDSTRIKE_CLIENT_ID`, `CROWDSTRIKE_CLIENT_SECRET` |
+| **VirusTotal** | `VIRUSTOTAL_API_KEY` |
+| **Slack** | `SLACK_BOT_TOKEN`, `DAEMON_SLACK_CHANNEL` |
+
+### Step 5: Run workflows on findings
+
+In the UI:
+
+1. Go to **Findings**
+2. Select a finding
+3. Click **Run Workflow** → choose one:
+   - **Incident Response** — triage → investigate → respond → report
+   - **Full Investigation** — deep analysis with MITRE mapping
+   - **Threat Hunt** — proactive hunting across data sources
+   - **Forensic Analysis** — evidence gathering and chain of custody
+
+Or use the chat interface — just ask Claude:
+
+```
+"Run incident response on finding f-001"
+"Find similar findings and add them to a case"
+```
+
+### Step 6: Run the autonomous daemon (optional)
+
+```bash
 ./start_daemon.sh
 ```
 
-**Option B: Manual (separate terminals)**
+This polls your connected sources (Splunk, CrowdStrike), auto-triages new findings, and responds based on confidence thresholds. It listens for webhooks on port 8081 and exposes metrics on port 9090.
+
+### Step 7: Shut down
 
 ```bash
-# Terminal 1: Start database (Docker must be running)
-cd docker && docker-compose up -d postgres
-
-# Terminal 2: Initialize admin user and generate demo data
-source venv/bin/activate
-python scripts/init_default_user.py
-python scripts/demo.py
-
-# Terminal 3: Start backend
-source venv/bin/activate
-export PYTHONPATH="${PWD}:${PYTHONPATH}"
-uvicorn backend.main:app --host 127.0.0.1 --port 6987 --reload
-
-# Terminal 4: Start frontend
-cd frontend && npm run dev
-```
-
-### Shutdown
-
-```bash
-./shutdown_all.sh              # Stop native processes only (Docker keeps running)
-./shutdown_all.sh -d           # Stop native processes + Docker containers
+./shutdown_all.sh              # Stop processes, keep Docker running
+./shutdown_all.sh -d           # Stop everything including Docker
 ./shutdown_all.sh -d --full    # Stop + remove containers and volumes
-```
-
-### Access
-
-- **Frontend**: http://localhost:6988
-- **API**: http://localhost:6987
-- **API Docs**: http://localhost:6987/docs
-
-### Run with Docker (Full Stack)
-
-```bash
-cd docker && docker-compose up -d
-```
-
-Starts PostgreSQL, Backend API, and SOC Daemon.
-
-### Run SOC Daemon (Headless Mode)
-
-For autonomous 24/7 monitoring without the UI:
-
-```bash
-source venv/bin/activate
-python daemon/main.py
 ```
 
 ---

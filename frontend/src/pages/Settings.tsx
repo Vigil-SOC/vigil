@@ -1329,7 +1329,7 @@ export default function Settings() {
                   </Box>
                 </Box>
                 {storageStatus && storageStatus.backend !== 'postgresql' && (
-                  <Alert severity="info" sx={{ mb: 2 }}>Start PostgreSQL to enable database storage: <code>./start_database.sh</code></Alert>
+                  <Alert severity="info" sx={{ mb: 2 }}>Start PostgreSQL to enable database storage: <code>./scripts/start_database.sh</code></Alert>
                 )}
                 <Box sx={{ maxWidth: 500 }}>
                   <TextField fullWidth label="Connection String" type="password" value={postgresqlConfig.connection_string} onChange={(e) => setPostgresqlConfig({ ...postgresqlConfig, connection_string: e.target.value })} placeholder="postgresql://user:pass@localhost:5432/db" sx={{ mb: 2 }} />

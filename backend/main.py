@@ -214,7 +214,7 @@ async def startup_event():
                         logger.warning("⚠ PostgreSQL not available")
                         logger.warning("  Using JSON file storage as fallback")
                         logger.warning("  To enable PostgreSQL:")
-                        logger.warning("    1. Start database: ./start_database.sh")
+                        logger.warning("    1. Start database: ./scripts/start_database.sh")
                         logger.warning("    2. Restart application: ./start_web.sh")
                     
                 except Exception as e:

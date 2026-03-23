@@ -121,10 +121,10 @@ npm test src/utils/api.test.ts
 
 ```bash
 # Run the automated test script
-./run_tests.sh
+./scripts/run_tests.sh
 
 # Run with verbose output
-./run_tests.sh --verbose
+./scripts/run_tests.sh --verbose
 ```
 
 ---
