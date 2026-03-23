@@ -257,6 +257,10 @@ ai-opensoc/
 └── data/schemas/      # JSON validation schemas
 ```
 
+## Submodules
+
+Vigil depends on two git submodules that must be initialized alongside the main repo (hence `--recurse-submodules` in the clone command). **`deeptempo-core`** provides the shared core library used by the backend and agents. **`mcp-servers`** contains the 30+ Model Context Protocol server implementations (Splunk, CrowdStrike, VirusTotal, Jira, Slack, etc.) that give every agent access to your existing security tooling. If you cloned without `--recurse-submodules`, run `git submodule update --init --recursive` to pull them in.
+
 ## Example Usage
 
 ### Run a Workflow
