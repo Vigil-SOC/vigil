@@ -15,7 +15,7 @@ Thank you for your interest in contributing to Vigil. This document covers how t
 ### Local Setup
 
 ```bash
-git clone --recurse-submodules https://github.com/DeepTempo/vigil.git
+git clone --recurse-submodules https://github.com/Vigil-SOC/vigil.git
 cd vigil
 ./start_web.sh
 ```
@@ -47,7 +47,7 @@ See the [README](README.md) for full setup instructions including manual install
    ```bash
    git push origin feature/your-feature-name
    ```
-7. **Open a Pull Request** from your fork to `DeepTempo/vigil:main`
+7. **Open a Pull Request** from your fork to `Vigil-SOC/vigil:main`
 
 ### Sign-Off Requirement (DCO)
 
@@ -70,7 +70,7 @@ git config user.email "your@email.com"
 
 ### Good First Issues
 
-Look for issues labeled [`good-first-issue`](https://github.com/DeepTempo/vigil/labels/good-first-issue) — these are scoped, well-defined tasks suitable for new contributors.
+Look for issues labeled [`good-first-issue`](https://github.com/Vigil-SOC/vigil/labels/good-first-issue) — these are scoped, well-defined tasks suitable for new contributors.
 
 ### Using the Auto-Contributor
 
@@ -125,7 +125,7 @@ vigil/
 Run the test suite before submitting:
 
 ```bash
-./scripts/run_tests.sh
+./run_tests.sh
 ```
 
 New features should include tests. Place them in `tests/` following existing naming conventions.

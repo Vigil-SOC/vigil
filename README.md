@@ -73,6 +73,16 @@ MCP servers live in `mcp-servers/` and are configured via the Settings UI or `mc
 
 ## Quick Start
 
+```bash
+git clone --recurse-submodules https://github.com/Vigil-SOC/vigil.git
+cd vigil
+./start_web.sh
+```
+
+> **Note:** Docker must be running before you start. The startup script handles everything else: creates the Python virtual environment, installs dependencies, starts PostgreSQL, initializes the database with a default admin user, installs frontend packages, and launches both backend and frontend servers.
+
+Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full auth is WIP and while it will turn on it is untested. To activate auth set `DEV_MODE=false`.
+
 ### Prerequisites
 
 - **Python 3.10+**
@@ -81,30 +91,23 @@ MCP servers live in `mcp-servers/` and are configured via the Settings UI or `mc
 - **Git** (with submodule support)
 - Claude API key from [console.anthropic.com](https://console.anthropic.com/) *(optional for initial testing)*
 
-### Step 1: Clone & start the platform
+### Default Login Credentials
 
-```bash
-git clone --recurse-submodules https://github.com/Vigil-Soc/vigil.git
-cd vigil
-./start_web.sh
-```
-
-This starts PostgreSQL, Redis, the FastAPI backend (port 6987), LLM worker, and React frontend (port 6988). The startup script handles everything: creates the Python virtual environment, installs dependencies, starts PostgreSQL, initializes the database with a default admin user, installs frontend packages, and launches both servers.
-
-Default login: **admin** / **admin123** (auth is bypassed when `DEV_MODE=true`, which is the default).
-
-| | URL |
+| | |
 |---|---|
-| **Frontend** | http://localhost:6988 |
-| **API** | http://localhost:6987 |
-| **API Docs** | http://localhost:6987/docs |
+| **Username** | `admin` |
+| **Password** | `admin123` |
+
+> Change these in production!
+
+### Manual Install
 
 <details>
-<summary>Manual install (if you need to set up step-by-step)</summary>
+<summary>Click to expand manual setup steps</summary>
 
 ```bash
 # Clone with submodules
-git clone --recurse-submodules https://github.com/Vigil-Soc/vigil.git
+git clone --recurse-submodules https://github.com/Vigil-SOC/vigil.git
 cd vigil
 
 # If you already cloned without --recurse-submodules:
@@ -127,100 +130,67 @@ cd ..
 
 </details>
 
-### Step 2: Add your API key
+### Run
 
-Edit `.env` and set:
-
-```
-ANTHROPIC_API_KEY=sk-ant-...
-```
-
-Restart after changing.
-
-### Step 3: Ingest data
-
-You have several options:
-
-**Option A — Generate sample data (quickest way to test):**
+**Option A: All-in-one (recommended)**
 
 ```bash
-source venv/bin/activate
-python scripts/generate_sample_data.py --count 50
-```
+# Interactive mode (keeps terminal attached, Ctrl+C to stop)
+./start_web.sh
 
-**Option B — Upload your own file (JSON, JSONL, CSV, or Parquet):**
-
-Go to http://localhost:6988 → Settings → Import and upload a file with security findings.
-
-**Option C — API upload:**
-
-```bash
-curl -X POST http://localhost:6987/api/ingestion/upload \
-  -F "file=@your_findings.json" \
-  -F "data_type=finding" \
-  -F "format=json"
-```
-
-A finding looks like:
-
-```json
-{
-  "finding_id": "f-001",
-  "description": "Suspicious PowerShell activity detected on WORKSTATION-42",
-  "severity": "critical",
-  "status": "new",
-  "data_source": "edr",
-  "anomaly_score": 0.87,
-  "mitre_predictions": {"T1059.001": 0.92},
-  "entity_context": {"source_ip": "192.168.1.100", "hostname": "WORKSTATION-42"},
-  "timestamp": "2026-03-21T15:30:00Z"
-}
-```
-
-### Step 4: Configure integrations (optional)
-
-In the UI: Settings → Integrations, or set in `.env`:
-
-| Integration | Env Vars |
-|-------------|----------|
-| **Splunk** | `SPLUNK_URL`, `SPLUNK_USERNAME`, `SPLUNK_PASSWORD` |
-| **CrowdStrike** | `CROWDSTRIKE_CLIENT_ID`, `CROWDSTRIKE_CLIENT_SECRET` |
-| **VirusTotal** | `VIRUSTOTAL_API_KEY` |
-| **Slack** | `SLACK_BOT_TOKEN`, `DAEMON_SLACK_CHANNEL` |
-
-### Step 5: Run workflows on findings
-
-In the UI:
-
-1. Go to **Findings**
-2. Select a finding
-3. Click **Run Workflow** → choose one:
-   - **Incident Response** — triage → investigate → respond → report
-   - **Full Investigation** — deep analysis with MITRE mapping
-   - **Threat Hunt** — proactive hunting across data sources
-   - **Forensic Analysis** — evidence gathering and chain of custody
-
-Or use the chat interface — just ask Claude:
-
-```
-"Run incident response on finding f-001"
-"Find similar findings and add them to a case"
-```
-
-### Step 6: Run the autonomous daemon (optional)
-
-```bash
+# OR background mode (frees terminal)
 ./start_daemon.sh
 ```
 
-This polls your connected sources (Splunk, CrowdStrike), auto-triages new findings, and responds based on confidence thresholds. It listens for webhooks on port 8081 and exposes metrics on port 9090.
-
-### Step 7: Shut down
+**Option B: Manual (separate terminals)**
 
 ```bash
-./shutdown_all.sh              # Stop processes, keep Docker running
-./shutdown_all.sh -d           # Stop everything including Docker
+# Terminal 1: Start database (Docker must be running)
+cd docker && docker-compose up -d postgres
+
+# Terminal 2: Initialize admin user and generate demo data
+source venv/bin/activate
+python scripts/init_default_user.py
+python scripts/demo.py
+
+# Terminal 3: Start backend
+source venv/bin/activate
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+uvicorn backend.main:app --host 127.0.0.1 --port 6987 --reload
+
+# Terminal 4: Start frontend
+cd frontend && npm run dev
+```
+
+### Shutdown
+
+```bash
+./shutdown_all.sh              # Stop native processes only (Docker keeps running)
+./shutdown_all.sh -d           # Stop native processes + Docker containers
 ./shutdown_all.sh -d --full    # Stop + remove containers and volumes
+```
+
+### Access
+
+- **Frontend**: http://localhost:6988
+- **API**: http://localhost:6987
+- **API Docs**: http://localhost:6987/docs
+
+### Run with Docker (Full Stack)
+
+```bash
+cd docker && docker-compose up -d
+```
+
+Starts PostgreSQL, Backend API, and SOC Daemon.
+
+### Run SOC Daemon (Headless Mode)
+
+For autonomous 24/7 monitoring without the UI:
+
+```bash
+source venv/bin/activate
+python daemon/main.py
 ```
 
 ---
@@ -262,6 +232,7 @@ This polls your connected sources (Splunk, CrowdStrike), auto-triages new findin
 
 ## Additional Features 
 
+- **Auto-Contributor** — Automated competitive research against proprietary AI security platforms. Analyzes a vendor's capabilities, maps gaps versus Vigil and the open-source ecosystem, and generates ready-to-file GitHub issues with acceptance criteria. The goal: make Vigil a superset of every proprietary AI SOC, one contribution at a time. See [`contrib/auto-contributor/`](contrib/README.md)
 - **Chat-Driven Case Management** — Build cases through natural language. Say "add this to case XYZ" and the system handles findings, activities, timelines, and MITRE tagging. [Learn more](docs/CHAT_CASE_MANAGEMENT.md)
 - **Detection Engineering** — 7,200+ detection rules (Sigma, Splunk, Elastic, KQL) with coverage analysis, gap identification, and AI-assisted template generation. [Learn more](docs/DETECTION_ENGINEERING.md)
 - **Case Management** — Full lifecycle tracking with PDF reports
@@ -272,8 +243,9 @@ This polls your connected sources (Splunk, CrowdStrike), auto-triages new findin
 ## Project Structure
 
 ```
-ai-opensoc/
+vigil/
 ├── workflows/         # WORKFLOW.md definitions (4 built-in)
+├── contrib/           # Community tools: auto-contributor, benchmarking
 ├── mcp-servers/       # MCP server implementations (30+)
 ├── backend/           # FastAPI backend API + Agent SDK tools
 ├── frontend/          # React + MUI frontend
@@ -286,10 +258,6 @@ ai-opensoc/
 ├── docs/              # Documentation
 └── data/schemas/      # JSON validation schemas
 ```
-
-## Submodules
-
-Vigil depends on two git submodules that must be initialized alongside the main repo (hence `--recurse-submodules` in the clone command). **`deeptempo-core`** provides the shared core library used by the backend and agents. **`mcp-servers`** contains the 30+ Model Context Protocol server implementations (Splunk, CrowdStrike, VirusTotal, Jira, Slack, etc.) that give every agent access to your existing security tooling. If you cloned without `--recurse-submodules`, run `git submodule update --init --recursive` to pull them in.
 
 ## Example Usage
 
@@ -339,6 +307,8 @@ Claude: ✓ Found 3 similar findings via embedding search
 | [docs/API.md](docs/API.md) | MCP tool contracts, data models |
 | [docs/README.md](docs/README.md) | Architecture overview |
 | [docs/SPLUNK_TESTING_GUIDE.md](docs/SPLUNK_TESTING_GUIDE.md) | Splunk test data and integration testing |
+| [contrib/auto-contributor/](contrib/auto-contributor/SKILL.md) | Competitive research and contribution planning tool |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute, auto-contributor workflow, DCO |
 
 ## Testing with Splunk & Claude
 
@@ -395,14 +365,16 @@ python scripts/export_postgres_to_splunk.py \
 
 Contributions are welcome! Whether you're fixing bugs, adding new MCP integrations, improving agent prompts, or building new workflows or agents — we'd love your help and leadership.
 
-**Join the community:** Connect with the DeepTempo community on [Discord](https://discord.gg/Kw68sPJU) to discuss ideas, get help, and collaborate with other contributors.
+**Find meaningful work automatically:** Vigil includes an [auto-contributor](contrib/README.md) tool that researches proprietary AI security platforms, identifies capability gaps, and generates ready-to-file GitHub issues. Pick a vendor, run the tool, and you'll have a scoped contribution spec in minutes.
+
+**Join the community:** Connect with the Vigil community on [Discord](https://discord.gg/Kw68sPJU) to discuss ideas, get help, and collaborate with other contributors.
 
 To contribute:
 1. Fork the repo and create a feature branch
 2. Make your changes and test them
 3. Submit a pull request with a clear description
 
-See [QuickStart](https://github.com/DeepTempo/vigil/blob/main/README.md#quick-start) to get your local environment running.
+See the [Quick Start](#quick-start) to get your local environment running, and [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide.
 
 ---
 
@@ -412,6 +384,7 @@ Apache 2.0 — See [LICENSE](LICENSE)
 
 ## References
 
-- [DeepTempo](https://deeptempo.ai) — AI for security operations
+- [Vigil](https://vigilsoc.org/) — Project homepage
+- [DeepTempo](https://deeptempo.ai) — Vigil sponsor; LogLM connects via MCP as an AI-native detection layer
 - [Model Context Protocol](https://modelcontextprotocol.io/) — MCP specification
 - [ATT&CK Navigator](https://mitre-attack.github.io/attack-navigator/) — MITRE visualization
