@@ -37,8 +37,12 @@ def run_docker_compose_command(service: str, action: str, profile: Optional[str]
                 "message": "Docker directory not found"
             }
         
-        # Build command
-        cmd = ['docker-compose']
+        # Build command (support both v1 standalone and v2 plugin)
+        import shutil
+        if shutil.which('docker-compose'):
+            cmd = ['docker-compose']
+        else:
+            cmd = ['docker', 'compose']
         
         if profile:
             cmd.extend(['--profile', profile])

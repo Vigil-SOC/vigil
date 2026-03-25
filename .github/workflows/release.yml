@@ -184,7 +184,7 @@ jobs:
         run: |
           ssh ${{ secrets.PROD_VM_USER }}@${{ secrets.PROD_VM_HOST }} '
             cd /opt/ai-opensoc &&
-            docker-compose ps > backup-${{ steps.version.outputs.version }}.txt &&
+            docker compose ps > backup-${{ steps.version.outputs.version }}.txt &&
             docker images | grep ai-opensoc >> backup-${{ steps.version.outputs.version }}.txt
           '
       
@@ -227,8 +227,8 @@ jobs:
           echo "Deployment failed, initiating rollback..."
           ssh ${{ secrets.PROD_VM_USER }}@${{ secrets.PROD_VM_HOST }} '
             cd /opt/ai-opensoc &&
-            docker-compose down &&
-            docker-compose up -d --force-recreate
+            docker compose down &&
+            docker compose up -d --force-recreate
           '
       
       - name: Cleanup old images

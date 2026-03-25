@@ -51,7 +51,7 @@ def main():
     except Exception as e:
         print(f"\nERROR: {e}")
         print("\nMake sure PostgreSQL is running:")
-        print("  cd docker && docker-compose up -d postgres")
+        print("  cd docker && docker compose up -d postgres")
         sys.exit(1)
 
 

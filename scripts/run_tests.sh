@@ -13,6 +13,13 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Determine docker compose command (v2 plugin vs v1 standalone)
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
+fi
+
 # Configuration
 API_URL="${API_URL:-http://localhost:6987}"
 FRONTEND_URL="${FRONTEND_URL:-http://localhost:6988}"
@@ -136,12 +143,12 @@ else
   echo -e "${RED}✗ Not running${NC}"
   echo ""
   echo -e "${RED}ERROR: API service not accessible at $API_URL${NC}"
-  echo "Please start the services with: docker-compose up -d"
+  echo "Please start the services with: $DOCKER_COMPOSE up -d"
   exit 1
 fi
 
 echo -n "  [*] Checking database... "
-if docker-compose ps | grep -q postgres.*Up; then
+if $DOCKER_COMPOSE ps | grep -q postgres.*Up; then
   echo -e "${GREEN}✓ Running${NC}"
 else
   echo -e "${YELLOW}⚠ Cannot verify${NC}"
@@ -263,7 +270,7 @@ fi
 print_header "Phase 7: Database Health"
 
 echo -n "  [*] Checking database connection... "
-if docker-compose exec -T postgres psql -U postgres -d deeptempo -c "SELECT 1;" > /dev/null 2>&1; then
+if $DOCKER_COMPOSE exec -T postgres psql -U postgres -d deeptempo -c "SELECT 1;" > /dev/null 2>&1; then
   echo -e "${GREEN}✓ PASS${NC}"
   ((PASSED_TESTS++))
 else
@@ -274,7 +281,7 @@ fi
 ((TOTAL_TESTS++))
 
 echo -n "  [*] Checking table existence... "
-TABLE_COUNT=$(docker-compose exec -T postgres psql -U postgres -d deeptempo -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
+TABLE_COUNT=$($DOCKER_COMPOSE exec -T postgres psql -U postgres -d deeptempo -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
 
 if [ "$TABLE_COUNT" -gt "5" ]; then
   echo -e "${GREEN}✓ PASS${NC} ($TABLE_COUNT tables)"
@@ -292,7 +299,7 @@ SERVICES=("postgres" "soc-api" "soc-daemon")
 
 for service in "${SERVICES[@]}"; do
   echo -n "  [*] Checking $service... "
-  if docker-compose ps | grep -q "$service.*Up"; then
+  if $DOCKER_COMPOSE ps | grep -q "$service.*Up"; then
     echo -e "${GREEN}✓ Running${NC}"
     ((PASSED_TESTS++))
   else

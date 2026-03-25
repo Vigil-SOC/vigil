@@ -111,6 +111,13 @@ elif [ -f "env.example" ]; then
     set +a
 fi
 
+# Determine docker compose command (v2 plugin vs v1 standalone)
+if command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
+    DOCKER_COMPOSE="docker compose"
+fi
+
 # Check and start PostgreSQL if needed
 echo "Checking PostgreSQL database..."
 if command -v docker &> /dev/null; then
@@ -119,9 +126,9 @@ if command -v docker &> /dev/null; then
     else
         echo "Starting PostgreSQL..."
         cd docker
-        docker-compose up -d postgres
+        $DOCKER_COMPOSE up -d postgres
         cd ..
-        
+
         echo "Waiting for PostgreSQL..."
         for i in {1..30}; do
             if docker exec deeptempo-postgres pg_isready -U deeptempo -d deeptempo_soc &> /dev/null 2>&1; then
@@ -141,7 +148,7 @@ if command -v docker &> /dev/null; then
     else
         echo "Starting Redis (LLM job queue)..."
         cd docker
-        docker-compose up -d redis
+        $DOCKER_COMPOSE up -d redis
         cd ..
         echo "Waiting for Redis..."
         sleep 2
