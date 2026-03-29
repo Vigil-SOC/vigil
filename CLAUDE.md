@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Project Is
 
-Vigil is an AI-Native Security Operations Center (SOC) built on Claude and the Model Context Protocol (MCP). It orchestrates 12 specialized AI agents across 4 multi-agent workflows ("Skills"), with integrations to 30+ security tools via MCP servers.
+Vigil is an AI-Native Security Operations Center (SOC) built on Claude with a modular multi-agent architecture. It orchestrates 13 specialized AI agents across 4 multi-agent workflows ("Skills"), with integrations to 30+ security tools.
 
 ## Commands
 
@@ -71,13 +71,13 @@ Set `DEV_MODE=true` in `.env` to skip authentication entirely. See `DEV_MODE.md`
 ## Architecture
 
 ### Stack
-- **Frontend**: React 18, TypeScript, Vite, Material-UI — in `frontend/`
+- **Frontend**: React, TypeScript, Vite, Material-UI — in `frontend/`
 - **Backend**: FastAPI (Python 3.10+), Uvicorn — in `backend/`
 - **Daemon**: Headless autonomous SOC service — in `daemon/`
 - **Database**: PostgreSQL 16 + pgvector (embeddings) — in `database/`
 - **Job Queue**: Redis + ARQ for LLM request queuing
-- **Agent Layer**: Claude Agent SDK (19 backend tools registered in `backend/api/claude.py`)
-- **Integrations**: MCP servers (30+ tools) configured in `mcp-config.json`
+- **Agent Layer**: Claude Agent SDK (multiple backend tools registered in `backend/api/claude.py`)
+- **Integrations**: MCP servers (multiple tools) configured in `mcp-config.json`
 
 ### Request Flow
 ```

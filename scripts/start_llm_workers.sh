@@ -59,13 +59,14 @@ for queue in "${QUEUES[@]}"; do
         LLM_WORKER_QUEUE="$queue" \
             python -m arq services.llm_worker.WorkerSettings \
             >> "$log" 2>&1 &
+        PIDS+=($!)
     else
         LLM_WORKER_QUEUE="$queue" \
             python -m arq services.llm_worker.WorkerSettings \
-            2>&1 | sed "s/^/[$type] /" &
+            > >(sed "s/^/[$type] /") 2>&1 &
+        PIDS+=($!)
     fi
 
-    PIDS+=($!)
 done
 
 if $DAEMON; then

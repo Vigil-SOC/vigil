@@ -3,8 +3,9 @@
 Reads every finding that has a non-null entity_context but null canonical
 fields, extracts the canonical values, and writes them back.
 
-Safe to run multiple times — only processes findings where ALL canonical
-fields are currently null (i.e. not yet backfilled).
+Safe to run multiple times — only processes findings where the core
+identifying canonical fields (src_ip, dst_ip, hostname, username) are all
+null, indicating the row has not yet been backfilled.
 
 Usage:
     source venv/bin/activate
