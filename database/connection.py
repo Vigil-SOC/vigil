@@ -14,6 +14,16 @@ from sqlalchemy.engine import Engine
 
 from database.models import Base
 
+# Import all models to register them with Base.metadata before create_all()
+from database.models import (
+    Finding, Case, SketchMapping, AttackLayer, AIDecisionLog,
+    SystemConfig, UserPreference, IntegrationConfig, ConfigAuditLog,
+    SLAPolicy, CaseSLA, CaseComment, CaseWatcher, CaseEvidence, CaseIOC,
+    CaseTask, CaseTemplate, CaseRelationship, CaseMetrics, CaseAttachment,
+    CaseClosureInfo, CaseEscalation, CaseAuditLog,
+    User, Role, Investigation, InvestigationLog, SharedIOC, CaseNotification,
+)
+
 logger = logging.getLogger(__name__)
 
 

@@ -10,10 +10,13 @@ from sqlalchemy.exc import IntegrityError
 # Skip all tests until database fixtures are created
 pytestmark = pytest.mark.skip(reason="Requires database fixtures - see tests/conftest.py to set up")
 
-from deeptempo_core.database.models import (
-    User, Case, Finding,
-    SLAPolicy
-)
+try:
+    from deeptempo_core.database.models import (
+        User, Case, Finding,
+        SLAPolicy
+    )
+except ImportError:
+    pytest.skip("deeptempo_core is not installed", allow_module_level=True)
 
 
 class TestUserModel:

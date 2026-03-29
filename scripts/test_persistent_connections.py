@@ -9,6 +9,8 @@ import sys
 import logging
 from pathlib import Path
 
+import pytest
+
 # Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -23,6 +25,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.asyncio
 async def test_persistent_connections():
     """Test that MCP connections are persistent and reused."""
     
