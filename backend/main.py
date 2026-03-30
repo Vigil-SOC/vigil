@@ -4,6 +4,7 @@ FastAPI Backend for Vigil SOC Web Application
 Main application entry point for the REST API server.
 """
 
+import json
 import logging
 import sys
 from pathlib import Path
@@ -298,7 +299,35 @@ async def startup_event():
             tools = await mcp_client.list_tools()
             total_tools = sum(len(t) for t in tools.values())
             logger.info(f"Loaded {total_tools} MCP tools from {len(tools)} servers")
-            
+
+            # Persist tools to JSON cache file for access in async contexts
+            try:
+                cache_dir = Path(__file__).parent.parent / "data"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file = cache_dir / "mcp_tools_cache.json"
+
+                cache_data = {}
+                for server_name, server_tools in tools.items():
+                    cache_data[server_name] = []
+                    for tool in server_tools:
+                        input_schema = tool.get("inputSchema", {})
+                        if hasattr(input_schema, 'model_dump'):
+                            input_schema = input_schema.model_dump()
+                        elif not isinstance(input_schema, dict):
+                            input_schema = dict(input_schema) if input_schema else {}
+                        cache_data[server_name].append({
+                            "name": tool.get("name"),
+                            "description": tool.get("description", ""),
+                            "inputSchema": input_schema
+                        })
+
+                with open(cache_file, 'w') as f:
+                    json.dump(cache_data, f, indent=2)
+
+                logger.info(f"✓ Saved MCP tools cache to {cache_file}")
+            except Exception as e:
+                logger.warning(f"⚠ Could not save MCP tools cache: {e}")
+
             # Log connection status
             status = mcp_client.get_connection_status()
             logger.info(f"Persistent connections: {sum(1 for connected in status.values() if connected)}/{len(status)}")

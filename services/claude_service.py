@@ -463,101 +463,83 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         return None
 
     def _load_mcp_tools(self):
-        """Load MCP tools for Claude to use."""
+        """Load MCP tools for Claude to use from persistent cache."""
         # Clear existing tools to prevent duplicates
         self.mcp_tools = []
-        
+
         try:
-            from services.mcp_client import get_mcp_client
-            import asyncio
-            
-            mcp_client = get_mcp_client()
-            if mcp_client:
-                # Try to use existing event loop or create a new one
+            # Compute cache file path relative to project root
+            cache_file = Path(__file__).parent.parent / "data" / "mcp_tools_cache.json"
+
+            tools_dict = {}
+
+            # First, try to load from persistent cache file (works in all contexts)
+            if cache_file.exists():
                 try:
-                    # Check if there's already a running loop
-                    loop = asyncio.get_running_loop()
-                    # If we're in an async context, we can't use run_until_complete
-                    # Instead, just use cached tools or skip loading
-                    logger.info("Running in async context - using cached MCP tools")
+                    with open(cache_file, 'r') as f:
+                        tools_dict = json.load(f)
+                    logger.info(f"✓ Loaded {sum(len(v) for v in tools_dict.values())} MCP tools from cache file")
+                except Exception as e:
+                    logger.warning(f"Could not load tools from cache file: {e}")
+                    tools_dict = {}
+
+            # If cache file didn't yield tools, fall back to in-memory cache
+            if not tools_dict:
+                from services.mcp_client import get_mcp_client
+                mcp_client = get_mcp_client()
+                if mcp_client and mcp_client.tools_cache:
                     tools_dict = mcp_client.tools_cache
-                    if not tools_dict:
-                        logger.warning("No cached MCP tools available yet. Tools will be loaded on first use.")
-                        return
-                except RuntimeError:
-                    # No running loop, safe to create one
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    
-                    try:
-                        # First, try to get cached tools
-                        tools_dict = loop.run_until_complete(mcp_client.list_tools())
-                        
-                        # If no tools are cached, try to connect to *enabled* servers only
-                        if not tools_dict or all(len(tools) == 0 for tools in tools_dict.values()):
-                            logger.info("No cached MCP tools found, attempting to connect to enabled servers...")
-                            servers = mcp_client.mcp_service.list_servers()
-                            for server_name in servers:
-                                if not mcp_client.mcp_service.is_server_enabled(server_name):
-                                    continue
-                                try:
-                                    loop.run_until_complete(mcp_client.connect_to_server(server_name))
-                                except Exception as e:
-                                    logger.warning(f"Could not connect to {server_name}: {e}")
-                            
-                            # Try to get tools again after connecting
-                            tools_dict = loop.run_until_complete(mcp_client.list_tools())
-                    finally:
-                        loop.close()
-                
-                # Track tool names to prevent duplicates
-                seen_tool_names = set()
-                
-                # Flatten tools from all servers with server prefix
-                for server_name, server_tools in tools_dict.items():
-                    for tool in server_tools:
-                        # Format for Claude API with server prefix
-                        tool_name = f"{server_name}_{tool['name']}"
-                        
-                        # Skip if we've already seen this tool name
-                        if tool_name in seen_tool_names:
-                            logger.warning(f"Skipping duplicate tool: {tool_name}")
-                            continue
-                        seen_tool_names.add(tool_name)
-                        
-                        # Get input schema - handle both dict and object formats
-                        input_schema = tool.get("inputSchema", {})
-                        if hasattr(input_schema, 'model_dump'):
-                            input_schema = input_schema.model_dump()
-                        elif not isinstance(input_schema, dict):
-                            input_schema = dict(input_schema) if input_schema else {}
-                        
-                        # Ensure input_schema has required structure
-                        if not input_schema or "type" not in input_schema:
-                            input_schema = {
-                                "type": "object",
-                                "properties": {},
-                                "required": []
-                            }
-                        
-                        claude_tool = {
-                            "name": tool_name,
-                            "description": f"[{server_name}] {tool.get('description', '')}",
-                            "input_schema": input_schema
-                        }
-                        self.mcp_tools.append(claude_tool)
-                
-                if self.mcp_tools:
-                    tool_names = [t['name'] for t in self.mcp_tools]
-                    logger.info(f"✓ Loaded {len(self.mcp_tools)} MCP tools from {len(tools_dict)} servers")
-                    logger.debug(f"Available tools: {', '.join(tool_names)}")
-                    
-                    # Populate the MCP registry for dynamic tool discovery
-                    self._populate_mcp_registry(tools_dict)
+                    logger.info("✓ Using in-memory MCP tools cache")
                 else:
-                    logger.warning("No MCP tools were loaded. Check that MCP servers are configured and running.")
+                    logger.warning("No MCP tools available - cache not yet populated")
+                    return
+
+            # Track tool names to prevent duplicates
+            seen_tool_names = set()
+
+            # Flatten tools from all servers with server prefix
+            for server_name, server_tools in tools_dict.items():
+                for tool in server_tools:
+                    # Format for Claude API with server prefix
+                    tool_name = f"{server_name}_{tool['name']}"
+
+                    # Skip if we've already seen this tool name
+                    if tool_name in seen_tool_names:
+                        logger.warning(f"Skipping duplicate tool: {tool_name}")
+                        continue
+                    seen_tool_names.add(tool_name)
+
+                    # Get input schema - handle both dict and object formats
+                    input_schema = tool.get("inputSchema", {})
+                    if hasattr(input_schema, 'model_dump'):
+                        input_schema = input_schema.model_dump()
+                    elif not isinstance(input_schema, dict):
+                        input_schema = dict(input_schema) if input_schema else {}
+
+                    # Ensure input_schema has required structure
+                    if not input_schema or "type" not in input_schema:
+                        input_schema = {
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
+
+                    claude_tool = {
+                        "name": tool_name,
+                        "description": f"[{server_name}] {tool.get('description', '')}",
+                        "input_schema": input_schema
+                    }
+                    self.mcp_tools.append(claude_tool)
+
+            if self.mcp_tools:
+                tool_names = [t['name'] for t in self.mcp_tools]
+                logger.info(f"✓ Loaded {len(self.mcp_tools)} MCP tools from {len(tools_dict)} servers")
+                logger.debug(f"Available tools: {', '.join(tool_names)}")
+
+                # Populate the MCP registry for dynamic tool discovery
+                self._populate_mcp_registry(tools_dict)
             else:
-                logger.warning("MCP client not available")
+                logger.warning("No MCP tools were loaded. Check that MCP servers are configured and running.")
         except Exception as e:
             logger.warning(f"Could not load MCP tools: {e}")
             self.mcp_tools = []

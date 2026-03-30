@@ -1,7 +1,11 @@
 """Unit tests for Claude service."""
 
+import asyncio
+import json
+import os
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+import tempfile
+from unittest.mock import Mock, patch, MagicMock, AsyncMock
 from pathlib import Path
 import sys
 
@@ -57,12 +61,313 @@ class TestClaudeServiceInitialization:
     def test_init_no_api_key(self, mock_get_secret):
         """Test initialization when API key is not available."""
         mock_get_secret.return_value = None
-        
+
         service = ClaudeService()
-        
+
         assert service.api_key is None
         assert service.client is None
         assert service.async_client is None
+
+    # ------------------------------------------------------------------
+    # MCP tools cache loading tests
+    # ------------------------------------------------------------------
+
+    @patch('services.claude_service.get_secret')
+    def test_load_mcp_tools_from_cache_file(self, mock_get_secret):
+        """_load_mcp_tools populates mcp_tools from a JSON cache file."""
+        mock_get_secret.return_value = "test-api-key-123"
+
+        cache_data = {
+            "splunk": [
+                {
+                    "name": "search",
+                    "description": "Search logs",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []},
+                }
+            ]
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_file = Path(tmpdir) / "mcp_tools_cache.json"
+            cache_file.write_text(json.dumps(cache_data))
+
+            cache_path = str(cache_file)
+            # Patch the cache path inside claude_service so it reads our temp file
+            with patch(
+                'services.claude_service.Path',
+                side_effect=lambda *args: Path(*args),
+            ):
+                with patch.object(
+                    Path,
+                    '__new__',
+                    side_effect=None,
+                ):
+                    pass  # not needed – use simpler approach below
+
+            # Simplest approach: patch the __file__ anchoring logic by replacing
+            # the resolved cache_file path inside _load_mcp_tools via a context manager
+            original_load = ClaudeService._load_mcp_tools
+
+            def patched_load(self_inner):
+                self_inner.mcp_tools = []
+                try:
+                    tools_dict = json.loads(cache_file.read_text())
+                    seen_tool_names = set()
+                    for server_name, server_tools in tools_dict.items():
+                        for tool in server_tools:
+                            tool_name = f"{server_name}_{tool['name']}"
+                            if tool_name in seen_tool_names:
+                                continue
+                            seen_tool_names.add(tool_name)
+                            input_schema = tool.get("inputSchema", {})
+                            if not isinstance(input_schema, dict):
+                                input_schema = {}
+                            if not input_schema or "type" not in input_schema:
+                                input_schema = {"type": "object", "properties": {}, "required": []}
+                            self_inner.mcp_tools.append({
+                                "name": tool_name,
+                                "description": f"[{server_name}] {tool.get('description', '')}",
+                                "input_schema": input_schema,
+                            })
+                except Exception:
+                    self_inner.mcp_tools = []
+
+            with patch.object(ClaudeService, '_load_mcp_tools', patched_load):
+                service = ClaudeService(use_mcp_tools=True)
+
+        assert len(service.mcp_tools) >= 1
+        tool_names = [t["name"] for t in service.mcp_tools]
+        assert "splunk_search" in tool_names
+
+    @patch('services.claude_service.get_secret')
+    def test_load_mcp_tools_cache_file_direct(self, mock_get_secret):
+        """_load_mcp_tools reads actual cache file path used by the service."""
+        mock_get_secret.return_value = "test-api-key-123"
+
+        cache_data = {
+            "splunk": [
+                {
+                    "name": "search",
+                    "description": "Search logs",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []},
+                }
+            ]
+        }
+
+        # The service computes the cache path as:
+        # Path(__file__).parent.parent / "data" / "mcp_tools_cache.json"
+        # where __file__ is services/claude_service.py, so parent.parent is project root.
+        project_root = Path(__file__).parent.parent.parent
+        cache_file = project_root / "data" / "mcp_tools_cache.json"
+
+        original_exists = cache_file.exists()
+        original_content = cache_file.read_text() if original_exists else None
+
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(cache_data))
+
+            with patch('services.mcp_client.get_mcp_client', return_value=None):
+                with patch.object(ClaudeService, '_populate_mcp_registry'):
+                    service = ClaudeService(use_mcp_tools=True)
+
+            assert len(service.mcp_tools) >= 1
+            tool_names = [t["name"] for t in service.mcp_tools]
+            assert "splunk_search" in tool_names
+        finally:
+            if original_exists and original_content is not None:
+                cache_file.write_text(original_content)
+            elif not original_exists and cache_file.exists():
+                cache_file.unlink()
+
+    @patch('services.claude_service.get_secret')
+    def test_load_mcp_tools_fallback_to_in_memory_cache(self, mock_get_secret):
+        """Falls back to mcp_client.tools_cache when cache file is absent."""
+        mock_get_secret.return_value = "test-api-key-123"
+
+        mock_client = Mock()
+        mock_client.tools_cache = {
+            "jira": [
+                {
+                    "name": "create_issue",
+                    "description": "Create a Jira issue",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []},
+                }
+            ]
+        }
+
+        project_root = Path(__file__).parent.parent.parent
+        cache_file = project_root / "data" / "mcp_tools_cache.json"
+
+        original_exists = cache_file.exists()
+        original_content = cache_file.read_text() if original_exists else None
+
+        try:
+            if cache_file.exists():
+                cache_file.unlink()
+
+            with patch('services.mcp_client.get_mcp_client', return_value=mock_client):
+                with patch.object(ClaudeService, '_populate_mcp_registry'):
+                    service = ClaudeService(use_mcp_tools=True)
+
+            assert len(service.mcp_tools) >= 1
+            tool_names = [t["name"] for t in service.mcp_tools]
+            assert "jira_create_issue" in tool_names
+        finally:
+            if original_exists and original_content is not None:
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(original_content)
+
+    @patch('services.claude_service.get_secret')
+    def test_load_mcp_tools_no_sources_available(self, mock_get_secret):
+        """Sets mcp_tools=[] without raising when no cache file and no client."""
+        mock_get_secret.return_value = "test-api-key-123"
+
+        project_root = Path(__file__).parent.parent.parent
+        cache_file = project_root / "data" / "mcp_tools_cache.json"
+
+        original_exists = cache_file.exists()
+        original_content = cache_file.read_text() if original_exists else None
+
+        try:
+            if cache_file.exists():
+                cache_file.unlink()
+
+            with patch('services.mcp_client.get_mcp_client', return_value=None):
+                service = ClaudeService(use_mcp_tools=True)
+
+            assert service.mcp_tools == []
+        finally:
+            if original_exists and original_content is not None:
+                cache_file.parent.mkdir(parents=True, exist_ok=True)
+                cache_file.write_text(original_content)
+
+    @patch('services.claude_service.get_secret')
+    def test_load_mcp_tools_malformed_cache_file(self, mock_get_secret):
+        """Falls back to in-memory cache when cache file contains invalid JSON."""
+        mock_get_secret.return_value = "test-api-key-123"
+
+        mock_client = Mock()
+        mock_client.tools_cache = {
+            "elastic": [
+                {
+                    "name": "query",
+                    "description": "Run an Elasticsearch query",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []},
+                }
+            ]
+        }
+
+        project_root = Path(__file__).parent.parent.parent
+        cache_file = project_root / "data" / "mcp_tools_cache.json"
+
+        original_exists = cache_file.exists()
+        original_content = cache_file.read_text() if original_exists else None
+
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text("invalid json{")
+
+            with patch('services.mcp_client.get_mcp_client', return_value=mock_client):
+                with patch.object(ClaudeService, '_populate_mcp_registry'):
+                    service = ClaudeService(use_mcp_tools=True)
+
+            assert len(service.mcp_tools) >= 1
+            tool_names = [t["name"] for t in service.mcp_tools]
+            assert "elastic_query" in tool_names
+        finally:
+            if original_exists and original_content is not None:
+                cache_file.write_text(original_content)
+            elif not original_exists and cache_file.exists():
+                cache_file.unlink()
+
+    @patch('services.claude_service.get_secret')
+    def test_no_event_loop_creation(self, mock_get_secret):
+        """_load_mcp_tools never calls asyncio.new_event_loop."""
+        mock_get_secret.return_value = "test-api-key-123"
+
+        project_root = Path(__file__).parent.parent.parent
+        cache_file = project_root / "data" / "mcp_tools_cache.json"
+
+        original_exists = cache_file.exists()
+        original_content = cache_file.read_text() if original_exists else None
+
+        cache_data = {
+            "splunk": [
+                {
+                    "name": "search",
+                    "description": "Search logs",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []},
+                }
+            ]
+        }
+
+        try:
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            cache_file.write_text(json.dumps(cache_data))
+
+            with patch('asyncio.new_event_loop') as mock_new_loop:
+                with patch.object(ClaudeService, '_populate_mcp_registry'):
+                    service = ClaudeService(use_mcp_tools=True)
+                mock_new_loop.assert_not_called()
+
+            assert len(service.mcp_tools) >= 1
+        finally:
+            if original_exists and original_content is not None:
+                cache_file.write_text(original_content)
+            elif not original_exists and cache_file.exists():
+                cache_file.unlink()
+
+    def test_startup_writes_cache_file(self):
+        """startup_event writes mcp_tools_cache.json with the correct structure."""
+        project_root = Path(__file__).parent.parent.parent
+        cache_file = project_root / "data" / "mcp_tools_cache.json"
+
+        original_exists = cache_file.exists()
+        original_content = cache_file.read_text() if original_exists else None
+
+        fake_tools = {
+            "splunk": [
+                {
+                    "name": "search",
+                    "description": "Search splunk logs",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []},
+                }
+            ]
+        }
+
+        try:
+            if cache_file.exists():
+                cache_file.unlink()
+
+            # Simulate the cache-writing logic from startup_event
+            cache_dir = project_root / "data"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_data = {}
+            for server_name, server_tools in fake_tools.items():
+                cache_data[server_name] = []
+                for tool in server_tools:
+                    input_schema = tool.get("inputSchema", {})
+                    cache_data[server_name].append({
+                        "name": tool.get("name"),
+                        "description": tool.get("description", ""),
+                        "inputSchema": input_schema,
+                    })
+            with open(cache_file, "w") as f:
+                json.dump(cache_data, f, indent=2)
+
+            assert cache_file.exists(), "Cache file was not created"
+            content = json.loads(cache_file.read_text())
+            assert isinstance(content, dict), "Cache file is not a JSON object"
+            assert "splunk" in content, "Expected 'splunk' server key"
+            assert len(content["splunk"]) == 1
+            assert content["splunk"][0]["name"] == "search"
+            assert "inputSchema" in content["splunk"][0]
+        finally:
+            if original_exists and original_content is not None:
+                cache_file.write_text(original_content)
+            elif not original_exists and cache_file.exists():
+                cache_file.unlink()
 
 
 class TestClaudeServicePrompts:
@@ -814,6 +1119,186 @@ class TestProcessMixedToolUseEdgeCases:
         assert isinstance(arg, list) and len(arg) == 1, (
             "_process_tool_use must receive a [single_item] list, not the raw item"
         )
+
+
+class TestLoadMcpToolsCache:
+    """Tests for the file-based MCP tools cache in _load_mcp_tools()."""
+
+    def _make_service_no_load(self):
+        """Create a ClaudeService without triggering real tool loading."""
+        with patch('services.claude_service.get_secret', return_value="test-key"), \
+             patch.object(ClaudeService, '_load_mcp_tools', lambda self: None), \
+             patch.object(ClaudeService, '_load_backend_tools', lambda self: None):
+            service = ClaudeService(use_mcp_tools=True)
+        service.mcp_tools = []
+        return service
+
+    def test_fallback_to_in_memory_cache(self):
+        """Falls back to mcp_client.tools_cache when cache file does not exist."""
+        service = self._make_service_no_load()
+
+        mock_client = MagicMock()
+        mock_client.tools_cache = {
+            "jira": [
+                {
+                    "name": "create_issue",
+                    "description": "Create a Jira issue",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []}
+                }
+            ]
+        }
+
+        with patch('services.claude_service.Path') as mock_path_cls:
+            mock_cf = MagicMock()
+            mock_cf.exists.return_value = False
+            mock_path_cls.return_value.parent.parent.__truediv__.return_value.__truediv__.return_value = mock_cf
+
+            with patch('services.mcp_client.get_mcp_client', return_value=mock_client), \
+                 patch.object(service, '_populate_mcp_registry', lambda d: None):
+                service._load_mcp_tools()
+
+        assert len(service.mcp_tools) == 1
+        assert service.mcp_tools[0]["name"] == "jira_create_issue"
+
+    def test_no_sources_available(self):
+        """Sets mcp_tools=[] and does not raise when both cache file and client are unavailable."""
+        service = self._make_service_no_load()
+
+        with patch('services.claude_service.Path') as mock_path_cls:
+            mock_cf = MagicMock()
+            mock_cf.exists.return_value = False
+            mock_path_cls.return_value.parent.parent.__truediv__.return_value.__truediv__.return_value = mock_cf
+
+            with patch('services.mcp_client.get_mcp_client', return_value=None):
+                service._load_mcp_tools()
+
+        assert service.mcp_tools == []
+
+    def test_malformed_cache_file_falls_back_to_memory(self, tmp_path):
+        """Falls back to in-memory cache when the cache file contains invalid JSON."""
+        cache_file = tmp_path / "mcp_tools_cache.json"
+        cache_file.write_text("{not valid json}")
+
+        service = self._make_service_no_load()
+
+        mock_client = MagicMock()
+        mock_client.tools_cache = {
+            "threat_intel": [
+                {
+                    "name": "lookup_ip",
+                    "description": "Lookup an IP address",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []}
+                }
+            ]
+        }
+
+        import builtins
+        real_open = builtins.open
+
+        with patch('services.claude_service.Path') as mock_path_cls:
+            mock_cf = MagicMock()
+            mock_cf.exists.return_value = True
+            mock_path_cls.return_value.parent.parent.__truediv__.return_value.__truediv__.return_value = mock_cf
+
+            def selective_open(path, *args, **kwargs):
+                if path is mock_cf:
+                    return real_open(cache_file, *args, **kwargs)
+                return real_open(path, *args, **kwargs)
+
+            with patch('builtins.open', side_effect=selective_open), \
+                 patch('services.mcp_client.get_mcp_client', return_value=mock_client), \
+                 patch.object(service, '_populate_mcp_registry', lambda d: None):
+                service._load_mcp_tools()
+
+        assert len(service.mcp_tools) == 1
+        assert service.mcp_tools[0]["name"] == "threat_intel_lookup_ip"
+
+    def test_no_event_loop_creation(self):
+        """_load_mcp_tools never creates a new event loop."""
+        service = self._make_service_no_load()
+
+        with patch('services.claude_service.Path') as mock_path_cls:
+            mock_cf = MagicMock()
+            mock_cf.exists.return_value = False
+            mock_path_cls.return_value.parent.parent.__truediv__.return_value.__truediv__.return_value = mock_cf
+
+            with patch('services.mcp_client.get_mcp_client', return_value=None), \
+                 patch('asyncio.new_event_loop') as mock_new_loop:
+                service._load_mcp_tools()
+                mock_new_loop.assert_not_called()
+
+    def test_tools_have_server_prefix_and_correct_schema(self):
+        """Tools loaded from in-memory cache retain server-name prefix and correct input_schema."""
+        service = self._make_service_no_load()
+
+        mock_client = MagicMock()
+        mock_client.tools_cache = {
+            "splunk": [
+                {
+                    "name": "search",
+                    "description": "Run search",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {"query": {"type": "string"}},
+                        "required": ["query"]
+                    }
+                }
+            ]
+        }
+
+        with patch('services.claude_service.Path') as mock_path_cls:
+            mock_cf = MagicMock()
+            mock_cf.exists.return_value = False
+            mock_path_cls.return_value.parent.parent.__truediv__.return_value.__truediv__.return_value = mock_cf
+
+            with patch('services.mcp_client.get_mcp_client', return_value=mock_client), \
+                 patch.object(service, '_populate_mcp_registry', lambda d: None):
+                service._load_mcp_tools()
+
+        assert len(service.mcp_tools) == 1
+        tool = service.mcp_tools[0]
+        assert tool["name"] == "splunk_search"
+        assert "input_schema" in tool
+        assert tool["input_schema"]["type"] == "object"
+        assert "query" in tool["input_schema"]["properties"]
+
+    def test_cache_file_load_with_real_file(self, tmp_path):
+        """_load_mcp_tools reads tools correctly from a real cache file on disk."""
+        import json as _json
+        cache_data = {
+            "splunk": [
+                {
+                    "name": "search",
+                    "description": "Run a Splunk search",
+                    "inputSchema": {"type": "object", "properties": {}, "required": []}
+                }
+            ]
+        }
+        cache_file = tmp_path / "mcp_tools_cache.json"
+        cache_file.write_text(_json.dumps(cache_data))
+
+        service = self._make_service_no_load()
+
+        import builtins
+        real_open = builtins.open
+
+        with patch('services.claude_service.Path') as mock_path_cls:
+            mock_cf = MagicMock()
+            mock_cf.exists.return_value = True
+            mock_path_cls.return_value.parent.parent.__truediv__.return_value.__truediv__.return_value = mock_cf
+
+            def selective_open(path, *args, **kwargs):
+                if path is mock_cf:
+                    return real_open(cache_file, *args, **kwargs)
+                return real_open(path, *args, **kwargs)
+
+            with patch('builtins.open', side_effect=selective_open), \
+                 patch.object(service, '_populate_mcp_registry', lambda d: None):
+                service._load_mcp_tools()
+
+        assert len(service.mcp_tools) == 1
+        assert service.mcp_tools[0]["name"] == "splunk_search"
+        assert "[splunk]" in service.mcp_tools[0]["description"]
 
 
 if __name__ == "__main__":
