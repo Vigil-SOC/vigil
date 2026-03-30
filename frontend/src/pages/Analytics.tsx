@@ -159,7 +159,7 @@ export default function Analytics() {
     setLoading(true)
     setError(null)
     try {
-      const response = await api.get(`/api/analytics?timeRange=${timeRange}`)
+      const response = await api.get(`/analytics?timeRange=${timeRange}`)
       setAnalyticsData(response.data)
     } catch (error) {
       console.error('Error fetching analytics:', error)
