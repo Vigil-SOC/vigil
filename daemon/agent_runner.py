@@ -698,8 +698,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
         if self._claude_service and hasattr(self._claude_service, '_execute_backend_tool'):
             try:
-                result = await asyncio.to_thread(
-                    self._claude_service._execute_backend_tool,
+                result = await self._claude_service._execute_backend_tool(
                     tool_name, tool_input
                 )
                 if result is not None:
@@ -868,8 +867,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         """Execute a tool that has already been approved, bypassing guardrails."""
         if self._claude_service and hasattr(self._claude_service, '_execute_backend_tool'):
             try:
-                result = await asyncio.to_thread(
-                    self._claude_service._execute_backend_tool,
+                result = await self._claude_service._execute_backend_tool(
                     tool_name, tool_input
                 )
                 if result is not None:

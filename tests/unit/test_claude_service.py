@@ -1301,6 +1301,76 @@ class TestLoadMcpToolsCache:
         assert "[splunk]" in service.mcp_tools[0]["description"]
 
 
+class TestExecuteBackendTool:
+    """Tests for _execute_backend_tool MCP fallback and existing-tool paths."""
+
+    def _make_service(self):
+        with patch('services.claude_service.get_secret', return_value="test-api-key-123"):
+            service = ClaudeService()
+        return service
+
+    @pytest.mark.asyncio
+    async def test_mcp_fallback_success(self):
+        """Unknown tool name triggers _execute_mcp_tool; result is wrapped in {'result': ...}."""
+        service = self._make_service()
+        with patch.object(service, '_execute_mcp_tool', new=AsyncMock(return_value="search results")):
+            result = await service._execute_backend_tool("splunk_splunk_nl_search", {})
+        assert result == {"result": "search results"}
+
+    @pytest.mark.asyncio
+    async def test_mcp_fallback_exception(self):
+        """When _execute_mcp_tool raises, returns {'error': 'Unknown tool: <name>'} without propagating."""
+        service = self._make_service()
+        with patch.object(service, '_execute_mcp_tool', new=AsyncMock(side_effect=Exception("connection refused"))):
+            result = await service._execute_backend_tool("splunk_splunk_nl_search", {})
+        assert result == {"error": "Unknown tool: splunk_splunk_nl_search"}
+
+    @pytest.mark.asyncio
+    async def test_existing_tools_unchanged(self):
+        """Known backend tools (list_findings) return their correct result; _execute_mcp_tool is never called."""
+        service = self._make_service()
+        mock_findings = [{"finding_id": "f1", "severity": "high", "anomaly_score": 0.9,
+                          "data_source": "splunk", "timestamp": "2026-01-01T00:00:00Z",
+                          "status": "open", "description": "Test finding"}]
+        with patch('services.database_data_service.DatabaseDataService') as mock_ds_cls, \
+             patch.object(service, '_execute_mcp_tool', new=AsyncMock()) as mock_mcp:
+            mock_ds = mock_ds_cls.return_value
+            mock_ds.count_findings.return_value = 1
+            mock_ds.get_findings.return_value = mock_findings
+            result = await service._execute_backend_tool("list_findings", {"limit": 10, "offset": 0})
+        assert "findings" in result
+        assert result["total"] == 1
+        mock_mcp.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_daemon_callsite_awaits_directly(self):
+        """Daemon _execute_tool awaits _execute_backend_tool directly (not via asyncio.to_thread)."""
+        service = self._make_service()
+        call_record = []
+
+        async def fake_backend_tool(tool_name, tool_input):
+            call_record.append((tool_name, tool_input))
+            return {"result": "ok"}
+
+        service._execute_backend_tool = fake_backend_tool
+
+        # Import AgentRunner and wire up a minimal instance
+        from daemon.agent_runner import AgentRunner
+        runner = object.__new__(AgentRunner)
+        runner._claude_service = service
+        runner._dry_run = False
+        runner.workdir = MagicMock()
+
+        # Patch module-level _get_tool_tier to return "auto" so it doesn't short-circuit
+        runner.config = MagicMock()
+        runner.config.dry_run = False
+        with patch('daemon.agent_runner._get_tool_tier', return_value="auto"):
+            result = await runner._execute_external_tool("inv1", "my_mcp_tool", {"key": "val"})
+
+        assert call_record == [("my_mcp_tool", {"key": "val"})]
+        assert result == '{"result": "ok"}'
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

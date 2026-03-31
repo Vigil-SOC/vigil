@@ -277,7 +277,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         for tool in self.backend_tools:
             logger.debug(f"  - {tool['name']}: {tool['description'][:60]}...")
 
-    def _execute_backend_tool(self, tool_name: str, tool_input: dict):
+    async def _execute_backend_tool(self, tool_name: str, tool_input: dict):
         """Execute a single backend tool by name. Used by the daemon agent runner."""
         from services.database_data_service import DatabaseDataService
         data_service = DatabaseDataService()
@@ -460,7 +460,13 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             elif tool_name == 'get_approval_stats':
                 return approval_service.get_stats()
 
-        return None
+        try:
+            mcp_result = await self._execute_mcp_tool(tool_name, tool_input)
+            logger.info(f"✅ Executed MCP tool: {tool_name}")
+            return {"result": mcp_result}
+        except Exception as e:
+            logger.warning(f"Unknown tool: {tool_name}")
+            return {"error": f"Unknown tool: {tool_name}"}
 
     def _load_mcp_tools(self):
         """Load MCP tools for Claude to use from persistent cache."""
