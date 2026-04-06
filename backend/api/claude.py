@@ -3,7 +3,7 @@
 from typing import List, Optional, Dict, Union, Any
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 import json
 import logging
 import base64
@@ -25,6 +25,13 @@ class ChatMessage(BaseModel):
     """Chat message model."""
     role: str  # user or assistant
     content: Union[str, List[ContentBlock]]  # Can be string or list of content blocks
+
+    @field_validator("content")
+    @classmethod
+    def content_not_empty(cls, v: Union[str, List]) -> Union[str, List]:
+        if isinstance(v, str) and not v.strip():
+            raise ValueError("message content must not be empty")
+        return v
 
 
 class ChatRequest(BaseModel):
@@ -113,7 +120,6 @@ async def chat(request: ChatRequest):
     
     claude_service = ClaudeService(
         use_backend_tools=True,
-        use_mcp_tools=False,
         enable_thinking=enable_thinking,
         thinking_budget=thinking_budget,
         use_agent_sdk=request.use_agent_sdk
@@ -305,7 +311,6 @@ async def chat_stream(request: ChatRequest):
     
     claude_service = ClaudeService(
         use_backend_tools=True,
-        use_mcp_tools=False,
         enable_thinking=enable_thinking,
         thinking_budget=thinking_budget
     )
@@ -447,8 +452,8 @@ async def websocket_chat(websocket: WebSocket):
     """
     await websocket.accept()
     
-    claude_service = ClaudeService(use_backend_tools=True, use_mcp_tools=False)
-    
+    claude_service = ClaudeService(use_backend_tools=True)
+
     # Check if API key is configured (works for both implementations)
     if not claude_service.has_api_key():
         await websocket.send_json({"error": "Claude API not configured"})
@@ -557,7 +562,6 @@ async def summarize_conversation(request: SummarizeRequest):
     
     claude_service = ClaudeService(
         use_backend_tools=False,
-        use_mcp_tools=False,
         enable_thinking=False
     )
     
@@ -639,7 +643,7 @@ async def get_sdk_status():
     """Check availability of Claude Agent SDK."""
     return {
         "agent_sdk_available": ClaudeService.is_agent_sdk_available(),
-        "anthropic_available": ClaudeService(use_backend_tools=True, use_mcp_tools=False).has_api_key()
+        "anthropic_available": ClaudeService(use_backend_tools=True).has_api_key()
     }
 
 
@@ -673,7 +677,7 @@ async def run_agent_task(request: AgentTaskRequest):
                 allowed_tools = agent.recommended_tools
             logger.info(f"Using agent: {agent.name}")
     
-    claude_service = ClaudeService(use_backend_tools=True, use_mcp_tools=False, use_agent_sdk=True)
+    claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
     
     if not claude_service.has_api_key():
         raise HTTPException(status_code=503, detail="Claude API not configured")
@@ -732,7 +736,7 @@ async def stream_agent_task(request: AgentTaskRequest):
             if not allowed_tools:
                 allowed_tools = agent.recommended_tools
     
-    claude_service = ClaudeService(use_backend_tools=True, use_mcp_tools=False, use_agent_sdk=True)
+    claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
     
     if not claude_service.has_api_key():
         raise HTTPException(status_code=503, detail="Claude API not configured")
@@ -772,7 +776,7 @@ async def websocket_agent(websocket: WebSocket):
     """
     await websocket.accept()
     
-    claude_service = ClaudeService(use_backend_tools=True, use_mcp_tools=False, use_agent_sdk=True)
+    claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
     
     if not claude_service.has_api_key():
         await websocket.send_json({"type": "error", "content": "Claude API not configured"})
@@ -913,7 +917,7 @@ async def analyze_finding(finding_id: str, context: Optional[str] = None):
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
     
-    claude_service = ClaudeService(use_backend_tools=True, use_mcp_tools=False)
+    claude_service = ClaudeService(use_backend_tools=True)
     
     # Check if API key is configured (works for both implementations)
     if not claude_service.has_api_key():

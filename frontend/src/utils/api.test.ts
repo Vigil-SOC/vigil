@@ -20,7 +20,7 @@ describe('API Utils', () => {
   })
 
   it('should handle errors', async () => {
-    ;(axios.get as any).mockRejectedValue(new Error('Network error'))
+    (axios.get as any).mockRejectedValue(new Error('Network error'))
 
     await expect(axios.get('/api/cases/123')).rejects.toThrow('Network error')
   })

@@ -76,12 +76,12 @@ class ClaudeService:
         # Try to load API key
         self._load_api_key()
         
-        # Load backend tools if enabled (preferred over MCP)
+        # Load backend tools if enabled
         if self.use_backend_tools and BACKEND_TOOLS_AVAILABLE:
             self._load_backend_tools()
             logger.info(f"✓ Loaded {len(self.backend_tools)} backend tools for direct function calling")
-        # Otherwise load MCP tools if enabled
-        elif self.use_mcp_tools:
+        # Load MCP tools if enabled (independently of backend tools)
+        if self.use_mcp_tools:
             self._load_mcp_tools()
         
         if self.use_agent_sdk:
@@ -277,7 +277,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         for tool in self.backend_tools:
             logger.debug(f"  - {tool['name']}: {tool['description'][:60]}...")
 
-    def _execute_backend_tool(self, tool_name: str, tool_input: dict):
+    async def _execute_backend_tool(self, tool_name: str, tool_input: dict):
         """Execute a single backend tool by name. Used by the daemon agent runner."""
         from services.database_data_service import DatabaseDataService
         data_service = DatabaseDataService()
@@ -460,104 +460,92 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             elif tool_name == 'get_approval_stats':
                 return approval_service.get_stats()
 
-        return None
+        try:
+            mcp_result = await self._execute_mcp_tool(tool_name, tool_input)
+            logger.info(f"✅ Executed MCP tool: {tool_name}")
+            return {"result": mcp_result}
+        except Exception as e:
+            logger.warning(f"Unknown tool: {tool_name}")
+            return {"error": f"Unknown tool: {tool_name}"}
 
     def _load_mcp_tools(self):
-        """Load MCP tools for Claude to use."""
+        """Load MCP tools for Claude to use from persistent cache."""
         # Clear existing tools to prevent duplicates
         self.mcp_tools = []
-        
+
         try:
-            from services.mcp_client import get_mcp_client
-            import asyncio
-            
-            mcp_client = get_mcp_client()
-            if mcp_client:
-                # Try to use existing event loop or create a new one
+            # Compute cache file path relative to project root
+            cache_file = Path(__file__).parent.parent / "data" / "mcp_tools_cache.json"
+
+            tools_dict = {}
+
+            # First, try to load from persistent cache file (works in all contexts)
+            if cache_file.exists():
                 try:
-                    # Check if there's already a running loop
-                    loop = asyncio.get_running_loop()
-                    # If we're in an async context, we can't use run_until_complete
-                    # Instead, just use cached tools or skip loading
-                    logger.info("Running in async context - using cached MCP tools")
+                    with open(cache_file, 'r') as f:
+                        tools_dict = json.load(f)
+                    logger.info(f"✓ Loaded {sum(len(v) for v in tools_dict.values())} MCP tools from cache file")
+                except Exception as e:
+                    logger.warning(f"Could not load tools from cache file: {e}")
+                    tools_dict = {}
+
+            # If cache file didn't yield tools, fall back to in-memory cache
+            if not tools_dict:
+                from services.mcp_client import get_mcp_client
+                mcp_client = get_mcp_client()
+                if mcp_client and mcp_client.tools_cache:
                     tools_dict = mcp_client.tools_cache
-                    if not tools_dict:
-                        logger.warning("No cached MCP tools available yet. Tools will be loaded on first use.")
-                        return
-                except RuntimeError:
-                    # No running loop, safe to create one
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    
-                    try:
-                        # First, try to get cached tools
-                        tools_dict = loop.run_until_complete(mcp_client.list_tools())
-                        
-                        # If no tools are cached, try to connect to *enabled* servers only
-                        if not tools_dict or all(len(tools) == 0 for tools in tools_dict.values()):
-                            logger.info("No cached MCP tools found, attempting to connect to enabled servers...")
-                            servers = mcp_client.mcp_service.list_servers()
-                            for server_name in servers:
-                                if not mcp_client.mcp_service.is_server_enabled(server_name):
-                                    continue
-                                try:
-                                    loop.run_until_complete(mcp_client.connect_to_server(server_name))
-                                except Exception as e:
-                                    logger.warning(f"Could not connect to {server_name}: {e}")
-                            
-                            # Try to get tools again after connecting
-                            tools_dict = loop.run_until_complete(mcp_client.list_tools())
-                    finally:
-                        loop.close()
-                
-                # Track tool names to prevent duplicates
-                seen_tool_names = set()
-                
-                # Flatten tools from all servers with server prefix
-                for server_name, server_tools in tools_dict.items():
-                    for tool in server_tools:
-                        # Format for Claude API with server prefix
-                        tool_name = f"{server_name}_{tool['name']}"
-                        
-                        # Skip if we've already seen this tool name
-                        if tool_name in seen_tool_names:
-                            logger.warning(f"Skipping duplicate tool: {tool_name}")
-                            continue
-                        seen_tool_names.add(tool_name)
-                        
-                        # Get input schema - handle both dict and object formats
-                        input_schema = tool.get("inputSchema", {})
-                        if hasattr(input_schema, 'model_dump'):
-                            input_schema = input_schema.model_dump()
-                        elif not isinstance(input_schema, dict):
-                            input_schema = dict(input_schema) if input_schema else {}
-                        
-                        # Ensure input_schema has required structure
-                        if not input_schema or "type" not in input_schema:
-                            input_schema = {
-                                "type": "object",
-                                "properties": {},
-                                "required": []
-                            }
-                        
-                        claude_tool = {
-                            "name": tool_name,
-                            "description": f"[{server_name}] {tool.get('description', '')}",
-                            "input_schema": input_schema
-                        }
-                        self.mcp_tools.append(claude_tool)
-                
-                if self.mcp_tools:
-                    tool_names = [t['name'] for t in self.mcp_tools]
-                    logger.info(f"✓ Loaded {len(self.mcp_tools)} MCP tools from {len(tools_dict)} servers")
-                    logger.debug(f"Available tools: {', '.join(tool_names)}")
-                    
-                    # Populate the MCP registry for dynamic tool discovery
-                    self._populate_mcp_registry(tools_dict)
+                    logger.info("✓ Using in-memory MCP tools cache")
                 else:
-                    logger.warning("No MCP tools were loaded. Check that MCP servers are configured and running.")
+                    logger.warning("No MCP tools available - cache not yet populated")
+                    return
+
+            # Track tool names to prevent duplicates
+            seen_tool_names = set()
+
+            # Flatten tools from all servers with server prefix
+            for server_name, server_tools in tools_dict.items():
+                for tool in server_tools:
+                    # Format for Claude API with server prefix
+                    tool_name = f"{server_name}_{tool['name']}"
+
+                    # Skip if we've already seen this tool name
+                    if tool_name in seen_tool_names:
+                        logger.warning(f"Skipping duplicate tool: {tool_name}")
+                        continue
+                    seen_tool_names.add(tool_name)
+
+                    # Get input schema - handle both dict and object formats
+                    input_schema = tool.get("inputSchema", {})
+                    if hasattr(input_schema, 'model_dump'):
+                        input_schema = input_schema.model_dump()
+                    elif not isinstance(input_schema, dict):
+                        input_schema = dict(input_schema) if input_schema else {}
+
+                    # Ensure input_schema has required structure
+                    if not input_schema or "type" not in input_schema:
+                        input_schema = {
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
+
+                    claude_tool = {
+                        "name": tool_name,
+                        "description": f"[{server_name}] {tool.get('description', '')}",
+                        "input_schema": input_schema
+                    }
+                    self.mcp_tools.append(claude_tool)
+
+            if self.mcp_tools:
+                tool_names = [t['name'] for t in self.mcp_tools]
+                logger.info(f"✓ Loaded {len(self.mcp_tools)} MCP tools from {len(tools_dict)} servers")
+                logger.debug(f"Available tools: {', '.join(tool_names)}")
+
+                # Populate the MCP registry for dynamic tool discovery
+                self._populate_mcp_registry(tools_dict)
             else:
-                logger.warning("MCP client not available")
+                logger.warning("No MCP tools were loaded. Check that MCP servers are configured and running.")
         except Exception as e:
             logger.warning(f"Could not load MCP tools: {e}")
             self.mcp_tools = []
@@ -784,9 +772,9 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         
         tool_tokens = 0
         if self.use_backend_tools and self.backend_tools:
-            tool_tokens = self._estimate_tokens(json.dumps(self.backend_tools))
-        elif self.use_mcp_tools and self.mcp_tools:
-            tool_tokens = self._estimate_tokens(json.dumps(self.mcp_tools))
+            tool_tokens += self._estimate_tokens(json.dumps(self.backend_tools))
+        if self.use_mcp_tools and self.mcp_tools:
+            tool_tokens += self._estimate_tokens(json.dumps(self.mcp_tools))
         
         available_tokens = max_context_tokens - system_tokens - tool_tokens
         if available_tokens <= 0:
@@ -1399,9 +1387,50 @@ Provide a structured summary preserving all critical context."""
                         })
                 else:
                     logger.warning(f"Could not determine server for tool {tool_name}")
-        
+
         return tool_results
-    
+
+    async def _process_mixed_tool_use(self, content: List) -> List[Dict]:
+        """
+        Routes each tool use request in `content` to the appropriate processor.
+        Backend tools (by name match against self.backend_tools) are handled by
+        _process_backend_tool_use(); all others are handled by _process_tool_use().
+
+        Note: If a backend tool and an MCP tool share the same name, backend takes
+        precedence since the backend name set is checked first.
+
+        Args:
+            content: List of tool use blocks from a Claude API response.
+
+        Returns:
+            Combined list of tool result dicts from both processors.
+        """
+        tool_results = []
+        # Build a set of backend tool names for O(1) lookup
+        backend_tool_names = {tool.get('name') for tool in (self.backend_tools or [])}
+
+        for item in content:
+            # Extract tool name (handle both dict and object formats)
+            if isinstance(item, dict):
+                tool_name = item.get('name')
+            else:
+                tool_name = getattr(item, 'name', None)
+
+            if not tool_name:
+                continue
+
+            # Route to appropriate processor based on tool name membership
+            if tool_name in backend_tool_names:
+                # Backend tool: dispatch to backend processor
+                result = await self._process_backend_tool_use([item])
+                tool_results.extend(result if result else [])
+            else:
+                # MCP tool (or unknown): dispatch to MCP processor
+                result = await self._process_tool_use([item])
+                tool_results.extend(result if result else [])
+
+        return tool_results
+
     def chat(self, message: Union[str, List[Dict]], system_prompt: Optional[str] = None,
              context: Optional[List[Dict]] = None, model: str = "claude-sonnet-4-5-20250929",
              images: Optional[List[Dict]] = None, prefill: Optional[str] = None,
@@ -1462,18 +1491,20 @@ Provide a structured summary preserving all critical context."""
             if prefill:
                 messages.append({"role": "assistant", "content": prefill})
             
-            # Prepare tools - backend tools take precedence over MCP
-            tools = None
+            # Prepare tools - combine both backend and MCP tools
+            tools = []
             if self.use_backend_tools and self.backend_tools:
-                tools = self.backend_tools
-                logger.debug(f"🔧 Backend tools enabled: {len(tools)} tools available")
-            elif self.use_mcp_tools and self.mcp_tools:
-                tools = self.mcp_tools
-                logger.debug(f"🔧 MCP tools enabled: {len(tools)} tools available")
-            
+                tools.extend(self.backend_tools)
+                logger.debug(f"🔧 Backend tools enabled: {len(self.backend_tools)} tools available")
+            if self.use_mcp_tools and self.mcp_tools:
+                tools.extend(self.mcp_tools)
+                logger.debug(f"🔧 MCP tools enabled: {len(self.mcp_tools)} tools available")
+            if not tools:
+                tools = None
+
             # Use system prompt (default if not provided)
             effective_system_prompt = system_prompt if system_prompt is not None else self.default_system_prompt
-            
+
             # Set thinking config
             thinking_config = None
             if use_thinking:
@@ -1528,15 +1559,10 @@ Provide a structured summary preserving all critical context."""
                 try:
                     # Add overall timeout for tool processing (60 seconds total)
                     try:
-                        # Use backend tool processing or MCP tool processing
-                        if self.use_backend_tools:
-                            tool_results = loop.run_until_complete(
-                                asyncio.wait_for(self._process_backend_tool_use(response.content), timeout=60.0)
-                            )
-                        else:
-                            tool_results = loop.run_until_complete(
-                                asyncio.wait_for(self._process_tool_use(response.content), timeout=60.0)
-                            )
+                        # Route each tool call to the correct processor (backend or MCP)
+                        tool_results = loop.run_until_complete(
+                            asyncio.wait_for(self._process_mixed_tool_use(response.content), timeout=60.0)
+                        )
                         logger.info(f"✅ Tool processing complete - {len(tool_results)} results")
                         # Log tool results
                         for tool_result in tool_results:
@@ -1582,14 +1608,9 @@ Provide a structured summary preserving all critical context."""
                         
                         if final_response.stop_reason == "tool_use" and final_response.content:
                             logger.info(f"🔧 Additional tool use in round {tool_round + 2}")
-                            if self.use_backend_tools:
-                                additional_results = loop.run_until_complete(
-                                    asyncio.wait_for(self._process_backend_tool_use(final_response.content), timeout=60.0)
-                                )
-                            else:
-                                additional_results = loop.run_until_complete(
-                                    asyncio.wait_for(self._process_tool_use(final_response.content), timeout=60.0)
-                                )
+                            additional_results = loop.run_until_complete(
+                                asyncio.wait_for(self._process_mixed_tool_use(final_response.content), timeout=60.0)
+                            )
                             assistant_content = final_response.content
                             if not isinstance(assistant_content, list):
                                 assistant_content = [assistant_content] if assistant_content else []
@@ -1782,14 +1803,16 @@ Provide a structured summary preserving all critical context."""
             if prefill:
                 messages.append({"role": "assistant", "content": prefill})
 
-            # Prepare tools - backend tools take precedence over MCP
-            tools = None
+            # Prepare tools - combine both backend and MCP tools independently
+            tools = []
             if self.use_backend_tools and self.backend_tools:
-                tools = self.backend_tools
-                logger.debug(f"🔧 Stream with {len(tools)} backend tools")
-            elif self.use_mcp_tools and self.mcp_tools:
-                tools = self.mcp_tools
-                logger.debug(f"🔧 Stream with {len(tools)} MCP tools")
+                tools.extend(self.backend_tools)
+                logger.debug(f"🔧 Stream with {len(self.backend_tools)} backend tools")
+            if self.use_mcp_tools and self.mcp_tools:
+                tools.extend(self.mcp_tools)
+                logger.debug(f"🔧 Stream with {len(self.mcp_tools)} MCP tools")
+            if not tools:
+                tools = None
 
             # Use system prompt (default if not provided)
             effective_system_prompt = system_prompt if system_prompt is not None else self.default_system_prompt
@@ -1953,11 +1976,8 @@ Provide a structured summary preserving all critical context."""
                     
                     yield {"type": "text", "content": "\n\n[Processing tools...]\n"}
                     
-                    # Process tool use - backend or MCP
-                    if self.use_backend_tools:
-                        tool_results = await self._process_backend_tool_use(accumulated_content)
-                    else:
-                        tool_results = await self._process_tool_use(accumulated_content)
+                    # Route each tool call to the correct processor (backend or MCP)
+                    tool_results = await self._process_mixed_tool_use(accumulated_content)
                     logger.info(f"✅ Tool processing complete in stream - {len(tool_results)} results")
                     
                     # Add assistant message and tool results to conversation

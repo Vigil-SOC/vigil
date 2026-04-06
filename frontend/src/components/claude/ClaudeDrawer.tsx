@@ -263,8 +263,8 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
 
           const reader = response.body?.getReader()
           const decoder = new TextDecoder()
-          let thinkingContent: ContentBlock[] = []
-          let textContent: ContentBlock[] = []
+          const thinkingContent: ContentBlock[] = []
+          const textContent: ContentBlock[] = []
           let currentThinking = ''
           let currentText = ''
 
@@ -430,8 +430,8 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       const reader = response.body?.getReader()
       const decoder = new TextDecoder()
       
-      let thinkingContent: ContentBlock[] = []
-      let textContent: ContentBlock[] = []
+      const thinkingContent: ContentBlock[] = []
+      const textContent: ContentBlock[] = []
       let currentThinking = ''
       let currentText = ''
       

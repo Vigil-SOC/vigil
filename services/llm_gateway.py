@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
+from arq.jobs import DeserializationError
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +145,15 @@ class LLMGateway:
             temperature=None,
             _queue_name=QUEUE_NAME,
         )
-        return await job.result(timeout=timeout)
+        try:
+            return await job.result(timeout=timeout)
+        except DeserializationError as exc:
+            logger.error(
+                "arq job result deserialization failed (stale or incompatible "
+                "result in Redis — APIStatusError constructor may have changed): %s",
+                exc,
+            )
+            raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
 
     async def submit_investigation(
         self,
@@ -176,7 +185,13 @@ class LLMGateway:
             temperature=None,
             _queue_name=QUEUE_NAME,
         )
-        return await job.result(timeout=timeout)
+        try:
+            return await job.result(timeout=timeout)
+        except DeserializationError as exc:
+            logger.error(
+                "arq job result deserialization failed for investigation job: %s", exc
+            )
+            raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
 
     async def submit_investigation_turn(
         self,
@@ -206,7 +221,14 @@ class LLMGateway:
             temperature=None,
             _queue_name=QUEUE_NAME,
         )
-        return await job.result(timeout=timeout)
+        try:
+            return await job.result(timeout=timeout)
+        except DeserializationError as exc:
+            logger.error(
+                "arq job result deserialization failed for investigation_turn job: %s",
+                exc,
+            )
+            raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
 
     async def submit_chat(
         self,
@@ -234,7 +256,13 @@ class LLMGateway:
             temperature=None,
             _queue_name=QUEUE_NAME,
         )
-        return await job.result(timeout=timeout)
+        try:
+            return await job.result(timeout=timeout)
+        except DeserializationError as exc:
+            logger.error(
+                "arq job result deserialization failed for chat job: %s", exc
+            )
+            raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
 
     async def submit_insights(
         self,
@@ -259,7 +287,13 @@ class LLMGateway:
             temperature=temperature,
             _queue_name=QUEUE_NAME,
         )
-        return await job.result(timeout=timeout)
+        try:
+            return await job.result(timeout=timeout)
+        except DeserializationError as exc:
+            logger.error(
+                "arq job result deserialization failed for insights job: %s", exc
+            )
+            raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

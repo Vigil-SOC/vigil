@@ -12,6 +12,14 @@ from sqlalchemy.exc import IntegrityError
 # Marker applied to classes that require a live database session.
 _requires_db = pytest.mark.skip(reason="Requires database fixtures - see tests/conftest.py to set up")
 
+try:
+    from deeptempo_core.database.models import (
+        User, Case, Finding,
+        SLAPolicy
+    )
+except ImportError:
+    User = Case = Finding = SLAPolicy = None
+
 
 class TestDatabaseMetadataRegistration:
     """Validate that all SQLAlchemy models are registered with Base.metadata.

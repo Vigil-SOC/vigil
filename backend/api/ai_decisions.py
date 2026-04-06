@@ -155,22 +155,52 @@ async def submit_feedback(decision_id: str, request: SubmitFeedbackRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/decisions/{decision_id}", response_model=AIDecisionResponse)
-async def get_ai_decision(decision_id: str):
-    """Get a specific AI decision by ID."""
+@router.get("/decisions/stats", response_model=AIDecisionStatsResponse)
+async def get_ai_decision_stats(
+    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
+    days: int = Query(30, ge=1, le=365, description="Number of days to analyze")
+):
+    """
+    Get statistics on AI decisions and feedback.
+
+    Provides metrics on AI accuracy, agreement rates, and time saved.
+    """
     try:
         db_service = DatabaseService()
-        decision = db_service.get_ai_decision(decision_id)
-        
-        if not decision:
-            raise HTTPException(status_code=404, detail=f"AI decision not found: {decision_id}")
-        
-        return AIDecisionResponse(**decision.to_dict())
-        
-    except HTTPException:
-        raise
+        stats = db_service.get_ai_decision_stats(agent_id=agent_id, days=days)
+
+        return AIDecisionStatsResponse(**stats)
+
     except Exception as e:
-        logger.error(f"Error getting AI decision: {e}")
+        logger.error(f"Error getting AI decision stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/decisions/pending-feedback")
+async def get_pending_feedback_decisions(
+    limit: int = Query(50, ge=1, le=100)
+):
+    """
+    Get decisions that are awaiting human feedback.
+
+    Returns decisions ordered by confidence (lowest first) since
+    low-confidence decisions benefit most from feedback.
+    """
+    try:
+        db_service = DatabaseService()
+
+        decisions = db_service.list_ai_decisions(
+            has_feedback=False,
+            limit=limit
+        )
+
+        # Sort by confidence score (lowest first)
+        decisions_sorted = sorted(decisions, key=lambda d: d.confidence_score)
+
+        return [AIDecisionResponse(**d.to_dict()) for d in decisions_sorted]
+
+    except Exception as e:
+        logger.error(f"Error getting pending feedback decisions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -186,12 +216,12 @@ async def list_ai_decisions(
 ):
     """
     List AI decisions with optional filters.
-    
+
     Use this to review decisions that need feedback or analyze past decisions.
     """
     try:
         db_service = DatabaseService()
-        
+
         decisions = db_service.list_ai_decisions(
             agent_id=agent_id,
             finding_id=finding_id,
@@ -203,59 +233,29 @@ async def list_ai_decisions(
 
         if workflow_id:
             decisions = [d for d in decisions if d.workflow_id == workflow_id]
-        
+
         return [AIDecisionResponse(**d.to_dict()) for d in decisions]
-        
+
     except Exception as e:
         logger.error(f"Error listing AI decisions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/decisions/stats", response_model=AIDecisionStatsResponse)
-async def get_ai_decision_stats(
-    agent_id: Optional[str] = Query(None, description="Filter by agent ID"),
-    days: int = Query(30, ge=1, le=365, description="Number of days to analyze")
-):
-    """
-    Get statistics on AI decisions and feedback.
-    
-    Provides metrics on AI accuracy, agreement rates, and time saved.
-    """
+@router.get("/decisions/{decision_id}", response_model=AIDecisionResponse)
+async def get_ai_decision(decision_id: str):
+    """Get a specific AI decision by ID."""
     try:
         db_service = DatabaseService()
-        stats = db_service.get_ai_decision_stats(agent_id=agent_id, days=days)
-        
-        return AIDecisionStatsResponse(**stats)
-        
-    except Exception as e:
-        logger.error(f"Error getting AI decision stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        decision = db_service.get_ai_decision(decision_id)
 
+        if not decision:
+            raise HTTPException(status_code=404, detail=f"AI decision not found: {decision_id}")
 
-@router.get("/decisions/pending-feedback")
-async def get_pending_feedback_decisions(
-    limit: int = Query(50, ge=1, le=100)
-):
-    """
-    Get decisions that are awaiting human feedback.
-    
-    Returns decisions ordered by confidence (lowest first) since
-    low-confidence decisions benefit most from feedback.
-    """
-    try:
-        db_service = DatabaseService()
-        
-        decisions = db_service.list_ai_decisions(
-            has_feedback=False,
-            limit=limit
-        )
-        
-        # Sort by confidence score (lowest first)
-        decisions_sorted = sorted(decisions, key=lambda d: d.confidence_score)
-        
-        return [AIDecisionResponse(**d.to_dict()) for d in decisions_sorted]
-        
+        return AIDecisionResponse(**decision.to_dict())
+
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error getting pending feedback decisions: {e}")
+        logger.error(f"Error getting AI decision: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

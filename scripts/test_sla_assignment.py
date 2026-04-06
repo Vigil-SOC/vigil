@@ -17,7 +17,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from services.case_sla_service import CaseSLAService
-from database.connection import get_db_session
+from database.connection import get_db_session, init_database
 from database.models import SLAPolicy, Case, CaseSLA
 import uuid
 from datetime import datetime
@@ -28,7 +28,8 @@ def test_sla_policies():
     print("\n" + "="*60)
     print("TEST 1: List SLA Policies")
     print("="*60)
-    
+
+    init_database()
     session = get_db_session()
     try:
         policies = session.query(SLAPolicy).filter(SLAPolicy.is_active == True).all()
@@ -53,7 +54,8 @@ def test_auto_sla_assignment():
     print("\n" + "="*60)
     print("TEST 2: Automatic SLA Assignment")
     print("="*60)
-    
+
+    init_database()
     session = get_db_session()
     sla_service = CaseSLAService()
     
@@ -120,7 +122,8 @@ def test_manual_sla_assignment():
     print("\n" + "="*60)
     print("TEST 3: Manual SLA Assignment")
     print("="*60)
-    
+
+    init_database()
     session = get_db_session()
     sla_service = CaseSLAService()
     
@@ -195,7 +198,8 @@ def test_sla_pause_resume():
     print("\n" + "="*60)
     print("TEST 4: SLA Pause/Resume")
     print("="*60)
-    
+
+    init_database()
     session = get_db_session()
     sla_service = CaseSLAService()
     

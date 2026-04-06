@@ -91,6 +91,15 @@
       }
     },
 
+    "splunk-selfhosted": {
+      "command": "python3",
+      "args": ["tools/splunk.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "Self-hosted Splunk via REST API. Set SPLUNK_URL (e.g., https://splunk.example.com:8089), SPLUNK_USERNAME, and SPLUNK_PASSWORD in .env. Port 8089 uses HTTPS by default."
+      }
+    },
+
     "pagerduty": {
       "command": "uvx",
       "args": ["pagerduty-mcp", "--enable-write-tools"],

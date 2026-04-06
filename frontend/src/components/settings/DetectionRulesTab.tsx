@@ -23,7 +23,6 @@ import {
   InputLabel,
   CircularProgress,
   alpha,
-  useTheme,
 } from '@mui/material'
 import {
   Refresh as RefreshIcon,
@@ -74,6 +73,10 @@ const FORMAT_COLORS: Record<string, string> = {
   auto: '#607d8b',
 }
 
+const RULE_FORMATS = ['sigma', 'splunk', 'elastic', 'kql', 'auto'] as const
+type RuleFormat = typeof RULE_FORMATS[number]
+const isRuleFormat = (v: string): v is RuleFormat => (RULE_FORMATS as readonly string[]).includes(v)
+
 const STATUS_ICON: Record<string, React.ReactNode> = {
   ready: <CheckIcon color="success" sx={{ fontSize: 18 }} />,
   error: <ErrorIcon color="error" sx={{ fontSize: 18 }} />,
@@ -82,7 +85,6 @@ const STATUS_ICON: Record<string, React.ReactNode> = {
 }
 
 export default function DetectionRulesTab() {
-  const theme = useTheme()
   const [sources, setSources] = useState<Source[]>([])
   const [stats, setStats] = useState<Stats | null>(null)
   const [loading, setLoading] = useState(false)
@@ -97,7 +99,7 @@ export default function DetectionRulesTab() {
   const [newSource, setNewSource] = useState({
     name: '',
     source_type: 'git' as 'git' | 'local',
-    format: 'sigma' as string,
+    format: 'sigma' as RuleFormat,
     url: '',
     path: '',
     subdirectory: '',
@@ -382,7 +384,11 @@ export default function DetectionRulesTab() {
               <Select
                 value={newSource.format}
                 label="Rule Format"
-                onChange={(e) => setNewSource({ ...newSource, format: e.target.value })}
+                onChange={(e) => {
+                  if (isRuleFormat(e.target.value)) {
+                    setNewSource({ ...newSource, format: e.target.value })
+                  }
+                }}
               >
                 <MenuItem value="sigma">Sigma (YAML)</MenuItem>
                 <MenuItem value="splunk">Splunk ESCU (YAML)</MenuItem>

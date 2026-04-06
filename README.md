@@ -1,6 +1,8 @@
-# Vigil 
+# Vigil
 
-Vigil is a community built AI-Native Security Operations Center built on three pillars: **Agents** for performing specific capabilities, **Workflows** for orchestrated multi-agent workflows, and **Integrations** for data integestion, tools and integrations to other open source projects.  Actually the most important pillar is **YOU** - this is your project, please contribute via feedback, code, a repo star, memes on Discord or otherwise.  
+Vigil is the open-source AI SOC where your playbooks are plain-text files, your agent logic is readable Python, and your integrations use an open standard ([MCP](https://modelcontextprotocol.io/)). Every proprietary AI SOC on the market is a black box you rent. Vigil is a capability you own.
+
+The project is built on three pillars: **Agents** — 12 specialized AI agents you can read, fork, and rewire; **Workflows** — multi-agent playbooks defined as Markdown files you edit directly; and **Integrations** — 30+ tool connections via MCP that you configure, not a vendor. The most important pillar is **YOU** — this is your project. Contribute via feedback, code, a repo star, memes on Discord, or otherwise.
 
 ---
 
@@ -44,6 +46,50 @@ workflows/
 ├── full-investigation/WORKFLOW.md
 ├── threat-hunt/WORKFLOW.md
 └── forensic-analysis/WORKFLOW.md
+```
+
+### Create Your Own Workflow in 60 Seconds
+
+Every workflow is a Markdown file. Here's what one looks like inside:
+
+```markdown
+---
+name: phishing-triage
+description: "Triage and investigate phishing reports from user submissions."
+agents:
+  - triage
+  - investigator
+  - responder
+tools-used:
+  - get_finding
+  - list_findings
+  - nearest_neighbors
+  - create_approval_action
+use-case: "A user reports a suspicious email and the SOC needs to assess, investigate, and contain."
+trigger-examples:
+  - "Run phishing triage on finding f-20260401-abc123"
+  - "Investigate this phishing report"
+---
+
+# Phishing Triage Workflow
+
+## Phase 1: Assess the Report (Triage Agent)
+Fetch the finding, extract sender/domain/URLs, score severity, check for known-bad indicators.
+
+## Phase 2: Investigate (Investigator Agent)
+Use nearest_neighbors to find similar reports. Correlate with detection rules. Build an evidence timeline.
+
+## Phase 3: Contain (Responder Agent)
+If confirmed malicious: block sender domain, quarantine matching emails, submit approval actions with confidence scores.
+```
+
+Edit this file. That's it. No vendor ticket, no professional services, no YAML/JSON schema to learn.
+
+Scaffold a new workflow instantly with the CLI:
+
+```bash
+python scripts/create_workflow.py phishing-triage
+# creates workflows/phishing-triage/WORKFLOW.md with a commented template
 ```
 
 ---

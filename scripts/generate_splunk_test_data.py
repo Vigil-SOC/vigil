@@ -500,14 +500,29 @@ class SplunkTestDataGenerator:
             
             # Format for HEC (multiple events)
             hec_payload = ""
+            reserved_keys = {"_time", "host", "source", "sourcetype", "index"}
             for event in batch:
+                # Convert ISO timestamp to Unix epoch float required by HEC
+                iso_time = event.get("_time")
+                try:
+                    dt = datetime.fromisoformat(iso_time)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    unix_time = dt.timestamp()
+                except (ValueError, TypeError):
+                    logger.warning(f"Failed to parse _time '{iso_time}', using current UTC time")
+                    unix_time = datetime.now(timezone.utc).timestamp()
+
+                # Strip reserved Splunk fields from the inner event object
+                clean_event = {k: v for k, v in event.items() if k not in reserved_keys}
+
                 hec_event = {
-                    "time": event["_time"],
+                    "time": unix_time,
                     "sourcetype": event.get("sourcetype", "json"),
                     "source": event.get("source", "test_data_generator"),
                     "host": event.get("host", "test-host"),
                     "index": index,
-                    "event": event
+                    "event": clean_event
                 }
                 hec_payload += json.dumps(hec_event) + "\n"
             
