@@ -811,10 +811,10 @@ export const localServicesApi = {
 // Skills API (workflow skill management and execution)
 export const skillsApi = {
   // List all available skills
-  listSkills: () => api.get('/skills'),
+  listSkills: () => api.get('/workflows'),
 
   // Get full details for a specific skill (including markdown body)
-  getSkill: (skillId: string) => api.get(`/skills/${skillId}`),
+  getSkill: (skillId: string) => api.get(`/workflows/${skillId}`),
 
   // Execute a skill workflow
   executeSkill: (skillId: string, params: {
@@ -822,10 +822,10 @@ export const skillsApi = {
     case_id?: string
     context?: string
     hypothesis?: string
-  }) => api.post(`/skills/${skillId}/execute`, params),
+  }) => api.post(`/workflows/${skillId}/execute`, params),
 
   // Force reload skills from disk
-  reloadSkills: () => api.post('/skills/reload'),
+  reloadSkills: () => api.post('/workflows/reload'),
 }
 
 // Orchestrator API (autonomous investigation management)

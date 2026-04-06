@@ -126,7 +126,7 @@ export default function Skills() {
     setError(null)
     try {
       const response = await skillsApi.listSkills()
-      setSkills(response.data.skills || [])
+      setSkills(response.data.workflows || [])
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load skills')
     } finally {
@@ -140,7 +140,7 @@ export default function Skills() {
     try {
       await skillsApi.reloadSkills()
       const response = await skillsApi.listSkills()
-      setSkills(response.data.skills || [])
+      setSkills(response.data.workflows || [])
       setSnackbar({ open: true, message: 'Skills reloaded from disk', severity: 'success' })
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to reload skills')
