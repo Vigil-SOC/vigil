@@ -66,7 +66,9 @@ from api.detection_rules import router as detection_rules_router
 from api.orchestrator import router as orchestrator_router
 
 from core.rate_limit import rate_limit_dependency
-from monitoring import init_sentry, PROMETHEUS_AVAILABLE, PrometheusMiddleware, get_metrics_response
+from monitoring import init_sentry, PROMETHEUS_AVAILABLE, get_metrics_response
+if PROMETHEUS_AVAILABLE:
+    from monitoring import PrometheusMiddleware
 
 # Configure logging
 log_dir = Path.home() / '.deeptempo'

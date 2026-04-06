@@ -141,18 +141,22 @@ try:
             if request.url.path == "/metrics":
                 return await call_next(request)
             start = time.perf_counter()
-            response = await call_next(request)
-            duration = time.perf_counter() - start
-            http_requests_total.labels(
-                method=request.method,
-                endpoint=request.url.path,
-                status=response.status_code,
-            ).inc()
-            http_request_duration_seconds.labels(
-                method=request.method,
-                endpoint=request.url.path,
-            ).observe(duration)
-            return response
+            status_code = 500
+            try:
+                response = await call_next(request)
+                status_code = response.status_code
+                return response
+            finally:
+                duration = time.perf_counter() - start
+                http_requests_total.labels(
+                    method=request.method,
+                    endpoint=request.url.path,
+                    status=status_code,
+                ).inc()
+                http_request_duration_seconds.labels(
+                    method=request.method,
+                    endpoint=request.url.path,
+                ).observe(duration)
 
 except ImportError:
     logger.warning("prometheus_client not installed, metrics disabled")
