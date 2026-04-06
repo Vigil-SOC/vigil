@@ -66,6 +66,7 @@ from api.detection_rules import router as detection_rules_router
 from api.orchestrator import router as orchestrator_router
 
 from core.rate_limit import rate_limit_dependency
+from monitoring import init_sentry, PROMETHEUS_AVAILABLE, PrometheusMiddleware, get_metrics_response
 
 # Configure logging
 log_dir = Path.home() / '.deeptempo'
@@ -81,6 +82,9 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Initialize Sentry as early as possible (no-op if SENTRY_DSN is unset)
+init_sentry()
 
 # Create FastAPI app
 app = FastAPI(
@@ -103,6 +107,9 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["X-MFA-Required"],
 )
+
+if PROMETHEUS_AVAILABLE:
+    app.add_middleware(PrometheusMiddleware)
 
 # Include API routers
 
@@ -366,6 +373,13 @@ async def shutdown_event():
                 logger.info(f"Stopped {stopped_count} MCP server processes")
     except Exception as e:
         logger.error(f"Error during shutdown cleanup: {e}")
+
+
+# Prometheus metrics endpoint
+@app.get("/metrics", include_in_schema=False)
+async def metrics():
+    """Expose Prometheus metrics for scraping."""
+    return get_metrics_response()
 
 
 # Health check endpoint
