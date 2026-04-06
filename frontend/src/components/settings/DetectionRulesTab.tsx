@@ -100,6 +100,7 @@ export default function DetectionRulesTab() {
     name: '',
     source_type: 'git' as 'git' | 'local',
     format: 'sigma' as RuleFormat,
+
     url: '',
     path: '',
     subdirectory: '',
@@ -384,11 +385,13 @@ export default function DetectionRulesTab() {
               <Select
                 value={newSource.format}
                 label="Rule Format"
+
                 onChange={(e) => {
                   if (isRuleFormat(e.target.value)) {
                     setNewSource({ ...newSource, format: e.target.value })
                   }
                 }}
+
               >
                 <MenuItem value="sigma">Sigma (YAML)</MenuItem>
                 <MenuItem value="splunk">Splunk ESCU (YAML)</MenuItem>
