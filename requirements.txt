@@ -57,3 +57,10 @@ redis>=5.0.0
 sentry-sdk>=1.40.0
 prometheus-client>=0.19.0
 
+# OpenTelemetry (enabled via VIGIL_OTEL_ENABLED=true)
+opentelemetry-api>=1.25.0
+opentelemetry-sdk>=1.25.0
+opentelemetry-exporter-otlp-proto-grpc>=1.25.0
+opentelemetry-exporter-otlp-proto-http>=1.25.0
+opentelemetry-semantic-conventions>=0.46b0
+
