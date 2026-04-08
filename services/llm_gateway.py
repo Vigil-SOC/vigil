@@ -115,11 +115,33 @@ class LLMGateway:
     async def create(cls, settings: Optional[RedisSettings] = None) -> "LLMGateway":
         settings = settings or _redis_settings()
         pool = await create_pool(settings)
+
+        # Instrument the underlying Redis client with OTEL tracing
+        try:
+            from opentelemetry.instrumentation.redis import RedisInstrumentor
+            RedisInstrumentor().instrument()
+            logger.debug("Redis OTEL instrumentation enabled")
+        except Exception as _inst_err:
+            logger.debug("Redis OTEL instrumentation skipped: %s", _inst_err)
+
         return cls(pool)
 
     async def close(self):
         if self._pool:
             await self._pool.aclose()
+
+    # -- Trace context helpers -----------------------------------------------
+
+    @staticmethod
+    def _get_traceparent() -> str:
+        """Capture the current W3C traceparent for ARQ job propagation."""
+        try:
+            from core.telemetry import inject_traceparent
+            carrier: Dict[str, str] = {}
+            inject_traceparent(carrier)
+            return carrier.get("traceparent", "")
+        except Exception:
+            return ""
 
     # -- Convenience enqueue methods ----------------------------------------
 
@@ -143,6 +165,7 @@ class LLMGateway:
             thinking_budget=0,
             tools=None,
             temperature=None,
+            traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
         )
         try:
@@ -183,6 +206,7 @@ class LLMGateway:
             thinking_budget=thinking_budget,
             tools=tools,
             temperature=None,
+            traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
         )
         try:
@@ -219,6 +243,7 @@ class LLMGateway:
             thinking_budget=thinking_budget,
             tools=tools,
             temperature=None,
+            traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
         )
         try:
@@ -254,6 +279,7 @@ class LLMGateway:
             thinking_budget=thinking_budget,
             tools=None,
             temperature=None,
+            traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
         )
         try:
@@ -285,6 +311,7 @@ class LLMGateway:
             thinking_budget=0,
             tools=None,
             temperature=temperature,
+            traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
         )
         try:

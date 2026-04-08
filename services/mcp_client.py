@@ -306,51 +306,104 @@ class MCPClient:
     async def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:
         """
         Call a tool on an MCP server using persistent connection with timeout.
-        
+
         Args:
             server_name: Name of the server
             tool_name: Name of the tool to call
             arguments: Tool arguments
             timeout: Timeout in seconds (default: 30)
-            
+
         Returns:
             Tool result dictionary
         """
+        import json as _json
+        import time as _time
+
         if not MCP_AVAILABLE:
             return {"error": "MCP SDK not available", "content": [{"type": "text", "text": "MCP SDK not available"}]}
-        
+
         if server_name not in self.mcp_service.servers:
             return {"error": f"Unknown server: {server_name}", "content": [{"type": "text", "text": f"Unknown server: {server_name}"}]}
-        
+
+        # OTEL span for transport-level MCP call
+        _mcp_span = None
+        _mcp_t0 = _time.monotonic()
+        try:
+            from core.telemetry import get_tracer
+            from opentelemetry.trace import SpanKind, StatusCode as _SC
+            _mcp_tracer = get_tracer("vigil.services.mcp_client")
+            _mcp_span = _mcp_tracer.start_span(
+                "mcp.call_tool",
+                kind=SpanKind.CLIENT,
+                attributes={
+                    "mcp.server.name": server_name,
+                    "mcp.transport": "stdio",
+                    "vigil.tool.name": tool_name,
+                    "vigil.tool.input_size": len(_json.dumps(arguments, default=str)),
+                },
+            )
+        except Exception:
+            _SC = None
+
         # Ensure we have a persistent session
         if server_name not in self.persistent_sessions:
             logger.info(f"Creating persistent connection to {server_name}...")
             if not await self.connect_to_server(server_name, persistent=True):
-                return {
+                _err = {
                     "error": True,
                     "content": [{"type": "text", "text": f"Failed to connect to server: {server_name}"}]
                 }
-        
+                try:
+                    if _mcp_span is not None:
+                        _mcp_span.set_attribute("vigil.tool.success", False)
+                        _mcp_span.end()
+                except Exception:
+                    pass
+                return _err
+
         persistent_session = self.persistent_sessions[server_name]
-        
+
         async def _call_tool_persistent():
             try:
                 return await persistent_session.call_tool(tool_name, arguments)
             except Exception as e:
                 logger.error(f"Error in tool call {tool_name} on {server_name}: {e}")
                 raise
-        
+
         try:
             # Apply timeout
-            return await asyncio.wait_for(_call_tool_persistent(), timeout=timeout)
+            result = await asyncio.wait_for(_call_tool_persistent(), timeout=timeout)
+            try:
+                if _mcp_span is not None:
+                    is_err = result.get("error", False) if isinstance(result, dict) else False
+                    _mcp_span.set_attribute("vigil.tool.success", not is_err)
+                    _mcp_span.set_attribute("vigil.tool.output_size", len(_json.dumps(result, default=str)))
+                    _mcp_span.set_attribute("vigil.tool.duration_ms", round((_time.monotonic() - _mcp_t0) * 1000, 1))
+                    _mcp_span.end()
+            except Exception:
+                pass
+            return result
         except asyncio.TimeoutError:
             logger.error(f"Tool call {tool_name} on {server_name} timed out after {timeout}s")
+            try:
+                if _mcp_span is not None and _SC is not None:
+                    _mcp_span.set_attribute("vigil.tool.success", False)
+                    _mcp_span.set_status(_SC.ERROR, f"Timeout after {timeout}s")
+                    _mcp_span.end()
+            except Exception:
+                pass
             return {
                 "error": True,
                 "content": [{"type": "text", "text": f"Tool call timed out after {timeout} seconds. The MCP server may not be responding."}]
             }
         except Exception as e:
             logger.error(f"Error calling tool {tool_name} on {server_name}: {e}")
+            try:
+                if _mcp_span is not None:
+                    _mcp_span.set_attribute("vigil.tool.success", False)
+                    _mcp_span.end()
+            except Exception:
+                pass
             return {"error": True, "content": [{"type": "text", "text": f"Error: {str(e)}"}]}
     
     def get_tools_for_claude(self) -> List[Dict]:

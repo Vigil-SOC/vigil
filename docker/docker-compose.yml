@@ -98,9 +98,9 @@ services:
       - DAEMON_THREAT_HUNT_ENABLED=${DAEMON_THREAT_HUNT_ENABLED:-true}
       - DAEMON_THREAT_HUNT_INTERVAL=${DAEMON_THREAT_HUNT_INTERVAL:-86400}
       - DAEMON_CLEANUP_RETENTION_DAYS=${DAEMON_CLEANUP_RETENTION_DAYS:-90}
-      # Metrics
+      # Metrics / Health
       - DAEMON_METRICS_ENABLED=${DAEMON_METRICS_ENABLED:-true}
-      - DAEMON_METRICS_PORT=${DAEMON_METRICS_PORT:-9090}
+      - DAEMON_HEALTH_PORT=${DAEMON_HEALTH_PORT:-9091}
       # Webhook
       - DAEMON_WEBHOOK_ENABLED=${DAEMON_WEBHOOK_ENABLED:-true}
       - DAEMON_WEBHOOK_PORT=${DAEMON_WEBHOOK_PORT:-8081}
@@ -119,7 +119,8 @@ services:
       - PAGERDUTY_ROUTING_KEY=${PAGERDUTY_ROUTING_KEY}
     ports:
       - "8081:8081"  # Webhook ingestion
-      - "9090:9090"  # Metrics/health
+      - "9090:9090"  # Prometheus /metrics (OTEL PrometheusMetricReader)
+      - "9091:9091"  # Health /health + /status
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,6 +171,78 @@ services:
     profiles:
       - dev  # Only start in dev profile
 
+  # ─── Observability stack (opt-in: --profile observability) ────────────────
+
+  # OpenTelemetry Collector — receives OTLP spans/metrics, fans out to Jaeger + Prometheus
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.100.0
+    container_name: deeptempo-otel-collector
+    command: ["--config=/etc/otel/otel-collector.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otel/otel-collector.yaml:ro
+    ports:
+      - "4317:4317"  # OTLP gRPC
+      - "4318:4318"  # OTLP HTTP
+    networks:
+      - deeptempo-network
+    profiles:
+      - observability
+
+  # Jaeger — distributed trace UI
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: deeptempo-jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # Jaeger UI
+    networks:
+      - deeptempo-network
+    profiles:
+      - observability
+
+  # Prometheus — scrapes /metrics from daemon and backend
+  prometheus:
+    image: prom/prometheus:v2.51.2
+    container_name: deeptempo-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9095:9090"  # Prometheus UI on host port 9095 (avoids conflict with daemon's 9090)
+    networks:
+      - deeptempo-network
+    profiles:
+      - observability
+
+  # Grafana — dashboards for system overview, LLM costs, investigation lifecycle
+  grafana:
+    image: grafana/grafana:10.4.0
+    container_name: deeptempo-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    ports:
+      - "3001:3000"  # Grafana UI
+    depends_on:
+      - prometheus
+    networks:
+      - deeptempo-network
+    profiles:
+      - observability
+
+  # ─── SIEM testing ─────────────────────────────────────────────────────────
+
   # Splunk Enterprise for SIEM testing
   splunk:
     image: splunk/splunk:latest
@@ -210,6 +283,10 @@ volumes:
   splunk_data:
     driver: local
   splunk_etc:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
     driver: local
 
 networks:

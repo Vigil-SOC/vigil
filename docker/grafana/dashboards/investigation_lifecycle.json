@@ -1,0 +1,172 @@
+{
+  "title": "Vigil SOC — Investigation Lifecycle",
+  "uid": "vigil-investigation-lifecycle",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Investigations Created",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_investigations_created_total",
+          "legendFormat": "created"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Investigations Completed",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_investigations_completed_total",
+          "legendFormat": "completed"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Investigations Failed",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "thresholds": {
+          "steps": [
+            { "value": 0, "color": "green" },
+            { "value": 1, "color": "red" }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_investigations_failed_total",
+          "legendFormat": "failed"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Active Agents",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_active_agents",
+          "legendFormat": "active"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Dedup Prevented",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_dedup_prevented_total",
+          "legendFormat": "dedup"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Investigation Rate (created/hr)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(soc_daemon_orchestrator_investigations_created_total[1h]) * 3600",
+          "legendFormat": "created/hr"
+        },
+        {
+          "expr": "rate(soc_daemon_orchestrator_investigations_completed_total[1h]) * 3600",
+          "legendFormat": "completed/hr"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Agent Concurrency Over Time",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_active_agents",
+          "legendFormat": "active agents"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Tool Success Rate by Tier",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 } },
+      "targets": [
+        {
+          "expr": "rate(vigil_tool_success_total[5m]) / rate(vigil_tool_calls_total[5m])",
+          "legendFormat": "tier {{vigil_tool_tier}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "MCP Tool Duration P95 by Tool",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ms" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(vigil_tool_duration_ms_bucket[5m]))",
+          "legendFormat": "P95 {{vigil_tool_name}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "LLM Cost per Investigation (avg)",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } },
+      "targets": [
+        {
+          "expr": "rate(soc_daemon_llm_cost_usd_total[1h]) / rate(soc_daemon_orchestrator_investigations_completed_total[1h])",
+          "legendFormat": "cost/investigation"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "title": "Stuck Agents Killed",
+      "type": "stat",
+      "gridPos": { "x": 20, "y": 0, "w": 4, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "thresholds": {
+          "steps": [
+            { "value": 0, "color": "green" },
+            { "value": 1, "color": "orange" },
+            { "value": 5, "color": "red" }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_stuck_agents_total",
+          "legendFormat": "stuck"
+        }
+      ]
+    }
+  ]
+}

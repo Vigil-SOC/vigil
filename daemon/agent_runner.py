@@ -21,6 +21,13 @@ from daemon.workdir import WorkdirManager
 
 logger = logging.getLogger(__name__)
 
+try:
+    from core.telemetry import get_tracer, extract_traceparent
+    from opentelemetry.trace import SpanKind
+    _tracer = get_tracer("vigil.daemon.agent_runner")
+except Exception:
+    _tracer = None  # type: ignore[assignment]
+
 SONNET_INPUT_COST = 3.0 / 1_000_000
 SONNET_OUTPUT_COST = 15.0 / 1_000_000
 
@@ -260,6 +267,24 @@ class AgentRunner:
         total_output_tokens = 0
         total_cost = 0.0
 
+        # Re-attach to the root investigation span as a child span
+        _agent_span = None
+        try:
+            if _tracer is not None:
+                _tp = investigation.get("otel_traceparent", "")
+                _parent_ctx = extract_traceparent({"traceparent": _tp}) if _tp else None
+                _agent_span = _tracer.start_span(
+                    "agent_run",
+                    context=_parent_ctx,
+                    kind=SpanKind.INTERNAL,
+                    attributes={
+                        "vigil.investigation.id": inv_id,
+                        "vigil.investigation.workflow_id": investigation.get("workflow_id", ""),
+                    },
+                )
+        except Exception:
+            pass
+
         try:
             while not shutdown_event.is_set():
                 state = self.workdir.read_state(inv_id)
@@ -306,11 +331,32 @@ class AgentRunner:
                 plan = self.workdir.read_file(inv_id, "plan.md")
                 prompt = self._build_prompt(inv_id, plan, state, iteration)
 
+                # Iteration-level span
+                _iter_span = None
+                try:
+                    if _tracer is not None:
+                        _iter_span = _tracer.start_span(
+                            "iteration",
+                            kind=SpanKind.INTERNAL,
+                            attributes={
+                                "vigil.investigation.id": inv_id,
+                                "vigil.agent.iteration": iteration,
+                                "vigil.investigation.current_step": state.get("current_step", 1),
+                            },
+                        )
+                except Exception:
+                    pass
+
                 try:
                     result = await self._call_claude(inv_id, prompt)
                 except Exception as e:
                     logger.error(f"{inv_id}: Claude call failed: {e}")
                     self.workdir.append_log(inv_id, {"event": "error", "error": str(e)})
+                    if _iter_span is not None:
+                        try:
+                            _iter_span.end()
+                        except Exception:
+                            pass
                     state["error_count"] = state.get("error_count", 0) + 1
                     if state["error_count"] >= 3:
                         self._mark_failed(inv_id, f"Repeated errors: {e}")
@@ -348,6 +394,15 @@ class AgentRunner:
                     "current_step": refreshed.get("current_step", 0),
                 })
 
+                # Close iteration span with token/cost summary
+                try:
+                    if _iter_span is not None:
+                        _iter_span.set_attribute("gen_ai.usage.input_tokens", in_tokens)
+                        _iter_span.set_attribute("gen_ai.usage.output_tokens", out_tokens)
+                        _iter_span.end()
+                except Exception:
+                    pass
+
                 if refreshed.get("status") in ("completed", "review_submitted", "failed"):
                     break
 
@@ -373,6 +428,14 @@ class AgentRunner:
             })
         finally:
             self._active_agents.pop(inv_id, None)
+            try:
+                if _agent_span is not None:
+                    _agent_span.set_attribute("vigil.agent.total_iterations", iteration)
+                    _agent_span.set_attribute("gen_ai.usage.input_tokens", total_input_tokens)
+                    _agent_span.set_attribute("gen_ai.usage.output_tokens", total_output_tokens)
+                    _agent_span.end()
+            except Exception:
+                pass
 
     def _build_prompt(self, inv_id: str, plan: str, state: Dict, iteration: int) -> str:
         """Build the Claude prompt from plan, context, and state."""
@@ -513,6 +576,23 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         max_tok = max(16000, thinking_budget + 4096) if thinking_enabled else 4096
 
         for turn in range(max_turns):
+            # LLM call span (one per tool-use round)
+            _llm_span = None
+            try:
+                if _tracer is not None:
+                    _llm_span = _tracer.start_span(
+                        "llm_call",
+                        kind=SpanKind.CLIENT,
+                        attributes={
+                            "vigil.investigation.id": inv_id,
+                            "gen_ai.system": "anthropic",
+                            "gen_ai.request.model": self.config.plan_model,
+                            "gen_ai.tool_use.round": turn,
+                        },
+                    )
+            except Exception:
+                pass
+
             try:
                 response = await self._llm_gateway.submit_investigation_turn(
                     inv_id=inv_id,
@@ -526,7 +606,21 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 )
             except Exception as e:
                 logger.error(f"{inv_id}: LLM queue error: {e}")
+                try:
+                    if _llm_span is not None:
+                        _llm_span.end()
+                except Exception:
+                    pass
                 raise
+
+            try:
+                if _llm_span is not None:
+                    _llm_span.set_attribute("gen_ai.usage.input_tokens", response.get("input_tokens", 0))
+                    _llm_span.set_attribute("gen_ai.usage.output_tokens", response.get("output_tokens", 0))
+                    _llm_span.set_attribute("gen_ai.finish_reason", response.get("stop_reason", ""))
+                    _llm_span.end()
+            except Exception:
+                pass
 
             total_input += response.get("input_tokens", 0)
             total_output += response.get("output_tokens", 0)
@@ -676,7 +770,25 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
     async def _execute_external_tool(self, inv_id: str, tool_name: str, tool_input: Dict) -> str:
         """Route to backend or MCP tool execution, enforcing safety guardrails."""
+        import time as _time
         tier = _get_tool_tier(tool_name)
+
+        _tool_span = None
+        _t0 = _time.monotonic()
+        try:
+            if _tracer is not None:
+                _tool_span = _tracer.start_span(
+                    "tool_call",
+                    kind=SpanKind.CLIENT,
+                    attributes={
+                        "vigil.investigation.id": inv_id,
+                        "vigil.tool.name": tool_name,
+                        "vigil.tool.tier": tier,
+                        "vigil.tool.input_size": len(json.dumps(tool_input, default=str)),
+                    },
+                )
+        except Exception:
+            pass
 
         if tier == "forbidden":
             msg = f"Tool '{tool_name}' is forbidden for autonomous agents."
@@ -684,6 +796,12 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             self.workdir.append_log(inv_id, {
                 "event": "tool_blocked", "tool": tool_name, "tier": "forbidden",
             })
+            try:
+                if _tool_span is not None:
+                    _tool_span.set_attribute("vigil.tool.success", False)
+                    _tool_span.end()
+            except Exception:
+                pass
             return msg
 
         if self.config.dry_run and tier in ("managed", "requires_approval"):
@@ -702,7 +820,16 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                     tool_name, tool_input
                 )
                 if result is not None:
-                    return json.dumps(result, default=str) if not isinstance(result, str) else result
+                    _r = json.dumps(result, default=str) if not isinstance(result, str) else result
+                    try:
+                        if _tool_span is not None:
+                            _tool_span.set_attribute("vigil.tool.success", True)
+                            _tool_span.set_attribute("vigil.tool.output_size", len(_r))
+                            _tool_span.set_attribute("vigil.tool.duration_ms", round((_time.monotonic() - _t0) * 1000, 1))
+                            _tool_span.end()
+                    except Exception:
+                        pass
+                    return _r
             except Exception:
                 pass
 
@@ -729,11 +856,28 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 if server_name:
                     result = await client.call_tool(server_name, actual_tool_name, tool_input)
                     if result is not None:
-                        return json.dumps(result, default=str) if not isinstance(result, str) else result
+                        _r = json.dumps(result, default=str) if not isinstance(result, str) else result
+                        try:
+                            if _tool_span is not None:
+                                _tool_span.set_attribute("vigil.tool.success", True)
+                                _tool_span.set_attribute("vigil.tool.output_size", len(_r))
+                                _tool_span.set_attribute("vigil.tool.duration_ms", round((_time.monotonic() - _t0) * 1000, 1))
+                                _tool_span.end()
+                        except Exception:
+                            pass
+                        return _r
         except Exception as e:
             logger.debug(f"MCP tool {tool_name} call failed: {e}")
 
-        return f"Tool '{tool_name}' not found or unavailable"
+        _result_str = f"Tool '{tool_name}' not found or unavailable"
+        try:
+            if _tool_span is not None:
+                _tool_span.set_attribute("vigil.tool.success", False)
+                _tool_span.set_attribute("vigil.tool.duration_ms", round((_time.monotonic() - _t0) * 1000, 1))
+                _tool_span.end()
+        except Exception:
+            pass
+        return _result_str
 
     async def _request_tool_approval(self, inv_id: str, tool_name: str, tool_input: Dict) -> str:
         """Create an approval request and put the agent into waiting_approval state."""

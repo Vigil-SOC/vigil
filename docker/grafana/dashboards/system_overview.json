@@ -1,0 +1,123 @@
+{
+  "title": "Vigil SOC — System Overview",
+  "uid": "vigil-system-overview",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Daemon Uptime",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "unit": "s" },
+      "targets": [
+        {
+          "expr": "soc_daemon_uptime_seconds",
+          "legendFormat": "uptime"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Findings Polled / 5m",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "rate(soc_daemon_poller_findings_total[5m]) * 300",
+          "legendFormat": "findings/5m"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "HTTP Request Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(http_server_duration_milliseconds_count[1m])",
+          "legendFormat": "{{http_route}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Error Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(soc_daemon_errors_total[1m])",
+          "legendFormat": "errors/s"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Active Agents",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_active_agents",
+          "legendFormat": "active agents"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Investigations Created",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_investigations_created_total",
+          "legendFormat": "created"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Investigations Completed",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 0, "w": 4, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "soc_daemon_orchestrator_investigations_completed_total",
+          "legendFormat": "completed"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Polls by Source",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(soc_daemon_poller_polls_total[5m])",
+          "legendFormat": "{{source}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Poll Duration P95 by Source",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(soc_daemon_poller_duration_seconds_bucket[5m]))",
+          "legendFormat": "P95 {{source}}"
+        }
+      ]
+    }
+  ]
+}

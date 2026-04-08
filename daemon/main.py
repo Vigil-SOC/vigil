@@ -21,7 +21,14 @@ class SOCDaemon:
     def __init__(self, config: Optional[DaemonConfig] = None):
         self.config = config or DaemonConfig.from_env()
         self.config.setup_logging()
-        
+
+        # Initialize OTEL telemetry after logging is set up
+        try:
+            from core.telemetry import init_telemetry
+            init_telemetry("vigil-daemon")
+        except Exception as _tel_err:
+            logger.warning("Telemetry init failed (non-fatal): %s", _tel_err)
+
         self._running = False
         self._shutdown_event = asyncio.Event()
         
@@ -141,6 +148,14 @@ class SOCDaemon:
         await asyncio.gather(*tasks, return_exceptions=True)
         
         self._running = False
+
+        # Flush and shut down OTEL providers
+        try:
+            from core.telemetry import shutdown_telemetry
+            shutdown_telemetry()
+        except Exception as e:
+            logger.warning("Telemetry shutdown error (non-fatal): %s", e)
+
         logger.info("SOC Daemon shutdown complete")
     
     async def stop(self):

@@ -69,7 +69,7 @@ class SchedulerConfig:
 class MetricsConfig:
     """Configuration for metrics/health endpoint."""
     enabled: bool = True
-    port: int = 9090
+    port: int = 9091
     path: str = "/metrics"
 
 
@@ -170,7 +170,7 @@ class DaemonConfig:
         
         # Metrics
         config.metrics.enabled = os.getenv("DAEMON_METRICS_ENABLED", "true").lower() == "true"
-        config.metrics.port = int(os.getenv("DAEMON_METRICS_PORT", "9090"))
+        config.metrics.port = int(os.getenv("DAEMON_HEALTH_PORT", "9091"))
         
         # Orchestrator
         config.orchestrator.enabled = os.getenv("ORCHESTRATOR_ENABLED", "false").lower() == "true"
