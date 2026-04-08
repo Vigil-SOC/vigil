@@ -113,6 +113,17 @@ class WorkdirManager:
     
     def append_log(self, investigation_id: str, event: Dict[str, Any]):
         event.setdefault("ts", datetime.utcnow().isoformat())
+        event.setdefault("vigil.investigation.id", investigation_id)
+        # Embed current OTEL trace context so log lines are correlatable in Jaeger/Grafana
+        try:
+            from opentelemetry import trace
+            span = trace.get_current_span()
+            ctx = span.get_span_context()
+            if ctx and ctx.is_valid:
+                event["trace_id"] = format(ctx.trace_id, "032x")
+                event["span_id"] = format(ctx.span_id, "016x")
+        except Exception:
+            pass
         line = json.dumps(event, default=str) + "\n"
         self.append_file(investigation_id, "log.jsonl", line)
     

@@ -1,0 +1,123 @@
+{
+  "title": "Vigil SOC — LLM Costs",
+  "uid": "vigil-llm-costs",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Total Cost (USD) — Last 24h",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "options": {
+        "reduceOptions": { "calcs": ["sum"] },
+        "unit": "currencyUSD"
+      },
+      "targets": [
+        {
+          "expr": "increase(soc_daemon_llm_cost_usd_total[24h])",
+          "legendFormat": "cost"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Hourly LLM Cost",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" } },
+      "targets": [
+        {
+          "expr": "rate(soc_daemon_llm_cost_usd_total[1h]) * 3600",
+          "legendFormat": "cost/hour"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Tokens per Model",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(soc_daemon_llm_tokens_total[5m])",
+          "legendFormat": "{{gen_ai_request_model}} {{token_type}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Call Duration P50 / P95 / P99",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(soc_daemon_llm_duration_seconds_bucket[5m]))",
+          "legendFormat": "P50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(soc_daemon_llm_duration_seconds_bucket[5m]))",
+          "legendFormat": "P95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(soc_daemon_llm_duration_seconds_bucket[5m]))",
+          "legendFormat": "P99"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "LLM Calls / min",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(soc_daemon_llm_calls_total[1m]) * 60",
+          "legendFormat": "calls/min {{gen_ai_request_model}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "LLM Call Rate — Last hour",
+      "type": "stat",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "expr": "rate(soc_daemon_llm_calls_total[1h]) * 3600",
+          "legendFormat": "calls/hr"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Input Tokens — Last 24h",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["sum"] } },
+      "targets": [
+        {
+          "expr": "increase(soc_daemon_llm_tokens_total{token_type=\"input\"}[24h])",
+          "legendFormat": "input tokens"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Output Tokens — Last 24h",
+      "type": "stat",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "options": { "reduceOptions": { "calcs": ["sum"] } },
+      "targets": [
+        {
+          "expr": "increase(soc_daemon_llm_tokens_total{token_type=\"output\"}[24h])",
+          "legendFormat": "output tokens"
+        }
+      ]
+    }
+  ]
+}

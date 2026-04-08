@@ -20,6 +20,40 @@ from typing import Any, Dict, List, Optional
 
 from daemon.agent_runner import AgentRunner
 from daemon.config import OrchestratorConfig
+
+try:
+    from core.telemetry import get_meter, get_tracer, inject_traceparent
+    from opentelemetry.trace import SpanKind
+    _tracer = get_tracer("vigil.daemon.orchestrator")
+    _orch_meter = get_meter("vigil.daemon.orchestrator")
+    _inv_created = _orch_meter.create_counter(
+        "soc_daemon_orchestrator_investigations_created_total",
+        description="Total investigations created",
+        unit="1",
+    )
+    _inv_completed = _orch_meter.create_counter(
+        "soc_daemon_orchestrator_investigations_completed_total",
+        description="Total investigations completed",
+        unit="1",
+    )
+    _inv_failed = _orch_meter.create_counter(
+        "soc_daemon_orchestrator_investigations_failed_total",
+        description="Total investigations failed",
+        unit="1",
+    )
+    _dedup_prevented = _orch_meter.create_counter(
+        "soc_daemon_orchestrator_dedup_prevented_total",
+        description="Total investigations deduplicated",
+        unit="1",
+    )
+    _stuck_agents = _orch_meter.create_counter(
+        "soc_daemon_orchestrator_stuck_agents_total",
+        description="Stuck agents detected and killed",
+        unit="1",
+    )
+except Exception:
+    _tracer = None  # type: ignore[assignment]
+    _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = None  # type: ignore[assignment]
 from daemon.plan_generator import (
     count_steps,
     generate_case_review_context,
@@ -201,6 +235,8 @@ class Orchestrator:
         if overlapping:
             logger.info(f"Finding {finding_id} overlaps with {overlapping}, adding to existing investigation")
             self.stats["dedup_prevented"] += 1
+            if _dedup_prevented is not None:
+                _dedup_prevented.add(1)
             self._log_ai_decision(
                 decision_type="dedup_prevention",
                 inv_id=overlapping,
@@ -284,6 +320,28 @@ class Orchestrator:
             and self.agent_runner.active_count < self.config.max_concurrent_agents
         )
 
+        # Start root investigation span — will be the parent for all agent spans
+        _inv_span = None
+        _tp = ""
+        try:
+            if _tracer is not None:
+                _inv_span = _tracer.start_span(
+                    "investigation",
+                    kind=SpanKind.INTERNAL,
+                    attributes={
+                        "vigil.investigation.id": inv_id,
+                        "vigil.investigation.workflow_id": workflow_id,
+                        "vigil.investigation.trigger_type": trigger_type,
+                        "vigil.investigation.priority": priority,
+                        "vigil.investigation.finding_count": len(findings),
+                    },
+                )
+                _tp_carrier: Dict = {}
+                inject_traceparent(_tp_carrier)
+                _tp = _tp_carrier.get("traceparent", "")
+        except Exception:
+            pass
+
         inv_record = {
             "investigation_id": inv_id,
             "case_id": case_id,
@@ -298,10 +356,20 @@ class Orchestrator:
             "max_iterations": self.config.max_iterations_per_agent,
             "max_cost_usd": self.config.max_cost_per_investigation,
             "max_runtime_seconds": self.config.max_runtime_per_investigation,
+            "otel_traceparent": _tp,  # propagated to agent_runner across async boundary
         }
 
         self._save_investigation(inv_record)
         self.stats["investigations_created"] += 1
+        if _inv_created is not None:
+            _inv_created.add(1)
+
+        # End the root span here — agent_runner will re-attach as a child
+        try:
+            if _inv_span is not None:
+                _inv_span.end()
+        except Exception:
+            pass
 
         self.workdir.append_log(inv_id, {
             "event": "investigation_created",
@@ -393,6 +461,8 @@ class Orchestrator:
                             await self.agent_runner.stop_agent(inv_id)
                             self._update_investigation_status(inv_id, "failed", "Stale: no activity")
                             self.stats["stuck_agents_killed"] += 1
+                            if _stuck_agents is not None:
+                                _stuck_agents.add(1)
                             self._send_notification(
                                 inv_id, "agent_stuck",
                                 f"Agent stuck: {inv_id}",
@@ -486,6 +556,8 @@ class Orchestrator:
         if completeness >= 0.8 and summary:
             self._update_investigation_status(inv_id, "completed")
             self.stats["investigations_completed"] += 1
+            if _inv_completed is not None:
+                _inv_completed.add(1)
             self.stats["reviews_completed"] += 1
             self.shared_intel.unregister_investigation(inv_id)
 

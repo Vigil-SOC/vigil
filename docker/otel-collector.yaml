@@ -1,0 +1,56 @@
+# OpenTelemetry Collector configuration for Vigil SOC
+#
+# Receives OTLP spans and metrics from all Vigil processes,
+# then fans out to Jaeger (traces) and Prometheus (metrics).
+# No external exporters — all data stays within the SOC network.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+  # Drop spans/metrics that have no service.name to avoid noisy cardinality
+  filter/drop_unnamed:
+    error_mode: ignore
+    traces:
+      span:
+        - 'resource.attributes["service.name"] == ""'
+
+exporters:
+  # Jaeger receives traces via OTLP gRPC (all-in-one image supports this natively)
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Prometheus pulls metrics from the collector's built-in exporter endpoint
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    namespace: vigil
+    const_labels:
+      environment: docker
+
+  # Debug logging at warn level — change to "detailed" for local troubleshooting
+  debug:
+    verbosity: warn
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch, filter/drop_unnamed]
+      exporters: [otlp/jaeger, debug]
+
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, debug]

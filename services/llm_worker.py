@@ -60,6 +60,7 @@ async def llm_call(
     thinking_budget: int,
     tools: Optional[List[Dict]],
     temperature: Optional[float],
+    traceparent: str = "",
 ) -> Any:
     """Execute a single LLM call through the shared ClaudeService.
 
@@ -73,6 +74,22 @@ async def llm_call(
     rate_limiter: asyncio.Semaphore = ctx["rate_limiter"]
     claude_service = ctx["claude_service"]
     session_store: RedisSessionStore = ctx["session_store"]
+
+    # Restore parent span context propagated across the ARQ/Redis boundary
+    try:
+        from core.telemetry import extract_traceparent, get_tracer
+        from opentelemetry.trace import SpanKind
+        parent_ctx = extract_traceparent({"traceparent": traceparent})
+        _tracer = get_tracer("vigil.services.llm_worker")
+        worker_span = _tracer.start_span(
+            "llm_worker.execute",
+            context=parent_ctx,
+            kind=SpanKind.CONSUMER,
+        )
+        worker_span.set_attribute("gen_ai.system", "anthropic")
+        worker_span.set_attribute("gen_ai.request.model", model)
+    except Exception:
+        worker_span = None
 
     # Load session history if applicable
     if session_id:
@@ -99,6 +116,12 @@ async def llm_call(
 
     result = _extract_result(response)
 
+    if worker_span is not None:
+        try:
+            worker_span.end()
+        except Exception:
+            pass
+
     # Persist session
     if session_id:
         updated = messages + [{"role": "assistant", "content": result.get("content", "")}]
@@ -116,6 +139,7 @@ async def llm_call_raw(
     thinking_budget: int,
     tools: Optional[List[Dict]],
     temperature: Optional[float],
+    traceparent: str = "",
 ) -> Dict[str, Any]:
     """Execute a raw multi-turn LLM call (used by AgentRunner tool loop).
 
@@ -125,6 +149,22 @@ async def llm_call_raw(
     """
     rate_limiter: asyncio.Semaphore = ctx["rate_limiter"]
     claude_service = ctx["claude_service"]
+
+    # Restore parent span context propagated across the ARQ/Redis boundary
+    try:
+        from core.telemetry import extract_traceparent, get_tracer
+        from opentelemetry.trace import SpanKind
+        parent_ctx = extract_traceparent({"traceparent": traceparent})
+        _tracer = get_tracer("vigil.services.llm_worker")
+        worker_span = _tracer.start_span(
+            "llm_worker.execute",
+            context=parent_ctx,
+            kind=SpanKind.CONSUMER,
+        )
+        worker_span.set_attribute("gen_ai.system", "anthropic")
+        worker_span.set_attribute("gen_ai.request.model", model)
+    except Exception:
+        worker_span = None
 
     await rate_limiter.acquire()
     try:
@@ -142,7 +182,20 @@ async def llm_call_raw(
     finally:
         rate_limiter.release()
 
-    return _serialize_raw_response(response)
+    result = _serialize_raw_response(response)
+
+    if worker_span is not None:
+        try:
+            in_tok = result.get("input_tokens", 0)
+            out_tok = result.get("output_tokens", 0)
+            worker_span.set_attribute("gen_ai.usage.input_tokens", in_tok)
+            worker_span.set_attribute("gen_ai.usage.output_tokens", out_tok)
+            worker_span.set_attribute("gen_ai.finish_reason", result.get("stop_reason", ""))
+            worker_span.end()
+        except Exception:
+            pass
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -266,10 +319,16 @@ def _serialize_raw_response(response: Any) -> Dict[str, Any]:
 
 async def on_startup(ctx: Dict[str, Any]):
     """Initialise shared resources when the ARQ worker boots."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    # Initialize OTEL telemetry (replaces basicConfig with structured JSON logging)
+    try:
+        from core.telemetry import init_telemetry
+        init_telemetry("vigil-llm-worker")
+    except Exception as _tel_err:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+        logger.warning("Telemetry init failed (non-fatal): %s", _tel_err)
 
     from services.claude_service import ClaudeService
 

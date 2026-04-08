@@ -28,6 +28,17 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
 
+# OTEL instrumentation (lazy to avoid hard dependency)
+try:
+    from core.telemetry import get_tracer, get_meter, create_genai_metrics
+    from opentelemetry.trace import SpanKind, StatusCode as _SpanStatusCode
+    _cs_tracer = get_tracer("vigil.services.claude")
+    _cs_meter = get_meter("vigil.services.claude")
+    _cs_genai_metrics = create_genai_metrics(_cs_meter)
+    _OTEL_CS_AVAILABLE = True
+except Exception:
+    _OTEL_CS_AVAILABLE = False
+
 try:
     from claude_agent_sdk import query as agent_query, ClaudeAgentOptions
     AGENT_SDK_AVAILABLE = True
@@ -1532,7 +1543,50 @@ Provide a structured summary preserving all critical context."""
             
             logger.debug(f"🚀 Making API call with {len(messages)} messages")
             logger.debug(f"📋 API kwargs keys: {list(api_kwargs.keys())}")
+
+            # OTEL: wrap the API call in a span and record GenAI metrics
+            import time as _time
+            _chat_span = None
+            _chat_t0 = _time.monotonic()
+            if _OTEL_CS_AVAILABLE:
+                try:
+                    _chat_span = _cs_tracer.start_span(
+                        "claude.chat",
+                        kind=SpanKind.CLIENT,
+                        attributes={
+                            "gen_ai.system": "anthropic",
+                            "gen_ai.request.model": model,
+                            "gen_ai.request.max_tokens": max_tokens,
+                        },
+                    )
+                except Exception:
+                    pass
+
             response = self.client.messages.create(**api_kwargs)
+
+            if _OTEL_CS_AVAILABLE and _chat_span is not None:
+                try:
+                    _duration = _time.monotonic() - _chat_t0
+                    _in_tok = response.usage.input_tokens if hasattr(response, "usage") else 0
+                    _out_tok = response.usage.output_tokens if hasattr(response, "usage") else 0
+                    _model_used = response.model if hasattr(response, "model") else model
+                    _chat_span.set_attribute("gen_ai.response.model", _model_used)
+                    _chat_span.set_attribute("gen_ai.usage.input_tokens", _in_tok)
+                    _chat_span.set_attribute("gen_ai.usage.output_tokens", _out_tok)
+                    _chat_span.set_attribute("gen_ai.finish_reason", response.stop_reason or "")
+                    _chat_span.end()
+                    # Update metric counters
+                    _labels = {"gen_ai.system": "anthropic", "gen_ai.request.model": _model_used}
+                    _cs_genai_metrics["llm_calls"].add(1, _labels)
+                    _cs_genai_metrics["llm_duration"].record(_duration, _labels)
+                    _cs_genai_metrics["llm_tokens"].add(_in_tok, {**_labels, "gen_ai.token.type": "input"})
+                    _cs_genai_metrics["llm_tokens"].add(_out_tok, {**_labels, "gen_ai.token.type": "output"})
+                    from daemon.agent_runner import SONNET_INPUT_COST, SONNET_OUTPUT_COST
+                    _cost = _in_tok * SONNET_INPUT_COST + _out_tok * SONNET_OUTPUT_COST
+                    _cs_genai_metrics["llm_cost_usd"].add(_cost, _labels)
+                except Exception:
+                    pass
+
             logger.debug(f"📥 API response received - stop_reason: {response.stop_reason}")
             logger.debug(f"   - Response ID: {response.id if hasattr(response, 'id') else 'N/A'}")
             logger.debug(f"   - Model: {response.model if hasattr(response, 'model') else 'N/A'}")
