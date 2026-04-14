@@ -13,7 +13,9 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./database/init:/docker-entrypoint-initdb.d
+      # Path is relative to this compose file (docker/), so ../ points at
+      # the repo root where database/init/ actually lives.
+      - ../database/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U deeptempo -d deeptempo_soc"]
       interval: 10s

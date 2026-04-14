@@ -155,6 +155,19 @@ if command -v docker &> /dev/null; then
         echo "✓ Redis started"
     fi
     
+    # Initialize database schema (SQLAlchemy Base.metadata.create_all)
+    # Runs BEFORE init_default_user.py because user/role tables and all
+    # case_* tables must exist before any bootstrap or API query.
+    echo ""
+    echo "Initializing database schema..."
+    if ! python3 scripts/init_schema.py; then
+        echo "❌ Database schema initialization failed."
+        echo "   The backend will not start correctly without a valid schema."
+        echo "   Check PostgreSQL connectivity and the error above."
+        exit 1
+    fi
+    echo "✓ Database schema ready"
+
     # Initialize default admin user
     echo ""
     echo "Initializing default admin user..."

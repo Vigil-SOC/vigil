@@ -210,7 +210,27 @@ async def startup_event():
         from services.database_data_service import DatabaseDataService
         from core.config import is_demo_mode
         import os
-        
+
+        # Defense-in-depth: ensure the SQLAlchemy-managed schema exists before
+        # any endpoint tries to query it. start_web.sh runs scripts/init_schema.py
+        # first, but this covers environments that launch uvicorn directly
+        # (e.g. Docker, systemd, CI). When DATA_BACKEND=database, a failure
+        # here is fatal — we do NOT silently fall back to JSON because that
+        # leaves the DB in an inconsistent state (some endpoints use
+        # get_db_session() directly, see backend/api/case_metrics.py).
+        data_backend_env = os.getenv('DATA_BACKEND', 'database').lower()
+        if not is_demo_mode() and data_backend_env == 'database':
+            try:
+                from database.connection import init_database
+                init_database(echo=False, create_tables=True)
+                logger.info("✓ Database schema ensured (create_all)")
+            except Exception as schema_err:
+                logger.error(
+                    "Fatal: could not initialize database schema: %s",
+                    schema_err,
+                )
+                raise
+
         # Check for demo mode first
         if is_demo_mode():
             logger.info("=" * 40)
