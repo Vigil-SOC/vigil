@@ -84,13 +84,13 @@ class PersistentServerSession:
             if self.session_context:
                 try:
                     await self.session_context.__aexit__(None, None, None)
-                except:
+                except Exception:
                     pass
             
             if self.stdio_context:
                 try:
                     await self.stdio_context.__aexit__(None, None, None)
-                except:
+                except Exception:
                     pass
             
             self.session = None

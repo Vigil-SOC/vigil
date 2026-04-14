@@ -241,7 +241,7 @@ async def export_case_report(args: dict, url: str, auth, headers) -> list:
                     )
                     sub_response.raise_for_status()
                     subtasks_created += 1
-                except:
+                except Exception:
                     pass  # Continue even if subtask creation fails
         
         return result({
