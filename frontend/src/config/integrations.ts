@@ -846,6 +846,22 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
         helpText: 'Required if using username auth',
       },
       {
+        name: 'kibana_url',
+        label: 'Kibana URL',
+        type: 'url',
+        required: false,
+        placeholder: 'https://kibana.example.com:5601',
+        helpText: 'Required for detection alert ingestion and case sync. Leave blank if only using Elasticsearch search.',
+      },
+      {
+        name: 'index_pattern',
+        label: 'Alert Index Pattern',
+        type: 'text',
+        required: false,
+        default: '.alerts-security.alerts-default',
+        helpText: 'Elasticsearch index pattern for security alerts.',
+      },
+      {
         name: 'verify_ssl',
         label: 'Verify SSL Certificate',
         type: 'boolean',
