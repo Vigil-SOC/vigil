@@ -22,6 +22,21 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 
+# Check Docker (required for PostgreSQL and Redis)
+if ! command -v docker &> /dev/null; then
+    echo "❌ Docker is not installed (required for PostgreSQL and Redis)."
+    echo "   Install from: https://docs.docker.com/engine/install/"
+    exit 1
+fi
+
+# Check Node.js (required for frontend)
+if ! command -v node &> /dev/null; then
+    echo "⚠️  Node.js not found. Frontend will not start."
+    echo "   Install from: https://nodejs.org/"
+elif ! node -e "process.exit(parseInt(process.version.slice(1)) >= 18 ? 0 : 1)" 2>/dev/null; then
+    echo "⚠️  Node.js 18+ is required for frontend. Found: $(node --version)"
+fi
+
 # Create logs directory
 mkdir -p logs
 
@@ -169,10 +184,13 @@ fi
 # Export Python path
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 
+# Bind host: default to localhost, set BIND_HOST=0.0.0.0 for remote access
+BIND_HOST="${BIND_HOST:-127.0.0.1}"
+
 # Start backend in background
 echo "Starting backend server..."
 nohup uvicorn backend.main:app \
-    --host 127.0.0.1 \
+    --host "$BIND_HOST" \
     --port 6987 \
     --reload \
     --reload-dir backend \

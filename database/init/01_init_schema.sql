@@ -3,6 +3,7 @@
 
 -- Enable required extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- Create indexes for better performance (SQLAlchemy will create tables)
 -- These will be created if they don't already exist
