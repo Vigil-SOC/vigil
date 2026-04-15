@@ -130,8 +130,21 @@ interface AnalyticsData {
     tactic: string
     count: number
   }>
-  insights: AIInsight[]
 }
+
+interface InsightsResponse {
+  insights: AIInsight[]
+  generated_at: string | null
+  is_stale: boolean
+  generating: boolean
+}
+
+// Auto-refresh insights every 10 minutes (matches backend CACHE_TTL_SECONDS).
+const INSIGHTS_REFRESH_INTERVAL_MS = 10 * 60 * 1000
+// After triggering a refresh, poll the GET endpoint this often until
+// generated_at changes (or we hit the overall timeout).
+const INSIGHTS_POLL_INTERVAL_MS = 3000
+const INSIGHTS_POLL_TIMEOUT_MS = 2 * 60 * 1000
 
 const COLORS = {
   critical: '#d32f2f',
@@ -148,24 +161,36 @@ export default function Analytics() {
   const [timeRange, setTimeRange] = useState<'24h' | '7d' | '30d' | 'all'>('7d')
   const [loading, setLoading] = useState(true)
   const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null)
+  const [insightsData, setInsightsData] = useState<InsightsResponse | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [refreshingInsights, setRefreshingInsights] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetchAnalytics()
+    fetchMetrics()
+    fetchInsights()
   }, [timeRange])
 
-  const fetchAnalytics = async () => {
+  // Periodically trigger insights regeneration so the cache stays warm
+  // without requiring the user to hit refresh.
+  useEffect(() => {
+    const id = setInterval(() => {
+      handleRefreshInsights()
+    }, INSIGHTS_REFRESH_INTERVAL_MS)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRange])
+
+  const fetchMetrics = async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await api.get(`/api/analytics?timeRange=${timeRange}`)
+      const response = await api.get(`/analytics?time_range=${timeRange}`)
       setAnalyticsData(response.data)
     } catch (error) {
       console.error('Error fetching analytics:', error)
       const errorMessage = error instanceof Error ? error.message : 'Failed to load analytics data'
       setError(errorMessage)
-      // Set to null on error to ensure proper fallback
       setAnalyticsData(null)
     } finally {
       setLoading(false)
@@ -173,9 +198,47 @@ export default function Analytics() {
     }
   }
 
+  const fetchInsights = async (): Promise<InsightsResponse | null> => {
+    try {
+      const response = await api.get<InsightsResponse>(
+        `/analytics/insights?time_range=${timeRange}`
+      )
+      setInsightsData(response.data)
+      return response.data
+    } catch (err) {
+      console.error('Error fetching insights:', err)
+      return null
+    }
+  }
+
   const handleRefresh = () => {
     setRefreshing(true)
-    fetchAnalytics()
+    fetchMetrics()
+    // Insights are managed independently — use the insights-specific
+    // refresh so the main page refresh stays fast and predictable.
+    handleRefreshInsights()
+  }
+
+  const handleRefreshInsights = async () => {
+    if (refreshingInsights) return
+    setRefreshingInsights(true)
+    const startedAt = insightsData?.generated_at ?? null
+    try {
+      await api.post(`/analytics/insights/refresh?time_range=${timeRange}`)
+      const pollStart = Date.now()
+      // Poll until generated_at changes or we time out.
+      while (Date.now() - pollStart < INSIGHTS_POLL_TIMEOUT_MS) {
+        await new Promise((r) => setTimeout(r, INSIGHTS_POLL_INTERVAL_MS))
+        const latest = await fetchInsights()
+        if (latest && latest.generated_at && latest.generated_at !== startedAt) {
+          break
+        }
+      }
+    } catch (err) {
+      console.error('Error triggering insights refresh:', err)
+    } finally {
+      setRefreshingInsights(false)
+    }
   }
 
   const handleTimeRangeChange = (_: React.MouseEvent<HTMLElement>, newValue: string | null) => {
@@ -387,20 +450,43 @@ export default function Analytics() {
       </Grid>
 
       {/* AI Insights */}
-      {analyticsData?.insights && analyticsData.insights.length > 0 && (
-        <Box mb={3}>
-          <Card>
-            <CardHeader
-              title={
-                <Box display="flex" alignItems="center" gap={1}>
-                  <AIIcon color="primary" />
-                  <Typography variant="h6">AI-Powered Insights</Typography>
-                </Box>
-              }
-            />
-            <CardContent>
+      <Box mb={3}>
+        <Card>
+          <CardHeader
+            title={
+              <Box display="flex" alignItems="center" gap={1}>
+                <AIIcon color="primary" />
+                <Typography variant="h6">AI-Powered Insights</Typography>
+                {insightsData?.is_stale && insightsData.generated_at && (
+                  <Chip label="Stale" color="warning" size="small" variant="outlined" />
+                )}
+                {insightsData?.generating && (
+                  <Chip label="Refreshing…" color="info" size="small" variant="outlined" />
+                )}
+              </Box>
+            }
+            action={
+              <Box display="flex" alignItems="center" gap={1}>
+                <Typography variant="caption" color="text.secondary">
+                  {insightsData?.generated_at
+                    ? `Updated ${format(new Date(insightsData.generated_at), 'PPpp')}`
+                    : 'No cached insights yet'}
+                </Typography>
+                <IconButton
+                  onClick={handleRefreshInsights}
+                  disabled={refreshingInsights}
+                  size="small"
+                  aria-label="Refresh AI insights"
+                >
+                  <RefreshIcon className={refreshingInsights ? 'spin' : ''} />
+                </IconButton>
+              </Box>
+            }
+          />
+          <CardContent>
+            {insightsData && insightsData.insights.length > 0 ? (
               <Grid container spacing={2}>
-                {analyticsData.insights.map((insight) => (
+                {insightsData.insights.map((insight) => (
                   <Grid item xs={12} md={6} key={insight.id}>
                     <Alert
                       severity={
@@ -436,10 +522,16 @@ export default function Analytics() {
                   </Grid>
                 ))}
               </Grid>
-            </CardContent>
-          </Card>
-        </Box>
-      )}
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                {refreshingInsights || insightsData?.generating
+                  ? 'Generating insights — this can take up to a minute.'
+                  : 'No insights yet. Click refresh to generate them.'}
+              </Typography>
+            )}
+          </CardContent>
+        </Card>
+      </Box>
 
       {/* Charts */}
       <Grid container spacing={3}>

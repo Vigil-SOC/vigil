@@ -8,12 +8,14 @@ This module exposes analytics data including:
 - AI-powered insights and recommendations
 """
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, or_
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+import asyncio
 import logging
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import Session
 
 from database.models import Finding, Case, CaseClosureInfo
 from database.connection import get_db_session
@@ -90,14 +92,9 @@ async def get_analytics(
         # Get MITRE technique distribution
         mitre_techniques = await get_mitre_technique_distribution(db, start_time, end_time)
         
-        # Generate AI insights
-        insights = await ai_insights_service.generate_insights(
-            db=db,
-            metrics=metrics,
-            time_series=time_series,
-            time_range=time_range
-        )
-        
+        # NOTE: AI insights are intentionally NOT generated here — they are
+        # served from an in-memory cache via GET /analytics/insights so this
+        # endpoint returns fast and never blocks on the Claude API.
         return {
             "metrics": metrics,
             "timeSeriesData": time_series,
@@ -107,12 +104,96 @@ async def get_analytics(
             "affectedEntities": affected_entities,
             "attackHeatmap": attack_heatmap,
             "mitreTechniques": mitre_techniques,
-            "insights": insights,
         }
-    
+
     except Exception as e:
         logger.error(f"Error generating analytics: {str(e)}")
         raise
+
+
+async def _collect_insights_inputs(
+    db: Session, time_range: str
+) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Collect the metrics + time_series inputs that the insights model needs.
+
+    Kept small so both the GET (opportunistic background refresh) and POST
+    (forced refresh) insights endpoints can schedule regeneration without
+    duplicating logic.
+    """
+    start_time, end_time = get_time_range(time_range)
+    period_duration = end_time - start_time
+    prev_start = start_time - period_duration
+    metrics = await calculate_metrics(db, start_time, end_time, prev_start, start_time)
+    time_series = await get_time_series_data(db, start_time, end_time, time_range)
+    return metrics, time_series
+
+
+@router.get("/analytics/insights")
+async def get_analytics_insights(
+    time_range: str = Query('7d', regex='^(24h|7d|30d|all)$'),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """Return cached AI insights for the given time_range.
+
+    Always returns immediately. If the cache is empty or stale, kicks off a
+    background regeneration so the next poll will see fresh data. Callers
+    should display ``insights`` as-is and show a staleness indicator when
+    ``is_stale`` is true or ``generated_at`` is null.
+    """
+    cached = ai_insights_service.get_cached_insights(time_range)
+
+    should_refresh = (
+        cached["generated_at"] is None or cached["is_stale"]
+    ) and not cached["generating"]
+
+    if should_refresh:
+        try:
+            metrics, time_series = await _collect_insights_inputs(db, time_range)
+            asyncio.create_task(
+                ai_insights_service.trigger_regeneration(
+                    db=db,
+                    metrics=metrics,
+                    time_series=time_series,
+                    time_range=time_range,
+                )
+            )
+            cached["generating"] = True
+        except Exception as e:
+            logger.warning(f"Could not schedule insights regeneration: {e}")
+
+    return cached
+
+
+@router.post("/analytics/insights/refresh")
+async def refresh_analytics_insights(
+    time_range: str = Query('7d', regex='^(24h|7d|30d|all)$'),
+    db: Session = Depends(get_db_session),
+) -> Dict[str, Any]:
+    """Force a background regeneration of insights for the given time_range.
+
+    Returns immediately with ``{"status": "refreshing"}`` or
+    ``{"status": "already_generating"}`` if one is already in flight. Clients
+    should then poll GET /analytics/insights until ``generated_at`` changes.
+    """
+    cached = ai_insights_service.get_cached_insights(time_range)
+    if cached["generating"]:
+        return {"status": "already_generating", "generated_at": cached["generated_at"]}
+
+    try:
+        metrics, time_series = await _collect_insights_inputs(db, time_range)
+    except Exception as e:
+        logger.error(f"Could not collect inputs for insights refresh: {e}")
+        return {"status": "error", "message": str(e)}
+
+    asyncio.create_task(
+        ai_insights_service.trigger_regeneration(
+            db=db,
+            metrics=metrics,
+            time_series=time_series,
+            time_range=time_range,
+        )
+    )
+    return {"status": "refreshing", "generated_at": cached["generated_at"]}
 
 
 async def calculate_metrics(
