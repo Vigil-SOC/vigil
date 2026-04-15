@@ -12,6 +12,7 @@ as a no-op to satisfy the interface.
 """
 
 import hashlib
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -131,9 +132,7 @@ class DarktraceIngestionService(SIEMIngestionService):
         logger.warning("Unrecognized Darktrace payload shape; skipping")
         return None
 
-    def transform_model_breach(
-        self, alert: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def transform_model_breach(self, alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Transform a Darktrace Model Breach Alert."""
         pbid = alert.get("pbid")
         if pbid is None:
@@ -178,9 +177,7 @@ class DarktraceIngestionService(SIEMIngestionService):
             "status": "new",
         }
 
-    def transform_ai_analyst(
-        self, alert: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+    def transform_ai_analyst(self, alert: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Transform a Darktrace AI Analyst Incident/Event."""
         uuid = alert.get("uuid") or alert.get("id")
         if not uuid:
@@ -190,13 +187,18 @@ class DarktraceIngestionService(SIEMIngestionService):
         ts = _parse_dt_time(
             alert.get("createdAt") or alert.get("start") or alert.get("time")
         )
-        # AI Analyst exposes a 0-100 "groupScore" (event criticality)
-        score = _score_to_anomaly(
-            alert.get("groupScore") or alert.get("score") or 0.5
-        )
+        # AI Analyst exposes a 0-100 "groupScore" (event criticality).
+        # Use explicit None checks so a legitimate zero (minimum criticality)
+        # is preserved instead of falling through to the 0.5 default.
+        gs = alert.get("groupScore")
+        sc = alert.get("score")
+        raw_score = gs if gs is not None else (sc if sc is not None else 0.5)
+        score = _score_to_anomaly(raw_score)
 
         entity_context: Dict[str, Any] = {}
-        breach_devices = alert.get("breachDevices") or alert.get("relatedBreaches") or []
+        breach_devices = (
+            alert.get("breachDevices") or alert.get("relatedBreaches") or []
+        )
         if breach_devices and isinstance(breach_devices, list):
             first = breach_devices[0] if isinstance(breach_devices[0], dict) else {}
             if first.get("ip"):
@@ -233,11 +235,15 @@ class DarktraceIngestionService(SIEMIngestionService):
         self, alert: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
         """Transform a Darktrace System Status Alert (health/operational)."""
+        # Deterministic fallback: Python's builtin hash() is seeded per
+        # process (PYTHONHASHSEED), which would make the finding_id change
+        # on every worker restart and break idempotent replay dedup. Use a
+        # stable SHA-1 digest over sorted JSON instead.
+        fallback_key = hashlib.sha1(
+            json.dumps({k: str(v) for k, v in sorted(alert.items())}).encode("utf-8")
+        ).hexdigest()
         key = (
-            alert.get("id")
-            or alert.get("eventId")
-            or alert.get("name")
-            or str(hash(frozenset((k, str(v)) for k, v in alert.items())))
+            alert.get("id") or alert.get("eventId") or alert.get("name") or fallback_key
         )
         ts = _parse_dt_time(alert.get("time") or alert.get("timestamp"))
         # System status is informational/operational — keep score low

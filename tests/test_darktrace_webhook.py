@@ -34,13 +34,13 @@ darktrace_router = _mod.router
 
 from services.darktrace_ingestion import DarktraceIngestionService  # noqa: E402
 
-
 SECRET = "unit-test-secret"
 
 
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def app(monkeypatch):
@@ -104,6 +104,7 @@ SYSTEM_STATUS_SAMPLE = {
 # Transform unit tests (no network, no ingestion)
 # ---------------------------------------------------------------------------
 
+
 class TestTransforms:
     def test_model_breach_maps_core_fields(self):
         svc = DarktraceIngestionService(console_url="https://dt.example.com")
@@ -144,6 +145,25 @@ class TestTransforms:
         assert f["entity_context"]["src_ip"] == "10.0.0.5"
         assert "aianalyst/incident" in f["evidence_links"][0]["ref"]
 
+    def test_ai_analyst_zero_groupscore_preserved(self):
+        """Regression: groupScore=0 must map to anomaly_score=0.0 / info.
+
+        A legitimate zero (Darktrace's minimum criticality) used to fall
+        through the ``or``-chain to the 0.5 default, inflating a zero-
+        criticality event to medium severity.
+        """
+        svc = DarktraceIngestionService()
+        payload = {
+            "uuid": "zero-score-incident",
+            "title": "Low Noise Event",
+            "createdAt": "2026-04-01T00:00:00Z",
+            "groupScore": 0,
+        }
+        f = svc.transform_ai_analyst(payload)
+        assert f is not None
+        assert f["anomaly_score"] == pytest.approx(0.0)
+        assert f["severity"] == "info"
+
     def test_system_status_always_informational(self):
         svc = DarktraceIngestionService()
         f = svc.transform_system_status(SYSTEM_STATUS_SAMPLE)
@@ -151,6 +171,34 @@ class TestTransforms:
         assert f["anomaly_score"] == pytest.approx(0.2)
         assert f["severity"] == "medium"  # "warning" -> medium via normalize
         assert f["data_source"] == "darktrace"
+
+    def test_system_status_fallback_finding_id_is_deterministic(self):
+        """Regression: fallback key must be stable across processes.
+
+        Previously used ``hash(frozenset(...))``, which is randomized per
+        process (PYTHONHASHSEED) and would silently duplicate findings
+        across worker restarts. Simulate a second process by patching the
+        builtin ``hash`` to ensure the output no longer depends on it.
+        """
+        svc = DarktraceIngestionService()
+        payload = {
+            "status": "warning",
+            "time": 1712995200000,
+            "message": "Probe lost",
+        }
+        first = svc.transform_system_status(payload)
+
+        # Monkeypatch the builtin hash to prove determinism doesn't rely on it.
+        import builtins
+
+        original_hash = builtins.hash
+        try:
+            builtins.hash = lambda _obj: 424242  # noqa: E731
+            second = svc.transform_system_status(payload)
+        finally:
+            builtins.hash = original_hash
+
+        assert first["finding_id"] == second["finding_id"]
 
     def test_dispatch_by_shape(self):
         svc = DarktraceIngestionService()
@@ -162,6 +210,7 @@ class TestTransforms:
 # ---------------------------------------------------------------------------
 # HMAC / route tests
 # ---------------------------------------------------------------------------
+
 
 class TestSignatureVerification:
     def test_missing_signature_rejected(self, client):
@@ -185,9 +234,7 @@ class TestSignatureVerification:
     def test_valid_signature_with_sha256_prefix(self, client):
         body = json.dumps(MODEL_BREACH_SAMPLE).encode()
         sig = "sha256=" + _sign(body)
-        with patch(
-            "darktrace_webhook_under_test.DarktraceIngestionService"
-        ) as MockSvc:
+        with patch("darktrace_webhook_under_test.DarktraceIngestionService") as MockSvc:
             instance = MockSvc.return_value
             instance.transform_model_breach.return_value = {
                 "finding_id": "f-20260101-deadbeef"
@@ -230,9 +277,7 @@ class TestRoutes:
     def test_ai_analyst_accepted(self, client):
         p, inst = self._patched_service()
         try:
-            r = _post(
-                client, "/api/webhooks/darktrace/ai-analyst", AI_ANALYST_SAMPLE
-            )
+            r = _post(client, "/api/webhooks/darktrace/ai-analyst", AI_ANALYST_SAMPLE)
         finally:
             p.stop()
         assert r.status_code == 202

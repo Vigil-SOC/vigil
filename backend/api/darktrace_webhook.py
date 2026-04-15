@@ -16,6 +16,7 @@ Endpoints:
 Signature header: ``X-Darktrace-Signature`` (hex HMAC-SHA256 of raw body).
 """
 
+import asyncio
 import hmac
 import logging
 import os
@@ -58,13 +59,9 @@ def _verify_signature(raw_body: bytes, provided: Optional[str]) -> bool:
     return hmac.compare_digest(expected, clean)
 
 
-async def _read_and_verify(
-    request: Request, signature: Optional[str]
-) -> bytes:
+async def _read_and_verify(request: Request, signature: Optional[str]) -> bytes:
     if not _get_secret():
-        logger.error(
-            "DARKTRACE_WEBHOOK_SECRET not configured; rejecting webhook"
-        )
+        logger.error("DARKTRACE_WEBHOOK_SECRET not configured; rejecting webhook")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Darktrace webhook receiver not configured",
@@ -151,7 +148,8 @@ async def model_breach(
 ) -> Dict:
     raw = await _read_and_verify(request, x_darktrace_signature)
     payload = _parse_json(raw)
-    return _ingest(
+    return await asyncio.to_thread(
+        _ingest,
         payload,
         lambda svc, p: svc.transform_model_breach(p),
         "model-breach",
@@ -165,7 +163,8 @@ async def ai_analyst(
 ) -> Dict:
     raw = await _read_and_verify(request, x_darktrace_signature)
     payload = _parse_json(raw)
-    return _ingest(
+    return await asyncio.to_thread(
+        _ingest,
         payload,
         lambda svc, p: svc.transform_ai_analyst(p),
         "ai-analyst",
@@ -179,7 +178,8 @@ async def system_status(
 ) -> Dict:
     raw = await _read_and_verify(request, x_darktrace_signature)
     payload = _parse_json(raw)
-    return _ingest(
+    return await asyncio.to_thread(
+        _ingest,
         payload,
         lambda svc, p: svc.transform_system_status(p),
         "system-status",
