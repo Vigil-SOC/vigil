@@ -70,7 +70,7 @@ fi
 # Step 1: Copy environment files
 echo "📝 Setting up environment files..."
 if [ ! -f .env ]; then
-    cp .env.example .env
+    cp env.example .env
     echo "✅ Created .env (with DEV_MODE=true)"
 else
     echo "ℹ️  .env already exists, skipping..."
