@@ -256,6 +256,18 @@
       "cwd": "${workspaceFolder}"
     },
 
+    "vstrike": {
+      "command": "python3",
+      "args": ["tools/vstrike.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "CloudCurrent VStrike network topology fusion layer. Set VSTRIKE_BASE_URL and VSTRIKE_API_KEY in .env, or configure in Settings > Integrations.",
+        "VSTRIKE_BASE_URL": "${VSTRIKE_BASE_URL}",
+        "VSTRIKE_API_KEY": "${VSTRIKE_API_KEY}",
+        "VSTRIKE_VERIFY_SSL": "${VSTRIKE_VERIFY_SSL}"
+      }
+    },
+
     "microsoft-defender": {
       "command": "python3",
       "args": ["tools/microsoft_defender.py"],

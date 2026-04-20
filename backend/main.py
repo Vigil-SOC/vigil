@@ -42,6 +42,7 @@ from api.integrations_compatibility import router as compatibility_router
 from api.ingestion import router as ingestion_router
 from api.timeline import router as timeline_router
 from api.graph import router as graph_router
+from api.vstrike import router as vstrike_router
 
 # Enhanced case management routers
 from api.case_templates import router as case_templates_router
@@ -148,6 +149,7 @@ app.include_router(agents_router, prefix="/api/agents", tags=["agents"])
 app.include_router(compatibility_router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(custom_integrations_router, prefix="/api/custom-integrations", tags=["custom-integrations"])
 app.include_router(ingestion_router, prefix="/api/ingest", tags=["ingestion"])
+app.include_router(vstrike_router, prefix="/api/integrations/vstrike", tags=["vstrike"])
 app.include_router(storage_status_router, prefix="/api/storage", tags=["storage"])
 app.include_router(ai_decisions_router, prefix="/api/ai", tags=["ai-decisions"])
 app.include_router(timeline_router, prefix="/api/timeline", tags=["timeline"])

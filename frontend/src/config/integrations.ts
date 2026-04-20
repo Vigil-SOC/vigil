@@ -3007,6 +3007,51 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     ],
     docs_url: 'https://cuckoo.readthedocs.io/en/latest/',
   },
+
+  // NETWORK TOPOLOGY FUSION
+  {
+    id: 'vstrike',
+    name: 'CloudCurrent VStrike',
+    category: 'Network Security',
+    description:
+      'Network topology fusion layer. Correlates DeepTempo findings with asset, segment, mission system, and attack-path context, and pushes enriched findings back into Vigil.',
+    functionality_type: 'Data Enrichment',
+    fields: [
+      {
+        name: 'url',
+        label: 'VStrike Base URL',
+        type: 'url',
+        required: true,
+        placeholder: 'https://vstrike.net',
+        helpText: 'Base URL of your VStrike deployment.',
+      },
+      {
+        name: 'api_key',
+        label: 'Outbound API Key',
+        type: 'password',
+        required: true,
+        placeholder: 'Bearer token for Vigil → VStrike calls',
+        helpText:
+          'Used for outbound topology lookups. Stored as VSTRIKE_API_KEY.',
+      },
+      {
+        name: 'inbound_api_key',
+        label: 'Inbound API Key',
+        type: 'password',
+        required: false,
+        placeholder: 'Bearer token VStrike presents to Vigil',
+        helpText:
+          'Required for /api/integrations/vstrike/findings unless DEV_MODE=true. Stored as VSTRIKE_INBOUND_API_KEY.',
+      },
+      {
+        name: 'verify_ssl',
+        label: 'Verify SSL Certificate',
+        type: 'boolean',
+        default: true,
+      },
+    ],
+    docs_url: 'https://cloudcurrent.biz/vstrike',
+  },
 ]
 
 export const INTEGRATION_CATEGORIES = [

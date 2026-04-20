@@ -340,6 +340,117 @@ Settings > Integrations > Custom Integration Builder:
 3. Review and test
 4. Deploy to `tools/` directory
 
+## CloudCurrent VStrike (Network Topology Fusion)
+
+VStrike enriches DeepTempo findings with network topology, asset, segment,
+and mission-system context, then pushes the enriched findings back into
+Vigil. Vigil can also query VStrike on demand for asset topology and blast
+radius.
+
+### Integration surface
+
+| Direction | Endpoint / Tool | Purpose |
+|-----------|-----------------|---------|
+| VStrike → Vigil | `POST /api/integrations/vstrike/findings` | Push enriched findings (batched) |
+| Vigil → VStrike | `GET /api/integrations/vstrike/health` | Outbound reachability check |
+| Vigil → VStrike | `GET /api/integrations/vstrike/topology/asset/{id}` | Asset topology lookup |
+| Vigil → VStrike | `GET /api/integrations/vstrike/topology/asset/{id}/adjacent` | One-hop neighbors |
+| Vigil → VStrike | `GET /api/integrations/vstrike/topology/asset/{id}/blast-radius` | Blast radius |
+| MCP | `tools/vstrike.py` (`vstrike_*` tools) | Agent-invokable topology queries |
+
+### Configuration
+
+Either set env vars (recommended for push/CI) or configure via the UI:
+
+```bash
+# .env
+VSTRIKE_BASE_URL="https://vstrike.example.com"
+VSTRIKE_API_KEY="<outbound bearer token>"
+VSTRIKE_VERIFY_SSL="true"
+VSTRIKE_INBOUND_API_KEY="<bearer token Vigil expects on inbound push>"
+```
+
+UI: **Settings → Integrations → CloudCurrent VStrike**.
+
+### Storage model
+
+VStrike enrichment lives at `finding.entity_context["vstrike"]` (JSONB —
+no DB migration required). Shape is defined by
+`backend/schemas/vstrike.py::VStrikeEnrichment` and mirrored by
+`frontend/src/types/vstrike.ts`.
+
+The ingest handler does read-modify-write on `entity_context` so existing
+keys (`src_ip`, `hostname`, etc.) are never clobbered.
+
+### Auto-case clustering
+
+When `auto_cluster_cases: true` (default), the ingest handler groups
+upserted findings by `(segment, attack_path[0] or asset_id)` and creates
+one case per group via
+`services.case_automation_service.cluster_findings_by_attack_path`.
+
+### Authentication
+
+Inbound push uses a bearer token:
+
+```
+Authorization: Bearer $VSTRIKE_INBOUND_API_KEY
+```
+
+When `DEV_MODE=true`, the auth check is bypassed (matches the rest of the
+codebase). Outside dev mode, the endpoint returns:
+- `401` if the header is missing or wrong
+- `503` if `VSTRIKE_INBOUND_API_KEY` is unset (refuses to run open)
+
+### Example push
+
+```bash
+export DEV_MODE=true
+curl -X POST http://localhost:6987/api/integrations/vstrike/findings \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "batch_id": "demo-1",
+    "findings": [{
+      "finding_id": "f-test-1",
+      "timestamp": "2026-05-20T14:00:00Z",
+      "anomaly_score": 0.87,
+      "vstrike_enrichment": {
+        "asset_id": "srv-01",
+        "asset_name": "SAP-PROD-01",
+        "segment": "mgmt-vlan-10",
+        "site": "JBSA",
+        "criticality": "high",
+        "mission_system": "C2-AWACS",
+        "attack_path": ["ext-gw-01", "dmz-web-02", "srv-01"],
+        "blast_radius": 14,
+        "adjacent_assets": [
+          {"asset_id": "dc-01", "hop_distance": 1, "edge_technique": "T1021.002"}
+        ],
+        "enriched_at": "2026-05-20T14:00:00Z"
+      }
+    }]
+  }'
+```
+
+### Visualization
+
+- **Finding detail**: `NetworkContextPanel` renders the VStrike sub-dict
+  (criticality, segment, mission system, blast radius, attack-path
+  breadcrumb, clickable adjacent-asset chips).
+- **Entity graph**: nodes are tinted by segment when VStrike metadata is
+  present; the first MITRE technique on a link is rendered as an edge
+  label (always on highlighted links, and at zoom > 2.0 otherwise).
+- **Pivot**: clicking an adjacent-asset chip dispatches
+  `vstrike-graph-highlight` — `pages/Investigation.tsx` listens for this
+  event and feeds the node id into `EntityGraph.highlightedNodes`.
+
+### Testing
+
+```bash
+pytest tests/integration/test_vstrike_ingest.py -v
+pytest tests/unit/test_vstrike_service.py -v
+```
+
 ## Stub Servers (Not Implemented)
 
 Available for future implementation:

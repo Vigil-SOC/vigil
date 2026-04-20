@@ -87,6 +87,39 @@ function throttle<T extends (...args: any[]) => any>(
   }
 }
 
+// Segment palette (VStrike-aware). Deterministic hash → categorical color.
+// Used when a node has no explicit severity but carries a VStrike segment.
+const SEGMENT_PALETTE = [
+  '#1976d2',
+  '#7b1fa2',
+  '#0097a7',
+  '#f57c00',
+  '#5d4037',
+  '#c2185b',
+  '#388e3c',
+  '#455a64',
+  '#6a1b9a',
+  '#00796b',
+]
+
+function hashString(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) {
+    h = (h << 5) - h + s.charCodeAt(i)
+    h |= 0
+  }
+  return Math.abs(h)
+}
+
+function getSegmentColor(segment: string): string {
+  return SEGMENT_PALETTE[hashString(segment) % SEGMENT_PALETTE.length]
+}
+
+function getNodeSegment(node: GraphNode): string | undefined {
+  const meta = node.metadata || {}
+  return meta.segment || meta?.vstrike?.segment
+}
+
 // Memoized color getter
 const getNodeColorMemo = (
   node: GraphNode,
@@ -107,6 +140,11 @@ const getNodeColorMemo = (
       case 'low':
         return '#388e3c'
     }
+  }
+
+  const segment = getNodeSegment(node)
+  if (segment) {
+    return getSegmentColor(segment)
   }
 
   switch (node.type) {
@@ -469,8 +507,19 @@ const EntityGraph = memo(function EntityGraph({
         ctx.stroke()
       }
 
-      // Draw label only if present and zoomed in enough (LOD optimization)
-      if (link.label && globalScale > 2.0) {
+      // Edge label: prefer explicit label, fall back to first MITRE technique
+      // Always show on highlighted links; otherwise require zoom > 2.0 (LOD).
+      const sourceIdForLabel = getLinkNodeId(link.source)
+      const targetIdForLabel = getLinkNodeId(link.target)
+      const isLinkHighlighted = highlightLinks.has(
+        `${sourceIdForLabel}-${targetIdForLabel}`
+      )
+      const labelText =
+        link.label ||
+        (link.techniques && link.techniques.length > 0
+          ? link.techniques[0]
+          : undefined)
+      if (labelText && (isLinkHighlighted || globalScale > 2.0)) {
         const midX = (source.x + target.x) / 2
         const midY = (source.y + target.y) / 2
         const fontSize = 10 / globalScale
@@ -478,11 +527,11 @@ const EntityGraph = memo(function EntityGraph({
         ctx.font = `${fontSize}px Sans-Serif`
         ctx.textAlign = 'center'
         ctx.textBaseline = 'middle'
-        ctx.fillStyle = '#666'
-        ctx.fillText(link.label, midX, midY)
+        ctx.fillStyle = isLinkHighlighted ? '#b71c1c' : '#666'
+        ctx.fillText(labelText, midX, midY)
       }
     },
-    [filteredNodes, getLinkColor, getLinkWidth]
+    [filteredNodes, getLinkColor, getLinkWidth, getLinkNodeId, highlightLinks]
   )
 
   // Get unique node types for filter
@@ -798,6 +847,16 @@ const EntityGraph = memo(function EntityGraph({
             {hoverNode.findingCount && hoverNode.findingCount > 0 && (
               <Typography variant="body2" color="text.secondary">
                 Findings: {hoverNode.findingCount}
+              </Typography>
+            )}
+            {getNodeSegment(hoverNode) && (
+              <Typography variant="body2" color="text.secondary">
+                Segment: {getNodeSegment(hoverNode)}
+              </Typography>
+            )}
+            {hoverNode.metadata?.vstrike?.mission_system && (
+              <Typography variant="body2" color="text.secondary">
+                Mission: {hoverNode.metadata.vstrike.mission_system}
               </Typography>
             )}
           </Paper>
