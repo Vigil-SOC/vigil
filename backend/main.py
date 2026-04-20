@@ -6,6 +6,7 @@ Main application entry point for the REST API server.
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -48,6 +49,9 @@ from api.case_metrics import router as case_metrics_router
 from api.case_search import router as case_search_router
 from api.webhooks import router as webhooks_router
 from api.sla_policies import router as sla_policies_router
+
+# Darktrace inbound webhook receiver
+from api.darktrace_webhook import router as darktrace_webhook_router
 
 # Authentication routers
 from api.auth import router as auth_router
@@ -163,6 +167,15 @@ app.include_router(case_templates_router, prefix="/api/cases/templates", tags=["
 app.include_router(case_metrics_router, prefix="/api/cases/metrics", tags=["case-metrics"])
 app.include_router(case_search_router, prefix="/api/cases/search", tags=["case-search"])
 app.include_router(webhooks_router, prefix="/api/webhooks", tags=["webhooks"])
+# Darktrace inbound webhook receiver — only mount when explicitly enabled.
+# env.example and docs/integrations/DARKTRACE.md document DARKTRACE_ENABLED
+# as the on/off toggle; leaving it unset must leave the receiver off.
+if os.environ.get("DARKTRACE_ENABLED", "false").lower() == "true":
+    app.include_router(
+        darktrace_webhook_router,
+        prefix="/api/webhooks/darktrace",
+        tags=["darktrace"],
+    )
 app.include_router(sla_policies_router, prefix="/api/sla-policies", tags=["sla-policies"])
 
 @app.on_event("startup")
