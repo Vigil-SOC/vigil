@@ -1772,6 +1772,15 @@ class User(Base):
     )
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # Password history — list of prior bcrypt hashes, newest first. Used
+    # to reject reuse of the last N passwords. Capped in application code.
+    password_history: Mapped[List[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default='[]'
+    )
+    password_changed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

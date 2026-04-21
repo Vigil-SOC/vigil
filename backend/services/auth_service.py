@@ -65,6 +65,9 @@ JWT_REFRESH_EXPIRATION_DAYS = 30
 LOCKOUT_THRESHOLD = int(os.getenv("AUTH_LOCKOUT_THRESHOLD", "5"))
 LOCKOUT_DURATION_MINUTES = int(os.getenv("AUTH_LOCKOUT_DURATION_MINUTES", "15"))
 
+# Number of prior password hashes to remember and reject on reuse
+PASSWORD_HISTORY_LIMIT = int(os.getenv("AUTH_PASSWORD_HISTORY_LIMIT", "5"))
+
 
 class AccountLockedError(Exception):
     """Raised when authentication is refused because the account is locked."""
@@ -72,6 +75,26 @@ class AccountLockedError(Exception):
     def __init__(self, locked_until: datetime):
         self.locked_until = locked_until
         super().__init__(f"Account locked until {locked_until.isoformat()}")
+
+
+class PasswordReuseError(Exception):
+    """Raised when a user attempts to reuse a recent password."""
+
+
+def password_matches_any(plaintext: str, hashes) -> bool:
+    """Return True if `plaintext` matches any bcrypt hash in the iterable."""
+    if not hashes:
+        return False
+    encoded = plaintext.encode("utf-8")
+    for h in hashes:
+        if not h:
+            continue
+        try:
+            if bcrypt.checkpw(encoded, h.encode("utf-8")):
+                return True
+        except Exception as exc:
+            logger.warning("Password history compare failed for one entry: %s", exc)
+    return False
 
 
 class AuthService:
