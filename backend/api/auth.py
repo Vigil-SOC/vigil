@@ -5,13 +5,15 @@ Handles login, logout, token refresh, password management, and MFA.
 """
 
 import logging
+from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Depends, status
+from fastapi import APIRouter, HTTPException, Depends, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
-from backend.services.auth_service import AuthService
+from backend.services.auth_service import AccountLockedError, AuthService
 from backend.middleware.auth import get_current_user, get_current_active_user
+from backend.middleware.rate_limit import limiter
 from database.models import User
 from database.connection import get_db_session
 
@@ -34,15 +36,6 @@ class LoginResponse(BaseModel):
     refresh_token: str
     token_type: str = "bearer"
     user: dict
-
-
-class RegisterRequest(BaseModel):
-    """User registration request."""
-    username: str
-    email: EmailStr
-    password: str
-    full_name: str
-    role_id: str = "role-analyst"  # Default role
 
 
 class ChangePasswordRequest(BaseModel):
@@ -68,55 +61,66 @@ class MFAVerifyRequest(BaseModel):
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("5/minute")
 async def login(
-    request: LoginRequest,
+    request: Request,
+    payload: LoginRequest,
     session: Session = Depends(get_db_session)
 ):
     """
     Authenticate user and return JWT tokens.
-    
+
     Args:
-        request: Login credentials
+        request: FastAPI request (used by the rate limiter).
+        payload: Login credentials
         session: Database session
-    
+
     Returns:
         Access and refresh tokens with user info
     """
     # Authenticate user
-    user = AuthService.authenticate_user(
-        request.username_or_email,
-        request.password,
-        session
-    )
-    
+    try:
+        user = AuthService.authenticate_user(
+            payload.username_or_email,
+            payload.password,
+            session
+        )
+    except AccountLockedError as exc:
+        retry_after = max(1, int((exc.locked_until - datetime.utcnow()).total_seconds()))
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail="Account locked due to repeated failed login attempts",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username/email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     # Check MFA if enabled
     if user.mfa_enabled:
-        if not request.mfa_code:
+        if not payload.mfa_code:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="MFA code required",
                 headers={"X-MFA-Required": "true"},
             )
-        
-        if not AuthService.verify_mfa_code(user.user_id, request.mfa_code, session):
+
+        if not AuthService.verify_mfa_code(user.user_id, payload.mfa_code, session):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid MFA code",
             )
-    
+
     # Generate tokens
     access_token = AuthService.generate_jwt_token(user, "access")
     refresh_token = AuthService.generate_jwt_token(user, "refresh")
-    
+
     logger.info(f"User logged in: {user.username}")
-    
+
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
@@ -140,22 +144,25 @@ async def logout(current_user: User = Depends(get_current_active_user)):
 
 
 @router.post("/refresh", response_model=LoginResponse)
+@limiter.limit("30/minute")
 async def refresh_token(
-    request: RefreshTokenRequest,
+    request: Request,
+    body: RefreshTokenRequest,
     session: Session = Depends(get_db_session)
 ):
     """
     Refresh access token using refresh token.
-    
+
     Args:
-        request: Refresh token
+        request: FastAPI request (used by the rate limiter).
+        body: Refresh token
         session: Database session
-    
+
     Returns:
         New access and refresh tokens
     """
     # Verify refresh token
-    payload = AuthService.verify_jwt_token(request.refresh_token)
+    payload = AuthService.verify_jwt_token(body.refresh_token)
     if not payload or payload.get("token_type") != "refresh":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -258,41 +265,44 @@ async def update_current_user(
 
 
 @router.post("/change-password")
+@limiter.limit("5/minute")
 async def change_password(
-    request: ChangePasswordRequest,
+    request: Request,
+    body: ChangePasswordRequest,
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_db_session)
 ):
     """
     Change user password.
-    
+
     Args:
-        request: Current and new password
+        request: FastAPI request (used by the rate limiter).
+        body: Current and new password
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         Success message
     """
     # Verify current password
-    if not AuthService.verify_password(request.current_password, current_user.password_hash):
+    if not AuthService.verify_password(body.current_password, current_user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Current password is incorrect"
         )
-    
+
     # Validate new password
-    if len(request.new_password) < 8:
+    if len(body.new_password) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Password must be at least 8 characters"
         )
-    
+
     try:
         # Update password
-        current_user.password_hash = AuthService.hash_password(request.new_password)
+        current_user.password_hash = AuthService.hash_password(body.new_password)
         session.commit()
-        
+
         logger.info(f"Password changed for user: {current_user.username}")
         return {"message": "Password changed successfully"}
     
@@ -397,53 +407,8 @@ async def disable_mfa(
         )
 
 
-@router.post("/register", response_model=LoginResponse)
-async def register(
-    request: RegisterRequest,
-    session: Session = Depends(get_db_session)
-):
-    """
-    Register a new user (public endpoint - consider restricting in production).
-    
-    Args:
-        request: Registration details
-        session: Database session
-    
-    Returns:
-        Access and refresh tokens with user info
-    """
-    # Validate password
-    if len(request.password) < 8:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must be at least 8 characters"
-        )
-    
-    # Create user
-    user = AuthService.create_user(
-        username=request.username,
-        email=request.email,
-        password=request.password,
-        full_name=request.full_name,
-        role_id=request.role_id,
-        session=session
-    )
-    
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username or email already exists"
-        )
-    
-    # Generate tokens
-    access_token = AuthService.generate_jwt_token(user, "access")
-    refresh_token = AuthService.generate_jwt_token(user, "refresh")
-    
-    logger.info(f"New user registered: {user.username}")
-    
-    return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=user.to_dict()
-    )
+# Public self-registration was removed intentionally. All user creation
+# goes through the admin-gated POST /api/users/ endpoint (backend/api/users.py)
+# which validates the requested role against the caller's privileges.
+
 

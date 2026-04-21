@@ -1765,7 +1765,13 @@ class User(Base):
     # Session tracking
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     login_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    
+
+    # Failed-login tracking and account lockout
+    failed_login_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default='0'
+    )
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -1780,7 +1786,7 @@ class User(Base):
         onupdate=datetime.utcnow,
         server_default='now()'
     )
-    
+
     # Indexes
     __table_args__ = (
         Index('idx_user_username', 'username'),

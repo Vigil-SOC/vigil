@@ -22,6 +22,10 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+
+from backend.middleware.rate_limit import limiter
 
 from api import (
     findings_router,
@@ -100,6 +104,11 @@ app = FastAPI(
     description="REST API for Vigil SOC Application",
     version="1.0.0"
 )
+
+# Wire the shared slowapi Limiter used by auth endpoints. The decorator-based
+# limits (@limiter.limit) read state from app.state.limiter, so both must be set.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Instrument FastAPI with OTEL tracing (health + metrics endpoints excluded)
 try:
