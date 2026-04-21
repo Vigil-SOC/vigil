@@ -26,6 +26,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 
 from backend.middleware.rate_limit import limiter
+from backend.middleware.security_headers import SecurityHeadersMiddleware
 
 from api import (
     findings_router,
@@ -120,20 +121,40 @@ try:
 except Exception as _inst_err:
     logger.debug("FastAPI OTEL instrumentation skipped: %s", _inst_err)
 
-# Configure CORS
+# Configure CORS — origins come from VIGIL_CORS_ORIGINS (comma-separated).
+# Default keeps the existing dev hosts; production deployments must override.
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:6988",
+    "http://127.0.0.1:6988",
+    "http://localhost:3000",
+    "http://localhost:5173",
+]
+_cors_origins_raw = os.getenv("VIGIL_CORS_ORIGINS")
+if _cors_origins_raw:
+    _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+else:
+    _cors_origins = _DEFAULT_CORS_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:6988",  # Frontend dev server
-        "http://127.0.0.1:6988",  # Frontend dev server (IPv4)
-        "http://localhost:3000",  # Alternative React dev server
-        "http://localhost:5173"   # Alternative Vite dev server
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-CSRF-Token",
+        "X-MFA-Required",
+        "X-Requested-With",
+    ],
     expose_headers=["X-MFA-Required"],
 )
+
+# Security headers added AFTER CORS so it is the outermost middleware on the
+# response path. That way HSTS/CSP/X-Frame-Options apply to CORS preflight
+# responses too (CORSMiddleware short-circuits OPTIONS without calling inner
+# middleware, so anything added before CORS would be skipped on preflight).
+app.add_middleware(SecurityHeadersMiddleware)
 
 if PROMETHEUS_AVAILABLE:
     app.add_middleware(PrometheusMiddleware)
