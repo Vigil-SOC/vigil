@@ -72,7 +72,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     ):
         super().__init__(app)
         self.enabled = (
-            _env_bool("VIGIL_CSRF_ENABLED", False) if enabled is None else enabled
+            _env_bool("VIGIL_CSRF_ENABLED", True) if enabled is None else enabled
         )
         self.report_only = (
             _env_bool("VIGIL_CSRF_REPORT_ONLY", True)
@@ -126,10 +126,11 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
         response = await call_next(request)
 
-        # Seed the csrf_token cookie on safe responses so the frontend has
-        # something to echo back on the next mutating request. Refresh if
-        # it's missing or on safe navigation responses.
-        if request.method not in UNSAFE_METHODS and CSRF_COOKIE_NAME not in request.cookies:
+        # Seed the csrf_token cookie on every response when the client
+        # doesn't already have one — including rejected POSTs (so the next
+        # attempt has something to echo) and error responses like 401
+        # (the frontend's loadUser flow gets a cookie from an unauth 401).
+        if CSRF_COOKIE_NAME not in request.cookies:
             response.set_cookie(
                 CSRF_COOKIE_NAME,
                 secrets.token_urlsafe(32),

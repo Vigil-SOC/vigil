@@ -1,63 +1,68 @@
 import axios from 'axios'
 
+// Auth is cookie-based (HttpOnly access_token + refresh_token set by the
+// backend). withCredentials ensures axios sends those cookies on every
+// request, including via the Vite dev proxy.
 const api = axios.create({
   baseURL: '/api',
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 })
 
-// Add auth token to requests
+// Read the csrf_token cookie set by the backend CSRF middleware. The
+// backend seeds this on any request that doesn't already have one, so
+// after the first /auth/me call it's always present.
+function readCookie(name: string): string | null {
+  const match = document.cookie.match(
+    new RegExp('(?:^|; )' + name.replace(/[.$?*|{}()[\]\\/+^]/g, '\\$&') + '=([^;]*)')
+  )
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete'])
+
+// Attach X-CSRF-Token on mutating requests. Double-submit cookie pattern —
+// a cross-site attacker can't read the cookie (same-origin policy) so
+// they can't forge a matching header.
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('access_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+    if (config.method && MUTATING_METHODS.has(config.method.toLowerCase())) {
+      const csrf = readCookie('csrf_token')
+      if (csrf) {
+        config.headers['X-CSRF-Token'] = csrf
+      }
     }
     return config
   },
-  (error) => {
-    return Promise.reject(error)
-  }
+  (error) => Promise.reject(error)
 )
 
-// Handle 401 errors (token expired)
+// Handle 401 by refreshing via the refresh_token cookie. The browser
+// carries the cookie automatically; we just POST to /auth/refresh.
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config
 
-    const isAuthEndpoint = originalRequest?.url?.startsWith('/auth/login')
+    const isAuthEndpoint =
+      originalRequest?.url?.startsWith('/auth/login') ||
+      originalRequest?.url?.startsWith('/auth/refresh')
 
     if (isAuthEndpoint) {
       return Promise.reject(error)
     }
 
-    // If 401 and we haven't retried yet, try to refresh token
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true
 
       try {
-        const refreshToken = localStorage.getItem('refresh_token')
-        if (refreshToken) {
-          const response = await axios.post('/api/auth/refresh', {
-            refresh_token: refreshToken,
-          })
-
-          const { access_token, refresh_token: newRefreshToken } = response.data
-
-          localStorage.setItem('access_token', access_token)
-          localStorage.setItem('refresh_token', newRefreshToken)
-
-          // Retry original request with new token
-          originalRequest.headers.Authorization = `Bearer ${access_token}`
-          return api(originalRequest)
-        }
+        await api.post('/auth/refresh')
+        // New cookies are set by the server; retry the original request.
+        return api(originalRequest)
       } catch (refreshError) {
-        // Refresh failed, redirect to login
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('refresh_token')
-        window.location.href = '/login'
+        // Refresh failed — let the app's AuthContext react to the 401.
         return Promise.reject(refreshError)
       }
     }
