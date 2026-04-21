@@ -9,9 +9,10 @@ import logging
 import os
 from typing import Optional, Callable
 from functools import wraps
-from fastapi import HTTPException, Header, Depends, status
+from fastapi import HTTPException, Header, Depends, Request, status
 from sqlalchemy.orm import Session
 
+from backend.services.auth_cookies import ACCESS_COOKIE_NAME
 from backend.services.auth_service import AuthService
 from backend.services.token_blacklist import is_token_revoked
 from database.models import User
@@ -70,47 +71,55 @@ def _get_dev_user(session: Session) -> User:
 
 
 async def get_current_user(
+    request: Request,
     authorization: Optional[str] = Header(None),
     session: Session = Depends(get_db_session)
 ) -> User:
     """
-    Dependency to get the current authenticated user from JWT token.
-    
+    Resolve the authenticated user from either the access_token HttpOnly
+    cookie (browser flow) or an Authorization: Bearer header (API clients).
+
+    Cookie is preferred when both are present.
+
     In DEV_MODE, authentication is bypassed and a mock admin user is returned.
-    
+
     Args:
-        authorization: Authorization header (Bearer token)
-        session: Database session
-    
+        request: FastAPI request (used to read the access_token cookie).
+        authorization: Authorization header (Bearer token fallback).
+        session: Database session.
+
     Returns:
-        Current User object
-    
+        Current User object.
+
     Raises:
-        HTTPException: If token is invalid or user not found (only in production)
+        HTTPException: If no token is present, validation fails, or the user
+            is not found (production only).
     """
     # DEV MODE: Bypass authentication and return mock user
     if DEV_MODE:
         logger.debug("DEV_MODE: Bypassing authentication")
         return _get_dev_user(session)
-    
-    # PRODUCTION MODE: Normal JWT authentication
-    if not authorization:
+
+    token: Optional[str] = request.cookies.get(ACCESS_COOKIE_NAME)
+
+    if not token and authorization:
+        # Bearer fallback for CLI / scripts / integrations that haven't
+        # migrated to the cookie flow.
+        parts = authorization.split()
+        if len(parts) != 2 or parts[0].lower() != "bearer":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid authorization header format",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        token = parts[1]
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authorization header missing",
+            detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    # Extract token from "Bearer <token>"
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header format",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
-    token = parts[1]
     
     # Verify JWT token
     payload = AuthService.verify_jwt_token(token)
@@ -296,26 +305,30 @@ def require_role(role_name: str):
 
 # Optional authentication (doesn't raise error if no token)
 async def get_optional_user(
+    request: Request,
     authorization: Optional[str] = Header(None),
     session: Session = Depends(get_db_session)
 ) -> Optional[User]:
     """
     Dependency to optionally get the current user.
-    
-    Returns None if no valid token is provided.
-    
+
+    Returns None if no valid token is provided (either via cookie or
+    Authorization header).
+
     Args:
-        authorization: Authorization header (Bearer token)
+        request: FastAPI request (used to read the access_token cookie).
+        authorization: Authorization header (Bearer token fallback).
         session: Database session
-    
+
     Returns:
         User object or None
     """
-    if not authorization:
+    has_cookie = ACCESS_COOKIE_NAME in request.cookies
+    if not has_cookie and not authorization:
         return None
-    
+
     try:
-        return await get_current_user(authorization, session)
+        return await get_current_user(request, authorization, session)
     except HTTPException:
         return None
 
