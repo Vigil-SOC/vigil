@@ -5,6 +5,7 @@ Handles login, logout, token refresh, password management, and MFA.
 """
 
 import logging
+import os
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends, Header, Request, Response, status
@@ -17,7 +18,21 @@ from backend.services.auth_cookies import (
     clear_auth_cookies,
     set_auth_cookies,
 )
-from backend.services.auth_service import AccountLockedError, AuthService
+from backend.services.auth_service import (
+    AccountLockedError,
+    AuthService,
+    PASSWORD_HISTORY_LIMIT,
+    password_matches_any,
+)
+from backend.services.email_service import send_email
+from backend.services.password_reset import (
+    generate_reset_token,
+    verify_reset_token,
+)
+from backend.services.password_validator import (
+    PasswordPolicyError,
+    validate_password_strength,
+)
 from backend.services.token_blacklist import (
     blacklist_jti,
     is_token_revoked,
@@ -74,6 +89,41 @@ class MFASetupResponse(BaseModel):
 class MFAVerifyRequest(BaseModel):
     """MFA verification request."""
     code: str
+
+
+class PasswordResetRequest(BaseModel):
+    """Password reset initiation."""
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    """Password reset completion."""
+    token: str
+    new_password: str
+
+
+def _apply_new_password(user: User, plaintext: str) -> None:
+    """Enforce history, hash, set, update history + changed_at in one place.
+    Caller is responsible for session.commit()."""
+    if password_matches_any(plaintext, user.password_history or []) or (
+        user.password_hash and AuthService.verify_password(plaintext, user.password_hash)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Password matches one of your last {PASSWORD_HISTORY_LIMIT} "
+                "passwords — choose a different one."
+            ),
+        )
+
+    new_hash = AuthService.hash_password(plaintext)
+    previous = list(user.password_history or [])
+    if user.password_hash:
+        previous.insert(0, user.password_hash)
+    # Cap to the configured limit so the JSONB row doesn't grow unbounded.
+    user.password_history = previous[:PASSWORD_HISTORY_LIMIT]
+    user.password_hash = new_hash
+    user.password_changed_at = datetime.utcnow()
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -398,16 +448,18 @@ async def change_password(
             detail="Current password is incorrect"
         )
 
-    # Validate new password
-    if len(body.new_password) < 8:
+    # Validate new password against the strength policy
+    try:
+        validate_password_strength(body.new_password)
+    except PasswordPolicyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must be at least 8 characters"
+            detail=str(exc),
         )
 
     try:
-        # Update password
-        current_user.password_hash = AuthService.hash_password(body.new_password)
+        # Enforce no-reuse + hash + history rotation
+        _apply_new_password(current_user, body.new_password)
         session.commit()
 
         # Invalidate every outstanding token for this user. The current
@@ -529,5 +581,121 @@ async def disable_mfa(
 # Public self-registration was removed intentionally. All user creation
 # goes through the admin-gated POST /api/users/ endpoint (backend/api/users.py)
 # which validates the requested role against the caller's privileges.
+
+
+@router.post("/password-reset/request")
+@limiter.limit("3/hour")
+async def password_reset_request(
+    request: Request,
+    body: PasswordResetRequest,
+    session: Session = Depends(get_db_session),
+):
+    """
+    Begin a password reset. Always returns 200 regardless of whether the
+    email maps to an account — otherwise the response shape leaks which
+    emails are registered.
+
+    The actual email (with the signed reset token) is sent asynchronously
+    via the configured email backend. In dev, the default ConsoleBackend
+    just logs the link.
+    """
+    user = session.query(User).filter(User.email == body.email).first()
+    if user and user.is_active:
+        token = generate_reset_token(user.user_id)
+        frontend_base = os.getenv("VIGIL_FRONTEND_URL", "").rstrip("/")
+        if frontend_base:
+            reset_link = f"{frontend_base}/reset-password?token={token}"
+        else:
+            # Fall back to a raw token so the dev backend still shows
+            # something actionable when VIGIL_FRONTEND_URL isn't set.
+            reset_link = f"(token) {token}"
+        subject = "Vigil SOC — password reset"
+        body_text = (
+            f"Hello {user.full_name or user.username},\n\n"
+            "A password reset was requested for this account. Use the link "
+            "below to choose a new password. The link is valid for one hour "
+            "and can only be used once.\n\n"
+            f"{reset_link}\n\n"
+            "If you did not request this reset, you can ignore this email."
+        )
+        send_email(to=user.email, subject=subject, body=body_text)
+        logger.info("Password reset requested for %s", user.user_id)
+    else:
+        # Unknown address or inactive user — log for ops visibility but
+        # return the same response. Constant-time comparison isn't needed
+        # here because the DB lookup already dominates the timing.
+        logger.info(
+            "Password reset requested for unknown/inactive email: %s", body.email
+        )
+
+    return {
+        "message": (
+            "If that email matches an active account, a reset link has been sent."
+        )
+    }
+
+
+@router.post("/password-reset/confirm")
+@limiter.limit("5/hour")
+async def password_reset_confirm(
+    request: Request,
+    body: PasswordResetConfirm,
+    session: Session = Depends(get_db_session),
+):
+    """
+    Complete a password reset. Validates the signed token, enforces the
+    password strength policy + reuse check, rotates the hash, and
+    revokes every outstanding token so any existing sessions die.
+    """
+    user_id = await verify_reset_token(body.token)
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        )
+
+    user = session.query(User).filter(User.user_id == user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Account no longer eligible for reset",
+        )
+
+    try:
+        validate_password_strength(body.new_password)
+    except PasswordPolicyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        )
+
+    try:
+        _apply_new_password(user, body.new_password)
+        # Clear any active lockout so the user can immediately log in.
+        user.failed_login_count = 0
+        user.locked_until = None
+        session.commit()
+
+        try:
+            await revoke_all_for_user(user.user_id)
+        except Exception as exc:
+            logger.error(
+                "Password reset for %s but revoke_all_for_user failed: %s",
+                user.username,
+                exc,
+            )
+
+        logger.info("Password reset completed for user: %s", user.username)
+        return {"message": "Password reset successfully"}
+    except HTTPException:
+        session.rollback()
+        raise
+    except Exception as exc:
+        logger.error("Password reset error: %s", exc)
+        session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset password",
+        )
 
 

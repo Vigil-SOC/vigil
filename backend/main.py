@@ -43,6 +43,7 @@ from api import (
     logs_router,
     workflows_router,
     reasoning_router,
+    skills_router,
 )
 from api.local_services import router as local_services_router
 from api.integrations_compatibility import router as compatibility_router
@@ -193,6 +194,7 @@ app.include_router(custom_agents_router, prefix="/api", tags=["custom-agents"])
 app.include_router(agents_router, prefix="/api/agents", tags=["agents"])
 app.include_router(compatibility_router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(custom_integrations_router, prefix="/api/custom-integrations", tags=["custom-integrations"])
+app.include_router(skills_router, prefix="/api/skills", tags=["skills"])
 app.include_router(ingestion_router, prefix="/api/ingest", tags=["ingestion"])
 app.include_router(vstrike_router, prefix="/api/integrations/vstrike", tags=["vstrike"])
 app.include_router(storage_status_router, prefix="/api/storage", tags=["storage"])

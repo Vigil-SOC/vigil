@@ -89,6 +89,7 @@ class TestDatabaseMetadataRegistration:
             "shared_iocs",
             "case_notifications",
             "custom_agents",
+            "skills",
         }
 
         registered = set(Base.metadata.tables.keys())

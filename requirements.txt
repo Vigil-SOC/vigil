@@ -44,6 +44,9 @@ bcrypt>=4.2.0
 pyjwt>=2.10.0
 pyotp>=2.9.0
 slowapi>=0.1.9
+# Signed URL-safe tokens for password reset (also a Starlette transitive
+# dep; listed explicitly so pip show it and it doesn't quietly disappear).
+itsdangerous>=2.1.0
 
 # Testing Dependencies
 pytest>=8.0.0
