@@ -969,6 +969,25 @@ export const orchestratorApi = {
   getCost: () => api.get('/orchestrator/cost'),
 }
 
+// Reasoning-trace API (GH #79 — LLM chain-of-thought visibility)
+export const reasoningApi = {
+  getSessionSummary: (sessionId: string) =>
+    api.get(`/reasoning/${encodeURIComponent(sessionId)}`).then(r => r.data),
+
+  listInteractions: (sessionId: string, params?: { limit?: number; offset?: number }) =>
+    api.get(`/reasoning/${encodeURIComponent(sessionId)}/interactions`, { params }).then(r => r.data),
+
+  getInteraction: (sessionId: string, interactionId: string) =>
+    api
+      .get(`/reasoning/${encodeURIComponent(sessionId)}/interactions/${encodeURIComponent(interactionId)}`)
+      .then(r => r.data),
+
+  listInvestigationInteractions: (investigationId: string, params?: { limit?: number; offset?: number }) =>
+    api
+      .get(`/reasoning/investigation/${encodeURIComponent(investigationId)}/interactions`, { params })
+      .then(r => r.data),
+}
+
 // Kafka ingestion API
 export const kafkaApi = {
   getConfig: () => api.get('/kafka/config'),

@@ -36,6 +36,7 @@ MAX_CONCURRENT_LLM_CALLS = int(os.getenv("LLM_MAX_CONCURRENT", "5"))
 def _redis_settings() -> RedisSettings:
     url = os.getenv("REDIS_URL", DEFAULT_REDIS_URL)
     from urllib.parse import urlparse
+
     parsed = urlparse(url)
     return RedisSettings(
         host=parsed.hostname or "localhost",
@@ -49,6 +50,7 @@ def _redis_settings() -> RedisSettings:
 # Worker task functions
 # ---------------------------------------------------------------------------
 
+
 async def llm_call(
     ctx: Dict[str, Any],
     messages: List[Dict],
@@ -61,6 +63,8 @@ async def llm_call(
     tools: Optional[List[Dict]],
     temperature: Optional[float],
     traceparent: str = "",
+    agent_id: Optional[str] = None,
+    investigation_id: Optional[str] = None,
 ) -> Any:
     """Execute a single LLM call through the shared ClaudeService.
 
@@ -79,6 +83,7 @@ async def llm_call(
     try:
         from core.telemetry import extract_traceparent, get_tracer
         from opentelemetry.trace import SpanKind
+
         parent_ctx = extract_traceparent({"traceparent": traceparent})
         _tracer = get_tracer("vigil.services.llm_worker")
         worker_span = _tracer.start_span(
@@ -110,6 +115,9 @@ async def llm_call(
             thinking_budget=thinking_budget,
             tools=tools,
             temperature=temperature,
+            session_id=session_id,
+            agent_id=agent_id,
+            investigation_id=investigation_id,
         )
     finally:
         rate_limiter.release()
@@ -124,7 +132,9 @@ async def llm_call(
 
     # Persist session
     if session_id:
-        updated = messages + [{"role": "assistant", "content": result.get("content", "")}]
+        updated = messages + [
+            {"role": "assistant", "content": result.get("content", "")}
+        ]
         await session_store.save(session_id, updated)
 
     return result
@@ -140,6 +150,8 @@ async def llm_call_raw(
     tools: Optional[List[Dict]],
     temperature: Optional[float],
     traceparent: str = "",
+    investigation_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Execute a raw multi-turn LLM call (used by AgentRunner tool loop).
 
@@ -154,6 +166,7 @@ async def llm_call_raw(
     try:
         from core.telemetry import extract_traceparent, get_tracer
         from opentelemetry.trace import SpanKind
+
         parent_ctx = extract_traceparent({"traceparent": traceparent})
         _tracer = get_tracer("vigil.services.llm_worker")
         worker_span = _tracer.start_span(
@@ -178,6 +191,8 @@ async def llm_call_raw(
             thinking_budget=thinking_budget,
             tools=tools,
             temperature=temperature,
+            investigation_id=investigation_id,
+            agent_id=agent_id,
         )
     finally:
         rate_limiter.release()
@@ -190,7 +205,9 @@ async def llm_call_raw(
             out_tok = result.get("output_tokens", 0)
             worker_span.set_attribute("gen_ai.usage.input_tokens", in_tok)
             worker_span.set_attribute("gen_ai.usage.output_tokens", out_tok)
-            worker_span.set_attribute("gen_ai.finish_reason", result.get("stop_reason", ""))
+            worker_span.set_attribute(
+                "gen_ai.finish_reason", result.get("stop_reason", "")
+            )
             worker_span.end()
         except Exception:
             pass
@@ -201,6 +218,7 @@ async def llm_call_raw(
 # ---------------------------------------------------------------------------
 # Sync helpers (run inside asyncio.to_thread)
 # ---------------------------------------------------------------------------
+
 
 def _sync_claude_call(
     claude_service,
@@ -213,6 +231,9 @@ def _sync_claude_call(
     thinking_budget: int,
     tools: Optional[List[Dict]],
     temperature: Optional[float],
+    session_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    investigation_id: Optional[str] = None,
 ) -> Any:
     """Call ClaudeService.chat() synchronously."""
     current_message = messages[-1]["content"] if messages else ""
@@ -226,6 +247,9 @@ def _sync_claude_call(
         max_tokens=max_tokens,
         enable_thinking=enable_thinking,
         thinking_budget=thinking_budget if enable_thinking else None,
+        session_id=session_id,
+        agent_id=agent_id,
+        investigation_id=investigation_id,
     )
 
 
@@ -239,8 +263,12 @@ def _sync_claude_raw(
     thinking_budget: int,
     tools: Optional[List[Dict]],
     temperature: Optional[float],
+    investigation_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
 ) -> Any:
     """Make a direct client.messages.create() call for multi-turn tool loops."""
+    import time as _time
+
     kwargs: Dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
@@ -256,12 +284,44 @@ def _sync_claude_raw(
             "budget_tokens": thinking_budget,
         }
 
-    return claude_service.client.messages.create(**kwargs)
+    _raw_started = _time.monotonic()
+    response = claude_service.client.messages.create(**kwargs)
+    _raw_duration_ms = int((_time.monotonic() - _raw_started) * 1000)
+
+    # Persist reasoning trace (GH #79)
+    try:
+        _usage = getattr(response, "usage", None)
+        claude_service._persist_interaction(
+            session_id=None,
+            agent_id=agent_id,
+            investigation_id=investigation_id,
+            model=getattr(response, "model", model),
+            system_prompt=None,
+            request_messages=messages,
+            response_content=list(response.content) if response.content else [],
+            thinking_enabled=bool(enable_thinking),
+            thinking_budget=thinking_budget if enable_thinking else None,
+            stop_reason=getattr(response, "stop_reason", None),
+            input_tokens=getattr(_usage, "input_tokens", 0) if _usage else 0,
+            output_tokens=getattr(_usage, "output_tokens", 0) if _usage else 0,
+            cache_read_tokens=(
+                getattr(_usage, "cache_read_input_tokens", 0) if _usage else 0
+            ),
+            cache_creation_tokens=(
+                getattr(_usage, "cache_creation_input_tokens", 0) if _usage else 0
+            ),
+            duration_ms=_raw_duration_ms,
+        )
+    except Exception as _pe:
+        logger.debug(f"Reasoning-trace persist skipped (raw): {_pe}")
+
+    return response
 
 
 # ---------------------------------------------------------------------------
 # Response helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_result(response: Any) -> Dict[str, Any]:
     """Normalise ClaudeService.chat() output to a serialisable dict."""
@@ -284,12 +344,14 @@ def _serialize_raw_response(response: Any) -> Dict[str, Any]:
             if block.type == "text":
                 content_blocks.append({"type": "text", "text": block.text})
             elif block.type == "tool_use":
-                content_blocks.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input,
-                })
+                content_blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": block.id,
+                        "name": block.name,
+                        "input": block.input,
+                    }
+                )
             elif block.type == "thinking":
                 thinking_block = {"type": "thinking", "thinking": block.thinking}
                 if hasattr(block, "signature") and block.signature:
@@ -317,11 +379,13 @@ def _serialize_raw_response(response: Any) -> Dict[str, Any]:
 # Worker startup / shutdown
 # ---------------------------------------------------------------------------
 
+
 async def on_startup(ctx: Dict[str, Any]):
     """Initialise shared resources when the ARQ worker boots."""
     # Initialize OTEL telemetry (replaces basicConfig with structured JSON logging)
     try:
         from core.telemetry import init_telemetry
+
         init_telemetry("vigil-llm-worker")
     except Exception as _tel_err:
         logging.basicConfig(
@@ -343,9 +407,7 @@ async def on_startup(ctx: Dict[str, Any]):
     ctx["rate_limiter"] = asyncio.Semaphore(MAX_CONCURRENT_LLM_CALLS)
     ctx["session_store"] = RedisSessionStore(ctx["redis"])
 
-    logger.info(
-        f"LLM worker started (max_concurrent={MAX_CONCURRENT_LLM_CALLS})"
-    )
+    logger.info(f"LLM worker started (max_concurrent={MAX_CONCURRENT_LLM_CALLS})")
 
 
 async def on_shutdown(ctx: Dict[str, Any]):
@@ -356,6 +418,7 @@ async def on_shutdown(ctx: Dict[str, Any]):
 # ARQ WorkerSettings
 # ---------------------------------------------------------------------------
 
+
 class WorkerSettings:
     """ARQ worker configuration.
 
@@ -363,6 +426,7 @@ class WorkerSettings:
     so ``triage`` jobs are always consumed before ``investigation``, which
     are consumed before ``chat``.
     """
+
     functions = [llm_call, llm_call_raw]
     redis_settings = _redis_settings()
     queue_name = QUEUE_NAME

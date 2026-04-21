@@ -30,6 +30,7 @@ def _redis_settings() -> RedisSettings:
     url = os.getenv("REDIS_URL", DEFAULT_REDIS_URL)
     # Parse redis://host:port/db
     from urllib.parse import urlparse
+
     parsed = urlparse(url)
     return RedisSettings(
         host=parsed.hostname or "localhost",
@@ -42,6 +43,7 @@ def _redis_settings() -> RedisSettings:
 # ---------------------------------------------------------------------------
 # Session store -- keeps chat histories isolated per session_id in Redis
 # ---------------------------------------------------------------------------
+
 
 class RedisSessionStore:
     """Stores per-session message histories in Redis with TTL."""
@@ -83,9 +85,11 @@ class RedisSessionStore:
 # Gateway -- singleton entry point used by all callers
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class LLMRequest:
     """Describes a single LLM call to be queued."""
+
     messages: List[Dict]
     model: str = "claude-sonnet-4-5-20250929"
     max_tokens: int = 4096
@@ -119,6 +123,7 @@ class LLMGateway:
         # Instrument the underlying Redis client with OTEL tracing
         try:
             from opentelemetry.instrumentation.redis import RedisInstrumentor
+
             RedisInstrumentor().instrument()
             logger.debug("Redis OTEL instrumentation enabled")
         except Exception as _inst_err:
@@ -137,6 +142,7 @@ class LLMGateway:
         """Capture the current W3C traceparent for ARQ job propagation."""
         try:
             from core.telemetry import inject_traceparent
+
             carrier: Dict[str, str] = {}
             inject_traceparent(carrier)
             return carrier.get("traceparent", "")
@@ -228,6 +234,7 @@ class LLMGateway:
         thinking_budget: int = 8000,
         tools: Optional[List[Dict]] = None,
         timeout: int = 180,
+        agent_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Enqueue a multi-turn investigation call with explicit messages.
 
@@ -244,6 +251,8 @@ class LLMGateway:
             tools=tools,
             temperature=None,
             traceparent=self._get_traceparent(),
+            investigation_id=inv_id,
+            agent_id=agent_id,
             _queue_name=QUEUE_NAME,
         )
         try:
@@ -266,6 +275,8 @@ class LLMGateway:
         enable_thinking: bool = False,
         thinking_budget: int = 10000,
         timeout: int = 120,
+        agent_id: Optional[str] = None,
+        investigation_id: Optional[str] = None,
     ) -> Any:
         """Enqueue a UI chat call (normal priority)."""
         job = await self._pool.enqueue_job(
@@ -280,14 +291,14 @@ class LLMGateway:
             tools=None,
             temperature=None,
             traceparent=self._get_traceparent(),
+            agent_id=agent_id,
+            investigation_id=investigation_id,
             _queue_name=QUEUE_NAME,
         )
         try:
             return await job.result(timeout=timeout)
         except DeserializationError as exc:
-            logger.error(
-                "arq job result deserialization failed for chat job: %s", exc
-            )
+            logger.error("arq job result deserialization failed for chat job: %s", exc)
             raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
 
     async def submit_insights(

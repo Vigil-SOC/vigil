@@ -50,7 +50,7 @@ import {
   Replay as ReworkIcon,
   Psychology as DecisionsIcon,
 } from '@mui/icons-material'
-import { orchestratorApi, configApi } from '../services/api'
+import { orchestratorApi, configApi, reasoningApi } from '../services/api'
 
 interface OrchestratorStatus {
   enabled: boolean
@@ -136,6 +136,10 @@ export default function Orchestrator() {
   const [reviewNotes, setReviewNotes] = useState('')
   const [reviewing, setReviewing] = useState(false)
   const [savingMaxAgents, setSavingMaxAgents] = useState(false)
+  // GH #79 — reasoning trace for the currently open investigation
+  const [reasoningInteractions, setReasoningInteractions] = useState<any[]>([])
+  const [reasoningLoading, setReasoningLoading] = useState(false)
+  const [expandedInteraction, setExpandedInteraction] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
     try {
@@ -215,6 +219,18 @@ export default function Orchestrator() {
       setFileTab(0)
       setFileContents({})
       setReviewNotes('')
+      setExpandedInteraction(null)
+      // GH #79 — load reasoning trace for this investigation
+      setReasoningLoading(true)
+      setReasoningInteractions([])
+      try {
+        const trace = await reasoningApi.listInvestigationInteractions(id, { limit: 500 })
+        setReasoningInteractions(trace.interactions || [])
+      } catch {
+        setReasoningInteractions([])
+      } finally {
+        setReasoningLoading(false)
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load investigation')
     }
@@ -780,6 +796,103 @@ export default function Orchestrator() {
                   </Paper>
                 </>
               )}
+
+              {/* GH #79 — Reasoning trace per iteration */}
+              <Box sx={{ mt: 2 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                  <DecisionsIcon sx={{ fontSize: 16 }} />
+                  <Typography variant="subtitle2">Reasoning Trace</Typography>
+                  {reasoningInteractions.length > 0 && (
+                    <Chip size="small" label={`${reasoningInteractions.length} call${reasoningInteractions.length === 1 ? '' : 's'}`} />
+                  )}
+                </Box>
+                {reasoningLoading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}><CircularProgress size={18} /></Box>
+                ) : reasoningInteractions.length === 0 ? (
+                  <Typography variant="caption" color="text.secondary">
+                    No reasoning traces recorded for this investigation.
+                  </Typography>
+                ) : (
+                  <Paper variant="outlined" sx={{ maxHeight: 420, overflow: 'auto' }}>
+                    {reasoningInteractions.map((it: any, idx: number) => {
+                      const expanded = expandedInteraction === it.interaction_id
+                      return (
+                        <Box key={it.interaction_id} sx={{ borderBottom: idx < reasoningInteractions.length - 1 ? 1 : 0, borderColor: 'divider' }}>
+                          <Box
+                            sx={{ px: 1.5, py: 1, display: 'flex', alignItems: 'center', gap: 1, cursor: 'pointer', '&:hover': { bgcolor: 'action.hover' } }}
+                            onClick={() => setExpandedInteraction(expanded ? null : it.interaction_id)}
+                          >
+                            <Typography variant="caption" sx={{ fontFamily: 'monospace', minWidth: 72 }}>
+                              #{idx + 1}
+                            </Typography>
+                            <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'text.secondary', minWidth: 80 }}>
+                              {it.created_at ? new Date(it.created_at).toLocaleTimeString() : ''}
+                            </Typography>
+                            <Typography variant="caption" sx={{ flex: 1 }}>
+                              {it.stop_reason || '—'}
+                              {it.thinking_content && ` · 💭 ${it.thinking_content.length}c`}
+                              {Array.isArray(it.tool_calls) && it.tool_calls.length > 0 && ` · 🔧 ${it.tool_calls.length}`}
+                            </Typography>
+                            <Typography variant="caption" sx={{ color: 'text.secondary' }}>
+                              {it.input_tokens}/{it.output_tokens} tok · ${Number(it.cost_usd || 0).toFixed(4)}
+                            </Typography>
+                          </Box>
+                          {expanded && (
+                            <Box sx={{ px: 1.5, py: 1, bgcolor: 'action.hover' }}>
+                              {it.thinking_content && (
+                                <Box sx={{ mb: 1.5 }}>
+                                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5, color: 'info.main' }}>
+                                    💭 Thinking ({it.thinking_content.length} chars)
+                                  </Typography>
+                                  <Typography variant="body2" component="pre" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.7rem', m: 0 }}>
+                                    {it.thinking_content}
+                                  </Typography>
+                                </Box>
+                              )}
+                              {it.response_content && (
+                                <Box sx={{ mb: 1.5 }}>
+                                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>Response</Typography>
+                                  <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.8rem' }}>
+                                    {it.response_content}
+                                  </Typography>
+                                </Box>
+                              )}
+                              {Array.isArray(it.tool_calls) && it.tool_calls.length > 0 && (
+                                <Box sx={{ mb: 1 }}>
+                                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>Tool Calls</Typography>
+                                  {it.tool_calls.map((tc: any, ti: number) => (
+                                    <Box key={ti} sx={{ mb: 0.5, pl: 1, borderLeft: 2, borderColor: 'warning.main' }}>
+                                      <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>🔧 {tc.name}</Typography>
+                                      <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: '0.7rem', whiteSpace: 'pre-wrap', m: 0 }}>
+                                        {JSON.stringify(tc.input, null, 2)}
+                                      </Typography>
+                                    </Box>
+                                  ))}
+                                </Box>
+                              )}
+                              {Array.isArray(it.tool_results) && it.tool_results.length > 0 && (
+                                <Box>
+                                  <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>Tool Results (input)</Typography>
+                                  {it.tool_results.map((tr: any, ri: number) => (
+                                    <Box key={ri} sx={{ mb: 0.5, pl: 1, borderLeft: 2, borderColor: tr.is_error ? 'error.main' : 'success.main' }}>
+                                      <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
+                                        {tr.is_error ? '❌' : '✅'} {tr.tool_use_id}
+                                      </Typography>
+                                      <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: '0.7rem', whiteSpace: 'pre-wrap', m: 0 }}>
+                                        {typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content, null, 2)}
+                                      </Typography>
+                                    </Box>
+                                  ))}
+                                </Box>
+                              )}
+                            </Box>
+                          )}
+                        </Box>
+                      )
+                    })}
+                  </Paper>
+                )}
+              </Box>
             </Box>
           )}
         </DialogContent>

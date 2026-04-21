@@ -44,8 +44,11 @@ import {
   Refresh as RefreshIcon,
   Compress as CompressIcon,
   Warning as WarningIcon,
+  Psychology as ReasoningIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material'
-import { claudeApi, agentsApi, mcpApi } from '../../services/api'
+import { claudeApi, agentsApi, mcpApi, reasoningApi } from '../../services/api'
 import { notificationService } from '../../services/notifications'
 import { createLogger } from '../../services/logger'
 
@@ -167,6 +170,18 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
   const [isThinking, setIsThinking] = useState(false)
   const [streamingText, setStreamingText] = useState<string>('')
   const [summarizing, setSummarizing] = useState(false)
+  // GH #79 — Reasoning trace state
+  const [sessionSummary, setSessionSummary] = useState<{
+    total_interactions: number
+    total_cost_usd: number
+    total_input_tokens: number
+    total_output_tokens: number
+  } | null>(null)
+  const [traceOpen, setTraceOpen] = useState(false)
+  const [traceInteractions, setTraceInteractions] = useState<any[]>([])
+  const [traceSelected, setTraceSelected] = useState<any | null>(null)
+  const [traceLoading, setTraceLoading] = useState(false)
+  const [collapsedThinking, setCollapsedThinking] = useState<Record<string, boolean>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -184,6 +199,53 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
     }
   }, [tabs, currentTab])
   useEffect(() => { try { localStorage.setItem('claudeDrawerCurrentTab', currentTab.toString()) } catch { /* ignore */ } }, [currentTab])
+
+  // GH #79 — load reasoning-trace summary when switching tabs
+  useEffect(() => {
+    const sid = tabs[currentTab]?.id
+    if (!sid) { setSessionSummary(null); return }
+    reasoningApi.getSessionSummary(sid)
+      .then(s => setSessionSummary({
+        total_interactions: s.total_interactions,
+        total_cost_usd: s.total_cost_usd,
+        total_input_tokens: s.total_input_tokens,
+        total_output_tokens: s.total_output_tokens,
+      }))
+      .catch(() => setSessionSummary(null))
+  }, [currentTab, tabs])
+
+  const openReasoningTrace = async () => {
+    const sid = tabs[currentTab]?.id
+    if (!sid) return
+    setTraceOpen(true)
+    setTraceLoading(true)
+    setTraceSelected(null)
+    try {
+      const resp = await reasoningApi.listInteractions(sid, { limit: 200 })
+      setTraceInteractions(resp.interactions || [])
+    } catch (e) {
+      logger.error('Failed to load reasoning trace', e)
+      setTraceInteractions([])
+    } finally {
+      setTraceLoading(false)
+    }
+  }
+
+  const loadTraceInteraction = async (interactionId: string) => {
+    const sid = tabs[currentTab]?.id
+    if (!sid) return
+    try {
+      const detail = await reasoningApi.getInteraction(sid, interactionId)
+      setTraceSelected(detail)
+    } catch (e) {
+      logger.error('Failed to load interaction detail', e)
+    }
+  }
+
+  const toggleThinking = (key: string) => {
+    setCollapsedThinking(prev => ({ ...prev, [key]: !prev[key] }))
+  }
+
   useEffect(() => {
     try {
       const settingsToSave = {
@@ -420,6 +482,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
           thinking_budget: enableThinking ? thinkingBudget : undefined,
           agent_id: selectedAgent || undefined,
           system_prompt: systemPrompt || undefined,
+          session_id: tabs[currentTab]?.id,
         }),
       })
       
@@ -513,6 +576,19 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       setStreamingThinking('')
       setStreamingText('')
       setIsThinking(false)
+
+      // GH #79 — refresh reasoning-trace summary for this session
+      const sid = tabs[currentTab]?.id
+      if (sid) {
+        reasoningApi.getSessionSummary(sid)
+          .then(s => setSessionSummary({
+            total_interactions: s.total_interactions,
+            total_cost_usd: s.total_cost_usd,
+            total_input_tokens: s.total_input_tokens,
+            total_output_tokens: s.total_output_tokens,
+          }))
+          .catch(() => { /* silent — trace persistence is best-effort */ })
+      }
     } catch (e: any) {
       logger.error('❌ === API ERROR ===', {
         sessionId,
@@ -622,82 +698,114 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
     }
   }
 
-  const renderContent = (content: string | ContentBlock[]) => {
+  const renderContent = (content: string | ContentBlock[], messageIndex?: number) => {
     if (typeof content === 'string') {
       logger.render(`Rendering string content: ${content.length} chars`, { preview: content.substring(0, 100) })
       return <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{content}</Typography>
     }
-    
+
     if (!Array.isArray(content)) {
       logger.error('Content is not string or array', { content, type: typeof content })
       return <Typography variant="body2" color="error">Invalid content type</Typography>
     }
-    
+
     logger.render(`Rendering content blocks: ${content.length} blocks`)
     content.forEach((b, i) => {
       logger.debug(`Block ${i}: ${b.type}, ${b.text?.length || 0} chars`)
     })
-    
-    return <>{content.map((b, i) => (
-      <Box key={i} sx={{ mb: 1 }}>
-        {b.type === 'text' && b.text && <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{b.text}</Typography>}
-        {b.type === 'image' && b.source && <img src={`data:${b.source.media_type};base64,${b.source.data}`} alt="" style={{ maxWidth: '100%', borderRadius: 8, marginTop: 8 }} />}
-        {b.type === 'thinking' && b.text && (
-          <Box sx={{ 
-            p: 1.5, 
-            borderRadius: 1, 
-            bgcolor: alpha(theme.palette.info.main, 0.05),
-            borderLeft: 2,
-            borderColor: 'info.main',
-            mb: 1.5,
-            mt: 0.5
-          }}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 0.5 }}>
-              <Typography variant="caption" sx={{ fontWeight: 600, color: 'info.main', fontSize: '0.7rem' }}>
-                💭 THINKING
-              </Typography>
+
+    return <>{content.map((b, i) => {
+      const thinkingKey = `${messageIndex ?? 'x'}-${i}`
+      const collapsed = collapsedThinking[thinkingKey] ?? false
+      return (
+        <Box key={i} sx={{ mb: 1 }}>
+          {b.type === 'text' && b.text && <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{b.text}</Typography>}
+          {b.type === 'image' && b.source && <img src={`data:${b.source.media_type};base64,${b.source.data}`} alt="" style={{ maxWidth: '100%', borderRadius: 8, marginTop: 8 }} />}
+          {b.type === 'thinking' && b.text && (
+            <Box sx={{
+              p: 1.5,
+              borderRadius: 1,
+              bgcolor: alpha(theme.palette.info.main, 0.05),
+              borderLeft: 2,
+              borderColor: 'info.main',
+              mb: 1.5,
+              mt: 0.5
+            }}>
+              <Box
+                sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: collapsed ? 0 : 0.5, cursor: 'pointer' }}
+                onClick={() => toggleThinking(thinkingKey)}
+              >
+                <Typography variant="caption" sx={{ fontWeight: 600, color: 'info.main', fontSize: '0.7rem', flex: 1 }}>
+                  💭 THINKING ({b.text.length} chars)
+                </Typography>
+                {collapsed ? <ExpandMoreIcon sx={{ fontSize: 14, color: 'info.main' }} /> : <ExpandLessIcon sx={{ fontSize: 14, color: 'info.main' }} />}
+              </Box>
+              <Collapse in={!collapsed}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    whiteSpace: 'pre-wrap',
+                    fontStyle: 'italic',
+                    color: 'text.secondary',
+                    fontSize: '0.85rem',
+                    lineHeight: 1.5,
+                    opacity: 0.9
+                  }}
+                >
+                  {b.text}
+                </Typography>
+              </Collapse>
             </Box>
-            <Typography 
-              variant="body2" 
-              sx={{ 
-                whiteSpace: 'pre-wrap', 
-                fontStyle: 'italic', 
-                color: 'text.secondary',
-                fontSize: '0.85rem',
-                lineHeight: 1.5,
-                opacity: 0.9
-              }}
-            >
-              {b.text}
-            </Typography>
-          </Box>
-        )}
-      </Box>
-    ))}</>
+          )}
+        </Box>
+      )
+    })}</>
   }
 
   return (
     <Drawer anchor="right" open={open} onClose={onClose} sx={{ '& .MuiDrawer-paper': { width: { xs: '100%', sm: 420, md: 480 }, bgcolor: 'background.default' } }}>
       <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
         <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center', bgcolor: 'background.paper' }}>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Vigil</Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Vigil</Typography>
+            {sessionSummary && sessionSummary.total_interactions > 0 && (
+              <Tooltip title={`${sessionSummary.total_interactions} LLM calls · in ${sessionSummary.total_input_tokens.toLocaleString()} tok · out ${sessionSummary.total_output_tokens.toLocaleString()} tok`}>
+                <Chip
+                  size="small"
+                  label={`$${sessionSummary.total_cost_usd.toFixed(4)}`}
+                  sx={{ height: 20, fontSize: '0.7rem' }}
+                />
+              </Tooltip>
+            )}
+          </Box>
           <Box>
-            <IconButton 
-              size="small" 
+            <Tooltip title="View reasoning trace">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={openReasoningTrace}
+                  disabled={!sessionSummary || sessionSummary.total_interactions === 0}
+                >
+                  <ReasoningIcon sx={{ fontSize: 20 }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <IconButton
+              size="small"
               onClick={(e) => {
                 e.stopPropagation()
                 const newValue = !showSettings
                 setShowSettings(newValue)
-                logger.info('Settings button clicked', { 
-                  previousState: showSettings, 
-                  newState: newValue 
+                logger.info('Settings button clicked', {
+                  previousState: showSettings,
+                  newState: newValue
                 })
               }}
               sx={{
                 bgcolor: showSettings ? alpha(theme.palette.primary.main, 0.15) : 'transparent',
                 color: showSettings ? 'primary.main' : 'text.secondary',
                 '&:hover': {
-                  bgcolor: showSettings 
+                  bgcolor: showSettings
                     ? alpha(theme.palette.primary.main, 0.25)
                     : alpha(theme.palette.text.primary, 0.05)
                 }
@@ -926,7 +1034,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                 <Typography variant="caption" sx={{ fontWeight: 600, color: msg.role === 'user' ? 'primary.main' : 'text.secondary', mb: 0.5, display: 'block' }}>
                   {msg.role === 'user' ? 'You' : 'DeepTempo'}
                 </Typography>
-                {renderContent(msg.content)}
+                {renderContent(msg.content, i)}
               </Box>
             ))}
           
@@ -1055,6 +1163,123 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
           ))}
         </DialogContent>
         <DialogActions><Button onClick={() => setAgentInfoDialogOpen(false)}>Close</Button></DialogActions>
+      </Dialog>
+
+      {/* GH #79 — Reasoning trace drawer */}
+      <Dialog open={traceOpen} onClose={() => setTraceOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <ReasoningIcon fontSize="small" />
+          Reasoning Trace
+          {sessionSummary && (
+            <Chip
+              size="small"
+              label={`${sessionSummary.total_interactions} calls · $${sessionSummary.total_cost_usd.toFixed(4)}`}
+              sx={{ ml: 1 }}
+            />
+          )}
+        </DialogTitle>
+        <DialogContent dividers sx={{ display: 'flex', gap: 2, p: 0, height: '70vh' }}>
+          <Box sx={{ width: 260, borderRight: 1, borderColor: 'divider', overflow: 'auto' }}>
+            {traceLoading ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}><CircularProgress size={18} /></Box>
+            ) : traceInteractions.length === 0 ? (
+              <Box sx={{ p: 2 }}><Typography variant="caption" color="text.secondary">No reasoning traces yet.</Typography></Box>
+            ) : (
+              <List dense>
+                {traceInteractions.map((it) => (
+                  <ListItem
+                    key={it.interaction_id}
+                    button
+                    selected={traceSelected?.interaction_id === it.interaction_id}
+                    onClick={() => loadTraceInteraction(it.interaction_id)}
+                    sx={{ py: 0.5, alignItems: 'flex-start' }}
+                  >
+                    <ListItemText
+                      primary={
+                        <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                          <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
+                            {it.created_at ? new Date(it.created_at).toLocaleTimeString() : ''}
+                          </Typography>
+                          {it.has_thinking && <Chip label="💭" size="small" sx={{ height: 16, fontSize: '0.65rem' }} />}
+                          {it.has_tools && <Chip label="🔧" size="small" sx={{ height: 16, fontSize: '0.65rem' }} />}
+                        </Box>
+                      }
+                      secondary={
+                        <Typography variant="caption" color="text.secondary">
+                          {it.agent_id || 'chat'} · {it.input_tokens}/{it.output_tokens} tok · ${(it.cost_usd ?? 0).toFixed(4)}
+                        </Typography>
+                      }
+                    />
+                  </ListItem>
+                ))}
+              </List>
+            )}
+          </Box>
+          <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+            {!traceSelected ? (
+              <Typography variant="body2" color="text.secondary">
+                Select an interaction to view full reasoning, tool calls, and response.
+              </Typography>
+            ) : (
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  {traceSelected.model} · stop={traceSelected.stop_reason || '—'} · {traceSelected.duration_ms}ms · ${(traceSelected.cost_usd ?? 0).toFixed(4)}
+                </Typography>
+
+                {traceSelected.thinking_content && (
+                  <Box sx={{ mb: 2, p: 1.5, bgcolor: alpha(theme.palette.info.main, 0.05), borderLeft: 2, borderColor: 'info.main' }}>
+                    <Typography variant="caption" sx={{ fontWeight: 600, color: 'info.main', display: 'block', mb: 0.5 }}>
+                      💭 Thinking ({traceSelected.thinking_content.length} chars)
+                    </Typography>
+                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                      {traceSelected.thinking_content}
+                    </Typography>
+                  </Box>
+                )}
+
+                {traceSelected.response_content && (
+                  <Box sx={{ mb: 2, p: 1.5, bgcolor: 'background.paper', border: 1, borderColor: 'divider', borderRadius: 1 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>Response</Typography>
+                    <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap', fontSize: '0.85rem' }}>
+                      {traceSelected.response_content}
+                    </Typography>
+                  </Box>
+                )}
+
+                {Array.isArray(traceSelected.tool_calls) && traceSelected.tool_calls.length > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>Tool Calls</Typography>
+                    {traceSelected.tool_calls.map((tc: any, i: number) => (
+                      <Box key={i} sx={{ mb: 1, p: 1, bgcolor: alpha(theme.palette.warning.main, 0.05), borderLeft: 2, borderColor: 'warning.main' }}>
+                        <Typography variant="caption" sx={{ fontWeight: 600, fontFamily: 'monospace' }}>🔧 {tc.name}</Typography>
+                        <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: '0.7rem', whiteSpace: 'pre-wrap', m: 0, mt: 0.5 }}>
+                          {JSON.stringify(tc.input, null, 2)}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Box>
+                )}
+
+                {Array.isArray(traceSelected.tool_results) && traceSelected.tool_results.length > 0 && (
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="caption" sx={{ fontWeight: 600, display: 'block', mb: 0.5 }}>Tool Results (input to this call)</Typography>
+                    {traceSelected.tool_results.map((tr: any, i: number) => (
+                      <Box key={i} sx={{ mb: 1, p: 1, bgcolor: alpha(theme.palette.success.main, 0.05), borderLeft: 2, borderColor: tr.is_error ? 'error.main' : 'success.main' }}>
+                        <Typography variant="caption" sx={{ fontWeight: 600, fontFamily: 'monospace' }}>
+                          {tr.is_error ? '❌' : '✅'} {tr.tool_use_id}
+                        </Typography>
+                        <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: '0.7rem', whiteSpace: 'pre-wrap', m: 0, mt: 0.5 }}>
+                          {typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content, null, 2)}
+                        </Typography>
+                      </Box>
+                    ))}
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Box>
+        </DialogContent>
+        <DialogActions><Button onClick={() => setTraceOpen(false)}>Close</Button></DialogActions>
       </Dialog>
     </Drawer>
   )

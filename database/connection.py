@@ -21,9 +21,8 @@ from database.models import (
     SLAPolicy, CaseSLA, CaseComment, CaseWatcher, CaseEvidence, CaseIOC,
     CaseTask, CaseTemplate, CaseRelationship, CaseMetrics, CaseAttachment,
     CaseClosureInfo, CaseEscalation, CaseAuditLog,
-    User, Role, Investigation, InvestigationLog, SharedIOC, CaseNotification,
-    CustomWorkflow,
-    Skill,
+    User, Role, Investigation, InvestigationLog, LLMInteractionLog,
+    SharedIOC, CaseNotification, CustomAgent, CustomWorkflow, Skill,
 )
 
 logger = logging.getLogger(__name__)

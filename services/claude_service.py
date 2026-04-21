@@ -7,6 +7,7 @@ import logging
 import platform
 import sys
 import threading
+import uuid
 from pathlib import Path
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
@@ -36,6 +37,7 @@ except ImportError:
 try:
     from core.telemetry import get_tracer, get_meter, create_genai_metrics
     from opentelemetry.trace import SpanKind, StatusCode as _SpanStatusCode
+
     _cs_tracer = get_tracer("vigil.services.claude")
     _cs_meter = get_meter("vigil.services.claude")
     _cs_genai_metrics = create_genai_metrics(_cs_meter)
@@ -802,6 +804,219 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         logger.warning("   No blocks extracted!")
         return None
 
+    # ------------------------------------------------------------------
+    # Reasoning-trace persistence (GH #79)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _serialize_response_blocks(content) -> List[Dict]:
+        """Convert Anthropic SDK content blocks to JSON-safe dicts."""
+        if not content:
+            return []
+        out = []
+        for block in content:
+            btype = (
+                getattr(block, "type", None)
+                if not isinstance(block, dict)
+                else block.get("type")
+            )
+            if btype == "text":
+                text = (
+                    block.text if not isinstance(block, dict) else block.get("text", "")
+                )
+                out.append({"type": "text", "text": text})
+            elif btype == "thinking":
+                text = (
+                    block.thinking
+                    if not isinstance(block, dict)
+                    else block.get("text") or block.get("thinking", "")
+                )
+                out.append({"type": "thinking", "text": text})
+            elif btype == "tool_use":
+                out.append(
+                    {
+                        "type": "tool_use",
+                        "id": (
+                            getattr(block, "id", None)
+                            if not isinstance(block, dict)
+                            else block.get("id")
+                        ),
+                        "name": (
+                            getattr(block, "name", None)
+                            if not isinstance(block, dict)
+                            else block.get("name")
+                        ),
+                        "input": (
+                            getattr(block, "input", None)
+                            if not isinstance(block, dict)
+                            else block.get("input")
+                        ),
+                    }
+                )
+            elif btype == "tool_result":
+                out.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": (
+                            getattr(block, "tool_use_id", None)
+                            if not isinstance(block, dict)
+                            else block.get("tool_use_id")
+                        ),
+                        "content": (
+                            getattr(block, "content", None)
+                            if not isinstance(block, dict)
+                            else block.get("content")
+                        ),
+                        "is_error": (
+                            getattr(block, "is_error", False)
+                            if not isinstance(block, dict)
+                            else block.get("is_error", False)
+                        ),
+                    }
+                )
+        return out
+
+    @staticmethod
+    def _sanitize_messages_for_log(messages: List[Dict]) -> List[Dict]:
+        """Strip heavy image base64 payloads from messages before logging."""
+        if not messages:
+            return []
+        sanitized = []
+        for msg in messages:
+            role = msg.get("role")
+            content = msg.get("content")
+            if isinstance(content, str):
+                sanitized.append({"role": role, "content": content})
+                continue
+            if not isinstance(content, list):
+                sanitized.append({"role": role, "content": content})
+                continue
+            clean_blocks = []
+            for block in content:
+                bdict = (
+                    block
+                    if isinstance(block, dict)
+                    else {"type": getattr(block, "type", "unknown")}
+                )
+                btype = bdict.get("type")
+                if btype == "image":
+                    clean_blocks.append(
+                        {"type": "image", "source": {"type": "redacted"}}
+                    )
+                else:
+                    clean_blocks.append(
+                        ClaudeService._serialize_response_blocks([block])[0]
+                        if not isinstance(block, dict)
+                        else block
+                    )
+            sanitized.append({"role": role, "content": clean_blocks})
+        return sanitized
+
+    @staticmethod
+    def _extract_prior_tool_results(messages: List[Dict]) -> List[Dict]:
+        """Return tool_result blocks from the most recent user message, if any.
+
+        Used to capture the "input" context for an iteration that consumed
+        tool results from the prior iteration's tool calls.
+        """
+        if not messages:
+            return []
+        for msg in reversed(messages):
+            if msg.get("role") != "user":
+                continue
+            content = msg.get("content")
+            if isinstance(content, list):
+                results = [
+                    b
+                    for b in content
+                    if (isinstance(b, dict) and b.get("type") == "tool_result")
+                    or (
+                        not isinstance(b, dict)
+                        and getattr(b, "type", None) == "tool_result"
+                    )
+                ]
+                if results:
+                    return ClaudeService._serialize_response_blocks(results)
+            return []
+        return []
+
+    def _persist_interaction(
+        self,
+        *,
+        session_id: Optional[str],
+        agent_id: Optional[str],
+        investigation_id: Optional[str],
+        model: str,
+        system_prompt: Optional[str],
+        request_messages: List[Dict],
+        response_content: Optional[List[Dict]],
+        thinking_enabled: bool,
+        thinking_budget: Optional[int],
+        stop_reason: Optional[str],
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+        duration_ms: int = 0,
+        error: Optional[str] = None,
+    ) -> None:
+        """Fire-and-forget insert of an LLMInteractionLog row.
+
+        Runs in the calling thread; failures are logged but never re-raised
+        so persistence can never break the request path.
+        """
+        try:
+            from database.connection import get_db_manager
+            from database.models import LLMInteractionLog
+
+            blocks = self._serialize_response_blocks(response_content or [])
+            thinking_text = "\n\n".join(
+                b["text"] for b in blocks if b["type"] == "thinking"
+            )
+            response_text = "\n\n".join(
+                b["text"] for b in blocks if b["type"] == "text"
+            )
+            tool_calls = [b for b in blocks if b["type"] == "tool_use"]
+            tool_results_in = self._extract_prior_tool_results(request_messages)
+
+            try:
+                from daemon.agent_runner import SONNET_INPUT_COST, SONNET_OUTPUT_COST
+
+                cost_usd = (input_tokens * SONNET_INPUT_COST) + (
+                    output_tokens * SONNET_OUTPUT_COST
+                )
+            except Exception:
+                cost_usd = 0.0
+
+            row = LLMInteractionLog(
+                interaction_id=str(uuid.uuid4()),
+                session_id=session_id,
+                agent_id=agent_id,
+                investigation_id=investigation_id,
+                model=model,
+                system_prompt=system_prompt,
+                request_messages=self._sanitize_messages_for_log(request_messages),
+                thinking_enabled=bool(thinking_enabled),
+                thinking_budget=thinking_budget,
+                thinking_content=thinking_text or None,
+                response_content=response_text or None,
+                tool_calls=tool_calls,
+                tool_results=tool_results_in,
+                stop_reason=stop_reason,
+                input_tokens=int(input_tokens or 0),
+                output_tokens=int(output_tokens or 0),
+                cache_read_tokens=int(cache_read_tokens or 0),
+                cache_creation_tokens=int(cache_creation_tokens or 0),
+                cost_usd=float(cost_usd or 0.0),
+                duration_ms=int(duration_ms or 0),
+                error=error,
+            )
+            db_manager = get_db_manager()
+            with db_manager.session_scope() as session:
+                session.add(row)
+        except Exception as exc:
+            logger.warning(f"LLMInteractionLog persist failed (non-fatal): {exc}")
+
     def _strip_thinking_blocks(self, messages: List[Dict]) -> List[Dict]:
         """
         Strip thinking blocks from assistant messages when thinking is disabled.
@@ -1322,8 +1537,7 @@ Provide a structured summary preserving all critical context."""
                         "update_case",
                         "add_resolution_step",
                     ]:
-                        from services.database_data_service import \
-                            DatabaseDataService
+                        from services.database_data_service import DatabaseDataService
 
                         data_service = DatabaseDataService()
 
@@ -1507,8 +1721,7 @@ Provide a structured summary preserving all critical context."""
 
                     # Attack layer tools
                     elif tool_name in ["get_attack_layer", "get_technique_rollup"]:
-                        from services.database_data_service import \
-                            DatabaseDataService
+                        from services.database_data_service import DatabaseDataService
 
                         data_service = DatabaseDataService()
 
@@ -1795,6 +2008,9 @@ Provide a structured summary preserving all critical context."""
         max_tokens: int = 4096,
         enable_thinking: Optional[bool] = None,
         thinking_budget: Optional[int] = None,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        investigation_id: Optional[str] = None,
     ) -> Optional[str]:
         """
         Send a chat message to Claude.
@@ -1809,6 +2025,9 @@ Provide a structured summary preserving all critical context."""
             max_tokens: Maximum tokens for response (default: 4096).
             enable_thinking: Override thinking setting for this request.
             thinking_budget: Override thinking budget for this request.
+            session_id: Chat/session identifier for reasoning-trace persistence.
+            agent_id: Agent identifier (e.g. 'investigator') for reasoning-trace attribution.
+            investigation_id: Investigation identifier if this call is part of one.
 
         Returns:
             Claude's response text or None if error.
@@ -1925,6 +2144,7 @@ Provide a structured summary preserving all critical context."""
 
             # OTEL: wrap the API call in a span and record GenAI metrics
             import time as _time
+
             _chat_span = None
             _chat_t0 = _time.monotonic()
             if _OTEL_CS_AVAILABLE:
@@ -1941,36 +2161,103 @@ Provide a structured summary preserving all critical context."""
                 except Exception:
                     pass
 
+            _call_started = _time.monotonic()
             response = self.client.messages.create(**api_kwargs)
+            _call_duration_ms = int((_time.monotonic() - _call_started) * 1000)
 
             if _OTEL_CS_AVAILABLE and _chat_span is not None:
                 try:
                     _duration = _time.monotonic() - _chat_t0
-                    _in_tok = response.usage.input_tokens if hasattr(response, "usage") else 0
-                    _out_tok = response.usage.output_tokens if hasattr(response, "usage") else 0
-                    _model_used = response.model if hasattr(response, "model") else model
+                    _in_tok = (
+                        response.usage.input_tokens if hasattr(response, "usage") else 0
+                    )
+                    _out_tok = (
+                        response.usage.output_tokens
+                        if hasattr(response, "usage")
+                        else 0
+                    )
+                    _model_used = (
+                        response.model if hasattr(response, "model") else model
+                    )
                     _chat_span.set_attribute("gen_ai.response.model", _model_used)
                     _chat_span.set_attribute("gen_ai.usage.input_tokens", _in_tok)
                     _chat_span.set_attribute("gen_ai.usage.output_tokens", _out_tok)
-                    _chat_span.set_attribute("gen_ai.finish_reason", response.stop_reason or "")
+                    _chat_span.set_attribute(
+                        "gen_ai.finish_reason", response.stop_reason or ""
+                    )
                     _chat_span.end()
                     # Update metric counters
-                    _labels = {"gen_ai.system": "anthropic", "gen_ai.request.model": _model_used}
+                    _labels = {
+                        "gen_ai.system": "anthropic",
+                        "gen_ai.request.model": _model_used,
+                    }
                     _cs_genai_metrics["llm_calls"].add(1, _labels)
                     _cs_genai_metrics["llm_duration"].record(_duration, _labels)
-                    _cs_genai_metrics["llm_tokens"].add(_in_tok, {**_labels, "gen_ai.token.type": "input"})
-                    _cs_genai_metrics["llm_tokens"].add(_out_tok, {**_labels, "gen_ai.token.type": "output"})
-                    from daemon.agent_runner import SONNET_INPUT_COST, SONNET_OUTPUT_COST
+                    _cs_genai_metrics["llm_tokens"].add(
+                        _in_tok, {**_labels, "gen_ai.token.type": "input"}
+                    )
+                    _cs_genai_metrics["llm_tokens"].add(
+                        _out_tok, {**_labels, "gen_ai.token.type": "output"}
+                    )
+                    from daemon.agent_runner import (
+                        SONNET_INPUT_COST,
+                        SONNET_OUTPUT_COST,
+                    )
+
                     _cost = _in_tok * SONNET_INPUT_COST + _out_tok * SONNET_OUTPUT_COST
                     _cs_genai_metrics["llm_cost_usd"].add(_cost, _labels)
                 except Exception:
                     pass
 
-            logger.debug(f"📥 API response received - stop_reason: {response.stop_reason}")
-            logger.debug(f"   - Response ID: {response.id if hasattr(response, 'id') else 'N/A'}")
-            logger.debug(f"   - Model: {response.model if hasattr(response, 'model') else 'N/A'}")
-            logger.debug(f"   - Content blocks: {len(response.content) if response.content else 0}")
-            
+            # Persist reasoning trace (GH #79) — fire-and-forget, best-effort
+            try:
+                _usage = getattr(response, "usage", None)
+                self._persist_interaction(
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    investigation_id=investigation_id,
+                    model=getattr(response, "model", model),
+                    system_prompt=effective_system_prompt,
+                    request_messages=messages,
+                    response_content=list(response.content) if response.content else [],
+                    thinking_enabled=use_thinking,
+                    thinking_budget=(
+                        (
+                            thinking_budget
+                            if thinking_budget is not None
+                            else self.thinking_budget
+                        )
+                        if use_thinking
+                        else None
+                    ),
+                    stop_reason=getattr(response, "stop_reason", None),
+                    input_tokens=getattr(_usage, "input_tokens", 0) if _usage else 0,
+                    output_tokens=getattr(_usage, "output_tokens", 0) if _usage else 0,
+                    cache_read_tokens=(
+                        getattr(_usage, "cache_read_input_tokens", 0) if _usage else 0
+                    ),
+                    cache_creation_tokens=(
+                        getattr(_usage, "cache_creation_input_tokens", 0)
+                        if _usage
+                        else 0
+                    ),
+                    duration_ms=_call_duration_ms,
+                )
+            except Exception as _pe:
+                logger.debug(f"Reasoning-trace persist skipped: {_pe}")
+
+            logger.debug(
+                f"📥 API response received - stop_reason: {response.stop_reason}"
+            )
+            logger.debug(
+                f"   - Response ID: {response.id if hasattr(response, 'id') else 'N/A'}"
+            )
+            logger.debug(
+                f"   - Model: {response.model if hasattr(response, 'model') else 'N/A'}"
+            )
+            logger.debug(
+                f"   - Content blocks: {len(response.content) if response.content else 0}"
+            )
 
             # Handle stop reasons (including new refusal reason in Claude 4.5)
             if response.stop_reason == "refusal":
@@ -2051,10 +2338,67 @@ Provide a structured summary preserving all critical context."""
                         logger.debug(
                             f"🔁 Making follow-up API call after tool use (round {tool_round + 1})"
                         )
+                        _fr_started = _time.monotonic()
                         final_response = self.client.messages.create(**api_kwargs)
+                        _fr_duration_ms = int((_time.monotonic() - _fr_started) * 1000)
                         logger.debug(
                             f"📥 Final response received - stop_reason: {final_response.stop_reason}"
                         )
+
+                        # Persist reasoning trace for this tool-loop iteration
+                        try:
+                            _fr_usage = getattr(final_response, "usage", None)
+                            self._persist_interaction(
+                                session_id=session_id,
+                                agent_id=agent_id,
+                                investigation_id=investigation_id,
+                                model=getattr(final_response, "model", model),
+                                system_prompt=effective_system_prompt,
+                                request_messages=messages,
+                                response_content=(
+                                    list(final_response.content)
+                                    if final_response.content
+                                    else []
+                                ),
+                                thinking_enabled=use_thinking,
+                                thinking_budget=(
+                                    (
+                                        thinking_budget
+                                        if thinking_budget is not None
+                                        else self.thinking_budget
+                                    )
+                                    if use_thinking
+                                    else None
+                                ),
+                                stop_reason=getattr(
+                                    final_response, "stop_reason", None
+                                ),
+                                input_tokens=(
+                                    getattr(_fr_usage, "input_tokens", 0)
+                                    if _fr_usage
+                                    else 0
+                                ),
+                                output_tokens=(
+                                    getattr(_fr_usage, "output_tokens", 0)
+                                    if _fr_usage
+                                    else 0
+                                ),
+                                cache_read_tokens=(
+                                    getattr(_fr_usage, "cache_read_input_tokens", 0)
+                                    if _fr_usage
+                                    else 0
+                                ),
+                                cache_creation_tokens=(
+                                    getattr(_fr_usage, "cache_creation_input_tokens", 0)
+                                    if _fr_usage
+                                    else 0
+                                ),
+                                duration_ms=_fr_duration_ms,
+                            )
+                        except Exception as _pe:
+                            logger.debug(
+                                f"Reasoning-trace persist skipped (tool round): {_pe}"
+                            )
 
                         if final_response.stop_reason == "refusal":
                             logger.warning(
@@ -2238,6 +2582,9 @@ Provide a structured summary preserving all critical context."""
         max_tokens: int = 4096,
         enable_thinking: Optional[bool] = None,
         thinking_budget: Optional[int] = None,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        investigation_id: Optional[str] = None,
     ) -> AsyncIterator[str]:
         """
         Send a chat message to Claude with streaming response.
@@ -2410,6 +2757,7 @@ Provide a structured summary preserving all critical context."""
                     iteration_delays.append(delay)
 
                 # Use streaming API to avoid timeout issues with tool use
+                _stream_started = asyncio.get_event_loop().time()
                 async with self.async_client.messages.stream(**api_kwargs) as stream:
                     accumulated_content = []
                     current_thinking_block = []
@@ -2497,6 +2845,55 @@ Provide a structured summary preserving all critical context."""
                     stop_reason = final_message.stop_reason
 
                     logger.debug(f"🏁 Stream stop reason: {stop_reason}")
+
+                # Persist reasoning trace for this streaming iteration (GH #79)
+                try:
+                    _stream_duration_ms = int(
+                        (asyncio.get_event_loop().time() - _stream_started) * 1000
+                    )
+                    _fm_usage = getattr(final_message, "usage", None)
+                    await asyncio.to_thread(
+                        self._persist_interaction,
+                        session_id=session_id,
+                        agent_id=agent_id,
+                        investigation_id=investigation_id,
+                        model=getattr(final_message, "model", model),
+                        system_prompt=effective_system_prompt,
+                        request_messages=messages,
+                        response_content=(
+                            list(accumulated_content) if accumulated_content else []
+                        ),
+                        thinking_enabled=use_thinking,
+                        thinking_budget=(
+                            (
+                                thinking_budget
+                                if thinking_budget is not None
+                                else self.thinking_budget
+                            )
+                            if use_thinking
+                            else None
+                        ),
+                        stop_reason=stop_reason,
+                        input_tokens=(
+                            getattr(_fm_usage, "input_tokens", 0) if _fm_usage else 0
+                        ),
+                        output_tokens=(
+                            getattr(_fm_usage, "output_tokens", 0) if _fm_usage else 0
+                        ),
+                        cache_read_tokens=(
+                            getattr(_fm_usage, "cache_read_input_tokens", 0)
+                            if _fm_usage
+                            else 0
+                        ),
+                        cache_creation_tokens=(
+                            getattr(_fm_usage, "cache_creation_input_tokens", 0)
+                            if _fm_usage
+                            else 0
+                        ),
+                        duration_ms=_stream_duration_ms,
+                    )
+                except Exception as _pe:
+                    logger.debug(f"Reasoning-trace persist skipped (stream): {_pe}")
 
                 # Check if tool use is needed
                 if stop_reason == "tool_use" and accumulated_content:
@@ -3018,8 +3415,7 @@ Provide only the JSON, no additional text."""
 
         # Fallback: configure security-detections MCP server directly
         try:
-            from services.detection_rules_service import \
-                get_detection_rules_service
+            from services.detection_rules_service import get_detection_rules_service
 
             detection_service = get_detection_rules_service()
             env_vars = detection_service.get_mcp_env_vars()
