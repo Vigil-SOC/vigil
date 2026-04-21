@@ -40,6 +40,8 @@ import {
 import { findingsApi, timelineApi } from '../../services/api'
 import EventTimeline from '../timeline/EventTimeline'
 import EventVisualizationDialog from '../timeline/EventVisualizationDialog'
+import NetworkContextPanel from './NetworkContextPanel'
+import { VStrikeEnrichment } from '../../types/vstrike'
 
 interface FindingDetailDialogProps {
   open: boolean
@@ -449,6 +451,18 @@ export default function FindingDetailDialog({
                     Predicted by DeepTempo LogLM model during ingestion
                   </Typography>
                 </Paper>
+              </Grid>
+            )}
+
+            {/* VStrike Network Context (only renders when enrichment present) */}
+            {displayFinding.entity_context?.vstrike && (
+              <Grid item xs={12}>
+                <Divider sx={{ my: 2 }} />
+                <NetworkContextPanel
+                  context={
+                    displayFinding.entity_context.vstrike as VStrikeEnrichment
+                  }
+                />
               </Grid>
             )}
 

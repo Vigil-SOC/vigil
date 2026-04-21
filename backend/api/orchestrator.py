@@ -65,14 +65,14 @@ async def get_orchestrator_status():
             cost_summary = orch.get_cost_summary()
             stats = orch.stats
 
+        # Enabled is persisted inside the single `orchestrator.settings` key.
+        # See services/config_service and backend/api/config.py.
         enabled = False
         try:
-            from database.connection import get_db_manager
-            from database.models import SystemConfig
-            with get_db_manager().session_scope() as session:
-                cfg = session.query(SystemConfig).filter_by(key="orchestrator_enabled").first()
-                if cfg and isinstance(cfg.value, dict):
-                    enabled = cfg.value.get("enabled", False)
+            from services.config_service import get_config_service
+            settings = get_config_service().get_system_config('orchestrator.settings')
+            if isinstance(settings, dict):
+                enabled = bool(settings.get("enabled", False))
         except Exception:
             enabled = orch.enabled if orch else False
         
@@ -109,6 +109,32 @@ async def get_orchestrator_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _persist_orchestrator_enabled(enabled: bool) -> None:
+    """Write the `enabled` flag into the single `orchestrator.settings` key.
+
+    Read-modify-write so the rest of the settings struct is preserved. If no
+    settings row exists yet (first toggle on a fresh DB), seed it from the
+    defaults defined in backend/api/config.py.
+    """
+    try:
+        from services.config_service import get_config_service
+        from backend.api.config import ORCHESTRATOR_DEFAULTS
+
+        svc = get_config_service(user_id='web_ui')
+        current = svc.get_system_config('orchestrator.settings')
+        base = dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
+        base["enabled"] = bool(enabled)
+        svc.set_system_config(
+            key='orchestrator.settings',
+            value=base,
+            description='Autonomous orchestrator settings',
+            config_type='orchestrator',
+            change_reason=f'Orchestrator {"enabled" if enabled else "disabled"} via API',
+        )
+    except Exception as e:
+        logger.warning("Could not persist orchestrator.settings.enabled: %s", e)
+
+
 @router.post("/enable")
 async def enable_orchestrator():
     """Enable the orchestrator at runtime."""
@@ -116,25 +142,7 @@ async def enable_orchestrator():
         orch = _get_orchestrator()
         if orch:
             orch.enable()
-        
-        try:
-            from database.connection import get_db_manager
-            from database.models import SystemConfig
-            with get_db_manager().session_scope() as session:
-                cfg = session.query(SystemConfig).filter_by(key="orchestrator_enabled").first()
-                if cfg:
-                    cfg.value = {"enabled": True}
-                else:
-                    cfg = SystemConfig(
-                        key="orchestrator_enabled",
-                        value={"enabled": True},
-                        config_type="orchestrator",
-                        description="Orchestrator enabled state",
-                    )
-                    session.add(cfg)
-        except Exception:
-            pass
-        
+        _persist_orchestrator_enabled(True)
         return {"success": True, "enabled": True, "message": "Orchestrator enabled"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -147,25 +155,7 @@ async def disable_orchestrator():
         orch = _get_orchestrator()
         if orch:
             orch.disable()
-        
-        try:
-            from database.connection import get_db_manager
-            from database.models import SystemConfig
-            with get_db_manager().session_scope() as session:
-                cfg = session.query(SystemConfig).filter_by(key="orchestrator_enabled").first()
-                if cfg:
-                    cfg.value = {"enabled": False}
-                else:
-                    cfg = SystemConfig(
-                        key="orchestrator_enabled",
-                        value={"enabled": False},
-                        config_type="orchestrator",
-                        description="Orchestrator enabled state",
-                    )
-                    session.add(cfg)
-        except Exception:
-            pass
-        
+        _persist_orchestrator_enabled(False)
         return {"success": True, "enabled": False, "message": "Orchestrator disabled (graceful)"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

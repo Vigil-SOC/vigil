@@ -15,6 +15,16 @@
       }
     },
 
+    "_comment_memory": "--- Persistent Memory Layer ---",
+
+    "mempalace": {
+      "command": "python3",
+      "args": ["-m", "mempalace.mcp_server"],
+      "env": {
+        "MEMPALACE_PALACE_PATH": "${MEMPALACE_PALACE_PATH:-${HOME}/.vigil/mempalace/palace}"
+      }
+    },
+
     "_comment_internal": "--- DeepTempo Internal Servers ---",
 
     "deeptempo-findings": {
@@ -97,6 +107,15 @@
       "cwd": "${workspaceFolder}",
       "env": {
         "_setup_note": "Self-hosted Splunk via REST API. Set SPLUNK_URL (e.g., https://splunk.example.com:8089), SPLUNK_USERNAME, and SPLUNK_PASSWORD in .env. Port 8089 uses HTTPS by default."
+      }
+    },
+
+    "elastic": {
+      "command": "python3",
+      "args": ["tools/elastic.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "Elastic Security via Elasticsearch REST API. Set ELASTIC_HOST (e.g., https://elasticsearch.example.com:9200), ELASTIC_API_KEY or ELASTIC_USERNAME/ELASTIC_PASSWORD, and optionally ELASTIC_KIBANA_URL in .env."
       }
     },
 
@@ -237,6 +256,18 @@
       "cwd": "${workspaceFolder}"
     },
 
+    "vstrike": {
+      "command": "python3",
+      "args": ["tools/vstrike.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "_setup_note": "CloudCurrent VStrike network topology fusion layer. Set VSTRIKE_BASE_URL and VSTRIKE_API_KEY in .env, or configure in Settings > Integrations.",
+        "VSTRIKE_BASE_URL": "${VSTRIKE_BASE_URL}",
+        "VSTRIKE_API_KEY": "${VSTRIKE_API_KEY}",
+        "VSTRIKE_VERIFY_SSL": "${VSTRIKE_VERIFY_SSL}"
+      }
+    },
+
     "microsoft-defender": {
       "command": "python3",
       "args": ["tools/microsoft_defender.py"],
@@ -277,6 +308,16 @@
       "command": "python3",
       "args": ["tools/anyrun.py"],
       "cwd": "${workspaceFolder}"
+    },
+
+    "cape-sandbox": {
+      "command": "python3",
+      "args": ["tools/cape_sandbox.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "CAPE_SANDBOX_URL": "${CAPE_SANDBOX_URL}",
+        "CAPE_SANDBOX_API_KEY": "${CAPE_SANDBOX_API_KEY}"
+      }
     },
 
     "ip-geolocation": {

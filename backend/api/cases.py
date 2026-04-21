@@ -138,6 +138,60 @@ async def create_case(case_data: CaseCreate):
     return case
 
 
+async def _sync_upstream_status(case_id: str, new_status: str) -> None:
+    """Best-effort sync of case status to the upstream SIEM."""
+    import logging
+    _logger = logging.getLogger(__name__)
+    try:
+        case = data_service.get_case(case_id)
+        if not case:
+            return
+        # Only sync findings that came from a SIEM with upstream support
+        finding_ids = case.get("finding_ids", [])
+        for fid in finding_ids:
+            finding = data_service.get_finding(fid)
+            if not finding:
+                continue
+            source = finding.get("data_source", "")
+            alert_id = (finding.get("metadata") or {}).get(
+                f"{source}_alert_id"
+            ) or (finding.get("metadata") or {}).get("elastic_alert_id")
+            if not alert_id:
+                continue
+            # Lazy-load the right ingestion service
+            svc = _get_ingestion_service(source)
+            if svc is None:
+                continue
+            try:
+                await svc.update_upstream_alert_status(alert_id, new_status)
+                _logger.info(
+                    f"Synced status '{new_status}' to {source} alert {alert_id}"
+                )
+            except NotImplementedError:
+                pass
+            except Exception as exc:
+                _logger.warning(
+                    f"Failed to sync status to {source} alert {alert_id}: {exc}"
+                )
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            f"Upstream status sync error for case {case_id}: {exc}"
+        )
+
+
+def _get_ingestion_service(source: str):
+    """Return the ingestion service for a given data source, or None."""
+    if source == "elastic":
+        try:
+            from services.elastic_ingestion import ElasticIngestion
+            return ElasticIngestion()
+        except Exception:
+            return None
+    # Future: add splunk, crowdstrike, etc.
+    return None
+
+
 @router.patch("/{case_id}")
 async def update_case(case_id: str, case_data: CaseUpdate):
     """
@@ -164,10 +218,17 @@ async def update_case(case_id: str, case_data: CaseUpdate):
         updates['notes'] = case_data.notes
     
     success = data_service.update_case(case_id, **updates)
-    
+
     if not success:
         raise HTTPException(status_code=404, detail="Case not found or update failed")
-    
+
+    # Fire upstream SIEM status sync when status changes
+    if case_data.status is not None:
+        import asyncio
+        asyncio.ensure_future(
+            _sync_upstream_status(case_id, case_data.status)
+        )
+
     return {"success": True}
 
 

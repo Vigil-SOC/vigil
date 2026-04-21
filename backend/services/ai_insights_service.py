@@ -11,7 +11,7 @@ This service analyzes SOC metrics and patterns to generate:
 import json
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
 from anthropic import Anthropic
 from sqlalchemy.orm import Session
@@ -20,14 +20,18 @@ from backend.secrets_manager import get_secret
 
 logger = logging.getLogger(__name__)
 
+# Cache TTL: insights older than this are considered stale and trigger a
+# background regeneration on the next read.
+CACHE_TTL_SECONDS = 600  # 10 minutes
+
 
 class AIInsightsService:
     """Service for generating AI-powered insights from SOC data."""
-    
+
     def __init__(self):
         """Initialize the AI insights service with Claude API client."""
-        api_key = (get_secret("ANTHROPIC_API_KEY") or 
-                   get_secret("CLAUDE_API_KEY") or 
+        api_key = (get_secret("ANTHROPIC_API_KEY") or
+                   get_secret("CLAUDE_API_KEY") or
                    get_secret("anthropic_api_key"))
         if not api_key:
             logger.warning("No Anthropic API key found - AI insights will use fallback mode")
@@ -35,6 +39,95 @@ class AIInsightsService:
         else:
             self.client = Anthropic(api_key=api_key)
         self.model = "claude-sonnet-4-20250514"  # Claude 4.5 Sonnet
+
+        # In-memory cache of insights keyed by time_range.
+        # Each entry: {"insights": List[Dict], "generated_at": datetime, "generating": bool}
+        # A module-level singleton of this service is instantiated in
+        # backend/api/analytics.py, so this dict is shared across requests
+        # within the single backend process.
+        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_lock = asyncio.Lock()
+
+    def get_cached_insights(self, time_range: str) -> Dict[str, Any]:
+        """Return the cached insights payload for a given time_range.
+
+        Always returns a dict (never raises / never None) with shape::
+
+            {
+                "insights": List[Dict],
+                "generated_at": Optional[str ISO],
+                "is_stale": bool,
+                "generating": bool,
+            }
+        """
+        entry = self._cache.get(time_range)
+        if not entry:
+            return {
+                "insights": [],
+                "generated_at": None,
+                "is_stale": True,
+                "generating": False,
+            }
+
+        generated_at: datetime = entry["generated_at"]
+        age_seconds = (datetime.now(timezone.utc) - generated_at).total_seconds()
+        is_stale = age_seconds > CACHE_TTL_SECONDS
+
+        return {
+            "insights": entry["insights"],
+            "generated_at": generated_at.isoformat(),
+            "is_stale": is_stale,
+            "generating": entry.get("generating", False),
+        }
+
+    async def trigger_regeneration(
+        self,
+        db: Session,
+        metrics: Dict[str, Any],
+        time_series: List[Dict[str, Any]],
+        time_range: str,
+    ) -> bool:
+        """Regenerate insights in the background.
+
+        Guards against concurrent regenerations for the same time_range via
+        the ``generating`` flag. This method is designed to be scheduled with
+        ``asyncio.create_task(...)`` — it will not raise, and returns True if
+        it actually ran a regeneration, False if one was already in flight.
+        """
+        async with self._cache_lock:
+            existing = self._cache.get(time_range)
+            if existing and existing.get("generating"):
+                return False
+            # Mark as generating so concurrent calls short-circuit.
+            if existing:
+                existing["generating"] = True
+            else:
+                self._cache[time_range] = {
+                    "insights": [],
+                    "generated_at": datetime.now(timezone.utc),
+                    "generating": True,
+                }
+
+        try:
+            insights = await self.generate_insights(
+                db=db,
+                metrics=metrics,
+                time_series=time_series,
+                time_range=time_range,
+            )
+            async with self._cache_lock:
+                self._cache[time_range] = {
+                    "insights": insights,
+                    "generated_at": datetime.now(timezone.utc),
+                    "generating": False,
+                }
+            return True
+        except Exception as e:
+            logger.error(f"Background insights regeneration failed: {e}")
+            async with self._cache_lock:
+                if time_range in self._cache:
+                    self._cache[time_range]["generating"] = False
+            return False
     
     async def generate_insights(
         self,

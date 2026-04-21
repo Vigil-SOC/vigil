@@ -159,6 +159,24 @@ else
     echo "⏭️  Skipping detection repositories (SKIP_DETECTION_REPOS=true)"
 fi
 
+# Step 5.6: Initialize MemPalace persistent memory palace
+echo ""
+echo "🏛️  Initializing MemPalace persistent memory..."
+MEMPALACE_PALACE_PATH="${MEMPALACE_PALACE_PATH:-$HOME/.vigil/mempalace/palace}"
+export MEMPALACE_PALACE_PATH
+if python3 -c "import mempalace" 2>/dev/null; then
+    # Seed the palace with a status check — this initializes the ChromaDB collection
+    python3 -c "
+from mempalace.mcp_server import _get_collection
+coll = _get_collection()
+print('MemPalace ChromaDB collection ready:', coll.count(), 'drawers')
+" 2>/dev/null && echo "✅ MemPalace palace initialized at $MEMPALACE_PALACE_PATH" || \
+    echo "✅ MemPalace installed (palace will initialize on first use)"
+else
+    echo "⚠️  mempalace not found. Run: pip install mempalace chromadb"
+    echo "   The palace initializes automatically on first agent use."
+fi
+
 echo ""
 echo "=========================================="
 echo "✅ Setup Complete!"

@@ -23,6 +23,7 @@ class FindingProcessor:
         self._data_service = None
         self._claude_service = None
         self._enrichment_services = {}
+        self._sandbox_submitter = None
         
         # Processing semaphore
         self._semaphore = asyncio.Semaphore(config.max_concurrent_tasks)
@@ -87,6 +88,19 @@ class FindingProcessor:
                 logger.info("Shodan enrichment enabled")
             except Exception as e:
                 logger.warning(f"Shodan not available: {e}")
+
+        # Sandbox auto-submission (opt-in, disabled by default)
+        try:
+            from daemon.sandbox_submitter import SandboxSubmitter
+
+            submitter = SandboxSubmitter()
+            if submitter.enabled():
+                self._sandbox_submitter = submitter
+                logger.info("Sandbox auto-submission enabled")
+            else:
+                logger.debug("Sandbox auto-submission disabled (SANDBOX_AUTO_SUBMIT=false or no sandbox enabled)")
+        except Exception as e:
+            logger.warning(f"Sandbox submitter not available: {e}")
     
     async def run(self, shutdown_event: asyncio.Event):
         """Run the processing loop."""
@@ -354,12 +368,31 @@ REASONING: [Brief explanation]
             hash_enrichment = await self._enrich_hash(hash_val)
             if hash_enrichment:
                 enrichment[f"hash_{hash_val[:16]}"] = hash_enrichment
-        
+
+        # Opt-in sandbox auto-submission (see daemon/sandbox_submitter.py)
+        if self._sandbox_submitter is not None and hashes:
+            file_hint = {
+                "file_name": (entity_context.get("file_names") or [None])[0]
+                if isinstance(entity_context.get("file_names"), list)
+                else entity_context.get("file_name"),
+                "file_size": entity_context.get("file_size"),
+            }
+            submissions: Dict[str, Any] = {}
+            for hash_val in hashes[:3]:
+                try:
+                    res = await self._sandbox_submitter.submit_hash(hash_val, file_hint)
+                    if res and res.get("status") not in ("disabled", "rejected"):
+                        submissions[hash_val] = res
+                except Exception as e:
+                    logger.debug(f"Sandbox submission failed for {hash_val}: {e}")
+            if submissions:
+                enrichment["sandbox_submissions"] = submissions
+
         if enrichment:
             finding["enrichment"] = enrichment
             finding["enriched_at"] = datetime.utcnow().isoformat()
             self.stats["enriched"] += 1
-        
+
         return finding
     
     async def _enrich_ip(self, ip: str) -> Optional[Dict[str, Any]]:

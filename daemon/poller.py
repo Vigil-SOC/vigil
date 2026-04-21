@@ -46,8 +46,9 @@ class DataPoller:
         self._azure_sentinel_state = PollState()
         self._aws_security_hub_state = PollState()
         self._microsoft_defender_state = PollState()
+        self._elastic_state = PollState()
         self._generic_state = PollState()
-        
+
         # Services (lazy loaded)
         self._splunk_service = None
         self._crowdstrike_service = None
@@ -55,7 +56,8 @@ class DataPoller:
         self._azure_sentinel_service = None
         self._aws_security_hub_service = None
         self._microsoft_defender_service = None
-        
+        self._elastic_service = None
+
         # Stats
         self.stats = {
             "splunk_polls": 0,
@@ -68,6 +70,8 @@ class DataPoller:
             "aws_security_hub_findings": 0,
             "microsoft_defender_polls": 0,
             "microsoft_defender_findings": 0,
+            "elastic_polls": 0,
+            "elastic_findings": 0,
             "webhook_findings": 0,
             "errors": 0
         }
@@ -136,7 +140,16 @@ class DataPoller:
                     logger.info("Microsoft Defender service initialized")
                 except Exception as e:
                     logger.warning(f"Failed to initialize Microsoft Defender service: {e}")
-            
+
+            # Initialize Elastic Security service if configured
+            if is_integration_enabled('elastic-siem'):
+                try:
+                    from services.elastic_ingestion import ElasticIngestion
+                    self._elastic_service = ElasticIngestion()
+                    logger.info("Elastic Security service initialized")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Elastic Security service: {e}")
+
             # Initialize data service for database access
             from services.database_data_service import DatabaseDataService
             self._data_service = DatabaseDataService()
@@ -176,7 +189,12 @@ class DataPoller:
             tasks.append(asyncio.create_task(
                 self._poll_microsoft_defender_loop(shutdown_event)
             ))
-        
+
+        if self._elastic_service:
+            tasks.append(asyncio.create_task(
+                self._poll_elastic_loop(shutdown_event)
+            ))
+
         if self.config.webhook_enabled:
             tasks.append(asyncio.create_task(
                 self._run_webhook_server(shutdown_event)
@@ -623,3 +641,54 @@ class DataPoller:
                 logger.error(f"Microsoft Defender ingestion failed: {result.get('errors')}")
         except Exception as e:
             logger.error(f"Error polling Microsoft Defender: {e}")
+
+    async def _poll_elastic_loop(self, shutdown_event: asyncio.Event):
+        """Poll Elastic Security for new detection alerts on interval."""
+        interval = self.config.splunk_interval  # Use same interval as Splunk
+        logger.info(f"Elastic Security polling loop started (interval: {interval}s)")
+
+        while not shutdown_event.is_set():
+            try:
+                await self._poll_elastic()
+                self._elastic_state.last_poll_time = datetime.utcnow()
+            except Exception as e:
+                logger.error(f"Elastic Security polling error: {e}")
+                self.stats["errors"] += 1
+
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
+                break
+            except asyncio.TimeoutError:
+                pass
+
+    async def _poll_elastic(self):
+        """Poll Elastic Security for new detection alerts."""
+        if not self._elastic_service:
+            return
+
+        self.stats["elastic_polls"] += 1
+        logger.debug("Polling Elastic Security for new alerts...")
+
+        try:
+            lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
+            start_time = datetime.utcnow() - timedelta(minutes=lookback_minutes)
+
+            alerts = await self._elastic_service.fetch_alerts(
+                start_time=start_time, limit=100
+            )
+
+            new_count = 0
+            for alert in alerts:
+                finding = self._elastic_service.transform_alert_to_finding(alert)
+                if finding and not self._elastic_state.is_processed(finding["finding_id"]):
+                    await self._enqueue_finding(finding, "elastic")
+                    self._elastic_state.mark_processed(finding["finding_id"])
+                    new_count += 1
+
+            if new_count > 0:
+                logger.info(f"Polled {new_count} new findings from Elastic Security")
+                self.stats["elastic_findings"] += new_count
+
+        except Exception as e:
+            logger.error(f"Elastic Security API error: {e}")
+            raise

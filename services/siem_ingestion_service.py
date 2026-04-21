@@ -136,6 +136,21 @@ class SIEMIngestionService(ABC):
                 "errors": [str(e)]
             }
     
+    async def update_upstream_alert_status(
+        self,
+        alert_id: str,
+        status: str,
+        note: Optional[str] = None,
+    ) -> bool:
+        """Push a status change back to the upstream SIEM.
+
+        Override in subclasses that support bi-directional sync.
+        Returns True on success, False on failure or if not supported.
+        """
+        raise NotImplementedError(
+            f"{self.siem_name} does not support upstream status sync"
+        )
+
     def normalize_severity(self, severity: Any) -> str:
         """
         Normalize severity to standard values.

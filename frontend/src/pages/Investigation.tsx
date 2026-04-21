@@ -25,6 +25,10 @@ import {
 import { timelineApi, graphApi } from '../services/api'
 import EventTimeline, { TimelineEvent } from '../components/timeline/EventTimeline'
 import EntityGraph, { GraphNode, GraphLink } from '../components/graph/EntityGraph'
+import {
+  VSTRIKE_GRAPH_HIGHLIGHT_EVENT,
+  VStrikeGraphHighlightDetail,
+} from '../types/vstrike'
 
 export default function Investigation() {
   const [searchParams] = useSearchParams()
@@ -49,6 +53,27 @@ export default function Investigation() {
   useEffect(() => {
     loadData()
   }, [caseId, findingIds, clusterId])
+
+  // Listen for pivot events dispatched by the VStrike NetworkContextPanel.
+  useEffect(() => {
+    const handleVStrikeHighlight = (event: Event) => {
+      const detail = (event as CustomEvent<VStrikeGraphHighlightDetail>).detail
+      if (!detail?.nodeId) return
+      setHighlightedNodes((prev) =>
+        prev.includes(detail.nodeId) ? prev : [detail.nodeId]
+      )
+    }
+    window.addEventListener(
+      VSTRIKE_GRAPH_HIGHLIGHT_EVENT,
+      handleVStrikeHighlight as EventListener
+    )
+    return () => {
+      window.removeEventListener(
+        VSTRIKE_GRAPH_HIGHLIGHT_EVENT,
+        handleVStrikeHighlight as EventListener
+      )
+    }
+  }, [])
 
   const loadData = async () => {
     setLoading(true)

@@ -54,6 +54,8 @@ class IntegrationBridgeService:
         'hybrid-analysis': 'hybrid-analysis-server',
         'joe-sandbox': 'joe-sandbox-server',
         'anyrun': 'anyrun-server',
+        'cape-sandbox': 'cape-sandbox-server',
+        'cape_sandbox': 'cape-sandbox-server',
     }
     
     # Map integration field names to environment variable names

@@ -13,9 +13,10 @@ All routine operations are pure Python logic.
 import asyncio
 import json
 import logging
-import time
+import os
 import uuid
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from daemon.agent_runner import AgentRunner
@@ -86,6 +87,7 @@ class Orchestrator:
         self._data_service = None
         self._claude_service = None
         self._hourly_costs: List[Dict] = []
+        self._mp = self._init_mempalace()
 
         self.stats = {
             "investigations_created": 0,
@@ -119,6 +121,7 @@ class Orchestrator:
         if self._data_service is None:
             try:
                 from services.database_data_service import DatabaseDataService
+
                 self._data_service = DatabaseDataService()
                 logger.info("Orchestrator: Database service initialized")
             except Exception as e:
@@ -130,7 +133,9 @@ class Orchestrator:
         self._init_services()
 
         if not self._enabled:
-            logger.info("Orchestrator loaded (disabled) - waiting for enable via UI/API")
+            logger.info(
+                "Orchestrator loaded (disabled) - waiting for enable via UI/API"
+            )
 
         while not shutdown_event.is_set():
             self._sync_enabled_from_db()
@@ -141,8 +146,12 @@ class Orchestrator:
 
             logger.info("Orchestrator starting...")
             logger.info(f"  Max concurrent agents: {self.config.max_concurrent_agents}")
-            logger.info(f"  Max cost/investigation: ${self.config.max_cost_per_investigation}")
-            logger.info(f"  Auto-assign severities: {self.config.auto_assign_severities}")
+            logger.info(
+                f"  Max cost/investigation: ${self.config.max_cost_per_investigation}"
+            )
+            logger.info(
+                f"  Auto-assign severities: {self.config.auto_assign_severities}"
+            )
             logger.info(f"  Dry run: {self.config.dry_run}")
 
             tasks = [
@@ -160,24 +169,33 @@ class Orchestrator:
             await asyncio.gather(*tasks, return_exceptions=True)
 
             if not shutdown_event.is_set():
-                logger.info("Orchestrator disabled - loops stopped, waiting for re-enable")
+                logger.info(
+                    "Orchestrator disabled - loops stopped, waiting for re-enable"
+                )
 
         await self.agent_runner.stop_all()
         logger.info("Orchestrator shutdown complete")
 
     def _sync_enabled_from_db(self):
-        """Read the enabled state from the database (set by the API/UI toggle)."""
+        """Read the enabled state from the single ``orchestrator.settings``
+        SystemConfig row (set by the API/UI toggle or the Settings page)."""
         try:
             from database.connection import get_db_manager
             from database.models import SystemConfig
 
             with get_db_manager().session_scope() as session:
-                cfg = session.query(SystemConfig).filter_by(key="orchestrator_enabled").first()
+                cfg = (
+                    session.query(SystemConfig)
+                    .filter_by(key="orchestrator.settings")
+                    .first()
+                )
                 if cfg and isinstance(cfg.value, dict):
-                    db_enabled = cfg.value.get("enabled", False)
+                    db_enabled = bool(cfg.value.get("enabled", False))
                     if db_enabled != self._enabled:
                         self._enabled = db_enabled
-                        logger.info(f"Orchestrator {'ENABLED' if db_enabled else 'DISABLED'} (synced from DB)")
+                        logger.info(
+                            f"Orchestrator {'ENABLED' if db_enabled else 'DISABLED'} (synced from DB)"
+                        )
         except Exception:
             pass
 
@@ -223,7 +241,9 @@ class Orchestrator:
         else:
             logger.warning(f"Unknown intake item type: {item_type}")
 
-    async def _create_investigation_for_finding(self, finding: Dict, shutdown_event: asyncio.Event):
+    async def _create_investigation_for_finding(
+        self, finding: Dict, shutdown_event: asyncio.Event
+    ):
         """Create an investigation for a finding, with dedup checks."""
         finding_id = finding.get("finding_id", "unknown")
         severity = (finding.get("severity") or "").lower()
@@ -233,7 +253,9 @@ class Orchestrator:
 
         overlapping = self.shared_intel.check_overlap(finding)
         if overlapping:
-            logger.info(f"Finding {finding_id} overlaps with {overlapping}, adding to existing investigation")
+            logger.info(
+                f"Finding {finding_id} overlaps with {overlapping}, adding to existing investigation"
+            )
             self.stats["dedup_prevented"] += 1
             if _dedup_prevented is not None:
                 _dedup_prevented.add(1)
@@ -262,7 +284,9 @@ class Orchestrator:
             shutdown_event=shutdown_event,
         )
 
-    async def _create_manual_investigation(self, item: Dict, shutdown_event: asyncio.Event):
+    async def _create_manual_investigation(
+        self, item: Dict, shutdown_event: asyncio.Event
+    ):
         """Create an investigation from a manual request."""
         workflow_id = item.get("workflow_id", "incident-response")
         finding_ids = item.get("finding_ids", [])
@@ -305,10 +329,17 @@ class Orchestrator:
         plan_md = generate_plan(inv_id, workflow_id, findings, case_id, hypothesis)
         self.workdir.write_file(inv_id, "plan.md", plan_md)
 
-        state = generate_initial_state(inv_id, workflow_id, case_id, findings, total_steps)
+        state = generate_initial_state(
+            inv_id, workflow_id, case_id, findings, total_steps
+        )
         self.workdir.write_state(inv_id, state)
 
         context_md = generate_initial_context(findings)
+        # Append any prior MemPalace intelligence for the trigger entities
+        if findings:
+            prior_context = self._fetch_prior_palace_context(findings[0])
+            if prior_context:
+                context_md = context_md + "\n\n" + prior_context
         self.workdir.write_file(inv_id, "context.md", context_md)
 
         for finding in findings:
@@ -347,7 +378,9 @@ class Orchestrator:
             "case_id": case_id,
             "workflow_id": workflow_id,
             "trigger_type": trigger_type,
-            "trigger_ids": [f.get("finding_id") for f in findings if f.get("finding_id")],
+            "trigger_ids": [
+                f.get("finding_id") for f in findings if f.get("finding_id")
+            ],
             "status": "assigned" if can_start_now else "queued",
             "workdir": str(workdir),
             "current_step": 1,
@@ -371,14 +404,19 @@ class Orchestrator:
         except Exception:
             pass
 
-        self.workdir.append_log(inv_id, {
-            "event": "investigation_created",
-            "workflow_id": workflow_id,
-            "trigger_type": trigger_type,
-            "finding_count": len(findings),
-        })
+        self.workdir.append_log(
+            inv_id,
+            {
+                "event": "investigation_created",
+                "workflow_id": workflow_id,
+                "trigger_type": trigger_type,
+                "finding_count": len(findings),
+            },
+        )
 
-        logger.info(f"Created investigation {inv_id} (workflow={workflow_id}, priority={priority}, steps={total_steps})")
+        logger.info(
+            f"Created investigation {inv_id} (workflow={workflow_id}, priority={priority}, steps={total_steps})"
+        )
 
         await self._check_cross_correlations(inv_id)
 
@@ -395,7 +433,9 @@ class Orchestrator:
         for status in ("assigned", "queued"):
             investigations = self._get_investigations_by_status(status)
             for inv in investigations:
-                inv_id = inv.get("investigation_id") or (inv.investigation_id if hasattr(inv, 'investigation_id') else None)
+                inv_id = inv.get("investigation_id") or (
+                    inv.investigation_id if hasattr(inv, "investigation_id") else None
+                )
                 if not inv_id:
                     continue
                 if self.agent_runner.is_running(inv_id):
@@ -432,7 +472,8 @@ class Orchestrator:
                     if notified_key not in self._notified_approvals:
                         self._notified_approvals.add(notified_key)
                         self._send_notification(
-                            w_inv_id, "approval_required",
+                            w_inv_id,
+                            "approval_required",
                             f"Approval required: {w_inv_id}",
                             f"Investigation {w_inv_id} is waiting for human approval of a restricted tool.",
                             priority="high",
@@ -457,14 +498,19 @@ class Orchestrator:
                             last_activity = datetime.fromisoformat(last_activity)
                         idle_seconds = (now - last_activity).total_seconds()
                         if idle_seconds > self.config.stale_threshold:
-                            logger.warning(f"{inv_id}: Stale for {idle_seconds:.0f}s, killing agent")
+                            logger.warning(
+                                f"{inv_id}: Stale for {idle_seconds:.0f}s, killing agent"
+                            )
                             await self.agent_runner.stop_agent(inv_id)
-                            self._update_investigation_status(inv_id, "failed", "Stale: no activity")
+                            self._update_investigation_status(
+                                inv_id, "failed", "Stale: no activity"
+                            )
                             self.stats["stuck_agents_killed"] += 1
                             if _stuck_agents is not None:
                                 _stuck_agents.add(1)
                             self._send_notification(
-                                inv_id, "agent_stuck",
+                                inv_id,
+                                "agent_stuck",
                                 f"Agent stuck: {inv_id}",
                                 f"Agent for investigation {inv_id} was idle for {idle_seconds:.0f}s and has been terminated.",
                                 priority="high",
@@ -475,11 +521,17 @@ class Orchestrator:
                             )
 
                     cost = inv_dict.get("cost_usd", 0.0)
-                    max_cost = inv_dict.get("max_cost_usd", self.config.max_cost_per_investigation)
+                    max_cost = inv_dict.get(
+                        "max_cost_usd", self.config.max_cost_per_investigation
+                    )
                     if cost >= max_cost:
-                        logger.warning(f"{inv_id}: Cost ${cost:.2f} exceeded limit ${max_cost:.2f}")
+                        logger.warning(
+                            f"{inv_id}: Cost ${cost:.2f} exceeded limit ${max_cost:.2f}"
+                        )
                         await self.agent_runner.stop_agent(inv_id)
-                        self._update_investigation_status(inv_id, "failed", "Cost limit exceeded")
+                        self._update_investigation_status(
+                            inv_id, "failed", "Cost limit exceeded"
+                        )
 
                 self._track_hourly_cost()
 
@@ -508,7 +560,9 @@ class Orchestrator:
         hourly_total = sum(c["cost"] for c in self._hourly_costs)
 
         if hourly_total >= self.config.max_total_hourly_cost:
-            logger.warning(f"Hourly cost ${hourly_total:.2f} exceeds limit ${self.config.max_total_hourly_cost:.2f}, pausing intake")
+            logger.warning(
+                f"Hourly cost ${hourly_total:.2f} exceeds limit ${self.config.max_total_hourly_cost:.2f}, pausing intake"
+            )
             self._enabled = False
 
     # -------------------------------------------------------------------------
@@ -560,14 +614,20 @@ class Orchestrator:
                 _inv_completed.add(1)
             self.stats["reviews_completed"] += 1
             self.shared_intel.unregister_investigation(inv_id)
+            self._persist_investigation_to_palace(inv_id, state)
 
-            self.workdir.append_log(inv_id, {
-                "event": "review_passed",
-                "completeness": completeness,
-                "proposed_actions_count": len(proposed_actions),
-            })
+            self.workdir.append_log(
+                inv_id,
+                {
+                    "event": "review_passed",
+                    "completeness": completeness,
+                    "proposed_actions_count": len(proposed_actions),
+                },
+            )
 
-            logger.info(f"Investigation {inv_id} APPROVED ({completeness:.0%} complete, {len(proposed_actions)} actions)")
+            logger.info(
+                f"Investigation {inv_id} APPROVED ({completeness:.0%} complete, {len(proposed_actions)} actions)"
+            )
 
             self._log_ai_decision(
                 decision_type="review_approve",
@@ -578,7 +638,8 @@ class Orchestrator:
             )
 
             self._send_notification(
-                inv_id, "investigation_complete",
+                inv_id,
+                "investigation_complete",
                 f"Investigation {inv_id} completed",
                 f"Investigation completed at {completeness:.0%} with {len(proposed_actions)} proposed actions.",
                 priority="normal",
@@ -604,11 +665,14 @@ class Orchestrator:
             self._update_investigation_status(inv_id, "needs_rework", notes)
             self.stats["reviews_completed"] += 1
 
-            self.workdir.append_log(inv_id, {
-                "event": "review_needs_rework",
-                "notes": notes,
-                "completeness": completeness,
-            })
+            self.workdir.append_log(
+                inv_id,
+                {
+                    "event": "review_needs_rework",
+                    "notes": notes,
+                    "completeness": completeness,
+                },
+            )
 
             logger.info(f"Investigation {inv_id} NEEDS REWORK: {notes}")
 
@@ -621,7 +685,8 @@ class Orchestrator:
             )
 
             self._send_notification(
-                inv_id, "investigation_needs_review",
+                inv_id,
+                "investigation_needs_review",
                 f"Investigation {inv_id} needs rework",
                 notes,
                 priority="high",
@@ -630,7 +695,9 @@ class Orchestrator:
     async def _create_approval_action(self, inv_id: str, action: Dict):
         """Create an approval action for proposed response."""
         try:
-            from services.approval_service import get_approval_service, ActionType
+            from services.approval_service import (ActionType,
+                                                   get_approval_service)
+
             service = get_approval_service()
 
             action_str = action.get("action", "unknown")
@@ -670,7 +737,9 @@ class Orchestrator:
                     .first()
                 )
                 if existing:
-                    logger.debug(f"Case-review already exists for {case_id}: {existing.investigation_id}")
+                    logger.debug(
+                        f"Case-review already exists for {case_id}: {existing.investigation_id}"
+                    )
                     return
 
             case_data = None
@@ -684,15 +753,21 @@ class Orchestrator:
             finding_ids = case_data.get("finding_ids", [])
             priority = case_data.get("priority", "medium")
 
-            inv_id = f"inv-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
+            inv_id = (
+                f"inv-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
+            )
             total_steps = count_steps("case-review")
 
             workdir = self.workdir.create(inv_id)
 
-            plan_md = generate_case_review_plan(inv_id, case_id, case_title, finding_ids, priority)
+            plan_md = generate_case_review_plan(
+                inv_id, case_id, case_title, finding_ids, priority
+            )
             self.workdir.write_file(inv_id, "plan.md", plan_md)
 
-            state = generate_initial_state(inv_id, "case-review", case_id, [], total_steps)
+            state = generate_initial_state(
+                inv_id, "case-review", case_id, [], total_steps
+            )
             self.workdir.write_state(inv_id, state)
 
             context_md = generate_case_review_context(case_id, case_title, finding_ids)
@@ -716,21 +791,115 @@ class Orchestrator:
 
             self._save_investigation(inv_record)
 
-            self.workdir.append_log(inv_id, {
-                "event": "investigation_created",
-                "workflow_id": "case-review",
-                "trigger_type": "case_review",
-                "case_id": case_id,
-            })
+            self.workdir.append_log(
+                inv_id,
+                {
+                    "event": "investigation_created",
+                    "workflow_id": "case-review",
+                    "trigger_type": "case_review",
+                    "case_id": case_id,
+                },
+            )
 
-            logger.info(f"Created case-review investigation {inv_id} for case {case_id}")
+            logger.info(
+                f"Created case-review investigation {inv_id} for case {case_id}"
+            )
 
         except Exception as e:
-            logger.error(f"Failed to trigger case review for {case_id}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to trigger case review for {case_id}: {e}", exc_info=True
+            )
 
     # -------------------------------------------------------------------------
     # AI Decision Logging
     # -------------------------------------------------------------------------
+
+    def _init_mempalace(self):
+        """Initialize MemPalace data directory for daemon persistence.
+
+        Returns the palace data Path if MEMPALACE_DAEMON_ENABLED=true, else None.
+        Investigation summaries are written as JSON files directly into the palace
+        data directory; the MemPalace Searcher is used for cross-run lookups.
+        """
+        if os.environ.get("MEMPALACE_DAEMON_ENABLED", "false").lower() != "true":
+            return None
+        try:
+            data_dir = Path(
+                os.environ.get(
+                    "MEMPALACE_PALACE_PATH", str(Path.home() / ".mempalace" / "palace")
+                )
+            )
+            closed_cases_dir = data_dir / "investigations" / "closed-cases"
+            closed_cases_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"MemPalace daemon integration enabled (data_dir={data_dir})")
+            return data_dir
+        except Exception as e:
+            logger.debug(f"MemPalace daemon init failed: {e}")
+            return None
+
+    def _persist_investigation_to_palace(self, inv_id: str, state: Dict) -> None:
+        """Store completed investigation summary as a JSON file in the palace data directory."""
+        if not self._mp:
+            return
+        try:
+            closed_cases_dir = self._mp / "investigations" / "closed-cases"
+            closed_cases_dir.mkdir(parents=True, exist_ok=True)
+            safe_id = inv_id.replace("/", "_")
+            dest = closed_cases_dir / f"{safe_id}.json"
+            dest.write_text(
+                json.dumps(
+                    {
+                        "inv_id": inv_id,
+                        "workflow_id": state.get("workflow_id"),
+                        "summary": state.get("summary", ""),
+                        "proposed_actions": state.get("proposed_actions", []),
+                        "completed_steps": state.get("completed_steps", []),
+                        "case_id": state.get("case_id"),
+                        "completed_at": datetime.utcnow().isoformat(),
+                    },
+                    indent=2,
+                )
+            )
+            logger.debug(f"Persisted investigation {inv_id} to MemPalace closed-cases")
+        except Exception as e:
+            logger.debug(f"MemPalace investigation persist failed: {e}")
+
+    def _fetch_prior_palace_context(self, finding: Dict) -> str:
+        """Query MemPalace Searcher for prior intelligence on a finding's entity set."""
+        if not self._mp:
+            return ""
+        try:
+            from mempalace.searcher import search_memories
+
+            ctx = finding.get("entity_context") or {}
+            terms = []
+            for ip in (ctx.get("src_ips") or []) + (
+                ctx.get("dest_ips") or ctx.get("dst_ips") or []
+            ):
+                terms.append(ip)
+            if ctx.get("src_ip"):
+                terms.append(ctx["src_ip"])
+            if ctx.get("dst_ip"):
+                terms.append(ctx["dst_ip"])
+            for d in ctx.get("domains") or []:
+                terms.append(d)
+            for h in ctx.get("file_hashes") or []:
+                terms.append(h)
+            if not terms:
+                return ""
+
+            query = " ".join(terms[:8])
+            results = search_memories(query=query, palace_path=str(self._mp))
+            if not results:
+                return ""
+
+            lines = ["## Prior Intelligence from MemPalace\n"]
+            for r in (results or [])[:5]:
+                lines.append(f"- {str(r)[:300]}")
+            return "\n".join(lines)
+        except Exception as e:
+            logger.debug(f"MemPalace prior context fetch failed: {e}")
+            return ""
 
     def _log_ai_decision(
         self,
@@ -748,12 +917,18 @@ class Orchestrator:
             with get_db_manager().session_scope() as session:
                 case_id = None
                 finding_id = None
-                inv = session.query(Investigation).filter_by(investigation_id=inv_id).first()
+                inv = (
+                    session.query(Investigation)
+                    .filter_by(investigation_id=inv_id)
+                    .first()
+                )
                 if inv:
                     case_id = inv.case_id
                     trigger_ids = inv.trigger_ids or []
                     if trigger_ids:
-                        finding_id = trigger_ids[0] if isinstance(trigger_ids, list) else None
+                        finding_id = (
+                            trigger_ids[0] if isinstance(trigger_ids, list) else None
+                        )
 
                 entry = AIDecisionLog(
                     decision_id=f"orch-{uuid.uuid4().hex[:8]}",
@@ -765,7 +940,10 @@ class Orchestrator:
                     confidence_score=confidence,
                     reasoning=reasoning,
                     recommended_action=action,
-                    decision_metadata={"source": "orchestrator", "investigation_id": inv_id},
+                    decision_metadata={
+                        "source": "orchestrator",
+                        "investigation_id": inv_id,
+                    },
                 )
                 session.add(entry)
             logger.debug(f"AI decision logged: {decision_type} for {inv_id}")
@@ -792,7 +970,9 @@ class Orchestrator:
             self._linked_pairs.add(pair_key)
 
             shared_keys = self.shared_intel.get_shared_iocs(inv_id, other_id)
-            logger.info(f"Cross-correlation: {inv_id} <-> {other_id} share {len(shared_keys)} IOCs: {shared_keys[:5]}")
+            logger.info(
+                f"Cross-correlation: {inv_id} <-> {other_id} share {len(shared_keys)} IOCs: {shared_keys[:5]}"
+            )
 
             inv_a = self.get_investigation(inv_id)
             inv_b = self.get_investigation(other_id)
@@ -802,13 +982,17 @@ class Orchestrator:
             if case_a and case_b and case_a != case_b:
                 try:
                     from services.mcp_client import get_mcp_client
+
                     client = get_mcp_client()
                     if client:
-                        await client.call_tool("link_related_cases", {
-                            "case_id": case_a,
-                            "related_case_id": case_b,
-                            "relationship": "shared_iocs",
-                        })
+                        await client.call_tool(
+                            "link_related_cases",
+                            {
+                                "case_id": case_a,
+                                "related_case_id": case_b,
+                                "relationship": "shared_iocs",
+                            },
+                        )
                         logger.info(f"Linked cases {case_a} <-> {case_b}")
                 except Exception as e:
                     logger.debug(f"Failed to link cases: {e}")
@@ -838,16 +1022,22 @@ class Orchestrator:
             except Exception:
                 pass
 
-            self.workdir.append_log(inv_id, {
-                "event": "cross_correlation",
-                "related_investigation": other_id,
-                "shared_iocs": shared_keys[:20],
-            })
-            self.workdir.append_log(other_id, {
-                "event": "cross_correlation",
-                "related_investigation": inv_id,
-                "shared_iocs": shared_keys[:20],
-            })
+            self.workdir.append_log(
+                inv_id,
+                {
+                    "event": "cross_correlation",
+                    "related_investigation": other_id,
+                    "shared_iocs": shared_keys[:20],
+                },
+            )
+            self.workdir.append_log(
+                other_id,
+                {
+                    "event": "cross_correlation",
+                    "related_investigation": inv_id,
+                    "shared_iocs": shared_keys[:20],
+                },
+            )
 
     # -------------------------------------------------------------------------
     # Notifications
@@ -867,7 +1057,11 @@ class Orchestrator:
             from database.models import CaseNotification, Investigation
 
             with get_db_manager().session_scope() as session:
-                inv = session.query(Investigation).filter_by(investigation_id=inv_id).first()
+                inv = (
+                    session.query(Investigation)
+                    .filter_by(investigation_id=inv_id)
+                    .first()
+                )
                 case_id = inv.case_id if inv else None
 
                 notif = CaseNotification(
@@ -885,16 +1079,21 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"Failed to create notification for {inv_id}: {e}")
 
-    async def _send_slack_for_notification(self, title: str, message: str, severity: str = "high"):
+    async def _send_slack_for_notification(
+        self, title: str, message: str, severity: str = "high"
+    ):
         """Optionally forward urgent notifications to Slack."""
         try:
             import os
+
             slack_enabled = os.getenv("DAEMON_SLACK_ENABLED", "false").lower() == "true"
             if not slack_enabled:
                 return
 
-            from core.config import get_integration_config
             import requests
+
+            from core.config import get_integration_config
+
             config = get_integration_config("slack")
             token = config.get("bot_token")
             channel = config.get("default_channel", "#soc-alerts")
@@ -904,17 +1103,22 @@ class Orchestrator:
             color_map = {"critical": "#ff0000", "high": "#ff9900", "medium": "#ffcc00"}
             payload = {
                 "channel": channel,
-                "attachments": [{
-                    "color": color_map.get(severity, "#36a64f"),
-                    "title": title,
-                    "text": message,
-                    "footer": "AI SOC Orchestrator",
-                }],
+                "attachments": [
+                    {
+                        "color": color_map.get(severity, "#36a64f"),
+                        "title": title,
+                        "text": message,
+                        "footer": "AI SOC Orchestrator",
+                    }
+                ],
             }
             await asyncio.to_thread(
                 requests.post,
                 "https://slack.com/api/chat.postMessage",
-                headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
                 json=payload,
                 timeout=10,
             )
@@ -930,6 +1134,7 @@ class Orchestrator:
         try:
             from database.connection import get_db_manager
             from database.models import Investigation
+
             with get_db_manager().session_scope() as session:
                 inv = Investigation(
                     investigation_id=inv_record["investigation_id"],
@@ -942,9 +1147,15 @@ class Orchestrator:
                     current_step=inv_record.get("current_step", 0),
                     total_steps=inv_record.get("total_steps", 0),
                     priority=inv_record.get("priority", "medium"),
-                    max_iterations=inv_record.get("max_iterations", self.config.max_iterations_per_agent),
-                    max_cost_usd=inv_record.get("max_cost_usd", self.config.max_cost_per_investigation),
-                    max_runtime_seconds=inv_record.get("max_runtime_seconds", self.config.max_runtime_per_investigation),
+                    max_iterations=inv_record.get(
+                        "max_iterations", self.config.max_iterations_per_agent
+                    ),
+                    max_cost_usd=inv_record.get(
+                        "max_cost_usd", self.config.max_cost_per_investigation
+                    ),
+                    max_runtime_seconds=inv_record.get(
+                        "max_runtime_seconds", self.config.max_runtime_per_investigation
+                    ),
                 )
                 session.add(inv)
         except Exception as e:
@@ -955,6 +1166,7 @@ class Orchestrator:
         try:
             from database.connection import get_db_manager
             from database.models import Investigation
+
             with get_db_manager().session_scope() as session:
                 results = session.query(Investigation).filter_by(status=status).all()
                 return [inv.to_dict() for inv in results]
@@ -967,11 +1179,15 @@ class Orchestrator:
         try:
             from database.connection import get_db_manager
             from database.models import Investigation
+
             with get_db_manager().session_scope() as session:
                 query = session.query(Investigation)
                 if status:
                     query = query.filter_by(status=status)
-                return [inv.to_dict() for inv in query.order_by(Investigation.created_at.desc()).all()]
+                return [
+                    inv.to_dict()
+                    for inv in query.order_by(Investigation.created_at.desc()).all()
+                ]
         except Exception as e:
             logger.debug(f"DB query failed: {e}")
             return []
@@ -980,18 +1196,30 @@ class Orchestrator:
         try:
             from database.connection import get_db_manager
             from database.models import Investigation
+
             with get_db_manager().session_scope() as session:
-                inv = session.query(Investigation).filter_by(investigation_id=inv_id).first()
+                inv = (
+                    session.query(Investigation)
+                    .filter_by(investigation_id=inv_id)
+                    .first()
+                )
                 return inv.to_dict() if inv else None
         except Exception:
             return None
 
-    def _update_investigation_status(self, inv_id: str, status: str, notes: Optional[str] = None):
+    def _update_investigation_status(
+        self, inv_id: str, status: str, notes: Optional[str] = None
+    ):
         try:
             from database.connection import get_db_manager
             from database.models import Investigation
+
             with get_db_manager().session_scope() as session:
-                inv = session.query(Investigation).filter_by(investigation_id=inv_id).first()
+                inv = (
+                    session.query(Investigation)
+                    .filter_by(investigation_id=inv_id)
+                    .first()
+                )
                 if inv:
                     inv.status = status
                     if notes:
@@ -1005,13 +1233,19 @@ class Orchestrator:
         """Get cost breakdown across all investigations."""
         all_inv = self.get_all_investigations()
         total = sum(i.get("cost_usd", 0) for i in all_inv)
-        active_cost = sum(i.get("cost_usd", 0) for i in all_inv if i.get("status") in ("assigned", "executing"))
+        active_cost = sum(
+            i.get("cost_usd", 0)
+            for i in all_inv
+            if i.get("status") in ("assigned", "executing")
+        )
         hourly = sum(c["cost"] for c in self._hourly_costs)
         return {
             "total_cost_usd": round(total, 4),
             "active_cost_usd": round(active_cost, 4),
             "hourly_cost_usd": round(hourly, 4),
-            "hourly_budget_remaining": round(self.config.max_total_hourly_cost - hourly, 4),
+            "hourly_budget_remaining": round(
+                self.config.max_total_hourly_cost - hourly, 4
+            ),
             "per_investigation_limit": self.config.max_cost_per_investigation,
         }
 

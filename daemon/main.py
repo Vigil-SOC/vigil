@@ -38,6 +38,7 @@ class SOCDaemon:
         self._responder = None
         self._scheduler = None
         self._orchestrator = None
+        self._llm_worker_manager = None
         self._metrics_server = None
         
         logger.info("SOC Daemon initialized")
@@ -65,13 +66,15 @@ class SOCDaemon:
         from daemon.scheduler import TaskScheduler
         from daemon.metrics import MetricsServer
         from daemon.orchestrator import Orchestrator
-        
+        from daemon.llm_worker_manager import LLMWorkerManager
+
         self._poller = DataPoller(self.config.polling)
         self._processor = FindingProcessor(self.config.processing)
         self._responder = AutonomousResponder(self.config.response, self.config.escalation)
         self._scheduler = TaskScheduler(self.config.scheduler)
         self._orchestrator = Orchestrator(self.config.orchestrator)
-        
+        self._llm_worker_manager = LLMWorkerManager()
+
         if self.config.metrics.enabled:
             self._metrics_server = MetricsServer(self.config.metrics)
         
@@ -128,7 +131,11 @@ class SOCDaemon:
                 logger.info("Autonomous orchestrator started")
             else:
                 logger.info("Autonomous orchestrator loaded (disabled)")
-        
+
+        if self._llm_worker_manager:
+            tasks.append(asyncio.create_task(self._llm_worker_manager.run(self._shutdown_event)))
+            logger.info("LLM Worker Manager started (controls worker subprocess via DB toggle)")
+
         if self._metrics_server:
             tasks.append(asyncio.create_task(self._metrics_server.run(self._shutdown_event)))
             logger.info(f"Metrics server started on port {self.config.metrics.port}")

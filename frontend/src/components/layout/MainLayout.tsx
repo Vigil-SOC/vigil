@@ -5,7 +5,7 @@ import { Chat as ChatIcon, Brightness4, Brightness7 } from '@mui/icons-material'
 import { useTheme } from '../../contexts/ThemeContext'
 import NavigationRail, { COLLAPSED_WIDTH } from './NavigationRail'
 import ClaudeDrawer from '../claude/ClaudeDrawer'
-import { configApi } from '../../services/api'
+import { configApi, orchestratorApi } from '../../services/api'
 
 export default function MainLayout() {
   const [claudeOpen, setClaudeOpen] = useState(false)
@@ -15,6 +15,7 @@ export default function MainLayout() {
     title: string
   } | null>(null)
   const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([])
+  const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
   const { mode, toggleTheme } = useTheme()
   const muiTheme = useMuiTheme()
 
@@ -22,6 +23,9 @@ export default function MainLayout() {
     configApi.getIntegrations()
       .then(res => setEnabledIntegrations(res.data?.enabled_integrations || []))
       .catch(() => setEnabledIntegrations([]))
+    orchestratorApi.getStatus()
+      .then(res => setOrchestratorEnabled(res.data?.enabled ?? false))
+      .catch(() => setOrchestratorEnabled(false))
   }, [])
 
   const handleInvestigate = (_findingId: string, agentId: string, prompt: string, title: string) => {
@@ -35,7 +39,7 @@ export default function MainLayout() {
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
-      <NavigationRail enabledIntegrations={enabledIntegrations} />
+      <NavigationRail enabledIntegrations={enabledIntegrations} orchestratorEnabled={orchestratorEnabled} />
       
       <Box
         component="main"

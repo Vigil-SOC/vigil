@@ -1,0 +1,131 @@
+[
+  {
+    "_index": ".internal.alerts-security.alerts-default-000001",
+    "_id": "abc123def456",
+    "_score": null,
+    "_source": {
+      "@timestamp": "2026-04-13T14:30:00.000Z",
+      "kibana.alert.rule.name": "Suspicious PowerShell Execution",
+      "kibana.alert.rule.description": "Detected a suspicious PowerShell command using encoded arguments, commonly associated with fileless malware and post-exploitation frameworks.",
+      "kibana.alert.severity": "high",
+      "kibana.alert.rule.uuid": "rule-uuid-001",
+      "kibana.alert.rule.threat": [
+        {
+          "framework": "MITRE ATT&CK",
+          "tactic": {
+            "id": "TA0002",
+            "name": "Execution"
+          },
+          "technique": [
+            {
+              "id": "T1059.001",
+              "name": "PowerShell"
+            }
+          ]
+        }
+      ],
+      "kibana.alert.case_ids": [],
+      "event": {
+        "kind": "signal",
+        "severity": 73
+      },
+      "host": {
+        "name": "WORKSTATION-01",
+        "os": {
+          "name": "Windows 10"
+        }
+      },
+      "user": {
+        "name": "jsmith"
+      },
+      "source": {
+        "ip": "10.0.1.50"
+      },
+      "destination": {
+        "ip": "198.51.100.42"
+      },
+      "process": {
+        "name": "powershell.exe",
+        "args": ["-EncodedCommand", "SQBuAHYAbwBrAGUALQBXAGUAYgBSAGUAcQB1AGUAcwB0AA=="],
+        "pid": 4832
+      },
+      "message": "Process powershell.exe executed with encoded command"
+    }
+  },
+  {
+    "_index": ".internal.alerts-security.alerts-default-000001",
+    "_id": "xyz789ghi012",
+    "_score": null,
+    "_source": {
+      "@timestamp": "2026-04-13T15:10:00.000Z",
+      "kibana.alert.rule.name": "Brute Force Attempt Detected",
+      "kibana.alert.rule.description": "Multiple failed login attempts detected from a single source IP within a short time window, indicating a potential brute force attack.",
+      "kibana.alert.severity": "medium",
+      "kibana.alert.rule.uuid": "rule-uuid-002",
+      "kibana.alert.rule.threat": [
+        {
+          "framework": "MITRE ATT&CK",
+          "tactic": {
+            "id": "TA0006",
+            "name": "Credential Access"
+          },
+          "technique": [
+            {
+              "id": "T1110.001",
+              "name": "Password Guessing"
+            }
+          ]
+        }
+      ],
+      "kibana.alert.case_ids": ["case-elastic-001"],
+      "event": {
+        "kind": "signal",
+        "severity": 47
+      },
+      "host": {
+        "name": "AUTH-SERVER-02"
+      },
+      "user": {
+        "name": "admin"
+      },
+      "source": {
+        "ip": "203.0.113.77"
+      },
+      "destination": {
+        "ip": "10.0.2.10"
+      },
+      "message": "50 failed login attempts from 203.0.113.77 in 5 minutes"
+    }
+  },
+  {
+    "_index": ".internal.alerts-security.alerts-default-000001",
+    "_id": "lowsev345",
+    "_score": null,
+    "_source": {
+      "@timestamp": "2026-04-13T16:00:00.000Z",
+      "signal": {
+        "rule": {
+          "name": "DNS Query to Newly Registered Domain",
+          "description": "A DNS query was made to a domain registered within the last 30 days.",
+          "severity": "low",
+          "id": "rule-legacy-003",
+          "threat": []
+        }
+      },
+      "event": {
+        "kind": "signal",
+        "severity": 21
+      },
+      "host": {
+        "name": "LAPTOP-DEV-03"
+      },
+      "source": {
+        "ip": "10.0.3.15"
+      },
+      "destination": {
+        "ip": "93.184.216.34"
+      },
+      "message": "DNS query to freshly-registered domain newmalware-c2.xyz"
+    }
+  }
+]

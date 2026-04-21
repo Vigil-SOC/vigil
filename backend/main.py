@@ -6,6 +6,7 @@ Main application entry point for the REST API server.
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -41,6 +42,7 @@ from api.integrations_compatibility import router as compatibility_router
 from api.ingestion import router as ingestion_router
 from api.timeline import router as timeline_router
 from api.graph import router as graph_router
+from api.vstrike import router as vstrike_router
 
 # Enhanced case management routers
 from api.case_templates import router as case_templates_router
@@ -48,6 +50,9 @@ from api.case_metrics import router as case_metrics_router
 from api.case_search import router as case_search_router
 from api.webhooks import router as webhooks_router
 from api.sla_policies import router as sla_policies_router
+
+# Darktrace inbound webhook receiver
+from api.darktrace_webhook import router as darktrace_webhook_router
 
 # Authentication routers
 from api.auth import router as auth_router
@@ -144,6 +149,7 @@ app.include_router(agents_router, prefix="/api/agents", tags=["agents"])
 app.include_router(compatibility_router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(custom_integrations_router, prefix="/api/custom-integrations", tags=["custom-integrations"])
 app.include_router(ingestion_router, prefix="/api/ingest", tags=["ingestion"])
+app.include_router(vstrike_router, prefix="/api/integrations/vstrike", tags=["vstrike"])
 app.include_router(storage_status_router, prefix="/api/storage", tags=["storage"])
 app.include_router(ai_decisions_router, prefix="/api/ai", tags=["ai-decisions"])
 app.include_router(timeline_router, prefix="/api/timeline", tags=["timeline"])
@@ -163,6 +169,15 @@ app.include_router(case_templates_router, prefix="/api/cases/templates", tags=["
 app.include_router(case_metrics_router, prefix="/api/cases/metrics", tags=["case-metrics"])
 app.include_router(case_search_router, prefix="/api/cases/search", tags=["case-search"])
 app.include_router(webhooks_router, prefix="/api/webhooks", tags=["webhooks"])
+# Darktrace inbound webhook receiver — only mount when explicitly enabled.
+# env.example and docs/integrations/DARKTRACE.md document DARKTRACE_ENABLED
+# as the on/off toggle; leaving it unset must leave the receiver off.
+if os.environ.get("DARKTRACE_ENABLED", "false").lower() == "true":
+    app.include_router(
+        darktrace_webhook_router,
+        prefix="/api/webhooks/darktrace",
+        tags=["darktrace"],
+    )
 app.include_router(sla_policies_router, prefix="/api/sla-policies", tags=["sla-policies"])
 
 @app.on_event("startup")

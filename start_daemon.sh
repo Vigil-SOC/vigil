@@ -236,6 +236,11 @@ else
     echo "⚠️  SOC Daemon failed. Check logs/daemon.log"
 fi
 
+# NOTE: The LLM worker (ARQ job processor for Claude API calls) is managed
+# dynamically by the SOC daemon via daemon/llm_worker_manager.py.  It starts
+# and stops automatically when the orchestrator is enabled/disabled in the
+# Settings UI — no manual startup required.
+
 # Install frontend dependencies if needed (skip when Node.js prereq unmet)
 if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
     if [ ! -d "frontend/node_modules" ]; then

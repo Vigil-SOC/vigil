@@ -27,6 +27,41 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    resolve: {
+      // Dedupe React + emotion so pre-bundled deps share one instance.
+      // Without this, react-router-dom gets its own React copy and hook
+      // calls throw "Cannot read properties of null (reading 'useRef')".
+      dedupe: [
+        'react',
+        'react-dom',
+        'react-is',
+        'react-transition-group',
+        '@emotion/react',
+        '@emotion/styled',
+      ],
+    },
+    optimizeDeps: {
+      // Force all MUI + emotion + react-transition-group into a single
+      // esbuild optimize pass so React lives in ONE shared chunk instead
+      // of being duplicated per dep. Also works around the esbuild 0.21.x
+      // cross-chunk splitting bug ("Export 'import_react3' is not defined")
+      // because all interdependent modules are discovered together.
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+        'react-transition-group',
+        '@emotion/react',
+        '@emotion/styled',
+        '@mui/material',
+        '@mui/material/styles',
+        '@mui/icons-material',
+        '@mui/lab',
+        'react-router-dom',
+      ],
+    },
     build: {
       outDir: 'build',
     },

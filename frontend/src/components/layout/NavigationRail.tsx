@@ -52,9 +52,10 @@ const navItems: NavItem[] = [
 
 interface NavigationRailProps {
   enabledIntegrations?: string[]
+  orchestratorEnabled?: boolean
 }
 
-export default function NavigationRail({ enabledIntegrations = [] }: NavigationRailProps) {
+export default function NavigationRail({ enabledIntegrations = [], orchestratorEnabled = false }: NavigationRailProps) {
   const [expanded, setExpanded] = useState(false)
   const navigate = useNavigate()
   const location = useLocation()
@@ -63,6 +64,7 @@ export default function NavigationRail({ enabledIntegrations = [] }: NavigationR
 
   const filteredItems = navItems.filter(item => {
     if (item.id === 'timesketch') return enabledIntegrations.includes('timesketch')
+    if (item.id === 'orchestrator') return orchestratorEnabled
     return true
   })
 

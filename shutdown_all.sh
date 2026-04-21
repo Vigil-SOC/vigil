@@ -57,6 +57,12 @@ if [ -f "logs/frontend.pid" ]; then
     rm logs/frontend.pid
 fi
 
+if [ -f "logs/llm_worker.pid" ]; then
+    LLM_WORKER_PID=$(cat logs/llm_worker.pid)
+    kill $LLM_WORKER_PID 2>/dev/null && echo "   ✓ LLM Worker stopped (PID: $LLM_WORKER_PID)" || echo "   LLM Worker already stopped"
+    rm logs/llm_worker.pid
+fi
+
 # Kill processes by name
 echo "2. Stopping backend processes..."
 pkill -f "uvicorn backend.main:app"

@@ -935,7 +935,10 @@ async def get_orchestrator_config():
 
 @router.post("/orchestrator")
 async def set_orchestrator_config(config: OrchestratorSettingsConfig):
-    """Set orchestrator configuration. Persists to DB and attempts runtime apply."""
+    """Set orchestrator configuration. Persists settings AND syncs the
+    runtime enabled flag used by GET /api/orchestrator/status (which
+    NavigationRail uses to show/hide the Auto Ops tab).
+    """
     try:
         config_data = config.model_dump()
 
@@ -950,6 +953,21 @@ async def set_orchestrator_config(config: OrchestratorSettingsConfig):
 
         if not success:
             raise HTTPException(status_code=500, detail="Failed to save orchestrator config to database")
+
+        # Poke the in-process orchestrator (if the API happens to share one)
+        # so a running daemon reacts immediately. No-op in backend-only
+        # deployments — the daemon polls orchestrator.settings every few
+        # seconds.
+        try:
+            from backend.api.orchestrator import _get_orchestrator
+            orch = _get_orchestrator()
+            if orch is not None:
+                if config_data.get("enabled"):
+                    orch.enable()
+                else:
+                    orch.disable()
+        except Exception as e:
+            logger.debug("In-process orchestrator runtime apply skipped: %s", e)
 
         return {"success": True, "message": "Orchestrator settings saved"}
     except HTTPException:

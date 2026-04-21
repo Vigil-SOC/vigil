@@ -293,8 +293,8 @@ export default function CaseMetricsDashboard() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {analystPerformance.map((analyst: any) => (
-                    <TableRow key={analyst.analyst}>
+                  {analystPerformance.map((analyst: any, index: number) => (
+                    <TableRow key={analyst.analyst ?? `unassigned-${index}`}>
                       <TableCell>
                         <Box display="flex" alignItems="center" gap={1}>
                           <PersonIcon fontSize="small" color="primary" />

@@ -36,11 +36,11 @@ Backend tools are automatically enabled for web UI users via the Claude Agent SD
 | Core | deeptempo-findings, approval, attack-layer, tempo-flow | Implemented |
 | Community | GitHub, PostgreSQL | Active |
 | Detection Engineering | Security-Detections-MCP | Implemented |
-| SIEM | Splunk | Implemented |
+| SIEM | Splunk, Elastic Security | Implemented |
 | Timeline | Timesketch | Implemented |
 | Threat Intel | VirusTotal, Shodan, AlienVault OTX, MISP, URL Analysis, IP Geolocation | Implemented |
 | EDR | CrowdStrike | Implemented |
-| Sandbox | Hybrid Analysis, Joe Sandbox, ANY.RUN | Implemented |
+| Sandbox | Hybrid Analysis, Joe Sandbox, ANY.RUN, CAPE Sandbox | Implemented |
 | Ticketing | Jira | Implemented |
 | Communication | Slack | Implemented |
 | Data Pipeline | Cribl Stream | Implemented |
@@ -159,6 +159,42 @@ Settings > Integrations > Splunk:
 | `natural_language_search` | Generate and execute |
 | `get_splunk_indexes` | List available indexes |
 
+## Elastic Security
+
+Elasticsearch SIEM with detection alert ingestion, bi-directional case sync, and IOC enrichment.
+
+### Configuration
+
+```bash
+ELASTIC_HOST="https://elasticsearch.example.com:9200"
+ELASTIC_KIBANA_URL="https://kibana.example.com:5601"
+ELASTIC_API_KEY="your_api_key"
+# Or use basic auth:
+# ELASTIC_USERNAME="elastic"
+# ELASTIC_PASSWORD="your_password"
+```
+
+Settings > Integrations > Elastic Security (SIEM):
+- Elasticsearch URL
+- Kibana URL (required for detection alerts and case sync)
+- API Key or Username/Password
+- Alert Index Pattern (default: `.alerts-security.alerts-default`)
+
+### MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `elastic_search_logs` | Search Elasticsearch with query DSL |
+| `elastic_search_by_ioc` | Search by IOC (IP, hash, username, hostname) |
+| `elastic_get_indices` | List available indices |
+| `elastic_get_detection_alerts` | Fetch recent detection alerts |
+
+### Features
+
+- **Alert Ingestion**: Daemon poller fetches detection alerts from Kibana Detections API
+- **Bi-directional Sync**: Case status changes in Vigil sync back to Elastic Security alerts
+- **IOC Enrichment**: Agents query Elasticsearch indices for logs matching case IOCs
+
 ## Timesketch
 
 Forensic timeline analysis.
@@ -242,6 +278,40 @@ ANYRUN_API_KEY="your_api_key"
 
 Tools: `anyrun_get_report`, `anyrun_search`, `anyrun_get_iocs`
 
+### CAPE Sandbox
+
+Open-source Cuckoo fork for on-prem detonation. Vigil ships an MCP client
+(`tools/cape_sandbox.py`) that talks to an existing CAPE deployment over
+its REST API — Vigil does **not** host CAPE itself. CAPE requires KVM and
+Windows guest VMs, so it's typically deployed on bare metal, not inside
+Docker Desktop.
+
+```bash
+CAPE_SANDBOX_ENABLED="true"
+CAPE_SANDBOX_URL="http://cape.internal:8000"
+CAPE_SANDBOX_API_KEY="your_cape_api_token"
+```
+
+Tools: `cape_submit_file`, `cape_submit_url`, `cape_get_report`,
+`cape_get_iocs`, `cape_get_pcap`, `cape_list_tasks`, `cape_search_hash`,
+`cape_task_status`.
+
+### Auto-submission pipeline
+
+When `SANDBOX_AUTO_SUBMIT=true` and at least one sandbox is enabled, the
+daemon will, during finding enrichment, consult each sandbox's hash cache
+for any file hash on the finding. Safety gates:
+
+- File extension must be in `SANDBOX_ALLOWED_FILE_TYPES` (default list
+  matches common malware extensions).
+- `file_size` (when known) must be ≤ `SANDBOX_MAX_FILE_SIZE_MB`.
+- No binary bytes are ever sent from Vigil. Only hash-cache lookups and
+  sandbox-API submission-by-hash are performed.
+
+A companion scheduler task (`sandbox_poll`, default every 60s) picks up
+completed reports and writes them into the case as `CaseEvidence` plus
+extracted IOCs into `CaseIOC`. See [SANDBOX.md](./SANDBOX.md).
+
 ## EDR/XDR
 
 ### CrowdStrike
@@ -303,6 +373,117 @@ Settings > Integrations > Custom Integration Builder:
 2. AI generates MCP server code
 3. Review and test
 4. Deploy to `tools/` directory
+
+## CloudCurrent VStrike (Network Topology Fusion)
+
+VStrike enriches DeepTempo findings with network topology, asset, segment,
+and mission-system context, then pushes the enriched findings back into
+Vigil. Vigil can also query VStrike on demand for asset topology and blast
+radius.
+
+### Integration surface
+
+| Direction | Endpoint / Tool | Purpose |
+|-----------|-----------------|---------|
+| VStrike → Vigil | `POST /api/integrations/vstrike/findings` | Push enriched findings (batched) |
+| Vigil → VStrike | `GET /api/integrations/vstrike/health` | Outbound reachability check |
+| Vigil → VStrike | `GET /api/integrations/vstrike/topology/asset/{id}` | Asset topology lookup |
+| Vigil → VStrike | `GET /api/integrations/vstrike/topology/asset/{id}/adjacent` | One-hop neighbors |
+| Vigil → VStrike | `GET /api/integrations/vstrike/topology/asset/{id}/blast-radius` | Blast radius |
+| MCP | `tools/vstrike.py` (`vstrike_*` tools) | Agent-invokable topology queries |
+
+### Configuration
+
+Either set env vars (recommended for push/CI) or configure via the UI:
+
+```bash
+# .env
+VSTRIKE_BASE_URL="https://vstrike.example.com"
+VSTRIKE_API_KEY="<outbound bearer token>"
+VSTRIKE_VERIFY_SSL="true"
+VSTRIKE_INBOUND_API_KEY="<bearer token Vigil expects on inbound push>"
+```
+
+UI: **Settings → Integrations → CloudCurrent VStrike**.
+
+### Storage model
+
+VStrike enrichment lives at `finding.entity_context["vstrike"]` (JSONB —
+no DB migration required). Shape is defined by
+`backend/schemas/vstrike.py::VStrikeEnrichment` and mirrored by
+`frontend/src/types/vstrike.ts`.
+
+The ingest handler does read-modify-write on `entity_context` so existing
+keys (`src_ip`, `hostname`, etc.) are never clobbered.
+
+### Auto-case clustering
+
+When `auto_cluster_cases: true` (default), the ingest handler groups
+upserted findings by `(segment, attack_path[0] or asset_id)` and creates
+one case per group via
+`services.case_automation_service.cluster_findings_by_attack_path`.
+
+### Authentication
+
+Inbound push uses a bearer token:
+
+```
+Authorization: Bearer $VSTRIKE_INBOUND_API_KEY
+```
+
+When `DEV_MODE=true`, the auth check is bypassed (matches the rest of the
+codebase). Outside dev mode, the endpoint returns:
+- `401` if the header is missing or wrong
+- `503` if `VSTRIKE_INBOUND_API_KEY` is unset (refuses to run open)
+
+### Example push
+
+```bash
+export DEV_MODE=true
+curl -X POST http://localhost:6987/api/integrations/vstrike/findings \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "batch_id": "demo-1",
+    "findings": [{
+      "finding_id": "f-test-1",
+      "timestamp": "2026-05-20T14:00:00Z",
+      "anomaly_score": 0.87,
+      "vstrike_enrichment": {
+        "asset_id": "srv-01",
+        "asset_name": "SAP-PROD-01",
+        "segment": "mgmt-vlan-10",
+        "site": "JBSA",
+        "criticality": "high",
+        "mission_system": "C2-AWACS",
+        "attack_path": ["ext-gw-01", "dmz-web-02", "srv-01"],
+        "blast_radius": 14,
+        "adjacent_assets": [
+          {"asset_id": "dc-01", "hop_distance": 1, "edge_technique": "T1021.002"}
+        ],
+        "enriched_at": "2026-05-20T14:00:00Z"
+      }
+    }]
+  }'
+```
+
+### Visualization
+
+- **Finding detail**: `NetworkContextPanel` renders the VStrike sub-dict
+  (criticality, segment, mission system, blast radius, attack-path
+  breadcrumb, clickable adjacent-asset chips).
+- **Entity graph**: nodes are tinted by segment when VStrike metadata is
+  present; the first MITRE technique on a link is rendered as an edge
+  label (always on highlighted links, and at zoom > 2.0 otherwise).
+- **Pivot**: clicking an adjacent-asset chip dispatches
+  `vstrike-graph-highlight` — `pages/Investigation.tsx` listens for this
+  event and feeds the node id into `EntityGraph.highlightedNodes`.
+
+### Testing
+
+```bash
+pytest tests/integration/test_vstrike_ingest.py -v
+pytest tests/unit/test_vstrike_service.py -v
+```
 
 ## Stub Servers (Not Implemented)
 
