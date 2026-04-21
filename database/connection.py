@@ -22,6 +22,7 @@ from database.models import (
     CaseTask, CaseTemplate, CaseRelationship, CaseMetrics, CaseAttachment,
     CaseClosureInfo, CaseEscalation, CaseAuditLog,
     User, Role, Investigation, InvestigationLog, SharedIOC, CaseNotification,
+    Skill,
 )
 
 logger = logging.getLogger(__name__)

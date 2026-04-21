@@ -2106,6 +2106,98 @@ class CaseNotification(Base):
         }
 
 
+class Skill(Base):
+    """Skill model - reusable, parameterized SOC capability (detection,
+    enrichment, response, reporting) that agents and workflows can invoke."""
+
+    __tablename__ = 'skills'
+
+    skill_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    category: Mapped[str] = mapped_column(String(32), nullable=False)
+
+    # JSON Schema for skill parameters (the inputs the skill accepts).
+    input_schema: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default='{}'
+    )
+    # JSON Schema for skill output.
+    output_schema: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default='{}'
+    )
+    # MCP tool names required by this skill
+    # (e.g. ["splunk.search", "virustotal.hash_lookup"]).
+    required_tools: Mapped[List[str]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default='[]'
+    )
+    # LLM instructions; may contain {{param}} placeholders.
+    prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
+    # Ordered execution steps (tool calls / prompts / transforms) — interpreted
+    # by the future skill-execution worker.
+    execution_steps: Mapped[List[dict]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default='[]'
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default='true'
+    )
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default='1'
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        server_default='now()',
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default='now()',
+    )
+
+    __table_args__ = (
+        Index('idx_skill_category', 'category'),
+        Index('idx_skill_is_active', 'is_active'),
+        Index(
+            'idx_skill_name_trgm',
+            'name',
+            postgresql_ops={'name': 'gin_trgm_ops'},
+            postgresql_using='gin',
+        ),
+    )
+
+    @staticmethod
+    def generate_skill_id() -> str:
+        """Generate a new skill_id in the form s-YYYYMMDD-XXXXXXXX."""
+        ts = datetime.utcnow().strftime('%Y%m%d')
+        return f"s-{ts}-{uuid.uuid4().hex[:8].upper()}"
+
+    def to_dict(self) -> dict:
+        """Convert skill to dictionary."""
+        return {
+            'skill_id': self.skill_id,
+            'name': self.name,
+            'description': self.description,
+            'category': self.category,
+            'input_schema': self.input_schema or {},
+            'output_schema': self.output_schema or {},
+            'required_tools': self.required_tools or [],
+            'prompt_template': self.prompt_template,
+            'execution_steps': self.execution_steps or [],
+            'is_active': self.is_active,
+            'created_by': self.created_by,
+            'version': self.version,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class CustomAgent(Base):
     """User-defined SOC agent created via the Agent Builder UI."""
 
