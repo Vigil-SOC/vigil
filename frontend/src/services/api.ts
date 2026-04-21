@@ -27,8 +27,7 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config
 
-    const isAuthEndpoint = originalRequest?.url?.startsWith('/auth/login') ||
-      originalRequest?.url?.startsWith('/auth/register')
+    const isAuthEndpoint = originalRequest?.url?.startsWith('/auth/login')
 
     if (isAuthEndpoint) {
       return Promise.reject(error)

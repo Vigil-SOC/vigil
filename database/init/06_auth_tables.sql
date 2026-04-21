@@ -28,9 +28,15 @@ CREATE TABLE IF NOT EXISTS users (
     mfa_secret VARCHAR(255),
     last_login TIMESTAMP,
     login_count INTEGER NOT NULL DEFAULT 0,
+    failed_login_count INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Additive migration for existing deployments (safe to rerun)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;
 
 CREATE INDEX IF NOT EXISTS idx_user_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_user_email ON users(email);
