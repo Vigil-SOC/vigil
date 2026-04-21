@@ -194,6 +194,160 @@ async def test_anthropic_dispatch_raises_when_no_key():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Non-default Anthropic providers must route through the router so the
+# per-provider api_key_ref is resolved (regression for PR #103 review).
+# ---------------------------------------------------------------------------
+
+
+def test_is_default_anthropic_recognizes_legacy_refs():
+    from services.llm_worker import _is_default_anthropic_spec
+
+    default_key = ProviderSpec(
+        provider_id="anthropic-default",
+        provider_type="anthropic",
+        base_url=None,
+        api_key_ref="CLAUDE_API_KEY",
+        default_model="claude-sonnet-4-5-20250929",
+        config={},
+    )
+    legacy_key = ProviderSpec(
+        provider_id="anthropic-default",
+        provider_type="anthropic",
+        base_url=None,
+        api_key_ref="ANTHROPIC_API_KEY",
+        default_model="claude-sonnet-4-5-20250929",
+        config={},
+    )
+    per_provider = ProviderSpec(
+        provider_id="anthropic-team",
+        provider_type="anthropic",
+        base_url=None,
+        api_key_ref="llm_provider_anthropic-team_api_key",
+        default_model="claude-sonnet-4-5-20250929",
+        config={},
+    )
+    no_ref = ProviderSpec(
+        provider_id="anthropic-anon",
+        provider_type="anthropic",
+        base_url=None,
+        api_key_ref=None,
+        default_model="claude-sonnet-4-5-20250929",
+        config={},
+    )
+    openai = _openai_spec()
+    assert _is_default_anthropic_spec(default_key) is True
+    assert _is_default_anthropic_spec(legacy_key) is True
+    assert _is_default_anthropic_spec(no_ref) is True  # falls back to env
+    assert _is_default_anthropic_spec(per_provider) is False
+    assert _is_default_anthropic_spec(openai) is False
+
+
+@pytest.mark.asyncio
+async def test_non_default_anthropic_with_thinking_dispatches_via_router(monkeypatch):
+    """PR #103 review regression: a non-default Anthropic provider with
+    enable_thinking=True must be dispatched via LLMRouter so the
+    per-provider api_key_ref is used, NOT the shared ClaudeService
+    whose key is CLAUDE_API_KEY.
+    """
+    from services.llm_worker import _maybe_dispatch_via_router
+
+    per_provider = ProviderSpec(
+        provider_id="anthropic-team",
+        provider_type="anthropic",
+        base_url=None,
+        api_key_ref="llm_provider_anthropic-team_api_key",
+        default_model="claude-sonnet-4-5-20250929",
+        config={},
+    )
+
+    mock_router = MagicMock()
+    mock_router.select_path = MagicMock(return_value="anthropic_direct")
+    mock_router.dispatch = AsyncMock(return_value={
+        "content": "ok", "path": "anthropic_direct", "provider": "anthropic",
+        "input_tokens": 1, "output_tokens": 1, "model": "x",
+    })
+
+    import asyncio
+    ctx = {
+        "llm_router": mock_router,
+        "rate_limiter": asyncio.Semaphore(1),
+    }
+
+    with patch(
+        "services.llm_router.get_provider_spec",
+        return_value=per_provider,
+    ):
+        result = await _maybe_dispatch_via_router(
+            ctx,
+            provider_id="anthropic-team",
+            messages=[{"role": "user", "content": "think hard"}],
+            system_prompt=None,
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=100,
+            temperature=None,
+            tools=None,
+            enable_thinking=True,
+            thinking_budget=4096,
+        )
+
+    # We MUST have dispatched via the router (not returned None which would
+    # fall back to the shared ClaudeService with the wrong key).
+    assert result is not None
+    mock_router.dispatch.assert_awaited_once()
+    dispatch_kwargs = mock_router.dispatch.call_args.kwargs
+    assert dispatch_kwargs["provider"].api_key_ref == (
+        "llm_provider_anthropic-team_api_key"
+    )
+    assert dispatch_kwargs["enable_thinking"] is True
+
+
+@pytest.mark.asyncio
+async def test_default_anthropic_with_thinking_still_falls_back():
+    """Default Anthropic row with thinking=True should keep using the
+    shared ClaudeService (return None), preserving prompt caching and
+    the tool-use loop that lives there.
+    """
+    from services.llm_worker import _maybe_dispatch_via_router
+
+    default_spec = ProviderSpec(
+        provider_id="anthropic-default",
+        provider_type="anthropic",
+        base_url=None,
+        api_key_ref="CLAUDE_API_KEY",
+        default_model="claude-sonnet-4-5-20250929",
+        config={},
+    )
+
+    mock_router = MagicMock()
+    mock_router.select_path = MagicMock(return_value="anthropic_direct")
+    mock_router.dispatch = AsyncMock()
+
+    import asyncio
+    ctx = {
+        "llm_router": mock_router,
+        "rate_limiter": asyncio.Semaphore(1),
+    }
+    with patch(
+        "services.llm_router.get_provider_spec",
+        return_value=default_spec,
+    ):
+        result = await _maybe_dispatch_via_router(
+            ctx,
+            provider_id="anthropic-default",
+            messages=[{"role": "user", "content": "think hard"}],
+            system_prompt=None,
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=100,
+            temperature=None,
+            tools=None,
+            enable_thinking=True,
+            thinking_budget=4096,
+        )
+    assert result is None
+    mock_router.dispatch.assert_not_awaited()
+
+
 def test_provider_spec_from_row_copies_fields():
     row = SimpleNamespace(
         provider_id="p",

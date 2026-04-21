@@ -283,11 +283,14 @@ async def test_provider(provider_id: str, db: Session = Depends(get_db_session))
             if not key:
                 raise RuntimeError("no api key configured")
             try:
-                from anthropic import Anthropic
+                from anthropic import AsyncAnthropic
             except ImportError as exc:
                 raise RuntimeError("anthropic SDK not installed") from exc
-            client = Anthropic(api_key=key, timeout=15.0)
-            client.messages.create(
+            # Must use AsyncAnthropic (not Anthropic) — this endpoint is
+            # async and the sync client would block the FastAPI event loop
+            # for up to the full timeout on an invalid key or slow network.
+            client = AsyncAnthropic(api_key=key, timeout=15.0)
+            await client.messages.create(
                 model=row.default_model,
                 max_tokens=1,
                 messages=[{"role": "user", "content": "ping"}],

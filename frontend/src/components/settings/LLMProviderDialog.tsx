@@ -61,6 +61,15 @@ export default function LLMProviderDialog({ existing, onClose, onSaved, onError 
   const [defaultModel, setDefaultModel] = useState(existing?.default_model ?? '')
   const [isDefault, setIsDefault] = useState(existing?.is_default ?? false)
 
+  // Tracks the provider id after it's been created (or for edits, the
+  // existing one). This is what finalSave and retry-of-test both need;
+  // if we relied on `existing?.provider_id` we'd lose the id in the new-
+  // provider flow, and retrying the test after a failure would re-POST
+  // the same slug and 409.
+  const [draftProviderId, setDraftProviderId] = useState<string | null>(
+    existing?.provider_id ?? null,
+  )
+
   // Step 2 state
   const [testing, setTesting] = useState(false)
   const [testError, setTestError] = useState<string | null>(null)
@@ -75,12 +84,15 @@ export default function LLMProviderDialog({ existing, onClose, onSaved, onError 
   }
 
   const saveDraftAndTest = async (): Promise<string | null> => {
-    // Upsert the provider so we can call /test and /models against it
+    // Upsert the provider so we can call /test and /models against it.
+    // On retry (user fixed settings and clicked Test again), we update the
+    // draft row we already created instead of re-POSTing and hitting 409.
     setTesting(true)
     setTestError(null)
     try {
-      let providerId = existing?.provider_id
-      if (!editing) {
+      let providerId = draftProviderId
+      const alreadyPersisted = editing || !!providerId
+      if (!alreadyPersisted) {
         const payload: LLMProviderCreate = {
           provider_type: providerType,
           name: name || `${providerType} provider`,
@@ -93,6 +105,7 @@ export default function LLMProviderDialog({ existing, onClose, onSaved, onError 
         }
         const resp = await llmProviderApi.create(payload)
         providerId = resp.data.provider_id
+        setDraftProviderId(providerId)
       } else if (providerId) {
         await llmProviderApi.update(providerId, {
           name,
@@ -123,7 +136,7 @@ export default function LLMProviderDialog({ existing, onClose, onSaved, onError 
 
   const finalSave = async () => {
     try {
-      const providerId = existing?.provider_id
+      const providerId = draftProviderId ?? existing?.provider_id
       if (!providerId) throw new Error('No provider id')
       if (isDefault || defaultModel !== existing?.default_model) {
         await llmProviderApi.update(providerId, {

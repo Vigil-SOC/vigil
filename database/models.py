@@ -20,6 +20,7 @@ from sqlalchemy import (
     Boolean,
     ARRAY,
     Numeric,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -2440,6 +2441,15 @@ class LLMProviderConfig(Base):
     __table_args__ = (
         Index('idx_llm_provider_type', 'provider_type'),
         Index('idx_llm_provider_active', 'is_active'),
+        # Partial unique index — enforces "one default per provider_type"
+        # for non-Docker deployments too (Base.metadata.create_all path).
+        # Mirrors the SQL in database/init/07_llm_providers.sql.
+        Index(
+            'llm_provider_default_per_type',
+            'provider_type',
+            unique=True,
+            postgresql_where=text('is_default = TRUE'),
+        ),
     )
 
     def to_dict(self, include_secrets: bool = False) -> dict:
