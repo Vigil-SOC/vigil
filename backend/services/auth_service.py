@@ -5,7 +5,9 @@ Handles password hashing, JWT generation/validation, MFA, and session management
 """
 
 import logging
+import os
 import secrets
+import uuid
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import bcrypt
@@ -18,11 +20,58 @@ from database.connection import get_db_session
 
 logger = logging.getLogger(__name__)
 
+
+def _is_dev_mode() -> bool:
+    return os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
+
+
+def _load_jwt_secret() -> str:
+    """
+    Load the JWT signing secret at import time.
+
+    Priority: env var / secrets backend. In DEV_MODE, fall back to a
+    deterministic dev secret so tokens survive restarts locally. In
+    production (DEV_MODE=false), fail-closed at startup if unset.
+    """
+    try:
+        from backend.secrets_manager import get_secret
+        value = get_secret("JWT_SECRET_KEY")
+    except Exception:
+        value = os.environ.get("JWT_SECRET_KEY")
+
+    if value:
+        return value
+
+    if _is_dev_mode():
+        logger.warning(
+            "JWT_SECRET_KEY not set; using deterministic DEV_MODE fallback. "
+            "Tokens issued in dev are not portable to production."
+        )
+        return "dev-mode-insecure-jwt-secret-do-not-use-in-production"
+
+    raise RuntimeError(
+        "JWT_SECRET_KEY is required when DEV_MODE=false. "
+        "Set it in the environment or .env before starting the backend."
+    )
+
+
 # JWT Configuration
-JWT_SECRET_KEY = secrets.token_urlsafe(32)  # In production, load from env
+JWT_SECRET_KEY = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 JWT_REFRESH_EXPIRATION_DAYS = 30
+
+# Account lockout configuration
+LOCKOUT_THRESHOLD = int(os.getenv("AUTH_LOCKOUT_THRESHOLD", "5"))
+LOCKOUT_DURATION_MINUTES = int(os.getenv("AUTH_LOCKOUT_DURATION_MINUTES", "15"))
+
+
+class AccountLockedError(Exception):
+    """Raised when authentication is refused because the account is locked."""
+
+    def __init__(self, locked_until: datetime):
+        self.locked_until = locked_until
+        super().__init__(f"Account locked until {locked_until.isoformat()}")
 
 
 class AuthService:
@@ -77,14 +126,16 @@ class AuthService:
             hours=JWT_EXPIRATION_HOURS if token_type == "access" else JWT_REFRESH_EXPIRATION_DAYS * 24
         )
         
+        now = datetime.utcnow()
         payload = {
             "user_id": user.user_id,
             "username": user.username,
             "email": user.email,
             "role_id": user.role_id,
             "token_type": token_type,
-            "exp": datetime.utcnow() + expiration,
-            "iat": datetime.utcnow(),
+            "jti": uuid.uuid4().hex,
+            "exp": now + expiration,
+            "iat": now,
         }
         
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
@@ -133,33 +184,56 @@ class AuthService:
             user = session.query(User).filter(
                 (User.username == username_or_email) | (User.email == username_or_email)
             ).first()
-            
+
             if not user:
                 logger.warning(f"User not found: {username_or_email}")
                 return None
-            
+
             if not user.is_active:
                 logger.warning(f"User is inactive: {username_or_email}")
                 return None
-            
+
+            # Reject while locked. Lockout is authoritative even over a correct
+            # password — otherwise an attacker who eventually guesses right
+            # would bypass the wait.
+            now = datetime.utcnow()
+            if user.locked_until and user.locked_until > now:
+                logger.warning(
+                    f"Login rejected, account locked: {username_or_email} "
+                    f"until {user.locked_until.isoformat()}"
+                )
+                raise AccountLockedError(user.locked_until)
+
             # Verify password
             if not AuthService.verify_password(password, user.password_hash):
+                user.failed_login_count = (user.failed_login_count or 0) + 1
+                if user.failed_login_count >= LOCKOUT_THRESHOLD:
+                    user.locked_until = now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+                    logger.warning(
+                        f"Account locked after {user.failed_login_count} failed "
+                        f"attempts: {username_or_email}"
+                    )
+                session.commit()
                 logger.warning(f"Invalid password for user: {username_or_email}")
                 return None
-            
-            # Update last login
-            user.last_login = datetime.utcnow()
+
+            # Success — reset lockout state and update session tracking
+            user.failed_login_count = 0
+            user.locked_until = None
+            user.last_login = now
             user.login_count += 1
             session.commit()
-            
+
             logger.info(f"User authenticated successfully: {username_or_email}")
             return user
-        
+
+        except AccountLockedError:
+            raise
         except Exception as e:
             logger.error(f"Authentication error: {e}")
             session.rollback()
             return None
-        
+
         finally:
             if should_close_session:
                 session.close()

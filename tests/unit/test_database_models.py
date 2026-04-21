@@ -88,6 +88,7 @@ class TestDatabaseMetadataRegistration:
             "llm_interaction_logs",
             "shared_iocs",
             "case_notifications",
+            "custom_agents",
         }
 
         registered = set(Base.metadata.tables.keys())

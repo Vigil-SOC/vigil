@@ -24,6 +24,26 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 
+# Check Docker (required for PostgreSQL and Redis)
+if ! command -v docker &> /dev/null; then
+    echo "❌ Docker is not installed (required for PostgreSQL and Redis)."
+    echo "   Install from: https://docs.docker.com/engine/install/"
+    exit 1
+fi
+
+# Check Node.js (required for frontend). Set SKIP_FRONTEND=1 when the node
+# runtime is missing or too old so the frontend startup block below actually
+# honours the warning instead of silently attempting to run npm anyway.
+SKIP_FRONTEND=0
+if ! command -v node &> /dev/null; then
+    echo "⚠️  Node.js not found. Frontend will not start."
+    echo "   Install from: https://nodejs.org/"
+    SKIP_FRONTEND=1
+elif ! node -e "process.exit(parseInt(process.version.slice(1)) >= 18 ? 0 : 1)" 2>/dev/null; then
+    echo "⚠️  Node.js 18+ is required for frontend. Found: $(node --version). Frontend will not start."
+    SKIP_FRONTEND=1
+fi
+
 # Initialize git submodules if needed
 if [ -d ".git" ]; then
     if [ ! -f "deeptempo-core/setup.py" ] && [ ! -f "deeptempo-core/pyproject.toml" ]; then
@@ -89,7 +109,10 @@ if ! command -v uvicorn &> /dev/null; then
     fi
 fi
 
-# Load environment variables
+# Load environment variables. Save caller-supplied values for settings we
+# want the command line to be able to override, before sourcing .env (which
+# would otherwise unconditionally overwrite them).
+_CALLER_BIND_HOST="${BIND_HOST}"
 if [ -f ".env" ]; then
     echo "✓ Loading environment variables from .env"
     set -a
@@ -109,6 +132,12 @@ else
         echo "❌ env.example not found either. Some features may not work."
     fi
 fi
+# Restore caller-supplied BIND_HOST if one was given, so
+# `BIND_HOST=0.0.0.0 ./start_web.sh` actually wins over the value in .env.
+if [ -n "$_CALLER_BIND_HOST" ]; then
+    BIND_HOST="$_CALLER_BIND_HOST"
+fi
+unset _CALLER_BIND_HOST
 
 # Determine docker compose command (v2 plugin vs v1 standalone)
 if command -v docker-compose &> /dev/null; then
@@ -179,10 +208,10 @@ else
     echo "⚠️  Docker not found. Database functionality limited."
 fi
 
-# Check and install frontend dependencies
+# Check and install frontend dependencies (skip when Node.js prereq unmet)
 echo ""
 echo "Checking frontend dependencies..."
-if [ -d "frontend" ]; then
+if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend" ]; then
     if [ ! -d "frontend/node_modules" ]; then
         echo "Installing frontend dependencies (may take a few minutes)..."
         cd frontend
@@ -235,8 +264,11 @@ echo ""
 echo "Starting backend API server..."
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 
+# Bind host: default to localhost, set BIND_HOST=0.0.0.0 for remote access
+BIND_HOST="${BIND_HOST:-127.0.0.1}"
+
 uvicorn backend.main:app \
-    --host 127.0.0.1 \
+    --host "$BIND_HOST" \
     --port 6987 \
     --reload \
     --reload-dir backend \
@@ -252,13 +284,16 @@ python3 -m services.run_llm_worker &
 WORKER_PID=$!
 sleep 1
 
-# Start frontend
-if [ -d "frontend/node_modules" ]; then
+# Start frontend (skip when Node.js prereq unmet)
+if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
     echo "Starting frontend dev server..."
     cd frontend
     npm run dev &
     FRONTEND_PID=$!
     cd ..
+elif [ "$SKIP_FRONTEND" -ne 0 ]; then
+    echo "ℹ️  Skipping frontend startup (Node.js prerequisite unmet)."
+    FRONTEND_PID=""
 else
     echo "⚠️  Frontend dependencies not installed"
     FRONTEND_PID=""

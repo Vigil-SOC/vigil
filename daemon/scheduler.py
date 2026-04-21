@@ -376,9 +376,8 @@ class TaskScheduler:
         # In production, would delete old findings/processed events
         logger.info(f"Cleanup would remove data older than {cutoff.isoformat()}")
         
-        # Clean up processed ID caches in poller (memory management)
-        # This is handled automatically by the PollState class
-        
+        # Dedup sets are pruned by RedisDedupSet itself (TTL + size cap)
+
         return {"cutoff_date": cutoff.isoformat()}
     
     async def _run_sandbox_poll(self):

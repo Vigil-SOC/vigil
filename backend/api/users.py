@@ -406,7 +406,21 @@ async def change_user_role(
         user.role_id = request.role_id
         session.commit()
         session.refresh(user)
-        
+
+        # Invalidate the target user's existing tokens so the new
+        # permissions take effect on their next request, not whenever their
+        # cached token happens to expire.
+        try:
+            from backend.services.token_blacklist import revoke_all_for_user
+            await revoke_all_for_user(user.user_id)
+        except Exception as exc:
+            logger.error(
+                "Role changed for %s but revoke_all_for_user failed: %s. "
+                "Old tokens may remain valid until natural expiry.",
+                user.username,
+                exc,
+            )
+
         logger.info(f"User role changed by {current_user.username}: {user.username} from {old_role_id} to {request.role_id}")
         return user.to_dict()
     

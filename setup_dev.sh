@@ -29,10 +29,48 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 
+# Check additional prerequisites (warn but don't fail, so user sees all issues at once)
+PREREQ_WARNINGS=0
+
+if ! "$PYTHON" -c "import venv" &> /dev/null; then
+    echo "⚠️  python3-venv is not installed."
+    echo "   Fix: sudo apt install python3-venv python3-dev"
+    PREREQ_WARNINGS=$((PREREQ_WARNINGS + 1))
+fi
+
+if ! command -v docker &> /dev/null; then
+    echo "⚠️  Docker is not installed (required for PostgreSQL and Redis)."
+    echo "   Install from: https://docs.docker.com/engine/install/"
+    PREREQ_WARNINGS=$((PREREQ_WARNINGS + 1))
+fi
+
+if ! command -v node &> /dev/null; then
+    echo "⚠️  Node.js is not installed (required for frontend)."
+    echo "   Install from: https://nodejs.org/ or via your package manager."
+    PREREQ_WARNINGS=$((PREREQ_WARNINGS + 1))
+elif ! node -e "process.exit(parseInt(process.version.slice(1)) >= 18 ? 0 : 1)" 2>/dev/null; then
+    echo "⚠️  Node.js 18+ is required. Found: $(node --version)"
+    echo "   Install from: https://nodejs.org/"
+    PREREQ_WARNINGS=$((PREREQ_WARNINGS + 1))
+fi
+
+if ! command -v npm &> /dev/null; then
+    echo "⚠️  npm is not installed (required for frontend)."
+    echo "   Install Node.js from: https://nodejs.org/"
+    PREREQ_WARNINGS=$((PREREQ_WARNINGS + 1))
+fi
+
+if [ "$PREREQ_WARNINGS" -gt 0 ]; then
+    echo ""
+    echo "⚠️  $PREREQ_WARNINGS prerequisite(s) missing. Setup will continue but may fail."
+    echo "   Install the missing tools above and re-run this script."
+    echo ""
+fi
+
 # Step 1: Copy environment files
 echo "📝 Setting up environment files..."
 if [ ! -f .env ]; then
-    cp .env.example .env
+    cp env.example .env
     echo "✅ Created .env (with DEV_MODE=true)"
 else
     echo "ℹ️  .env already exists, skipping..."

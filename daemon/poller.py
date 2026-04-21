@@ -3,34 +3,24 @@
 import asyncio
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any, Set
-from dataclasses import dataclass, field
+from typing import Optional, Dict, List, Any
+from dataclasses import dataclass
 
 from daemon.config import PollingConfig
+from daemon.dedup import RedisDedupSet
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class PollState:
-    """Track polling state for deduplication."""
+    """Per-source polling cursor.
+
+    Deduplication lives in ``RedisDedupSet`` (see ``DataPoller``);
+    this dataclass tracks only the last-poll timestamp used to compute
+    query windows.
+    """
     last_poll_time: Optional[datetime] = None
-    processed_ids: Set[str] = field(default_factory=set)
-    max_processed_ids: int = 10000  # Limit memory usage
-    
-    def mark_processed(self, finding_id: str):
-        """Mark a finding as processed."""
-        self.processed_ids.add(finding_id)
-        # Trim if too large (FIFO-ish)
-        if len(self.processed_ids) > self.max_processed_ids:
-            # Remove oldest half
-            to_remove = list(self.processed_ids)[:self.max_processed_ids // 2]
-            for item in to_remove:
-                self.processed_ids.discard(item)
-    
-    def is_processed(self, finding_id: str) -> bool:
-        """Check if a finding was already processed."""
-        return finding_id in self.processed_ids
 
 
 class DataPoller:
@@ -40,7 +30,7 @@ class DataPoller:
         self.config = config
         self._output_queue: Optional[asyncio.Queue] = None
         
-        # Polling state for each source
+        # Polling cursors for each source
         self._splunk_state = PollState()
         self._crowdstrike_state = PollState()
         self._azure_sentinel_state = PollState()
@@ -48,6 +38,15 @@ class DataPoller:
         self._microsoft_defender_state = PollState()
         self._elastic_state = PollState()
         self._generic_state = PollState()
+
+        # Durable per-source dedup sets (Redis-backed)
+        self._splunk_dedup = RedisDedupSet("poller:splunk")
+        self._crowdstrike_dedup = RedisDedupSet("poller:crowdstrike")
+        self._azure_sentinel_dedup = RedisDedupSet("poller:azure_sentinel")
+        self._aws_security_hub_dedup = RedisDedupSet("poller:aws_security_hub")
+        self._microsoft_defender_dedup = RedisDedupSet("poller:microsoft_defender")
+        self._elastic_dedup = RedisDedupSet("poller:elastic")
+        self._webhook_dedup = RedisDedupSet("poller:webhook")
 
         # Services (lazy loaded)
         self._splunk_service = None
@@ -273,9 +272,9 @@ class DataPoller:
         new_count = 0
         for event in findings:
             finding = self._splunk_event_to_finding(event)
-            if finding and not self._splunk_state.is_processed(finding['finding_id']):
+            if finding and not await self._splunk_dedup.is_processed(finding['finding_id']):
                 await self._enqueue_finding(finding, "splunk")
-                self._splunk_state.mark_processed(finding['finding_id'])
+                await self._splunk_dedup.mark_processed(finding['finding_id'])
                 new_count += 1
         
         if new_count > 0:
@@ -382,9 +381,9 @@ class DataPoller:
             new_count = 0
             for detection in detections:
                 finding = self._crowdstrike_detection_to_finding(detection)
-                if finding and not self._crowdstrike_state.is_processed(finding['finding_id']):
+                if finding and not await self._crowdstrike_dedup.is_processed(finding['finding_id']):
                     await self._enqueue_finding(finding, "crowdstrike")
-                    self._crowdstrike_state.mark_processed(finding['finding_id'])
+                    await self._crowdstrike_dedup.mark_processed(finding['finding_id'])
                     new_count += 1
             
             if new_count > 0:
@@ -464,10 +463,10 @@ class DataPoller:
                         finding_id = f"webhook-{uuid.uuid4().hex[:16]}"
                         finding_data['finding_id'] = finding_id
                     
-                    if not self._generic_state.is_processed(finding_id):
+                    if not await self._webhook_dedup.is_processed(finding_id):
                         finding_data['data_source'] = finding_data.get('data_source', 'webhook')
                         await self._enqueue_finding(finding_data, "webhook")
-                        self._generic_state.mark_processed(finding_id)
+                        await self._webhook_dedup.mark_processed(finding_id)
                         count += 1
                 
                 self.stats["webhook_findings"] += count
@@ -680,9 +679,9 @@ class DataPoller:
             new_count = 0
             for alert in alerts:
                 finding = self._elastic_service.transform_alert_to_finding(alert)
-                if finding and not self._elastic_state.is_processed(finding["finding_id"]):
+                if finding and not await self._elastic_dedup.is_processed(finding["finding_id"]):
                     await self._enqueue_finding(finding, "elastic")
-                    self._elastic_state.mark_processed(finding["finding_id"])
+                    await self._elastic_dedup.mark_processed(finding["finding_id"])
                     new_count += 1
 
             if new_count > 0:

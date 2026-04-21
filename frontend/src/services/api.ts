@@ -1,64 +1,68 @@
 import axios from 'axios'
 
+// Auth is cookie-based (HttpOnly access_token + refresh_token set by the
+// backend). withCredentials ensures axios sends those cookies on every
+// request, including via the Vite dev proxy.
 const api = axios.create({
   baseURL: '/api',
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
 })
 
-// Add auth token to requests
+// Read the csrf_token cookie set by the backend CSRF middleware. The
+// backend seeds this on any request that doesn't already have one, so
+// after the first /auth/me call it's always present.
+function readCookie(name: string): string | null {
+  const match = document.cookie.match(
+    new RegExp('(?:^|; )' + name.replace(/[.$?*|{}()[\]\\/+^]/g, '\\$&') + '=([^;]*)')
+  )
+  return match ? decodeURIComponent(match[1]) : null
+}
+
+const MUTATING_METHODS = new Set(['post', 'put', 'patch', 'delete'])
+
+// Attach X-CSRF-Token on mutating requests. Double-submit cookie pattern —
+// a cross-site attacker can't read the cookie (same-origin policy) so
+// they can't forge a matching header.
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('access_token')
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+    if (config.method && MUTATING_METHODS.has(config.method.toLowerCase())) {
+      const csrf = readCookie('csrf_token')
+      if (csrf) {
+        config.headers['X-CSRF-Token'] = csrf
+      }
     }
     return config
   },
-  (error) => {
-    return Promise.reject(error)
-  }
+  (error) => Promise.reject(error)
 )
 
-// Handle 401 errors (token expired)
+// Handle 401 by refreshing via the refresh_token cookie. The browser
+// carries the cookie automatically; we just POST to /auth/refresh.
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config
 
-    const isAuthEndpoint = originalRequest?.url?.startsWith('/auth/login') ||
-      originalRequest?.url?.startsWith('/auth/register')
+    const isAuthEndpoint =
+      originalRequest?.url?.startsWith('/auth/login') ||
+      originalRequest?.url?.startsWith('/auth/refresh')
 
     if (isAuthEndpoint) {
       return Promise.reject(error)
     }
 
-    // If 401 and we haven't retried yet, try to refresh token
     if (error.response?.status === 401 && !originalRequest._retry) {
       originalRequest._retry = true
 
       try {
-        const refreshToken = localStorage.getItem('refresh_token')
-        if (refreshToken) {
-          const response = await axios.post('/api/auth/refresh', {
-            refresh_token: refreshToken,
-          })
-
-          const { access_token, refresh_token: newRefreshToken } = response.data
-
-          localStorage.setItem('access_token', access_token)
-          localStorage.setItem('refresh_token', newRefreshToken)
-
-          // Retry original request with new token
-          originalRequest.headers.Authorization = `Bearer ${access_token}`
-          return api(originalRequest)
-        }
+        await api.post('/auth/refresh')
+        // New cookies are set by the server; retry the original request.
+        return api(originalRequest)
       } catch (refreshError) {
-        // Refresh failed, redirect to login
-        localStorage.removeItem('access_token')
-        localStorage.removeItem('refresh_token')
-        window.location.href = '/login'
+        // Refresh failed — let the app's AuthContext react to the 401.
         return Promise.reject(refreshError)
       }
     }
@@ -576,6 +580,39 @@ export const agentsApi = {
     agent_id?: string
     use_agent_sdk?: boolean
   }) => api.post('/agents/agents/run', data),
+
+  // Custom Agent Builder (issue #80)
+  listCustom: () => api.get('/agents/custom'),
+  getCustom: (agent_id: string) => api.get(`/agents/custom/${agent_id}`),
+  createCustom: (data: CustomAgentPayload) => api.post('/agents/custom', data),
+  updateCustom: (agent_id: string, data: Partial<CustomAgentPayload>) =>
+    api.patch(`/agents/custom/${agent_id}`, data),
+  deleteCustom: (agent_id: string) => api.delete(`/agents/custom/${agent_id}`),
+  getAvailableTools: () => api.get('/agents/custom/_meta/tools'),
+}
+
+export interface CustomAgentPayload {
+  name: string
+  role: string
+  description?: string | null
+  icon?: string | null
+  color?: string | null
+  specialization?: string | null
+  extra_principles?: string | null
+  methodology?: string | null
+  system_prompt_override?: string | null
+  recommended_tools?: string[]
+  max_tokens?: number
+  enable_thinking?: boolean
+  model?: string | null
+}
+
+export interface CustomAgent extends CustomAgentPayload {
+  id: string
+  created_by?: string | null
+  created_at?: string
+  updated_at?: string
+  effective_prompt?: string
 }
 
 // Config API
@@ -876,6 +913,24 @@ export const reasoningApi = {
     api
       .get(`/reasoning/investigation/${encodeURIComponent(investigationId)}/interactions`, { params })
       .then(r => r.data),
+}
+
+// Kafka ingestion API
+export const kafkaApi = {
+  getConfig: () => api.get('/kafka/config'),
+  setConfig: (config: {
+    enabled: boolean
+    bootstrap_servers: string
+    consumer_group: string
+    topics: string[]
+    auto_offset_reset: string
+    security_protocol: string
+    sasl_mechanism?: string | null
+    sasl_username?: string | null
+    max_poll_records: number
+    session_timeout_ms: number
+  }) => api.put('/kafka/config', config),
+  getStatus: () => api.get('/kafka/status'),
 }
 
 export default api

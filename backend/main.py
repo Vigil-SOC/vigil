@@ -22,6 +22,12 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+
+from backend.middleware.csrf import CSRFMiddleware
+from backend.middleware.rate_limit import limiter
+from backend.middleware.security_headers import SecurityHeadersMiddleware
 
 from api import (
     findings_router,
@@ -44,6 +50,7 @@ from api.ingestion import router as ingestion_router
 from api.timeline import router as timeline_router
 from api.graph import router as graph_router
 from api.vstrike import router as vstrike_router
+from api.custom_agents import router as custom_agents_router
 
 # Enhanced case management routers
 from api.case_templates import router as case_templates_router
@@ -70,6 +77,9 @@ from api.detection_rules import router as detection_rules_router
 
 # Orchestrator router
 from api.orchestrator import router as orchestrator_router
+
+# Kafka ingestion router
+from api.kafka import router as kafka_router
 
 from core.rate_limit import rate_limit_dependency
 from monitoring import init_sentry, PROMETHEUS_AVAILABLE, get_metrics_response
@@ -99,6 +109,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Wire the shared slowapi Limiter used by auth endpoints. The decorator-based
+# limits (@limiter.limit) read state from app.state.limiter, so both must be set.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Instrument FastAPI with OTEL tracing (health + metrics endpoints excluded)
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentation
@@ -109,20 +124,47 @@ try:
 except Exception as _inst_err:
     logger.debug("FastAPI OTEL instrumentation skipped: %s", _inst_err)
 
-# Configure CORS
+# Configure CORS — origins come from VIGIL_CORS_ORIGINS (comma-separated).
+# Default keeps the existing dev hosts; production deployments must override.
+_DEFAULT_CORS_ORIGINS = [
+    "http://localhost:6988",
+    "http://127.0.0.1:6988",
+    "http://localhost:3000",
+    "http://localhost:5173",
+]
+_cors_origins_raw = os.getenv("VIGIL_CORS_ORIGINS")
+if _cors_origins_raw:
+    _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+else:
+    _cors_origins = _DEFAULT_CORS_ORIGINS
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:6988",  # Frontend dev server
-        "http://127.0.0.1:6988",  # Frontend dev server (IPv4)
-        "http://localhost:3000",  # Alternative React dev server
-        "http://localhost:5173"   # Alternative Vite dev server
-    ],
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-CSRF-Token",
+        "X-MFA-Required",
+        "X-Requested-With",
+    ],
     expose_headers=["X-MFA-Required"],
 )
+
+# CSRF middleware. No-op by default (VIGIL_CSRF_ENABLED=false); PR 4 flips
+# it on once the frontend uses HttpOnly cookies and echoes X-CSRF-Token.
+# Registered between CORS and SecurityHeaders so:
+#   - SecurityHeaders (outermost) applies to any 403 CSRF rejection.
+#   - CORS (innermost of these three) still short-circuits OPTIONS preflight.
+app.add_middleware(CSRFMiddleware)
+
+# Security headers added AFTER CORS so it is the outermost middleware on the
+# response path. That way HSTS/CSP/X-Frame-Options apply to CORS preflight
+# responses too (CORSMiddleware short-circuits OPTIONS without calling inner
+# middleware, so anything added before CORS would be skipped on preflight).
+app.add_middleware(SecurityHeadersMiddleware)
 
 if PROMETHEUS_AVAILABLE:
     app.add_middleware(PrometheusMiddleware)
@@ -147,6 +189,7 @@ app.include_router(claude_router, prefix="/api/claude", tags=["claude"], depende
 app.include_router(reasoning_router, prefix="/api/reasoning", tags=["reasoning"])
 app.include_router(config_router, prefix="/api/config", tags=["config"])
 app.include_router(attack_router, prefix="/api/attack", tags=["attack"])
+app.include_router(custom_agents_router, prefix="/api", tags=["custom-agents"])
 app.include_router(agents_router, prefix="/api/agents", tags=["agents"])
 app.include_router(compatibility_router, prefix="/api/integrations", tags=["integrations"])
 app.include_router(custom_integrations_router, prefix="/api/custom-integrations", tags=["custom-integrations"])
@@ -165,6 +208,7 @@ app.include_router(workflows_router, prefix="/api", tags=["workflows"])
 
 # Autonomous orchestrator
 app.include_router(orchestrator_router, prefix="/api/orchestrator", tags=["orchestrator"])
+app.include_router(kafka_router)
 
 # Enhanced case management routers
 app.include_router(case_templates_router, prefix="/api/cases/templates", tags=["case-templates"])
@@ -396,6 +440,16 @@ async def startup_event():
             logger.warning("MCP client not available - MCP SDK may not be installed")
     except Exception as e:
         logger.error(f"Error during MCP initialization: {e}")
+
+    # Load custom agents from DB into the AgentManager so built-in + custom
+    # agents are visible in one merged list. Lookup misses for "custom-*" IDs
+    # also trigger a refresh at request time, so this is a convenience preload.
+    try:
+        from backend.api.agents import agent_manager
+        loaded = agent_manager.refresh_custom_agents()
+        logger.info(f"Loaded {loaded} custom agent(s) from database")
+    except Exception as e:
+        logger.warning(f"Could not preload custom agents: {e}")
 
 
 @app.on_event("shutdown")

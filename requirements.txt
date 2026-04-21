@@ -43,6 +43,7 @@ alembic>=1.13.0
 bcrypt>=4.2.0
 pyjwt>=2.10.0
 pyotp>=2.9.0
+slowapi>=0.1.9
 
 # Testing Dependencies
 pytest>=8.0.0
@@ -54,6 +55,9 @@ faker>=22.0.0
 # Job Queue (ARQ + Redis)
 arq>=0.27.0
 redis>=5.0.0
+
+# Kafka ingestion (optional; only used when KAFKA_ENABLED=true)
+aiokafka>=0.10.0
 
 # Monitoring & Observability
 sentry-sdk>=1.40.0

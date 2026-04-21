@@ -97,6 +97,30 @@ class OrchestratorConfig:
 
 
 @dataclass
+class KafkaConfig:
+    """Configuration for Kafka ingestion.
+
+    MVP scope: JSON-only deserialization, single consumer group,
+    enable/disable + bootstrap servers + topics overridable via
+    ``SystemConfig["kafka.settings"]``. Secrets (SASL password,
+    SSL cert path) stay in env only.
+    """
+    enabled: bool = False
+    bootstrap_servers: str = "localhost:9092"
+    consumer_group: str = "vigil-soc"
+    topics: List[str] = field(default_factory=list)
+    auto_offset_reset: str = "latest"  # "latest" | "earliest"
+    max_poll_records: int = 500
+    session_timeout_ms: int = 30_000
+    # Security (env-only for secrets)
+    security_protocol: str = "PLAINTEXT"  # PLAINTEXT | SASL_SSL | SSL
+    sasl_mechanism: Optional[str] = None  # PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512
+    sasl_username: Optional[str] = None
+    sasl_password: Optional[str] = None
+    ssl_ca_location: Optional[str] = None
+
+
+@dataclass
 class LLMQueueConfig:
     """Configuration for the ARQ-based LLM request queue."""
     redis_url: str = "redis://localhost:6379/0"
@@ -118,6 +142,7 @@ class DaemonConfig:
     metrics: MetricsConfig = field(default_factory=MetricsConfig)
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
     llm_queue: LLMQueueConfig = field(default_factory=LLMQueueConfig)
+    kafka: KafkaConfig = field(default_factory=KafkaConfig)
     
     # Database
     database_url: Optional[str] = None
@@ -193,7 +218,26 @@ class DaemonConfig:
         # LLM Queue
         config.llm_queue.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         config.llm_queue.max_concurrent_llm_calls = int(os.getenv("LLM_MAX_CONCURRENT", "5"))
-        
+
+        # Kafka ingestion (env defaults; may be overridden by SystemConfig below)
+        config.kafka.enabled = os.getenv("KAFKA_ENABLED", "false").lower() == "true"
+        config.kafka.bootstrap_servers = os.getenv(
+            "KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
+        )
+        config.kafka.consumer_group = os.getenv("KAFKA_CONSUMER_GROUP", "vigil-soc")
+        topics = os.getenv("KAFKA_TOPICS", "").strip()
+        config.kafka.topics = [t.strip() for t in topics.split(",") if t.strip()]
+        config.kafka.auto_offset_reset = os.getenv("KAFKA_AUTO_OFFSET_RESET", "latest")
+        config.kafka.max_poll_records = int(os.getenv("KAFKA_MAX_POLL_RECORDS", "500"))
+        config.kafka.session_timeout_ms = int(
+            os.getenv("KAFKA_SESSION_TIMEOUT_MS", "30000")
+        )
+        config.kafka.security_protocol = os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT")
+        config.kafka.sasl_mechanism = os.getenv("KAFKA_SASL_MECHANISM") or None
+        config.kafka.sasl_username = os.getenv("KAFKA_SASL_USERNAME") or None
+        config.kafka.sasl_password = os.getenv("KAFKA_SASL_PASSWORD") or None
+        config.kafka.ssl_ca_location = os.getenv("KAFKA_SSL_CA_LOCATION") or None
+
         # Override with DB-persisted settings (set via Settings UI)
         try:
             from database.config_service import get_config_service
@@ -229,7 +273,37 @@ class DaemonConfig:
                 logger.info("Orchestrator config overridden from database settings")
         except Exception as e:
             logger.debug(f"Could not load orchestrator config from DB (using env/defaults): {e}")
-        
+
+        # Kafka: merge non-secret DB settings on top of env defaults
+        try:
+            from database.config_service import get_config_service
+            config_service = get_config_service()
+            kafka_db = config_service.get_system_config('kafka.settings')
+            if kafka_db and isinstance(kafka_db, dict):
+                if 'enabled' in kafka_db:
+                    config.kafka.enabled = bool(kafka_db['enabled'])
+                if 'bootstrap_servers' in kafka_db:
+                    config.kafka.bootstrap_servers = str(kafka_db['bootstrap_servers'])
+                if 'consumer_group' in kafka_db:
+                    config.kafka.consumer_group = str(kafka_db['consumer_group'])
+                if 'topics' in kafka_db and isinstance(kafka_db['topics'], list):
+                    config.kafka.topics = [str(t) for t in kafka_db['topics']]
+                if 'auto_offset_reset' in kafka_db:
+                    config.kafka.auto_offset_reset = str(kafka_db['auto_offset_reset'])
+                if 'security_protocol' in kafka_db:
+                    config.kafka.security_protocol = str(kafka_db['security_protocol'])
+                if 'sasl_mechanism' in kafka_db:
+                    config.kafka.sasl_mechanism = kafka_db['sasl_mechanism'] or None
+                if 'sasl_username' in kafka_db:
+                    config.kafka.sasl_username = kafka_db['sasl_username'] or None
+                if 'max_poll_records' in kafka_db:
+                    config.kafka.max_poll_records = int(kafka_db['max_poll_records'])
+                if 'session_timeout_ms' in kafka_db:
+                    config.kafka.session_timeout_ms = int(kafka_db['session_timeout_ms'])
+                logger.info("Kafka config overridden from database settings")
+        except Exception as e:
+            logger.debug(f"Could not load Kafka config from DB (using env/defaults): {e}")
+
         return config
     
     def setup_logging(self):

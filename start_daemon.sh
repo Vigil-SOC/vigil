@@ -22,6 +22,26 @@ if [ -z "$PYTHON" ]; then
     exit 1
 fi
 
+# Check Docker (required for PostgreSQL and Redis)
+if ! command -v docker &> /dev/null; then
+    echo "❌ Docker is not installed (required for PostgreSQL and Redis)."
+    echo "   Install from: https://docs.docker.com/engine/install/"
+    exit 1
+fi
+
+# Check Node.js (required for frontend). Set SKIP_FRONTEND=1 when the node
+# runtime is missing or too old so the frontend startup block below actually
+# honours the warning instead of silently attempting to run npm anyway.
+SKIP_FRONTEND=0
+if ! command -v node &> /dev/null; then
+    echo "⚠️  Node.js not found. Frontend will not start."
+    echo "   Install from: https://nodejs.org/"
+    SKIP_FRONTEND=1
+elif ! node -e "process.exit(parseInt(process.version.slice(1)) >= 18 ? 0 : 1)" 2>/dev/null; then
+    echo "⚠️  Node.js 18+ is required for frontend. Found: $(node --version). Frontend will not start."
+    SKIP_FRONTEND=1
+fi
+
 # Create logs directory
 mkdir -p logs
 
@@ -97,7 +117,10 @@ if ! command -v uvicorn &> /dev/null; then
     fi
 fi
 
-# Load env vars
+# Load env vars. Save caller-supplied values for settings we want to let
+# the command line override, before sourcing .env (which would otherwise
+# unconditionally overwrite them).
+_CALLER_BIND_HOST="${BIND_HOST}"
 if [ -f ".env" ]; then
     set -a
     source .env
@@ -110,6 +133,12 @@ elif [ -f "env.example" ]; then
     source .env
     set +a
 fi
+# Restore caller-supplied BIND_HOST if one was given, so
+# `BIND_HOST=0.0.0.0 ./start_daemon.sh` actually wins over the value in .env.
+if [ -n "$_CALLER_BIND_HOST" ]; then
+    BIND_HOST="$_CALLER_BIND_HOST"
+fi
+unset _CALLER_BIND_HOST
 
 # Determine docker compose command (v2 plugin vs v1 standalone)
 if command -v docker-compose &> /dev/null; then
@@ -169,10 +198,13 @@ fi
 # Export Python path
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 
+# Bind host: default to localhost, set BIND_HOST=0.0.0.0 for remote access
+BIND_HOST="${BIND_HOST:-127.0.0.1}"
+
 # Start backend in background
 echo "Starting backend server..."
 nohup uvicorn backend.main:app \
-    --host 127.0.0.1 \
+    --host "$BIND_HOST" \
     --port 6987 \
     --reload \
     --reload-dir backend \
@@ -209,8 +241,8 @@ fi
 # and stops automatically when the orchestrator is enabled/disabled in the
 # Settings UI — no manual startup required.
 
-# Install frontend dependencies if needed
-if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
+# Install frontend dependencies if needed (skip when Node.js prereq unmet)
+if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
     if [ ! -d "frontend/node_modules" ]; then
         echo "Installing frontend dependencies..."
         cd frontend
@@ -220,21 +252,23 @@ if [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
     fi
 fi
 
-# Start frontend if available
-if [ -d "frontend/node_modules" ]; then
+# Start frontend if available (and not suppressed by the Node.js prereq check)
+if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
     echo "Starting frontend server..."
     cd frontend
     nohup npm run dev > ../logs/frontend-app.log 2>&1 &
     FRONTEND_PID=$!
     cd ..
     echo $FRONTEND_PID > logs/frontend.pid
-    
+
     sleep 2
     if ps -p $FRONTEND_PID > /dev/null; then
         echo "✅ Frontend started (PID: $FRONTEND_PID)"
     else
         echo "⚠️  Frontend failed. Check logs/frontend-app.log"
     fi
+elif [ "$SKIP_FRONTEND" -ne 0 ]; then
+    echo "ℹ️  Skipping frontend startup (Node.js prerequisite unmet)."
 fi
 
 echo ""

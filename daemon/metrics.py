@@ -200,6 +200,7 @@ class MetricsServer:
 
         # Component references (set externally)
         self.poller = None
+        self.kafka_ingestor = None
         self.processor = None
         self.responder = None
         self.scheduler = None
@@ -284,6 +285,7 @@ class MetricsServer:
                 "uptime_seconds": (datetime.utcnow() - self._start_time).total_seconds(),
             },
             "poller": metrics.get("poller", {}),
+            "kafka": metrics.get("kafka", {}),
             "processor": metrics.get("processor", {}),
             "responder": metrics.get("responder", {}),
             "scheduler": metrics.get("scheduler", {}),
@@ -298,6 +300,9 @@ class MetricsServer:
 
         if self.poller:
             metrics["poller"] = self.poller.stats.copy()
+
+        if self.kafka_ingestor:
+            metrics["kafka"] = dict(self.kafka_ingestor.stats)
 
         if self.processor:
             metrics["processor"] = self.processor.stats.copy()

@@ -34,6 +34,7 @@ class SOCDaemon:
         
         # Components (lazy loaded)
         self._poller = None
+        self._kafka_ingestor = None
         self._processor = None
         self._responder = None
         self._scheduler = None
@@ -67,8 +68,10 @@ class SOCDaemon:
         from daemon.metrics import MetricsServer
         from daemon.orchestrator import Orchestrator
         from daemon.llm_worker_manager import LLMWorkerManager
+        from daemon.kafka_ingestor import KafkaIngestor
 
         self._poller = DataPoller(self.config.polling)
+        self._kafka_ingestor = KafkaIngestor(self.config.kafka)
         self._processor = FindingProcessor(self.config.processing)
         self._responder = AutonomousResponder(self.config.response, self.config.escalation)
         self._scheduler = TaskScheduler(self.config.scheduler)
@@ -77,15 +80,17 @@ class SOCDaemon:
 
         if self.config.metrics.enabled:
             self._metrics_server = MetricsServer(self.config.metrics)
-        
+
         # Connect components via queues
         self._poller.set_output_queue(self._processor.input_queue)
+        self._kafka_ingestor.set_output_queue(self._processor.input_queue)
         self._processor.set_response_queue(self._responder.input_queue)
         self._processor.set_investigation_queue(self._orchestrator.investigation_queue)
-        
+
         # Wire up metrics server with component references
         if self._metrics_server:
             self._metrics_server.poller = self._poller
+            self._metrics_server.kafka_ingestor = self._kafka_ingestor
             self._metrics_server.processor = self._processor
             self._metrics_server.responder = self._responder
             self._metrics_server.scheduler = self._scheduler
@@ -112,7 +117,11 @@ class SOCDaemon:
         if self._poller:
             tasks.append(asyncio.create_task(self._poller.run(self._shutdown_event)))
             logger.info("Data poller started")
-        
+
+        if self._kafka_ingestor:
+            tasks.append(asyncio.create_task(self._kafka_ingestor.run(self._shutdown_event)))
+            logger.info("Kafka ingestor started (controlled by kafka.settings enabled flag)")
+
         if self._processor:
             tasks.append(asyncio.create_task(self._processor.run(self._shutdown_event)))
             logger.info("Finding processor started")

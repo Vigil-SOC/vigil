@@ -30,7 +30,9 @@ fi
 # Load env vars
 if [ -f .env ]; then
     echo "✓ Loading .env"
-    export $(cat .env | grep -v '^#' | xargs)
+    set -a
+    source .env
+    set +a
 else
     echo "⚠️  No .env file, using defaults"
 fi

@@ -1760,6 +1760,12 @@ class User(Base):
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     login_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
+    # Failed-login tracking and account lockout
+    failed_login_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default='0'
+    )
+    locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
@@ -2173,4 +2179,62 @@ class CaseNotification(Base):
             "read_at": self.read_at.isoformat() if self.read_at else None,
             "metadata": self.notification_metadata,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class CustomAgent(Base):
+    """User-defined SOC agent created via the Agent Builder UI."""
+
+    __tablename__ = 'custom_agents'
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    icon: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    color: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    specialization: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    role: Mapped[str] = mapped_column(Text, nullable=False)
+    extra_principles: Mapped[str] = mapped_column(Text, nullable=False, default='', server_default='')
+    methodology: Mapped[str] = mapped_column(Text, nullable=False, default='', server_default='')
+    system_prompt_override: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    recommended_tools: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default='[]')
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=4096, server_default='4096')
+    enable_thinking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='false')
+    model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow,
+        onupdate=datetime.utcnow, server_default='now()'
+    )
+
+    __table_args__ = (
+        Index('idx_custom_agents_updated_at', 'updated_at'),
+    )
+
+    def to_dict(self) -> dict:
+        """Convert custom agent to dictionary."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'icon': self.icon,
+            'color': self.color,
+            'specialization': self.specialization,
+            'role': self.role,
+            'extra_principles': self.extra_principles,
+            'methodology': self.methodology,
+            'system_prompt_override': self.system_prompt_override,
+            'recommended_tools': self.recommended_tools or [],
+            'max_tokens': self.max_tokens,
+            'enable_thinking': self.enable_thinking,
+            'model': self.model,
+            'created_by': self.created_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }

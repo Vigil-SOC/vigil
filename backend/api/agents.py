@@ -5,13 +5,28 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import logging
 
-from services.soc_agents import SOCAgentLibrary, AgentManager
+from services.soc_agents import SOCAgentLibrary, AgentManager, CUSTOM_AGENT_ID_PREFIX
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 # Global agent manager instance
 agent_manager = AgentManager()
+
+
+def _resolve_agent(agent_id: str):
+    """Resolve an agent_id to an AgentProfile, lazy-loading custom agents on miss.
+
+    Built-in agents are served from the in-memory dict with zero DB calls.
+    Only misses for IDs prefixed with custom- trigger a refresh and retry.
+    """
+    agent = agent_manager.agents.get(agent_id)
+    if agent is not None:
+        return agent
+    if agent_id and agent_id.startswith(CUSTOM_AGENT_ID_PREFIX):
+        agent_manager.refresh_custom_agents()
+        return agent_manager.agents.get(agent_id)
+    return None
 
 
 class InvestigationRequest(BaseModel):
@@ -52,10 +67,10 @@ async def get_agent(agent_id: str):
         Agent details
     """
     try:
-        agent = agent_manager.agents.get(agent_id)
+        agent = _resolve_agent(agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
-        
+
         return {
             "id": agent.id,
             "name": agent.name,
@@ -123,7 +138,7 @@ async def start_investigation(request: InvestigationRequest):
             raise HTTPException(status_code=404, detail=f"Finding not found: {request.finding_id}")
         
         # Get the agent
-        agent = agent_manager.agents.get(request.agent_id)
+        agent = _resolve_agent(request.agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent not found: {request.agent_id}")
         
@@ -191,10 +206,10 @@ async def run_agent(request: AgentRunRequest):
     from services.claude_service import ClaudeService
     
     try:
-        agent = agent_manager.agents.get(request.agent_id)
+        agent = _resolve_agent(request.agent_id)
         if not agent:
             raise HTTPException(status_code=404, detail=f"Agent not found: {request.agent_id}")
-        
+
         # Build task from finding/case if not explicitly provided
         task = request.task
         context_data = {}

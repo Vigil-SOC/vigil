@@ -415,6 +415,17 @@ Confidence scoring:
 }
 
 
+def render_base_prompt(
+    role: str, extra_principles: str = "", methodology: str = ""
+) -> str:
+    """Render BASE_PROMPT with the given fragments. Shared by built-in + custom."""
+    return BASE_PROMPT.format(
+        role=role,
+        extra_principles=extra_principles or "",
+        methodology=methodology or "",
+    )
+
+
 class SOCAgentLibrary:
     @staticmethod
     def get_all_agents() -> Dict[str, AgentProfile]:
@@ -422,7 +433,7 @@ class SOCAgentLibrary:
 
     @staticmethod
     def _build_agent(agent_id: str, cfg: dict) -> AgentProfile:
-        prompt = BASE_PROMPT.format(
+        prompt = render_base_prompt(
             role=cfg["role"],
             extra_principles=cfg.get("extra_principles", ""),
             methodology=cfg.get("methodology", ""),
@@ -441,15 +452,83 @@ class SOCAgentLibrary:
         )
 
     @staticmethod
+    def _build_from_custom(row: dict) -> AgentProfile:
+        """Build an AgentProfile from a custom_agents row dict.
+
+        Uses system_prompt_override verbatim when set; otherwise renders BASE_PROMPT
+        with the row's role/extra_principles/methodology fragments.
+        """
+        override = row.get("system_prompt_override")
+        if override:
+            prompt = override
+        else:
+            prompt = render_base_prompt(
+                role=row.get("role", ""),
+                extra_principles=row.get("extra_principles", ""),
+                methodology=row.get("methodology", ""),
+            )
+        return AgentProfile(
+            id=row["id"],
+            name=row.get("name") or row["id"],
+            description=row.get("description") or "",
+            system_prompt=prompt,
+            icon=row.get("icon") or "C",
+            color=row.get("color") or "#888888",
+            specialization=row.get("specialization") or "Custom",
+            recommended_tools=list(row.get("recommended_tools") or []),
+            max_tokens=int(row.get("max_tokens") or 4096),
+            enable_thinking=bool(row.get("enable_thinking") or False),
+        )
+
+    @staticmethod
     def get_agent(agent_id: str) -> Optional[AgentProfile]:
         agents = SOCAgentLibrary.get_all_agents()
         return agents.get(agent_id)
+
+
+CUSTOM_AGENT_ID_PREFIX = "custom-"
 
 
 class AgentManager:
     def __init__(self):
         self.agents = SOCAgentLibrary.get_all_agents()
         self.current_agent_id = "investigator"
+
+    def refresh_custom_agents(self) -> int:
+        """Reload custom agents from the DB.
+
+        Clears only entries with the custom- prefix so built-ins are never touched.
+        Returns the number of custom agents loaded. Failures (e.g. DB unavailable
+        at import time) are logged and swallowed so the built-in set remains usable.
+        """
+        # Drop existing custom agents first
+        custom_keys = [k for k in self.agents if k.startswith(CUSTOM_AGENT_ID_PREFIX)]
+        for k in custom_keys:
+            del self.agents[k]
+
+        try:
+            from database.connection import get_db_manager
+            from database.models import CustomAgent
+        except Exception as e:
+            logger.warning(f"CustomAgent model unavailable, skipping refresh: {e}")
+            return 0
+
+        try:
+            db_manager = get_db_manager()
+            with db_manager.session_scope() as session:
+                rows = session.query(CustomAgent).all()
+                loaded = 0
+                for row in rows:
+                    try:
+                        profile = SOCAgentLibrary._build_from_custom(row.to_dict())
+                        self.agents[profile.id] = profile
+                        loaded += 1
+                    except Exception as e:
+                        logger.error(f"Failed to load custom agent {row.id}: {e}")
+                return loaded
+        except Exception as e:
+            logger.warning(f"Unable to refresh custom agents from DB: {e}")
+            return 0
 
     def get_current_agent(self) -> AgentProfile:
         return self.agents.get(self.current_agent_id, self.agents["investigator"])

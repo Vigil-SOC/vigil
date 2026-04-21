@@ -69,5 +69,6 @@ AI-powered Security Operations Center using Claude and MCP (Model Context Protoc
 - [CONFIGURATION.md](CONFIGURATION.md) - Environment variables, secrets, setup
 - [AGENTS.md](AGENTS.md) - 12 specialized SOC AI agents
 - [INTEGRATIONS.md](INTEGRATIONS.md) - Splunk, Timesketch, Cribl, 27+ tools
+- [KAFKA_INGESTION.md](KAFKA_INGESTION.md) - Stream findings from Kafka topics
 - [FEATURES.md](FEATURES.md) - Cases, approvals, enrichment, reports
 - [API.md](API.md) - MCP tool contracts, data models

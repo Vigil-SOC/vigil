@@ -91,10 +91,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load user from localStorage on mount
+  // Load user on mount. Auth cookies are HttpOnly so we can't read them
+  // from JS — we just call /auth/me and let the cookie (if present and
+  // valid) identify the user. A 401 means not logged in; show the login UI.
   useEffect(() => {
     const loadUser = async () => {
-      // DEV MODE: Skip authentication and use mock user
       if (DEV_MODE) {
         console.log('DEV_MODE: Using mock dev user');
         setUser(DEV_USER);
@@ -102,19 +103,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
         return;
       }
 
-      // PRODUCTION MODE: Normal authentication flow
-      const token = localStorage.getItem('access_token');
-      if (token) {
-        try {
-          // Verify token and get user info
-          const response = await api.get('/auth/me');
-          setUser(response.data);
-        } catch (error) {
-          console.error('Failed to load user:', error);
-          // Token is invalid, clear it
-          localStorage.removeItem('access_token');
-          localStorage.removeItem('refresh_token');
-        }
+      try {
+        const response = await api.get('/auth/me');
+        setUser(response.data);
+      } catch {
+        // Not logged in — AuthContext stays with user=null and the app
+        // renders the login page. /auth/me also seeds the csrf_token
+        // cookie as a side effect so the subsequent login POST works.
       }
       setIsLoading(false);
     };
@@ -142,7 +137,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return;
     }
 
-    // PRODUCTION MODE: Normal login flow
+    // PRODUCTION MODE: Normal login flow. The backend sets HttpOnly
+    // cookies for access_token and refresh_token; we just read the user
+    // from the response body.
     try {
       const response = await api.post('/auth/login', {
         username_or_email: usernameOrEmail,
@@ -150,16 +147,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
         mfa_code: mfaCode,
       });
 
-      const { access_token, refresh_token, user: userData } = response.data;
-
-      // Store tokens
-      localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', refresh_token);
-
-      // Set user
-      setUser(userData);
+      setUser(response.data.user);
     } catch (error: any) {
-      // Check if MFA is required (header or detail message)
       const isMfaRequired =
         error.response?.headers?.['x-mfa-required'] === 'true' ||
         error.response?.data?.detail === 'MFA code required';
@@ -178,41 +167,24 @@ export function AuthProvider({ children }: AuthProviderProps) {
       return;
     }
 
-    // PRODUCTION MODE: Normal logout flow
+    // PRODUCTION MODE: Normal logout. Backend clears the auth cookies
+    // and blacklists the JTI; we just drop the user state.
     try {
       await api.post('/auth/logout');
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      // Clear tokens and user
-      localStorage.removeItem('access_token');
-      localStorage.removeItem('refresh_token');
       setUser(null);
     }
   };
 
   const refreshToken = async () => {
     try {
-      const refreshTokenValue = localStorage.getItem('refresh_token');
-      if (!refreshTokenValue) {
-        throw new Error('No refresh token');
-      }
-
-      const response = await api.post('/auth/refresh', {
-        refresh_token: refreshTokenValue,
-      });
-
-      const { access_token, refresh_token: newRefreshToken, user: userData } = response.data;
-
-      // Update tokens
-      localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', newRefreshToken);
-
-      // Update user
-      setUser(userData);
+      // Refresh cookie is HttpOnly — the browser sends it automatically.
+      const response = await api.post('/auth/refresh');
+      setUser(response.data.user);
     } catch (error) {
       console.error('Token refresh failed:', error);
-      // Refresh failed, log out
       await logout();
     }
   };
