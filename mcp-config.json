@@ -310,6 +310,16 @@
       "cwd": "${workspaceFolder}"
     },
 
+    "cape-sandbox": {
+      "command": "python3",
+      "args": ["tools/cape_sandbox.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "CAPE_SANDBOX_URL": "${CAPE_SANDBOX_URL}",
+        "CAPE_SANDBOX_API_KEY": "${CAPE_SANDBOX_API_KEY}"
+      }
+    },
+
     "ip-geolocation": {
       "command": "python3",
       "args": ["tools/ip_geolocation.py"],

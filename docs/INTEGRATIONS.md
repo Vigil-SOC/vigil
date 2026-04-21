@@ -40,7 +40,7 @@ Backend tools are automatically enabled for web UI users via the Claude Agent SD
 | Timeline | Timesketch | Implemented |
 | Threat Intel | VirusTotal, Shodan, AlienVault OTX, MISP, URL Analysis, IP Geolocation | Implemented |
 | EDR | CrowdStrike | Implemented |
-| Sandbox | Hybrid Analysis, Joe Sandbox, ANY.RUN | Implemented |
+| Sandbox | Hybrid Analysis, Joe Sandbox, ANY.RUN, CAPE Sandbox | Implemented |
 | Ticketing | Jira | Implemented |
 | Communication | Slack | Implemented |
 | Data Pipeline | Cribl Stream | Implemented |
@@ -277,6 +277,40 @@ ANYRUN_API_KEY="your_api_key"
 ```
 
 Tools: `anyrun_get_report`, `anyrun_search`, `anyrun_get_iocs`
+
+### CAPE Sandbox
+
+Open-source Cuckoo fork for on-prem detonation. Vigil ships an MCP client
+(`tools/cape_sandbox.py`) that talks to an existing CAPE deployment over
+its REST API — Vigil does **not** host CAPE itself. CAPE requires KVM and
+Windows guest VMs, so it's typically deployed on bare metal, not inside
+Docker Desktop.
+
+```bash
+CAPE_SANDBOX_ENABLED="true"
+CAPE_SANDBOX_URL="http://cape.internal:8000"
+CAPE_SANDBOX_API_KEY="your_cape_api_token"
+```
+
+Tools: `cape_submit_file`, `cape_submit_url`, `cape_get_report`,
+`cape_get_iocs`, `cape_get_pcap`, `cape_list_tasks`, `cape_search_hash`,
+`cape_task_status`.
+
+### Auto-submission pipeline
+
+When `SANDBOX_AUTO_SUBMIT=true` and at least one sandbox is enabled, the
+daemon will, during finding enrichment, consult each sandbox's hash cache
+for any file hash on the finding. Safety gates:
+
+- File extension must be in `SANDBOX_ALLOWED_FILE_TYPES` (default list
+  matches common malware extensions).
+- `file_size` (when known) must be ≤ `SANDBOX_MAX_FILE_SIZE_MB`.
+- No binary bytes are ever sent from Vigil. Only hash-cache lookups and
+  sandbox-API submission-by-hash are performed.
+
+A companion scheduler task (`sandbox_poll`, default every 60s) picks up
+completed reports and writes them into the case as `CaseEvidence` plus
+extracted IOCs into `CaseIOC`. See [SANDBOX.md](./SANDBOX.md).
 
 ## EDR/XDR
 

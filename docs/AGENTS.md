@@ -137,6 +137,7 @@ The backend discovers workflows automatically on startup. Use `POST /api/workflo
 - Family classification
 - IOC extraction
 - C2 identification
+- Sandbox tools: CAPE (`cape_*`), Hybrid Analysis (`ha_*`), Any.Run (`anyrun_*`), URL analysis (`url_analyze`). Agents should cache-check via `*_search_hash` before submitting new detonations.
 
 ### Network Analyst Agent
 - Flow analysis
@@ -176,7 +177,7 @@ All agents use these tools via Claude API function calling:
 | MITRE Analyst | `technique_rollup`, `get_findings_by_technique`, coverage analysis, gap identification |
 | Forensics | `search_findings`, evidence tools, detection search |
 | Threat Intel | Detection search, IOC analysis tools |
-| Malware Analyst | Detection search, pattern analysis |
+| Malware Analyst | Detection search, pattern analysis, sandbox detonation (CAPE, Hybrid Analysis, Any.Run) |
 | Network Analyst | Detection search, traffic pattern tools |
 | Auto-Responder | `correlate_and_create_action`, approval tools, detection validation |
 
