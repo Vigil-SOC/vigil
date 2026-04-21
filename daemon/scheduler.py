@@ -11,6 +11,21 @@ from daemon.config import SchedulerConfig
 logger = logging.getLogger(__name__)
 
 
+def _sandbox_poll_enabled() -> bool:
+    import os
+
+    return os.getenv("SANDBOX_AUTO_SUBMIT", "false").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _sandbox_poll_interval() -> int:
+    import os
+
+    try:
+        return max(30, int(os.getenv("SANDBOX_POLL_INTERVAL", "60")))
+    except ValueError:
+        return 60
+
+
 @dataclass
 class ScheduledTask:
     """Represents a scheduled task."""
@@ -82,6 +97,16 @@ class TaskScheduler:
             enabled=True,
             run_on_start=True
         ))
+
+        # Sandbox poller — only runs when auto-submit is enabled
+        if _sandbox_poll_enabled():
+            self._tasks.append(ScheduledTask(
+                name="sandbox_poll",
+                func=self._run_sandbox_poll,
+                interval=_sandbox_poll_interval(),
+                enabled=True,
+                run_on_start=False,
+            ))
     
     def _init_services(self):
         """Initialize required services."""
@@ -356,6 +381,20 @@ class TaskScheduler:
         
         return {"cutoff_date": cutoff.isoformat()}
     
+    async def _run_sandbox_poll(self):
+        """Advance pending sandbox submissions to completed reports."""
+        try:
+            from daemon.sandbox_poller import SandboxPoller
+        except Exception as e:
+            logger.warning(f"Sandbox poller unavailable: {e}")
+            return
+
+        poller = SandboxPoller(data_service=self._data_service)
+        stats = await poller.run_once()
+        if stats.get("completed") or stats.get("expired") or stats.get("errors"):
+            logger.info(f"Sandbox poll: {stats}")
+        return stats
+
     async def _run_health_check(self):
         """Run system health check."""
         logger.info("Running health check...")

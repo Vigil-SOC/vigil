@@ -329,18 +329,38 @@ Confidence scoring:
         "color": "#FF6B9D",
         "description": "Malware analysis and reverse engineering",
         "specialization": "Malware Analysis",
-        "tools": ["get_finding"],
+        "tools": [
+            "get_finding",
+            # CAPE Sandbox (open-source detonation — tools/cape_sandbox.py)
+            "cape_search_hash",
+            "cape_submit_file",
+            "cape_submit_url",
+            "cape_get_report",
+            "cape_get_iocs",
+            "cape_task_status",
+            "cape_list_tasks",
+            # Hybrid Analysis (tools/hybrid_analysis.py)
+            "ha_search_hash",
+            "ha_get_report",
+            # Any.Run (tools/anyrun.py)
+            "anyrun_search_hash",
+            "anyrun_get_report",
+            # URL behavioral analysis (tools/url_analysis.py)
+            "url_analyze",
+        ],
         "max_tokens": 16384,
         "thinking": True,
-        "extra_principles": "- Static before dynamic analysis\n- Use multiple sandboxes\n- Extract comprehensive IOCs\n- Memory: mempalace_search in threat-intel/ioc-registry for known file hashes before sandboxing; mempalace_add_drawer malware family and IOCs; mempalace_kg_add malware → actor relationships",
+        "extra_principles": "- Static before dynamic analysis\n- Use multiple sandboxes; prefer cache lookup (cape_search_hash / ha_search_hash / anyrun_search_hash) before submitting new detonations\n- Extract comprehensive IOCs\n- Memory: mempalace_search in threat-intel/ioc-registry for known file hashes before sandboxing; mempalace_add_drawer malware family and IOCs; mempalace_kg_add malware → actor relationships",
         "methodology": """<methodology>
 1. Retrieve context and extract file hashes
 2. Static analysis: File properties, strings, imports, PE structure
-3. Dynamic analysis: Sandbox execution (Joe Sandbox, Any.Run, Hybrid Analysis)
-4. Network analysis: C2 infrastructure, protocols
-5. Determine capabilities: Data theft, ransomware, backdoor, RAT
-6. Identify malware family and threat actor
-7. Extract IOCs and create detection rules
+3. Cache lookup: check prior analyses via cape_search_hash, ha_search_hash, anyrun_search_hash before submitting
+4. Dynamic analysis: Sandbox execution (CAPE, Joe Sandbox, Any.Run, Hybrid Analysis) — submit only if no prior report exists
+5. Pull behavioral report + IOCs (cape_get_report / cape_get_iocs) once the detonation completes
+6. Network analysis: C2 infrastructure, protocols
+7. Determine capabilities: Data theft, ransomware, backdoor, RAT
+8. Identify malware family and threat actor
+9. Extract IOCs and create detection rules
 </methodology>""",
     },
     "network_analyst": {
