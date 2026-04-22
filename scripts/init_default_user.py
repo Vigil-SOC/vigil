@@ -93,10 +93,37 @@ def init_default_user():
                     mfa_secret VARCHAR(255),
                     last_login TIMESTAMP,
                     login_count INTEGER NOT NULL DEFAULT 0,
+                    failed_login_count INTEGER NOT NULL DEFAULT 0,
+                    locked_until TIMESTAMP,
+                    password_history JSONB NOT NULL DEFAULT '[]',
+                    password_changed_at TIMESTAMP,
                     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
                     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
                 )
             """))
+
+            # Reconcile older deployed schemas: add missing columns and (re)assert
+            # defaults on columns that may have been created without them.
+            # All statements are idempotent and safe on fresh DBs.
+            logger.info("Reconciling users table schema with latest definition...")
+            session.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_count INTEGER NOT NULL DEFAULT 0"
+            ))
+            session.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP"
+            ))
+            session.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_history JSONB NOT NULL DEFAULT '[]'"
+            ))
+            session.execute(text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP"
+            ))
+            session.execute(text(
+                "ALTER TABLE users ALTER COLUMN mfa_enabled SET DEFAULT FALSE"
+            ))
+            session.execute(text(
+                "ALTER TABLE users ALTER COLUMN login_count SET DEFAULT 0"
+            ))
             
             # Check if default admin user already exists
             result = session.execute(
@@ -109,11 +136,21 @@ def init_default_user():
                 logger.info(f"✓ Default admin user already exists: {DEFAULT_USERNAME}")
                 return
             
-            # Insert default admin user
+            # Insert default admin user. Explicit values for every NOT NULL
+            # column guard against stale deployed schemas where a column may
+            # exist without its server-side default.
             logger.info(f"Creating default admin user: {DEFAULT_USERNAME}")
             session.execute(text("""
-                INSERT INTO users (user_id, username, email, password_hash, full_name, role_id, is_active, is_verified)
-                VALUES (:user_id, :username, :email, :password_hash, :full_name, :role_id, true, true)
+                INSERT INTO users (
+                    user_id, username, email, password_hash, full_name, role_id,
+                    is_active, is_verified,
+                    mfa_enabled, login_count, failed_login_count, password_history
+                )
+                VALUES (
+                    :user_id, :username, :email, :password_hash, :full_name, :role_id,
+                    true, true,
+                    false, 0, 0, '[]'::jsonb
+                )
                 ON CONFLICT (user_id) DO NOTHING
             """), {
                 "user_id": DEFAULT_USER_ID,
