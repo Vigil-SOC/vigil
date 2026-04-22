@@ -737,6 +737,49 @@ export const llmProviderApi = {
     api.post<LLMProvider>(`/llm/providers/${providerId}/set-default`),
 }
 
+// AI Config API (GH #89 — per-component model assignments)
+export interface AIModelInfo {
+  model_id: string
+  provider_id: string
+  provider_type: 'anthropic' | 'openai' | 'ollama' | string
+  display_name: string
+  context_window: number
+  input_cost_per_1k: number
+  output_cost_per_1k: number
+  supports_tools: boolean
+  supports_thinking: boolean
+  supports_vision: boolean
+}
+
+export interface ComponentAssignment {
+  component: string
+  provider_id: string
+  model_id: string
+  settings: Record<string, any>
+  updated_by: string | null
+  updated_at: string | null
+}
+
+export interface AIConfigResponse {
+  components: string[]
+  assignments: Record<string, ComponentAssignment>
+}
+
+export const aiConfigApi = {
+  getConfig: () => api.get<AIConfigResponse>('/ai/config'),
+  setComponent: (
+    component: string,
+    payload: { provider_id: string; model_id: string; settings?: Record<string, any> },
+  ) => api.put<ComponentAssignment>(`/ai/config/${component}`, payload),
+  clearComponent: (component: string) =>
+    api.delete<{ component: string; cleared: boolean }>(`/ai/config/${component}`),
+  listModels: () => api.get<{ models: AIModelInfo[] }>('/ai/models'),
+  getModelInfo: (modelId: string, providerId?: string) =>
+    api.get<AIModelInfo>(`/ai/models/${encodeURIComponent(modelId)}/info`, {
+      params: providerId ? { provider_id: providerId } : undefined,
+    }),
+}
+
 // Ingestion API
 export const ingestionApi = {
   listS3Files: (prefix?: string) =>

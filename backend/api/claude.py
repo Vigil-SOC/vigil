@@ -16,9 +16,53 @@ import logging
 import base64
 
 from services.claude_service import ClaudeService
+from services.model_registry import get_registry
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _resolve_model_for_request(
+    requested_model: Optional[str], agent_id: Optional[str]
+) -> str:
+    """Resolve the effective chat model (GH #89).
+
+    Precedence:
+      1. Explicit request.model (caller opt-in)
+      2. AgentProfile.model (per-agent override)
+      3. ai_model_configs[agent.component_category] (triage/investigation/reporting)
+      4. ai_model_configs['chat_default']
+      5. Default Anthropic provider's default_model
+      6. Historical default 'claude-sonnet-4-5-20250929'
+    """
+    if requested_model:
+        return requested_model
+
+    registry = get_registry()
+    agent_override: Optional[str] = None
+    category: str = "chat_default"
+
+    if agent_id:
+        try:
+            from services.soc_agents import AgentManager
+
+            agent = AgentManager().agents.get(agent_id)
+            if agent is not None:
+                agent_override = getattr(agent, "model", None)
+                category = getattr(agent, "component_category", None) or "investigation"
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("agent lookup in model resolution failed: %s", exc)
+
+    if agent_override:
+        resolved = registry.resolve_model_for_component(
+            category, agent_override=agent_override
+        )
+    else:
+        resolved = registry.resolve_model_for_component(category)
+
+    if resolved is not None:
+        return resolved[1]
+    return "claude-sonnet-4-5-20250929"
 
 
 class ContentBlock(BaseModel):
@@ -50,7 +94,9 @@ class ChatRequest(BaseModel):
 
     messages: List[ChatMessage]
     system_prompt: Optional[str] = None
-    model: str = "claude-sonnet-4-20250514"
+    # None means "resolve via ai_model_configs" (GH #89). Callers may still
+    # override with an explicit model id.
+    model: Optional[str] = None
     max_tokens: int = 4096
     enable_thinking: bool = False
     thinking_budget: int = 10000
@@ -69,7 +115,7 @@ class AgentTaskRequest(BaseModel):
     system_prompt: Optional[str] = None
     allowed_tools: Optional[List[str]] = None
     max_turns: int = 10
-    model: str = "claude-sonnet-4-20250514"
+    model: Optional[str] = None  # GH #89 — resolved via ai_model_configs if omitted
     session_id: Optional[str] = None
     agent_id: Optional[str] = None
 
@@ -94,6 +140,9 @@ async def chat(request: ChatRequest):
     # Generate unique request ID for tracking
     request_id = str(uuid.uuid4())[:8]
     start_time = time.time()
+
+    # GH #89: resolve model via ai_model_configs if caller didn't specify one.
+    request.model = _resolve_model_for_request(request.model, request.agent_id)
 
     logger.info(
         f"📨 Chat request received - RequestID: {request_id}, Model: {request.model}, Thinking: {request.enable_thinking}, Budget: {request.thinking_budget}, Agent: {request.agent_id}"
@@ -335,6 +384,9 @@ async def chat_stream(request: ChatRequest):
     # Generate unique request ID for tracking
     request_id = str(uuid.uuid4())[:8]
     start_time = time.time()
+
+    # GH #89: resolve model via ai_model_configs if caller didn't specify one.
+    request.model = _resolve_model_for_request(request.model, request.agent_id)
 
     logger.info(
         f"🌊 Stream request received - RequestID: {request_id}, Model: {request.model}, Thinking: {request.enable_thinking}, Budget: {request.thinking_budget}, Agent: {request.agent_id}"
@@ -586,7 +638,10 @@ async def websocket_chat(websocket: WebSocket):
 
             messages = data.get("messages", [])
             system_prompt = data.get("system_prompt")
-            model = data.get("model", "claude-sonnet-4-20250514")
+            # GH #89: resolve via ai_model_configs when caller omits model.
+            model = data.get("model") or _resolve_model_for_request(
+                None, data.get("agent_id")
+            )
             max_tokens = data.get("max_tokens", 4096)
             enable_thinking = data.get("enable_thinking", False)
             thinking_budget = data.get("thinking_budget", 10000)
@@ -636,29 +691,54 @@ async def websocket_chat(websocket: WebSocket):
 
 @router.get("/models")
 async def get_models():
-    """
-    Get list of available Claude models.
+    """List available models.
 
-    Returns:
-        List of model names
+    Backward-compatible alias for `/api/ai/models` (GH #89). Returns the
+    Anthropic subset so the existing Chat UI model picker continues to
+    show only Claude models even when Ollama/OpenAI providers are active.
     """
+    registry = get_registry()
+    try:
+        all_models = await registry.list_available_models()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("get_models: registry lookup failed: %s", exc)
+        all_models = []
+
+    anthropic_only = [m for m in all_models if m.provider_type == "anthropic"]
+    if not anthropic_only:
+        # Fallback — ensures the Chat UI still has something to render if the
+        # provider registry isn't reachable (e.g. fresh install, no DB).
+        return {
+            "models": [
+                {
+                    "id": "claude-sonnet-4-5-20250929",
+                    "name": "Claude Sonnet 4.5",
+                    "description": "Most intelligent model, best for complex tasks",
+                },
+                {
+                    "id": "claude-sonnet-4-20250514",
+                    "name": "Claude Sonnet 4",
+                    "description": "Balanced speed and intelligence",
+                },
+                {
+                    "id": "claude-haiku-4-5-20251001",
+                    "name": "Claude Haiku 4.5",
+                    "description": "Fastest model, good for simple tasks",
+                },
+            ]
+        }
+
     return {
         "models": [
             {
-                "id": "claude-sonnet-4-20250514",
-                "name": "Claude 4.5 Sonnet",
-                "description": "Most intelligent model, best for complex tasks",
-            },
-            {
-                "id": "claude-3-5-sonnet-20241022",
-                "name": "Claude 3.5 Sonnet",
-                "description": "Previous generation, good balance of speed and intelligence",
-            },
-            {
-                "id": "claude-3-5-haiku-20241022",
-                "name": "Claude 3.5 Haiku",
-                "description": "Fastest model, good for simple tasks",
-            },
+                "id": m.model_id,
+                "name": m.display_name,
+                "description": (
+                    f"{m.context_window // 1000}K context, "
+                    f"${m.input_cost_per_1k:.4f}/1K in / ${m.output_cost_per_1k:.4f}/1K out"
+                ),
+            }
+            for m in anthropic_only
         ]
     }
 
@@ -667,7 +747,8 @@ class SummarizeRequest(BaseModel):
     """Request to summarize a conversation."""
 
     messages: List[ChatMessage]
-    model: str = "claude-sonnet-4-20250514"
+    # GH #89: None means "use ai_model_configs['summarization']".
+    model: Optional[str] = None
 
 
 @router.post("/summarize")
@@ -729,10 +810,16 @@ Provide a structured summary that captures all essential context for continuing 
     try:
         from services.llm_gateway import get_llm_gateway
 
+        # GH #89: resolve summarization model via ai_model_configs.
+        model = request.model or _resolve_model_for_request(None, None)
+        resolved = get_registry().resolve_model_for_component("summarization")
+        if request.model is None and resolved is not None:
+            model = resolved[1]
+
         gateway = await get_llm_gateway()
         response = await gateway.submit_chat(
             messages=[{"role": "user", "content": summary_prompt}],
-            model=request.model,
+            model=model,
             max_tokens=4096,
             system_prompt="You are a precise conversation summarizer. Preserve all actionable details, entity IDs, and investigation context.",
         )
@@ -802,6 +889,9 @@ async def run_agent_task(request: AgentTaskRequest):
                 allowed_tools = agent.recommended_tools
             logger.info(f"Using agent: {agent.name}")
 
+    # GH #89: resolve model via ai_model_configs if caller didn't specify one.
+    request.model = _resolve_model_for_request(request.model, request.agent_id)
+
     claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
 
     if not claude_service.has_api_key():
@@ -860,6 +950,9 @@ async def stream_agent_task(request: AgentTaskRequest):
             system_prompt = system_prompt or agent.system_prompt
             if not allowed_tools:
                 allowed_tools = agent.recommended_tools
+
+    # GH #89: resolve model via ai_model_configs if caller didn't specify one.
+    request.model = _resolve_model_for_request(request.model, request.agent_id)
 
     claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
 

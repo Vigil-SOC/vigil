@@ -28,12 +28,33 @@ try:
 except Exception:
     _tracer = None  # type: ignore[assignment]
 
-# TODO(#89): Sonnet price constants assume Anthropic. With multi-provider
-# support (#88) landing, cost tracking should resolve per-provider rates
-# from a model registry instead of a single global constant. Update
-# together with the per-agent model assignment work in #89.
+# Deprecated legacy aliases — retained so out-of-tree imports don't crash.
+# New code should use `compute_call_cost()` below, which resolves per-provider
+# rates via services.model_registry (GH #89).
 SONNET_INPUT_COST = 3.0 / 1_000_000
 SONNET_OUTPUT_COST = 15.0 / 1_000_000
+
+
+def compute_call_cost(
+    model_id: Optional[str],
+    provider_type: Optional[str],
+    input_tokens: int,
+    output_tokens: int,
+) -> float:
+    """Compute USD cost of a single LLM call (GH #89).
+
+    Looks up per-token rates from services.model_registry.get_cost_rates().
+    Falls back to Sonnet pricing when the model/provider can't be determined
+    so daemon cost tracking never silently zeroes out for known Anthropic usage.
+    """
+    if model_id and provider_type:
+        try:
+            from services.model_registry import get_registry
+            in_rate, out_rate = get_registry().get_cost_rates(model_id, provider_type)
+            return input_tokens * in_rate + output_tokens * out_rate
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("cost lookup fell through to Sonnet defaults: %s", exc)
+    return input_tokens * SONNET_INPUT_COST + output_tokens * SONNET_OUTPUT_COST
 
 TOOL_TIERS = {
     "safe": [
@@ -371,7 +392,15 @@ class AgentRunner:
 
                 in_tokens = result.get("input_tokens", 0)
                 out_tokens = result.get("output_tokens", 0)
-                cost = in_tokens * SONNET_INPUT_COST + out_tokens * SONNET_OUTPUT_COST
+                # GH #89: provider_type defaults to "anthropic" since the
+                # plan_model used here is resolved from ai_model_configs or
+                # the default Anthropic provider.
+                cost = compute_call_cost(
+                    self.config.plan_model,
+                    result.get("provider") or "anthropic",
+                    in_tokens,
+                    out_tokens,
+                )
                 total_input_tokens += in_tokens
                 total_output_tokens += out_tokens
                 total_cost += cost

@@ -68,6 +68,7 @@ import AutoInvestigateTab from '../components/settings/AutoInvestigateTab'
 import SkillsTab from '../components/settings/SkillsTab'
 import KafkaTab from '../components/settings/KafkaTab'
 import LLMProvidersTab from '../components/settings/LLMProvidersTab'
+import ModelAssignmentTab from '../components/settings/ModelAssignmentTab'
 
 interface TabPanelProps {
   children?: React.ReactNode
@@ -879,6 +880,9 @@ export default function Settings() {
               </Box>
               <TextField fullWidth label="API Key" type="password" value={claudeConfig.api_key} onChange={(e) => setClaudeConfig({ ...claudeConfig, api_key: e.target.value })} sx={{ mb: 2 }} />
               <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSaveClaude}>Save</Button>
+            </Box>
+            <Box sx={{ mt: 4, maxWidth: 1100 }}>
+              <ModelAssignmentTab setMessage={setMessage} />
             </Box>
             <Box sx={{ mt: 4 }}>
               <LLMProvidersTab setMessage={setMessage} />

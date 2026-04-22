@@ -17,6 +17,13 @@ class AgentProfile:
     recommended_tools: List[str]
     max_tokens: int = 4096
     enable_thinking: bool = False
+    # GH #89 — per-agent model override. None = inherit from
+    # ai_model_configs[component_category] → ai_model_configs['chat_default'].
+    model: Optional[str] = None
+    # GH #89 — which ai_model_configs row to consult when `model` is None.
+    # One of: 'triage', 'investigation', 'reporting'. Custom agents default
+    # to 'investigation' unless the user picks otherwise in the builder.
+    component_category: str = "investigation"
 
 
 BASE_PROMPT = """You are a SOC {role} in the Vigil SOC platform.
@@ -86,6 +93,26 @@ Memory tool quick reference:
 </principles>
 
 {methodology}"""
+
+
+# GH #89 — maps each built-in agent id to the ai_model_configs component it
+# inherits its model from. Kept outside AGENT_CONFIGS so the per-agent dicts
+# stay focused on prompt content.
+_BUILTIN_COMPONENT_CATEGORY: Dict[str, str] = {
+    "triage": "triage",
+    "investigator": "investigation",
+    "threat_hunter": "investigation",
+    "correlator": "investigation",
+    "responder": "investigation",
+    "reporter": "reporting",
+    "mitre_analyst": "investigation",
+    "forensics": "investigation",
+    "threat_intel": "investigation",
+    "compliance": "investigation",
+    "malware_analyst": "investigation",
+    "network_analyst": "investigation",
+    "auto_responder": "investigation",
+}
 
 
 AGENT_CONFIGS = {
@@ -449,6 +476,13 @@ class SOCAgentLibrary:
             recommended_tools=cfg["tools"],
             max_tokens=cfg.get("max_tokens", 4096),
             enable_thinking=cfg.get("thinking", False),
+            # GH #89 — built-ins don't ship with a pinned model; they inherit
+            # from ai_model_configs[component_category] with chat_default as
+            # the ultimate fallback.
+            model=None,
+            component_category=_BUILTIN_COMPONENT_CATEGORY.get(
+                agent_id, "investigation"
+            ),
         )
 
     @staticmethod
@@ -478,6 +512,10 @@ class SOCAgentLibrary:
             recommended_tools=list(row.get("recommended_tools") or []),
             max_tokens=int(row.get("max_tokens") or 4096),
             enable_thinking=bool(row.get("enable_thinking") or False),
+            # GH #89 — custom agents can pin a model; falling back to the
+            # component_category (default 'investigation') if not set.
+            model=(row.get("model") or None),
+            component_category=(row.get("component_category") or "investigation"),
         )
 
     @staticmethod

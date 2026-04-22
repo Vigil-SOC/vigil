@@ -14,6 +14,28 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 from secrets_manager import get_secret, set_secret
 
+# GH #89 — resolve the summarization model via ai_model_configs with a safe
+# fallback to the historical hardcoded default. Defined at module scope so
+# the registry import stays lazy and tests can monkeypatch it trivially.
+_SUMMARIZATION_DEFAULT = "claude-sonnet-4-20250514"
+
+
+def _resolve_summarization_model() -> str:
+    try:
+        from services.model_registry import get_registry
+
+        resolved = get_registry().resolve_model_for_component("summarization")
+        if resolved is not None:
+            return resolved[1]
+    except (
+        Exception
+    ) as exc:  # noqa: BLE001 — never let model resolution break summarization
+        logging.getLogger(__name__).debug(
+            "summarization model resolution failed, using default: %s", exc
+        )
+    return _SUMMARIZATION_DEFAULT
+
+
 # Import backend tool support
 try:
     sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -997,10 +1019,11 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             tool_results_in = self._extract_prior_tool_results(request_messages)
 
             try:
-                from daemon.agent_runner import SONNET_INPUT_COST, SONNET_OUTPUT_COST
+                # GH #89: use the model registry for per-provider pricing.
+                from daemon.agent_runner import compute_call_cost
 
-                cost_usd = (input_tokens * SONNET_INPUT_COST) + (
-                    output_tokens * SONNET_OUTPUT_COST
+                cost_usd = compute_call_cost(
+                    model, "anthropic", int(input_tokens or 0), int(output_tokens or 0)
                 )
             except Exception:
                 cost_usd = 0.0
@@ -1228,7 +1251,7 @@ CONVERSATION ({len(conversation_text)} chars):
 Provide a structured summary preserving all critical context."""
 
     def _summarize_messages_sync(
-        self, messages: List[Dict], model: str = "claude-sonnet-4-20250514"
+        self, messages: List[Dict], model: Optional[str] = None
     ) -> Optional[str]:
         """
         Synchronously summarize a list of messages using a lightweight Claude call.
@@ -1244,6 +1267,9 @@ Provide a structured summary preserving all critical context."""
             return None
 
         prompt = self._build_summary_prompt(conversation_text)
+
+        # GH #89: use ai_model_configs['summarization'] when caller didn't pin one.
+        model = model or _resolve_summarization_model()
 
         try:
             logger.info(
@@ -1269,7 +1295,7 @@ Provide a structured summary preserving all critical context."""
             return None
 
     async def _summarize_messages_async(
-        self, messages: List[Dict], model: str = "claude-sonnet-4-20250514"
+        self, messages: List[Dict], model: Optional[str] = None
     ) -> Optional[str]:
         """
         Asynchronously summarize a list of messages using a lightweight Claude call.
@@ -1285,6 +1311,9 @@ Provide a structured summary preserving all critical context."""
             return None
 
         prompt = self._build_summary_prompt(conversation_text)
+
+        # GH #89: use ai_model_configs['summarization'] when caller didn't pin one.
+        model = model or _resolve_summarization_model()
 
         try:
             logger.info(
@@ -1361,7 +1390,9 @@ Provide a structured summary preserving all critical context."""
 
         threading.Thread(target=_archive_overflow, daemon=True).start()
 
-        summary = self._summarize_messages_sync(to_summarize, model=model)
+        # GH #89: pass model=None so summarization resolves to its own
+        # component in ai_model_configs, independent of the chat model.
+        summary = self._summarize_messages_sync(to_summarize, model=None)
 
         if summary:
             summary_msg = {
@@ -1444,7 +1475,9 @@ Provide a structured summary preserving all critical context."""
 
         threading.Thread(target=_archive_overflow_async, daemon=True).start()
 
-        summary = await self._summarize_messages_async(to_summarize, model=model)
+        # GH #89: pass model=None so summarization resolves to its own
+        # component in ai_model_configs, independent of the chat model.
+        summary = await self._summarize_messages_async(to_summarize, model=None)
 
         if summary:
             summary_msg = {
@@ -2216,12 +2249,12 @@ Provide a structured summary preserving all critical context."""
                     _cs_genai_metrics["llm_tokens"].add(
                         _out_tok, {**_labels, "gen_ai.token.type": "output"}
                     )
-                    from daemon.agent_runner import (
-                        SONNET_INPUT_COST,
-                        SONNET_OUTPUT_COST,
-                    )
+                    # GH #89: use the model registry for per-provider pricing.
+                    from daemon.agent_runner import compute_call_cost
 
-                    _cost = _in_tok * SONNET_INPUT_COST + _out_tok * SONNET_OUTPUT_COST
+                    _cost = compute_call_cost(
+                        model, "anthropic", int(_in_tok or 0), int(_out_tok or 0)
+                    )
                     _cs_genai_metrics["llm_cost_usd"].add(_cost, _labels)
                 except Exception:
                     pass

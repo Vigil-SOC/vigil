@@ -16,6 +16,7 @@ from api.workflows import router as workflows_router
 from api.reasoning import router as reasoning_router
 from api.skills import router as skills_router
 from api.llm_providers import router as llm_providers_router
+from api.ai_config import router as ai_config_router
 
 __all__ = [
     'findings_router',
@@ -34,4 +35,5 @@ __all__ = [
     'reasoning_router',
     'skills_router',
     'llm_providers_router',
+    'ai_config_router',
 ]

@@ -2373,6 +2373,9 @@ class CustomAgent(Base):
     max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=4096, server_default='4096')
     enable_thinking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='false')
     model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    component_category: Mapped[str] = mapped_column(
+        String(32), nullable=False, default='investigation', server_default='investigation'
+    )
 
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -2404,6 +2407,7 @@ class CustomAgent(Base):
             'max_tokens': self.max_tokens,
             'enable_thinking': self.enable_thinking,
             'model': self.model,
+            'component_category': self.component_category,
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -2467,6 +2471,52 @@ class LLMProviderConfig(Base):
             'last_test_at': self.last_test_at.isoformat() if self.last_test_at else None,
             'last_test_success': self.last_test_success,
             'last_error': self.last_error,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class AIModelConfig(Base):
+    """Per-component AI model assignment (GH #89).
+
+    Each row maps a logical component (chat_default, triage, investigation,
+    orchestrator_plan, orchestrator_review, summarization, reporting) to a
+    (provider, model) pair. Components without a row fall back to the
+    `chat_default` row; if that is missing, callers fall back to the
+    default Anthropic provider's default_model.
+
+    See database/init/10_ai_model_configs.sql for the table definition.
+    """
+
+    __tablename__ = 'ai_model_configs'
+
+    component: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey('llm_provider_configs.provider_id', ondelete='RESTRICT'),
+        nullable=False,
+    )
+    model_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+    )
+
+    __table_args__ = (
+        Index('idx_ai_model_configs_provider', 'provider_id'),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            'component': self.component,
+            'provider_id': self.provider_id,
+            'model_id': self.model_id,
+            'settings': self.settings or {},
+            'updated_by': self.updated_by,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }

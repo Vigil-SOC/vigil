@@ -274,6 +274,28 @@ class DaemonConfig:
         except Exception as e:
             logger.debug(f"Could not load orchestrator config from DB (using env/defaults): {e}")
 
+        # GH #89 — ai_model_configs takes precedence over orchestrator.settings
+        # for plan_model/review_model. This is the same override layer that
+        # powers the "Model Assignment" section of the AI Config tab.
+        try:
+            from services.model_registry import get_registry
+            registry = get_registry()
+            plan_pick = registry.resolve_model_for_component('orchestrator_plan')
+            review_pick = registry.resolve_model_for_component('orchestrator_review')
+            if plan_pick is not None:
+                config.orchestrator.plan_model = plan_pick[1]
+            if review_pick is not None:
+                config.orchestrator.review_model = review_pick[1]
+            if plan_pick or review_pick:
+                logger.info(
+                    "Orchestrator models resolved from ai_model_configs: "
+                    "plan=%s review=%s",
+                    config.orchestrator.plan_model,
+                    config.orchestrator.review_model,
+                )
+        except Exception as e:
+            logger.debug(f"ai_model_configs override skipped: {e}")
+
         # Kafka: merge non-secret DB settings on top of env defaults
         try:
             from database.config_service import get_config_service

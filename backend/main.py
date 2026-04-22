@@ -45,6 +45,7 @@ from api import (
     reasoning_router,
     skills_router,
     llm_providers_router,
+    ai_config_router,
 )
 from api.local_services import router as local_services_router
 from api.integrations_compatibility import router as compatibility_router
@@ -191,6 +192,7 @@ app.include_router(claude_router, prefix="/api/claude", tags=["claude"], depende
 app.include_router(reasoning_router, prefix="/api/reasoning", tags=["reasoning"])
 app.include_router(config_router, prefix="/api/config", tags=["config"])
 app.include_router(llm_providers_router, prefix="/api/llm/providers", tags=["llm-providers"])
+app.include_router(ai_config_router, prefix="/api/ai", tags=["ai-config"])
 app.include_router(attack_router, prefix="/api/attack", tags=["attack"])
 app.include_router(custom_agents_router, prefix="/api", tags=["custom-agents"])
 app.include_router(agents_router, prefix="/api/agents", tags=["agents"])
