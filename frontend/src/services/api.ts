@@ -589,6 +589,27 @@ export const agentsApi = {
     api.patch(`/agents/custom/${agent_id}`, data),
   deleteCustom: (agent_id: string) => api.delete(`/agents/custom/${agent_id}`),
   getAvailableTools: () => api.get('/agents/custom/_meta/tools'),
+
+  // AI-assisted generation + iterative refinement (issue #80 Phase 2)
+  generateCustom: (data: {
+    description: string
+    current_draft?: GeneratedAgentDraft | null
+    feedback?: string
+  }) => api.post<{ draft: GeneratedAgentDraft }>('/agents/custom/generate', data),
+}
+
+export interface GeneratedAgentDraft {
+  name: string
+  description: string
+  specialization: string
+  icon: string
+  color: string
+  role: string
+  extra_principles: string
+  methodology: string
+  recommended_tools: string[]
+  max_tokens: number
+  enable_thinking: boolean
 }
 
 export interface CustomAgentPayload {
@@ -666,6 +687,14 @@ export const configApi = {
     tool_response_budget_default: number
     thinking_budget: number
   }) => api.post('/config/ai-operations', data),
+
+  getDarktrace: () => api.get('/config/darktrace'),
+  setDarktrace: (data: {
+    enabled: boolean
+    url: string
+    max_body_kb: number
+    webhook_secret?: string
+  }) => api.post('/config/darktrace', data),
 
   getOrchestrator: () => api.get('/config/orchestrator'),
   setOrchestrator: (data: {

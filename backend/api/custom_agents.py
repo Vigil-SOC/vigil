@@ -69,6 +69,18 @@ class CustomAgentUpdate(BaseModel):
     model: Optional[str] = None
 
 
+class GenerateAgentRequest(BaseModel):
+    """Request body for AI-assisted agent generation (issue #80 Phase 2).
+
+    First call: pass ``description`` only.
+    Refinement: also pass ``current_draft`` and ``feedback``.
+    """
+
+    description: str = Field(..., min_length=1)
+    current_draft: Optional[Dict[str, Any]] = None
+    feedback: Optional[str] = None
+
+
 def _with_effective_prompt(row: Dict[str, Any]) -> Dict[str, Any]:
     """Attach the rendered effective prompt to an agent row dict."""
     row = dict(row)
@@ -112,6 +124,36 @@ async def list_available_tools() -> Dict[str, Any]:
         "tools": tools,
         "grouped": grouped,
     }
+
+
+@router.post("/agents/custom/generate")
+async def generate_custom_agent(payload: GenerateAgentRequest) -> Dict[str, Any]:
+    """
+    AI-assisted agent generation / refinement (issue #80 Phase 2).
+
+    Does NOT save. Frontend takes the returned draft, lets the user tweak it,
+    and POSTs to /agents/custom to create. Pass ``current_draft`` + ``feedback``
+    to iteratively refine a prior draft.
+    """
+    try:
+        from services.agent_ai_generator import get_agent_ai_generator
+
+        result = await get_agent_ai_generator().generate(
+            description=payload.description,
+            current_draft=payload.current_draft,
+            feedback=payload.feedback,
+        )
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=502,
+                detail=result.get("error") or "Agent generation failed",
+            )
+        return {"draft": result["draft"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error generating custom agent")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/agents/custom/{agent_id}")

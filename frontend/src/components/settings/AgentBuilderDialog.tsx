@@ -14,15 +14,22 @@ import {
   Switch,
   Autocomplete,
   Chip,
-  Tooltip,
   Accordion,
   AccordionSummary,
   AccordionDetails,
   Alert,
   CircularProgress,
 } from '@mui/material'
-import { ExpandMore as ExpandMoreIcon } from '@mui/icons-material'
-import { agentsApi, type CustomAgent, type CustomAgentPayload } from '../../services/api'
+import {
+  ExpandMore as ExpandMoreIcon,
+  AutoAwesome as AutoAwesomeIcon,
+} from '@mui/icons-material'
+import {
+  agentsApi,
+  type CustomAgent,
+  type CustomAgentPayload,
+  type GeneratedAgentDraft,
+} from '../../services/api'
 
 interface Props {
   open: boolean
@@ -46,6 +53,8 @@ const EMPTY_FORM: CustomAgentPayload = {
   enable_thinking: false,
 }
 
+type AIHistoryEntry = { kind: 'describe' | 'refine'; text: string }
+
 export default function AgentBuilderDialog({ open, agentId, onClose, onMessage }: Props) {
   const [form, setForm] = useState<CustomAgentPayload>(EMPTY_FORM)
   const [availableTools, setAvailableTools] = useState<string[]>([])
@@ -54,6 +63,14 @@ export default function AgentBuilderDialog({ open, agentId, onClose, onMessage }
   const [saving, setSaving] = useState(false)
   const [useOverride, setUseOverride] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // AI Assist state (issue #80 Phase 2) — iterative NL → draft refinement
+  const [aiDescription, setAiDescription] = useState('')
+  const [aiFeedback, setAiFeedback] = useState('')
+  const [aiDraft, setAiDraft] = useState<GeneratedAgentDraft | null>(null)
+  const [aiHistory, setAiHistory] = useState<AIHistoryEntry[]>([])
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
 
   const isEdit = Boolean(agentId)
 
@@ -99,10 +116,84 @@ export default function AgentBuilderDialog({ open, agentId, onClose, onMessage }
       setUseOverride(false)
       setEffectivePrompt('')
     }
+    // Reset AI Assist state whenever the dialog opens or the target changes.
+    setAiDescription('')
+    setAiFeedback('')
+    setAiDraft(null)
+    setAiHistory([])
+    setAiBusy(false)
+    setAiError(null)
   }, [open, agentId])
 
   const handleChange = <K extends keyof CustomAgentPayload>(key: K, value: CustomAgentPayload[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }))
+  }
+
+  // Merge an AI-generated draft into the form. Preserves a manually-typed name
+  // (and always preserves it in edit mode since the ID is locked there);
+  // everything else is replaced because that's what the AI is for.
+  const mergeDraftIntoForm = (d: GeneratedAgentDraft) => {
+    setForm((prev) => ({
+      ...prev,
+      name: isEdit || prev.name?.trim() ? prev.name : d.name,
+      description: d.description || prev.description,
+      specialization: d.specialization || prev.specialization,
+      icon: d.icon || prev.icon,
+      color: d.color || prev.color,
+      role: d.role || prev.role,
+      extra_principles: d.extra_principles || prev.extra_principles,
+      methodology: d.methodology || prev.methodology,
+      recommended_tools: d.recommended_tools?.length
+        ? d.recommended_tools
+        : prev.recommended_tools,
+      max_tokens: d.max_tokens || prev.max_tokens,
+      enable_thinking: d.enable_thinking ?? prev.enable_thinking,
+    }))
+  }
+
+  const handleAIGenerate = async () => {
+    if (!aiDescription.trim()) {
+      setAiError('Please describe your agent first.')
+      return
+    }
+    setAiBusy(true)
+    setAiError(null)
+    try {
+      const res = await agentsApi.generateCustom({ description: aiDescription })
+      const draft = res.data.draft
+      setAiDraft(draft)
+      setAiHistory((h) => [...h, { kind: 'describe', text: aiDescription }])
+      mergeDraftIntoForm(draft)
+    } catch (err: any) {
+      setAiError(err?.response?.data?.detail || err?.message || 'Generation failed')
+    } finally {
+      setAiBusy(false)
+    }
+  }
+
+  const handleAIRefine = async () => {
+    if (!aiFeedback.trim()) {
+      setAiError('Describe what to change in the feedback box.')
+      return
+    }
+    setAiBusy(true)
+    setAiError(null)
+    try {
+      const res = await agentsApi.generateCustom({
+        description: aiDescription || form.role || 'custom SOC agent',
+        current_draft: aiDraft,
+        feedback: aiFeedback,
+      })
+      const draft = res.data.draft
+      setAiDraft(draft)
+      setAiHistory((h) => [...h, { kind: 'refine', text: aiFeedback }])
+      setAiFeedback('')
+      mergeDraftIntoForm(draft)
+    } catch (err: any) {
+      setAiError(err?.response?.data?.detail || err?.message || 'Refinement failed')
+    } finally {
+      setAiBusy(false)
+    }
   }
 
   const validate = (): string | null => {
@@ -159,19 +250,137 @@ export default function AgentBuilderDialog({ open, agentId, onClose, onMessage }
           <Stack spacing={2}>
             {error && <Alert severity="error">{error}</Alert>}
 
-            {/* Phase 2 placeholder: NL-to-agent generator */}
-            <Tooltip title="Coming in Phase 2: describe the agent in natural language and we generate the configuration.">
-              <span>
-                <TextField
-                  label="Describe your agent (AI-assisted — coming soon)"
-                  multiline
-                  rows={2}
-                  fullWidth
-                  disabled
-                  placeholder="e.g. detects impossible-travel logins by correlating auth events across geographies"
-                />
-              </span>
-            </Tooltip>
+            {/* AI Assist — NL → draft with iterative refinement (issue #80 Phase 2) */}
+            <Accordion variant="outlined" disableGutters defaultExpanded={!isEdit}>
+              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                <Stack direction="row" spacing={1} alignItems="center">
+                  <AutoAwesomeIcon fontSize="small" color="primary" />
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    AI Assist
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    Describe your agent and iterate with feedback
+                  </Typography>
+                </Stack>
+              </AccordionSummary>
+              <AccordionDetails>
+                <Stack spacing={1.5}>
+                  {aiError && (
+                    <Alert severity="error" onClose={() => setAiError(null)}>
+                      {aiError}
+                    </Alert>
+                  )}
+                  <TextField
+                    label="Describe your agent"
+                    multiline
+                    rows={2}
+                    fullWidth
+                    value={aiDescription}
+                    onChange={(e) => setAiDescription(e.target.value)}
+                    placeholder="e.g. detects impossible-travel logins by correlating auth events across geographies"
+                    disabled={aiBusy}
+                    helperText="The draft fills the fields below. Your typed values are preserved where possible."
+                  />
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Button
+                      variant="contained"
+                      size="small"
+                      startIcon={
+                        aiBusy && !aiDraft ? (
+                          <CircularProgress size={14} />
+                        ) : (
+                          <AutoAwesomeIcon />
+                        )
+                      }
+                      onClick={handleAIGenerate}
+                      disabled={aiBusy || !aiDescription.trim()}
+                    >
+                      {aiDraft ? 'Regenerate' : 'Generate'}
+                    </Button>
+                    {aiDraft && (
+                      <Typography variant="caption" color="text.secondary">
+                        Draft applied. Refine below or edit fields directly.
+                      </Typography>
+                    )}
+                  </Stack>
+
+                  {aiDraft && (
+                    <>
+                      <TextField
+                        label="Refinement feedback"
+                        multiline
+                        rows={2}
+                        fullWidth
+                        value={aiFeedback}
+                        onChange={(e) => setAiFeedback(e.target.value)}
+                        placeholder="e.g. add VirusTotal lookups; tighten methodology to 3 steps; enable thinking"
+                        disabled={aiBusy}
+                      />
+                      <Stack direction="row" spacing={1} alignItems="center">
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          startIcon={
+                            aiBusy && aiDraft ? (
+                              <CircularProgress size={14} />
+                            ) : (
+                              <AutoAwesomeIcon />
+                            )
+                          }
+                          onClick={handleAIRefine}
+                          disabled={aiBusy || !aiFeedback.trim()}
+                        >
+                          Refine
+                        </Button>
+                        <Typography variant="caption" color="text.secondary">
+                          Keeps what's good; changes what you ask for.
+                        </Typography>
+                      </Stack>
+                    </>
+                  )}
+
+                  {aiHistory.length > 0 && (
+                    <Box
+                      sx={{
+                        mt: 0.5,
+                        p: 1,
+                        borderRadius: 1,
+                        bgcolor: (t) =>
+                          t.palette.mode === 'dark'
+                            ? 'rgba(255,255,255,0.03)'
+                            : 'rgba(0,0,0,0.03)',
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: 'block', mb: 0.5 }}
+                      >
+                        Conversation
+                      </Typography>
+                      <Stack spacing={0.5}>
+                        {aiHistory.map((h, i) => (
+                          <Stack key={i} direction="row" spacing={1}>
+                            <Chip
+                              size="small"
+                              label={h.kind === 'describe' ? 'describe' : 'refine'}
+                              color={h.kind === 'describe' ? 'primary' : 'default'}
+                              variant="outlined"
+                            />
+                            <Typography
+                              variant="caption"
+                              sx={{ whiteSpace: 'pre-wrap' }}
+                            >
+                              {h.text}
+                            </Typography>
+                          </Stack>
+                        ))}
+                      </Stack>
+                    </Box>
+                  )}
+                </Stack>
+              </AccordionDetails>
+            </Accordion>
 
             <Typography variant="subtitle2" sx={{ mt: 1 }}>
               Identity
