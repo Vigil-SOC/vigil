@@ -64,6 +64,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      bifrost:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - deeptempo-network
@@ -147,6 +149,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      bifrost:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - deeptempo-network
@@ -171,14 +175,19 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      bifrost:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - deeptempo-network
 
-  # ─── Multi-provider LLM gateway (opt-in: --profile bifrost) ───────────────
-  # Bifrost exposes a unified OpenAI-format API that translates to
-  # OpenAI/Anthropic/Ollama/etc. Vigil routes non-Anthropic calls here.
-  # Anthropic + extended thinking bypasses Bifrost and hits the SDK directly.
+  # ─── Multi-provider LLM gateway ───────────────────────────────────────────
+  # Bifrost is the single path for all LLM traffic (GH #84 PR-B). Anthropic
+  # calls hit the /anthropic passthrough (preserves extended thinking and
+  # prompt caching); OpenAI/Ollama/etc. hit the /v1 OpenAI-format surface.
+  # Live config lives in /app/data/config.db (SQLite); config.json is used
+  # as a first-boot seed. Configure Bifrost's own exact-hash / semantic
+  # cache via its UI at http://localhost:8080.
   bifrost:
     image: maximhq/bifrost:latest
     container_name: deeptempo-bifrost
@@ -189,17 +198,19 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
     volumes:
-      - ./bifrost/config.json:/app/config.json:ro
+      - ./bifrost/config.json:/app/data/config.json:ro
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      # wget --spider does HEAD and Bifrost /health only answers GET (405 on HEAD).
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health | grep -q '\"status\":\"ok\"'"]
       interval: 15s
       timeout: 5s
       retries: 5
     restart: unless-stopped
     networks:
       - deeptempo-network
-    profiles:
-      - bifrost
 
   # PgAdmin for database management (optional, can be commented out in production)
   pgadmin:

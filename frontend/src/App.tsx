@@ -12,6 +12,7 @@ import Settings from './pages/Settings'
 import AIDecisions from './pages/AIDecisions'
 import Investigation from './pages/Investigation'
 import Analytics from './pages/Analytics'
+import CostAnalytics from './pages/CostAnalytics'
 import Skills from './pages/Skills'
 import Orchestrator from './pages/Orchestrator'
 import WorkflowBuilder from './pages/WorkflowBuilder'
@@ -46,6 +47,7 @@ function App() {
             <Route path="investigation" element={<Investigation />} />
             <Route path="timesketch" element={<Timesketch />} />
             <Route path="analytics" element={<Analytics />} />
+            <Route path="analytics/cost" element={<CostAnalytics />} />
             <Route path="skills" element={<Skills />} />
             <Route path="workflow-builder" element={<WorkflowBuilder />} />
             <Route path="orchestrator" element={<Orchestrator />} />

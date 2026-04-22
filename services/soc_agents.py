@@ -17,6 +17,12 @@ class AgentProfile:
     recommended_tools: List[str]
     max_tokens: int = 4096
     enable_thinking: bool = False
+    # GH #84 PR-D — per-agent extended-thinking budget (tokens). Only honored
+    # when ``enable_thinking`` is True. ``None`` means "inherit from the
+    # caller's default" (ClaudeService.thinking_budget or the
+    # CLAUDE_THINKING_BUDGET env var in daemon/agent_runner.py). Tune down
+    # for simple agents, up for deep-reasoning ones.
+    thinking_budget: Optional[int] = None
     # GH #89 — per-agent model override. None = inherit from
     # ai_model_configs[component_category] → ai_model_configs['chat_default'].
     model: Optional[str] = None
@@ -145,6 +151,7 @@ AGENT_CONFIGS = {
         "tools": ["list_findings", "get_finding", "create_approval_action"],
         "max_tokens": 16384,
         "thinking": True,
+        "thinking_budget": 10000,
         "extra_principles": "- Be thorough - follow systematic methodology\n- Document chain of evidence\n- Proactively suggest containment actions\n- Memory: mempalace_search all IOCs before starting; mempalace_add_drawer to wing=investigations/active-cases during; mempalace_kg_add for entity relationships found",
         "methodology": """<methodology>
 1. Retrieve data via MCP tools
@@ -165,6 +172,7 @@ AGENT_CONFIGS = {
         "tools": ["list_findings", "create_approval_action"],
         "max_tokens": 16384,
         "thinking": True,
+        "thinking_budget": 10000,
         "extra_principles": "- Think like an attacker\n- Search across all available data sources\n- Share insights to improve team hunting\n- Memory: mempalace_search in threat-intel wing before forming hypotheses; mempalace_add_drawer confirmed TTPs to wing=threat-intel/actor-profiles",
         "methodology": """<methodology>
 1. Formulate hypothesis based on TTPs
@@ -185,6 +193,7 @@ AGENT_CONFIGS = {
         "tools": ["list_findings", "create_case", "get_technique_rollup"],
         "max_tokens": 16384,
         "thinking": True,
+        "thinking_budget": 8000,
         "extra_principles": "- Find hidden connections\n- Think multi-stage attack chains\n- Reduce alert fatigue by grouping findings\n- Memory: mempalace_search all wings for entity overlap before scoring; mempalace_find_tunnels for cross-wing connections; mempalace_kg_add for new entity links",
         "methodology": """<methodology>
 1. Gather findings via list_findings
@@ -279,6 +288,7 @@ Confidence scoring:
         "tools": ["get_finding", "get_technique_rollup", "create_attack_layer"],
         "max_tokens": 16384,
         "thinking": True,
+        "thinking_budget": 6000,
         "extra_principles": "- Use specific technique IDs (T1566.001)\n- Explain attacker objectives\n- Visualize with ATT&CK layers\n- Memory: mempalace_search in threat-intel/actor-profiles for known actors using these techniques; mempalace_kg_query on technique IDs before attributing",
         "methodology": """<methodology>
 1. Retrieve findings and extract MITRE technique IDs
@@ -299,6 +309,7 @@ Confidence scoring:
         "tools": ["get_finding"],
         "max_tokens": 16384,
         "thinking": True,
+        "thinking_budget": 8000,
         "extra_principles": "- Never modify original evidence\n- Document chain of custody\n- Be meticulous - small details matter\n- Memory: mempalace_search for prior forensic findings on same hosts/hashes; mempalace_add_drawer to wing=investigations/kill-chains; mempalace_kg_add artifact relationships",
         "methodology": """<methodology>
 1. Acquire evidence via MCP tools
@@ -319,6 +330,7 @@ Confidence scoring:
         "tools": ["get_finding", "list_findings"],
         "max_tokens": 16384,
         "thinking": True,
+        "thinking_budget": 6000,
         "extra_principles": "- Focus on actionable intelligence\n- State confidence in attribution\n- Query multiple threat intel sources in parallel\n- Memory: mempalace_search in threat-intel/ioc-registry before querying external APIs (avoid duplicate lookups); mempalace_add_drawer enriched IOCs and actor attributions immediately",
         "methodology": """<methodology>
 1. Retrieve context and extract IOCs
@@ -377,6 +389,7 @@ Confidence scoring:
         ],
         "max_tokens": 16384,
         "thinking": True,
+        "thinking_budget": 10000,
         "extra_principles": "- Static before dynamic analysis\n- Use multiple sandboxes; prefer cache lookup (cape_search_hash / ha_search_hash / anyrun_search_hash) before submitting new detonations\n- Extract comprehensive IOCs\n- Memory: mempalace_search in threat-intel/ioc-registry for known file hashes before sandboxing; mempalace_add_drawer malware family and IOCs; mempalace_kg_add malware → actor relationships",
         "methodology": """<methodology>
 1. Retrieve context and extract file hashes
@@ -400,6 +413,7 @@ Confidence scoring:
         "tools": ["list_findings", "get_finding"],
         "max_tokens": 16384,
         "thinking": True,
+        "thinking_budget": 8000,
         "extra_principles": "- Understand normal traffic to spot anomalies\n- Deep dive protocol-specific attacks\n- Always look for C2 indicators\n- Memory: mempalace_search in infrastructure/network-baselines for known-good patterns; mempalace_add_drawer new C2 infrastructure to wing=threat-intel/ioc-registry",
         "methodology": """<methodology>
 1. Retrieve network findings and extract IOCs
@@ -422,6 +436,7 @@ Confidence scoring:
         "tools": ["get_finding", "create_approval_action", "list_approval_actions"],
         "max_tokens": 16384,
         "thinking": True,
+        "thinking_budget": 3000,
         "extra_principles": "- Act immediately on high-confidence threats (>=0.90)\n- Never auto-approve without strong evidence\n- Provide complete audit trail\n- Memory: mempalace_search in agent-decisions/approval-actions for prior auto-approvals on this entity; mempalace_add_drawer all approval decisions with confidence scores",
         "methodology": """<methodology>
 1. Gather data from multiple detection sources (Tempo Flow, EDR)
@@ -476,6 +491,7 @@ class SOCAgentLibrary:
             recommended_tools=cfg["tools"],
             max_tokens=cfg.get("max_tokens", 4096),
             enable_thinking=cfg.get("thinking", False),
+            thinking_budget=cfg.get("thinking_budget"),
             # GH #89 — built-ins don't ship with a pinned model; they inherit
             # from ai_model_configs[component_category] with chat_default as
             # the ultimate fallback.
@@ -512,6 +528,11 @@ class SOCAgentLibrary:
             recommended_tools=list(row.get("recommended_tools") or []),
             max_tokens=int(row.get("max_tokens") or 4096),
             enable_thinking=bool(row.get("enable_thinking") or False),
+            thinking_budget=(
+                int(row["thinking_budget"])
+                if row.get("thinking_budget") is not None
+                else None
+            ),
             # GH #89 — custom agents can pin a model; falling back to the
             # component_category (default 'investigation') if not set.
             model=(row.get("model") or None),

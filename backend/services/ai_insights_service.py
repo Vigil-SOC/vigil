@@ -13,10 +13,10 @@ import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
 import asyncio
-from anthropic import Anthropic
 from sqlalchemy.orm import Session
 
 from backend.secrets_manager import get_secret
+from services.llm_clients import create_anthropic_client
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,7 @@ class AIInsightsService:
             logger.warning("No Anthropic API key found - AI insights will use fallback mode")
             self.client = None
         else:
-            self.client = Anthropic(api_key=api_key)
+            self.client = create_anthropic_client(api_key)
         self.model = "claude-sonnet-4-20250514"  # Claude 4.5 Sonnet
 
         # In-memory cache of insights keyed by time_range.

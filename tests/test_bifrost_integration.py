@@ -1,4 +1,4 @@
-"""Bifrost sidecar smoke test (GH #88).
+"""Bifrost gateway smoke test (GH #88).
 
 Skipped by default. Runs only when BIFROST_URL is set and points at a
 live Bifrost instance. Use this as the end-to-end gate in the
@@ -25,14 +25,14 @@ pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
         not os.getenv("BIFROST_URL"),
-        reason="BIFROST_URL not set — Bifrost sidecar not running",
+        reason="BIFROST_URL not set — Bifrost gateway not running",
     ),
 ]
 
 
 @pytest.mark.asyncio
 async def test_bifrost_health_endpoint():
-    """Bifrost /health should return 200 when the sidecar is up."""
+    """Bifrost /health should return 200 when the gateway is up."""
     import httpx
 
     url = os.environ["BIFROST_URL"].rstrip("/")

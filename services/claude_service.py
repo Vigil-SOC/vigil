@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import platform
 import sys
 import threading
@@ -49,7 +50,15 @@ except ImportError as e:
     BACKEND_TOOLS_AVAILABLE = False
 
 try:
-    from anthropic import Anthropic, AsyncAnthropic
+    # Anthropic imports are retained for type references and the Bifrost-routed
+    # client helpers imported just below. Direct construction happens through
+    # `create_anthropic_client` / `create_async_anthropic_client` in
+    # services.llm_clients so every Anthropic call flows through Bifrost (GH #84).
+    from anthropic import Anthropic, AsyncAnthropic  # noqa: F401
+    from services.llm_clients import (
+        create_anthropic_client,
+        create_async_anthropic_client,
+    )
 
     ANTHROPIC_AVAILABLE = True
 except ImportError:
@@ -329,8 +338,10 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             if self.api_key and ANTHROPIC_AVAILABLE:
                 # Set longer timeout for operations that may take more than 10 minutes
                 # Default is 600 seconds (10 min), we set to 1800 seconds (30 min)
-                self.client = Anthropic(api_key=self.api_key, timeout=1800.0)
-                self.async_client = AsyncAnthropic(api_key=self.api_key, timeout=1800.0)
+                self.client = create_anthropic_client(self.api_key, timeout=1800.0)
+                self.async_client = create_async_anthropic_client(
+                    self.api_key, timeout=1800.0
+                )
                 return True
 
             return False
@@ -771,8 +782,10 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         try:
             # Set longer timeout for operations that may take more than 10 minutes
             # Default is 600 seconds (10 min), we set to 1800 seconds (30 min)
-            self.client = Anthropic(api_key=self.api_key, timeout=1800.0)
-            self.async_client = AsyncAnthropic(api_key=self.api_key, timeout=1800.0)
+            self.client = create_anthropic_client(self.api_key, timeout=1800.0)
+            self.async_client = create_async_anthropic_client(
+                self.api_key, timeout=1800.0
+            )
 
             if save:
                 # Save using secrets manager
@@ -1507,12 +1520,159 @@ Provide a structured summary preserving all critical context."""
             )
             return to_keep, len(to_summarize)
 
+    @staticmethod
+    def _apply_history_window(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Cap conversation history to the most-recent N turns (GH #84 PR-D).
+
+        Window size resolves through ``services.runtime_config`` (GH #84 PR-F):
+        Settings-UI value → ``CLAUDE_HISTORY_WINDOW`` env → 20 turns default.
+        20 turns = up to 40 messages. Applied *before* ``_prepare_context_sync``
+        so summarization only fires when even the window-trimmed history
+        overflows the model's context budget — summarization itself costs
+        tokens, so avoiding it on most calls is a net win.
+
+        The trailing user turn is always preserved; older messages are
+        dropped from the head. Set the toggle to 0 to disable.
+        """
+        from services.runtime_config import get_ai_operations_setting
+
+        window = get_ai_operations_setting("history_window", 20)
+        if window <= 0:
+            return messages
+        max_msgs = window * 2
+        if len(messages) <= max_msgs:
+            return messages
+        return messages[-max_msgs:]
+
+    @staticmethod
+    def _filter_tools_by_name(
+        tools: List[Dict[str, Any]],
+        recommended: Optional[List[str]],
+    ) -> List[Dict[str, Any]]:
+        """Keep only the tools whose name is in ``recommended`` (GH #84 PR-D).
+
+        No-op when ``recommended`` is None or empty. MCP tool names are
+        prefixed with ``{server}_`` — callers may pass either the raw name
+        (e.g. ``get_finding``) or the prefixed form; we match on both.
+        """
+        if not recommended:
+            return tools
+        wanted = set(recommended)
+        out: List[Dict[str, Any]] = []
+        for t in tools:
+            name = t.get("name", "")
+            if name in wanted:
+                out.append(t)
+                continue
+            # MCP tools arrive as "<server>_<tool_name>". Strip the first
+            # segment and retry so per-agent recommended_tools lists (which
+            # use bare names from soc_agents.py) continue to match.
+            if "_" in name and name.split("_", 1)[1] in wanted:
+                out.append(t)
+        return out
+
+    @staticmethod
+    def _apply_prompt_cache_controls(api_kwargs: Dict[str, Any]) -> None:
+        """Add Anthropic ``cache_control`` markers to system + tool blocks (GH #84 PR-C).
+
+        Mutates ``api_kwargs`` in place. The last block of the system prompt
+        and the last tool definition are tagged as ``{"type": "ephemeral"}``
+        cache breakpoints. Anthropic caches everything up to and including a
+        tagged block, so tagging these two stable prefixes lets repeated
+        calls in the same session read them from cache at ~10% the input
+        cost. Routed through Bifrost's /anthropic passthrough (GH #84 PR-B),
+        which preserves the ``cache_control`` blocks unchanged.
+
+        Kill-switch lives at Settings → AI Config → AI Operations (GH #84 PR-F)
+        and falls back to the ``ANTHROPIC_PROMPT_CACHE_ENABLED`` env var.
+        """
+        from services.runtime_config import get_ai_operations_setting
+        if not get_ai_operations_setting("prompt_cache_enabled", True):
+            return
+
+        system = api_kwargs.get("system")
+        if isinstance(system, str) and system:
+            api_kwargs["system"] = [
+                {
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ]
+        elif isinstance(system, list) and system:
+            # Already block-formatted — tag the trailing block if it's untagged.
+            last = system[-1]
+            if isinstance(last, dict) and "cache_control" not in last:
+                system[-1] = {**last, "cache_control": {"type": "ephemeral"}}
+
+        tools = api_kwargs.get("tools")
+        if isinstance(tools, list) and tools:
+            last_tool = tools[-1]
+            if isinstance(last_tool, dict) and "cache_control" not in last_tool:
+                api_kwargs["tools"] = tools[:-1] + [
+                    {**last_tool, "cache_control": {"type": "ephemeral"}}
+                ]
+
+    # GH #84 PR-D: per-tool truncation budgets. Defaults to 8k (down from the
+    # previous flat 30k); specific tools that legitimately need more — raw
+    # log fetches, bulk listings — are overridden here. Bumping a tool is
+    # cheap; forgetting to bump it just truncates the tail. Tune from the
+    # /analytics/cost dashboard once we have real data.
+    #
+    # Keys are matched against the bare tool name AND the MCP-prefixed form
+    # ("<server>_<tool>") so callers can pass either.
+    TOOL_RESPONSE_BUDGETS: Dict[str, int] = {
+        # Raw log / forensic dumps — legitimately large.
+        "get_raw_logs": 30000,
+        "timesketch_search": 30000,
+        "splunk_search": 30000,
+        # Bulk listings — medium.
+        "list_findings": 12000,
+        "search_findings": 12000,
+        "list_cases": 12000,
+        "semantic_search_findings": 12000,
+        "nearest_neighbors": 12000,
+    }
+
+    # Back-compat: historical constant some callers may import. New code
+    # should use ``TOOL_RESPONSE_BUDGETS`` or the env-configurable default.
     MAX_TOOL_RESPONSE_TOKENS = 30000
 
-    def _truncate_tool_response(self, content: str, max_tokens: int = None) -> str:
-        """Truncate a tool response if it exceeds the token budget."""
+    @classmethod
+    def _response_budget_for(cls, tool_name: Optional[str]) -> int:
+        """Lookup the truncation budget for ``tool_name`` (GH #84 PR-D).
+
+        Order of resolution:
+          1. Exact match in ``TOOL_RESPONSE_BUDGETS``
+          2. Match on the un-prefixed name (strip leading ``<server>_``)
+          3. ``TOOL_RESPONSE_BUDGET_DEFAULT`` env var
+          4. 8000 (hard default)
+        """
+        if tool_name:
+            if tool_name in cls.TOOL_RESPONSE_BUDGETS:
+                return cls.TOOL_RESPONSE_BUDGETS[tool_name]
+            if "_" in tool_name:
+                bare = tool_name.split("_", 1)[1]
+                if bare in cls.TOOL_RESPONSE_BUDGETS:
+                    return cls.TOOL_RESPONSE_BUDGETS[bare]
+        # GH #84 PR-F: Settings-UI value → env var → hard default.
+        from services.runtime_config import get_ai_operations_setting
+        return get_ai_operations_setting("tool_response_budget_default", 8000)
+
+    def _truncate_tool_response(
+        self,
+        content: str,
+        tool_name: Optional[str] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """Truncate a tool response if it exceeds the token budget.
+
+        Budget resolution (GH #84 PR-D): explicit ``max_tokens`` wins; else
+        the per-tool budget from ``TOOL_RESPONSE_BUDGETS``; else the
+        ``TOOL_RESPONSE_BUDGET_DEFAULT`` env var; else 8000.
+        """
         if max_tokens is None:
-            max_tokens = self.MAX_TOOL_RESPONSE_TOKENS
+            max_tokens = self._response_budget_for(tool_name)
         estimated_tokens = len(content) // 4
         if estimated_tokens <= max_tokens:
             return content
@@ -1894,7 +2054,9 @@ Provide a structured summary preserving all critical context."""
                         content_str = json.dumps(result)
                     else:
                         content_str = str(result)
-                    content_str = self._truncate_tool_response(content_str)
+                    content_str = self._truncate_tool_response(
+                        content_str, tool_name=tool_name
+                    )
 
                     tool_results.append(
                         {
@@ -1980,7 +2142,7 @@ Provide a structured summary preserving all critical context."""
                                     and block.get("type") == "text"
                                 ):
                                     block["text"] = self._truncate_tool_response(
-                                        block["text"]
+                                        block["text"], tool_name=tool_name
                                     )
 
                             tool_results.append(
@@ -2061,6 +2223,7 @@ Provide a structured summary preserving all critical context."""
         session_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         investigation_id: Optional[str] = None,
+        recommended_tools: Optional[List[str]] = None,
     ) -> Optional[str]:
         """
         Send a chat message to Claude.
@@ -2148,6 +2311,15 @@ Provide a structured summary preserving all critical context."""
                 logger.debug(
                     f"🔧 MCP tools enabled: {len(self.mcp_tools)} tools available"
                 )
+            # GH #84 PR-D: filter to the caller's recommended set so each
+            # agent ships a stable, smaller tool block — both fewer input
+            # tokens and a more cacheable prefix for PR-C's cache_control.
+            if recommended_tools:
+                before = len(tools)
+                tools = self._filter_tools_by_name(tools, recommended_tools)
+                logger.debug(
+                    f"🎯 Filtered tools by recommended_tools: {before} → {len(tools)}"
+                )
             if not tools:
                 tools = None
 
@@ -2167,6 +2339,10 @@ Provide a structured summary preserving all critical context."""
                     else self.thinking_budget
                 )
                 thinking_config = {"type": "enabled", "budget_tokens": budget}
+
+            # GH #84 PR-D: trim to a sliding window so summarization (which
+            # itself costs tokens) only fires on genuinely long investigations.
+            messages = self._apply_history_window(messages)
 
             # Auto-summarize if context is too long (preserves context instead of dropping)
             messages, _summarized = self._prepare_context_sync(
@@ -2188,6 +2364,9 @@ Provide a structured summary preserving all critical context."""
             if thinking_config:
                 api_kwargs["thinking"] = thinking_config
                 logger.info(f"💭 Thinking config: {thinking_config}")
+
+            # GH #84 PR-C: tag system prompt + last tool block for prompt caching.
+            self._apply_prompt_cache_controls(api_kwargs)
 
             logger.debug(f"🚀 Making API call with {len(messages)} messages")
             logger.debug(f"📋 API kwargs keys: {list(api_kwargs.keys())}")
@@ -2382,6 +2561,11 @@ Provide a structured summary preserving all critical context."""
                     # IMPORTANT: Include thinking config in follow-up request too!
                     if thinking_config:
                         api_kwargs["thinking"] = thinking_config
+
+                    # GH #84 PR-C: cache markers for the follow-up rounds too.
+                    # System + tools are stable across rounds so the same
+                    # cache entry keeps getting hit.
+                    self._apply_prompt_cache_controls(api_kwargs)
 
                     # Loop to handle multiple rounds of tool use (max 5 rounds)
                     for tool_round in range(5):
@@ -2635,6 +2819,7 @@ Provide a structured summary preserving all critical context."""
         session_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         investigation_id: Optional[str] = None,
+        recommended_tools: Optional[List[str]] = None,
     ) -> AsyncIterator[str]:
         """
         Send a chat message to Claude with streaming response.
@@ -2710,6 +2895,9 @@ Provide a structured summary preserving all critical context."""
             if self.use_mcp_tools and self.mcp_tools:
                 tools.extend(self.mcp_tools)
                 logger.debug(f"🔧 Stream with {len(self.mcp_tools)} MCP tools")
+            # GH #84 PR-D: per-agent filter (see chat() for rationale).
+            if recommended_tools:
+                tools = self._filter_tools_by_name(tools, recommended_tools)
             if not tools:
                 tools = None
 
@@ -2729,6 +2917,9 @@ Provide a structured summary preserving all critical context."""
                     else self.thinking_budget
                 )
                 thinking_config = {"type": "enabled", "budget_tokens": budget}
+
+            # GH #84 PR-D: sliding window before summarization (see chat() for rationale).
+            messages = self._apply_history_window(messages)
 
             # Auto-summarize if context is too long (preserves context instead of dropping)
             messages, summarized_count = await self._prepare_context_async(
@@ -3509,7 +3700,7 @@ Provide only the JSON, no additional text."""
                     raw = json.dumps(result.get("content", result))
                 else:
                     raw = str(result)
-                return self._truncate_tool_response(raw)
+                return self._truncate_tool_response(raw, tool_name=actual_tool_name)
         except Exception as e:
             logger.error(f"MCP tool execution error: {e}")
             return f"Error: {str(e)}"

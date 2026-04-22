@@ -928,6 +928,72 @@ async def set_postgresql_config(config: PostgreSQLConfig):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+class AIOperationsSettingsConfig(BaseModel):
+    """Runtime cost/perf toggles introduced across GH #84 PR-C/PR-D/PR-F.
+
+    Persisted in ``system_config`` at key ``ai_operations.settings``.
+    Consumed via ``services.runtime_config.get_ai_operations_setting``
+    which layers DB → env var → default. Exposed in the Settings UI
+    (AI Config → AI Operations) so operators can flip values live
+    without restarting the backend / daemon / llm-worker.
+    """
+    prompt_cache_enabled: bool = True
+    history_window: int = 20
+    tool_response_budget_default: int = 8000
+    thinking_budget: int = 10000
+
+
+AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()
+
+
+@router.get("/ai-operations")
+async def get_ai_operations_config():
+    """Return the current AI-operations toggles (defaults merged with DB overrides)."""
+    try:
+        config_service = get_config_service()
+        value = config_service.get_system_config("ai_operations.settings")
+        if value:
+            return {**AI_OPERATIONS_DEFAULTS, **value}
+        return AI_OPERATIONS_DEFAULTS
+    except Exception as e:
+        logger.error(f"Error getting AI operations config: {e}")
+        return AI_OPERATIONS_DEFAULTS
+
+
+@router.post("/ai-operations")
+async def set_ai_operations_config(config: AIOperationsSettingsConfig):
+    """Persist the AI-operations toggles and invalidate the in-process cache."""
+    try:
+        config_data = config.model_dump()
+        config_service = get_config_service(user_id="web_ui")
+        success = config_service.set_system_config(
+            key="ai_operations.settings",
+            value=config_data,
+            description="Runtime AI cost/perf toggles (GH #84 PR-F)",
+            config_type="ai_operations",
+            change_reason="Updated via Settings UI",
+        )
+        if not success:
+            raise HTTPException(
+                status_code=500, detail="Failed to save AI operations config"
+            )
+        # Drop the in-process cache so the next read reflects the new values.
+        # Note: this only clears THIS process's cache. The daemon / llm-worker
+        # processes will pick up the new values on their next cache-TTL miss
+        # (default 60s) — acceptable since these are rarely-flipped toggles.
+        try:
+            from services.runtime_config import clear_cache
+            clear_cache()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"runtime_config cache clear skipped: {exc}")
+        return {"success": True, "message": "AI operations config updated"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting AI operations config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 class OrchestratorSettingsConfig(BaseModel):
     """Orchestrator configuration for autonomous investigations."""
     enabled: bool = False

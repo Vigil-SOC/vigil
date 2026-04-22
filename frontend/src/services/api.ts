@@ -658,6 +658,15 @@ export const configApi = {
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),
 
+  // GH #84 PR-F — runtime AI cost/perf toggles
+  getAIOperations: () => api.get('/config/ai-operations'),
+  setAIOperations: (data: {
+    prompt_cache_enabled: boolean
+    history_window: number
+    tool_response_budget_default: number
+    thinking_budget: number
+  }) => api.post('/config/ai-operations', data),
+
   getOrchestrator: () => api.get('/config/orchestrator'),
   setOrchestrator: (data: {
     enabled: boolean

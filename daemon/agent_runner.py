@@ -15,6 +15,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+
+def _default_thinking_budget() -> int:
+    """Default extended-thinking budget for the autonomous runner (GH #84 PR-D).
+
+    The runner doesn't know which sub-agent is running and so can't consult
+    per-agent ``AgentProfile.thinking_budget`` values. It uses this
+    process-wide default (runtime-configurable via Settings UI, GH #84 PR-F)
+    instead. Per-agent overrides still apply when the caller has agent
+    context (e.g. ClaudeService.chat).
+    """
+    from services.runtime_config import get_ai_operations_setting
+    return get_ai_operations_setting("thinking_budget", 10000)
+
 from daemon.config import OrchestratorConfig
 from daemon.plan_generator import WORKFLOW_STEP_MAP, DEFAULT_STEPS
 from daemon.workdir import WorkdirManager
@@ -28,33 +41,41 @@ try:
 except Exception:
     _tracer = None  # type: ignore[assignment]
 
-# Deprecated legacy aliases — retained so out-of-tree imports don't crash.
-# New code should use `compute_call_cost()` below, which resolves per-provider
-# rates via services.model_registry (GH #89).
-SONNET_INPUT_COST = 3.0 / 1_000_000
-SONNET_OUTPUT_COST = 15.0 / 1_000_000
-
-
 def compute_call_cost(
     model_id: Optional[str],
     provider_type: Optional[str],
     input_tokens: int,
     output_tokens: int,
 ) -> float:
-    """Compute USD cost of a single LLM call (GH #89).
+    """Compute USD cost of a single LLM call.
 
-    Looks up per-token rates from services.model_registry.get_cost_rates().
-    Falls back to Sonnet pricing when the model/provider can't be determined
-    so daemon cost tracking never silently zeroes out for known Anthropic usage.
+    Looks up per-token rates from ``services.model_registry.get_cost_rates()``.
+
+    GH #84 PR-E removed the previous Sonnet-pricing fallback: with per-component
+    model selection (#89) active, silently billing a GPT-4o or Ollama call at
+    Sonnet rates would misattribute cost. On an unresolved model/provider we
+    return 0.0 and log at WARNING so the call surfaces as a visible zero on
+    the ``/analytics/cost`` dashboard rather than hiding inside a misattributed
+    bucket.
     """
-    if model_id and provider_type:
-        try:
-            from services.model_registry import get_registry
-            in_rate, out_rate = get_registry().get_cost_rates(model_id, provider_type)
-            return input_tokens * in_rate + output_tokens * out_rate
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("cost lookup fell through to Sonnet defaults: %s", exc)
-    return input_tokens * SONNET_INPUT_COST + output_tokens * SONNET_OUTPUT_COST
+    if not model_id or not provider_type:
+        logger.warning(
+            "compute_call_cost: missing model_id/provider_type (got %r / %r); "
+            "recording cost as $0.00 (GH #84 PR-E)",
+            model_id, provider_type,
+        )
+        return 0.0
+    try:
+        from services.model_registry import get_registry
+        in_rate, out_rate = get_registry().get_cost_rates(model_id, provider_type)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "compute_call_cost: model_registry lookup failed for %s/%s (%s); "
+            "recording cost as $0.00",
+            provider_type, model_id, exc,
+        )
+        return 0.0
+    return input_tokens * in_rate + output_tokens * out_rate
 
 TOOL_TIERS = {
     "safe": [
@@ -215,7 +236,7 @@ class AgentRunner:
                     use_mcp_tools=True,
                     use_agent_sdk=False,
                     enable_thinking=True,
-                    thinking_budget=8000,
+                    thinking_budget=_default_thinking_budget(),
                 )
                 logger.info("AgentRunner: Claude service initialized")
             except Exception as e:
@@ -605,7 +626,8 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         max_turns = 25
 
         thinking_enabled = getattr(self._claude_service, 'enable_thinking', False) if self._claude_service else True
-        thinking_budget = getattr(self._claude_service, 'thinking_budget', 8000) if self._claude_service else 8000
+        _fallback = _default_thinking_budget()
+        thinking_budget = getattr(self._claude_service, 'thinking_budget', _fallback) if self._claude_service else _fallback
         max_tok = max(16000, thinking_budget + 4096) if thinking_enabled else 4096
 
         for turn in range(max_turns):

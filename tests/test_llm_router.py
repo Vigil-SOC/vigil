@@ -65,8 +65,9 @@ def _openai_spec() -> ProviderSpec:
 # ---------------------------------------------------------------------------
 
 
-def test_path_anthropic_with_thinking_is_direct():
-    assert select_path(_anthropic_spec(), enable_thinking=True) == "anthropic_direct"
+def test_path_anthropic_with_thinking_uses_bifrost():
+    """GH #84 PR-B: all Anthropic traffic goes through Bifrost, even thinking."""
+    assert select_path(_anthropic_spec(), enable_thinking=True) == "bifrost"
 
 
 def test_path_anthropic_without_thinking_uses_bifrost():
@@ -139,22 +140,34 @@ async def test_dispatch_bifrost_for_ollama():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_anthropic_direct_with_thinking():
-    router = LLMRouter()
+async def test_dispatch_anthropic_with_thinking_routes_through_bifrost():
+    """GH #84 PR-B: Anthropic thinking calls use Bifrost's /anthropic passthrough.
+
+    The Anthropic SDK is still the client the router builds, but its
+    ``base_url`` points at Bifrost so extended thinking + prompt caching
+    round-trip unchanged while Bifrost handles caching + observability.
+    """
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
     thinking_block = SimpleNamespace(type="thinking", thinking="inner reasoning")
     text_block = SimpleNamespace(type="text", text="the answer")
     fake_resp = SimpleNamespace(
         content=[thinking_block, text_block],
         model="claude-sonnet-4-5-20250929",
-        usage=SimpleNamespace(input_tokens=12, output_tokens=34),
+        usage=SimpleNamespace(
+            input_tokens=12,
+            output_tokens=34,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        ),
     )
     mock_client = MagicMock()
     mock_client.messages.create = AsyncMock(return_value=fake_resp)
 
+    # Router builds its Anthropic client via services.llm_clients.create_async_anthropic_client,
+    # which in turn instantiates anthropic.AsyncAnthropic with base_url=<bifrost>/anthropic.
     with patch("anthropic.AsyncAnthropic", return_value=mock_client) as ac_ctor, \
-         patch(
-             "services.llm_router.get_secret", return_value="sk-ant-fake"
-         ):
+         patch("services.llm_router.get_secret", return_value="sk-ant-fake"), \
+         patch.dict("os.environ", {"BIFROST_URL": "http://test-bifrost:8080"}):
         out = await router.dispatch(
             provider=_anthropic_spec(),
             messages=[{"role": "user", "content": "ponder"}],
@@ -162,18 +175,24 @@ async def test_dispatch_anthropic_direct_with_thinking():
             thinking_budget=4096,
         )
 
-    ac_ctor.assert_called_once_with(api_key="sk-ant-fake", timeout=1800.0)
+    ac_ctor.assert_called_once_with(
+        api_key="sk-ant-fake",
+        base_url="http://test-bifrost:8080/anthropic",
+        timeout=1800.0,
+    )
     kwargs = mock_client.messages.create.call_args.kwargs
     assert kwargs["thinking"] == {"type": "enabled", "budget_tokens": 4096}
     assert kwargs["model"] == "claude-sonnet-4-5-20250929"
     assert kwargs["messages"] == [{"role": "user", "content": "ponder"}]
 
-    assert out["path"] == "anthropic_direct"
+    assert out["path"] == "bifrost"
     assert out["provider"] == "anthropic"
     assert out["content"] == "the answer"
     assert out["thinking"] == "inner reasoning"
     assert out["input_tokens"] == 12
     assert out["output_tokens"] == 34
+    assert out["cache_read_tokens"] == 0
+    assert out["cache_creation_tokens"] == 0
 
 
 @pytest.mark.asyncio
@@ -262,9 +281,9 @@ async def test_non_default_anthropic_with_thinking_dispatches_via_router(monkeyp
     )
 
     mock_router = MagicMock()
-    mock_router.select_path = MagicMock(return_value="anthropic_direct")
+    mock_router.select_path = MagicMock(return_value="bifrost")
     mock_router.dispatch = AsyncMock(return_value={
-        "content": "ok", "path": "anthropic_direct", "provider": "anthropic",
+        "content": "ok", "path": "bifrost", "provider": "anthropic",
         "input_tokens": 1, "output_tokens": 1, "model": "x",
     })
 
@@ -320,7 +339,7 @@ async def test_default_anthropic_with_thinking_still_falls_back():
     )
 
     mock_router = MagicMock()
-    mock_router.select_path = MagicMock(return_value="anthropic_direct")
+    mock_router.select_path = MagicMock(return_value="bifrost")
     mock_router.dispatch = AsyncMock()
 
     import asyncio

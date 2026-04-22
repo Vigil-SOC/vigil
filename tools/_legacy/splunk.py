@@ -2,6 +2,8 @@ import asyncio
 import json
 import logging
 import os
+import sys
+from pathlib import Path
 from mcp.server.models import InitializationOptions
 import mcp.types as types
 from mcp.server import NotificationOptions, Server
@@ -12,6 +14,32 @@ try:
     load_dotenv()
 except ImportError:
     pass
+
+# GH #84 PR-F follow-up: prefer secrets_manager over direct env reads so
+# SPLUNK_* credentials can be rotated without editing .env. The MCP server
+# spawns as a subprocess from the repo root, so we need to add backend/ to
+# sys.path to find secrets_manager. If the import fails (e.g. the server is
+# running outside the repo), we fall back to os.environ — the keyring /
+# dotenv lookups just get skipped.
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_BACKEND_DIR = _REPO_ROOT / "backend"
+if _BACKEND_DIR.is_dir() and str(_BACKEND_DIR) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_DIR))
+
+try:
+    from secrets_manager import get_secret as _get_secret  # type: ignore
+except Exception:  # noqa: BLE001
+    _get_secret = None  # type: ignore
+
+
+def _read_credential(key: str, default: str | None = None) -> str | None:
+    """Read a SPLUNK_* credential via secrets_manager, falling back to env."""
+    if _get_secret is not None:
+        value = _get_secret(key)
+        if value is not None:
+            return value
+    return os.environ.get(key, default)
+
 
 logger = logging.getLogger(__name__)
 server = Server("splunk")
@@ -32,14 +60,14 @@ def result(data):
 def get_splunk_service():
     try:
         from services.splunk_service import SplunkService
-        url = os.environ.get("SPLUNK_URL")
+        url = _read_credential("SPLUNK_URL")
         if not url:
             return None
         return SplunkService(
             server_url=url,
-            username=os.environ.get("SPLUNK_USERNAME"),
-            password=os.environ.get("SPLUNK_PASSWORD"),
-            verify_ssl=os.environ.get("SPLUNK_VERIFY_SSL", "false").lower() == "true"
+            username=_read_credential("SPLUNK_USERNAME"),
+            password=_read_credential("SPLUNK_PASSWORD"),
+            verify_ssl=(_read_credential("SPLUNK_VERIFY_SSL", "false") or "false").lower() == "true"
         )
     except Exception:
         return None

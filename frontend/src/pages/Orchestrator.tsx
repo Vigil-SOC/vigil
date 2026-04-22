@@ -264,6 +264,10 @@ export default function Orchestrator() {
   }
 
   const handleCardClick = (label: string) => {
+    if (label === 'Total Cost') {
+      navigate('/analytics/cost')
+      return
+    }
     const filters = CARD_FILTERS[label]
     if (!filters) {
       setStatusFilter(null)

@@ -69,6 +69,7 @@ import SkillsTab from '../components/settings/SkillsTab'
 import KafkaTab from '../components/settings/KafkaTab'
 import LLMProvidersTab from '../components/settings/LLMProvidersTab'
 import ModelAssignmentTab from '../components/settings/ModelAssignmentTab'
+import AIOperationsTab from '../components/settings/AIOperationsTab'
 
 interface TabPanelProps {
   children?: React.ReactNode
@@ -886,6 +887,9 @@ export default function Settings() {
             </Box>
             <Box sx={{ mt: 4 }}>
               <LLMProvidersTab setMessage={setMessage} />
+            </Box>
+            <Box sx={{ mt: 4, maxWidth: 1100 }}>
+              <AIOperationsTab setMessage={setMessage} />
             </Box>
           </TabPanel>
         )

@@ -1,17 +1,24 @@
-"""LLM router: decides whether a call goes through Bifrost or the direct SDK.
+"""LLM router: dispatches calls through the Bifrost gateway.
 
-Vigil's multi-provider support (GH #88) relies on Bifrost as a unified
-gateway for OpenAI/Ollama/etc. Anthropic + extended thinking bypasses
-Bifrost because extended-thinking and native prompt caching don't
-round-trip cleanly through Bifrost's OpenAI-format surface today.
+Per GH #84 PR-B, Vigil routes **all** LLM traffic through Bifrost —
+Anthropic, OpenAI, Ollama, and any future providers — so that caching,
+cost tracking, and budget enforcement live in exactly one place.
+
+Anthropic traffic (including extended-thinking calls) hits Bifrost's
+Anthropic-compatible passthrough at ``{BIFROST_URL}/anthropic`` using
+the regular Anthropic SDK with a swapped ``base_url``. Non-Anthropic
+providers use Bifrost's OpenAI-format surface at ``{BIFROST_URL}/v1``.
+
+Before this PR ships, ``scripts/bifrost_capability_probe.py`` must pass
+against a live Bifrost — it verifies extended thinking, ``cache_control``
+blocks, and cache-token usage counters round-trip unchanged.
 
 Usage::
 
-    from services.llm_router import LLMRouter, DispatchPath
+    from services.llm_router import LLMRouter
 
     router = LLMRouter()
     provider = router.resolve_provider(provider_id)   # DB lookup
-    path = router.select_path(provider, enable_thinking=True)  # "anthropic_direct"|"bifrost"
     result = await router.dispatch(messages=..., provider=provider, enable_thinking=True)
 """
 
@@ -42,7 +49,10 @@ except Exception:  # noqa: BLE001
     get_secret = None  # type: ignore
 
 
-DispatchPath = Literal["anthropic_direct", "bifrost"]
+# DispatchPath retained as a single-value literal so downstream code that
+# branches on it keeps working without edits. If we add another gateway
+# later, this grows back into a union.
+DispatchPath = Literal["bifrost"]
 
 
 @dataclass(frozen=True)
@@ -65,33 +75,25 @@ def _bifrost_url() -> str:
     return os.getenv("BIFROST_URL", "http://bifrost:8080").rstrip("/")
 
 
-def select_path(
-    provider: ProviderSpec, *, enable_thinking: bool = False
-) -> DispatchPath:
-    """Decide which dispatch path a request should take.
-
-    Rules (see docker/bifrost/README.md):
-      - anthropic + thinking → direct SDK (extended thinking isn't routed)
-      - everything else → Bifrost
-    """
-    if provider.provider_type == "anthropic" and enable_thinking:
-        return "anthropic_direct"
+def select_path(provider: ProviderSpec, *, enable_thinking: bool = False) -> DispatchPath:
+    """All traffic goes through Bifrost; kept for backwards-compatible callers."""
+    del provider, enable_thinking
     return "bifrost"
 
 
 class LLMRouter:
-    """Thin router that dispatches to Bifrost (openai SDK) or direct Anthropic.
+    """Dispatches chat completions through the Bifrost gateway.
 
-    The router does NOT own the DB session or Anthropic client. Callers
-    construct a ProviderSpec from an `LLMProviderConfig` row (e.g. via
-    ``provider_spec_from_row``) and pass it in. This keeps the worker hot
-    path free of DB imports and makes unit-testing trivial.
+    The router does NOT own the DB session. Callers construct a
+    ``ProviderSpec`` from an ``LLMProviderConfig`` row (via
+    ``provider_spec_from_row``) and pass it in. This keeps the worker
+    hot path free of DB imports and makes unit-testing trivial.
     """
 
     def __init__(self, bifrost_url: Optional[str] = None):
         self.bifrost_url = (bifrost_url or _bifrost_url()).rstrip("/")
 
-    # ---- path selection (pure) -------------------------------------------
+    # ---- path selection --------------------------------------------------
 
     @staticmethod
     def select_path(
@@ -114,15 +116,14 @@ class LLMRouter:
         enable_thinking: bool = False,
         thinking_budget: int = 10000,
     ) -> Dict[str, Any]:
-        """Send a chat completion via the appropriate path.
+        """Send a chat completion via Bifrost.
 
-        Returns a dict with at least ``content``, ``model``, ``input_tokens``,
-        ``output_tokens``, ``provider``, ``path``.
+        Anthropic calls hit Bifrost's ``/anthropic`` passthrough so
+        extended thinking and native prompt caching round-trip intact.
+        Other providers use Bifrost's OpenAI-format ``/v1`` endpoint.
         """
-        path = self.select_path(provider, enable_thinking=enable_thinking)
         model = model or provider.default_model
-
-        if path == "anthropic_direct":
+        if provider.provider_type == "anthropic":
             return await self._dispatch_anthropic(
                 provider=provider,
                 messages=messages,
@@ -133,7 +134,7 @@ class LLMRouter:
                 enable_thinking=enable_thinking,
                 thinking_budget=thinking_budget,
             )
-        return await self._dispatch_bifrost(
+        return await self._dispatch_bifrost_openai(
             provider=provider,
             messages=messages,
             system_prompt=system_prompt,
@@ -145,7 +146,7 @@ class LLMRouter:
 
     # ---- backends --------------------------------------------------------
 
-    async def _dispatch_bifrost(
+    async def _dispatch_bifrost_openai(
         self,
         *,
         provider: ProviderSpec,
@@ -202,7 +203,7 @@ class LLMRouter:
         enable_thinking: bool,
         thinking_budget: int,
     ) -> Dict[str, Any]:
-        from anthropic import AsyncAnthropic  # lazy
+        from services.llm_clients import create_async_anthropic_client
 
         api_key: Optional[str] = None
         if provider.api_key_ref and get_secret is not None:
@@ -218,7 +219,10 @@ class LLMRouter:
                 f"Anthropic provider '{provider.provider_id}' has no resolvable API key"
             )
 
-        client = AsyncAnthropic(api_key=api_key, timeout=1800.0)
+        # Anthropic traffic routes through Bifrost's /anthropic passthrough,
+        # which preserves extended thinking + cache_control. See
+        # scripts/bifrost_capability_probe.py for the merge-blocking verification.
+        client = create_async_anthropic_client(api_key, timeout=1800.0)
         kwargs: Dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
@@ -257,8 +261,14 @@ class LLMRouter:
             "model": resp.model,
             "input_tokens": getattr(usage, "input_tokens", 0) if usage else 0,
             "output_tokens": getattr(usage, "output_tokens", 0) if usage else 0,
+            "cache_read_tokens": (
+                getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+            ),
+            "cache_creation_tokens": (
+                getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
+            ),
             "provider": provider.provider_type,
-            "path": "anthropic_direct",
+            "path": "bifrost",
         }
 
 

@@ -301,15 +301,12 @@ async def _maybe_dispatch_via_router(
     """Return a router result dict, or None if the caller should fall back
     to the legacy ClaudeService path.
 
-    The router path is taken when:
-      - provider_id is explicitly set (non-None), AND
-      - either the resolved provider's path is "bifrost",
-        or it's "anthropic_direct" but the provider is a non-default
-        Anthropic row (different api_key_ref than the shared ClaudeService).
-
-    For the bare "anthropic_direct" case on the default provider we still
-    return None so the existing ClaudeService path handles it (prompt
-    caching, backend-tool loop, session management all live there).
+    All traffic routes through Bifrost (GH #84 PR-B). The router is taken
+    when ``provider_id`` is explicitly set and the provider is anything
+    other than the default Anthropic row with thinking enabled — that one
+    case still falls back to ClaudeService so we keep its full tool-use
+    loop, context reduction, and session management (which also routes
+    through Bifrost under the hood via ``services.llm_clients``).
     """
     if provider_id is None:
         return None
@@ -330,14 +327,15 @@ async def _maybe_dispatch_via_router(
         logger.warning("Provider %s not found; falling back to ClaudeService", provider_id)
         return None
 
-    path = router.select_path(spec, enable_thinking=enable_thinking)
-    if path == "anthropic_direct":
-        # Only hand off to the shared ClaudeService when this is the default
-        # Anthropic account. A non-default Anthropic provider has its own
-        # api_key_ref and must dispatch through the router so _dispatch_anthropic
-        # resolves that per-provider secret (not CLAUDE_API_KEY).
-        if _is_default_anthropic_spec(spec):
-            return None
+    # All traffic now routes through Bifrost (GH #84 PR-B). We still hand off
+    # default-anthropic-with-thinking calls to the shared ClaudeService so
+    # they get its full tool-use loop, context reduction, and session
+    # management — that logic lives in ClaudeService, not here. Non-default
+    # Anthropic providers have their own api_key_ref and must dispatch through
+    # the router so _dispatch_anthropic resolves that per-provider secret
+    # (not CLAUDE_API_KEY).
+    if enable_thinking and _is_default_anthropic_spec(spec):
+        return None
 
     rate_limiter: asyncio.Semaphore = ctx["rate_limiter"]
     await rate_limiter.acquire()

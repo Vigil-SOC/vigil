@@ -116,8 +116,9 @@ export default function LLMProvidersTab({ setMessage }: Props) {
         </Button>
       </Box>
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-        Configure additional Anthropic, OpenAI, or Ollama providers. Non-Anthropic traffic
-        is routed through the Bifrost gateway; Anthropic with extended thinking uses the SDK directly.
+        Configure additional Anthropic, OpenAI, or Ollama providers. All traffic is routed through
+        the Bifrost gateway — Anthropic calls hit the /anthropic passthrough so extended thinking and
+        prompt caching round-trip unchanged.
       </Typography>
 
       {loading ? (

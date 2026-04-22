@@ -1,8 +1,11 @@
 {
+  "$schema": "https://www.getbifrost.ai/schema",
   "providers": {
     "anthropic": {
       "keys": [
         {
+          "name": "default-anthropic-key",
+          "weight": 1,
           "value": "env.ANTHROPIC_API_KEY",
           "models": [
             "claude-sonnet-4-20250514",
@@ -15,6 +18,8 @@
     "openai": {
       "keys": [
         {
+          "name": "default-openai-key",
+          "weight": 1,
           "value": "env.OPENAI_API_KEY",
           "models": [
             "gpt-4",
@@ -23,15 +28,6 @@
             "gpt-4o-mini"
           ]
         }
-      ]
-    },
-    "ollama": {
-      "base_url": "env.OLLAMA_URL",
-      "models": [
-        "llama3.1:8b",
-        "llama3.1:70b",
-        "mistral:latest",
-        "qwen2.5:latest"
       ]
     }
   }
