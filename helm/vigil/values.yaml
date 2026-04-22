@@ -515,6 +515,27 @@ config:
 extraConfig: {}
 
 # -----------------------------------------------------------------------------
+# Observability (issue #112, #115)
+# -----------------------------------------------------------------------------
+observability:
+  # Prometheus Operator ServiceMonitor — requires the monitoring.coreos.com
+  # CRD to be installed on the cluster (Prometheus Operator / kube-prometheus-stack).
+  # Daemon must also have config.VIGIL_OTEL_ENABLED=true to actually serve
+  # metrics; otherwise scrapes will fail with connection refused.
+  serviceMonitor:
+    enabled: false
+    # Namespace to deploy the ServiceMonitor into. Empty = Release namespace.
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels applied to the ServiceMonitor — set these to match your
+    # Prometheus instance's serviceMonitorSelector. Common pattern for
+    # kube-prometheus-stack: release: kube-prometheus-stack
+    labels: {}
+    relabelings: []
+    metricRelabelings: []
+
+# -----------------------------------------------------------------------------
 # NetworkPolicies (issue #111)
 # -----------------------------------------------------------------------------
 # Off by default — flipping to true on an existing cluster may break traffic

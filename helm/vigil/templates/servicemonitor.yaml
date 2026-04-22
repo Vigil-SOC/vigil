@@ -1,0 +1,46 @@
+{{- if and .Values.daemon.enabled .Values.observability.serviceMonitor.enabled }}
+{{- /*
+Prometheus Operator ServiceMonitor for the daemon's /metrics endpoint.
+
+The metrics port only serves traffic when config.VIGIL_OTEL_ENABLED=true.
+If OTEL is off, Prometheus will get connection-refused — enable OTEL or
+disable this ServiceMonitor.
+
+The CRD lives in monitoring.coreos.com/v1; clusters without the Prometheus
+Operator should leave observability.serviceMonitor.enabled=false.
+*/ -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "vigil.daemon.fullname" . }}
+  {{- with .Values.observability.serviceMonitor.namespace }}
+  namespace: {{ . }}
+  {{- else }}
+  namespace: {{ $.Release.Namespace }}
+  {{- end }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "daemon") | nindent 4 }}
+    {{- with .Values.observability.serviceMonitor.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "daemon") | nindent 6 }}
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: {{ .Values.observability.serviceMonitor.interval | default "30s" }}
+      scrapeTimeout: {{ .Values.observability.serviceMonitor.scrapeTimeout | default "10s" }}
+      {{- with .Values.observability.serviceMonitor.relabelings }}
+      relabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.observability.serviceMonitor.metricRelabelings }}
+      metricRelabelings:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
