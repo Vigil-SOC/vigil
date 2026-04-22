@@ -23,9 +23,16 @@ export default function MainLayout() {
     configApi.getIntegrations()
       .then(res => setEnabledIntegrations(res.data?.enabled_integrations || []))
       .catch(() => setEnabledIntegrations([]))
-    orchestratorApi.getStatus()
-      .then(res => setOrchestratorEnabled(res.data?.enabled ?? false))
-      .catch(() => setOrchestratorEnabled(false))
+
+    // Poll orchestrator status so the Auto Ops nav item appears/disappears
+    // within a few seconds of the user toggling it in Settings > Auto Investigate.
+    const pollStatus = () =>
+      orchestratorApi.getStatus()
+        .then(res => setOrchestratorEnabled(res.data?.enabled ?? false))
+        .catch(() => { /* leave previous value */ })
+    pollStatus()
+    const id = setInterval(pollStatus, 10_000)
+    return () => clearInterval(id)
   }, [])
 
   const handleInvestigate = (_findingId: string, agentId: string, prompt: string, title: string) => {
@@ -38,17 +45,18 @@ export default function MainLayout() {
   }
 
   return (
-    <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: 'background.default' }}>
+    <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden', bgcolor: 'background.default' }}>
       <NavigationRail enabledIntegrations={enabledIntegrations} orchestratorEnabled={orchestratorEnabled} />
-      
+
       <Box
         component="main"
         sx={{
           flex: 1,
           ml: `${COLLAPSED_WIDTH}px`,
-          minHeight: '100vh',
+          height: '100vh',
           display: 'flex',
           flexDirection: 'column',
+          minWidth: 0,
         }}
       >
         <Box
@@ -90,7 +98,7 @@ export default function MainLayout() {
           </Tooltip>
         </Box>
 
-        <Box sx={{ flex: 1, p: 3, pt: 2 }}>
+        <Box sx={{ flex: 1, p: 3, pt: 2, minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'auto' }}>
           <Outlet context={{ handleInvestigate }} />
         </Box>
       </Box>

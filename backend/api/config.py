@@ -1,11 +1,12 @@
 """Configuration API endpoints."""
 
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from pathlib import Path
 import json
 import logging
+import os
 
 # Import new secrets manager
 import sys
@@ -996,7 +997,7 @@ async def set_ai_operations_config(config: AIOperationsSettingsConfig):
 
 class OrchestratorSettingsConfig(BaseModel):
     """Orchestrator configuration for autonomous investigations."""
-    enabled: bool = False
+    enabled: bool = True
     dry_run: bool = False
     auto_assign_findings: bool = True
     auto_assign_severities: List[str] = ["critical", "high"]
@@ -1077,5 +1078,80 @@ async def set_orchestrator_config(config: OrchestratorSettingsConfig):
         raise
     except Exception as e:
         logger.error(f"Error setting orchestrator config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---- Darktrace webhook receiver config ----
+class DarktraceConfig(BaseModel):
+    """Darktrace webhook receiver configuration.
+
+    Non-secret fields live in ``system_config['darktrace.settings']``; the
+    HMAC shared secret is stored via the secrets manager under
+    ``DARKTRACE_WEBHOOK_SECRET``. Env vars are honoured as fallback so
+    existing deployments keep working.
+    """
+
+    enabled: bool = False
+    url: str = ""
+    max_body_kb: int = 1024
+    webhook_secret: Optional[str] = None  # write-only; never returned
+
+
+DARKTRACE_SETTINGS_KEY = "darktrace.settings"
+DARKTRACE_DEFAULTS: Dict[str, Any] = {
+    "enabled": False,
+    "url": "",
+    "max_body_kb": 1024,
+}
+
+
+@router.get("/darktrace")
+async def get_darktrace_config():
+    """Return the current Darktrace webhook receiver config (without the secret)."""
+    try:
+        config_service = get_config_service()
+        value = config_service.get_system_config(DARKTRACE_SETTINGS_KEY) or {}
+        merged = {**DARKTRACE_DEFAULTS, **value}
+        secret = get_secret("DARKTRACE_WEBHOOK_SECRET") or os.environ.get(
+            "DARKTRACE_WEBHOOK_SECRET", ""
+        )
+        return {**merged, "configured": bool(secret)}
+    except Exception as e:
+        logger.error(f"Error getting Darktrace config: {e}")
+        return {**DARKTRACE_DEFAULTS, "configured": False}
+
+
+@router.post("/darktrace")
+async def set_darktrace_config(config: DarktraceConfig):
+    """Persist Darktrace config. The webhook_secret is stored separately via the
+    secrets manager; if omitted, the existing secret is preserved."""
+    try:
+        config_service = get_config_service(user_id="web_ui")
+        settings = {
+            "enabled": config.enabled,
+            "url": config.url,
+            "max_body_kb": config.max_body_kb,
+        }
+        ok = config_service.set_system_config(
+            key=DARKTRACE_SETTINGS_KEY,
+            value=settings,
+            description="Darktrace webhook receiver settings",
+            config_type="darktrace",
+            change_reason="Updated via Settings UI",
+        )
+        if not ok:
+            raise HTTPException(
+                status_code=500, detail="Failed to save Darktrace settings"
+            )
+        if config.webhook_secret is not None and config.webhook_secret != "":
+            if not set_secret("DARKTRACE_WEBHOOK_SECRET", config.webhook_secret):
+                raise HTTPException(
+                    status_code=500, detail="Failed to save Darktrace webhook secret"
+                )
+        return {"success": True, "message": "Darktrace config saved"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting Darktrace config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 

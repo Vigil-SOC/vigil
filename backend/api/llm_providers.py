@@ -310,6 +310,66 @@ async def test_provider(provider_id: str, db: Session = Depends(get_db_session))
     return {"success": success, "provider_id": provider_id, "error": error}
 
 
+class DiscoverModelsRequest(BaseModel):
+    """Ephemeral model-discovery: takes unsaved credentials and returns the
+    provider's model list. Used by the Add LLM Provider dialog to populate a
+    dropdown before the provider is saved."""
+
+    provider_type: str
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    organization: Optional[str] = None
+
+
+@router.post("/discover-models")
+async def discover_models(req: DiscoverModelsRequest):
+    if req.provider_type not in VALID_PROVIDER_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unsupported provider_type: {req.provider_type}",
+        )
+
+    if req.provider_type == "anthropic":
+        return {"models": ANTHROPIC_MODELS}
+
+    if req.provider_type == "ollama":
+        base_url = req.base_url or "http://localhost:11434"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{base_url.rstrip('/')}/api/tags")
+                resp.raise_for_status()
+                data = resp.json()
+        except httpx.HTTPError as e:
+            raise HTTPException(status_code=502, detail=f"ollama: {e}")
+        return {
+            "models": [m.get("name") for m in data.get("models", []) if m.get("name")]
+        }
+
+    # openai / openai-compatible
+    base_url = req.base_url or "https://api.openai.com/v1"
+    if not req.api_key:
+        raise HTTPException(
+            status_code=400, detail="api_key is required to discover OpenAI models"
+        )
+    headers = {"Authorization": f"Bearer {req.api_key}"}
+    if req.organization:
+        headers["OpenAI-Organization"] = req.organization
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.HTTPStatusError as e:
+        # Surface auth errors cleanly so the dialog can show them
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"upstream error: {e.response.text[:200]}",
+        )
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"openai: {e}")
+    return {"models": [m.get("id") for m in data.get("data", []) if m.get("id")]}
+
+
 @router.get("/{provider_id}/models")
 async def list_models(provider_id: str, db: Session = Depends(get_db_session)):
     row = db.get(LLMProviderConfig, provider_id)

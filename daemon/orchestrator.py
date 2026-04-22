@@ -817,11 +817,18 @@ class Orchestrator:
     def _init_mempalace(self):
         """Initialize MemPalace data directory for daemon persistence.
 
-        Returns the palace data Path if MEMPALACE_DAEMON_ENABLED=true, else None.
-        Investigation summaries are written as JSON files directly into the palace
-        data directory; the MemPalace Searcher is used for cross-run lookups.
+        MemPalace is a core dependency (not user-toggleable) — investigation
+        summaries are always written as JSON files directly into the palace
+        data directory, and the MemPalace Searcher is used for cross-run
+        lookups. The legacy MEMPALACE_DAEMON_ENABLED env gate is honoured
+        only when explicitly set to "false" to allow emergency disable in
+        broken environments.
         """
-        if os.environ.get("MEMPALACE_DAEMON_ENABLED", "false").lower() != "true":
+        if os.environ.get("MEMPALACE_DAEMON_ENABLED", "true").lower() == "false":
+            logger.warning(
+                "MemPalace daemon integration disabled via MEMPALACE_DAEMON_ENABLED=false "
+                "(core dependency — only disable for emergency debugging)"
+            )
             return None
         try:
             data_dir = Path(

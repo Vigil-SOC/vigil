@@ -22,13 +22,11 @@ import {
   Select,
   MenuItem,
   Chip,
-  Button,
   CircularProgress,
   Checkbox,
   FormControlLabel,
   Stack,
 } from '@mui/material'
-import SaveIcon from '@mui/icons-material/Save'
 import PsychologyIcon from '@mui/icons-material/Psychology'
 import BuildIcon from '@mui/icons-material/Build'
 import ImageIcon from '@mui/icons-material/Image'
@@ -87,7 +85,6 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
   const [rows, setRows] = useState<Record<string, RowState>>({})
   const [models, setModels] = useState<AIModelInfo[]>([])
   const [loading, setLoading] = useState(false)
-  const [saving, setSaving] = useState(false)
 
   const modelsByProvider = useMemo(() => {
     const grouped: Record<string, AIModelInfo[]> = {}
@@ -144,62 +141,59 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const updateRow = (component: string, patch: Partial<RowState>) => {
-    setRows((prev) => ({ ...prev, [component]: { ...prev[component], ...patch } }))
-  }
-
-  const hasChanges = useMemo(() => {
-    for (const c of components) {
-      const row = rows[c]
-      const initial = initialAssignments[c]
-      if (!row) continue
-      if (row.inherit) {
-        if (initial !== undefined) return true
-      } else {
-        if (!initial) return true
-        if (initial.provider_id !== row.providerId || initial.model_id !== row.modelId) {
-          return true
-        }
-      }
-    }
-    return false
-  }, [rows, initialAssignments, components])
-
-  const handleSave = async () => {
-    setSaving(true)
+  const persistRow = async (component: string, next: RowState) => {
+    const initial = initialAssignments[component]
     try {
-      for (const c of components) {
-        const row = rows[c]
-        const initial = initialAssignments[c]
-        if (!row) continue
-        if (row.inherit) {
-          if (initial !== undefined) {
-            await aiConfigApi.clearComponent(c)
-          }
-          continue
-        }
-        if (!row.providerId || !row.modelId) continue
-        if (
-          !initial ||
-          initial.provider_id !== row.providerId ||
-          initial.model_id !== row.modelId
-        ) {
-          await aiConfigApi.setComponent(c, {
-            provider_id: row.providerId,
-            model_id: row.modelId,
+      if (next.inherit) {
+        if (initial !== undefined) {
+          await aiConfigApi.clearComponent(component)
+          setInitialAssignments((prev) => {
+            const copy = { ...prev }
+            delete copy[component]
+            return copy
           })
+          setMessage({ type: 'success', text: `${component} set to inherit` })
         }
+        return
       }
-      setMessage({ type: 'success', text: 'Model assignments saved' })
-      await load()
+      if (!next.providerId || !next.modelId) return
+      if (
+        initial &&
+        initial.provider_id === next.providerId &&
+        initial.model_id === next.modelId
+      ) {
+        return
+      }
+      await aiConfigApi.setComponent(component, {
+        provider_id: next.providerId,
+        model_id: next.modelId,
+      })
+      setInitialAssignments((prev) => ({
+        ...prev,
+        [component]: {
+          component,
+          provider_id: next.providerId,
+          model_id: next.modelId,
+          settings: {},
+          updated_by: null,
+          updated_at: null,
+        },
+      }))
+      setMessage({ type: 'success', text: `${component} saved` })
     } catch (e: any) {
       setMessage({
         type: 'error',
-        text: e?.response?.data?.detail || 'Failed to save assignments',
+        text: e?.response?.data?.detail || `Failed to save ${component}`,
       })
-    } finally {
-      setSaving(false)
     }
+  }
+
+  const updateRow = (component: string, patch: Partial<RowState>) => {
+    setRows((prev) => {
+      const next = { ...prev[component], ...patch }
+      persistRow(component, next)
+      return { ...prev, [component]: next }
+    })
   }
 
   const renderModelMenuItem = (m: AIModelInfo) => {
@@ -359,17 +353,6 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
           </TableBody>
         </Table>
       </TableContainer>
-
-      <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
-        <Button
-          variant="contained"
-          startIcon={<SaveIcon />}
-          disabled={!hasChanges || saving}
-          onClick={handleSave}
-        >
-          {saving ? 'Saving…' : 'Save'}
-        </Button>
-      </Box>
     </Box>
   )
 }

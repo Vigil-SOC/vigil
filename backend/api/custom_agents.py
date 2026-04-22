@@ -100,7 +100,14 @@ async def list_custom_agents() -> Dict[str, Any]:
 
 @router.get("/agents/custom/_meta/tools")
 async def list_available_tools() -> Dict[str, Any]:
-    """Return MCP tool names grouped by server prefix for the UI multiselect."""
+    """Return MCP tool names grouped by server prefix for the UI multiselect.
+
+    Sources, in order of preference:
+      1. Live MCP registry (populated when MCP servers connect at startup).
+      2. Persistent tools cache file at ``data/mcp_tools_cache.json`` written
+         on prior successful boots — covers the common dev case where not
+         every MCP server happens to be reachable right now.
+    """
     tools: List[str] = []
     try:
         from services.mcp_registry import get_mcp_registry
@@ -110,6 +117,33 @@ async def list_available_tools() -> Dict[str, Any]:
         tools = sorted(set(names))
     except Exception as e:
         logger.warning(f"Could not load MCP tool names from registry: {e}")
+
+    # Fallback: read the persisted tools cache (same file ClaudeService loads).
+    if not tools:
+        try:
+            import json
+            from pathlib import Path
+
+            cache_file = Path(__file__).parent.parent.parent / "data" / "mcp_tools_cache.json"
+            if cache_file.exists():
+                with open(cache_file, "r") as f:
+                    tools_dict = json.load(f)
+                collected = set()
+                for server_name, server_tools in (tools_dict or {}).items():
+                    for t in server_tools or []:
+                        name = t.get("name") if isinstance(t, dict) else None
+                        if not name:
+                            continue
+                        collected.add(
+                            f"{server_name}_{name}" if server_name else name
+                        )
+                tools = sorted(collected)
+                if tools:
+                    logger.info(
+                        f"Loaded {len(tools)} tool names from cache file (registry empty)"
+                    )
+        except Exception as e:
+            logger.warning(f"Could not load MCP tool names from cache: {e}")
 
     grouped: Dict[str, List[str]] = {}
     for name in tools:

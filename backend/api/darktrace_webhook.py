@@ -21,7 +21,7 @@ import hmac
 import logging
 import os
 from hashlib import sha256
-from typing import Callable, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
@@ -31,18 +31,46 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Hard cap on webhook body size (1 MiB is generous for a single alert).
-MAX_BODY_BYTES = int(os.environ.get("DARKTRACE_MAX_BODY_KB", "1024")) * 1024
+
+def _get_settings() -> Dict[str, Any]:
+    """Read darktrace.settings from system_config (DB). Falls back to env vars."""
+    try:
+        from database.config_service import get_config_service
+        value = get_config_service().get_system_config("darktrace.settings") or {}
+        if value:
+            return value
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("darktrace.settings read failed, using env: %s", exc)
+    return {}
+
+
+def _get_max_body_bytes() -> int:
+    settings = _get_settings()
+    try:
+        kb = int(settings.get("max_body_kb") or os.environ.get("DARKTRACE_MAX_BODY_KB", "1024"))
+    except (TypeError, ValueError):
+        kb = 1024
+    return max(1, kb) * 1024
 
 
 def _get_secret() -> Optional[str]:
-    """Fetch the HMAC shared secret at request time (not import time) so
-    tests and runtime env changes are picked up."""
+    """Fetch the HMAC shared secret at request time (not import time). Prefers
+    the secrets manager (set via Settings UI); falls back to env var."""
+    try:
+        from secrets_manager import get_secret as _gs
+        secret = _gs("DARKTRACE_WEBHOOK_SECRET")
+        if secret:
+            return secret
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("secrets_manager lookup failed, using env: %s", exc)
     secret = os.environ.get("DARKTRACE_WEBHOOK_SECRET")
     return secret or None
 
 
 def _get_console_url() -> str:
+    url = _get_settings().get("url")
+    if url:
+        return str(url)
     return os.environ.get("DARKTRACE_URL", "") or ""
 
 
@@ -67,10 +95,10 @@ async def _read_and_verify(request: Request, signature: Optional[str]) -> bytes:
             detail="Darktrace webhook receiver not configured",
         )
     raw = await request.body()
-    if len(raw) > MAX_BODY_BYTES:
+    if len(raw) > _get_max_body_bytes():
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"Body exceeds {MAX_BODY_BYTES} bytes",
+            detail=f"Body exceeds {_get_max_body_bytes()} bytes",
         )
     if not _verify_signature(raw, signature):
         raise HTTPException(

@@ -1,26 +1,26 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
-  Box,
-  Typography,
-  TextField,
-  Button,
-  Switch,
-  FormControlLabel,
-  Divider,
-  Chip,
-  Card,
-  CardContent,
   Alert,
-  InputAdornment,
+  Box,
+  Button,
+  Chip,
   CircularProgress,
+  Divider,
+  FormControl,
+  FormControlLabel,
   Grid,
+  InputAdornment,
+  InputLabel,
+  MenuItem,
+  Select,
+  Stack,
+  Switch,
+  TextField,
+  Tooltip,
+  Typography,
 } from '@mui/material'
-import {
-  Save as SaveIcon,
-  RestartAlt as ResetIcon,
-  SmartToy as AgentIcon,
-} from '@mui/icons-material'
-import { configApi, orchestratorApi } from '../../services/api'
+import RestoreIcon from '@mui/icons-material/Restore'
+import { aiConfigApi, AIModelInfo, configApi, orchestratorApi } from '../../services/api'
 
 interface OrchestratorConfig {
   enabled: boolean
@@ -44,7 +44,7 @@ interface OrchestratorConfig {
 }
 
 const DEFAULTS: OrchestratorConfig = {
-  enabled: false,
+  enabled: true,
   dry_run: false,
   auto_assign_findings: true,
   auto_assign_severities: ['critical', 'high'],
@@ -68,22 +68,30 @@ const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low']
 
 interface Props {
   onMessage: (msg: { type: 'success' | 'error'; text: string }) => void
-  showConfirm: (title: string, msg: string, onConfirm: () => void) => void
+  // Kept for backwards compatibility with Settings.tsx wiring; no longer used
+  // now that the tab auto-saves. Safe to remove if Settings.tsx is updated.
+  showConfirm?: (title: string, msg: string, onConfirm: () => void) => void
 }
 
-export default function AutoInvestigateTab({ onMessage, showConfirm }: Props) {
+export default function AutoInvestigateTab({ onMessage }: Props) {
   const [config, setConfig] = useState<OrchestratorConfig>(DEFAULTS)
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<any>(null)
+  const [models, setModels] = useState<AIModelInfo[]>([])
+  const lastSaved = useRef<OrchestratorConfig>(DEFAULTS)
 
   const loadConfig = async () => {
     try {
-      const [cfgRes, statusRes] = await Promise.all([
+      const [cfgRes, statusRes, modelsRes] = await Promise.all([
         configApi.getOrchestrator().catch(() => ({ data: DEFAULTS })),
         orchestratorApi.getStatus().catch(() => ({ data: null })),
+        aiConfigApi.listModels().catch(() => ({ data: { models: [] } })),
       ])
-      setConfig({ ...DEFAULTS, ...cfgRes.data })
+      const merged = { ...DEFAULTS, ...cfgRes.data }
+      setConfig(merged)
+      lastSaved.current = merged
       setStatus(statusRes.data)
+      setModels(modelsRes.data.models || [])
     } catch {
       /* use defaults */
     } finally {
@@ -91,258 +99,427 @@ export default function AutoInvestigateTab({ onMessage, showConfirm }: Props) {
     }
   }
 
-  useEffect(() => { loadConfig() }, [])
+  useEffect(() => {
+    loadConfig()
+  }, [])
 
-  const doSave = async () => {
+  const persist = async (next: OrchestratorConfig) => {
     try {
-      await configApi.setOrchestrator(config)
+      await configApi.setOrchestrator(next)
+      lastSaved.current = next
       onMessage({ type: 'success', text: 'Auto Investigate settings saved' })
-      loadConfig()
+      setTimeout(() => onMessage({ type: 'success', text: '' }), 2500)
     } catch {
       onMessage({ type: 'error', text: 'Failed to save Auto Investigate settings' })
     }
-    setTimeout(() => onMessage({ type: 'success', text: '' }), 3000)
   }
 
-  const handleSave = () => {
-    showConfirm(
-      'Save Auto Investigate Settings',
-      'Are you sure you want to save these settings? Changes will take effect on the next daemon restart (or immediately if you toggle the enabled switch via the Auto Ops page).',
-      doSave,
-    )
-  }
-
-  const handleReset = () => {
-    setConfig(DEFAULTS)
-    onMessage({ type: 'success', text: 'Reset to defaults (not yet saved)' })
-    setTimeout(() => onMessage({ type: 'success', text: '' }), 3000)
+  // Apply + persist a partial change. Used for toggles and chip clicks that
+  // should save immediately (no blur event to hook into).
+  const applyAndSave = (patch: Partial<OrchestratorConfig>) => {
+    const next = { ...config, ...patch }
+    setConfig(next)
+    persist(next)
   }
 
   const toggleSeverity = (sev: string) => {
     const current = config.auto_assign_severities
-    if (current.includes(sev)) {
-      setConfig({ ...config, auto_assign_severities: current.filter(s => s !== sev) })
-    } else {
-      setConfig({ ...config, auto_assign_severities: [...current, sev] })
-    }
+    const next = current.includes(sev)
+      ? current.filter((s) => s !== sev)
+      : [...current, sev]
+    applyAndSave({ auto_assign_severities: next })
   }
+
+  const handleReset = () => {
+    setConfig(DEFAULTS)
+    persist(DEFAULTS)
+  }
+
+  // 0 is the sentinel for "unlimited" across all bounded numeric fields.
+  // The daemon treats 0 as no-limit for cost/time/concurrency caps.
+  const isUnlimited = (field: keyof OrchestratorConfig) =>
+    (config[field] as number) === 0
 
   const numField = (
     label: string,
     field: keyof OrchestratorConfig,
-    opts?: { min?: number; max?: number; prefix?: string; suffix?: string; helperText?: string },
+    opts?: {
+      min?: number
+      max?: number
+      prefix?: string
+      suffix?: string
+      helperText?: string
+      allowUnlimited?: boolean
+    },
+  ) => {
+    const unlimited = Boolean(opts?.allowUnlimited) && isUnlimited(field)
+    return (
+      <Box>
+        <Tooltip title={opts?.helperText || ''} placement="top" arrow>
+          <TextField
+            fullWidth
+            label={label}
+            type="number"
+            size="small"
+            value={unlimited ? '' : (config[field] as number)}
+            disabled={unlimited}
+            placeholder={unlimited ? 'Unlimited' : ''}
+            onChange={(e) => {
+              let val = Number(e.target.value)
+              if (opts?.min !== undefined && val < opts.min) val = opts.min
+              if (opts?.max !== undefined && val > opts.max) val = opts.max
+              setConfig((prev) => ({ ...prev, [field]: val }))
+            }}
+            onBlur={() => {
+              if (config[field] !== lastSaved.current[field]) persist(config)
+            }}
+            helperText={opts?.helperText}
+            InputProps={{
+              ...(opts?.prefix
+                ? {
+                    startAdornment: (
+                      <InputAdornment position="start">{opts.prefix}</InputAdornment>
+                    ),
+                  }
+                : {}),
+              ...(opts?.suffix
+                ? {
+                    endAdornment: (
+                      <InputAdornment position="end">{opts.suffix}</InputAdornment>
+                    ),
+                  }
+                : {}),
+            }}
+          />
+        </Tooltip>
+        {opts?.allowUnlimited && (
+          <FormControlLabel
+            sx={{ ml: 0, mt: 0.25 }}
+            control={
+              <Switch
+                size="small"
+                checked={unlimited}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    // save sentinel immediately
+                    applyAndSave({ [field]: 0 } as Partial<OrchestratorConfig>)
+                  } else {
+                    // restore to default value for this field
+                    const def = DEFAULTS[field] as number
+                    applyAndSave({ [field]: def } as Partial<OrchestratorConfig>)
+                  }
+                }}
+              />
+            }
+            label={
+              <Typography variant="caption" color="text.secondary">
+                Unlimited
+              </Typography>
+            }
+          />
+        )}
+      </Box>
+    )
+  }
+
+  const modelSelect = (
+    label: string,
+    field: 'plan_model' | 'review_model',
+    helperText: string,
+  ) => {
+    const current = config[field] as string
+    const options = models.map((m) => m.model_id)
+    const hasCurrent = !current || options.includes(current)
+    // If the saved value isn't in the live-fetched list (e.g., backend has
+    // a stale default), still show it so the user isn't surprised.
+    const shownOptions = hasCurrent ? options : [...options, current]
+    return (
+      <FormControl fullWidth size="small">
+        <InputLabel>{label}</InputLabel>
+        <Select
+          label={label}
+          value={current}
+          onChange={(e) => applyAndSave({ [field]: e.target.value as string } as Partial<OrchestratorConfig>)}
+          displayEmpty
+        >
+          {shownOptions.length === 0 && (
+            <MenuItem value="" disabled>
+              <em>No models available — add a provider in AI Config</em>
+            </MenuItem>
+          )}
+          {shownOptions.map((id) => {
+            const info = models.find((m) => m.model_id === id)
+            return (
+              <MenuItem key={id} value={id}>
+                <Stack>
+                  <Typography variant="body2">
+                    {info?.display_name || id}
+                  </Typography>
+                  {info && (
+                    <Typography variant="caption" color="text.secondary">
+                      {info.provider_id} ·{' '}
+                      {info.context_window
+                        ? `${Math.round(info.context_window / 1000)}K ctx`
+                        : ''}
+                    </Typography>
+                  )}
+                </Stack>
+              </MenuItem>
+            )
+          })}
+        </Select>
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+          {helperText}
+        </Typography>
+      </FormControl>
+    )
+  }
+
+  const textField = (
+    label: string,
+    field: keyof OrchestratorConfig,
+    helperText: string,
   ) => (
     <TextField
       fullWidth
       label={label}
-      type="number"
       size="small"
-      value={config[field]}
-      onChange={(e) => {
-        let val = Number(e.target.value)
-        if (opts?.min !== undefined && val < opts.min) val = opts.min
-        if (opts?.max !== undefined && val > opts.max) val = opts.max
-        setConfig({ ...config, [field]: val })
+      value={config[field] as string}
+      onChange={(e) =>
+        setConfig((prev) => ({ ...prev, [field]: e.target.value }))
+      }
+      onBlur={() => {
+        if (config[field] !== lastSaved.current[field]) persist(config)
       }}
-      helperText={opts?.helperText}
-      InputProps={{
-        ...(opts?.prefix ? { startAdornment: <InputAdornment position="start">{opts.prefix}</InputAdornment> } : {}),
-        ...(opts?.suffix ? { endAdornment: <InputAdornment position="end">{opts.suffix}</InputAdornment> } : {}),
-      }}
-      sx={{ mb: 2 }}
+      helperText={helperText}
     />
   )
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
-        <CircularProgress />
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 2 }}>
+        <CircularProgress size={16} />
+        <Typography variant="body2">Loading Auto Investigate config…</Typography>
       </Box>
     )
   }
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-        <AgentIcon />
-        <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>Auto Investigate</Typography>
-      </Box>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        Configure the autonomous investigation orchestrator. When enabled, the system automatically investigates high-severity findings using AI sub-agents.
+      <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>
+        Auto Investigate
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+        Runtime toggles for the autonomous investigation orchestrator. Changes
+        save automatically and take effect across backend / daemon / llm-worker
+        within ~60 seconds (the runtime-config cache TTL).
       </Typography>
 
       {status && (
         <Alert severity={status.enabled ? 'success' : 'info'} sx={{ mb: 3 }}>
           Orchestrator is <strong>{status.enabled ? 'ENABLED' : 'DISABLED'}</strong>
-          {status.active_agents !== undefined && ` | ${status.active_agents} active agent(s)`}
-          {status.cost?.total_cost_usd !== undefined && ` | Total cost: $${status.cost.total_cost_usd.toFixed(2)}`}
+          {status.active_agents !== undefined && ` · ${status.active_agents} active agent(s)`}
+          {status.cost?.total_cost_usd !== undefined &&
+            ` · Total cost: $${status.cost.total_cost_usd.toFixed(2)}`}
         </Alert>
       )}
 
       {/* Master Controls */}
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>Master Controls</Typography>
-
-          <FormControlLabel
-            control={
-              <Switch
-                checked={config.enabled}
-                onChange={(e) => setConfig({ ...config, enabled: e.target.checked })}
-              />
+      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
+        Master Controls
+      </Typography>
+      <Stack spacing={0.5} sx={{ mb: 2 }}>
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.enabled}
+              onChange={(e) => applyAndSave({ enabled: e.target.checked })}
+            />
+          }
+          label="Enable autonomous investigations"
+        />
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.dry_run}
+              onChange={(e) => applyAndSave({ dry_run: e.target.checked })}
+            />
+          }
+          label="Dry run mode (agents gather data but skip write actions)"
+        />
+        <FormControlLabel
+          control={
+            <Switch
+              checked={config.auto_assign_findings}
+              onChange={(e) =>
+                applyAndSave({ auto_assign_findings: e.target.checked })
+              }
+            />
+          }
+          label="Auto-assign new findings for investigation"
+        />
+      </Stack>
+      <Typography variant="body2" sx={{ mb: 1, fontWeight: 500 }}>
+        Auto-investigate severities
+      </Typography>
+      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 3 }}>
+        {ALL_SEVERITIES.map((sev) => (
+          <Chip
+            key={sev}
+            label={sev.charAt(0).toUpperCase() + sev.slice(1)}
+            variant={config.auto_assign_severities.includes(sev) ? 'filled' : 'outlined'}
+            color={
+              sev === 'critical'
+                ? 'error'
+                : sev === 'high'
+                  ? 'warning'
+                  : sev === 'medium'
+                    ? 'info'
+                    : 'default'
             }
-            label="Enable autonomous investigations"
+            onClick={() => toggleSeverity(sev)}
+            sx={{ cursor: 'pointer' }}
           />
+        ))}
+      </Box>
 
-          <FormControlLabel
-            control={
-              <Switch
-                checked={config.dry_run}
-                onChange={(e) => setConfig({ ...config, dry_run: e.target.checked })}
-              />
-            }
-            label="Dry run mode (agents gather data but skip write actions)"
-          />
-
-          <FormControlLabel
-            control={
-              <Switch
-                checked={config.auto_assign_findings}
-                onChange={(e) => setConfig({ ...config, auto_assign_findings: e.target.checked })}
-              />
-            }
-            label="Auto-assign new findings for investigation"
-          />
-
-          <Divider sx={{ my: 2 }} />
-
-          <Typography variant="body2" sx={{ mb: 1, fontWeight: 500 }}>Auto-investigate severities</Typography>
-          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            {ALL_SEVERITIES.map(sev => (
-              <Chip
-                key={sev}
-                label={sev.charAt(0).toUpperCase() + sev.slice(1)}
-                variant={config.auto_assign_severities.includes(sev) ? 'filled' : 'outlined'}
-                color={
-                  sev === 'critical' ? 'error' :
-                  sev === 'high' ? 'warning' :
-                  sev === 'medium' ? 'info' : 'default'
-                }
-                onClick={() => toggleSeverity(sev)}
-                sx={{ cursor: 'pointer' }}
-              />
-            ))}
-          </Box>
-        </CardContent>
-      </Card>
+      <Divider sx={{ my: 3 }} />
 
       {/* Agent Limits */}
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>Agent Limits</Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={4}>
-              {numField('Max concurrent agents', 'max_concurrent_agents', { min: 1, max: 10, helperText: '1-10 simultaneous agents' })}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {numField('Max iterations per agent', 'max_iterations_per_agent', { min: 1, max: 500, helperText: 'Claude calls per investigation' })}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {numField('Max runtime (seconds)', 'max_runtime_per_investigation', { min: 60, max: 86400, suffix: 's', helperText: `${Math.round(config.max_runtime_per_investigation / 60)} minutes` })}
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
+        Agent Limits
+      </Typography>
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={4}>
+          {numField('Max concurrent agents', 'max_concurrent_agents', {
+            min: 1,
+            max: 10,
+            helperText: '1-10 simultaneous agents',
+            allowUnlimited: true,
+          })}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {numField('Max iterations per agent', 'max_iterations_per_agent', {
+            min: 1,
+            max: 500,
+            helperText: 'Claude calls per investigation',
+            allowUnlimited: true,
+          })}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {numField('Max runtime (seconds)', 'max_runtime_per_investigation', {
+            min: 60,
+            max: 86400,
+            suffix: 's',
+            helperText: `${Math.round(config.max_runtime_per_investigation / 60)} minutes`,
+            allowUnlimited: true,
+          })}
+        </Grid>
+      </Grid>
+
+      <Divider sx={{ my: 3 }} />
 
       {/* Cost Guardrails */}
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>Cost Guardrails</Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={4}>
-              {numField('Per investigation limit', 'max_cost_per_investigation', { min: 0.5, max: 100, prefix: '$', helperText: 'Max spend per investigation' })}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {numField('Hourly cost limit', 'max_total_hourly_cost', { min: 1, max: 500, prefix: '$', helperText: 'Pause intake if exceeded' })}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {numField('Daily cost limit', 'max_total_daily_cost', { min: 1, max: 1000, prefix: '$', helperText: 'Hard daily ceiling' })}
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
+        Cost Guardrails
+      </Typography>
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={4}>
+          {numField('Per investigation limit', 'max_cost_per_investigation', {
+            min: 0.5,
+            max: 100,
+            prefix: '$',
+            helperText: 'Max spend per investigation',
+            allowUnlimited: true,
+          })}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {numField('Hourly cost limit', 'max_total_hourly_cost', {
+            min: 1,
+            max: 500,
+            prefix: '$',
+            helperText: 'Pause intake if exceeded',
+            allowUnlimited: true,
+          })}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {numField('Daily cost limit', 'max_total_daily_cost', {
+            min: 1,
+            max: 1000,
+            prefix: '$',
+            helperText: 'Hard daily ceiling',
+            allowUnlimited: true,
+          })}
+        </Grid>
+      </Grid>
 
-      {/* Advanced */}
-      <Card variant="outlined" sx={{ mb: 3 }}>
-        <CardContent>
-          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2 }}>Timing &amp; Advanced</Typography>
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={4}>
-              {numField('Loop interval', 'loop_interval', { min: 10, max: 600, suffix: 's', helperText: 'Orchestrator check interval' })}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {numField('Agent loop delay', 'agent_loop_delay', { min: 1, max: 30, suffix: 's', helperText: 'Pause between agent iterations' })}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {numField('Stale threshold', 'stale_threshold', { min: 60, max: 3600, suffix: 's', helperText: 'Kill idle agents after this' })}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {numField('Dedup window', 'dedup_window_minutes', { min: 5, max: 1440, suffix: 'min', helperText: 'Overlap detection window' })}
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              {numField('Context max chars', 'context_max_chars', { min: 1000, max: 100000, helperText: 'Max context.md in prompt' })}
-            </Grid>
-          </Grid>
+      <Divider sx={{ my: 3 }} />
 
-          <Divider sx={{ my: 2 }} />
+      {/* Timing & Advanced */}
+      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
+        Timing &amp; Advanced
+      </Typography>
+      <Grid container spacing={2} sx={{ mb: 2 }}>
+        <Grid item xs={12} sm={4}>
+          {numField('Loop interval', 'loop_interval', {
+            min: 10,
+            max: 600,
+            suffix: 's',
+            helperText: 'Orchestrator check interval',
+          })}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {numField('Agent loop delay', 'agent_loop_delay', {
+            min: 1,
+            max: 30,
+            suffix: 's',
+            helperText: 'Pause between agent iterations',
+          })}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {numField('Stale threshold', 'stale_threshold', {
+            min: 60,
+            max: 3600,
+            suffix: 's',
+            helperText: 'Kill idle agents after this',
+          })}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {numField('Dedup window', 'dedup_window_minutes', {
+            min: 5,
+            max: 1440,
+            suffix: 'min',
+            helperText: 'Overlap detection window',
+          })}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {numField('Context max chars', 'context_max_chars', {
+            min: 1000,
+            max: 100000,
+            helperText: 'Max context.md in prompt',
+          })}
+        </Grid>
+      </Grid>
 
-          <Grid container spacing={2}>
-            <Grid item xs={12} sm={4}>
-              <TextField
-                fullWidth
-                label="Plan model"
-                size="small"
-                value={config.plan_model}
-                onChange={(e) => setConfig({ ...config, plan_model: e.target.value })}
-                helperText="Claude model for agent work"
-                sx={{ mb: 2 }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              <TextField
-                fullWidth
-                label="Review model"
-                size="small"
-                value={config.review_model}
-                onChange={(e) => setConfig({ ...config, review_model: e.target.value })}
-                helperText="Claude model for master review"
-                sx={{ mb: 2 }}
-              />
-            </Grid>
-            <Grid item xs={12} sm={4}>
-              <TextField
-                fullWidth
-                label="Working directory"
-                size="small"
-                value={config.workdir_base}
-                onChange={(e) => setConfig({ ...config, workdir_base: e.target.value })}
-                helperText="Base path for investigation files"
-                sx={{ mb: 2 }}
-              />
-            </Grid>
-          </Grid>
-        </CardContent>
-      </Card>
+      <Grid container spacing={2} sx={{ mb: 3 }}>
+        <Grid item xs={12} sm={4}>
+          {modelSelect('Plan model', 'plan_model', 'Model for agent planning')}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {modelSelect('Review model', 'review_model', 'Model for master review')}
+        </Grid>
+        <Grid item xs={12} sm={4}>
+          {textField('Working directory', 'workdir_base', 'Base path for investigation files')}
+        </Grid>
+      </Grid>
 
-      {/* Actions */}
-      <Box sx={{ display: 'flex', gap: 2 }}>
-        <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave}>
-          Save Settings
+      <Divider sx={{ my: 3 }} />
+
+      <Stack direction="row" spacing={2}>
+        <Button variant="outlined" startIcon={<RestoreIcon />} onClick={handleReset}>
+          Reset to defaults
         </Button>
-        <Button variant="outlined" startIcon={<ResetIcon />} onClick={handleReset}>
-          Reset to Defaults
-        </Button>
-      </Box>
+      </Stack>
     </Box>
   )
 }

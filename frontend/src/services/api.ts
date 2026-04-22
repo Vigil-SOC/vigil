@@ -762,6 +762,12 @@ export interface LLMProviderUpdate {
 export const llmProviderApi = {
   list: () => api.get<LLMProvider[]>('/llm/providers/'),
   create: (data: LLMProviderCreate) => api.post<LLMProvider>('/llm/providers/', data),
+  discoverModels: (data: {
+    provider_type: string
+    base_url?: string
+    api_key?: string
+    organization?: string
+  }) => api.post<{ models: string[] }>('/llm/providers/discover-models', data),
   update: (providerId: string, data: LLMProviderUpdate) =>
     api.put<LLMProvider>(`/llm/providers/${providerId}`, data),
   remove: (providerId: string) => api.delete(`/llm/providers/${providerId}`),

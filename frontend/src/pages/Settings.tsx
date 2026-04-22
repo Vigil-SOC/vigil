@@ -62,14 +62,13 @@ import IntegrationWizard, { IntegrationMetadata } from '../components/settings/I
 import CustomIntegrationBuilder from '../components/settings/CustomIntegrationBuilder'
 import { getAllIntegrations, loadCustomIntegrations } from '../config/integrations'
 import UserManagementTab from '../components/settings/UserManagementTab'
-import AgentBuilderTab from '../components/settings/AgentBuilderTab'
 import DetectionRulesTab from '../components/settings/DetectionRulesTab'
 import AutoInvestigateTab from '../components/settings/AutoInvestigateTab'
-import SkillsTab from '../components/settings/SkillsTab'
 import KafkaTab from '../components/settings/KafkaTab'
 import LLMProvidersTab from '../components/settings/LLMProvidersTab'
 import ModelAssignmentTab from '../components/settings/ModelAssignmentTab'
 import AIOperationsTab from '../components/settings/AIOperationsTab'
+import CostAnalytics from './CostAnalytics'
 
 interface TabPanelProps {
   children?: React.ReactNode
@@ -96,13 +95,9 @@ const IS_DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
 // Define tabs — some are dev-only
 const TAB_DEFS: { key: string; label: string; devOnly: boolean }[] = [
   { key: 'ai-config', label: 'AI Config', devOnly: false },
-  { key: 's3', label: 'S3 Storage', devOnly: false },
   { key: 'integrations', label: 'Integrations / MCP', devOnly: false },
   { key: 'users', label: 'Users', devOnly: false },
-  { key: 'agents', label: 'SOC Agents', devOnly: false },
   { key: 'autoinvestigate', label: 'Auto Investigate', devOnly: false },
-  { key: 'skills', label: 'Skills', devOnly: false },
-  { key: 'kafka', label: 'Kafka', devOnly: false },
   { key: 'general', label: 'General', devOnly: false },
   { key: 'dev', label: 'Developer', devOnly: true },
 ]
@@ -137,7 +132,6 @@ export default function Settings() {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const { notificationsEnabled, setNotificationsEnabled, permissionGranted } = useNotifications()
 
-  const [claudeConfig, setClaudeConfig] = useState({ api_key: '', configured: false })
   const [s3Config, setS3Config] = useState({
     bucket_name: '', region: 'us-east-1', auth_method: 'credentials', aws_profile: '',
     access_key_id: '', secret_access_key: '', session_token: '',
@@ -166,6 +160,16 @@ export default function Settings() {
     open: boolean; title: string; message: string; onConfirm: () => void
   }>({ open: false, title: '', message: '', onConfirm: () => {} })
   const [s3HelpOpen, setS3HelpOpen] = useState(false)
+  const [s3DialogOpen, setS3DialogOpen] = useState(false)
+  const [kafkaDialogOpen, setKafkaDialogOpen] = useState(false)
+  const [darktraceDialogOpen, setDarktraceDialogOpen] = useState(false)
+  const [darktraceConfig, setDarktraceConfig] = useState<{
+    enabled: boolean
+    url: string
+    max_body_kb: number
+    webhook_secret: string
+    configured: boolean
+  }>({ enabled: false, url: '', max_body_kb: 1024, webhook_secret: '', configured: false })
   const [s3BrowsePrefix, setS3BrowsePrefix] = useState('')
   const [s3Files, setS3Files] = useState<{ key: string; size: number; last_modified: string }[]>([])
   const [s3FilesLoading, setS3FilesLoading] = useState(false)
@@ -251,17 +255,17 @@ export default function Settings() {
       } catch { /* ignore */ }
     }
     try {
-      const [claude, s3, integrations, general] = await Promise.all([
-        configApi.getClaude().catch(() => ({ data: { configured: false } })),
+      const [s3, integrations, general, darktrace] = await Promise.all([
         configApi.getS3().catch(() => ({ data: { configured: false } })),
         configApi.getIntegrations().catch(() => ({ data: { configured: false, enabled_integrations: [], integrations: {} } })),
         configApi.getGeneral().catch(() => ({ data: { auto_start_sync: false, show_notifications: true, theme: 'dark', enable_keyring: false } })),
+        configApi.getDarktrace().catch(() => ({ data: { enabled: false, url: '', max_body_kb: 1024, configured: false } })),
       ])
-      setClaudeConfig(prev => ({ ...prev, configured: claude.data.configured }))
       setS3Config(prev => ({ ...prev, ...s3.data }))
       if (s3.data.parquet_prefix) setS3BrowsePrefix(s3.data.parquet_prefix)
       setIntegrationsConfig(prev => ({ ...prev, ...integrations.data }))
       setGeneralConfig(prev => ({ ...prev, ...general.data }))
+      setDarktraceConfig(prev => ({ ...prev, ...darktrace.data, webhook_secret: '' }))
     } catch { /* ignore */ }
   }
 
@@ -315,16 +319,6 @@ export default function Settings() {
   }
   const handleConfirmClose = () => { setConfirmDialog({ ...confirmDialog, open: false }) }
   const handleConfirmAction = async () => { handleConfirmClose(); await confirmDialog.onConfirm() }
-
-  const doSaveClaude = async () => {
-    try { await configApi.setClaude(claudeConfig.api_key); setMessage({ type: 'success', text: 'Claude API key saved' }); await loadConfigs() }
-    catch { setMessage({ type: 'error', text: 'Failed to save' }) }
-    setTimeout(() => setMessage(null), 3000)
-  }
-  const handleSaveClaude = () => {
-    if (!claudeConfig.api_key.trim()) { setMessage({ type: 'error', text: 'API key cannot be empty' }); setTimeout(() => setMessage(null), 3000); return }
-    showConfirm('Save Claude API Key', 'Are you sure you want to save this API key? This will overwrite any existing key.', doSaveClaude)
-  }
 
   const doSaveS3 = async () => {
     try {
@@ -848,6 +842,14 @@ export default function Settings() {
     )
   }
 
+  // Servers hidden from the Integrations grid entirely.
+  // - mempalace: core dependency, always on, not user-toggleable
+  // - splunk-selfhosted: legacy duplicate of "splunk" (merged into the same card)
+  const HIDDEN_MCP_SERVERS = new Set(['mempalace', 'splunk-selfhosted'])
+  // MCP servers that should render inside the first-party "Data Ingestion"
+  // accordion alongside S3/Kafka/Darktrace rather than in their own category.
+  const DATA_INGESTION_MCP = new Set(['elastic'])
+
   const MCP_CATEGORIES = [
     { label: 'Internal / Platform', filter: (n: string) => ['deeptempo-findings', 'tempo-flow', 'approval', 'attack-layer', 'security-detections'].includes(n) },
     { label: 'Reference Servers', filter: (n: string) => ['github'].includes(n) },
@@ -856,14 +858,247 @@ export default function Settings() {
     { label: 'Threat Intelligence', filter: (n: string) => ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp'].includes(n) },
     { label: 'Cloud Security', filter: (n: string) => ['aws-security', 'gcp-scc', 'palo-alto'].includes(n) },
     { label: 'Identity & Access', filter: (n: string) => ['okta', 'azure-ad'].includes(n) },
-    { label: 'Network Security', filter: (_n: string) => false },
+    { label: 'Network Security', filter: (n: string) => ['vstrike'].includes(n) },
     { label: 'Incident Management', filter: (n: string) => ['jira', 'pagerduty', 'slack', 'microsoft-teams'].includes(n) },
     { label: 'Communications', filter: (_n: string) => false },
     { label: 'Sandbox / Analysis', filter: (n: string) => ['joe-sandbox', 'hybrid-analysis', 'anyrun', 'url-analysis', 'ip-geolocation'].includes(n) },
     { label: 'Forensics & Analysis', filter: (_n: string) => false },
   ]
 
-  const CATEGORIZED_NAMES = new Set(MCP_CATEGORIES.flatMap(c => mcpServers.filter(c.filter)))
+  // Visible MCP servers = discovered servers minus hidden ones (mempalace is a
+  // core dep, splunk-selfhosted is merged into the splunk card).
+  const visibleMcpServers = mcpServers.filter((n) => !HIDDEN_MCP_SERVERS.has(n))
+  const CATEGORIZED_NAMES = new Set([
+    ...MCP_CATEGORIES.flatMap((c) => visibleMcpServers.filter(c.filter)),
+    ...visibleMcpServers.filter((n) => DATA_INGESTION_MCP.has(n)),
+  ])
+
+  // ---- Reusable section content (also referenced inside Integrations tab) ----
+  const s3SectionJsx = (
+    <>
+      <Box sx={{ maxWidth: 600 }}>
+        <Box sx={{ mb: 2 }}>
+          <Chip label={(s3Config.configured && s3Config.bucket_name) ? 'S3 configured' : 'S3 not configured'} color={(s3Config.configured && s3Config.bucket_name) ? 'success' : 'default'} size="small" icon={(s3Config.configured && s3Config.bucket_name) ? <CheckIcon /> : undefined} />
+        </Box>
+        <TextField fullWidth label="Bucket Name" placeholder="my-bucket or s3://my-bucket/prefix/" value={s3Config.bucket_name} onChange={(e) => {
+          const val = e.target.value
+          if (val.startsWith('s3://')) {
+            const stripped = val.slice(5)
+            const slashIdx = stripped.indexOf('/')
+            if (slashIdx > 0) {
+              const bucket = stripped.slice(0, slashIdx)
+              let path = stripped.slice(slashIdx + 1).replace(/\/*$/, '')
+              const lastSeg = path.includes('/') ? path.split('/').pop()! : path
+              if (lastSeg.includes('.')) {
+                path = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+              }
+              setS3Config({ ...s3Config, bucket_name: bucket, parquet_prefix: path ? path + '/' : '' })
+              return
+            }
+          }
+          setS3Config({ ...s3Config, bucket_name: val })
+        }} sx={{ mb: 2 }} />
+        <TextField fullWidth label="Region" value={s3Config.region} onChange={(e) => setS3Config({ ...s3Config, region: e.target.value })} sx={{ mb: 2 }} />
+
+        <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>Authentication Method</Typography>
+        <ToggleButtonGroup
+          value={s3Config.auth_method}
+          exclusive
+          onChange={(_e, val) => { if (val) setS3Config({ ...s3Config, auth_method: val }) }}
+          size="small"
+          sx={{ mb: 2 }}
+        >
+          <ToggleButton value="credentials">Manual Credentials</ToggleButton>
+          <ToggleButton value="profile">AWS Profile (SSO)</ToggleButton>
+        </ToggleButtonGroup>
+
+        {s3Config.auth_method === 'profile' ? (
+          <>
+            <TextField fullWidth label="AWS Profile Name" value={s3Config.aws_profile} onChange={(e) => setS3Config({ ...s3Config, aws_profile: e.target.value })} placeholder="e.g. my-sso-profile" helperText={<>Name of the profile in ~/.aws/config. Run <code>aws sso login --profile &lt;name&gt;</code> before using.</>} sx={{ mb: 2 }} />
+          </>
+        ) : (
+          <>
+            <TextField fullWidth label="Access Key ID" value={s3Config.access_key_id} onChange={(e) => setS3Config({ ...s3Config, access_key_id: e.target.value })} placeholder={s3Config.configured ? '(saved — leave blank to keep)' : ''} sx={{ mb: 2 }} />
+            <TextField fullWidth label="Secret Access Key" type="password" value={s3Config.secret_access_key} onChange={(e) => setS3Config({ ...s3Config, secret_access_key: e.target.value })} placeholder={s3Config.configured ? '(saved — leave blank to keep)' : ''} sx={{ mb: 2 }} />
+            <TextField fullWidth label="Session Token (optional)" type="password" value={s3Config.session_token} onChange={(e) => setS3Config({ ...s3Config, session_token: e.target.value })} placeholder={s3Config.configured ? '(saved — leave blank to keep)' : ''} helperText="Required for temporary AWS STS credentials (keys starting with ASIA)." sx={{ mb: 2 }} />
+          </>
+        )}
+
+        <TextField fullWidth label="Default Path / Prefix" placeholder="e.g. lake/v1/embeddings/" value={s3Config.parquet_prefix} onChange={(e) => setS3Config({ ...s3Config, parquet_prefix: e.target.value })} helperText="S3 key prefix used as the default when browsing files. Tip: paste a full s3:// URI into Bucket Name to auto-populate." sx={{ mb: 2 }} />
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSaveS3}>Save</Button>
+          <Button variant="outlined" startIcon={<HelpIcon />} onClick={() => setS3HelpOpen(true)}>How to Configure Your S3 Bucket</Button>
+        </Box>
+      </Box>
+
+      <Box sx={{ mt: 4, maxWidth: 900 }}>
+        <Divider sx={{ mb: 3 }} />
+        <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>Upload Local File</Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          Upload a CSV, Parquet, JSON, or JSONL file from your computer to ingest directly.
+        </Typography>
+
+        <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mb: 1 }}>
+          <Button
+            variant="outlined"
+            component="label"
+            startIcon={<UploadFileIcon />}
+            sx={{ textTransform: 'none' }}
+          >
+            {uploadFile ? uploadFile.name : 'Choose File'}
+            <input
+              type="file"
+              hidden
+              accept=".csv,.parquet,.json,.jsonl,.ndjson"
+              onChange={handleFileSelect}
+            />
+          </Button>
+          {uploadFile && (
+            <Typography variant="body2" color="text.secondary">
+              {formatFileSize(uploadFile.size)}
+            </Typography>
+          )}
+          <Button
+            variant="contained"
+            startIcon={uploading ? <CircularProgress size={16} color="inherit" /> : <CloudDownloadIcon />}
+            onClick={handleUploadFile}
+            disabled={!uploadFile || uploading}
+          >
+            {uploading ? 'Uploading...' : 'Ingest'}
+          </Button>
+        </Box>
+
+        {uploadResult && (
+          <Alert severity={uploadResult.success ? 'success' : 'error'} sx={{ mt: 1, '& .MuiAlert-message': { fontSize: '0.85rem' } }}>
+            {uploadResult.message}
+          </Alert>
+        )}
+      </Box>
+
+      {s3Config.configured && s3Config.bucket_name && (
+        <Box sx={{ mt: 4, maxWidth: 900 }}>
+          <Divider sx={{ mb: 3 }} />
+          <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>Browse & Ingest S3 Files</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Browse your S3 bucket and select files to ingest manually.
+          </Typography>
+
+          <Box sx={{ display: 'flex', gap: 1, mb: 2, alignItems: 'center' }}>
+            <TextField
+              size="small"
+              label="Prefix / Folder"
+              placeholder="e.g. data/embeddings/"
+              value={s3BrowsePrefix}
+              onChange={(e) => setS3BrowsePrefix(e.target.value)}
+              sx={{ flex: 1, maxWidth: 400 }}
+            />
+            <Button
+              variant="contained"
+              startIcon={s3FilesLoading ? <CircularProgress size={16} color="inherit" /> : <FolderOpenIcon />}
+              onClick={handleBrowseS3}
+              disabled={s3FilesLoading}
+            >
+              {s3FilesLoading ? 'Loading...' : 'Browse'}
+            </Button>
+          </Box>
+
+          {s3FilesLoaded && s3Files.length === 0 && (
+            <Alert severity="info" sx={{ mb: 2 }}>No files found{s3BrowsePrefix ? ` under prefix "${s3BrowsePrefix}"` : ' in bucket'}.</Alert>
+          )}
+
+          {s3Files.length > 0 && (
+            <>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                <Typography variant="body2" color="text.secondary">
+                  {s3Files.length} file(s) found &middot; {s3SelectedKeys.size} selected
+                </Typography>
+                <Button
+                  variant="contained"
+                  size="small"
+                  startIcon={s3Ingesting ? <CircularProgress size={14} color="inherit" /> : <CloudDownloadIcon />}
+                  onClick={handleIngestSelected}
+                  disabled={s3SelectedKeys.size === 0 || s3Ingesting}
+                >
+                  {s3Ingesting
+                    ? `Ingesting ${s3IngestProgress.done}/${s3IngestProgress.total}...`
+                    : `Ingest Selected (${s3SelectedKeys.size})`}
+                </Button>
+              </Box>
+
+              {s3Ingesting && (
+                <LinearProgress
+                  variant="determinate"
+                  value={s3IngestProgress.total > 0 ? (s3IngestProgress.done / s3IngestProgress.total) * 100 : 0}
+                  sx={{ mb: 1, borderRadius: 1 }}
+                />
+              )}
+
+              <TableContainer sx={{ border: 1, borderColor: 'divider', borderRadius: 2, maxHeight: 420 }}>
+                <Table size="small" stickyHeader>
+                  <TableHead>
+                    <TableRow>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          indeterminate={s3SelectedKeys.size > 0 && s3SelectedKeys.size < s3Files.length}
+                          checked={s3Files.length > 0 && s3SelectedKeys.size === s3Files.length}
+                          onChange={handleToggleAllS3Files}
+                          size="small"
+                        />
+                      </TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>File</TableCell>
+                      <TableCell sx={{ fontWeight: 600, width: 100 }}>Size</TableCell>
+                      <TableCell sx={{ fontWeight: 600, width: 180 }}>Last Modified</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {s3Files.map((file) => (
+                      <TableRow
+                        key={file.key}
+                        hover
+                        onClick={() => handleToggleS3File(file.key)}
+                        sx={{ cursor: 'pointer' }}
+                        selected={s3SelectedKeys.has(file.key)}
+                      >
+                        <TableCell padding="checkbox">
+                          <Checkbox checked={s3SelectedKeys.has(file.key)} size="small" />
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all' }}>
+                            {file.key}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                            {formatFileSize(file.size)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
+                            {new Date(file.last_modified).toLocaleString()}
+                          </Typography>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </>
+          )}
+
+          {s3IngestResults.length > 0 && (
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>Ingestion Results</Typography>
+              {s3IngestResults.map((r, i) => (
+                <Alert key={i} severity={r.success ? 'success' : 'error'} sx={{ mb: 0.5, py: 0, '& .MuiAlert-message': { fontSize: '0.8rem' } }}>
+                  <strong>{r.key.split('/').pop()}</strong>: {r.message}
+                </Alert>
+              ))}
+            </Box>
+          )}
+        </Box>
+      )}
+    </>
+  )
 
   // ---- Tab content renderers ----
   const renderTabContent = (tabKey: string, idx: number) => {
@@ -871,293 +1106,15 @@ export default function Settings() {
       case 'ai-config':
         return (
           <TabPanel value={currentTab} index={idx} key={tabKey}>
-            <Box sx={{ maxWidth: 900 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>Default Anthropic API Key</Typography>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-                Used by the built-in Anthropic provider (<code>anthropic-default</code>). For Ollama / OpenAI / custom Anthropic accounts, add a provider below.
-              </Typography>
-              <Box sx={{ mb: 2 }}>
-                <Chip label={claudeConfig.configured ? 'API key configured' : 'API key not configured'} color={claudeConfig.configured ? 'success' : 'default'} size="small" icon={claudeConfig.configured ? <CheckIcon /> : undefined} />
-              </Box>
-              <TextField fullWidth label="API Key" type="password" value={claudeConfig.api_key} onChange={(e) => setClaudeConfig({ ...claudeConfig, api_key: e.target.value })} sx={{ mb: 2 }} />
-              <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSaveClaude}>Save</Button>
+            <Box>
+              <LLMProvidersTab setMessage={setMessage} />
             </Box>
             <Box sx={{ mt: 4, maxWidth: 1100 }}>
               <ModelAssignmentTab setMessage={setMessage} />
             </Box>
-            <Box sx={{ mt: 4 }}>
-              <LLMProvidersTab setMessage={setMessage} />
-            </Box>
             <Box sx={{ mt: 4, maxWidth: 1100 }}>
               <AIOperationsTab setMessage={setMessage} />
             </Box>
-          </TabPanel>
-        )
-
-      case 's3':
-        return (
-          <TabPanel value={currentTab} index={idx} key={tabKey}>
-            <Box sx={{ maxWidth: 600 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>S3 Storage</Typography>
-              <Box sx={{ mb: 2 }}>
-                <Chip label={(s3Config.configured && s3Config.bucket_name) ? 'S3 configured' : 'S3 not configured'} color={(s3Config.configured && s3Config.bucket_name) ? 'success' : 'default'} size="small" icon={(s3Config.configured && s3Config.bucket_name) ? <CheckIcon /> : undefined} />
-              </Box>
-              <TextField fullWidth label="Bucket Name" placeholder="my-bucket or s3://my-bucket/prefix/" value={s3Config.bucket_name} onChange={(e) => {
-                const val = e.target.value
-                if (val.startsWith('s3://')) {
-                  const stripped = val.slice(5)
-                  const slashIdx = stripped.indexOf('/')
-                  if (slashIdx > 0) {
-                    const bucket = stripped.slice(0, slashIdx)
-                    let path = stripped.slice(slashIdx + 1).replace(/\/*$/, '')
-                    const lastSeg = path.includes('/') ? path.split('/').pop()! : path
-                    if (lastSeg.includes('.')) {
-                      path = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
-                    }
-                    setS3Config({ ...s3Config, bucket_name: bucket, parquet_prefix: path ? path + '/' : '' })
-                    return
-                  }
-                }
-                setS3Config({ ...s3Config, bucket_name: val })
-              }} sx={{ mb: 2 }} />
-              <TextField fullWidth label="Region" value={s3Config.region} onChange={(e) => setS3Config({ ...s3Config, region: e.target.value })} sx={{ mb: 2 }} />
-
-              <Typography variant="body2" sx={{ fontWeight: 600, mb: 1 }}>Authentication Method</Typography>
-              <ToggleButtonGroup
-                value={s3Config.auth_method}
-                exclusive
-                onChange={(_e, val) => { if (val) setS3Config({ ...s3Config, auth_method: val }) }}
-                size="small"
-                sx={{ mb: 2 }}
-              >
-                <ToggleButton value="credentials">Manual Credentials</ToggleButton>
-                <ToggleButton value="profile">AWS Profile (SSO)</ToggleButton>
-              </ToggleButtonGroup>
-
-              {s3Config.auth_method === 'profile' ? (
-                <>
-                  <TextField fullWidth label="AWS Profile Name" value={s3Config.aws_profile} onChange={(e) => setS3Config({ ...s3Config, aws_profile: e.target.value })} placeholder="e.g. my-sso-profile" helperText={<>Name of the profile in ~/.aws/config. Run <code>aws sso login --profile &lt;name&gt;</code> before using.</>} sx={{ mb: 2 }} />
-                </>
-              ) : (
-                <>
-                  <TextField fullWidth label="Access Key ID" value={s3Config.access_key_id} onChange={(e) => setS3Config({ ...s3Config, access_key_id: e.target.value })} placeholder={s3Config.configured ? '(saved — leave blank to keep)' : ''} sx={{ mb: 2 }} />
-                  <TextField fullWidth label="Secret Access Key" type="password" value={s3Config.secret_access_key} onChange={(e) => setS3Config({ ...s3Config, secret_access_key: e.target.value })} placeholder={s3Config.configured ? '(saved — leave blank to keep)' : ''} sx={{ mb: 2 }} />
-                  <TextField fullWidth label="Session Token (optional)" type="password" value={s3Config.session_token} onChange={(e) => setS3Config({ ...s3Config, session_token: e.target.value })} placeholder={s3Config.configured ? '(saved — leave blank to keep)' : ''} helperText="Required for temporary AWS STS credentials (keys starting with ASIA)." sx={{ mb: 2 }} />
-                </>
-              )}
-
-              <TextField fullWidth label="Default Path / Prefix" placeholder="e.g. lake/v1/embeddings/" value={s3Config.parquet_prefix} onChange={(e) => setS3Config({ ...s3Config, parquet_prefix: e.target.value })} helperText="S3 key prefix used as the default when browsing files. Tip: paste a full s3:// URI into Bucket Name to auto-populate." sx={{ mb: 2 }} />
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSaveS3}>Save</Button>
-                <Button variant="outlined" startIcon={<HelpIcon />} onClick={() => setS3HelpOpen(true)}>How to Configure Your S3 Bucket</Button>
-              </Box>
-            </Box>
-
-            <Box sx={{ mt: 4, maxWidth: 900 }}>
-              <Divider sx={{ mb: 3 }} />
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>Data Management</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Clear all findings from the database to start fresh.
-              </Typography>
-              <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mb: 1 }}>
-                <Button
-                  variant="outlined"
-                  color="error"
-                  startIcon={clearingFindings ? <CircularProgress size={16} color="inherit" /> : <DeleteSweepIcon />}
-                  onClick={() => setConfirmClearOpen(true)}
-                  disabled={clearingFindings}
-                >
-                  {clearingFindings ? 'Clearing...' : 'Clear All Findings'}
-                </Button>
-              </Box>
-              {clearFindingsResult && (
-                <Alert severity={clearFindingsResult.success ? 'success' : 'error'} sx={{ mt: 1, '& .MuiAlert-message': { fontSize: '0.85rem' } }}>
-                  {clearFindingsResult.message}
-                </Alert>
-              )}
-            </Box>
-
-            <Dialog open={confirmClearOpen} onClose={() => setConfirmClearOpen(false)}>
-              <DialogTitle>Clear All Findings?</DialogTitle>
-              <DialogContent>
-                <DialogContentText>
-                  This will permanently delete all findings from the database. This action cannot be undone.
-                </DialogContentText>
-              </DialogContent>
-              <DialogActions>
-                <Button onClick={() => setConfirmClearOpen(false)}>Cancel</Button>
-                <Button onClick={handleClearFindings} color="error" variant="contained" disabled={clearingFindings}>
-                  {clearingFindings ? 'Clearing...' : 'Yes, Clear All'}
-                </Button>
-              </DialogActions>
-            </Dialog>
-
-            <Box sx={{ mt: 4, maxWidth: 900 }}>
-              <Divider sx={{ mb: 3 }} />
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>Upload Local File</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                Upload a CSV, Parquet, JSON, or JSONL file from your computer to ingest directly.
-              </Typography>
-
-              <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mb: 1 }}>
-                <Button
-                  variant="outlined"
-                  component="label"
-                  startIcon={<UploadFileIcon />}
-                  sx={{ textTransform: 'none' }}
-                >
-                  {uploadFile ? uploadFile.name : 'Choose File'}
-                  <input
-                    type="file"
-                    hidden
-                    accept=".csv,.parquet,.json,.jsonl,.ndjson"
-                    onChange={handleFileSelect}
-                  />
-                </Button>
-                {uploadFile && (
-                  <Typography variant="body2" color="text.secondary">
-                    {formatFileSize(uploadFile.size)}
-                  </Typography>
-                )}
-                <Button
-                  variant="contained"
-                  startIcon={uploading ? <CircularProgress size={16} color="inherit" /> : <CloudDownloadIcon />}
-                  onClick={handleUploadFile}
-                  disabled={!uploadFile || uploading}
-                >
-                  {uploading ? 'Uploading...' : 'Ingest'}
-                </Button>
-              </Box>
-
-              {uploadResult && (
-                <Alert severity={uploadResult.success ? 'success' : 'error'} sx={{ mt: 1, '& .MuiAlert-message': { fontSize: '0.85rem' } }}>
-                  {uploadResult.message}
-                </Alert>
-              )}
-            </Box>
-
-            {s3Config.configured && s3Config.bucket_name && (
-              <Box sx={{ mt: 4, maxWidth: 900 }}>
-                <Divider sx={{ mb: 3 }} />
-                <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>Browse & Ingest S3 Files</Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                  Browse your S3 bucket and select files to ingest manually.
-                </Typography>
-
-                <Box sx={{ display: 'flex', gap: 1, mb: 2, alignItems: 'center' }}>
-                  <TextField
-                    size="small"
-                    label="Prefix / Folder"
-                    placeholder="e.g. data/embeddings/"
-                    value={s3BrowsePrefix}
-                    onChange={(e) => setS3BrowsePrefix(e.target.value)}
-                    sx={{ flex: 1, maxWidth: 400 }}
-                  />
-                  <Button
-                    variant="contained"
-                    startIcon={s3FilesLoading ? <CircularProgress size={16} color="inherit" /> : <FolderOpenIcon />}
-                    onClick={handleBrowseS3}
-                    disabled={s3FilesLoading}
-                  >
-                    {s3FilesLoading ? 'Loading...' : 'Browse'}
-                  </Button>
-                </Box>
-
-                {s3FilesLoaded && s3Files.length === 0 && (
-                  <Alert severity="info" sx={{ mb: 2 }}>No files found{s3BrowsePrefix ? ` under prefix "${s3BrowsePrefix}"` : ' in bucket'}.</Alert>
-                )}
-
-                {s3Files.length > 0 && (
-                  <>
-                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        {s3Files.length} file(s) found &middot; {s3SelectedKeys.size} selected
-                      </Typography>
-                      <Button
-                        variant="contained"
-                        size="small"
-                        startIcon={s3Ingesting ? <CircularProgress size={14} color="inherit" /> : <CloudDownloadIcon />}
-                        onClick={handleIngestSelected}
-                        disabled={s3SelectedKeys.size === 0 || s3Ingesting}
-                      >
-                        {s3Ingesting
-                          ? `Ingesting ${s3IngestProgress.done}/${s3IngestProgress.total}...`
-                          : `Ingest Selected (${s3SelectedKeys.size})`}
-                      </Button>
-                    </Box>
-
-                    {s3Ingesting && (
-                      <LinearProgress
-                        variant="determinate"
-                        value={s3IngestProgress.total > 0 ? (s3IngestProgress.done / s3IngestProgress.total) * 100 : 0}
-                        sx={{ mb: 1, borderRadius: 1 }}
-                      />
-                    )}
-
-                    <TableContainer sx={{ border: 1, borderColor: 'divider', borderRadius: 2, maxHeight: 420 }}>
-                      <Table size="small" stickyHeader>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell padding="checkbox">
-                              <Checkbox
-                                indeterminate={s3SelectedKeys.size > 0 && s3SelectedKeys.size < s3Files.length}
-                                checked={s3Files.length > 0 && s3SelectedKeys.size === s3Files.length}
-                                onChange={handleToggleAllS3Files}
-                                size="small"
-                              />
-                            </TableCell>
-                            <TableCell sx={{ fontWeight: 600 }}>File</TableCell>
-                            <TableCell sx={{ fontWeight: 600, width: 100 }}>Size</TableCell>
-                            <TableCell sx={{ fontWeight: 600, width: 180 }}>Last Modified</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
-                          {s3Files.map((file) => (
-                            <TableRow
-                              key={file.key}
-                              hover
-                              onClick={() => handleToggleS3File(file.key)}
-                              sx={{ cursor: 'pointer' }}
-                              selected={s3SelectedKeys.has(file.key)}
-                            >
-                              <TableCell padding="checkbox">
-                                <Checkbox checked={s3SelectedKeys.has(file.key)} size="small" />
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all' }}>
-                                  {file.key}
-                                </Typography>
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                                  {formatFileSize(file.size)}
-                                </Typography>
-                              </TableCell>
-                              <TableCell>
-                                <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem', whiteSpace: 'nowrap' }}>
-                                  {new Date(file.last_modified).toLocaleString()}
-                                </Typography>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                      </Table>
-                    </TableContainer>
-                  </>
-                )}
-
-                {s3IngestResults.length > 0 && (
-                  <Box sx={{ mt: 2 }}>
-                    <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>Ingestion Results</Typography>
-                    {s3IngestResults.map((r, i) => (
-                      <Alert key={i} severity={r.success ? 'success' : 'error'} sx={{ mb: 0.5, py: 0, '& .MuiAlert-message': { fontSize: '0.8rem' } }}>
-                        <strong>{r.key.split('/').pop()}</strong>: {r.message}
-                      </Alert>
-                    ))}
-                  </Box>
-                )}
-              </Box>
-            )}
           </TabPanel>
         )
 
@@ -1224,9 +1181,148 @@ export default function Settings() {
               />
             </Box>
 
+            {/* Data Ingestion — first-party integrations with custom config forms (S3, Kafka) */}
+            {(() => {
+              const s3Configured = Boolean(s3Config.configured && s3Config.bucket_name)
+              const builtins: {
+                name: string
+                description: string
+                configured: boolean
+                onConfigure: () => void
+                matches: boolean
+              }[] = [
+                {
+                  name: 'S3 Storage',
+                  description: 'AWS S3 bucket for parquet ingest, browsing, and file uploads.',
+                  configured: s3Configured,
+                  onConfigure: () => setS3DialogOpen(true),
+                  matches: !searchLower || 's3 storage'.includes(searchLower) || 'aws s3 bucket parquet'.includes(searchLower),
+                },
+                {
+                  name: 'Kafka',
+                  description: 'Kafka topics for streaming finding ingest.',
+                  configured: false,
+                  onConfigure: () => setKafkaDialogOpen(true),
+                  matches: !searchLower || 'kafka'.includes(searchLower) || 'streaming'.includes(searchLower),
+                },
+                {
+                  name: 'Darktrace',
+                  description: 'Webhook receiver for Darktrace Model Breach, AI Analyst, and System Status alerts.',
+                  configured: Boolean(darktraceConfig.configured && darktraceConfig.enabled),
+                  onConfigure: () => setDarktraceDialogOpen(true),
+                  matches: !searchLower || 'darktrace'.includes(searchLower) || 'webhook'.includes(searchLower),
+                },
+              ]
+              const visible = builtins.filter(b => b.matches)
+              // Also include any MCP servers explicitly classified as Data Ingestion
+              const mcpForGroup = filterBySearch(visibleMcpServers.filter(n => DATA_INGESTION_MCP.has(n)))
+              if (visible.length === 0 && mcpForGroup.length === 0) return null
+              const configuredCount = visible.filter(b => b.configured).length
+                + mcpForGroup.filter(n => mcpEnabled[n]).length
+              const totalCount = visible.length + mcpForGroup.length
+              return (
+                <Accordion
+                  disableGutters
+                  elevation={0}
+                  sx={{
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: '8px !important',
+                    mb: 1.5,
+                    '&:before': { display: 'none' },
+                    overflow: 'hidden',
+                  }}
+                >
+                  <AccordionSummary
+                    expandIcon={<ExpandMoreIcon />}
+                    sx={{
+                      minHeight: 44,
+                      px: 2,
+                      '& .MuiAccordionSummary-content': { my: 0.75, alignItems: 'center', gap: 1 },
+                    }}
+                  >
+                    <Typography variant="body2" sx={{ fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', fontSize: '0.7rem', color: 'text.secondary' }}>
+                      Data Ingestion
+                    </Typography>
+                    <Chip label={`${configuredCount}/${totalCount}`} size="small" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 600 }} />
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ px: 2, pt: 0, pb: 2 }}>
+                    <Grid container spacing={2}>
+                      {visible.map(b => {
+                        const indicatorColor = b.configured ? '#4caf50' : '#9e9e9e'
+                        const indicatorLabel = b.configured ? 'Configured' : 'Configure'
+                        return (
+                          <Grid item xs={12} sm={6} md={4} lg={3} key={b.name}>
+                            <Card
+                              variant="outlined"
+                              sx={{
+                                height: CARD_HEIGHT,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                borderColor: b.configured ? alpha(theme.palette.primary.main, 0.5) : 'divider',
+                                borderWidth: 1,
+                                bgcolor: b.configured ? alpha(theme.palette.primary.main, 0.03) : 'background.paper',
+                                transition: 'border-color 0.2s, background-color 0.2s',
+                                '&:hover': { borderColor: b.configured ? 'primary.main' : alpha(theme.palette.text.primary, 0.25) },
+                              }}
+                            >
+                              <CardContent sx={{ display: 'flex', flexDirection: 'column', flex: 1, p: 2, '&:last-child': { pb: 1.5 } }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
+                                  <Typography variant="body2" noWrap sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                                    {b.name}
+                                  </Typography>
+                                </Box>
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                    lineHeight: 1.35,
+                                    fontSize: '0.68rem',
+                                    mb: 0.75,
+                                  }}
+                                >
+                                  {b.description}
+                                </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 'auto' }}>
+                                  <Chip
+                                    label={indicatorLabel}
+                                    size="small"
+                                    onClick={b.onConfigure}
+                                    sx={{
+                                      height: 22,
+                                      fontSize: '0.68rem',
+                                      fontWeight: 600,
+                                      cursor: 'pointer',
+                                      borderWidth: 1.5,
+                                      borderStyle: 'solid',
+                                      borderColor: alpha(indicatorColor, 0.5),
+                                      bgcolor: alpha(indicatorColor, 0.1),
+                                      color: indicatorColor,
+                                      '& .MuiChip-icon': { color: indicatorColor },
+                                      '&:hover': { bgcolor: alpha(indicatorColor, 0.2), borderColor: indicatorColor },
+                                    }}
+                                    icon={<Box component="span" sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: indicatorColor, ml: '5px !important', boxShadow: `0 0 4px ${alpha(indicatorColor, 0.6)}` }} />}
+                                  />
+                                </Box>
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        )
+                      })}
+                      {mcpForGroup.map(renderServerCard)}
+                    </Grid>
+                  </AccordionDetails>
+                </Accordion>
+              )
+            })()}
+
             <Box>
               {MCP_CATEGORIES.map(category => {
-                const servers = filterBySearch(mcpServers.filter(category.filter))
+                const servers = filterBySearch(visibleMcpServers.filter(category.filter))
                 const wipIntegrations = filterIntegrationsBySearch(unimplementedByMcpCat[category.label] || [])
                 if (servers.length === 0 && wipIntegrations.length === 0) return null
                 const enabledCount = servers.filter(n => mcpEnabled[n]).length
@@ -1272,7 +1368,7 @@ export default function Settings() {
               })}
 
               {(() => {
-                const uncategorized = filterBySearch(mcpServers.filter(n => !CATEGORIZED_NAMES.has(n)))
+                const uncategorized = filterBySearch(visibleMcpServers.filter(n => !CATEGORIZED_NAMES.has(n)))
                 const wipOther = filterIntegrationsBySearch(unimplementedByMcpCat['Other'] || [])
                 if (uncategorized.length === 0 && wipOther.length === 0) return null
                 const enabledCount = uncategorized.filter(n => mcpEnabled[n]).length
@@ -1416,34 +1512,11 @@ export default function Settings() {
           </TabPanel>
         )
 
-      case 'agents':
-        return (
-          <TabPanel value={currentTab} index={idx} key={tabKey}>
-            <AgentBuilderTab onMessage={setMessage} showConfirm={showConfirm} />
-          </TabPanel>
-        )
-
       case 'autoinvestigate':
         return (
           <TabPanel value={currentTab} index={idx} key={tabKey}>
             <Box sx={{ maxWidth: 800 }}>
               <AutoInvestigateTab onMessage={setMessage} showConfirm={showConfirm} />
-            </Box>
-          </TabPanel>
-        )
-
-      case 'skills':
-        return (
-          <TabPanel value={currentTab} index={idx} key={tabKey}>
-            <SkillsTab />
-          </TabPanel>
-        )
-
-      case 'kafka':
-        return (
-          <TabPanel value={currentTab} index={idx} key={tabKey}>
-            <Box sx={{ maxWidth: 900 }}>
-              <KafkaTab onMessage={setMessage} />
             </Box>
           </TabPanel>
         )
@@ -1460,6 +1533,50 @@ export default function Settings() {
               </FormGroup>
               <Divider sx={{ my: 2 }} />
               <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSaveGeneral}>Save</Button>
+            </Box>
+
+            <Box sx={{ mt: 4, maxWidth: 900 }}>
+              <Divider sx={{ mb: 3 }} />
+              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>Data Management</Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Clear all findings from the database to start fresh.
+              </Typography>
+              <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', mb: 1 }}>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  startIcon={clearingFindings ? <CircularProgress size={16} color="inherit" /> : <DeleteSweepIcon />}
+                  onClick={() => setConfirmClearOpen(true)}
+                  disabled={clearingFindings}
+                >
+                  {clearingFindings ? 'Clearing...' : 'Clear All Findings'}
+                </Button>
+              </Box>
+              {clearFindingsResult && (
+                <Alert severity={clearFindingsResult.success ? 'success' : 'error'} sx={{ mt: 1, '& .MuiAlert-message': { fontSize: '0.85rem' } }}>
+                  {clearFindingsResult.message}
+                </Alert>
+              )}
+            </Box>
+
+            <Dialog open={confirmClearOpen} onClose={() => setConfirmClearOpen(false)}>
+              <DialogTitle>Clear All Findings?</DialogTitle>
+              <DialogContent>
+                <DialogContentText>
+                  This will permanently delete all findings from the database. This action cannot be undone.
+                </DialogContentText>
+              </DialogContent>
+              <DialogActions>
+                <Button onClick={() => setConfirmClearOpen(false)}>Cancel</Button>
+                <Button onClick={handleClearFindings} color="error" variant="contained" disabled={clearingFindings}>
+                  {clearingFindings ? 'Clearing...' : 'Yes, Clear All'}
+                </Button>
+              </DialogActions>
+            </Dialog>
+
+            <Box sx={{ mt: 4 }}>
+              <Divider sx={{ mb: 3 }} />
+              <CostAnalytics />
             </Box>
           </TabPanel>
         )
@@ -1518,6 +1635,108 @@ export default function Settings() {
         <DialogActions>
           <Button onClick={handleConfirmClose} color="inherit">Cancel</Button>
           <Button onClick={handleConfirmAction} variant="contained" autoFocus>Confirm</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={s3DialogOpen} onClose={() => setS3DialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>S3 Storage</DialogTitle>
+        <DialogContent dividers>
+          {s3SectionJsx}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setS3DialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={kafkaDialogOpen} onClose={() => setKafkaDialogOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>Kafka</DialogTitle>
+        <DialogContent dividers>
+          <KafkaTab onMessage={setMessage} />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setKafkaDialogOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={darktraceDialogOpen} onClose={() => setDarktraceDialogOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Darktrace Webhook Receiver</DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ mb: 2 }}>
+            <Chip
+              label={darktraceConfig.configured ? 'Webhook secret configured' : 'Webhook secret not configured'}
+              color={darktraceConfig.configured ? 'success' : 'default'}
+              size="small"
+              icon={darktraceConfig.configured ? <CheckIcon /> : undefined}
+            />
+          </Box>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+            Vigil exposes inbound webhooks at <code>POST /api/webhooks/darktrace/&#123;model-breach,ai-analyst,system-status&#125;</code>.
+            Darktrace must sign each request with HMAC-SHA256 in the <code>X-Darktrace-Signature</code> header.
+          </Typography>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={darktraceConfig.enabled}
+                onChange={(e) => setDarktraceConfig({ ...darktraceConfig, enabled: e.target.checked })}
+              />
+            }
+            label="Enable webhook receiver"
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            fullWidth
+            label="Webhook Secret"
+            type="password"
+            value={darktraceConfig.webhook_secret}
+            onChange={(e) => setDarktraceConfig({ ...darktraceConfig, webhook_secret: e.target.value })}
+            placeholder={darktraceConfig.configured ? '(saved — leave blank to keep)' : 'Paste the HMAC secret from Darktrace'}
+            helperText="HMAC-SHA256 shared secret. Stored in the secrets manager."
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            fullWidth
+            label="Darktrace Console URL (optional)"
+            value={darktraceConfig.url}
+            onChange={(e) => setDarktraceConfig({ ...darktraceConfig, url: e.target.value })}
+            placeholder="https://your-tenant.darktrace.com"
+            helperText="Used to build back-links from findings to the Threat Visualizer."
+            sx={{ mb: 2 }}
+          />
+          <TextField
+            fullWidth
+            type="number"
+            label="Max Body Size (KB)"
+            value={darktraceConfig.max_body_kb}
+            onChange={(e) => setDarktraceConfig({ ...darktraceConfig, max_body_kb: Math.max(1, Number(e.target.value) || 1024) })}
+            inputProps={{ min: 1, max: 16384 }}
+            helperText="Reject payloads larger than this."
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDarktraceDialogOpen(false)}>Close</Button>
+          <Button
+            variant="contained"
+            startIcon={<SaveIcon />}
+            onClick={async () => {
+              try {
+                const payload: any = {
+                  enabled: darktraceConfig.enabled,
+                  url: darktraceConfig.url,
+                  max_body_kb: darktraceConfig.max_body_kb,
+                }
+                if (darktraceConfig.webhook_secret) payload.webhook_secret = darktraceConfig.webhook_secret
+                await configApi.setDarktrace(payload)
+                setMessage({ type: 'success', text: 'Darktrace config saved' })
+                setDarktraceDialogOpen(false)
+                await loadConfigs()
+              } catch (e: any) {
+                setMessage({ type: 'error', text: e?.response?.data?.detail || 'Failed to save Darktrace config' })
+              }
+              setTimeout(() => setMessage(null), 3000)
+            }}
+          >
+            Save
+          </Button>
         </DialogActions>
       </Dialog>
 

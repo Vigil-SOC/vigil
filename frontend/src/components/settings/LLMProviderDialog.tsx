@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Dialog,
   DialogTitle,
@@ -21,7 +21,11 @@ import {
   MenuItem,
   InputLabel,
   Typography,
+  IconButton,
+  Tooltip,
+  Stack,
 } from '@mui/material'
+import RefreshIcon from '@mui/icons-material/Refresh'
 import { llmProviderApi, LLMProvider, LLMProviderCreate } from '../../services/api'
 
 type ProviderType = 'anthropic' | 'openai' | 'ollama'
@@ -75,6 +79,56 @@ export default function LLMProviderDialog({ existing, onClose, onSaved, onError 
   const [testError, setTestError] = useState<string | null>(null)
   const [tested, setTested] = useState(false)
   const [availableModels, setAvailableModels] = useState<string[]>([])
+
+  // Step 1 model discovery (pre-save) — populates the Default model dropdown.
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
+  const [discovering, setDiscovering] = useState(false)
+  const [discoverError, setDiscoverError] = useState<string | null>(null)
+  const [useCustomModel, setUseCustomModel] = useState(false)
+  const discoverDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const runDiscovery = async () => {
+    setDiscovering(true)
+    setDiscoverError(null)
+    try {
+      const res = await llmProviderApi.discoverModels({
+        provider_type: providerType,
+        base_url: baseUrl || undefined,
+        api_key: apiKey || undefined,
+        organization: organization || undefined,
+      })
+      const ids = res.data.models || []
+      setDiscoveredModels(ids)
+      // If user hadn't picked a model yet, default to the first one.
+      if (!defaultModel && ids.length > 0) setDefaultModel(ids[0])
+      // If current default isn't in the list, flip to custom so the user sees
+      // the free-text value rather than an empty Select.
+      if (defaultModel && ids.length > 0 && !ids.includes(defaultModel)) {
+        setUseCustomModel(true)
+      }
+    } catch (e: any) {
+      setDiscoverError(e?.response?.data?.detail || e?.message || 'Failed to list models')
+      setDiscoveredModels([])
+    } finally {
+      setDiscovering(false)
+    }
+  }
+
+  // Auto-discover when we have enough info. Debounced so typing the key
+  // doesn't fire one request per keystroke.
+  useEffect(() => {
+    if (step !== 1) return
+    // Anthropic has no discovery endpoint — return static list anyway.
+    const needsKey = providerType === 'openai' || providerType === 'anthropic'
+    if (needsKey && !apiKey && !editing) return
+    if (providerType === 'ollama' && !baseUrl) return
+    if (discoverDebounce.current) clearTimeout(discoverDebounce.current)
+    discoverDebounce.current = setTimeout(runDiscovery, 500)
+    return () => {
+      if (discoverDebounce.current) clearTimeout(discoverDebounce.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, providerType, baseUrl, apiKey, organization])
 
   // First-load helper when switching provider type
   const selectProviderType = (t: ProviderType) => {
@@ -205,14 +259,95 @@ export default function LLMProviderDialog({ existing, onClose, onSaved, onError 
           fullWidth
         />
       )}
-      <TextField
-        label="Default model"
-        value={defaultModel}
-        onChange={(e) => setDefaultModel(e.target.value)}
-        placeholder={DEFAULT_MODEL[providerType]}
-        helperText="You can change this after a successful connection test."
-        fullWidth
-      />
+      {discoveredModels.length > 0 && !useCustomModel ? (
+        <Box>
+          <Stack direction="row" spacing={1} alignItems="flex-start">
+            <FormControl fullWidth size="small">
+              <InputLabel>Default model</InputLabel>
+              <Select
+                label="Default model"
+                value={discoveredModels.includes(defaultModel) ? defaultModel : ''}
+                onChange={(e) => {
+                  const v = e.target.value as string
+                  if (v === '__custom__') {
+                    setUseCustomModel(true)
+                  } else {
+                    setDefaultModel(v)
+                  }
+                }}
+                displayEmpty
+              >
+                <MenuItem value="" disabled>
+                  <em>Select a model</em>
+                </MenuItem>
+                {discoveredModels.map((m) => (
+                  <MenuItem key={m} value={m}>{m}</MenuItem>
+                ))}
+                <MenuItem value="__custom__">
+                  <em>Custom model ID…</em>
+                </MenuItem>
+              </Select>
+            </FormControl>
+            <Tooltip title="Re-fetch model list">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={runDiscovery}
+                  disabled={discovering}
+                  sx={{ mt: 0.5 }}
+                >
+                  {discovering ? <CircularProgress size={16} /> : <RefreshIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+            {discoveredModels.length} model{discoveredModels.length === 1 ? '' : 's'} available from this provider.
+          </Typography>
+        </Box>
+      ) : (
+        <Box>
+          <Stack direction="row" spacing={1} alignItems="flex-start">
+            <TextField
+              label="Default model"
+              size="small"
+              value={defaultModel}
+              onChange={(e) => setDefaultModel(e.target.value)}
+              placeholder={DEFAULT_MODEL[providerType]}
+              helperText={
+                discoverError
+                  ? `Model discovery failed — enter a model ID manually. (${discoverError})`
+                  : discovering
+                    ? 'Fetching available models…'
+                    : 'Enter the model ID, or click refresh to fetch a list from the provider.'
+              }
+              fullWidth
+              error={Boolean(discoverError)}
+            />
+            <Tooltip title="Fetch model list from provider">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={runDiscovery}
+                  disabled={discovering}
+                  sx={{ mt: 0.5 }}
+                >
+                  {discovering ? <CircularProgress size={16} /> : <RefreshIcon fontSize="small" />}
+                </IconButton>
+              </span>
+            </Tooltip>
+          </Stack>
+          {useCustomModel && discoveredModels.length > 0 && (
+            <Button
+              size="small"
+              onClick={() => setUseCustomModel(false)}
+              sx={{ mt: 0.5 }}
+            >
+              Back to model list
+            </Button>
+          )}
+        </Box>
+      )}
     </Box>
   )
 

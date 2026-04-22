@@ -13,7 +13,7 @@
  * soc-daemon / llm-worker processes.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Alert,
   Box,
@@ -28,7 +28,6 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
-import SaveIcon from '@mui/icons-material/Save'
 import RestoreIcon from '@mui/icons-material/Restore'
 import { configApi } from '../../services/api'
 
@@ -53,13 +52,15 @@ const DEFAULTS: AIOperationsSettings = {
 export default function AIOperationsTab({ setMessage }: Props) {
   const [settings, setSettings] = useState<AIOperationsSettings>(DEFAULTS)
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const lastSaved = useRef<AIOperationsSettings>(DEFAULTS)
 
   const load = async () => {
     setLoading(true)
     try {
       const { data } = await configApi.getAIOperations()
-      setSettings({ ...DEFAULTS, ...data })
+      const merged = { ...DEFAULTS, ...data }
+      setSettings(merged)
+      lastSaved.current = merged
     } catch (err: any) {
       setMessage({
         type: 'error',
@@ -75,22 +76,23 @@ export default function AIOperationsTab({ setMessage }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const handleSave = async () => {
-    setSaving(true)
+  const persist = async (next: AIOperationsSettings) => {
     try {
-      await configApi.setAIOperations(settings)
+      await configApi.setAIOperations(next)
+      lastSaved.current = next
       setMessage({ type: 'success', text: 'AI operations settings saved' })
     } catch (err: any) {
       setMessage({
         type: 'error',
         text: err?.response?.data?.detail || 'Failed to save AI operations config',
       })
-    } finally {
-      setSaving(false)
     }
   }
 
-  const handleReset = () => setSettings(DEFAULTS)
+  const handleReset = () => {
+    setSettings(DEFAULTS)
+    persist(DEFAULTS)
+  }
 
   const numberField = (
     key: keyof AIOperationsSettings,
@@ -110,6 +112,9 @@ export default function AIOperationsTab({ setMessage }: Props) {
             [key]: Math.max(min, Math.min(max, Number(e.target.value) || 0)),
           })
         }
+        onBlur={() => {
+          if (settings[key] !== lastSaved.current[key]) persist(settings)
+        }}
         inputProps={{ min, max }}
         fullWidth
         helperText={helper}
@@ -152,9 +157,11 @@ export default function AIOperationsTab({ setMessage }: Props) {
             control={
               <Switch
                 checked={settings.prompt_cache_enabled}
-                onChange={(e) =>
-                  setSettings({ ...settings, prompt_cache_enabled: e.target.checked })
-                }
+                onChange={(e) => {
+                  const next = { ...settings, prompt_cache_enabled: e.target.checked }
+                  setSettings(next)
+                  persist(next)
+                }}
               />
             }
             label={
@@ -201,18 +208,9 @@ export default function AIOperationsTab({ setMessage }: Props) {
 
           <Stack direction="row" spacing={2} sx={{ pt: 1 }}>
             <Button
-              variant="contained"
-              startIcon={<SaveIcon />}
-              onClick={handleSave}
-              disabled={saving}
-            >
-              {saving ? 'Saving…' : 'Save'}
-            </Button>
-            <Button
               variant="outlined"
               startIcon={<RestoreIcon />}
               onClick={handleReset}
-              disabled={saving}
             >
               Reset to defaults
             </Button>
