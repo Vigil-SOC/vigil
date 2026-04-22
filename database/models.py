@@ -20,6 +20,7 @@ from sqlalchemy import (
     Boolean,
     ARRAY,
     Numeric,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -2404,6 +2405,68 @@ class CustomAgent(Base):
             'enable_thinking': self.enable_thinking,
             'model': self.model,
             'created_by': self.created_by,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class LLMProviderConfig(Base):
+    """LLM provider configuration (Anthropic, OpenAI, Ollama, ...).
+
+    Keys are not stored here — `api_key_ref` points to a secrets_manager key.
+    See database/init/09_llm_providers.sql for the table definition.
+    """
+
+    __tablename__ = 'llm_provider_configs'
+
+    provider_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    base_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    api_key_ref: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    default_model: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    last_test_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_test_success: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+    )
+
+    __table_args__ = (
+        Index('idx_llm_provider_type', 'provider_type'),
+        Index('idx_llm_provider_active', 'is_active'),
+        # Partial unique index — enforces "one default per provider_type"
+        # for non-Docker deployments too (Base.metadata.create_all path).
+        # Mirrors the SQL in database/init/07_llm_providers.sql.
+        Index(
+            'llm_provider_default_per_type',
+            'provider_type',
+            unique=True,
+            postgresql_where=text('is_default = TRUE'),
+        ),
+    )
+
+    def to_dict(self, include_secrets: bool = False) -> dict:
+        return {
+            'provider_id': self.provider_id,
+            'provider_type': self.provider_type,
+            'name': self.name,
+            'base_url': self.base_url,
+            'api_key_ref': self.api_key_ref if include_secrets else None,
+            'has_api_key': bool(self.api_key_ref),
+            'default_model': self.default_model,
+            'is_active': self.is_active,
+            'is_default': self.is_default,
+            'config': self.config or {},
+            'last_test_at': self.last_test_at.isoformat() if self.last_test_at else None,
+            'last_test_success': self.last_test_success,
+            'last_error': self.last_error,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
         }

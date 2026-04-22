@@ -193,6 +193,7 @@ logs/
 config.json
 *_config.json
 !mcp-config.json
+!docker/bifrost/config.json
 
 # Node.js / React
 frontend/node_modules/

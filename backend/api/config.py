@@ -203,20 +203,57 @@ async def get_claude_config():
 async def set_claude_config(config: ClaudeConfig):
     """
     Set Claude API configuration.
-    
+
     Args:
         config: Claude configuration
-    
+
     Returns:
         Success status
     """
     try:
         # Use standard environment variable name
         success = set_secret("CLAUDE_API_KEY", config.api_key)
-        if success:
-            return {"success": True, "message": "API key saved securely"}
-        else:
+        if not success:
             raise HTTPException(status_code=500, detail="Failed to save API key")
+
+        # GH #88: keep the new llm_provider_configs table in sync so the
+        # Settings "AI Config" tab and the legacy endpoint agree on the
+        # Anthropic default. Best-effort — a DB failure here should NOT
+        # block the secret write that already succeeded.
+        try:
+            from database.connection import get_db_session
+            from database.models import LLMProviderConfig
+
+            session = get_db_session()
+            try:
+                row = session.get(LLMProviderConfig, "anthropic-default")
+                if row is None:
+                    row = LLMProviderConfig(
+                        provider_id="anthropic-default",
+                        provider_type="anthropic",
+                        name="Anthropic (default)",
+                        api_key_ref="CLAUDE_API_KEY",
+                        default_model="claude-sonnet-4-5-20250929",
+                        is_active=True,
+                        is_default=True,
+                        config={},
+                    )
+                    session.add(row)
+                else:
+                    row.api_key_ref = "CLAUDE_API_KEY"
+                    row.is_active = True
+                session.commit()
+            finally:
+                session.close()
+        except Exception as sync_err:  # noqa: BLE001
+            logger.warning(
+                "Legacy /config/claude could not sync llm_provider_configs: %s",
+                sync_err,
+            )
+
+        return {"success": True, "message": "API key saved securely"}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error setting Claude config: {e}")
         raise HTTPException(status_code=500, detail=str(e))

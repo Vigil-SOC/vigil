@@ -52,6 +52,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://deeptempo:${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}@postgres:5432/deeptempo_soc
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       - REDIS_URL=redis://redis:6379/0
       - PYTHONUNBUFFERED=1
     ports:
@@ -76,6 +79,9 @@ services:
       - DATABASE_URL=postgresql://deeptempo:${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}@postgres:5432/deeptempo_soc
       # AI
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       # Redis (LLM queue)
       - REDIS_URL=redis://redis:6379/0
       # Polling intervals (seconds)
@@ -155,6 +161,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://deeptempo:${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}@postgres:5432/deeptempo_soc
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       - REDIS_URL=redis://redis:6379/0
       - PYTHONUNBUFFERED=1
     depends_on:
@@ -165,6 +174,32 @@ services:
     restart: unless-stopped
     networks:
       - deeptempo-network
+
+  # ─── Multi-provider LLM gateway (opt-in: --profile bifrost) ───────────────
+  # Bifrost exposes a unified OpenAI-format API that translates to
+  # OpenAI/Anthropic/Ollama/etc. Vigil routes non-Anthropic calls here.
+  # Anthropic + extended thinking bypasses Bifrost and hits the SDK directly.
+  bifrost:
+    image: maximhq/bifrost:latest
+    container_name: deeptempo-bifrost
+    ports:
+      - "8080:8080"
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+    volumes:
+      - ./bifrost/config.json:/app/config.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - deeptempo-network
+    profiles:
+      - bifrost
 
   # PgAdmin for database management (optional, can be commented out in production)
   pgadmin:

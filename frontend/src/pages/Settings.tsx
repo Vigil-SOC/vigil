@@ -67,6 +67,7 @@ import DetectionRulesTab from '../components/settings/DetectionRulesTab'
 import AutoInvestigateTab from '../components/settings/AutoInvestigateTab'
 import SkillsTab from '../components/settings/SkillsTab'
 import KafkaTab from '../components/settings/KafkaTab'
+import LLMProvidersTab from '../components/settings/LLMProvidersTab'
 
 interface TabPanelProps {
   children?: React.ReactNode
@@ -92,7 +93,7 @@ const IS_DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
 
 // Define tabs — some are dev-only
 const TAB_DEFS: { key: string; label: string; devOnly: boolean }[] = [
-  { key: 'claude', label: 'Claude', devOnly: false },
+  { key: 'ai-config', label: 'AI Config', devOnly: false },
   { key: 's3', label: 'S3 Storage', devOnly: false },
   { key: 'integrations', label: 'Integrations / MCP', devOnly: false },
   { key: 'users', label: 'Users', devOnly: false },
@@ -118,6 +119,7 @@ export default function Settings() {
     map['github'] = map['integrations']
     map['postgresql'] = map['dev'] ?? map['integrations'] // postgresql now lives in dev tab
     map['detection-rules'] = map['integrations'] // detection rules now lives inside integrations tab
+    map['claude'] = map['ai-config'] // legacy alias — "Claude" tab renamed to "AI Config" in #88/#89
     return map
   }, [visibleTabs])
 
@@ -864,16 +866,22 @@ export default function Settings() {
   // ---- Tab content renderers ----
   const renderTabContent = (tabKey: string, idx: number) => {
     switch (tabKey) {
-      case 'claude':
+      case 'ai-config':
         return (
           <TabPanel value={currentTab} index={idx} key={tabKey}>
-            <Box sx={{ maxWidth: 500 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>Claude API</Typography>
+            <Box sx={{ maxWidth: 900 }}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 0.5 }}>Default Anthropic API Key</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                Used by the built-in Anthropic provider (<code>anthropic-default</code>). For Ollama / OpenAI / custom Anthropic accounts, add a provider below.
+              </Typography>
               <Box sx={{ mb: 2 }}>
                 <Chip label={claudeConfig.configured ? 'API key configured' : 'API key not configured'} color={claudeConfig.configured ? 'success' : 'default'} size="small" icon={claudeConfig.configured ? <CheckIcon /> : undefined} />
               </Box>
               <TextField fullWidth label="API Key" type="password" value={claudeConfig.api_key} onChange={(e) => setClaudeConfig({ ...claudeConfig, api_key: e.target.value })} sx={{ mb: 2 }} />
               <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSaveClaude}>Save</Button>
+            </Box>
+            <Box sx={{ mt: 4 }}>
+              <LLMProvidersTab setMessage={setMessage} />
             </Box>
           </TabPanel>
         )

@@ -69,6 +69,7 @@ class ClaudeService:
         thinking_budget: int = 10000,
         use_agent_sdk: bool = True,
         use_backend_tools: bool = False,
+        provider_api_key_ref: Optional[str] = None,
     ):
         """
         Initialize Claude service.
@@ -79,10 +80,14 @@ class ClaudeService:
             thinking_budget: Token budget for extended thinking (default: 10000)
             use_agent_sdk: Whether to use Claude Agent SDK for agentic workflows
             use_backend_tools: Whether to use backend function calling (bypasses MCP)
+            provider_api_key_ref: Optional secret-manager key for a non-default
+                Anthropic provider row (GH #88). When set, _load_api_key reads
+                this secret first before the legacy CLAUDE_API_KEY fallback chain.
         """
         self.client: Optional[Anthropic] = None
         self.async_client: Optional[AsyncAnthropic] = None
         self.api_key: Optional[str] = None
+        self.provider_api_key_ref = provider_api_key_ref
         self.use_mcp_tools = use_mcp_tools
         self.use_backend_tools = use_backend_tools
         self.mcp_tools: List[Dict] = []
@@ -277,11 +282,23 @@ You have comprehensive tools to manage ALL aspects of cases during investigation
 Your goal is to help SOC analysts work more efficiently by leveraging all available tools and integrations to provide comprehensive, accurate, and actionable security analysis. When investigating, you should automatically build out cases with all relevant findings, activities, timeline entries, and MITRE mappings as the investigation progresses."""
 
     def _load_api_key(self) -> bool:
-        """Load API key from secure storage."""
+        """Load API key from secure storage.
+
+        When ``provider_api_key_ref`` is set (GH #88), the secret named by
+        that ref is tried first. This lets LLMRouter instantiate ClaudeService
+        with a non-default Anthropic provider row. Falls back to the legacy
+        CLAUDE_API_KEY / ANTHROPIC_API_KEY chain for backward compatibility.
+        """
         try:
             # Use secrets manager with fallback to legacy names
+            provider_key = (
+                get_secret(self.provider_api_key_ref)
+                if self.provider_api_key_ref
+                else None
+            )
             self.api_key = (
-                get_secret("CLAUDE_API_KEY")
+                provider_key
+                or get_secret("CLAUDE_API_KEY")
                 or get_secret("ANTHROPIC_API_KEY")
                 or get_secret("claude_api_key")
                 or get_secret("anthropic_api_key")

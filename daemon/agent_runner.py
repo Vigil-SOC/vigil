@@ -28,6 +28,10 @@ try:
 except Exception:
     _tracer = None  # type: ignore[assignment]
 
+# TODO(#89): Sonnet price constants assume Anthropic. With multi-provider
+# support (#88) landing, cost tracking should resolve per-provider rates
+# from a model registry instead of a single global constant. Update
+# together with the per-agent model assignment work in #89.
 SONNET_INPUT_COST = 3.0 / 1_000_000
 SONNET_OUTPUT_COST = 15.0 / 1_000_000
 

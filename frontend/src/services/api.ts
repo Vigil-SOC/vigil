@@ -681,6 +681,62 @@ export const configApi = {
   }) => api.post('/config/orchestrator', data),
 }
 
+// LLM Provider API (GH #88 — multi-provider LLM config)
+export interface LLMProvider {
+  provider_id: string
+  provider_type: 'anthropic' | 'openai' | 'ollama'
+  name: string
+  base_url: string | null
+  has_api_key: boolean
+  default_model: string
+  is_active: boolean
+  is_default: boolean
+  config: Record<string, any>
+  last_test_at: string | null
+  last_test_success: boolean | null
+  last_error: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface LLMProviderCreate {
+  provider_id?: string
+  provider_type: 'anthropic' | 'openai' | 'ollama'
+  name: string
+  base_url?: string
+  api_key?: string
+  default_model: string
+  is_active?: boolean
+  is_default?: boolean
+  config?: Record<string, any>
+}
+
+export interface LLMProviderUpdate {
+  name?: string
+  base_url?: string
+  api_key?: string
+  default_model?: string
+  is_active?: boolean
+  is_default?: boolean
+  config?: Record<string, any>
+}
+
+export const llmProviderApi = {
+  list: () => api.get<LLMProvider[]>('/llm/providers/'),
+  create: (data: LLMProviderCreate) => api.post<LLMProvider>('/llm/providers/', data),
+  update: (providerId: string, data: LLMProviderUpdate) =>
+    api.put<LLMProvider>(`/llm/providers/${providerId}`, data),
+  remove: (providerId: string) => api.delete(`/llm/providers/${providerId}`),
+  test: (providerId: string) =>
+    api.post<{ success: boolean; provider_id: string; error: string | null }>(
+      `/llm/providers/${providerId}/test`,
+    ),
+  listModels: (providerId: string) =>
+    api.get<{ models: string[] }>(`/llm/providers/${providerId}/models`),
+  setDefault: (providerId: string) =>
+    api.post<LLMProvider>(`/llm/providers/${providerId}/set-default`),
+}
+
 // Ingestion API
 export const ingestionApi = {
   listS3Files: (prefix?: string) =>

@@ -135,7 +135,7 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 - **Node.js 18+** (for frontend)
 - **Docker Desktop** (must be running — used for PostgreSQL)
 - **Git** (with submodule support)
-- Claude API key from [console.anthropic.com](https://console.anthropic.com/) *(optional for initial testing)*
+- An LLM provider key. Vigil supports Anthropic Claude (default), OpenAI, and Ollama (local) — configure providers in Settings → AI Config. See [`docker/bifrost/README.md`](docker/bifrost/README.md) for the multi-provider gateway. *(optional for initial testing)*
 
 ### Default Login Credentials
 

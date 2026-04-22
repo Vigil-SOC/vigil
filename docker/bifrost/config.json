@@ -1,0 +1,38 @@
+{
+  "providers": {
+    "anthropic": {
+      "keys": [
+        {
+          "value": "env.ANTHROPIC_API_KEY",
+          "models": [
+            "claude-sonnet-4-20250514",
+            "claude-sonnet-4-5-20250929",
+            "claude-opus-4-20250514"
+          ]
+        }
+      ]
+    },
+    "openai": {
+      "keys": [
+        {
+          "value": "env.OPENAI_API_KEY",
+          "models": [
+            "gpt-4",
+            "gpt-4-turbo",
+            "gpt-4o",
+            "gpt-4o-mini"
+          ]
+        }
+      ]
+    },
+    "ollama": {
+      "base_url": "env.OLLAMA_URL",
+      "models": [
+        "llama3.1:8b",
+        "llama3.1:70b",
+        "mistral:latest",
+        "qwen2.5:latest"
+      ]
+    }
+  }
+}

@@ -99,6 +99,9 @@ class LLMRequest:
     thinking_budget: int = 10000
     tools: Optional[List[Dict]] = None
     temperature: Optional[float] = None
+    # Multi-provider routing (GH #88). None means "use the default
+    # anthropic provider" which preserves pre-#88 behavior.
+    provider_id: Optional[str] = None
     extra_kwargs: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -158,6 +161,7 @@ class LLMGateway:
         model: str = "claude-sonnet-4-5-20250929",
         max_tokens: int = 2048,
         timeout: int = 90,
+        provider_id: Optional[str] = None,
     ) -> Optional[str]:
         """Enqueue a stateless triage call (highest priority)."""
         job = await self._pool.enqueue_job(
@@ -171,6 +175,7 @@ class LLMGateway:
             thinking_budget=0,
             tools=None,
             temperature=None,
+            provider_id=provider_id,
             traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
         )
@@ -195,6 +200,7 @@ class LLMGateway:
         thinking_budget: int = 8000,
         tools: Optional[List[Dict]] = None,
         timeout: int = 180,
+        provider_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Enqueue an investigation LLM call (medium priority).
 
@@ -212,6 +218,7 @@ class LLMGateway:
             thinking_budget=thinking_budget,
             tools=tools,
             temperature=None,
+            provider_id=provider_id,
             traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
         )
@@ -235,6 +242,7 @@ class LLMGateway:
         tools: Optional[List[Dict]] = None,
         timeout: int = 180,
         agent_id: Optional[str] = None,
+        provider_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Enqueue a multi-turn investigation call with explicit messages.
 
@@ -250,6 +258,7 @@ class LLMGateway:
             thinking_budget=thinking_budget,
             tools=tools,
             temperature=None,
+            provider_id=provider_id,
             traceparent=self._get_traceparent(),
             investigation_id=inv_id,
             agent_id=agent_id,
@@ -277,6 +286,7 @@ class LLMGateway:
         timeout: int = 120,
         agent_id: Optional[str] = None,
         investigation_id: Optional[str] = None,
+        provider_id: Optional[str] = None,
     ) -> Any:
         """Enqueue a UI chat call (normal priority)."""
         job = await self._pool.enqueue_job(
@@ -290,6 +300,7 @@ class LLMGateway:
             thinking_budget=thinking_budget,
             tools=None,
             temperature=None,
+            provider_id=provider_id,
             traceparent=self._get_traceparent(),
             agent_id=agent_id,
             investigation_id=investigation_id,
@@ -309,6 +320,7 @@ class LLMGateway:
         max_tokens: int = 2000,
         temperature: float = 0.3,
         timeout: int = 90,
+        provider_id: Optional[str] = None,
     ) -> Optional[str]:
         """Enqueue a background insights/analytics call (lowest priority)."""
         job = await self._pool.enqueue_job(
@@ -322,6 +334,7 @@ class LLMGateway:
             thinking_budget=0,
             tools=None,
             temperature=temperature,
+            provider_id=provider_id,
             traceparent=self._get_traceparent(),
             _queue_name=QUEUE_NAME,
         )

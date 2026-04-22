@@ -91,6 +91,7 @@ class TestDatabaseMetadataRegistration:
             "custom_agents",
             "custom_workflows",
             "skills",
+            "llm_provider_configs",
         }
 
         registered = set(Base.metadata.tables.keys())
