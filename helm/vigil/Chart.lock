@@ -5,5 +5,8 @@ dependencies:
 - name: redis
   repository: https://charts.bitnami.com/bitnami
   version: 20.3.0
-digest: sha256:c156834a26f3f8d70bae8214e40e270fa45d23ff6105c6c5e2bc57edca12e6e6
-generated: "2026-04-22T09:16:52.134272-04:00"
+- name: opentelemetry-collector
+  repository: https://open-telemetry.github.io/opentelemetry-helm-charts
+  version: 0.108.0
+digest: sha256:34e5cb4cff273986bf40cbf48a008dff6e73b5a9e0c8bd853a4a11e24657d9d8
+generated: "2026-04-22T09:19:31.333343-04:00"

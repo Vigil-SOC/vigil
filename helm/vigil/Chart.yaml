@@ -42,3 +42,8 @@ dependencies:
     version: "20.3.0"
     repository: "https://charts.bitnami.com/bitnami"
     condition: redis.bitnami.enabled
+  - name: opentelemetry-collector
+    version: "0.108.0"
+    repository: "https://open-telemetry.github.io/opentelemetry-helm-charts"
+    condition: otelCollector.enabled
+    alias: otelCollector

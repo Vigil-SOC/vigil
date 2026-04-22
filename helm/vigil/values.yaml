@@ -596,6 +596,57 @@ extraConfig: {}
 # -----------------------------------------------------------------------------
 # Observability (issue #112, #115)
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# OTEL Collector subchart (issue #115)
+# -----------------------------------------------------------------------------
+# Optional, provides an in-cluster OTLP endpoint so backend + daemon don't
+# need external observability infra. Values here are passed through to the
+# upstream open-telemetry/opentelemetry-collector chart (aliased as otelCollector).
+#
+# Prerequisites (ONE-TIME):
+#   helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+#   helm dependency update helm/vigil
+#
+# When enabled, the chart auto-rewrites OTEL_EXPORTER_OTLP_ENDPOINT in the
+# app ConfigMap to the in-cluster Collector service. You still need to flip
+# config.VIGIL_OTEL_ENABLED=true to actually emit telemetry.
+otelCollector:
+  enabled: false
+  mode: deployment
+  replicaCount: 1
+  # Upstream chart requires image.repository to be set explicitly.
+  image:
+    repository: otel/opentelemetry-collector-contrib
+  # Default pipeline dumps everything to stdout for debugging — swap in
+  # Jaeger / Prometheus / Datadog exporters once the collector is producing data.
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+    exporters:
+      debug:
+        verbosity: basic
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+        logs:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+
 observability:
   # Prometheus Operator ServiceMonitor — requires the monitoring.coreos.com
   # CRD to be installed on the cluster (Prometheus Operator / kube-prometheus-stack).

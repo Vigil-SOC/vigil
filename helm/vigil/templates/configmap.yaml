@@ -6,8 +6,21 @@ metadata:
   labels:
     {{- include "vigil.labels" . | nindent 4 }}
 data:
-  {{- /* Render every key in .Values.config as a string. */ -}}
+  {{- /* Render every key in .Values.config as a string, but let
+         computed-at-render overrides (below) win. */ -}}
+  {{- $computed := dict }}
+  {{- if .Values.otelCollector.enabled }}
+  {{- /* Point OTLP at the in-chart Collector service. The upstream chart
+         exposes a service named <release>-opentelemetry-collector (or the
+         alias fullname) on port 4317 (gRPC). */ -}}
+  {{- $_ := set $computed "OTEL_EXPORTER_OTLP_ENDPOINT" (printf "http://%s-opentelemetry-collector:4317" .Release.Name) }}
+  {{- end }}
   {{- range $k, $v := .Values.config }}
+  {{- if not (hasKey $computed $k) }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+  {{- end }}
+  {{- range $k, $v := $computed }}
   {{ $k }}: {{ $v | quote }}
   {{- end }}
   {{- /* extraConfig lets users add site-specific keys without forking the chart. */ -}}
