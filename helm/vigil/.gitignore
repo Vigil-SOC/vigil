@@ -1,0 +1,6 @@
+# Subchart artifacts downloaded by `helm dependency update` / `build`.
+# CI re-fetches these on every run; local devs run `helm dependency update`
+# once after cloning. Do not commit — they're large and version-tracked in
+# Chart.lock.
+charts/*.tgz
+charts/*/

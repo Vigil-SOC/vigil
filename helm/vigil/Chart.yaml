@@ -23,3 +23,22 @@ icon: https://raw.githubusercontent.com/Vigil-SOC/vigil/main/docs/logo.png
 annotations:
   artifacthub.io/category: security
   artifacthub.io/license: Apache-2.0
+
+# Optional data-layer subcharts (issue #114). Both gated behind per-chart
+# `condition:` flags so `helm dependency update` only actually downloads them
+# when enabled — and the MVP in-chart StatefulSets remain the default.
+#
+# Prerequisites when enabling these:
+#   helm dependency update helm/vigil
+dependencies:
+  - name: postgresql
+    version: "16.2.2"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.bitnami.enabled
+    import-values:
+      - child: auth
+        parent: postgresql.bitnami.auth
+  - name: redis
+    version: "20.3.0"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: redis.bitnami.enabled

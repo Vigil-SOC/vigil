@@ -187,19 +187,25 @@ imagePullSecrets:
 {{- end -}}
 
 {{/*
-Postgres host/port/database resolution. When postgresql.enabled=true we point
-at the in-chart service. Otherwise values.postgresql.external.* takes over.
+Postgres host/port/database resolution. Three modes:
+  1. MVP in-chart StatefulSet (postgresql.enabled=true, bitnami.enabled=false)
+  2. Bitnami postgresql subchart (postgresql.bitnami.enabled=true)
+  3. External DB (postgresql.enabled=false)
 */}}
 {{- define "vigil.postgres.host" -}}
-{{- if .Values.postgresql.enabled -}}
+{{- if .Values.postgresql.bitnami.enabled -}}
+{{- .Values.postgresql.bitnami.fullnameOverride | default (printf "%s-postgresql" .Release.Name) -}}
+{{- else if .Values.postgresql.enabled -}}
 {{ include "vigil.postgres.fullname" . }}
 {{- else -}}
-{{- required "postgresql.external.host is required when postgresql.enabled=false" .Values.postgresql.external.host -}}
+{{- required "postgresql.external.host is required when postgresql.enabled=false and postgresql.bitnami.enabled=false" .Values.postgresql.external.host -}}
 {{- end -}}
 {{- end -}}
 
 {{- define "vigil.postgres.port" -}}
-{{- if .Values.postgresql.enabled -}}
+{{- if .Values.postgresql.bitnami.enabled -}}
+{{- .Values.postgresql.bitnami.primary.service.ports.postgresql | default 5432 -}}
+{{- else if .Values.postgresql.enabled -}}
 {{- .Values.postgresql.service.port | default 5432 -}}
 {{- else -}}
 {{- .Values.postgresql.external.port | default 5432 -}}
@@ -207,7 +213,9 @@ at the in-chart service. Otherwise values.postgresql.external.* takes over.
 {{- end -}}
 
 {{- define "vigil.postgres.database" -}}
-{{- if .Values.postgresql.enabled -}}
+{{- if .Values.postgresql.bitnami.enabled -}}
+{{- .Values.postgresql.bitnami.auth.database | default "deeptempo_soc" -}}
+{{- else if .Values.postgresql.enabled -}}
 {{- .Values.postgresql.auth.database | default "deeptempo_soc" -}}
 {{- else -}}
 {{- .Values.postgresql.external.database | default "deeptempo_soc" -}}
@@ -215,7 +223,9 @@ at the in-chart service. Otherwise values.postgresql.external.* takes over.
 {{- end -}}
 
 {{- define "vigil.postgres.username" -}}
-{{- if .Values.postgresql.enabled -}}
+{{- if .Values.postgresql.bitnami.enabled -}}
+{{- .Values.postgresql.bitnami.auth.username | default "deeptempo" -}}
+{{- else if .Values.postgresql.enabled -}}
 {{- .Values.postgresql.auth.username | default "deeptempo" -}}
 {{- else -}}
 {{- .Values.postgresql.external.username | default "deeptempo" -}}
@@ -223,10 +233,18 @@ at the in-chart service. Otherwise values.postgresql.external.* takes over.
 {{- end -}}
 
 {{/*
-Name of the secret holding POSTGRES_PASSWORD.
+Name of the secret holding POSTGRES_PASSWORD. Bitnami emits its own secret
+(<release>-postgresql) with key `password` for the non-superuser; the backend
+needs to pick that up.
 */}}
 {{- define "vigil.postgres.passwordSecret" -}}
-{{- if .Values.postgresql.enabled -}}
+{{- if .Values.postgresql.bitnami.enabled -}}
+{{- if .Values.postgresql.bitnami.auth.existingSecret -}}
+{{- .Values.postgresql.bitnami.auth.existingSecret -}}
+{{- else -}}
+{{- .Values.postgresql.bitnami.fullnameOverride | default (printf "%s-postgresql" .Release.Name) -}}
+{{- end -}}
+{{- else if .Values.postgresql.enabled -}}
 {{- if .Values.postgresql.auth.existingSecret -}}
 {{- .Values.postgresql.auth.existingSecret -}}
 {{- else -}}
@@ -242,7 +260,10 @@ Name of the secret holding POSTGRES_PASSWORD.
 {{- end -}}
 
 {{- define "vigil.postgres.passwordSecretKey" -}}
-{{- if .Values.postgresql.enabled -}}
+{{- if .Values.postgresql.bitnami.enabled -}}
+{{- /* Bitnami postgresql secret key is "password" for the non-superuser. */ -}}
+{{- .Values.postgresql.bitnami.auth.secretKeys.userPasswordKey | default "password" -}}
+{{- else if .Values.postgresql.enabled -}}
 {{- .Values.postgresql.auth.existingSecretKey | default "POSTGRES_PASSWORD" -}}
 {{- else -}}
 {{- .Values.postgresql.external.existingSecretKey | default "POSTGRES_PASSWORD" -}}
@@ -259,16 +280,44 @@ password, which it pulls from the secret directly.
 {{- end -}}
 
 {{/*
-REDIS_URL resolution.
+REDIS_URL resolution. Same three modes as Postgres.
+
+Bitnami redis defaults to password auth on — we pull the password from the
+subchart's emitted secret at runtime via env-var substitution, so the URL
+template here uses the $(REDIS_PASSWORD) placeholder which Kubernetes
+expands from envFrom/env.
 */}}
 {{- define "vigil.redis.url" -}}
-{{- if .Values.redis.external.url -}}
+{{- if .Values.redis.bitnami.enabled -}}
+{{- $host := .Values.redis.bitnami.fullnameOverride | default (printf "%s-redis-master" .Release.Name) -}}
+{{- $port := 6379 -}}
+{{- if .Values.redis.bitnami.auth.enabled -}}
+{{- printf "redis://:$(REDIS_PASSWORD)@%s:%v/0" $host $port -}}
+{{- else -}}
+{{- printf "redis://%s:%v/0" $host $port -}}
+{{- end -}}
+{{- else if .Values.redis.external.url -}}
 {{- .Values.redis.external.url -}}
 {{- else if .Values.redis.enabled -}}
 {{- printf "redis://%s:%v/0" (include "vigil.redis.fullname" .) (.Values.redis.service.port | default 6379) -}}
 {{- else -}}
-{{- required "redis.external.url is required when redis.enabled=false" "" -}}
+{{- required "redis.external.url is required when redis.enabled=false and redis.bitnami.enabled=false" "" -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+Bitnami Redis password secret — used by app pods to resolve REDIS_PASSWORD.
+*/}}
+{{- define "vigil.redis.bitnami.passwordSecret" -}}
+{{- if .Values.redis.bitnami.auth.existingSecret -}}
+{{- .Values.redis.bitnami.auth.existingSecret -}}
+{{- else -}}
+{{- .Values.redis.bitnami.fullnameOverride | default (printf "%s-redis" .Release.Name) -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "vigil.redis.bitnami.passwordSecretKey" -}}
+{{- .Values.redis.bitnami.auth.existingSecretPasswordKey | default "redis-password" -}}
 {{- end -}}
 
 {{/*

@@ -1,4 +1,5 @@
-{{- if .Values.redis.enabled }}
+{{- /* MVP in-chart Redis. Suppressed when Bitnami subchart is active. */ -}}
+{{- if and .Values.redis.enabled (not .Values.redis.bitnami.enabled) }}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

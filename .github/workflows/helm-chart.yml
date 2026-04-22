@@ -36,11 +36,27 @@ jobs:
           diff -r database/init helm/vigil/files/database-init \
             --exclude=README.md
 
+      - name: Fetch chart dependencies
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+          helm dependency update helm/vigil
+          # Helm 4 requires subcharts extracted, not just as tgz
+          for tgz in helm/vigil/charts/*.tgz; do
+            tar -xzf "$tgz" -C helm/vigil/charts/
+          done
+
       - name: helm lint (default values)
         run: helm lint helm/vigil
 
       - name: helm lint (dev values)
         run: helm lint helm/vigil -f helm/vigil/values-dev.yaml
+
+      - name: helm lint (Bitnami subcharts enabled)
+        run: |
+          helm lint helm/vigil \
+            --set postgresql.enabled=false --set postgresql.bitnami.enabled=true \
+            --set redis.enabled=false --set redis.bitnami.enabled=true
 
       - name: helm template (default values)
         run: |
@@ -57,6 +73,15 @@ jobs:
             --set secrets.anthropicApiKey=test-key \
             > /tmp/manifest-dev.yaml
 
+      - name: helm template (Bitnami subcharts)
+        run: |
+          helm template release-check helm/vigil \
+            --set secrets.anthropicApiKey=test-key \
+            --set postgresql.enabled=false --set postgresql.bitnami.enabled=true \
+            --set redis.enabled=false --set redis.bitnami.enabled=true \
+            > /tmp/manifest-bitnami.yaml
+          echo "Rendered $(grep -c '^kind:' /tmp/manifest-bitnami.yaml) resources."
+
       - name: Validate manifests with kubeconform
         run: |
           curl -sSLo kubeconform.tar.gz \
@@ -64,6 +89,7 @@ jobs:
           tar xzf kubeconform.tar.gz
           ./kubeconform -strict -ignore-missing-schemas -summary /tmp/manifest-default.yaml
           ./kubeconform -strict -ignore-missing-schemas -summary /tmp/manifest-dev.yaml
+          ./kubeconform -strict -ignore-missing-schemas -summary /tmp/manifest-bitnami.yaml
 
   chart-testing:
     name: chart-testing

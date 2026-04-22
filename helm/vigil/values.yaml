@@ -170,6 +170,37 @@ postgresql:
     # If true, append ?sslmode=require to the DATABASE_URL.
     sslRequired: false
 
+  # Bitnami postgresql subchart (issue #114). When enabled, the MVP in-chart
+  # StatefulSet above is suppressed and all Bitnami values below are passed
+  # through to the subchart (alias: bitnamiPostgresql in Chart.yaml).
+  #
+  # Prerequisites (ONE-TIME):
+  #   helm dependency update helm/vigil
+  #
+  # See https://artifacthub.io/packages/helm/bitnami/postgresql for the full
+  # value schema — anything you add here flows through unchanged.
+  bitnami:
+    enabled: false
+    # If set, overrides the subchart's default service/secret name
+    # (<release>-postgresql). Rarely needed.
+    fullnameOverride: ""
+    auth:
+      database: deeptempo_soc
+      username: deeptempo
+      # Leave empty to let the subchart generate a password into its Secret.
+      # Set to a pre-created Secret name to reuse externally-managed credentials.
+      existingSecret: ""
+      # Key within the user's existingSecret holding the non-superuser password.
+      secretKeys:
+        userPasswordKey: password
+    primary:
+      service:
+        ports:
+          postgresql: 5432
+      persistence:
+        size: 50Gi
+    # Additional Bitnami values can be set here or via --set / -f overrides.
+
 # -----------------------------------------------------------------------------
 # In-chart Redis (set redis.enabled=false to use an external Redis)
 # -----------------------------------------------------------------------------
@@ -208,6 +239,26 @@ redis:
     url: ""
     existingSecret: ""
     existingSecretKey: REDIS_URL
+
+  # Bitnami redis subchart (issue #114). When enabled, suppresses the MVP
+  # in-chart Redis and routes REDIS_URL at the subchart's -master service.
+  #
+  # Prerequisites (ONE-TIME):
+  #   helm dependency update helm/vigil
+  #
+  # See https://artifacthub.io/packages/helm/bitnami/redis
+  bitnami:
+    enabled: false
+    fullnameOverride: ""   # default: <release>-redis, with service <release>-redis-master
+    architecture: standalone   # "replication" for HA
+    auth:
+      enabled: true
+      # Leave empty to let the subchart generate a password.
+      existingSecret: ""
+      existingSecretPasswordKey: redis-password
+    master:
+      persistence:
+        size: 5Gi
 
 # -----------------------------------------------------------------------------
 # Database init Job

@@ -121,7 +121,9 @@ spec:
   ingress: []
 ---
 {{- end }}
-{{- if .Values.postgresql.enabled }}
+{{- /* NetworkPolicy for MVP Postgres only. Bitnami's chart has its own
+       networkPolicy.* config — enable that there instead. */ -}}
+{{- if and .Values.postgresql.enabled (not .Values.postgresql.bitnami.enabled) }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -153,7 +155,8 @@ spec:
           port: {{ .Values.postgresql.service.port }}
 ---
 {{- end }}
-{{- if .Values.redis.enabled }}
+{{- /* NetworkPolicy for MVP Redis only. Bitnami's chart has its own config. */ -}}
+{{- if and .Values.redis.enabled (not .Values.redis.bitnami.enabled) }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
