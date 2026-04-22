@@ -1,0 +1,104 @@
+{{- if .Values.dbInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "vigil.dbInit.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "db-init") | nindent 4 }}
+  annotations:
+    # Run after secrets/configmap are in place but before the app deployments
+    # become Ready. Hook-weight negative = earlier execution.
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        {{- include "vigil.componentLabels" (dict "context" . "component" "db-init") | nindent 8 }}
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "vigil.serviceAccountName" . }}
+      {{- include "vigil.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70  # postgres user in alpine image
+        runAsGroup: 70
+      containers:
+        - name: db-init
+          image: "{{ .Values.dbInit.image.repository }}:{{ .Values.dbInit.image.tag }}"
+          imagePullPolicy: {{ .Values.dbInit.image.pullPolicy | default "IfNotPresent" }}
+          env:
+            - name: PGHOST
+              value: {{ include "vigil.postgres.host" . }}
+            - name: PGPORT
+              value: {{ include "vigil.postgres.port" . | quote }}
+            - name: PGDATABASE
+              value: {{ include "vigil.postgres.database" . }}
+            - name: PGUSER
+              value: {{ include "vigil.postgres.username" . }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.postgres.passwordSecret" . }}
+                  key: {{ include "vigil.postgres.passwordSecretKey" . }}
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -eu
+              echo "Waiting for Postgres at $PGHOST:$PGPORT..."
+              for i in $(seq 1 60); do
+                if pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" >/dev/null 2>&1; then
+                  echo "Postgres is ready."
+                  break
+                fi
+                sleep 2
+              done
+              if ! pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" >/dev/null 2>&1; then
+                echo "Postgres did not become ready in time." >&2
+                exit 1
+              fi
+
+              # Create a marker table so we can record which SQL files have
+              # already been applied. Safe to run on every install/upgrade.
+              psql -v ON_ERROR_STOP=1 -c "CREATE TABLE IF NOT EXISTS _vigil_schema_versions (filename TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT now());"
+
+              apply() {
+                local f="$1"
+                local marker
+                marker=$(psql -tA -c "SELECT 1 FROM _vigil_schema_versions WHERE filename='$f' LIMIT 1" || true)
+                if [ "$marker" = "1" ]; then
+                  echo "SKIP $f (already applied)"
+                  return 0
+                fi
+                echo "APPLY $f"
+                psql -v ON_ERROR_STOP=1 -f "/sql/$f"
+                psql -v ON_ERROR_STOP=1 -c "INSERT INTO _vigil_schema_versions (filename) VALUES ('$f') ON CONFLICT (filename) DO NOTHING"
+              }
+
+              {{- range .Values.dbInit.sqlFiles }}
+              apply {{ . | quote }}
+              {{- end }}
+
+              echo "Database initialization complete."
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+              readOnly: true
+          resources:
+            {{- toYaml .Values.dbInit.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: sql
+          configMap:
+            name: {{ include "vigil.dbInit.fullname" . }}-sql
+{{- end }}

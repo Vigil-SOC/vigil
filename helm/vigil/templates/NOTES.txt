@@ -1,0 +1,45 @@
+Vigil SOC has been installed in namespace {{ .Release.Namespace }} as release "{{ .Release.Name }}".
+
+1. Wait for pods to come up:
+
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/instance={{ .Release.Name }} -w
+
+2. The db-init Job runs once per install/upgrade. Check its status:
+
+   kubectl get jobs -n {{ .Release.Namespace }} -l app.kubernetes.io/component=db-init
+
+3. Access the backend API:
+
+{{- if .Values.ingress.enabled }}
+   Ingress is enabled. Point DNS at your ingress controller and visit:
+{{- range .Values.ingress.hosts }}
+     http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+   kubectl port-forward -n {{ .Release.Namespace }} svc/{{ include "vigil.backend.fullname" . }} {{ .Values.backend.service.port }}:{{ .Values.backend.service.port }}
+   # Then open http://localhost:{{ .Values.backend.service.port }}
+{{- end }}
+
+4. Run the smoke test:
+
+   helm test {{ .Release.Name }} -n {{ .Release.Namespace }}
+
+{{- if eq (.Values.config.DEV_MODE | toString) "true" }}
+
+⚠️  WARNING: DEV_MODE is enabled. Authentication is BYPASSED and every request
+   acts as a mock admin user. Do NOT expose this deployment publicly. Flip
+   config.DEV_MODE to "false" and set secrets.jwtSecretKey to enable real auth.
+{{- else }}
+
+Default admin login (if not already changed): admin / admin123
+Change it immediately via the settings UI.
+{{- end }}
+
+{{- if not .Values.secrets.anthropicApiKey }}
+{{- if not .Values.secrets.existingSecret }}
+
+⚠️  WARNING: secrets.anthropicApiKey is empty. The AI-powered features of Vigil
+   will return errors until you set it (either via --set secrets.anthropicApiKey=…
+   or by pointing secrets.existingSecret at a pre-created Secret).
+{{- end }}
+{{- end }}

@@ -1,0 +1,124 @@
+{{- if .Values.daemon.enabled }}
+{{- /*
+The SOC daemon is a singleton by design — the orchestrator holds in-memory
+state (work queues, agent tracking) that is not safe to share across replicas.
+We use a StatefulSet with replicas=1 (hardcoded — NOT exposed in values.yaml
+to prevent accidental misconfiguration) to guarantee at most one pod.
+*/ -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "vigil.daemon.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "daemon") | nindent 4 }}
+spec:
+  serviceName: {{ include "vigil.daemon.fullname" . }}
+  replicas: 1
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+  selector:
+    matchLabels:
+      {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "daemon") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "vigil.componentLabels" (dict "context" . "component" "daemon") | nindent 8 }}
+        {{- with .Values.daemon.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.daemon.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "vigil.serviceAccountName" . }}
+      {{- include "vigil.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: daemon
+          image: {{ include "vigil.image" (dict "context" . "component" "daemon") | quote }}
+          imagePullPolicy: {{ include "vigil.imagePullPolicy" (dict "context" . "component" "daemon") }}
+          ports:
+            - name: webhook
+              containerPort: {{ .Values.daemon.ports.webhook }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.daemon.ports.metrics }}
+              protocol: TCP
+            - name: health
+              containerPort: {{ .Values.daemon.ports.health }}
+              protocol: TCP
+          envFrom:
+            {{- include "vigil.envFrom" . | nindent 12 }}
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "vigil.postgres.passwordSecret" . }}
+                  key: {{ include "vigil.postgres.passwordSecretKey" . }}
+            {{- include "vigil.env" . | nindent 12 }}
+            {{- with .Values.daemon.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          # Probes target /health on port 9091. /metrics on 9090 only serves
+          # when VIGIL_OTEL_ENABLED=true, so it's unsafe for readiness.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.daemon.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          {{- if .Values.daemon.persistence.enabled }}
+          volumeMounts:
+            - name: investigations
+              mountPath: {{ .Values.daemon.persistence.mountPath }}
+          {{- end }}
+      {{- with .Values.daemon.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.daemon.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.daemon.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.daemon.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: investigations
+      spec:
+        accessModes:
+          {{- toYaml .Values.daemon.persistence.accessModes | nindent 10 }}
+        {{- if .Values.daemon.persistence.storageClassName }}
+        storageClassName: {{ .Values.daemon.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.daemon.persistence.size }}
+  {{- end }}
+{{- end }}

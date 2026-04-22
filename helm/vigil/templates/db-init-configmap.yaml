@@ -1,0 +1,20 @@
+{{- if .Values.dbInit.enabled }}
+{{- /*
+ConfigMap containing the init SQL files. Mounted into the db-init Job
+at /sql/. The Job's entrypoint iterates over .Values.dbInit.sqlFiles in
+order and pipes each one to psql.
+*/ -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "vigil.dbInit.fullname" . }}-sql
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "db-init") | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation
+data:
+{{ (.Files.Glob "files/database-init/*.sql").AsConfig | indent 2 }}
+{{- end }}

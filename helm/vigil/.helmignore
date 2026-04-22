@@ -1,0 +1,14 @@
+# Default .helmignore for Vigil SOC chart
+.DS_Store
+.git/
+.gitignore
+.idea/
+.vscode/
+*.tmproj
+*.orig
+*.swp
+*.bak
+*.tgz
+.project
+*.tmproj
+OWNERS

@@ -176,6 +176,21 @@ cd ..
 
 </details>
 
+### Install on Kubernetes
+
+A production-style Helm chart lives at [`helm/vigil/`](helm/vigil/):
+
+```bash
+helm install vigil ./helm/vigil \
+  --namespace vigil --create-namespace \
+  --set secrets.anthropicApiKey="$ANTHROPIC_API_KEY" \
+  --set secrets.postgresPassword="$(openssl rand -hex 24)" \
+  --set secrets.jwtSecretKey="$(python -c 'import secrets; print(secrets.token_urlsafe(64))')"
+```
+
+See [docs/HELM.md](docs/HELM.md) for the full values reference, external
+Postgres/Redis setup, ingress configuration, and troubleshooting.
+
 ### Run
 
 **Option A: All-in-one (recommended)**

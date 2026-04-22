@@ -1,0 +1,92 @@
+name: Helm Chart
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+    paths:
+      - 'helm/**'
+      - 'database/init/**'
+      - '.github/workflows/helm-chart.yml'
+  pull_request:
+    paths:
+      - 'helm/**'
+      - 'database/init/**'
+      - '.github/workflows/helm-chart.yml'
+
+jobs:
+  lint:
+    name: Lint and Template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+
+      - name: Verify db-init SQL copies are in sync
+        run: |
+          # The chart bundles a copy of database/init/*.sql under
+          # helm/vigil/files/database-init/ because Helm can only read files
+          # inside the chart directory. Drift here means the chart would
+          # ship a different schema than the docker-compose stack.
+          diff -r database/init helm/vigil/files/database-init \
+            --exclude=README.md
+
+      - name: helm lint (default values)
+        run: helm lint helm/vigil
+
+      - name: helm lint (dev values)
+        run: helm lint helm/vigil -f helm/vigil/values-dev.yaml
+
+      - name: helm template (default values)
+        run: |
+          helm template release-check helm/vigil \
+            --set secrets.anthropicApiKey=test-key \
+            --set secrets.postgresPassword=test-password \
+            > /tmp/manifest-default.yaml
+          echo "Rendered $(grep -c '^kind:' /tmp/manifest-default.yaml) resources."
+
+      - name: helm template (dev values)
+        run: |
+          helm template release-check helm/vigil \
+            -f helm/vigil/values-dev.yaml \
+            --set secrets.anthropicApiKey=test-key \
+            > /tmp/manifest-dev.yaml
+
+      - name: Validate manifests with kubeconform
+        run: |
+          curl -sSLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar xzf kubeconform.tar.gz
+          ./kubeconform -strict -ignore-missing-schemas -summary /tmp/manifest-default.yaml
+          ./kubeconform -strict -ignore-missing-schemas -summary /tmp/manifest-dev.yaml
+
+  chart-testing:
+    name: chart-testing
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          check-latest: true
+
+      - name: Set up chart-testing
+        uses: helm/chart-testing-action@v2.6.1
+
+      - name: Run chart-testing (lint)
+        run: ct lint --target-branch ${{ github.event.repository.default_branch }} --chart-dirs helm

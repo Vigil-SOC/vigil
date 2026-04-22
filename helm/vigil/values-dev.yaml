@@ -1,0 +1,70 @@
+# Development overrides for the Vigil SOC chart.
+# Install with:
+#   helm install vigil helm/vigil -f helm/vigil/values-dev.yaml \
+#     --set secrets.anthropicApiKey=$ANTHROPIC_API_KEY \
+#     -n vigil --create-namespace
+#
+# This profile is NOT suitable for production:
+#   - DEV_MODE bypasses all authentication.
+#   - Replica counts and resource requests are minimized.
+#   - No ingress / TLS.
+
+config:
+  DEV_MODE: "true"
+  VIGIL_COOKIE_SECURE: "false"
+
+backend:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+
+llmWorker:
+  replicaCount: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+daemon:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  persistence:
+    size: 1Gi
+
+postgresql:
+  persistence:
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
+
+redis:
+  persistence:
+    size: 1Gi
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 250m
+      memory: 384Mi
+
+secrets:
+  postgresPassword: "dev_password_change_me"

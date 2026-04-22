@@ -1,0 +1,523 @@
+# Default values for the Vigil SOC Helm chart.
+# This is a YAML-formatted file.
+# See docs/HELM.md for a full reference of all values.
+
+# -----------------------------------------------------------------------------
+# Global
+# -----------------------------------------------------------------------------
+global:
+  # Container registry where Vigil images live. Set in release.yml.
+  imageRegistry: ghcr.io
+  # Image repo namespace. Images resolve to <registry>/<namespace>-<component>
+  # e.g. ghcr.io/vigil-soc/vigil-backend
+  imageNamespace: vigil-soc/vigil
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+# Override chart name or fullname if the release name collides with something.
+nameOverride: ""
+fullnameOverride: ""
+
+# Common labels applied to every resource.
+commonLabels: {}
+
+# -----------------------------------------------------------------------------
+# Backend API (FastAPI, serves REST API + bundled SPA)
+# -----------------------------------------------------------------------------
+backend:
+  replicaCount: 2
+  image:
+    # Final image ref: {{ global.imageRegistry }}/{{ global.imageNamespace }}-backend:{{ tag }}
+    repository: ""   # empty → auto-derive from global.imageNamespace + "-backend"
+    tag: ""          # empty → fall back to .Chart.AppVersion
+    pullPolicy: ""   # empty → inherit global.imagePullPolicy
+  service:
+    type: ClusterIP
+    port: 6987
+  # Resource requests/limits tuned for a small prod deploy; scale up for real workloads.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  # CPU-based HPA. For queue-depth-based scaling, see follow-up issues.
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Extra env merged on top of the shared ConfigMap/Secret. Useful for overrides.
+  extraEnv: []
+  # Backend-specific feature flags written into the ConfigMap.
+  env:
+    BIND_HOST: "0.0.0.0"
+
+# -----------------------------------------------------------------------------
+# SOC Daemon (autonomous orchestrator, singleton)
+# -----------------------------------------------------------------------------
+daemon:
+  enabled: true
+  image:
+    repository: ""   # empty → auto-derive from global.imageNamespace + "-daemon"
+    tag: ""
+    pullPolicy: ""
+  # Ports (explicit; matches env.example defaults)
+  ports:
+    webhook: 8081
+    metrics: 9090   # Prometheus /metrics (OTEL PrometheusReader, only when OTEL enabled)
+    health: 9091    # always-on /health and /status
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  persistence:
+    # Daemon writes investigation artifacts under ORCHESTRATOR_WORKDIR (data/investigations).
+    # Enabled by default so singleton restarts don't lose in-flight state.
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+    mountPath: /app/data/investigations
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  extraEnv: []
+
+# -----------------------------------------------------------------------------
+# LLM Worker (ARQ worker, processes Claude requests off Redis queue)
+# -----------------------------------------------------------------------------
+llmWorker:
+  enabled: true
+  replicaCount: 2
+  # Shares the backend image — command is overridden to run services.run_llm_worker.
+  image:
+    repository: ""   # inherits backend.image.repository when empty
+    tag: ""
+    pullPolicy: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  extraEnv: []
+
+# -----------------------------------------------------------------------------
+# In-chart Postgres (set postgresql.enabled=false to use an external DB)
+# -----------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    database: deeptempo_soc
+    username: deeptempo
+    # Password sourced from secrets.postgresPassword unless existingSecret is set.
+    existingSecret: ""        # name of a pre-created Secret containing POSTGRES_PASSWORD
+    existingSecretKey: POSTGRES_PASSWORD
+  service:
+    port: 5432
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  # External Postgres (used when postgresql.enabled=false)
+  external:
+    host: ""
+    port: 5432
+    database: deeptempo_soc
+    username: deeptempo
+    # Either set .existingSecret + .existingSecretKey OR provide password via secrets.postgresPassword.
+    existingSecret: ""
+    existingSecretKey: POSTGRES_PASSWORD
+    # If true, append ?sslmode=require to the DATABASE_URL.
+    sslRequired: false
+
+# -----------------------------------------------------------------------------
+# In-chart Redis (set redis.enabled=false to use an external Redis)
+# -----------------------------------------------------------------------------
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  service:
+    port: 6379
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+  # Match docker-compose defaults: AOF on, 512MB cap, LRU eviction.
+  args:
+    - --appendonly
+    - "yes"
+    - --maxmemory
+    - 512mb
+    - --maxmemory-policy
+    - allkeys-lru
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  external:
+    # Full Redis URL (e.g. redis://:password@redis.example.com:6379/0).
+    # If set, this wins over in-chart Redis.
+    url: ""
+    existingSecret: ""
+    existingSecretKey: REDIS_URL
+
+# -----------------------------------------------------------------------------
+# Database init Job
+# -----------------------------------------------------------------------------
+# Runs the SQL files under database/init/ in an explicit order to avoid the
+# 003_* filename collision. Uses helm hooks to run on install + upgrade.
+dbInit:
+  enabled: true
+  image:
+    # Uses the same image as Postgres so psql is available.
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  # Explicit ordering — files added under database/init/ will NOT auto-run.
+  # Update this list when new init SQL lands.
+  sqlFiles:
+    - 01_init_schema.sql
+    - 003_add_ai_enrichment.sql
+    - 003_ai_decision_logs.sql
+    - 04_config_tables.sql
+    - 05_case_management_extended.sql
+    - 06_auth_tables.sql
+    - 07_custom_agents.sql
+    - 07_skills.sql
+    - 08_custom_workflows.sql
+    - 09_llm_providers.sql
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -----------------------------------------------------------------------------
+# Ingress
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+    # nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: vigil.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: vigil-tls
+    #   hosts:
+    #     - vigil.example.com
+
+# -----------------------------------------------------------------------------
+# Service account
+# -----------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+# -----------------------------------------------------------------------------
+# Pod security
+# -----------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+# -----------------------------------------------------------------------------
+# Secrets (plain values — skipped if existingSecret is set)
+# -----------------------------------------------------------------------------
+# Reference a pre-created secret instead of templating values here.
+# The secret must define keys matching env vars (ANTHROPIC_API_KEY, POSTGRES_PASSWORD, …).
+secrets:
+  existingSecret: ""
+
+  # Required (at least one of these must be set for the backend to do useful work).
+  anthropicApiKey: ""
+
+  # DB. Used by dbInit and DATABASE_URL assembly.
+  postgresPassword: "change-me-before-production"
+
+  # Required when DEV_MODE=false (see env.example). Generate with:
+  #   python -c "import secrets; print(secrets.token_urlsafe(64))"
+  jwtSecretKey: ""
+
+  # Optional data-source integrations.
+  splunkPassword: ""
+  crowdstrikeClientId: ""
+  crowdstrikeClientSecret: ""
+  elasticApiKey: ""
+  elasticPassword: ""
+  timesketchPassword: ""
+  criblPassword: ""
+  darktraceWebhookSecret: ""
+  vstrikeApiKey: ""
+  vstrikeInboundApiKey: ""
+
+  # Optional threat-intel.
+  virustotalApiKey: ""
+  shodanApiKey: ""
+  alienvaultOtxApiKey: ""
+  joeSandboxApiKey: ""
+  capeSandboxApiKey: ""
+
+  # Notifications.
+  slackBotToken: ""
+  pagerdutyRoutingKey: ""
+  teamsWebhookUrl: ""
+
+  # Cloud.
+  awsAccessKeyId: ""
+  awsSecretAccessKey: ""
+  githubToken: ""
+
+  # Email.
+  smtpPassword: ""
+
+  # Kafka SASL (optional).
+  kafkaSaslPassword: ""
+
+  # Multi-provider LLM (issue #88 / post-merge additions)
+  openaiApiKey: ""
+
+# -----------------------------------------------------------------------------
+# Non-secret config (rendered into a ConfigMap)
+# -----------------------------------------------------------------------------
+config:
+  # Development Mode — MUST be false in production.
+  DEV_MODE: "false"
+
+  # Secrets / auth policy
+  SECRETS_BACKEND: "dotenv"
+  ENABLE_KEYRING: "false"
+  AUTH_LOCKOUT_THRESHOLD: "5"
+  AUTH_LOCKOUT_DURATION_MINUTES: "15"
+  AUTH_MIN_PASSWORD_LENGTH: "12"
+  AUTH_PASSWORD_HISTORY_LIMIT: "5"
+  PASSWORD_RESET_TTL_SECONDS: "3600"
+  VIGIL_FRONTEND_URL: ""
+
+  # Email backend
+  VIGIL_EMAIL_BACKEND: "console"
+  SMTP_HOST: ""
+  SMTP_PORT: "587"
+  SMTP_USER: ""
+  SMTP_TLS: "true"
+  SMTP_FROM: "noreply@vigil.local"
+
+  # HTTP security headers + CORS
+  VIGIL_CORS_ORIGINS: ""
+  VIGIL_HSTS_ENABLED: "true"
+  VIGIL_HSTS_MAX_AGE: "31536000"
+  VIGIL_FRAME_OPTIONS_ENABLED: "true"
+  VIGIL_CONTENT_TYPE_OPTIONS_ENABLED: "true"
+  VIGIL_REFERRER_POLICY_ENABLED: "true"
+  VIGIL_CSP_ENABLED: "true"
+  VIGIL_CSP_POLICY: ""
+
+  # CSRF
+  VIGIL_CSRF_ENABLED: "true"
+  VIGIL_CSRF_REPORT_ONLY: "true"
+  VIGIL_CSRF_EXEMPT_PATHS: "/api/webhooks/,/api/ingest/"
+
+  # Auth cookies
+  VIGIL_COOKIE_SECURE: "true"
+  VIGIL_COOKIE_SAMESITE: "strict"
+
+  # MemPalace
+  MEMPALACE_PALACE_PATH: "/app/data/mempalace/palace"
+  MEMPALACE_DAEMON_ENABLED: "false"
+
+  # Integrations — non-secret URLs/usernames
+  SPLUNK_URL: ""
+  SPLUNK_USERNAME: ""
+  CROWDSTRIKE_BASE_URL: "https://api.crowdstrike.com"
+  ELASTIC_HOST: ""
+  ELASTIC_KIBANA_URL: ""
+  ELASTIC_USERNAME: ""
+  ELASTIC_VERIFY_SSL: "true"
+  ELASTIC_INDEX_PATTERN: ".alerts-security.alerts-default"
+  TIMESKETCH_URL: ""
+  TIMESKETCH_USERNAME: ""
+  CRIBL_URL: ""
+  CRIBL_USERNAME: ""
+  CRIBL_WORKER_GROUP: "default"
+  DARKTRACE_ENABLED: "false"
+  DARKTRACE_URL: ""
+  DARKTRACE_MAX_BODY_KB: "1024"
+  VSTRIKE_BASE_URL: ""
+  VSTRIKE_VERIFY_SSL: "true"
+
+  # Sandbox
+  JOE_SANDBOX_ENABLED: "false"
+  JOE_SANDBOX_URL: "https://jbxcloud.joesecurity.org/api"
+  CAPE_SANDBOX_ENABLED: "false"
+  CAPE_SANDBOX_URL: ""
+  HYBRID_ANALYSIS_ENABLED: "false"
+  ANYRUN_ENABLED: "false"
+  SANDBOX_AUTO_SUBMIT: "false"
+  SANDBOX_MAX_FILE_SIZE_MB: "100"
+  SANDBOX_ALLOWED_FILE_TYPES: "exe,dll,doc,docx,xls,xlsx,pdf,js,vbs,ps1,bat,msi"
+  SANDBOX_ANALYSIS_TIMEOUT: "300"
+  SANDBOX_POLL_INTERVAL: "60"
+
+  # Notifications non-secret
+  SLACK_DEFAULT_CHANNEL: "#soc-alerts"
+
+  # AWS region (non-secret)
+  AWS_REGION: "us-east-1"
+
+  # Daemon behaviour
+  DAEMON_SPLUNK_POLL_INTERVAL: "300"
+  DAEMON_CROWDSTRIKE_POLL_INTERVAL: "60"
+  DAEMON_WEBHOOK_ENABLED: "true"
+  DAEMON_WEBHOOK_PORT: "8081"
+  DAEMON_AUTO_TRIAGE: "true"
+  DAEMON_AUTO_ENRICH: "true"
+  DAEMON_BATCH_SIZE: "10"
+  DAEMON_AUTO_RESPONSE: "true"
+  DAEMON_CONFIDENCE_THRESHOLD: "0.90"
+  DAEMON_FORCE_APPROVAL: "false"
+  DAEMON_DRY_RUN: "false"
+  DAEMON_ESCALATION_ENABLED: "true"
+  DAEMON_ESCALATE_SEVERITIES: "critical,high"
+  DAEMON_SLACK_ENABLED: "true"
+  DAEMON_SLACK_CHANNEL: "#soc-alerts"
+  DAEMON_PAGERDUTY_ENABLED: "false"
+  DAEMON_THREAT_HUNT_ENABLED: "true"
+  DAEMON_THREAT_HUNT_INTERVAL: "86400"
+  DAEMON_CLEANUP_RETENTION_DAYS: "90"
+  DAEMON_METRICS_ENABLED: "true"
+  DAEMON_METRICS_PORT: "9090"
+  DAEMON_HEALTH_PORT: "9091"
+  DAEMON_LOG_LEVEL: "INFO"
+
+  # Autonomous orchestrator
+  ORCHESTRATOR_ENABLED: "false"
+  ORCHESTRATOR_LOOP_INTERVAL: "60"
+  ORCHESTRATOR_MAX_CONCURRENT_AGENTS: "3"
+  ORCHESTRATOR_MAX_ITERATIONS: "50"
+  ORCHESTRATOR_MAX_COST: "5.0"
+  ORCHESTRATOR_MAX_RUNTIME: "3600"
+  ORCHESTRATOR_MAX_HOURLY_COST: "20.0"
+  ORCHESTRATOR_MAX_DAILY_COST: "100.0"
+  ORCHESTRATOR_STALE_THRESHOLD: "300"
+  ORCHESTRATOR_WORKDIR: "/app/data/investigations"
+  ORCHESTRATOR_AUTO_ASSIGN: "true"
+  ORCHESTRATOR_AUTO_SEVERITIES: "critical,high"
+  ORCHESTRATOR_DRY_RUN: "false"
+  ORCHESTRATOR_DEDUP_WINDOW: "30"
+  ORCHESTRATOR_AGENT_LOOP_DELAY: "2"
+  ORCHESTRATOR_CONTEXT_MAX_CHARS: "10000"
+  ORCHESTRATOR_PLAN_MODEL: "claude-sonnet-4-5-20250929"
+  ORCHESTRATOR_REVIEW_MODEL: "claude-sonnet-4-5-20250929"
+
+  # OTEL — disabled by default; turn on when an OTEL collector is reachable.
+  VIGIL_OTEL_ENABLED: "false"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+  OTEL_TRACES_SAMPLER: "parentbased_always_on"
+  VIGIL_OTEL_LOG_LLM_CONTENT: "false"
+
+  # Kafka — disabled by default
+  KAFKA_ENABLED: "false"
+  KAFKA_BOOTSTRAP_SERVERS: ""
+  KAFKA_CONSUMER_GROUP: "vigil-soc"
+  KAFKA_TOPICS: ""
+  KAFKA_AUTO_OFFSET_RESET: "latest"
+  KAFKA_SECURITY_PROTOCOL: "PLAINTEXT"
+  KAFKA_SASL_MECHANISM: ""
+  KAFKA_SASL_USERNAME: ""
+  KAFKA_SSL_CA_LOCATION: ""
+  KAFKA_MAX_POLL_RECORDS: "500"
+  KAFKA_SESSION_TIMEOUT_MS: "30000"
+
+  # Python
+  PYTHONUNBUFFERED: "1"
+
+  # Multi-provider LLM (non-secret defaults; per-provider config is stored
+  # per-row in llm_provider_configs after first boot).
+  BIFROST_ENABLED: "false"
+  BIFROST_URL: "http://bifrost:8080"
+  OLLAMA_ENABLED: "false"
+  OLLAMA_URL: "http://ollama:11434"
+  OLLAMA_DEFAULT_MODEL: "llama3.1:70b"
+  OPENAI_ENABLED: "false"
+  OPENAI_BASE_URL: "https://api.openai.com/v1"
+  OPENAI_ORGANIZATION: ""
+  DEFAULT_LLM_PROVIDER: "anthropic"
+
+# Additional ad-hoc env entries merged into every pod. Useful for site-specific
+# settings that don't warrant a top-level config key.
+extraConfig: {}
+
+# -----------------------------------------------------------------------------
+# Tests (helm test)
+# -----------------------------------------------------------------------------
+tests:
+  image:
+    repository: curlimages/curl
+    tag: "8.10.1"

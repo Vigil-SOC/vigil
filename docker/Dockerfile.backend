@@ -1,5 +1,25 @@
 # SOC Backend API Dockerfile
+# Multi-stage build: node builds the SPA, python runs the FastAPI backend
+# which serves both the API and the bundled SPA as static files.
 
+# -----------------------------------------------------------------------------
+# Stage 1: build the React SPA
+# -----------------------------------------------------------------------------
+FROM node:18-alpine AS frontend-builder
+
+WORKDIR /src/frontend
+
+# Copy manifest first for better caching of the install step.
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+
+# Copy the rest of the frontend source and build.
+COPY frontend/ ./
+RUN npm run build
+
+# -----------------------------------------------------------------------------
+# Stage 2: Python backend + bundled SPA
+# -----------------------------------------------------------------------------
 FROM python:3.11-slim
 
 # Set working directory
@@ -20,6 +40,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
+
+# Copy the pre-built SPA from the frontend-builder stage.
+# backend/main.py reads from frontend/build/ at runtime.
+COPY --from=frontend-builder /src/frontend/build ./frontend/build
 
 # Create non-root user for security
 RUN useradd -m -u 1000 backend && chown -R backend:backend /app

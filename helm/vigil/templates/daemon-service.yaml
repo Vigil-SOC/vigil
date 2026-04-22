@@ -1,0 +1,26 @@
+{{- if .Values.daemon.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "vigil.daemon.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "daemon") | nindent 4 }}
+spec:
+  type: {{ .Values.daemon.service.type }}
+  ports:
+    - name: webhook
+      port: {{ .Values.daemon.ports.webhook }}
+      targetPort: webhook
+      protocol: TCP
+    - name: metrics
+      port: {{ .Values.daemon.ports.metrics }}
+      targetPort: metrics
+      protocol: TCP
+    - name: health
+      port: {{ .Values.daemon.ports.health }}
+      targetPort: health
+      protocol: TCP
+  selector:
+    {{- include "vigil.componentSelectorLabels" (dict "context" . "component" "daemon") | nindent 4 }}
+{{- end }}
