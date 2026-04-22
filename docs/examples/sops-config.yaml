@@ -1,0 +1,25 @@
+# Example .sops.yaml for encrypting Vigil secret manifests.
+#
+# Place this at the repo root as `.sops.yaml`. SOPS reads it to decide which
+# encryption key to use for files matching `path_regex`.
+#
+# Commit this file (it contains only the public half of the key, which is
+# fine to share). Never commit the private half.
+#
+# See https://github.com/getsops/sops#23usage for the full schema.
+---
+creation_rules:
+  # Encrypt everything under secrets/ with the team age public key.
+  - path_regex: secrets/.*\.ya?ml$
+    encrypted_regex: '^(data|stringData)$'
+    age: >-
+      age1your-public-key-here-generated-with-age-keygen
+
+  # Encrypt helm values files that end in -secrets.yaml
+  - path_regex: helm/.*-secrets\.ya?ml$
+    age: >-
+      age1your-public-key-here-generated-with-age-keygen
+
+  # Alternative: AWS KMS
+  # - path_regex: secrets/.*\.yaml$
+  #   kms: 'arn:aws:kms:us-east-1:123456789012:alias/vigil-sops'
