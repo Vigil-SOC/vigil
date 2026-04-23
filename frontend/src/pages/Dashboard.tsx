@@ -30,7 +30,6 @@ import {
 } from '@mui/icons-material'
 import { findingsApi, casesApi, configApi, timelineApi, graphApi } from '../services/api'
 import FindingsTable from '../components/findings/FindingsTable'
-import CasesTable from '../components/cases/CasesTable'
 import AttackChart from '../components/attack/AttackChart'
 import ExportToTimesketchDialog from '../components/timesketch/ExportToTimesketchDialog'
 import EventTimeline from '../components/timeline/EventTimeline'
@@ -77,9 +76,9 @@ export default function Dashboard() {
   }, [])
 
   useEffect(() => {
-    if (currentTab === 3) {
+    if (currentTab === 2) {
       loadTimelineData()
-    } else if (currentTab === 4) {
+    } else if (currentTab === 3) {
       loadGraphData()
     }
   }, [currentTab])
@@ -270,7 +269,7 @@ export default function Dashboard() {
             subtitle={`${stats?.cases?.by_status?.open || 0} open`}
             icon={<FolderIcon />}
             color={theme.palette.primary.main}
-            onClick={() => setCurrentTab(1)}
+            onClick={() => navigate('/cases')}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>
@@ -297,7 +296,6 @@ export default function Dashboard() {
         <Box sx={{ borderBottom: 1, borderColor: 'divider', px: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <Tabs value={currentTab} onChange={(_, v) => setCurrentTab(v)}>
             <Tab label="Findings" sx={{ minHeight: 48 }} />
-            <Tab label="Cases" sx={{ minHeight: 48 }} />
             <Tab label="ATT&CK" sx={{ minHeight: 48 }} />
             <Tab label="Timeline" sx={{ minHeight: 48 }} />
             <Tab label="Entity Graph" sx={{ minHeight: 48 }} />
@@ -346,9 +344,8 @@ export default function Dashboard() {
               />
             </>
           )}
-          {currentTab === 1 && <CasesTable limit={10} />}
-          {currentTab === 2 && <AttackChart />}
-          {currentTab === 3 && (
+          {currentTab === 1 && <AttackChart />}
+          {currentTab === 2 && (
             loadingTimeline ? (
               <Box display="flex" justifyContent="center" p={3}>
                 <CircularProgress />
@@ -362,7 +359,7 @@ export default function Dashboard() {
               />
             )
           )}
-          {currentTab === 4 && (
+          {currentTab === 3 && (
             loadingGraph ? (
               <Box display="flex" justifyContent="center" p={3}>
                 <CircularProgress />
