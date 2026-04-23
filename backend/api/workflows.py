@@ -300,7 +300,14 @@ async def execute_workflow(workflow_id: str, request: WorkflowExecuteRequest):
                 ),
             )
 
-        result = await service.execute_workflow(workflow_id, parameters)
+        # Pass the caller as triggered_by so the workflow_runs row has a
+        # useful audit marker. "api" is a safe default when auth isn't
+        # surfacing a concrete user identity here (DEV_MODE / system
+        # triggers). Daemon invocations can override by calling the
+        # service layer directly.
+        result = await service.execute_workflow(
+            workflow_id, parameters, triggered_by="api"
+        )
 
         if not result.get("success"):
             error = result.get("error", "Unknown error during workflow execution")
@@ -313,3 +320,46 @@ async def execute_workflow(workflow_id: str, request: WorkflowExecuteRequest):
     except Exception as e:
         logger.error(f"Error executing workflow {workflow_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# Run history (#127)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/workflows/runs/{run_id}")
+async def get_workflow_run(run_id: str):
+    """Fetch a single workflow run by id, including its result summary."""
+    from services.workflow_run_service import get_workflow_run_service
+
+    row = get_workflow_run_service().get_run(run_id)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    return row
+
+
+@router.get("/workflows/{workflow_id}/runs")
+async def list_workflow_runs(
+    workflow_id: str,
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+):
+    """List past executions of ``workflow_id``, newest first.
+
+    Omits ``result_summary`` from each entry so the listing stays
+    light; use GET /workflows/runs/{run_id} for the full detail.
+    """
+    from services.workflow_run_service import get_workflow_run_service
+
+    # Light-touch bounds so a buggy caller can't ask for 10k rows.
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+
+    runs = get_workflow_run_service().list_runs(
+        workflow_id=workflow_id,
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    return {"workflow_id": workflow_id, "runs": runs}

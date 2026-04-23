@@ -1,5 +1,6 @@
 """Workflows service for discovering, parsing, and executing WORKFLOW.md workflow definitions."""
 
+import asyncio
 import logging
 import re
 from typing import Dict, List, Optional, Any
@@ -414,10 +415,17 @@ For each phase:
         self,
         workflow_id: str,
         parameters: Dict[str, Any],
+        triggered_by: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Execute a workflow by building a composite prompt and running it
-        through ClaudeService.run_agent_task().
+        """Execute a workflow as a playbook run (not a chat session).
+
+        Per #126, the execution path delegates to ``ClaudeService.chat``
+        as an internal Python primitive so backend_tools (including
+        ``skill_<slug>`` generated from the ``skills`` table) are in
+        scope for the model. Per #127, the run is persisted to
+        ``workflow_runs`` for history/audit — the row starts with
+        ``status='running'`` and is finalised with the terminal status
+        + result summary or error.
 
         Args:
             workflow_id: The workflow ID to execute
@@ -426,12 +434,16 @@ For each phase:
                 - case_id: Optional case to investigate
                 - context: Optional freeform context string
                 - hypothesis: Optional hunt hypothesis (for threat-hunt)
+            triggered_by: Identifier of what initiated the run
+                (user id, "daemon", "api", …). Persisted for audit.
 
         Returns:
-            Execution result dict
+            Execution result dict, including ``run_id`` so callers can
+            retrieve the persisted run via /api/workflows/runs/{run_id}.
         """
         from services.claude_service import ClaudeService
         from services.soc_agents import SOCAgentLibrary
+        from services.workflow_run_service import get_workflow_run_service
 
         workflow = self.get_workflow(workflow_id)
         if not workflow:
@@ -474,7 +486,36 @@ For each phase:
         except Exception as e:
             logger.debug(f"Could not get MCP tools from registry: {e}")
 
+        # Include active DB-backed Skills as ``skill_<slug>`` tools so a
+        # workflow phase can invoke them (#126). Skills aren't MCP tools,
+        # they're backend tools generated at runtime from the `skills`
+        # table — without this step they'd be invisible to the execution
+        # engine even when the user had authored them.
+        skill_tool_names: List[str] = []
+        try:
+            from services.skill_tools_bridge import list_active_skill_tools
+
+            skill_defs, _ = list_active_skill_tools()
+            skill_tool_names = [t["name"] for t in skill_defs]
+            for name in skill_tool_names:
+                if name not in all_tools:
+                    all_tools.append(name)
+        except Exception as e:
+            logger.debug(f"Could not load active skill tools: {e}")
+
         # Build a composite system prompt incorporating all agent roles
+        skills_hint = ""
+        if skill_tool_names:
+            skills_hint = (
+                "\n<available_skills>\n"
+                "The following skill tools are available as reusable SOC "
+                "capabilities. Invoke by name whenever a phase's work "
+                "matches a skill's purpose — each call returns the "
+                "skill's rendered playbook text for you to act on.\n"
+                + "\n".join(f"- {name}" for name in skill_tool_names)
+                + "\n</available_skills>\n"
+            )
+
         system_prompt = f"""You are the Vigil SOC Workflow Engine executing the "{workflow.name}" workflow.
 
 You have access to all SOC tools and will execute a multi-phase workflow,
@@ -486,7 +527,7 @@ adopting different specialist agent roles for each phase.
 - IPs/domains/hashes: Use threat intel tools
 - NEVER access findings as files - use tools
 </entity_recognition>
-
+{skills_hint}
 <principles>
 - Always fetch data via tools before analyzing
 - Be evidence-based and document reasoning
@@ -496,34 +537,81 @@ adopting different specialist agent roles for each phase.
 </principles>
 """
 
-        # Execute via ClaudeService
+        # Workflow execution is a *playbook run*, not a chat session.
+        # We call ClaudeService.chat() as an internal Python primitive
+        # — no /api/claude/chat route, no conversation session, no
+        # session-history persistence. It's "run this composite prompt
+        # with access to backend + MCP tools (incl. skills) and hand me
+        # the structured result." The Agent SDK path used to live here
+        # (run_agent_task) but that branch doesn't see backend_tools, so
+        # skills would never resolve. See issue #126.
         claude_service = ClaudeService(
             use_backend_tools=True,
             use_mcp_tools=True,
-            use_agent_sdk=True,
+            use_agent_sdk=False,
             enable_thinking=True,
         )
 
         if not claude_service.has_api_key():
             return {"success": False, "error": "Claude API not configured"}
 
-        result = await claude_service.run_agent_task(
-            task=prompt,
-            agent_config={
-                "system_prompt": system_prompt,
-                "allowed_tools": all_tools if all_tools else None,
-                "max_turns": 25,  # More turns for multi-phase workflows
-                "model": "claude-sonnet-4-5-20250929",
-            }
+        # Persist run start so history/audit reflects this invocation
+        # even if the chat() call below crashes. Best-effort: a DB
+        # hiccup yields ``run_id is None`` and the workflow still runs.
+        workflow_dict = workflow.to_dict(include_body=False)
+        run_service = get_workflow_run_service()
+        run_id = run_service.begin_run(
+            workflow_id=workflow_id,
+            workflow_name=workflow.name,
+            workflow_source=workflow_dict.get("source", "file"),
+            workflow_version=workflow_dict.get("version"),
+            trigger_context=dict(parameters or {}),
+            triggered_by=triggered_by,
+            skill_tools_available=skill_tool_names,
         )
 
+        # chat() is sync + has its own multi-iteration tool loop. Offload
+        # to a thread so we don't block the asyncio loop of the caller.
+        try:
+            response_text = await asyncio.to_thread(
+                claude_service.chat,
+                message=prompt,
+                system_prompt=system_prompt,
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=8192,
+                recommended_tools=all_tools if all_tools else None,
+            )
+            success = response_text is not None
+            error = None if success else "Claude returned no response"
+        except Exception as exc:  # noqa: BLE001
+            response_text = ""
+            success = False
+            error = f"{type(exc).__name__}: {exc}"
+            logger.exception("Workflow execution failed for %s", workflow_id)
+
+        # Finalize the run record regardless of outcome so the row never
+        # dangles in ``status='running'``.
+        if run_id:
+            run_service.finalize_run(
+                run_id,
+                status="completed" if success else "failed",
+                result_summary=response_text or None,
+                error=error,
+            )
+
         return {
-            "success": result.get("success", False),
-            "workflow": workflow.to_dict(include_body=False),
-            "result": result.get("final_result", ""),
-            "tool_calls": result.get("tool_calls", []),
-            "error": result.get("error"),
+            "success": success,
+            "run_id": run_id,
+            "workflow": workflow_dict,
+            "result": response_text or "",
+            # Playbook runs don't yet stream intermediate tool calls back
+            # through this entry point; ClaudeService.chat captures them
+            # internally for reasoning-trace persistence. A structured
+            # per-phase output + tool_calls feed is tracked as #128.
+            "tool_calls": [],
+            "error": error,
             "parameters": parameters,
+            "skill_tools_available": skill_tool_names,
             "executed_at": datetime.now().isoformat(),
         }
 

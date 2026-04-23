@@ -10,10 +10,12 @@ import {
   Checkbox,
   Chip,
   CircularProgress,
+  Collapse,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   FormControl,
   FormControlLabel,
   Grid,
@@ -23,6 +25,12 @@ import {
   Select,
   Snackbar,
   Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
   TextField,
   Tooltip,
   Typography,
@@ -37,6 +45,7 @@ import {
   Close as CloseIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
+  History as HistoryIcon,
   PlayArrow as PlayIcon,
   Save as SaveIcon,
 } from '@mui/icons-material'
@@ -87,6 +96,28 @@ interface CustomWorkflowRecord {
 }
 
 type View = 'list' | 'editor'
+
+// Run-history envelope shapes (#127). Kept local to this page since
+// the history UI lives only here; move to services/api.ts if other
+// pages grow a need for them.
+interface WorkflowRunSummary {
+  run_id: string
+  workflow_id: string
+  workflow_name: string
+  workflow_source: string
+  status: 'running' | 'completed' | 'failed' | 'cancelled'
+  triggered_by?: string | null
+  trigger_context?: Record<string, any>
+  started_at?: string | null
+  finished_at?: string | null
+  duration_ms?: number | null
+  total_cost_usd?: number
+  error?: string | null
+  skill_tools_available?: string[]
+}
+interface WorkflowRunDetail extends WorkflowRunSummary {
+  result_summary?: string | null
+}
 
 // Agent options are fetched from /api/agents/agents at runtime so both
 // built-in templates and DB-backed custom agents (incl. forks) show up in
@@ -157,6 +188,16 @@ export default function WorkflowBuilder() {
     hypothesis: '',
   })
   const [executing, setExecuting] = useState(false)
+
+  // Run history dialog state (#127). A single dialog is reused for any
+  // workflow; we fetch its runs when opened and let rows expand to show
+  // the full result_summary / error for that specific run.
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyTarget, setHistoryTarget] = useState<WorkflowListItem | null>(null)
+  const [historyRuns, setHistoryRuns] = useState<WorkflowRunSummary[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyExpandedId, setHistoryExpandedId] = useState<string | null>(null)
+  const [historyExpandedData, setHistoryExpandedData] = useState<WorkflowRunDetail | null>(null)
 
   const [snackbar, setSnackbar] = useState<{
     open: boolean
@@ -330,6 +371,50 @@ export default function WorkflowBuilder() {
     }
   }
 
+  // Run-history handlers (#127). The dialog opens with a blank state,
+  // kicks off the list fetch, and supports row-level expansion into
+  // a full run detail on demand.
+  const openHistoryDialog = async (wf: WorkflowListItem) => {
+    setHistoryTarget(wf)
+    setHistoryOpen(true)
+    setHistoryRuns([])
+    setHistoryExpandedId(null)
+    setHistoryExpandedData(null)
+    setHistoryLoading(true)
+    try {
+      const res = await workflowApi.listRuns(wf.id, { limit: 50 })
+      setHistoryRuns(res.data?.runs || [])
+    } catch (err: any) {
+      notify(err.response?.data?.detail || 'Failed to load run history', 'error')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }
+
+  const closeHistoryDialog = () => {
+    setHistoryOpen(false)
+    setHistoryTarget(null)
+    setHistoryRuns([])
+    setHistoryExpandedId(null)
+    setHistoryExpandedData(null)
+  }
+
+  const toggleHistoryRow = async (runId: string) => {
+    if (historyExpandedId === runId) {
+      setHistoryExpandedId(null)
+      setHistoryExpandedData(null)
+      return
+    }
+    setHistoryExpandedId(runId)
+    setHistoryExpandedData(null)
+    try {
+      const res = await workflowApi.getRun(runId)
+      setHistoryExpandedData(res.data || null)
+    } catch {
+      setHistoryExpandedData(null)
+    }
+  }
+
   // ---------- Render ---------------------------------------------------------
 
   if (view === 'editor') {
@@ -436,6 +521,13 @@ export default function WorkflowBuilder() {
                     }}
                   >
                     Execute
+                  </Button>
+                  <Button
+                    size="small"
+                    startIcon={<HistoryIcon />}
+                    onClick={() => openHistoryDialog(wf)}
+                  >
+                    History
                   </Button>
                   <Button
                     size="small"
@@ -573,6 +665,172 @@ export default function WorkflowBuilder() {
           >
             Execute
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Run history dialog (#127) */}
+      <Dialog
+        open={historyOpen}
+        onClose={closeHistoryDialog}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <HistoryIcon fontSize="small" />
+            <Typography variant="h6" component="span" sx={{ flexGrow: 1 }}>
+              Run history — {historyTarget?.name || '…'}
+            </Typography>
+            <IconButton size="small" onClick={closeHistoryDialog}>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Stack>
+        </DialogTitle>
+        <DialogContent dividers>
+          {historyLoading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : historyRuns.length === 0 ? (
+            <Alert severity="info">
+              No runs recorded yet. Execute this workflow to see run history here.
+            </Alert>
+          ) : (
+            <TableContainer>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ width: 160, fontFamily: 'monospace', fontSize: '0.75rem' }}>Run ID</TableCell>
+                    <TableCell sx={{ width: 100 }}>Status</TableCell>
+                    <TableCell sx={{ width: 180 }}>Started</TableCell>
+                    <TableCell sx={{ width: 80 }}>Duration</TableCell>
+                    <TableCell sx={{ width: 120 }}>Trigger</TableCell>
+                    <TableCell>Trigger context</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {historyRuns.map((r) => {
+                    const isExpanded = historyExpandedId === r.run_id
+                    const statusColor: Record<string, any> = {
+                      completed: 'success',
+                      running: 'info',
+                      failed: 'error',
+                      cancelled: 'default',
+                    }
+                    return (
+                      <>
+                        <TableRow
+                          key={r.run_id}
+                          hover
+                          onClick={() => toggleHistoryRow(r.run_id)}
+                          sx={{ cursor: 'pointer' }}
+                        >
+                          <TableCell sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
+                            {r.run_id}
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              size="small"
+                              label={r.status}
+                              color={statusColor[r.status] || 'default'}
+                              sx={{ textTransform: 'capitalize' }}
+                            />
+                          </TableCell>
+                          <TableCell sx={{ fontSize: '0.75rem' }}>
+                            {r.started_at ? new Date(r.started_at).toLocaleString() : '—'}
+                          </TableCell>
+                          <TableCell sx={{ fontSize: '0.75rem' }}>
+                            {r.duration_ms
+                              ? r.duration_ms < 1000
+                                ? `${r.duration_ms}ms`
+                                : `${(r.duration_ms / 1000).toFixed(1)}s`
+                              : '—'}
+                          </TableCell>
+                          <TableCell sx={{ fontSize: '0.75rem' }}>
+                            {r.triggered_by || '—'}
+                          </TableCell>
+                          <TableCell sx={{ fontSize: '0.75rem' }}>
+                            {Object.entries(r.trigger_context || {})
+                              .filter(([, v]) => v != null && v !== '')
+                              .slice(0, 3)
+                              .map(([k, v]) => (
+                                <Chip
+                                  key={k}
+                                  size="small"
+                                  label={`${k}=${String(v).substring(0, 20)}`}
+                                  sx={{ mr: 0.5, mb: 0.25, fontSize: '0.65rem', height: 18 }}
+                                  variant="outlined"
+                                />
+                              ))}
+                          </TableCell>
+                        </TableRow>
+                        <TableRow>
+                          <TableCell colSpan={6} sx={{ py: 0, border: 0 }}>
+                            <Collapse in={isExpanded} unmountOnExit>
+                              <Box
+                                sx={{
+                                  px: 2,
+                                  py: 1.5,
+                                  bgcolor: alpha(theme.palette.background.default, 0.5),
+                                  borderRadius: 1,
+                                  my: 1,
+                                }}
+                              >
+                                {historyExpandedData?.run_id === r.run_id ? (
+                                  <>
+                                    {historyExpandedData.error && (
+                                      <Alert severity="error" sx={{ mb: 1.5 }}>
+                                        {historyExpandedData.error}
+                                      </Alert>
+                                    )}
+                                    <Typography variant="caption" color="text.secondary">
+                                      Skill tools available at run-start:{' '}
+                                      {(historyExpandedData.skill_tools_available || []).length}
+                                    </Typography>
+                                    <Divider sx={{ my: 1 }} />
+                                    <Typography
+                                      variant="caption"
+                                      color="text.secondary"
+                                      sx={{ fontWeight: 600, mb: 0.5, display: 'block' }}
+                                    >
+                                      Result summary
+                                    </Typography>
+                                    <Box
+                                      sx={{
+                                        maxHeight: 360,
+                                        overflow: 'auto',
+                                        fontFamily: 'monospace',
+                                        fontSize: '0.75rem',
+                                        whiteSpace: 'pre-wrap',
+                                      }}
+                                    >
+                                      {historyExpandedData.result_summary || (
+                                        <em>(no result text captured)</em>
+                                      )}
+                                    </Box>
+                                  </>
+                                ) : (
+                                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                    <CircularProgress size={14} />
+                                    <Typography variant="caption" color="text.secondary">
+                                      Loading run detail…
+                                    </Typography>
+                                  </Box>
+                                )}
+                              </Box>
+                            </Collapse>
+                          </TableCell>
+                        </TableRow>
+                      </>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeHistoryDialog}>Close</Button>
         </DialogActions>
       </Dialog>
 

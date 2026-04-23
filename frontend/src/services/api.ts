@@ -1045,6 +1045,13 @@ export const workflowApi = {
   }) => api.post(`/workflows/${id}/execute`, params),
   reloadFiles: () => api.post('/workflows/reload'),
 
+  // Run history (#127) — execution is persisted to workflow_runs so the
+  // History tab can show "last 50 runs of this playbook" without
+  // retrieving every prompt transcript.
+  listRuns: (id: string, params: { limit?: number; offset?: number; status?: string } = {}) =>
+    api.get(`/workflows/${id}/runs`, { params }),
+  getRun: (runId: string) => api.get(`/workflows/runs/${runId}`),
+
   // Custom (database-backed) CRUD
   listCustom: (activeOnly: boolean = true) =>
     api.get('/workflows/custom', { params: { active_only: activeOnly } }),

@@ -2260,6 +2260,132 @@ class CustomWorkflow(Base):
         }
 
 
+class WorkflowRun(Base):
+    """Per-invocation record of ``execute_workflow`` (#127).
+
+    One row per `/api/workflows/{id}/execute` call, used for history +
+    audit. The parent row always exists; `workflow_run_phases` rows are
+    reserved for phase-by-phase execution (#128) and may be absent.
+    """
+
+    __tablename__ = 'workflow_runs'
+
+    run_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    workflow_id: Mapped[str] = mapped_column(Text, nullable=False)
+    workflow_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    workflow_source: Mapped[str] = mapped_column(
+        String(16), nullable=False, default='file', server_default='file'
+    )
+    workflow_name: Mapped[str] = mapped_column(Text, nullable=False)
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    triggered_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    trigger_context: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default='{}'
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+    )
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    total_cost_usd: Mapped[float] = mapped_column(
+        Numeric(10, 4), nullable=False, default=0, server_default='0'
+    )
+    result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    skill_tools_available: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default='[]'
+    )
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index('idx_workflow_runs_workflow_id', 'workflow_id', 'started_at'),
+        Index('idx_workflow_runs_started_at', 'started_at'),
+    )
+
+    def to_dict(self, include_result: bool = False) -> dict:
+        """Serialise the run. ``include_result`` gates the potentially-large
+        ``result_summary`` field so list endpoints stay light."""
+        out: dict = {
+            'run_id': self.run_id,
+            'workflow_id': self.workflow_id,
+            'workflow_version': self.workflow_version,
+            'workflow_source': self.workflow_source,
+            'workflow_name': self.workflow_name,
+            'status': self.status,
+            'triggered_by': self.triggered_by,
+            'trigger_context': self.trigger_context or {},
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
+            'duration_ms': self.duration_ms,
+            'total_cost_usd': float(self.total_cost_usd or 0),
+            'skill_tools_available': self.skill_tools_available or [],
+            'error': self.error,
+        }
+        if include_result:
+            out['result_summary'] = self.result_summary
+        return out
+
+
+class WorkflowRunPhase(Base):
+    """Per-phase record within a workflow run.
+
+    Reserved for phase-by-phase execution (#128). The table ships with
+    the schema so the audit story is complete, but no rows are written
+    until phase-level execution lands.
+    """
+
+    __tablename__ = 'workflow_run_phases'
+
+    run_id: Mapped[str] = mapped_column(
+        String(80),
+        ForeignKey('workflow_runs.run_id', ondelete='CASCADE'),
+        primary_key=True,
+    )
+    phase_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    phase_order: Mapped[int] = mapped_column(Integer, nullable=False)
+    agent_id: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    input_context: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default='{}'
+    )
+    output: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default='{}'
+    )
+    approval_state: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    cost_usd: Mapped[float] = mapped_column(
+        Numeric(10, 4), nullable=False, default=0, server_default='0'
+    )
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (
+        Index('idx_workflow_run_phases_run_id', 'run_id', 'phase_order'),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            'run_id': self.run_id,
+            'phase_id': self.phase_id,
+            'phase_order': self.phase_order,
+            'agent_id': self.agent_id,
+            'status': self.status,
+            'started_at': self.started_at.isoformat() if self.started_at else None,
+            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
+            'duration_ms': self.duration_ms,
+            'input_context': self.input_context or {},
+            'output': self.output or {},
+            'approval_state': self.approval_state,
+            'cost_usd': float(self.cost_usd or 0),
+            'error': self.error,
+        }
+
+
 class Skill(Base):
     """Skill model - reusable, parameterized SOC capability (detection,
     enrichment, response, reporting) that agents and workflows can invoke."""
