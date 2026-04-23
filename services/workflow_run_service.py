@@ -24,7 +24,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from database.connection import get_db_manager
-from database.models import WorkflowRun
+from database.models import WorkflowRun, WorkflowRunPhase
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,25 @@ class WorkflowRunService:
         except SQLAlchemyError as e:
             logger.warning("Could not persist workflow run start: %s", e)
             return None
+
+    def set_status(self, run_id: str, status: str) -> bool:
+        """Update only ``workflow_runs.status`` without touching terminal
+        fields. Used by the phase loop to flip running→paused when a
+        phase blocks on approval (#128)."""
+        if status not in ("running", "paused"):
+            logger.error("set_status: invalid non-terminal status %r", status)
+            return False
+        try:
+            db = get_db_manager()
+            with db.session_scope() as session:
+                row = session.get(WorkflowRun, run_id)
+                if row is None:
+                    return False
+                row.status = status
+            return True
+        except SQLAlchemyError as e:
+            logger.warning("Could not set run status %s: %s", run_id, e)
+            return False
 
     def finalize_run(
         self,
@@ -156,6 +175,97 @@ class WorkflowRunService:
         except SQLAlchemyError as e:
             logger.warning("Error fetching workflow run %s: %s", run_id, e)
             return None
+
+    # ------------------------------------------------------------------
+    # Phase-level helpers (#128)
+    # ------------------------------------------------------------------
+
+    def upsert_phase(
+        self,
+        run_id: str,
+        phase_id: str,
+        *,
+        phase_order: int,
+        agent_id: str,
+        status: str,
+        input_context: Optional[Dict[str, Any]] = None,
+        output: Optional[Dict[str, Any]] = None,
+        approval_state: Optional[str] = None,
+        error: Optional[str] = None,
+        started_at: Optional[datetime] = None,
+        finished_at: Optional[datetime] = None,
+    ) -> bool:
+        """Insert or update a ``workflow_run_phases`` row.
+
+        The phase loop in ``WorkflowsService.execute_workflow`` calls
+        this at each state transition (pending → running → completed
+        / failed / pending_approval). ``upsert`` semantics keep the
+        call sites simple — they don't need to know whether a prior
+        row exists on retry/resume.
+        """
+        try:
+            db = get_db_manager()
+            with db.session_scope() as session:
+                row = session.get(WorkflowRunPhase, (run_id, phase_id))
+                if row is None:
+                    row = WorkflowRunPhase(
+                        run_id=run_id,
+                        phase_id=phase_id,
+                        phase_order=phase_order,
+                        agent_id=agent_id,
+                        status=status,
+                        input_context=dict(input_context or {}),
+                        output=dict(output or {}),
+                        approval_state=approval_state,
+                        error=error,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                    )
+                    session.add(row)
+                else:
+                    row.phase_order = phase_order
+                    row.agent_id = agent_id
+                    row.status = status
+                    if input_context is not None:
+                        row.input_context = dict(input_context)
+                    if output is not None:
+                        row.output = dict(output)
+                    if approval_state is not None:
+                        row.approval_state = approval_state
+                    if error is not None:
+                        row.error = error
+                    if started_at is not None:
+                        row.started_at = started_at
+                    if finished_at is not None:
+                        row.finished_at = finished_at
+                        if row.started_at:
+                            delta = finished_at - row.started_at
+                            row.duration_ms = int(delta.total_seconds() * 1000)
+            return True
+        except SQLAlchemyError as e:
+            logger.warning(
+                "Could not upsert phase %s/%s: %s",
+                run_id,
+                phase_id,
+                e,
+            )
+            return False
+
+    def list_phases(self, run_id: str) -> List[Dict[str, Any]]:
+        """Return all phase rows for a run, ordered by ``phase_order``."""
+        try:
+            db = get_db_manager()
+            with db.session_scope() as session:
+                stmt = (
+                    select(WorkflowRunPhase)
+                    .where(WorkflowRunPhase.run_id == run_id)
+                    .order_by(WorkflowRunPhase.phase_order)
+                )
+                rows = session.execute(stmt).scalars().all()
+                return [r.to_dict() for r in rows]
+        except SQLAlchemyError as e:
+            logger.warning("Error listing phases for run %s: %s", run_id, e)
+            return []
 
 
 _service: Optional[WorkflowRunService] = None

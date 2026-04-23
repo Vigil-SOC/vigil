@@ -113,8 +113,28 @@ export const aiDecisionsApi = {
     days?: number
   }) => api.get('/ai/decisions/stats', { params }),
   
-  getPendingFeedback: (limit?: number) => 
+  getPendingFeedback: (limit?: number) =>
     api.get('/ai/decisions/pending-feedback', { params: { limit } }),
+}
+
+// Approvals API (#128) — pending human-in-the-loop actions, including
+// workflow phase approvals that pause execution until a decision is made.
+export const approvalsApi = {
+  list: (params?: {
+    status?: string
+    workflow_run_id?: string
+    limit?: number
+  }) => api.get('/approvals', { params }),
+
+  listPending: () => api.get('/approvals/pending'),
+
+  getById: (actionId: string) => api.get(`/approvals/${actionId}`),
+
+  approve: (actionId: string, approved_by?: string) =>
+    api.post(`/approvals/${actionId}/approve`, { approved_by }),
+
+  reject: (actionId: string, reason: string, rejected_by?: string) =>
+    api.post(`/approvals/${actionId}/reject`, { reason, rejected_by }),
 }
 
 // Findings API

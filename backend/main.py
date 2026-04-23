@@ -42,6 +42,7 @@ from api import (
     ai_decisions_router,
     logs_router,
     workflows_router,
+    approvals_router,
     reasoning_router,
     skills_router,
     llm_providers_router,
@@ -211,6 +212,7 @@ app.include_router(detection_rules_router, prefix="/api/detection-rules", tags=[
 
 # Workflows engine
 app.include_router(workflows_router, prefix="/api", tags=["workflows"])
+app.include_router(approvals_router, prefix="/api", tags=["approvals"])
 
 # Autonomous orchestrator
 app.include_router(orchestrator_router, prefix="/api/orchestrator", tags=["orchestrator"])

@@ -13,6 +13,7 @@ from api.storage_status import router as storage_status_router
 from api.ai_decisions import router as ai_decisions_router
 from api.logs import router as logs_router
 from api.workflows import router as workflows_router
+from api.approvals import router as approvals_router
 from api.reasoning import router as reasoning_router
 from api.skills import router as skills_router
 from api.llm_providers import router as llm_providers_router
@@ -32,6 +33,7 @@ __all__ = [
     'ai_decisions_router',
     'logs_router',
     'workflows_router',
+    'approvals_router',
     'reasoning_router',
     'skills_router',
     'llm_providers_router',

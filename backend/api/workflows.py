@@ -63,6 +63,19 @@ class WorkflowGenerateRequest(BaseModel):
     description: str
 
 
+class WorkflowRunResumeRequest(BaseModel):
+    """Optional payload when manually resuming a paused run."""
+
+    approved_by: Optional[str] = None
+
+
+class WorkflowRunCancelRequest(BaseModel):
+    """Payload when cancelling a paused / running run from the UI."""
+
+    reason: str
+    rejected_by: Optional[str] = None
+
+
 # -----------------------------------------------------------------------------
 # Read-only discovery endpoints (existing + extended)
 # -----------------------------------------------------------------------------
@@ -329,13 +342,126 @@ async def execute_workflow(workflow_id: str, request: WorkflowExecuteRequest):
 
 @router.get("/workflows/runs/{run_id}")
 async def get_workflow_run(run_id: str):
-    """Fetch a single workflow run by id, including its result summary."""
+    """Fetch a single workflow run by id.
+
+    Includes the full ``result_summary`` plus the list of phase rows
+    (``workflow_run_phases``) written by the phased execution loop
+    (#128). For one-shot runs with no phase rows, ``phases`` is just
+    an empty list.
+    """
     from services.workflow_run_service import get_workflow_run_service
 
-    row = get_workflow_run_service().get_run(run_id)
+    run_service = get_workflow_run_service()
+    row = run_service.get_run(run_id)
     if not row:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    row["phases"] = run_service.list_phases(run_id)
     return row
+
+
+@router.post("/workflows/runs/{run_id}/resume")
+async def resume_workflow_run(run_id: str, request: WorkflowRunResumeRequest):
+    """Resume a paused workflow run (#128).
+
+    Looks up the run's pending approval action, approves it, and
+    re-enters the phase loop. If there is no pending approval action
+    linked to the run, returns 409.
+    """
+    from services.approval_service import (
+        ActionStatus,
+        get_approval_service,
+    )
+    from services.workflow_run_service import get_workflow_run_service
+    from services.workflows_service import get_workflows_service
+
+    run_service = get_workflow_run_service()
+    run = run_service.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    if run.get("status") != "paused":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run {run_id} is not paused (status={run.get('status')})",
+        )
+
+    approval_service = get_approval_service()
+    pending = [
+        a
+        for a in approval_service.list_actions(
+            status=ActionStatus.PENDING, workflow_run_id=run_id
+        )
+    ]
+    if pending:
+        approval_service.approve_action(
+            pending[0].action_id,
+            approved_by=request.approved_by or "analyst",
+        )
+
+    result = await get_workflows_service().resume_workflow(
+        run_id,
+        "approved",
+        approved_by=request.approved_by or "analyst",
+    )
+    return result
+
+
+@router.post("/workflows/runs/{run_id}/cancel")
+async def cancel_workflow_run(run_id: str, request: WorkflowRunCancelRequest):
+    """Cancel a paused or running workflow run (#128).
+
+    Rejects any pending approval action on the run and finalises it
+    as ``cancelled`` with the supplied reason.
+    """
+    from services.approval_service import (
+        ActionStatus,
+        get_approval_service,
+    )
+    from services.workflow_run_service import get_workflow_run_service
+    from services.workflows_service import get_workflows_service
+
+    run_service = get_workflow_run_service()
+    run = run_service.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+
+    approval_service = get_approval_service()
+    pending = [
+        a
+        for a in approval_service.list_actions(
+            status=ActionStatus.PENDING, workflow_run_id=run_id
+        )
+    ]
+    for action in pending:
+        approval_service.reject_action(
+            action.action_id,
+            reason=request.reason,
+            rejected_by=request.rejected_by or "analyst",
+        )
+
+    if run.get("status") == "paused":
+        result = await get_workflows_service().resume_workflow(
+            run_id,
+            "rejected",
+            rejection_reason=request.reason,
+            approved_by=request.rejected_by or "analyst",
+        )
+        return result
+
+    # Running-but-not-paused runs: we can't interrupt the in-flight
+    # Claude call here, but we can mark the row cancelled so history
+    # reflects the user's intent. (Background-worker support would
+    # let us actually stop execution; that's out of scope for #128.)
+    run_service.finalize_run(
+        run_id,
+        status="cancelled",
+        error=f"Cancelled: {request.reason}",
+    )
+    return {
+        "success": True,
+        "status": "cancelled",
+        "run_id": run_id,
+        "rejection_reason": request.reason,
+    }
 
 
 @router.get("/workflows/{workflow_id}/runs")

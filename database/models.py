@@ -1763,14 +1763,14 @@ class User(Base):
 
     # Failed-login tracking and account lockout
     failed_login_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default='0'
+        Integer, nullable=False, default=0, server_default="0"
     )
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Password history — list of prior bcrypt hashes, newest first. Used
     # to reject reuse of the last N passwords. Capped in application code.
     password_history: Mapped[List[str]] = mapped_column(
-        JSONB, nullable=False, default=list, server_default='[]'
+        JSONB, nullable=False, default=list, server_default="[]"
     )
     password_changed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True
@@ -2200,7 +2200,7 @@ class CustomWorkflow(Base):
     holds workflows created/edited via the Workflow Builder UI.
     """
 
-    __tablename__ = 'custom_workflows'
+    __tablename__ = "custom_workflows"
 
     workflow_id: Mapped[str] = mapped_column(String(100), primary_key=True)
 
@@ -2209,13 +2209,13 @@ class CustomWorkflow(Base):
     use_case: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     trigger_examples: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default='[]'
+        JSONB, nullable=False, default=list, server_default="[]"
     )
     phases: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default='[]'
+        JSONB, nullable=False, default=list, server_default="[]"
     )
     graph_layout: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default='{}'
+        JSONB, nullable=False, default=dict, server_default="{}"
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
@@ -2226,37 +2226,37 @@ class CustomWorkflow(Base):
         DateTime,
         nullable=False,
         default=datetime.utcnow,
-        server_default='now()',
+        server_default="now()",
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default='now()',
+        server_default="now()",
     )
 
     __table_args__ = (
-        Index('idx_custom_workflows_active', 'is_active'),
-        Index('idx_custom_workflows_created_by', 'created_by'),
-        Index('idx_custom_workflows_name', 'name'),
+        Index("idx_custom_workflows_active", "is_active"),
+        Index("idx_custom_workflows_created_by", "created_by"),
+        Index("idx_custom_workflows_name", "name"),
     )
 
     def to_dict(self) -> dict:
         """Convert custom workflow to dictionary."""
         return {
-            'workflow_id': self.workflow_id,
-            'name': self.name,
-            'description': self.description,
-            'use_case': self.use_case,
-            'trigger_examples': self.trigger_examples or [],
-            'phases': self.phases or [],
-            'graph_layout': self.graph_layout or {},
-            'is_active': self.is_active,
-            'created_by': self.created_by,
-            'version': self.version,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            "workflow_id": self.workflow_id,
+            "name": self.name,
+            "description": self.description,
+            "use_case": self.use_case,
+            "trigger_examples": self.trigger_examples or [],
+            "phases": self.phases or [],
+            "graph_layout": self.graph_layout or {},
+            "is_active": self.is_active,
+            "created_by": self.created_by,
+            "version": self.version,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -2268,63 +2268,63 @@ class WorkflowRun(Base):
     reserved for phase-by-phase execution (#128) and may be absent.
     """
 
-    __tablename__ = 'workflow_runs'
+    __tablename__ = "workflow_runs"
 
     run_id: Mapped[str] = mapped_column(String(80), primary_key=True)
     workflow_id: Mapped[str] = mapped_column(Text, nullable=False)
     workflow_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     workflow_source: Mapped[str] = mapped_column(
-        String(16), nullable=False, default='file', server_default='file'
+        String(16), nullable=False, default="file", server_default="file"
     )
     workflow_name: Mapped[str] = mapped_column(Text, nullable=False)
 
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     triggered_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     trigger_context: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default='{}'
+        JSONB, nullable=False, default=dict, server_default="{}"
     )
 
     started_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+        DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
     )
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     total_cost_usd: Mapped[float] = mapped_column(
-        Numeric(10, 4), nullable=False, default=0, server_default='0'
+        Numeric(10, 4), nullable=False, default=0, server_default="0"
     )
     result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     skill_tools_available: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default='[]'
+        JSONB, nullable=False, default=list, server_default="[]"
     )
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
-        Index('idx_workflow_runs_workflow_id', 'workflow_id', 'started_at'),
-        Index('idx_workflow_runs_started_at', 'started_at'),
+        Index("idx_workflow_runs_workflow_id", "workflow_id", "started_at"),
+        Index("idx_workflow_runs_started_at", "started_at"),
     )
 
     def to_dict(self, include_result: bool = False) -> dict:
         """Serialise the run. ``include_result`` gates the potentially-large
         ``result_summary`` field so list endpoints stay light."""
         out: dict = {
-            'run_id': self.run_id,
-            'workflow_id': self.workflow_id,
-            'workflow_version': self.workflow_version,
-            'workflow_source': self.workflow_source,
-            'workflow_name': self.workflow_name,
-            'status': self.status,
-            'triggered_by': self.triggered_by,
-            'trigger_context': self.trigger_context or {},
-            'started_at': self.started_at.isoformat() if self.started_at else None,
-            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
-            'duration_ms': self.duration_ms,
-            'total_cost_usd': float(self.total_cost_usd or 0),
-            'skill_tools_available': self.skill_tools_available or [],
-            'error': self.error,
+            "run_id": self.run_id,
+            "workflow_id": self.workflow_id,
+            "workflow_version": self.workflow_version,
+            "workflow_source": self.workflow_source,
+            "workflow_name": self.workflow_name,
+            "status": self.status,
+            "triggered_by": self.triggered_by,
+            "trigger_context": self.trigger_context or {},
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "duration_ms": self.duration_ms,
+            "total_cost_usd": float(self.total_cost_usd or 0),
+            "skill_tools_available": self.skill_tools_available or [],
+            "error": self.error,
         }
         if include_result:
-            out['result_summary'] = self.result_summary
+            out["result_summary"] = self.result_summary
         return out
 
 
@@ -2336,11 +2336,11 @@ class WorkflowRunPhase(Base):
     until phase-level execution lands.
     """
 
-    __tablename__ = 'workflow_run_phases'
+    __tablename__ = "workflow_run_phases"
 
     run_id: Mapped[str] = mapped_column(
         String(80),
-        ForeignKey('workflow_runs.run_id', ondelete='CASCADE'),
+        ForeignKey("workflow_runs.run_id", ondelete="CASCADE"),
         primary_key=True,
     )
     phase_id: Mapped[str] = mapped_column(Text, primary_key=True)
@@ -2353,36 +2353,110 @@ class WorkflowRunPhase(Base):
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     input_context: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default='{}'
+        JSONB, nullable=False, default=dict, server_default="{}"
     )
     output: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default='{}'
+        JSONB, nullable=False, default=dict, server_default="{}"
     )
     approval_state: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     cost_usd: Mapped[float] = mapped_column(
-        Numeric(10, 4), nullable=False, default=0, server_default='0'
+        Numeric(10, 4), nullable=False, default=0, server_default="0"
     )
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    __table_args__ = (Index("idx_workflow_run_phases_run_id", "run_id", "phase_order"),)
+
+    def to_dict(self) -> dict:
+        return {
+            "run_id": self.run_id,
+            "phase_id": self.phase_id,
+            "phase_order": self.phase_order,
+            "agent_id": self.agent_id,
+            "status": self.status,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "finished_at": self.finished_at.isoformat() if self.finished_at else None,
+            "duration_ms": self.duration_ms,
+            "input_context": self.input_context or {},
+            "output": self.output or {},
+            "approval_state": self.approval_state,
+            "cost_usd": float(self.cost_usd or 0),
+            "error": self.error,
+        }
+
+
+class ApprovalAction(Base):
+    """Pending human-in-the-loop approval (#128).
+
+    Supersedes the JSON-file persistence that ApprovalService used to
+    do. Workflow phase-level approvals link back to the paused run via
+    ``workflow_run_id`` + ``workflow_phase_id``. Non-workflow approvals
+    (daemon containment actions, etc.) leave those columns null.
+    """
+
+    __tablename__ = "approval_actions"
+
+    action_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    action_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    target: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(
+        Numeric(4, 3), nullable=False, default=0, server_default="0"
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
+    )
+    created_by: Mapped[str] = mapped_column(String(100), nullable=False)
+    requires_approval: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    approved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    execution_result: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parameters: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    workflow_run_id: Mapped[Optional[str]] = mapped_column(
+        String(80),
+        ForeignKey("workflow_runs.run_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    workflow_phase_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     __table_args__ = (
-        Index('idx_workflow_run_phases_run_id', 'run_id', 'phase_order'),
+        Index("idx_approval_actions_status_created", "status", "created_at"),
+        Index("idx_approval_actions_workflow_run", "workflow_run_id"),
     )
 
     def to_dict(self) -> dict:
         return {
-            'run_id': self.run_id,
-            'phase_id': self.phase_id,
-            'phase_order': self.phase_order,
-            'agent_id': self.agent_id,
-            'status': self.status,
-            'started_at': self.started_at.isoformat() if self.started_at else None,
-            'finished_at': self.finished_at.isoformat() if self.finished_at else None,
-            'duration_ms': self.duration_ms,
-            'input_context': self.input_context or {},
-            'output': self.output or {},
-            'approval_state': self.approval_state,
-            'cost_usd': float(self.cost_usd or 0),
-            'error': self.error,
+            "action_id": self.action_id,
+            "action_type": self.action_type,
+            "title": self.title,
+            "description": self.description,
+            "target": self.target,
+            "confidence": float(self.confidence or 0),
+            "reason": self.reason,
+            "evidence": self.evidence or [],
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_by": self.created_by,
+            "requires_approval": bool(self.requires_approval),
+            "status": self.status,
+            "approved_at": self.approved_at.isoformat() if self.approved_at else None,
+            "approved_by": self.approved_by,
+            "executed_at": self.executed_at.isoformat() if self.executed_at else None,
+            "execution_result": self.execution_result,
+            "rejection_reason": self.rejection_reason,
+            "parameters": self.parameters or {},
+            "workflow_run_id": self.workflow_run_id,
+            "workflow_phase_id": self.workflow_phase_id,
         }
 
 
@@ -2390,7 +2464,7 @@ class Skill(Base):
     """Skill model - reusable, parameterized SOC capability (detection,
     enrichment, response, reporting) that agents and workflows can invoke."""
 
-    __tablename__ = 'skills'
+    __tablename__ = "skills"
 
     skill_id: Mapped[str] = mapped_column(String(32), primary_key=True)
 
@@ -2400,88 +2474,88 @@ class Skill(Base):
 
     # JSON Schema for skill parameters (the inputs the skill accepts).
     input_schema: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default='{}'
+        JSONB, nullable=False, default=dict, server_default="{}"
     )
     # JSON Schema for skill output.
     output_schema: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default='{}'
+        JSONB, nullable=False, default=dict, server_default="{}"
     )
     # MCP tool names required by this skill
     # (e.g. ["splunk.search", "virustotal.hash_lookup"]).
     required_tools: Mapped[List[str]] = mapped_column(
-        JSONB, nullable=False, default=list, server_default='[]'
+        JSONB, nullable=False, default=list, server_default="[]"
     )
     # LLM instructions; may contain {{param}} placeholders.
     prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
     # Ordered execution steps (tool calls / prompts / transforms) — interpreted
     # by the future skill-execution worker.
     execution_steps: Mapped[List[dict]] = mapped_column(
-        JSONB, nullable=False, default=list, server_default='[]'
+        JSONB, nullable=False, default=list, server_default="[]"
     )
 
     is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default='true'
+        Boolean, nullable=False, default=True, server_default="true"
     )
     created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     version: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=1, server_default='1'
+        Integer, nullable=False, default=1, server_default="1"
     )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=datetime.utcnow,
-        server_default='now()',
+        server_default="now()",
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
-        server_default='now()',
+        server_default="now()",
     )
 
     __table_args__ = (
-        Index('idx_skill_category', 'category'),
-        Index('idx_skill_is_active', 'is_active'),
+        Index("idx_skill_category", "category"),
+        Index("idx_skill_is_active", "is_active"),
         Index(
-            'idx_skill_name_trgm',
-            'name',
-            postgresql_ops={'name': 'gin_trgm_ops'},
-            postgresql_using='gin',
+            "idx_skill_name_trgm",
+            "name",
+            postgresql_ops={"name": "gin_trgm_ops"},
+            postgresql_using="gin",
         ),
     )
 
     @staticmethod
     def generate_skill_id() -> str:
         """Generate a new skill_id in the form s-YYYYMMDD-XXXXXXXX."""
-        ts = datetime.utcnow().strftime('%Y%m%d')
+        ts = datetime.utcnow().strftime("%Y%m%d")
         return f"s-{ts}-{uuid.uuid4().hex[:8].upper()}"
 
     def to_dict(self) -> dict:
         """Convert skill to dictionary."""
         return {
-            'skill_id': self.skill_id,
-            'name': self.name,
-            'description': self.description,
-            'category': self.category,
-            'input_schema': self.input_schema or {},
-            'output_schema': self.output_schema or {},
-            'required_tools': self.required_tools or [],
-            'prompt_template': self.prompt_template,
-            'execution_steps': self.execution_steps or [],
-            'is_active': self.is_active,
-            'created_by': self.created_by,
-            'version': self.version,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            "skill_id": self.skill_id,
+            "name": self.name,
+            "description": self.description,
+            "category": self.category,
+            "input_schema": self.input_schema or {},
+            "output_schema": self.output_schema or {},
+            "required_tools": self.required_tools or [],
+            "prompt_template": self.prompt_template,
+            "execution_steps": self.execution_steps or [],
+            "is_active": self.is_active,
+            "created_by": self.created_by,
+            "version": self.version,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
 class CustomAgent(Base):
     """User-defined SOC agent created via the Agent Builder UI."""
 
-    __tablename__ = 'custom_agents'
+    __tablename__ = "custom_agents"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -2491,16 +2565,29 @@ class CustomAgent(Base):
     specialization: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     role: Mapped[str] = mapped_column(Text, nullable=False)
-    extra_principles: Mapped[str] = mapped_column(Text, nullable=False, default='', server_default='')
-    methodology: Mapped[str] = mapped_column(Text, nullable=False, default='', server_default='')
+    extra_principles: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
+    methodology: Mapped[str] = mapped_column(
+        Text, nullable=False, default="", server_default=""
+    )
     system_prompt_override: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
-    recommended_tools: Mapped[list] = mapped_column(JSONB, nullable=False, default=list, server_default='[]')
-    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=4096, server_default='4096')
-    enable_thinking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default='false')
+    recommended_tools: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default="[]"
+    )
+    max_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=4096, server_default="4096"
+    )
+    enable_thinking: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     model: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     component_category: Mapped[str] = mapped_column(
-        String(32), nullable=False, default='investigation', server_default='investigation'
+        String(32),
+        nullable=False,
+        default="investigation",
+        server_default="investigation",
     )
     # Origin agent ID this row was forked from (built-in id like "reporter" or
     # another custom id). Null for agents authored from scratch. Breadcrumb
@@ -2509,39 +2596,40 @@ class CustomAgent(Base):
 
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+        DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow,
-        onupdate=datetime.utcnow, server_default='now()'
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default="now()",
     )
 
-    __table_args__ = (
-        Index('idx_custom_agents_updated_at', 'updated_at'),
-    )
+    __table_args__ = (Index("idx_custom_agents_updated_at", "updated_at"),)
 
     def to_dict(self) -> dict:
         """Convert custom agent to dictionary."""
         return {
-            'id': self.id,
-            'name': self.name,
-            'description': self.description,
-            'icon': self.icon,
-            'color': self.color,
-            'specialization': self.specialization,
-            'role': self.role,
-            'extra_principles': self.extra_principles,
-            'methodology': self.methodology,
-            'system_prompt_override': self.system_prompt_override,
-            'recommended_tools': self.recommended_tools or [],
-            'max_tokens': self.max_tokens,
-            'enable_thinking': self.enable_thinking,
-            'model': self.model,
-            'component_category': self.component_category,
-            'forked_from': self.forked_from,
-            'created_by': self.created_by,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            "id": self.id,
+            "name": self.name,
+            "description": self.description,
+            "icon": self.icon,
+            "color": self.color,
+            "specialization": self.specialization,
+            "role": self.role,
+            "extra_principles": self.extra_principles,
+            "methodology": self.methodology,
+            "system_prompt_override": self.system_prompt_override,
+            "recommended_tools": self.recommended_tools or [],
+            "max_tokens": self.max_tokens,
+            "enable_thinking": self.enable_thinking,
+            "model": self.model,
+            "component_category": self.component_category,
+            "forked_from": self.forked_from,
+            "created_by": self.created_by,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -2552,7 +2640,7 @@ class LLMProviderConfig(Base):
     See database/init/09_llm_providers.sql for the table definition.
     """
 
-    __tablename__ = 'llm_provider_configs'
+    __tablename__ = "llm_provider_configs"
 
     provider_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     provider_type: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -2567,43 +2655,45 @@ class LLMProviderConfig(Base):
     last_test_success: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+        DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+        DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
     )
 
     __table_args__ = (
-        Index('idx_llm_provider_type', 'provider_type'),
-        Index('idx_llm_provider_active', 'is_active'),
+        Index("idx_llm_provider_type", "provider_type"),
+        Index("idx_llm_provider_active", "is_active"),
         # Partial unique index — enforces "one default per provider_type"
         # for non-Docker deployments too (Base.metadata.create_all path).
         # Mirrors the SQL in database/init/07_llm_providers.sql.
         Index(
-            'llm_provider_default_per_type',
-            'provider_type',
+            "llm_provider_default_per_type",
+            "provider_type",
             unique=True,
-            postgresql_where=text('is_default = TRUE'),
+            postgresql_where=text("is_default = TRUE"),
         ),
     )
 
     def to_dict(self, include_secrets: bool = False) -> dict:
         return {
-            'provider_id': self.provider_id,
-            'provider_type': self.provider_type,
-            'name': self.name,
-            'base_url': self.base_url,
-            'api_key_ref': self.api_key_ref if include_secrets else None,
-            'has_api_key': bool(self.api_key_ref),
-            'default_model': self.default_model,
-            'is_active': self.is_active,
-            'is_default': self.is_default,
-            'config': self.config or {},
-            'last_test_at': self.last_test_at.isoformat() if self.last_test_at else None,
-            'last_test_success': self.last_test_success,
-            'last_error': self.last_error,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            "provider_id": self.provider_id,
+            "provider_type": self.provider_type,
+            "name": self.name,
+            "base_url": self.base_url,
+            "api_key_ref": self.api_key_ref if include_secrets else None,
+            "has_api_key": bool(self.api_key_ref),
+            "default_model": self.default_model,
+            "is_active": self.is_active,
+            "is_default": self.is_default,
+            "config": self.config or {},
+            "last_test_at": (
+                self.last_test_at.isoformat() if self.last_test_at else None
+            ),
+            "last_test_success": self.last_test_success,
+            "last_error": self.last_error,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -2619,35 +2709,33 @@ class AIModelConfig(Base):
     See database/init/10_ai_model_configs.sql for the table definition.
     """
 
-    __tablename__ = 'ai_model_configs'
+    __tablename__ = "ai_model_configs"
 
     component: Mapped[str] = mapped_column(String(64), primary_key=True)
     provider_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey('llm_provider_configs.provider_id', ondelete='RESTRICT'),
+        ForeignKey("llm_provider_configs.provider_id", ondelete="RESTRICT"),
         nullable=False,
     )
     model_id: Mapped[str] = mapped_column(String(200), nullable=False)
     settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     updated_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+        DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, server_default='now()'
+        DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
     )
 
-    __table_args__ = (
-        Index('idx_ai_model_configs_provider', 'provider_id'),
-    )
+    __table_args__ = (Index("idx_ai_model_configs_provider", "provider_id"),)
 
     def to_dict(self) -> dict:
         return {
-            'component': self.component,
-            'provider_id': self.provider_id,
-            'model_id': self.model_id,
-            'settings': self.settings or {},
-            'updated_by': self.updated_by,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            "component": self.component,
+            "provider_id": self.provider_id,
+            "model_id": self.model_id,
+            "settings": self.settings or {},
+            "updated_by": self.updated_by,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

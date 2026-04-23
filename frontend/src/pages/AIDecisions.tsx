@@ -26,6 +26,11 @@ import {
   alpha,
   useTheme,
   Link,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
 } from '@mui/material'
 import {
   Feedback as FeedbackIcon,
@@ -34,8 +39,10 @@ import {
   Analytics as AnalyticsIcon,
   TrendingUp as TrendingUpIcon,
   Timer as TimerIcon,
+  ThumbUp as ThumbUpIcon,
+  ThumbDown as ThumbDownIcon,
 } from '@mui/icons-material'
-import { aiDecisionsApi } from '../services/api'
+import { aiDecisionsApi, approvalsApi } from '../services/api'
 import AIDecisionFeedback from '../components/ai/AIDecisionFeedback'
 import { StatCard, StatusBadge } from '../components/ui'
 import { severityColors } from '../theme'
@@ -71,6 +78,15 @@ export default function AIDecisionsPage() {
   const [hoveredRow, setHoveredRow] = useState<string | null>(null)
   const [investigationFilter, setInvestigationFilter] = useState<string | null>(null)
 
+  // #128 — pending workflow phase / daemon-action approvals
+  const [pendingApprovals, setPendingApprovals] = useState<any[]>([])
+  const [approvalActing, setApprovalActing] = useState<string | null>(null)
+  const [rejectDialog, setRejectDialog] = useState<{ open: boolean; action: any | null }>({
+    open: false,
+    action: null,
+  })
+  const [rejectReason, setRejectReason] = useState('')
+
   useEffect(() => {
     const agentParam = searchParams.get('agent_id')
     const invParam = searchParams.get('investigation_id')
@@ -102,10 +118,58 @@ export default function AIDecisionsPage() {
       const statsParams = filterAgent !== 'all' ? { agent_id: filterAgent } : {}
       const statsResponse = await aiDecisionsApi.getStats(statsParams)
       setStats(statsResponse.data)
+      const approvalsResponse = await approvalsApi.listPending()
+      setPendingApprovals(approvalsResponse.data?.actions || [])
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load AI decisions')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const reloadApprovals = async () => {
+    try {
+      const response = await approvalsApi.listPending()
+      setPendingApprovals(response.data?.actions || [])
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to reload approvals')
+    }
+  }
+
+  const handleApprove = async (action: any) => {
+    setApprovalActing(action.action_id)
+    try {
+      await approvalsApi.approve(action.action_id)
+      await reloadApprovals()
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to approve action')
+    } finally {
+      setApprovalActing(null)
+    }
+  }
+
+  const openRejectDialog = (action: any) => {
+    setRejectDialog({ open: true, action })
+    setRejectReason('')
+  }
+
+  const closeRejectDialog = () => {
+    setRejectDialog({ open: false, action: null })
+    setRejectReason('')
+  }
+
+  const submitReject = async () => {
+    const action = rejectDialog.action
+    if (!action || !rejectReason.trim()) return
+    setApprovalActing(action.action_id)
+    try {
+      await approvalsApi.reject(action.action_id, rejectReason.trim())
+      closeRejectDialog()
+      await reloadApprovals()
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to reject action')
+    } finally {
+      setApprovalActing(null)
     }
   }
 
@@ -220,6 +284,10 @@ export default function AIDecisionsPage() {
             <Tab label={`Pending (${pendingDecisions.length})`} sx={{ minHeight: 48 }} />
             <Tab label="All Decisions" sx={{ minHeight: 48 }} />
             <Tab label="Analytics" sx={{ minHeight: 48 }} />
+            <Tab
+              label={`Pending Approvals (${pendingApprovals.length})`}
+              sx={{ minHeight: 48 }}
+            />
           </Tabs>
         </Box>
 
@@ -430,6 +498,145 @@ export default function AIDecisionsPage() {
             </TableContainer>
           </TabPanel>
 
+          <TabPanel value={tabValue} index={3}>
+            {pendingApprovals.length === 0 ? (
+              <Box sx={{ py: 6, textAlign: 'center' }}>
+                <CheckIcon sx={{ fontSize: 48, color: 'success.main', mb: 1 }} />
+                <Typography color="text.secondary">
+                  No pending approvals. Workflow phases that require approval will appear here.
+                </Typography>
+              </Box>
+            ) : (
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell>Action</TableCell>
+                      <TableCell>Target / Run</TableCell>
+                      <TableCell>Phase</TableCell>
+                      <TableCell>Reason</TableCell>
+                      <TableCell>Created</TableCell>
+                      <TableCell align="right" sx={{ width: 200 }}>
+                        Decision
+                      </TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {pendingApprovals.map((action) => (
+                      <TableRow key={action.action_id}>
+                        <TableCell>
+                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                            {action.title}
+                          </Typography>
+                          <Typography
+                            variant="caption"
+                            color="text.secondary"
+                            sx={{ display: 'block', maxWidth: 320 }}
+                          >
+                            {action.description}
+                          </Typography>
+                        </TableCell>
+                        <TableCell>
+                          {action.workflow_run_id ? (
+                            <Tooltip title="View workflow run">
+                              <Link
+                                component="button"
+                                variant="body2"
+                                sx={{
+                                  fontFamily: 'monospace',
+                                  fontSize: '0.7rem',
+                                  cursor: 'pointer',
+                                }}
+                                onClick={() =>
+                                  navigate(
+                                    `/workflows?run_id=${action.workflow_run_id}`,
+                                  )
+                                }
+                              >
+                                {action.workflow_run_id}
+                              </Link>
+                            </Tooltip>
+                          ) : (
+                            <Typography
+                              variant="caption"
+                              sx={{ fontFamily: 'monospace' }}
+                            >
+                              {action.target}
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {action.workflow_phase_id ? (
+                            <Chip
+                              label={action.workflow_phase_id}
+                              size="small"
+                              variant="outlined"
+                            />
+                          ) : (
+                            <Typography
+                              variant="caption"
+                              color="text.secondary"
+                            >
+                              —
+                            </Typography>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Tooltip title={action.reason}>
+                            <Typography
+                              variant="body2"
+                              noWrap
+                              sx={{ maxWidth: 220 }}
+                            >
+                              {action.reason}
+                            </Typography>
+                          </Tooltip>
+                        </TableCell>
+                        <TableCell>
+                          <Typography variant="caption" color="text.secondary">
+                            {formatDateTime(action.created_at)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            justifyContent="flex-end"
+                          >
+                            <Button
+                              size="small"
+                              variant="contained"
+                              color="success"
+                              startIcon={
+                                <ThumbUpIcon sx={{ fontSize: 16 }} />
+                              }
+                              disabled={approvalActing === action.action_id}
+                              onClick={() => handleApprove(action)}
+                            >
+                              Approve
+                            </Button>
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              color="error"
+                              startIcon={
+                                <ThumbDownIcon sx={{ fontSize: 16 }} />
+                              }
+                              disabled={approvalActing === action.action_id}
+                              onClick={() => openRejectDialog(action)}
+                            >
+                              Reject
+                            </Button>
+                          </Stack>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </TabPanel>
+
           <TabPanel value={tabValue} index={2}>
             <Grid container spacing={3}>
               <Grid item xs={12} md={6}>
@@ -488,6 +695,41 @@ export default function AIDecisionsPage() {
         decision={selectedDecision}
         onFeedbackSubmitted={loadData}
       />
+
+      <Dialog
+        open={rejectDialog.open}
+        onClose={closeRejectDialog}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>Reject action</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            {rejectDialog.action?.title}
+          </Typography>
+          <TextField
+            autoFocus
+            fullWidth
+            multiline
+            minRows={3}
+            label="Rejection reason"
+            value={rejectReason}
+            onChange={(e) => setRejectReason(e.target.value)}
+            helperText="Required. This is recorded on the workflow run's audit trail."
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeRejectDialog}>Cancel</Button>
+          <Button
+            variant="contained"
+            color="error"
+            disabled={!rejectReason.trim() || !!approvalActing}
+            onClick={submitReject}
+          >
+            Reject
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
