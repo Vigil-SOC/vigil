@@ -1,25 +1,38 @@
+import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { Box } from '@mui/material'
+import { Box, CircularProgress } from '@mui/material'
 import { AuthProvider } from './contexts/AuthContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import MainLayout from './components/layout/MainLayout'
-import Login from './pages/Login'
-import Dashboard from './pages/Dashboard'
-import Cases from './pages/Cases'
-import CaseMetrics from './pages/CaseMetrics'
-import Timesketch from './pages/Timesketch'
-import Settings from './pages/Settings'
-import AIDecisions from './pages/AIDecisions'
-import Investigation from './pages/Investigation'
-import Analytics from './pages/Analytics'
-import Skills from './pages/Skills'
-import Orchestrator from './pages/Orchestrator'
-import BuilderTool from './pages/BuilderTool'
+
+// Lazy-load every page so a refresh on any route only pulls that page's
+// module graph (plus shared deps). Previously every page was eagerly
+// imported, forcing ~1 MB of JS + all its MUI/recharts/x-data-grid deps
+// on every cold load.
+const Login = lazy(() => import('./pages/Login'))
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Cases = lazy(() => import('./pages/Cases'))
+const CaseMetrics = lazy(() => import('./pages/CaseMetrics'))
+const Timesketch = lazy(() => import('./pages/Timesketch'))
+const Settings = lazy(() => import('./pages/Settings'))
+const AIDecisions = lazy(() => import('./pages/AIDecisions'))
+const Investigation = lazy(() => import('./pages/Investigation'))
+const Analytics = lazy(() => import('./pages/Analytics'))
+const Skills = lazy(() => import('./pages/Skills'))
+const Orchestrator = lazy(() => import('./pages/Orchestrator'))
+const BuilderTool = lazy(() => import('./pages/BuilderTool'))
+
+const PageFallback = () => (
+  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 200 }}>
+    <CircularProgress size={24} />
+  </Box>
+)
 
 function App() {
   return (
     <AuthProvider>
       <Box sx={{ display: 'flex', height: '100vh' }}>
+        <Suspense fallback={<PageFallback />}>
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
@@ -77,6 +90,7 @@ function App() {
             />
           </Route>
         </Routes>
+        </Suspense>
       </Box>
     </AuthProvider>
   )
