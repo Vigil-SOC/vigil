@@ -416,15 +416,13 @@ export const mcpApi = {
   getStatuses: () => api.get('/mcp/servers/status'),
   
   getServerStatus: (name: string) => api.get(`/mcp/servers/${name}/status`),
-  
-  startServer: (name: string) => api.post(`/mcp/servers/${name}/start`),
-  
-  stopServer: (name: string) => api.post(`/mcp/servers/${name}/stop`),
-  
-  startAll: () => api.post('/mcp/servers/start-all'),
-  
-  stopAll: () => api.post('/mcp/servers/stop-all'),
-  
+
+  // NOTE: startServer / stopServer / startAll / stopAll were removed —
+  // every server in mcp-config.json is stdio-based, and the old endpoints
+  // explicitly refused stdio. Runtime start/stop now lives on the enable
+  // toggle (setServerEnabled below) which actually triggers a connect
+  // attempt and returns its result.
+
   getLogs: (name: string, lines: number = 100) =>
     api.get(`/mcp/servers/${name}/logs`, { params: { lines } }),
   
@@ -589,6 +587,10 @@ export const agentsApi = {
     api.patch(`/agents/custom/${agent_id}`, data),
   deleteCustom: (agent_id: string) => api.delete(`/agents/custom/${agent_id}`),
   getAvailableTools: () => api.get('/agents/custom/_meta/tools'),
+  // Fork any agent (built-in or custom) into a new editable custom copy.
+  // Built-ins are never mutated; they're static templates.
+  forkAgent: (source_agent_id: string, new_name?: string) =>
+    api.post(`/agents/${source_agent_id}/fork`, { new_name }),
 
   // AI-assisted generation + iterative refinement (issue #80 Phase 2)
   generateCustom: (data: {
@@ -634,6 +636,17 @@ export interface CustomAgent extends CustomAgentPayload {
   created_at?: string
   updated_at?: string
   effective_prompt?: string
+  forked_from?: string | null
+}
+
+// Shape returned by /agents/agents (both built-ins and customs).
+export interface AgentSummary {
+  id: string
+  name: string
+  description?: string
+  icon?: string
+  color?: string
+  specialization?: string
 }
 
 // Config API

@@ -38,13 +38,17 @@ class InvestigationRequest(BaseModel):
 
 @router.get("/agents")
 async def list_agents():
-    """
-    Get list of all available SOC agents.
-    
-    Returns:
-        List of agents with their metadata
+    """Get list of all available SOC agents (built-ins + DB-backed customs).
+
+    Always refreshes the custom-agent side of the cache from the DB so
+    callers see rows created by other worker processes or external
+    tooling without having to restart. Built-ins are code-defined and
+    cached in-process.
     """
     try:
+        # Cheap best-effort refresh. Failures leave the existing cache in
+        # place — you'd still get the built-in list back.
+        agent_manager.refresh_custom_agents()
         agents = agent_manager.get_agent_list()
         return {
             "agents": agents,

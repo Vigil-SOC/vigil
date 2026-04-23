@@ -552,6 +552,11 @@ class AgentManager:
     def __init__(self):
         self.agents = SOCAgentLibrary.get_all_agents()
         self.current_agent_id = "investigator"
+        # Load DB-backed custom agents at startup so /agents/agents returns
+        # a unified list without waiting for a later CRUD call to trigger
+        # refresh. Failures (DB not ready) are logged inside the helper,
+        # so this remains safe when imported before the DB is initialised.
+        self.refresh_custom_agents()
 
     def refresh_custom_agents(self) -> int:
         """Reload custom agents from the DB.

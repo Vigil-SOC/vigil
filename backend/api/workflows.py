@@ -184,6 +184,8 @@ async def update_custom_workflow(workflow_id: str, payload: CustomWorkflowUpdate
         return updated
     except HTTPException:
         raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.exception("Error updating custom workflow")
         raise HTTPException(status_code=500, detail=str(e))

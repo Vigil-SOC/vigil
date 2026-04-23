@@ -110,7 +110,7 @@ class CustomAgentService:
                     f"Custom agent already exists: {agent_id}"
                 )
 
-            agent = CustomAgent(
+            kwargs = dict(
                 id=agent_id,
                 name=name,
                 description=data.get("description"),
@@ -125,11 +125,72 @@ class CustomAgentService:
                 max_tokens=int(data.get("max_tokens") or 4096),
                 enable_thinking=bool(data.get("enable_thinking") or False),
                 model=data.get("model"),
+                forked_from=data.get("forked_from"),
                 created_by=created_by,
             )
+            if data.get("component_category"):
+                kwargs["component_category"] = data["component_category"]
+            agent = CustomAgent(**kwargs)
             session.add(agent)
             session.flush()
             return agent.to_dict()
+
+    def fork_from_profile(
+        self,
+        source_profile: Any,
+        source_id: str,
+        created_by: Optional[str] = None,
+        new_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Create a custom agent by copying values from an ``AgentProfile``.
+
+        Works for both built-in and custom source agents. The new row is
+        an independent copy — the source is never touched. Appends "
+        (copy)" to the name unless ``new_name`` is supplied, and bumps
+        with a numeric suffix if the default ID collides.
+        """
+        base_name = new_name or f"{source_profile.name} (copy)"
+        # Find an unused ID by appending " 2", " 3", ... on collision.
+        db_manager = get_db_manager()
+        with db_manager.session_scope() as session:
+            name = base_name
+            counter = 2
+            while True:
+                candidate = build_agent_id(name)
+                exists = (
+                    session.query(CustomAgent)
+                    .filter(CustomAgent.id == candidate)
+                    .one_or_none()
+                )
+                if not exists:
+                    break
+                name = f"{base_name} {counter}"
+                counter += 1
+
+        # Extract fields off the AgentProfile. Some built-in fields
+        # (extra_principles, methodology) aren't on the profile — we
+        # capture the rendered system prompt as an override so the fork
+        # behaves exactly like the source on day one.
+        data = {
+            "name": name,
+            "role": getattr(source_profile, "role", "") or source_profile.name,
+            "description": getattr(source_profile, "description", None),
+            "icon": getattr(source_profile, "icon", None),
+            "color": getattr(source_profile, "color", None),
+            "specialization": getattr(source_profile, "specialization", None),
+            "extra_principles": getattr(source_profile, "extra_principles", "") or "",
+            "methodology": getattr(source_profile, "methodology", "") or "",
+            "system_prompt_override": getattr(source_profile, "system_prompt", None),
+            "recommended_tools": list(
+                getattr(source_profile, "recommended_tools", []) or []
+            ),
+            "max_tokens": getattr(source_profile, "max_tokens", 4096),
+            "enable_thinking": getattr(source_profile, "enable_thinking", False),
+            "model": getattr(source_profile, "model", None),
+            "component_category": getattr(source_profile, "component_category", None),
+            "forked_from": source_id,
+        }
+        return self.create_agent(data, created_by=created_by)
 
     def update_agent(
         self,

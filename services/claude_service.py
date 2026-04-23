@@ -351,17 +351,70 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             return False
 
     def _load_backend_tools(self):
-        """Load backend tools for Claude to use via function calling."""
+        """Load backend tools for Claude to use via function calling.
+
+        Also appends a tool per active DB-backed Skill so the model can
+        invoke user-created Skills directly (Issue #82 Phase 1 wiring).
+        Skill tool lookups happen via ``self._skill_tool_index`` set here.
+        """
         self.backend_tools = list(BACKEND_TOOLS)
-        logger.info(f"Loaded {len(self.backend_tools)} backend tools")
+        self._static_backend_tools_count = len(self.backend_tools)
+        self._skill_tool_index = {}
+        self._refresh_skill_tools()
         for tool in self.backend_tools:
             logger.debug(f"  - {tool['name']}: {tool['description'][:60]}...")
+
+    def _refresh_skill_tools(self) -> int:
+        """Reload DB-backed skill tools in place.
+
+        The chat path calls this at the start of every request so skills
+        created after the (shared, worker-pool) ClaudeService booted are
+        still visible. Trims any previously-loaded skill tools first so
+        deletes and renames propagate cleanly. Cheap: one DB query.
+
+        Returns the number of skill tools loaded.
+        """
+        # Reset to the static portion only.
+        if hasattr(self, "_static_backend_tools_count"):
+            self.backend_tools = self.backend_tools[: self._static_backend_tools_count]
+        self._skill_tool_index = {}
+        try:
+            from services.skill_tools_bridge import list_active_skill_tools
+
+            skill_tools, skill_index = list_active_skill_tools()
+            self.backend_tools.extend(skill_tools)
+            self._skill_tool_index = skill_index
+            if skill_tools:
+                logger.info(
+                    f"Backend tools refreshed: {len(self.backend_tools)} total "
+                    f"(incl. {len(skill_tools)} skill tool(s))"
+                )
+            return len(skill_tools)
+        except Exception as e:
+            logger.debug(f"Could not load skill tools: {e}")
+            return 0
 
     async def _execute_backend_tool(self, tool_name: str, tool_input: dict):
         """Execute a single backend tool by name. Used by the daemon agent runner."""
         from services.database_data_service import DatabaseDataService
 
         data_service = DatabaseDataService()
+
+        # DB-backed Skills get their own dispatch path so we don't bury
+        # every one of them in this long if/elif ladder.
+        try:
+            from services.skill_tools_bridge import execute_skill_tool, is_skill_tool_name
+
+            if is_skill_tool_name(tool_name):
+                return execute_skill_tool(
+                    tool_name,
+                    tool_input or {},
+                    skills_by_tool_name=getattr(self, "_skill_tool_index", None),
+                )
+        except Exception as e:
+            logger.warning(f"Skill tool dispatch failed for {tool_name}: {e}")
+            # Fall through to the regular backend-tool ladder in case the
+            # tool name coincidentally starts with "skill_" but is built-in.
 
         if tool_name == "list_findings":
             limit = tool_input.get("limit", 20)
@@ -1707,8 +1760,30 @@ Provide a structured summary preserving all critical context."""
                 try:
                     result = None
 
+                    # DB-backed Skills (Issue #82 wiring) get a dedicated
+                    # dispatch so we don't clutter the ladder below with
+                    # user-created entries. Falls through on failure so a
+                    # coincidental ``skill_`` prefix still tries the rest
+                    # of the chain.
+                    if tool_name and tool_name.startswith("skill_"):
+                        try:
+                            from services.skill_tools_bridge import execute_skill_tool
+
+                            result = execute_skill_tool(
+                                tool_name,
+                                arguments or {},
+                                skills_by_tool_name=getattr(
+                                    self, "_skill_tool_index", None
+                                ),
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Skill tool dispatch failed for {tool_name}: {e}"
+                            )
+                            result = {"error": f"Skill execution failed: {e}"}
+
                     # Security detection tools
-                    if tool_name in [
+                    if result is None and tool_name in [
                         "analyze_coverage",
                         "search_detections",
                         "identify_gaps",
@@ -2045,7 +2120,10 @@ Provide a structured summary preserving all critical context."""
                         elif tool_name == "get_approval_stats":
                             result = approval_service.get_stats()
 
-                    else:
+                    elif result is None:
+                        # Only hit when no ladder branch set ``result`` and
+                        # the skill-tool pre-dispatch above didn't match
+                        # either — truly unknown tool.
                         logger.warning(f"Unknown backend tool: {tool_name}")
                         result = {"error": f"Unknown tool: {tool_name}"}
 
@@ -2249,6 +2327,11 @@ Provide a structured summary preserving all critical context."""
             raise ValueError(
                 "API key not configured. Please set your Anthropic API key."
             )
+
+        # Refresh DB-backed skill tools so this request sees skills
+        # created after the (potentially shared) ClaudeService booted.
+        if self.use_backend_tools and BACKEND_TOOLS_AVAILABLE:
+            self._refresh_skill_tools()
 
         try:
             messages = []
@@ -2842,6 +2925,11 @@ Provide a structured summary preserving all critical context."""
             raise ValueError(
                 "API key not configured. Please set your Anthropic API key."
             )
+
+        # Refresh DB-backed skill tools so this request sees skills
+        # created after the (potentially shared) ClaudeService booted.
+        if self.use_backend_tools and BACKEND_TOOLS_AVAILABLE:
+            self._refresh_skill_tools()
 
         try:
             messages = []

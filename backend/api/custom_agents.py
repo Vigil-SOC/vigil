@@ -69,6 +69,13 @@ class CustomAgentUpdate(BaseModel):
     model: Optional[str] = None
 
 
+class ForkAgentRequest(BaseModel):
+    """Optional payload when forking. `new_name` lets the UI set the copy's
+    name up front instead of taking the default "<source> (copy)"."""
+
+    new_name: Optional[str] = None
+
+
 class GenerateAgentRequest(BaseModel):
     """Request body for AI-assisted agent generation (issue #80 Phase 2).
 
@@ -203,6 +210,41 @@ async def get_custom_agent(agent_id: str) -> Dict[str, Any]:
         raise
     except Exception as e:
         logger.error(f"Error getting custom agent {agent_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/agents/{source_agent_id}/fork", status_code=201)
+async def fork_agent(
+    source_agent_id: str, request: Optional[ForkAgentRequest] = None
+) -> Dict[str, Any]:
+    """Fork any agent (built-in or custom) into a new editable custom copy.
+
+    Built-ins remain static templates — the source is never modified. The
+    new row is a standalone custom agent that can be edited or deleted
+    without affecting the source.
+    """
+    try:
+        from backend.api.agents import agent_manager, _resolve_agent
+
+        source = _resolve_agent(source_agent_id)
+        if source is None:
+            raise HTTPException(
+                status_code=404, detail=f"Source agent not found: {source_agent_id}"
+            )
+        new_name = (request.new_name if request else None)
+        row = service.fork_from_profile(
+            source_profile=source,
+            source_id=source_agent_id,
+            new_name=new_name,
+        )
+        agent_manager.refresh_custom_agents()
+        return _with_effective_prompt(row)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Error forking agent %s", source_agent_id)
         raise HTTPException(status_code=500, detail=str(e))
 
 
