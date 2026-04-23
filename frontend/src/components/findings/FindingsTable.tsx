@@ -21,11 +21,12 @@ import {
   alpha,
   useTheme,
 } from '@mui/material'
-import { 
+import {
   Visibility as ViewIcon,
   Psychology as InvestigateIcon,
+  PlayCircleOutline as PlaybookIcon,
 } from '@mui/icons-material'
-import { findingsApi, agentsApi } from '../../services/api'
+import { findingsApi, agentsApi, workflowApi } from '../../services/api'
 import FindingDetailDialog from './FindingDetailDialog'
 import { notificationService } from '../../services/notifications'
 import { SeverityChip } from '../ui'
@@ -54,6 +55,11 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
   const [agents, setAgents] = useState<Agent[]>([])
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null)
   const [selectedFinding, setSelectedFinding] = useState<any>(null)
+  // Workflow (playbook) run picker — separate anchor from the agent menu.
+  const [workflows, setWorkflows] = useState<{ id: string; name: string; description?: string }[]>([])
+  const [workflowAnchorEl, setWorkflowAnchorEl] = useState<null | HTMLElement>(null)
+  const [workflowFinding, setWorkflowFinding] = useState<any>(null)
+  const [runningWorkflowId, setRunningWorkflowId] = useState<string | null>(null)
   const prevFindingsRef = useRef<Set<string>>(new Set())
   const [page, setPage] = useState(0)
   const [rowsPerPage, setRowsPerPage] = useState(10)
@@ -93,6 +99,11 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
     agentsApi.listAgents()
       .then(res => setAgents(res.data.agents || []))
       .catch(() => {})
+    // Workflows are playbooks — keep the list cached alongside agents so
+    // the "Run Playbook" menu opens without a network roundtrip on click.
+    workflowApi.listAll()
+      .then(res => setWorkflows(res.data?.workflows || []))
+      .catch(() => setWorkflows([]))
   }, [])
 
   const loadFindings = async () => {
@@ -176,6 +187,55 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
       console.error('Failed to start investigation:', error)
     } finally {
       handleCloseMenu()
+    }
+  }
+
+  // Playbook run — separate menu from the agent picker so the two
+  // actions stay conceptually distinct. A workflow is run as a playbook
+  // against the finding, not as a chat conversation.
+  const handleRunPlaybookClick = (event: React.MouseEvent<HTMLElement>, finding: any) => {
+    event.stopPropagation()
+    setWorkflowAnchorEl(event.currentTarget)
+    setWorkflowFinding(finding)
+  }
+
+  const handleCloseWorkflowMenu = () => {
+    setWorkflowAnchorEl(null)
+    setWorkflowFinding(null)
+  }
+
+  const handleWorkflowSelect = async (workflowId: string) => {
+    if (!workflowFinding) {
+      handleCloseWorkflowMenu()
+      return
+    }
+    const findingId = workflowFinding.finding_id
+    setRunningWorkflowId(workflowId)
+    handleCloseWorkflowMenu()
+    try {
+      const res = await workflowApi.execute(workflowId, { finding_id: findingId })
+      const body = res?.data || {}
+      if (body.success === false) {
+        notificationService.notifyGeneric(
+          'Playbook finished with errors',
+          `${body.workflow?.name || workflowId}: ${body.error || 'unknown error'}`,
+          { severity: 'error' }
+        )
+      } else {
+        notificationService.notifyGeneric(
+          'Playbook executed',
+          `${body.workflow?.name || workflowId} ran against ${findingId.substring(0, 12)}…`,
+          { severity: 'success' }
+        )
+      }
+    } catch (e: any) {
+      notificationService.notifyGeneric(
+        'Playbook execution failed',
+        e?.response?.data?.detail || e?.message || 'unknown error',
+        { severity: 'error' }
+      )
+    } finally {
+      setRunningWorkflowId(null)
     }
   }
 
@@ -519,6 +579,30 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
                         </IconButton>
                       </Tooltip>
                     )}
+                    {workflows.length > 0 && (
+                      <Tooltip title="Run playbook against this finding">
+                        <span>
+                          <IconButton
+                            size="small"
+                            onClick={(e) => handleRunPlaybookClick(e, finding)}
+                            disabled={runningWorkflowId !== null}
+                            sx={{
+                              color: 'secondary.main',
+                              bgcolor: alpha(theme.palette.secondary.main, 0.1),
+                              '&:hover': {
+                                bgcolor: alpha(theme.palette.secondary.main, 0.2),
+                              },
+                            }}
+                          >
+                            {runningWorkflowId ? (
+                              <CircularProgress size={16} />
+                            ) : (
+                              <PlaybookIcon sx={{ fontSize: 18 }} />
+                            )}
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    )}
                   </Box>
                 </TableCell>
               </TableRow>
@@ -563,6 +647,39 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
             <ListItemText primary={agent.name} primaryTypographyProps={{ fontSize: '0.875rem' }} />
           </MenuItem>
         ))}
+      </Menu>
+
+      <Menu
+        anchorEl={workflowAnchorEl}
+        open={Boolean(workflowAnchorEl)}
+        onClose={handleCloseWorkflowMenu}
+      >
+        <MenuItem disabled sx={{ opacity: 1 }}>
+          <Typography variant="caption" color="text.secondary">
+            Run playbook:
+          </Typography>
+        </MenuItem>
+        {workflows.length === 0 ? (
+          <MenuItem disabled>
+            <Typography variant="caption" color="text.disabled">
+              No workflows configured
+            </Typography>
+          </MenuItem>
+        ) : (
+          workflows.map((wf) => (
+            <MenuItem key={wf.id} onClick={() => handleWorkflowSelect(wf.id)}>
+              <ListItemIcon sx={{ minWidth: 32 }}>
+                <PlaybookIcon sx={{ fontSize: 18, color: 'secondary.main' }} />
+              </ListItemIcon>
+              <ListItemText
+                primary={wf.name}
+                secondary={wf.description}
+                primaryTypographyProps={{ fontSize: '0.875rem' }}
+                secondaryTypographyProps={{ fontSize: '0.7rem', noWrap: true }}
+              />
+            </MenuItem>
+          ))
+        )}
       </Menu>
     </>
   )
