@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Box,
   Button,
@@ -12,6 +15,7 @@ import {
   InputAdornment,
   InputLabel,
   MenuItem,
+  Paper,
   Select,
   Stack,
   Switch,
@@ -20,6 +24,8 @@ import {
   Typography,
 } from '@mui/material'
 import RestoreIcon from '@mui/icons-material/Restore'
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
+import TuneIcon from '@mui/icons-material/Tune'
 import { aiConfigApi, AIModelInfo, configApi, orchestratorApi } from '../../services/api'
 
 interface OrchestratorConfig {
@@ -65,6 +71,68 @@ const DEFAULTS: OrchestratorConfig = {
 }
 
 const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low']
+
+type PresetKey = 'conservative' | 'balanced' | 'aggressive'
+type PresetValues = Pick<
+  OrchestratorConfig,
+  | 'max_concurrent_agents'
+  | 'max_iterations_per_agent'
+  | 'max_runtime_per_investigation'
+  | 'max_cost_per_investigation'
+  | 'max_total_hourly_cost'
+  | 'max_total_daily_cost'
+>
+
+const PRESETS: Record<PresetKey, { label: string; summary: string; values: PresetValues }> = {
+  conservative: {
+    label: 'Conservative',
+    summary: 'Minimal spend · 2 agents · tight limits',
+    values: {
+      max_concurrent_agents: 2,
+      max_iterations_per_agent: 25,
+      max_runtime_per_investigation: 1800,
+      max_cost_per_investigation: 1.0,
+      max_total_hourly_cost: 5.0,
+      max_total_daily_cost: 25.0,
+    },
+  },
+  balanced: {
+    label: 'Balanced',
+    summary: 'Recommended · 3 agents · $20/hr · $100/day',
+    values: {
+      max_concurrent_agents: 3,
+      max_iterations_per_agent: 50,
+      max_runtime_per_investigation: 3600,
+      max_cost_per_investigation: 5.0,
+      max_total_hourly_cost: 20.0,
+      max_total_daily_cost: 100.0,
+    },
+  },
+  aggressive: {
+    label: 'Aggressive',
+    summary: 'Broad coverage · 5 agents · $60/hr · $300/day',
+    values: {
+      max_concurrent_agents: 5,
+      max_iterations_per_agent: 100,
+      max_runtime_per_investigation: 7200,
+      max_cost_per_investigation: 15.0,
+      max_total_hourly_cost: 60.0,
+      max_total_daily_cost: 300.0,
+    },
+  },
+}
+
+const matchesPreset = (cfg: OrchestratorConfig, key: PresetKey) =>
+  (Object.entries(PRESETS[key].values) as [keyof PresetValues, number][]).every(
+    ([k, v]) => cfg[k] === v,
+  )
+
+const detectActivePreset = (cfg: OrchestratorConfig): PresetKey | 'custom' => {
+  for (const key of Object.keys(PRESETS) as PresetKey[]) {
+    if (matchesPreset(cfg, key)) return key
+  }
+  return 'custom'
+}
 
 interface Props {
   onMessage: (msg: { type: 'success' | 'error'; text: string }) => void
@@ -121,6 +189,12 @@ export default function AutoInvestigateTab({ onMessage }: Props) {
     setConfig(next)
     persist(next)
   }
+
+  const applyPreset = (key: PresetKey) => {
+    applyAndSave(PRESETS[key].values)
+  }
+
+  const activePreset = detectActivePreset(config)
 
   const toggleSeverity = (sev: string) => {
     const current = config.auto_assign_severities
@@ -385,133 +459,210 @@ export default function AutoInvestigateTab({ onMessage }: Props) {
 
       <Divider sx={{ my: 3 }} />
 
-      {/* Agent Limits */}
-      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
-        Agent Limits
+      {/* Investigation Profile — one-click preset for agent + cost limits */}
+      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 0.5 }}>
+        Investigation profile
       </Typography>
-      <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={4}>
-          {numField('Max concurrent agents', 'max_concurrent_agents', {
-            min: 1,
-            max: 10,
-            helperText: '1-10 simultaneous agents',
-            allowUnlimited: true,
-          })}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {numField('Max iterations per agent', 'max_iterations_per_agent', {
-            min: 1,
-            max: 500,
-            helperText: 'Claude calls per investigation',
-            allowUnlimited: true,
-          })}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {numField('Max runtime (seconds)', 'max_runtime_per_investigation', {
-            min: 60,
-            max: 86400,
-            suffix: 's',
-            helperText: `${Math.round(config.max_runtime_per_investigation / 60)} minutes`,
-            allowUnlimited: true,
-          })}
-        </Grid>
-      </Grid>
-
-      <Divider sx={{ my: 3 }} />
-
-      {/* Cost Guardrails */}
-      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
-        Cost Guardrails
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1.5 }}>
+        Pick a profile to set agent concurrency, runtime, and cost limits in one click.
+        Fine-tune any value in Advanced below.
       </Typography>
-      <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={4}>
-          {numField('Per investigation limit', 'max_cost_per_investigation', {
-            min: 0.5,
-            max: 100,
-            prefix: '$',
-            helperText: 'Max spend per investigation',
-            allowUnlimited: true,
-          })}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {numField('Hourly cost limit', 'max_total_hourly_cost', {
-            min: 1,
-            max: 500,
-            prefix: '$',
-            helperText: 'Pause intake if exceeded',
-            allowUnlimited: true,
-          })}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {numField('Daily cost limit', 'max_total_daily_cost', {
-            min: 1,
-            max: 1000,
-            prefix: '$',
-            helperText: 'Hard daily ceiling',
-            allowUnlimited: true,
-          })}
-        </Grid>
+      <Grid container spacing={1.5} sx={{ mb: 3 }}>
+        {(Object.keys(PRESETS) as PresetKey[]).map((key) => {
+          const p = PRESETS[key]
+          const selected = activePreset === key
+          return (
+            <Grid key={key} item xs={12} sm={4}>
+              <Paper
+                variant="outlined"
+                onClick={() => applyPreset(key)}
+                sx={{
+                  p: 1.75,
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  cursor: 'pointer',
+                  borderColor: selected ? 'primary.main' : 'divider',
+                  borderWidth: selected ? 2 : 1,
+                  bgcolor: selected ? 'action.selected' : 'background.paper',
+                  transition: 'all 120ms ease',
+                  '&:hover': { borderColor: 'primary.main', bgcolor: 'action.hover' },
+                }}
+              >
+                <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 0.5 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                    {p.label}
+                  </Typography>
+                  {selected && <Chip size="small" label="Active" color="primary" />}
+                </Stack>
+                <Typography variant="caption" color="text.secondary">
+                  {p.summary}
+                </Typography>
+              </Paper>
+            </Grid>
+          )
+        })}
       </Grid>
+      {activePreset === 'custom' && (
+        <Alert severity="info" icon={<TuneIcon fontSize="small" />} sx={{ mb: 3 }}>
+          Custom limits in effect — your values don’t match any profile. Pick one above
+          to restore a profile, or expand Advanced to review.
+        </Alert>
+      )}
 
-      <Divider sx={{ my: 3 }} />
+      {/* Advanced — everything power users may want to tune */}
+      <Accordion
+        disableGutters
+        elevation={0}
+        sx={{
+          border: '1px solid',
+          borderColor: 'divider',
+          borderRadius: 1,
+          mb: 2,
+          '&:before': { display: 'none' },
+        }}
+      >
+        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+          <Stack direction="row" alignItems="center" spacing={1}>
+            <TuneIcon fontSize="small" />
+            <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+              Advanced
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Fine-tune limits, timing, models
+            </Typography>
+          </Stack>
+        </AccordionSummary>
+        <AccordionDetails>
+          {/* Agent Limits */}
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Agent limits
+          </Typography>
+          <Grid container spacing={2} sx={{ mb: 3, mt: 0.5 }}>
+            <Grid item xs={12} sm={4}>
+              {numField('Max concurrent agents', 'max_concurrent_agents', {
+                min: 1,
+                max: 10,
+                helperText: '1-10 simultaneous agents',
+                allowUnlimited: true,
+              })}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {numField('Max iterations per agent', 'max_iterations_per_agent', {
+                min: 1,
+                max: 500,
+                helperText: 'Claude calls per investigation',
+                allowUnlimited: true,
+              })}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {numField('Max runtime (seconds)', 'max_runtime_per_investigation', {
+                min: 60,
+                max: 86400,
+                suffix: 's',
+                helperText: `${Math.round(config.max_runtime_per_investigation / 60)} minutes`,
+                allowUnlimited: true,
+              })}
+            </Grid>
+          </Grid>
 
-      {/* Timing & Advanced */}
-      <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>
-        Timing &amp; Advanced
-      </Typography>
-      <Grid container spacing={2} sx={{ mb: 2 }}>
-        <Grid item xs={12} sm={4}>
-          {numField('Loop interval', 'loop_interval', {
-            min: 10,
-            max: 600,
-            suffix: 's',
-            helperText: 'Orchestrator check interval',
-          })}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {numField('Agent loop delay', 'agent_loop_delay', {
-            min: 1,
-            max: 30,
-            suffix: 's',
-            helperText: 'Pause between agent iterations',
-          })}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {numField('Stale threshold', 'stale_threshold', {
-            min: 60,
-            max: 3600,
-            suffix: 's',
-            helperText: 'Kill idle agents after this',
-          })}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {numField('Dedup window', 'dedup_window_minutes', {
-            min: 5,
-            max: 1440,
-            suffix: 'min',
-            helperText: 'Overlap detection window',
-          })}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {numField('Context max chars', 'context_max_chars', {
-            min: 1000,
-            max: 100000,
-            helperText: 'Max context.md in prompt',
-          })}
-        </Grid>
-      </Grid>
+          {/* Cost Guardrails */}
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Cost guardrails
+          </Typography>
+          <Grid container spacing={2} sx={{ mb: 3, mt: 0.5 }}>
+            <Grid item xs={12} sm={4}>
+              {numField('Per investigation limit', 'max_cost_per_investigation', {
+                min: 0.5,
+                max: 100,
+                prefix: '$',
+                helperText: 'Max spend per investigation',
+                allowUnlimited: true,
+              })}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {numField('Hourly cost limit', 'max_total_hourly_cost', {
+                min: 1,
+                max: 500,
+                prefix: '$',
+                helperText: 'Pause intake if exceeded',
+                allowUnlimited: true,
+              })}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {numField('Daily cost limit', 'max_total_daily_cost', {
+                min: 1,
+                max: 1000,
+                prefix: '$',
+                helperText: 'Hard daily ceiling',
+                allowUnlimited: true,
+              })}
+            </Grid>
+          </Grid>
 
-      <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={4}>
-          {modelSelect('Plan model', 'plan_model', 'Model for agent planning')}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {modelSelect('Review model', 'review_model', 'Model for master review')}
-        </Grid>
-        <Grid item xs={12} sm={4}>
-          {textField('Working directory', 'workdir_base', 'Base path for investigation files')}
-        </Grid>
-      </Grid>
+          {/* Timing */}
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Timing
+          </Typography>
+          <Grid container spacing={2} sx={{ mb: 3, mt: 0.5 }}>
+            <Grid item xs={12} sm={4}>
+              {numField('Loop interval', 'loop_interval', {
+                min: 10,
+                max: 600,
+                suffix: 's',
+                helperText: 'Orchestrator check interval',
+              })}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {numField('Agent loop delay', 'agent_loop_delay', {
+                min: 1,
+                max: 30,
+                suffix: 's',
+                helperText: 'Pause between agent iterations',
+              })}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {numField('Stale threshold', 'stale_threshold', {
+                min: 60,
+                max: 3600,
+                suffix: 's',
+                helperText: 'Kill idle agents after this',
+              })}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {numField('Dedup window', 'dedup_window_minutes', {
+                min: 5,
+                max: 1440,
+                suffix: 'min',
+                helperText: 'Overlap detection window',
+              })}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {numField('Context max chars', 'context_max_chars', {
+                min: 1000,
+                max: 100000,
+                helperText: 'Max context.md in prompt',
+              })}
+            </Grid>
+          </Grid>
+
+          {/* Models & workdir */}
+          <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+            Models &amp; storage
+          </Typography>
+          <Grid container spacing={2} sx={{ mb: 1, mt: 0.5 }}>
+            <Grid item xs={12} sm={4}>
+              {modelSelect('Plan model', 'plan_model', 'Model for agent planning')}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {modelSelect('Review model', 'review_model', 'Model for master review')}
+            </Grid>
+            <Grid item xs={12} sm={4}>
+              {textField('Working directory', 'workdir_base', 'Base path for investigation files')}
+            </Grid>
+          </Grid>
+        </AccordionDetails>
+      </Accordion>
 
       <Divider sx={{ my: 3 }} />
 

@@ -40,6 +40,13 @@ alembic>=1.13.0
 # MCP SDK (for MCP tools)
 # Install with: pip install mcp
 
+# `uv` ships `uvx`, which several MCP server configs in mcp-config.json use
+# as their launcher (e.g. crowdstrike/falcon-mcp, sentinelone/purple-mcp,
+# pagerduty-mcp, gcp-* security tools). Installing it here means the venv
+# has `uvx` on PATH and those servers can connect at backend startup
+# instead of silently failing with FileNotFoundError.
+uv>=0.5.0
+
 # Authentication
 bcrypt>=4.2.0
 pyjwt>=2.10.0

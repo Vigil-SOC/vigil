@@ -2376,6 +2376,10 @@ class CustomAgent(Base):
     component_category: Mapped[str] = mapped_column(
         String(32), nullable=False, default='investigation', server_default='investigation'
     )
+    # Origin agent ID this row was forked from (built-in id like "reporter" or
+    # another custom id). Null for agents authored from scratch. Breadcrumb
+    # only — no FK, because built-ins live in code, not a table.
+    forked_from: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -2408,6 +2412,7 @@ class CustomAgent(Base):
             'enable_thinking': self.enable_thinking,
             'model': self.model,
             'component_category': self.component_category,
+            'forked_from': self.forked_from,
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

@@ -270,7 +270,17 @@ async def startup_event():
             
     except Exception as e:
         logger.warning(f"Error loading secrets for MCP servers: {e}")
-    
+
+    # Push LLM provider keys from the secrets manager to Bifrost so its
+    # configured keys reflect what's in the secret store, regardless of
+    # how the container was started or which shell env was loaded at the
+    # time. Best-effort — Bifrost may not be up yet in all environments.
+    try:
+        from services.bifrost_admin import sync_all_provider_keys
+        sync_all_provider_keys()
+    except Exception as e:
+        logger.warning(f"Bifrost provider sync skipped: {e}")
+
     # Initialize data storage backend
     logger.info("Initializing data storage...")
     try:
@@ -400,7 +410,22 @@ async def startup_event():
                         connected_count += 1
                         logger.info(f"✓ Persistent connection established: {server_name}")
                     else:
-                        logger.warning(f"Failed to connect to MCP server: {server_name}")
+                        # Dormant-by-design when the user hasn't supplied
+                        # credentials yet — log at info and name the vars
+                        # so ops has a single line to act on. Other failure
+                        # modes (bad binary, unreachable remote MCP) still
+                        # warn at warning-level because they're real.
+                        missing = mcp_client.get_missing_credentials(server_name)
+                        if missing:
+                            logger.info(
+                                "MCP server %s dormant — awaiting env vars: %s",
+                                server_name,
+                                ", ".join(missing),
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to connect to MCP server: {server_name}"
+                            )
                 except Exception as e:
                     logger.error(f"Error connecting to {server_name}: {e}")
             
@@ -475,16 +500,12 @@ async def shutdown_event():
 
         mcp_client = get_mcp_client()
         if mcp_client:
-            # Close all MCP sessions
+            # Close all MCP sessions — stdio child processes are owned by
+            # the MCP SDK's stdio_client contexts, which shut down as the
+            # persistent sessions close. No separate Popen pool to tear
+            # down since the legacy start_server path was removed (#125).
             await mcp_client.close_all()
             logger.info("All MCP connections closed")
-
-            # Stop all MCP server processes managed by MCPService
-            mcp_service = mcp_client.mcp_service
-            if mcp_service:
-                stop_results = mcp_service.stop_all()
-                stopped_count = sum(1 for success in stop_results.values() if success)
-                logger.info(f"Stopped {stopped_count} MCP server processes")
     except Exception as e:
         logger.error(f"Error during shutdown cleanup: {e}")
 

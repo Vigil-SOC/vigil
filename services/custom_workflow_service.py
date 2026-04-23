@@ -33,6 +33,41 @@ def _generate_workflow_id(name: str) -> str:
     return f"wf-{_slugify(name)}-{uuid.uuid4().hex[:8]}"
 
 
+def _validate_agent_ids(phases: List[Dict[str, Any]]) -> None:
+    """Ensure every phase's agent_id resolves against the unified pool.
+
+    Avoids the silent-failure-at-execution-time pattern where a workflow
+    references a renamed/deleted custom agent. Built-ins + DB-backed
+    custom agents are both checked. Raises ``ValueError`` listing every
+    unknown id so the UI can surface all of them at once.
+    """
+    if not phases:
+        return
+    # Deferred to keep this service import-cheap for callers that only
+    # want a .get() and don't touch the AgentManager.
+    try:
+        from services.soc_agents import AgentManager
+
+        known = set(AgentManager().agents.keys())
+    except Exception as e:
+        # If the agent registry isn't available (e.g. DB down during a
+        # migration) we skip validation rather than block writes.
+        logger.warning("Skipping workflow agent validation: %s", e)
+        return
+
+    missing: List[str] = []
+    for idx, phase in enumerate(phases, start=1):
+        aid = (phase or {}).get("agent_id")
+        if aid and aid not in known:
+            missing.append(f"phase {idx}: '{aid}'")
+    if missing:
+        raise ValueError(
+            "Unknown agent_id(s) in workflow phases: "
+            + "; ".join(missing)
+            + ". Fork one of the built-in templates or pick an existing custom agent."
+        )
+
+
 class CustomWorkflowService:
     """Persistence service for database-backed custom workflows."""
 
@@ -52,6 +87,8 @@ class CustomWorkflowService:
             raise ValueError("name is required")
         if not payload.get("description"):
             raise ValueError("description is required")
+
+        _validate_agent_ids(payload.get("phases") or [])
 
         workflow_id = payload.get("workflow_id") or _generate_workflow_id(
             payload["name"]
@@ -117,6 +154,9 @@ class CustomWorkflowService:
             "graph_layout",
             "is_active",
         }
+        if "phases" in updates and updates["phases"] is not None:
+            _validate_agent_ids(updates["phases"])
+
         db = get_db_manager()
         with db.session_scope() as session:
             wf = session.get(CustomWorkflow, workflow_id)

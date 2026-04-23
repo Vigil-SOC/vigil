@@ -25,6 +25,7 @@ from secrets_manager import delete_secret, get_secret, set_secret
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from database.connection import get_db_session
 from database.models import LLMProviderConfig
+from services.bifrost_admin import push_provider_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -32,13 +33,11 @@ router = APIRouter()
 VALID_PROVIDER_TYPES = {"anthropic", "openai", "ollama"}
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 
-# Static list for Anthropic — the SDK doesn't expose a /models endpoint
-# for listing. Kept in sync with docker/bifrost/config.json.
-ANTHROPIC_MODELS = [
-    "claude-sonnet-4-20250514",
-    "claude-sonnet-4-5-20250929",
-    "claude-opus-4-20250514",
-]
+# Single source of truth lives in services.model_registry. The Anthropic
+# SDK doesn't expose a /models endpoint, so this static list is what
+# drives the Providers UI's model dropdown.
+from services.model_registry import ANTHROPIC_STATIC_MODELS
+ANTHROPIC_MODELS = list(ANTHROPIC_STATIC_MODELS)
 
 
 def _slugify(name: str) -> str:
@@ -144,6 +143,9 @@ async def create_provider(
         api_key_ref = _secret_ref_for(provider_id)
         if not set_secret(api_key_ref, payload.api_key):
             raise HTTPException(status_code=500, detail="Failed to persist API key")
+        # Push live to Bifrost so subsequent LLM calls use the new key
+        # without waiting for a container restart.
+        push_provider_key(payload.provider_type, payload.api_key)
 
     row = LLMProviderConfig(
         provider_id=provider_id,
@@ -193,10 +195,14 @@ async def update_provider(
         if payload.api_key == "":
             delete_secret(ref)
             row.api_key_ref = None
+            # Clearing the key: push an empty value to Bifrost so it stops
+            # trying to authenticate with a stale credential.
+            push_provider_key(row.provider_type, "")
         else:
             if not set_secret(ref, payload.api_key):
                 raise HTTPException(status_code=500, detail="Failed to persist API key")
             row.api_key_ref = ref
+            push_provider_key(row.provider_type, payload.api_key)
 
     if payload.is_default is True:
         row.is_default = True
@@ -220,6 +226,8 @@ async def delete_provider(provider_id: str, db: Session = Depends(get_db_session
             delete_secret(row.api_key_ref)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to delete secret %s: %s", row.api_key_ref, exc)
+        # Wipe the corresponding value on Bifrost too.
+        push_provider_key(row.provider_type, "")
 
     db.delete(row)
     db.commit()

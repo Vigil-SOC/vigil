@@ -88,20 +88,13 @@ interface CustomWorkflowRecord {
 
 type View = 'list' | 'editor'
 
-// Known built-in agent IDs mapped to readable labels (matches soc_agents.py)
-const AGENT_OPTIONS: Array<{ id: string; label: string }> = [
-  { id: 'triage', label: 'Triage Agent' },
+// Agent options are fetched from /api/agents/agents at runtime so both
+// built-in templates and DB-backed custom agents (incl. forks) show up in
+// the phase picker. Shape: { id, label }. Seeded with the minimal fallback
+// so first render before the fetch resolves doesn't crash the Select.
+type AgentOption = { id: string; label: string }
+const FALLBACK_AGENT_OPTIONS: AgentOption[] = [
   { id: 'investigator', label: 'Investigation Agent' },
-  { id: 'threat_hunter', label: 'Threat Hunter' },
-  { id: 'correlator', label: 'Correlator' },
-  { id: 'responder', label: 'Responder' },
-  { id: 'reporter', label: 'Reporter' },
-  { id: 'mitre_analyst', label: 'MITRE Analyst' },
-  { id: 'forensics', label: 'Forensics' },
-  { id: 'threat_intel', label: 'Threat Intel' },
-  { id: 'compliance', label: 'Compliance' },
-  { id: 'malware_analyst', label: 'Malware Analyst' },
-  { id: 'network_analyst', label: 'Network Analyst' },
 ]
 
 const emptyPhase = (order: number): WorkflowPhase => ({
@@ -624,18 +617,27 @@ function EditorView({
   setSnackbar,
   isDark,
 }: EditorViewProps) {
-  const initialGraph = useMemo(() => buildGraph(editor.phases), [])
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // Agent pool (built-ins + custom) fetched from the unified API. Seeded
+  // with the fallback so the first render before the fetch resolves still
+  // has a valid list for buildGraph and the Select.
+  const [agentOptions, setAgentOptions] = useState<AgentOption[]>(FALLBACK_AGENT_OPTIONS)
+  const initialGraph = useMemo(
+    () => buildGraph(editor.phases, agentOptions),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
   const [nodes, setNodes] = useState<Node[]>(initialGraph.nodes)
   const [edges, setEdges] = useState<Edge[]>(initialGraph.edges)
   const [edgeLabelEdit, setEdgeLabelEdit] = useState<{ edgeId: string; label: string } | null>(null)
 
   // Keep nodes in sync with editor.phases when phases are added/removed/renamed.
   // We preserve user-dragged positions for phases that still exist.
+  // Also re-runs when agentOptions arrive from the API so freshly-loaded
+  // labels replace the id-as-label fallback on node cards.
   useEffect(() => {
     setNodes((prev) => {
       const prevById = new Map(prev.map((n) => [n.id, n]))
-      const fresh = buildGraph(editor.phases).nodes
+      const fresh = buildGraph(editor.phases, agentOptions).nodes
       return fresh.map((n) => {
         const existing = prevById.get(n.id)
         return existing
@@ -652,10 +654,10 @@ function EditorView({
         (e) => validIds.has(e.source) && validIds.has(e.target),
       )
       // If there are no edges at all (first render or all invalid) seed from defaults.
-      if (keep.length === 0) return buildGraph(editor.phases).edges
+      if (keep.length === 0) return buildGraph(editor.phases, agentOptions).edges
       return keep
     })
-  }, [editor.phases])
+  }, [editor.phases, agentOptions])
 
   const onNodesChange = useCallback(
     (changes: NodeChange[]) => setNodes((nds) => applyNodeChanges(changes, nds)),
@@ -737,6 +739,21 @@ function EditorView({
       .getAvailableTools()
       .then((res) => setAvailableTools(res.data.tools || []))
       .catch(() => { /* non-fatal; falls back to free text */ })
+
+    // Unified agent pool — built-ins + custom agents (forks included).
+    agentsApi
+      .listAgents()
+      .then((res) => {
+        const agents = res.data?.agents || []
+        if (agents.length === 0) return
+        setAgentOptions(
+          agents.map((a: { id: string; name: string }) => ({
+            id: a.id,
+            label: a.name,
+          }))
+        )
+      })
+      .catch(() => { /* keep fallback list */ })
   }, [])
 
   const openPhase = (idx: number, isNew: boolean) => {
@@ -1011,6 +1028,7 @@ function EditorView({
                 phase={editor.phases[editPhaseIdx]}
                 onChange={(patch) => updatePhase(editPhaseIdx, patch)}
                 availableTools={availableTools}
+                agentOptions={agentOptions}
               />
             </DialogContent>
             <DialogActions>
@@ -1073,9 +1091,10 @@ interface PhaseFieldsProps {
   phase: WorkflowPhase
   onChange: (patch: Partial<WorkflowPhase>) => void
   availableTools: string[]
+  agentOptions: AgentOption[]
 }
 
-function PhaseFields({ phase, onChange, availableTools }: PhaseFieldsProps) {
+function PhaseFields({ phase, onChange, availableTools, agentOptions }: PhaseFieldsProps) {
   const allAccess = (phase.tools || []).length === 1 && phase.tools[0] === '*'
   const selectedTools = allAccess ? [] : phase.tools || []
   return (
@@ -1098,7 +1117,7 @@ function PhaseFields({ phase, onChange, availableTools }: PhaseFieldsProps) {
                 value={phase.agent_id}
                 onChange={(e) => onChange({ agent_id: e.target.value })}
               >
-                {AGENT_OPTIONS.map((a) => (
+                {agentOptions.map((a) => (
                   <MenuItem key={a.id} value={a.id}>
                     {a.label} ({a.id})
                   </MenuItem>
@@ -1227,11 +1246,14 @@ function PhaseFields({ phase, onChange, availableTools }: PhaseFieldsProps) {
 // Graph builder — linear left-to-right layout
 // -----------------------------------------------------------------------------
 
-function buildGraph(phases: WorkflowPhase[]): { nodes: Node[]; edges: Edge[] } {
+function buildGraph(
+  phases: WorkflowPhase[],
+  agentOptions: AgentOption[] = FALLBACK_AGENT_OPTIONS,
+): { nodes: Node[]; edges: Edge[] } {
   const NODE_WIDTH = 280
   const HORIZONTAL_GAP = 60
   const agentLabel = (id: string) =>
-    AGENT_OPTIONS.find((a) => a.id === id)?.label || id
+    agentOptions.find((a) => a.id === id)?.label || id
   const timeoutLabel = (s?: number) => {
     if (!s || s <= 0) return null
     if (s < 60) return `${s}s`

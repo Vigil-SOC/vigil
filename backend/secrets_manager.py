@@ -2,20 +2,19 @@
 Secrets Manager for Vigil SOC
 
 Provides pluggable secrets storage backends with priority fallback:
-1. Environment variables (best for server deployments)
-2. .env file (good for local development)
-3. Keyring (fallback for desktop development)
+1. Encrypted local file at ``~/.vigil/secrets.enc`` (preferred; at-rest encrypted)
+2. Environment variables
+3. .env file (legacy / interoperability)
+4. Keyring (only when explicitly enabled)
 
 Usage:
     from backend.secrets_manager import get_secret, set_secret
-    
-    # Get a secret (tries all backends in order)
+
     api_key = get_secret("CLAUDE_API_KEY")
-    
-    # Set a secret (uses configured backend)
     set_secret("CLAUDE_API_KEY", "sk-ant-...")
 """
 
+import json
 import os
 import logging
 from pathlib import Path
@@ -281,59 +280,227 @@ class KeyringBackend(SecretsBackend):
         return self._available
 
 
+class EncryptedFileBackend(SecretsBackend):
+    """Project-local, at-rest encrypted secret store.
+
+    Secrets live in a Fernet-encrypted JSON blob at ``~/.vigil/secrets.enc``.
+    The symmetric key lives alongside it in ``~/.vigil/master.key`` (chmod
+    600, auto-generated on first write). Both files sit outside the repo
+    so ``.env`` rewrites, ``setup_dev.sh``, or resetting the project dir
+    never nuke stored credentials.
+
+    This is the preferred backend when running locally. Keys stored here
+    are never written to ``.env`` and are not exposed to other processes.
+    """
+
+    DEFAULT_DIR = Path.home() / ".vigil"
+    SECRETS_FILENAME = "secrets.enc"
+    MASTER_KEY_FILENAME = "master.key"
+
+    def __init__(self, data_dir: Optional[Path] = None):
+        self.data_dir = data_dir or self.DEFAULT_DIR
+        self.secrets_path = self.data_dir / self.SECRETS_FILENAME
+        self.master_key_path = self.data_dir / self.MASTER_KEY_FILENAME
+        self._fernet = None  # lazy
+        self._cache: Optional[Dict[str, str]] = None
+        # mtime of the last ``secrets.enc`` load. Used by ``_load_cache``
+        # to detect cross-process writes so the backend picks up secrets
+        # saved by sibling processes without a restart.
+        self._cache_mtime: float = 0.0
+        # `cryptography` is listed in requirements.txt; guard in case a
+        # slim deploy is missing it.
+        try:
+            from cryptography.fernet import Fernet  # noqa: F401
+            self._crypto_ok = True
+        except Exception as e:
+            logger.debug(f"EncryptedFileBackend disabled (cryptography missing): {e}")
+            self._crypto_ok = False
+
+    def _ensure_dir(self) -> None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(self.data_dir, 0o700)
+        except OSError:
+            pass
+
+    def _load_or_create_master_key(self) -> bytes:
+        """Return the Fernet key bytes, creating ``master.key`` on first use."""
+        from cryptography.fernet import Fernet
+
+        self._ensure_dir()
+        if self.master_key_path.exists():
+            return self.master_key_path.read_bytes().strip()
+        key = Fernet.generate_key()
+        # Atomic write
+        tmp = self.master_key_path.with_suffix(".tmp")
+        tmp.write_bytes(key)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.master_key_path)
+        logger.info(f"Generated new Vigil master key at {self.master_key_path}")
+        return key
+
+    def _get_fernet(self):
+        from cryptography.fernet import Fernet
+        if self._fernet is None:
+            self._fernet = Fernet(self._load_or_create_master_key())
+        return self._fernet
+
+    def _current_mtime(self) -> float:
+        """Return the secrets file's mtime, or 0 if it doesn't exist."""
+        try:
+            return self.secrets_path.stat().st_mtime
+        except OSError:
+            return 0.0
+
+    def _load_cache(self) -> Dict[str, str]:
+        # Invalidate the in-memory cache if another process (or another
+        # instance in this process) has written to the file since we
+        # last read it. Without this, the backend couldn't see secrets
+        # saved by sibling processes (CLI tools, other workers, the MCP
+        # dormant-retry auto-reconnect path, etc.).
+        current_mtime = self._current_mtime()
+        if (
+            self._cache is not None
+            and current_mtime
+            and current_mtime != getattr(self, "_cache_mtime", 0.0)
+        ):
+            logger.debug("Secrets file changed on disk — reloading cache")
+            self._cache = None
+
+        if self._cache is not None:
+            return self._cache
+        if not self.secrets_path.exists():
+            self._cache = {}
+            self._cache_mtime = current_mtime
+            return self._cache
+        try:
+            from cryptography.fernet import InvalidToken  # noqa: F401
+            blob = self.secrets_path.read_bytes()
+            plaintext = self._get_fernet().decrypt(blob)
+            self._cache = json.loads(plaintext.decode("utf-8"))
+            self._cache_mtime = current_mtime
+            logger.debug(f"Loaded {len(self._cache)} secrets from {self.secrets_path}")
+        except Exception as e:
+            # Don't silently wipe: log and present an empty view, but leave
+            # the encrypted file untouched so a bad master key doesn't
+            # destroy data.
+            logger.error(
+                f"Could not decrypt {self.secrets_path} ({e}); "
+                f"treating as empty. If the master key changed, restore "
+                f"~/.vigil/master.key from a backup."
+            )
+            self._cache = {}
+            self._cache_mtime = current_mtime
+        return self._cache
+
+    def _write_cache(self) -> bool:
+        try:
+            self._ensure_dir()
+            plaintext = json.dumps(self._cache or {}, sort_keys=True).encode("utf-8")
+            blob = self._get_fernet().encrypt(plaintext)
+            tmp = self.secrets_path.with_suffix(".tmp")
+            tmp.write_bytes(blob)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, self.secrets_path)
+            # Keep our mtime tracker in sync so we don't needlessly
+            # re-read the file we just wrote.
+            self._cache_mtime = self._current_mtime()
+            return True
+        except Exception as e:
+            logger.error(f"Error writing encrypted secrets: {e}")
+            return False
+
+    def get(self, key: str) -> Optional[str]:
+        if not self._crypto_ok:
+            return None
+        value = self._load_cache().get(key)
+        if value:
+            logger.debug(f"Found secret '{key}' in encrypted store")
+        return value
+
+    def set(self, key: str, value: str) -> bool:
+        if not self._crypto_ok:
+            logger.error("EncryptedFileBackend unavailable (cryptography missing)")
+            return False
+        cache = self._load_cache()
+        cache[key] = value
+        if self._write_cache():
+            logger.info(f"Set secret '{key}' in encrypted store")
+            return True
+        return False
+
+    def delete(self, key: str) -> bool:
+        if not self._crypto_ok:
+            return False
+        cache = self._load_cache()
+        if key in cache:
+            del cache[key]
+            if self._write_cache():
+                logger.info(f"Deleted secret '{key}' from encrypted store")
+        return True
+
+    def is_available(self) -> bool:
+        return self._crypto_ok
+
+
 class SecretsManager:
     """
     Unified secrets manager that tries multiple backends in priority order.
-    
+
     Priority for reading:
-    1. Environment variables (process-level, ideal for containers/servers)
-    2. .env file (file-based, good for local dev)
-    3. Keyring (OS-level, only if explicitly enabled)
-    
-    Priority for writing (configurable):
-    - By default writes to .env file for server deployments
-    - Can be configured to write to keyring for desktop deployments
+    1. Encrypted local file (``~/.vigil/secrets.enc``; preferred)
+    2. Environment variables
+    3. .env file (legacy / interoperability)
+    4. Keyring (only when explicitly enabled)
+
+    Priority for writing: configurable via ``SECRETS_BACKEND``. Default is
+    ``encrypted`` when ``cryptography`` is available, otherwise ``dotenv``.
     """
-    
-    def __init__(self, write_backend: str = "dotenv", enable_keyring: bool = False):
-        """
-        Initialize secrets manager.
-        
+
+    def __init__(self, write_backend: str = "encrypted", enable_keyring: bool = False):
+        """Initialize secrets manager.
+
         Args:
-            write_backend: Backend to use for writing ("env", "dotenv", or "keyring")
-            enable_keyring: If True, include keyring in read backends. If False, only use
-                          keyring if it's the write_backend. This prevents keychain prompts
-                          on macOS unless explicitly needed.
+            write_backend: "encrypted", "env", "dotenv", or "keyring".
+            enable_keyring: Include keyring in read backends when True. Keyring
+                access triggers macOS keychain prompts, so off by default.
         """
+        self.encrypted_backend = EncryptedFileBackend()
         self.env_backend = EnvironmentBackend()
         self.dotenv_backend = DotEnvBackend()
         # Use lazy init to avoid triggering keychain prompts on startup
         self.keyring_backend = KeyringBackend(lazy_init=True)
         self.enable_keyring = enable_keyring or (write_backend == "keyring")
-        
-        # Read priority - only include keyring if explicitly enabled
+
+        # Graceful fallback if user asked for "encrypted" but cryptography
+        # isn't installed — prevents hard failure on slim deploys.
+        if write_backend == "encrypted" and not self.encrypted_backend.is_available():
+            logger.warning(
+                "EncryptedFileBackend unavailable; falling back to dotenv write backend"
+            )
+            write_backend = "dotenv"
+
+        # Read priority — encrypted first (preferred), then env, then dotenv,
+        # then keyring only when explicitly enabled.
+        self.read_backends = []
+        if self.encrypted_backend.is_available():
+            self.read_backends.append(self.encrypted_backend)
+        self.read_backends.extend([self.env_backend, self.dotenv_backend])
         if self.enable_keyring:
-            self.read_backends = [
-                self.env_backend,
-                self.dotenv_backend,
-                self.keyring_backend,
-            ]
+            self.read_backends.append(self.keyring_backend)
         else:
-            self.read_backends = [
-                self.env_backend,
-                self.dotenv_backend,
-            ]
             logger.debug("Keyring backend disabled - will not check keyring for secrets")
-        
+
         # Write backend (configurable based on deployment)
         self.write_backend_name = write_backend
         backend_map = {
+            "encrypted": self.encrypted_backend,
             "env": self.env_backend,
             "dotenv": self.dotenv_backend,
             "keyring": self.keyring_backend,
         }
-        self.write_backend = backend_map.get(write_backend, self.dotenv_backend)
-        
+        self.write_backend = backend_map.get(write_backend, self.encrypted_backend)
+
         logger.info(f"Secrets manager initialized (write backend: {write_backend})")
     
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
@@ -393,7 +560,12 @@ class SecretsManager:
             True if successful
         """
         success = True
-        for backend in [self.env_backend, self.dotenv_backend, self.keyring_backend]:
+        for backend in [
+            self.encrypted_backend,
+            self.env_backend,
+            self.dotenv_backend,
+            self.keyring_backend,
+        ]:
             if backend.is_available():
                 if not backend.delete(key):
                     success = False
@@ -402,6 +574,11 @@ class SecretsManager:
     def get_backend_status(self) -> Dict[str, Any]:
         """Get status of all backends."""
         return {
+            "encrypted": {
+                "available": self.encrypted_backend.is_available(),
+                "path": str(self.encrypted_backend.secrets_path),
+                "description": "Project-local encrypted file (preferred)"
+            },
             "environment": {
                 "available": self.env_backend.is_available(),
                 "description": "Environment variables (best for containers/servers)"
@@ -409,7 +586,7 @@ class SecretsManager:
             "dotenv": {
                 "available": self.dotenv_backend.is_available(),
                 "path": str(self.dotenv_backend.env_file),
-                "description": "File-based secrets (good for local development)"
+                "description": "File-based secrets (legacy)"
             },
             "keyring": {
                 "available": self.keyring_backend.is_available(),
@@ -439,7 +616,7 @@ def get_secrets_manager(write_backend: Optional[str] = None, enable_keyring: Opt
     if _secrets_manager is None:
         # Check environment variable for backend preference
         if write_backend is None:
-            write_backend = os.environ.get("SECRETS_BACKEND", "dotenv")
+            write_backend = os.environ.get("SECRETS_BACKEND", "encrypted")
         
         # Check if keyring should be enabled (priority order: arg > env var > config file)
         if enable_keyring is None:

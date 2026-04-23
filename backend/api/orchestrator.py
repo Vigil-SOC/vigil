@@ -69,7 +69,7 @@ async def get_orchestrator_status():
         # See services/config_service and backend/api/config.py.
         enabled = False
         try:
-            from services.config_service import get_config_service
+            from database.config_service import get_config_service
             settings = get_config_service().get_system_config('orchestrator.settings')
             if isinstance(settings, dict):
                 enabled = bool(settings.get("enabled", False))
@@ -84,7 +84,7 @@ async def get_orchestrator_status():
         
         max_agents = 3
         try:
-            from services.config_service import get_config_service
+            from database.config_service import get_config_service
             orch_cfg = get_config_service().get_system_config('orchestrator.settings')
             if orch_cfg and isinstance(orch_cfg, dict):
                 max_agents = int(orch_cfg.get('max_concurrent_agents', 3))
@@ -117,7 +117,7 @@ def _persist_orchestrator_enabled(enabled: bool) -> None:
     defaults defined in backend/api/config.py.
     """
     try:
-        from services.config_service import get_config_service
+        from database.config_service import get_config_service
         from backend.api.config import ORCHESTRATOR_DEFAULTS
 
         svc = get_config_service(user_id='web_ui')

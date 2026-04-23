@@ -18,10 +18,15 @@ CREATE TABLE IF NOT EXISTS custom_agents (
     max_tokens INTEGER NOT NULL DEFAULT 4096,
     enable_thinking BOOLEAN NOT NULL DEFAULT FALSE,
     model TEXT,
+    forked_from TEXT,
     created_by VARCHAR(100),
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- Idempotent migration for existing installs where this table predates the
+-- `forked_from` column. Safe to run repeatedly.
+ALTER TABLE custom_agents ADD COLUMN IF NOT EXISTS forked_from TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_custom_agents_updated_at ON custom_agents(updated_at DESC);
 

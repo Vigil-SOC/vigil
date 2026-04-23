@@ -61,6 +61,24 @@ def is_valid_component(name: str) -> bool:
 
 _CATALOG: Dict[Tuple[str, str], Dict[str, Any]] = {
     # (provider_type, model_id) → metadata
+    ("anthropic", "claude-opus-4-7"): {
+        "display_name": "Claude Opus 4.7",
+        "context_window": 1_000_000,
+        "input_per_m": 15.0,
+        "output_per_m": 75.0,
+        "supports_tools": True,
+        "supports_thinking": True,
+        "supports_vision": True,
+    },
+    ("anthropic", "claude-sonnet-4-6"): {
+        "display_name": "Claude Sonnet 4.6",
+        "context_window": 200_000,
+        "input_per_m": 3.0,
+        "output_per_m": 15.0,
+        "supports_tools": True,
+        "supports_thinking": True,
+        "supports_vision": True,
+    },
     ("anthropic", "claude-sonnet-4-5-20250929"): {
         "display_name": "Claude Sonnet 4.5",
         "context_window": 200_000,
@@ -232,8 +250,12 @@ class _ProviderModelCache:
 _MODEL_LIST_CACHE = _ProviderModelCache()
 
 
-# Kept in sync with docker/bifrost/config.json and backend/api/llm_providers.py.
+# Single source of truth for the Anthropic model list. `backend/api/llm_providers.py`
+# imports this tuple; `docker/bifrost/config.json` must be kept in sync so Bifrost
+# accepts requests for these model IDs.
 ANTHROPIC_STATIC_MODELS: Tuple[str, ...] = (
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
     "claude-sonnet-4-5-20250929",
     "claude-sonnet-4-20250514",
     "claude-opus-4-20250514",

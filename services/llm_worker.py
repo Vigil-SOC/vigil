@@ -564,6 +564,23 @@ async def on_startup(ctx: Dict[str, Any]):
         )
         logger.warning("Telemetry init failed (non-fatal): %s", _tel_err)
 
+    # Initialize the SQLAlchemy DB manager so downstream code (skill tool
+    # loading, reasoning-trace persistence, provider-key resolution) can
+    # query the DB. The backend process does this in its FastAPI startup
+    # hook; the worker is a separate process and must do it itself.
+    try:
+        from database.connection import get_db_manager
+
+        db_manager = get_db_manager()
+        if db_manager._engine is None:
+            db_manager.initialize()
+            logger.info("LLM worker: DB manager initialized")
+    except Exception as _db_err:
+        logger.warning(
+            "LLM worker DB init failed (skill tools + reasoning traces will be disabled): %s",
+            _db_err,
+        )
+
     from services.claude_service import ClaudeService
 
     claude_service = ClaudeService(
