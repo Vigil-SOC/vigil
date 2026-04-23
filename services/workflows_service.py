@@ -1,5 +1,6 @@
 """Workflows service for discovering, parsing, and executing WORKFLOW.md workflow definitions."""
 
+import asyncio
 import logging
 import re
 from typing import Dict, List, Optional, Any
@@ -474,7 +475,36 @@ For each phase:
         except Exception as e:
             logger.debug(f"Could not get MCP tools from registry: {e}")
 
+        # Include active DB-backed Skills as ``skill_<slug>`` tools so a
+        # workflow phase can invoke them (#126). Skills aren't MCP tools,
+        # they're backend tools generated at runtime from the `skills`
+        # table — without this step they'd be invisible to the execution
+        # engine even when the user had authored them.
+        skill_tool_names: List[str] = []
+        try:
+            from services.skill_tools_bridge import list_active_skill_tools
+
+            skill_defs, _ = list_active_skill_tools()
+            skill_tool_names = [t["name"] for t in skill_defs]
+            for name in skill_tool_names:
+                if name not in all_tools:
+                    all_tools.append(name)
+        except Exception as e:
+            logger.debug(f"Could not load active skill tools: {e}")
+
         # Build a composite system prompt incorporating all agent roles
+        skills_hint = ""
+        if skill_tool_names:
+            skills_hint = (
+                "\n<available_skills>\n"
+                "The following skill tools are available as reusable SOC "
+                "capabilities. Invoke by name whenever a phase's work "
+                "matches a skill's purpose — each call returns the "
+                "skill's rendered playbook text for you to act on.\n"
+                + "\n".join(f"- {name}" for name in skill_tool_names)
+                + "\n</available_skills>\n"
+            )
+
         system_prompt = f"""You are the Vigil SOC Workflow Engine executing the "{workflow.name}" workflow.
 
 You have access to all SOC tools and will execute a multi-phase workflow,
@@ -486,7 +516,7 @@ adopting different specialist agent roles for each phase.
 - IPs/domains/hashes: Use threat intel tools
 - NEVER access findings as files - use tools
 </entity_recognition>
-
+{skills_hint}
 <principles>
 - Always fetch data via tools before analyzing
 - Be evidence-based and document reasoning
@@ -496,34 +526,55 @@ adopting different specialist agent roles for each phase.
 </principles>
 """
 
-        # Execute via ClaudeService
+        # Workflow execution is a *playbook run*, not a chat session.
+        # We call ClaudeService.chat() as an internal Python primitive
+        # — no /api/claude/chat route, no conversation session, no
+        # session-history persistence. It's "run this composite prompt
+        # with access to backend + MCP tools (incl. skills) and hand me
+        # the structured result." The Agent SDK path used to live here
+        # (run_agent_task) but that branch doesn't see backend_tools, so
+        # skills would never resolve. See issue #126.
         claude_service = ClaudeService(
             use_backend_tools=True,
             use_mcp_tools=True,
-            use_agent_sdk=True,
+            use_agent_sdk=False,
             enable_thinking=True,
         )
 
         if not claude_service.has_api_key():
             return {"success": False, "error": "Claude API not configured"}
 
-        result = await claude_service.run_agent_task(
-            task=prompt,
-            agent_config={
-                "system_prompt": system_prompt,
-                "allowed_tools": all_tools if all_tools else None,
-                "max_turns": 25,  # More turns for multi-phase workflows
-                "model": "claude-sonnet-4-5-20250929",
-            }
-        )
+        # chat() is sync + has its own multi-iteration tool loop. Offload
+        # to a thread so we don't block the asyncio loop of the caller.
+        try:
+            response_text = await asyncio.to_thread(
+                claude_service.chat,
+                message=prompt,
+                system_prompt=system_prompt,
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=8192,
+                recommended_tools=all_tools if all_tools else None,
+            )
+            success = response_text is not None
+            error = None if success else "Claude returned no response"
+        except Exception as exc:  # noqa: BLE001
+            response_text = ""
+            success = False
+            error = f"{type(exc).__name__}: {exc}"
+            logger.exception("Workflow execution failed for %s", workflow_id)
 
         return {
-            "success": result.get("success", False),
+            "success": success,
             "workflow": workflow.to_dict(include_body=False),
-            "result": result.get("final_result", ""),
-            "tool_calls": result.get("tool_calls", []),
-            "error": result.get("error"),
+            "result": response_text or "",
+            # Playbook runs don't yet stream intermediate tool calls back
+            # through this entry point; ClaudeService.chat captures them
+            # internally for reasoning-trace persistence. A structured
+            # per-phase output + tool_calls list is tracked as #127.
+            "tool_calls": [],
+            "error": error,
             "parameters": parameters,
+            "skill_tools_available": skill_tool_names,
             "executed_at": datetime.now().isoformat(),
         }
 
