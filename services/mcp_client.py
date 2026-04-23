@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 from typing import Optional, Dict, List, Any, Tuple, TYPE_CHECKING
 from pathlib import Path
 import platform
@@ -167,7 +168,7 @@ class MCPClient:
     def __init__(self, mcp_service: MCPService):
         """
         Initialize MCP client with persistent connection support.
-        
+
         Args:
             mcp_service: MCPService instance for managing server processes
         """
@@ -175,41 +176,79 @@ class MCPClient:
         self.persistent_sessions: Dict[str, PersistentServerSession] = {}
         self.tools_cache: Dict[str, List[Dict]] = {}
         self._connection_locks: Dict[str, threading.Lock] = {}  # Locks per server to prevent concurrent connections
+        # Populated by connect_to_server — string reason on failure, and a
+        # structured list of env var names when credentials are missing.
+        self.last_errors: Dict[str, str] = {}
+        self.last_missing_credentials: Dict[str, List[str]] = {}
     
     async def connect_to_server(self, server_name: str, persistent: bool = True) -> bool:
         """
         Connect to an MCP server, cache its tools, and optionally maintain persistent connection.
-        
-        Only connects if the server is enabled in the MCP service.
-        
+
+        Only connects if the server is enabled in the MCP service. On failure, the
+        exception message is recorded on ``self.last_errors[server_name]`` so the
+        Settings → MCP UI can surface *why* a connection failed (missing binary,
+        credentials, package not installed) instead of a generic "Failed to connect".
+
         Args:
             server_name: Name of the server to connect to
             persistent: If True, maintain persistent connection for reuse
-            
+
         Returns:
             True if successful, False otherwise
         """
+        # Defensive init for deployments that upgraded without reinstantiating
+        # the client — keeps the legacy __init__ compatible.
+        if not hasattr(self, "last_errors"):
+            self.last_errors: Dict[str, str] = {}
+        if not hasattr(self, "last_missing_credentials"):
+            self.last_missing_credentials: Dict[str, List[str]] = {}
+        # Clear any stale state from a prior attempt so the UI always
+        # reflects the most recent connect.
+        self.last_errors.pop(server_name, None)
+        self.last_missing_credentials.pop(server_name, None)
+
         if not MCP_AVAILABLE:
             logger.error("MCP SDK not available")
+            self.last_errors[server_name] = "MCP SDK not installed in the backend venv"
             return False
-        
+
         if server_name not in self.mcp_service.servers:
             logger.error(f"Unknown server: {server_name}")
+            self.last_errors[server_name] = "Server not present in mcp-config.json"
             return False
-        
+
         # Skip disabled servers
         if not self.mcp_service.is_server_enabled(server_name):
             logger.debug(f"Server {server_name} is disabled, skipping connection")
             return False
-        
+
         # Check if already connected with cached tools
         if server_name in self.persistent_sessions and server_name in self.tools_cache:
             if self.persistent_sessions[server_name].is_connected:
                 logger.debug(f"Already connected to {server_name}")
                 return True
-        
+
         server = self.mcp_service.servers[server_name]
-        
+
+        # Credential gate: if the server declared ${VAR} placeholders in
+        # its mcp-config.json entry and those env vars resolve empty,
+        # short-circuit without spawning a child. This is dormancy by
+        # design — per #124's conclusion, pre-configuration is not a
+        # failure. The UI's existing "Not Configured" treatment takes
+        # over once it sees connected=false + a missing_credentials list.
+        missing = self._missing_credentials_for(server)
+        if missing:
+            msg = f"missing credentials: {', '.join(missing)}"
+            self.last_errors[server_name] = msg
+            self.last_missing_credentials[server_name] = missing
+            logger.info(
+                "MCP server %s dormant — waiting on env vars: %s",
+                server_name,
+                ", ".join(missing),
+            )
+            return False
+
         try:
             # Create stdio server parameters
             server_params = StdioServerParameters(
@@ -266,9 +305,112 @@ class MCPClient:
             return True
         
         except Exception as e:
+            # Preserve the exception text so the UI can surface the real
+            # reason (e.g. "FileNotFoundError: uvx", "ModuleNotFoundError:
+            # mempalace", "missing env var GITHUB_TOKEN") instead of a
+            # generic "Failed to connect".
+            self.last_errors[server_name] = f"{type(e).__name__}: {e}"
             logger.error(f"Failed to connect to {server_name}: {e}")
             return False
-    
+
+    def _missing_credentials_for(self, server) -> List[str]:
+        """Return the subset of a server's required_env_vars that resolve empty.
+
+        Checks both ``os.environ`` and the Vigil secrets manager, so a
+        user who saved a credential via the integration wizard (which
+        writes to the encrypted store, not the process env) isn't told
+        the server is still dormant.
+        """
+        required = getattr(server, "required_env_vars", None) or []
+        if not required:
+            return []
+        try:
+            from backend.secrets_manager import get_secret
+        except Exception:  # pragma: no cover — secrets module always present
+            get_secret = lambda _name: None  # type: ignore[assignment]
+
+        missing: List[str] = []
+        for var in required:
+            if os.environ.get(var):
+                continue
+            if get_secret(var):
+                continue
+            missing.append(var)
+        return missing
+
+    def get_missing_credentials(self, server_name: str) -> Optional[List[str]]:
+        """Return the list of unset required env vars from the last connect."""
+        return getattr(self, "last_missing_credentials", {}).get(server_name)
+
+    def get_last_error(self, server_name: str) -> Optional[str]:
+        """Return the most recent connect-failure reason for a server, if any."""
+        return getattr(self, "last_errors", {}).get(server_name)
+
+    # Per-server rate limit between auto-retry attempts. Prevents a
+    # misconfigured secret (wrong value, typo) from hammering the MCP
+    # child process with connect storms on every /connections/status
+    # poll. 15s balances "user saves key and sees it online quickly"
+    # with "don't spin up 20 subprocesses a minute on a stuck setup".
+    _RETRY_MIN_INTERVAL_S = 15.0
+
+    async def retry_dormant_if_ready(self) -> Dict[str, bool]:
+        """Re-attempt connect for any dormant server whose required env
+        vars have since resolved (e.g. user saved the credential via the
+        integration wizard). Safe to call from a read-path endpoint:
+        no-op when nothing's dormant or when creds are still missing.
+
+        Returns a dict ``{server_name: connected_bool}`` recording what
+        we actually tried this call — the common case is an empty dict.
+        """
+        # Defensive init — mirrors connect_to_server's compat shim.
+        if not hasattr(self, "_last_retry_at"):
+            self._last_retry_at: Dict[str, float] = {}
+        if not hasattr(self, "last_missing_credentials"):
+            return {}
+
+        import time
+
+        now = time.monotonic()
+        attempted: Dict[str, bool] = {}
+
+        # Snapshot the keys — ``last_missing_credentials`` is mutated
+        # by ``connect_to_server`` we're about to call.
+        candidates = [
+            name
+            for name, missing in list(self.last_missing_credentials.items())
+            if missing
+        ]
+        for server_name in candidates:
+            server = self.mcp_service.servers.get(server_name)
+            if server is None:
+                continue
+            # Cheap precheck — skip unless creds actually resolve now.
+            if self._missing_credentials_for(server):
+                continue
+            # Rate-limit: don't retry the same server more than once
+            # per _RETRY_MIN_INTERVAL_S seconds.
+            last = self._last_retry_at.get(server_name, 0.0)
+            if now - last < self._RETRY_MIN_INTERVAL_S:
+                continue
+            self._last_retry_at[server_name] = now
+            try:
+                attempted[server_name] = await self.connect_to_server(
+                    server_name, persistent=True
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Dormant-retry for %s raised: %s", server_name, exc
+                )
+                attempted[server_name] = False
+        if attempted:
+            connected = sum(1 for v in attempted.values() if v)
+            logger.info(
+                "Auto-reconnect: %d/%d dormant server(s) came online",
+                connected,
+                len(attempted),
+            )
+        return attempted
+
     async def list_tools(self, server_name: Optional[str] = None) -> Dict[str, List[Dict]]:
         """
         List available tools from MCP servers.

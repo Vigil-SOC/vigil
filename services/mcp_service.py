@@ -4,6 +4,7 @@ import subprocess
 import platform
 import logging
 import json
+import re
 from pathlib import Path
 from typing import Optional, Dict, List
 from datetime import datetime
@@ -12,10 +13,55 @@ import os
 logger = logging.getLogger(__name__)
 
 
+# Matches ${VAR_NAME} placeholders in mcp-config.json values/args. Anchored
+# to uppercase+underscore+digits so we don't pick up things like
+# ${workspaceFolder} (filtered explicitly below regardless).
+_ENV_PLACEHOLDER_RE = re.compile(r"\$\{([A-Z_][A-Z0-9_]*)\}")
+
+# Placeholders that are path sentinels, not credentials — never treat as
+# required env vars.
+_PLACEHOLDER_BLACKLIST = {"workspaceFolder", "HOME", "PYTHONPATH"}
+
+
+def extract_required_env_vars(raw_env: Dict[str, str], raw_args: List[str]) -> List[str]:
+    """Collect every ``${VAR}`` placeholder referenced by a server config.
+
+    Scans the raw (pre-substitution) ``env`` values and ``args`` entries
+    from ``mcp-config.json``. Returns a deduplicated, sorted list of
+    placeholder names. These are treated as required by
+    ``mcp_client.connect_to_server`` — if any resolve to empty, the
+    server is considered dormant-by-design (not a connect failure).
+
+    Limitation (documented for follow-ups): this infers requirements
+    from the config file. A server whose process quietly needs a
+    credential that isn't referenced via ``${…}`` is invisible to us
+    and will fall through to the regular connect path.
+    """
+    found: set[str] = set()
+    for value in list((raw_env or {}).values()) + list(raw_args or []):
+        if not isinstance(value, str):
+            continue
+        for m in _ENV_PLACEHOLDER_RE.finditer(value):
+            name = m.group(1)
+            if name in _PLACEHOLDER_BLACKLIST:
+                continue
+            found.add(name)
+    return sorted(found)
+
+
 class MCPServer:
     """Represents an MCP server process."""
-    
-    def __init__(self, name: str, command: str, args: List[str], cwd: str, env: Dict[str, str], server_type: str = "unknown"):
+
+    def __init__(
+        self,
+        name: str,
+        command: str,
+        args: List[str],
+        cwd: str,
+        env: Dict[str, str],
+        server_type: str = "unknown",
+        required_env_vars: Optional[List[str]] = None,
+    ):
         self.name = name
         self.command = command
         self.args = args
@@ -25,6 +71,9 @@ class MCPServer:
         self.status = "stopped"
         self.start_time: Optional[datetime] = None
         self.server_type = server_type  # "fastmcp" or "stdio"
+        # Credential placeholders declared in mcp-config.json for this
+        # server. Read by mcp_client.connect_to_server at connect time.
+        self.required_env_vars: List[str] = list(required_env_vars or [])
     
     def start(self) -> bool:
         """Start the MCP server."""
@@ -312,27 +361,37 @@ class MCPService:
                         cwd = cwd.replace("${workspaceFolder}", project_path_str)
                     
                     # Get environment variables and substitute ${VAR_NAME} patterns
-                    raw_env = server_config.get("env", {})
-                    env = {}
-                    for env_key, env_val in raw_env.items():
-                        # Skip documentation keys (e.g., _note, _setup_note)
-                        if env_key.startswith("_"):
-                            continue
-                        env[env_key] = self._substitute_env_vars(str(env_val))
+                    raw_env_strs = {
+                        k: str(v)
+                        for k, v in (server_config.get("env") or {}).items()
+                        if not k.startswith("_")
+                    }
+                    env = {
+                        k: self._substitute_env_vars(v)
+                        for k, v in raw_env_strs.items()
+                    }
                     env["PYTHONPATH"] = project_path_str
-                    
+
                     # Get args and perform environment variable substitution
-                    args = server_config.get("args", [])
-                    # Substitute environment variables in args (e.g., ${VAR_NAME})
-                    args = [self._substitute_env_vars(arg) for arg in args]
-                    
+                    raw_args = list(server_config.get("args") or [])
+                    args = [self._substitute_env_vars(arg) for arg in raw_args]
+
+                    # Capture declared credential placeholders *before*
+                    # substitution collapses missing vars to empty strings
+                    # — used by mcp_client to short-circuit connect when
+                    # required credentials aren't set.
+                    required_env_vars = extract_required_env_vars(
+                        raw_env_strs, raw_args
+                    )
+
                     server_configs.append({
                         "name": server_name,
                         "command": command,
                         "args": args,
                         "cwd": cwd,
                         "env": env,
-                        "server_type": self._detect_server_type(args)
+                        "server_type": self._detect_server_type(args),
+                        "required_env_vars": required_env_vars,
                     })
                     
                 logger.info(f"Loaded {len(server_configs)} servers from mcp-config.json")
@@ -435,78 +494,28 @@ class MCPService:
             }
         ]
     
-    def start_server(self, server_name: str, ignore_enabled: bool = False) -> bool:
-        """
-        Start an MCP server.
-        
-        Args:
-            server_name: Name of the server to start.
-            ignore_enabled: If True, start regardless of enabled state (for internal use).
-        
-        Returns:
-            True if successful, False otherwise.
-        """
-        if server_name not in self.servers:
-            logger.error(f"Unknown server: {server_name}")
-            return False
-        
-        # Respect enabled state unless explicitly overridden
-        if not ignore_enabled and not self.is_server_enabled(server_name):
-            logger.info(f"Server {server_name} is disabled, skipping start")
-            return False
-        
-        server = self.servers[server_name]
-        
-        # Check if it's a stdio-based server
-        if server.server_type == "stdio":
-            logger.warning(f"Server {server_name} is stdio-based and designed for advanced MCP integration, not standalone monitoring")
-            return False
-        
-        return server.start()
-    
+    # NOTE: the former `start_server` / `start_all` / `stop_all` methods were
+    # removed when the MCP enable toggle became the single runtime lever.
+    # They were Popen-subprocess monitors that explicitly refused stdio
+    # servers (every server in mcp-config.json is stdio), so they never
+    # worked for users anyway. Runtime connect/disconnect is now owned by
+    # services.mcp_client.connect_to_server / disconnect_from_server.
+
     def stop_server(self, server_name: str) -> bool:
-        """
-        Stop an MCP server.
-        
-        Args:
-            server_name: Name of the server to stop.
-        
-        Returns:
-            True if successful, False otherwise.
+        """Stop a Popen-managed server if one was spawned.
+
+        Kept for completeness: a stdio server never gets a Popen child via
+        this class (it's driven by the MCP SDK's ``stdio_client`` through
+        ``mcp_client``), so for the current config this is effectively a
+        no-op. Still called defensively from ``PUT /enabled`` when a
+        non-stdio ``running`` status is observed.
         """
         if server_name not in self.servers:
             logger.error(f"Unknown server: {server_name}")
             return False
-        
         return self.servers[server_name].stop()
-    
-    def start_all(self) -> Dict[str, bool]:
-        """
-        Start all *enabled* MCP servers.
-        
-        Returns:
-            Dictionary mapping server names to success status.
-        """
-        results = {}
-        for name in self.servers:
-            if self.is_server_enabled(name):
-                results[name] = self.start_server(name)
-            else:
-                results[name] = False
-        return results
-    
-    def stop_all(self) -> Dict[str, bool]:
-        """
-        Stop all MCP servers.
-        
-        Returns:
-            Dictionary mapping server names to success status.
-        """
-        results = {}
-        for name in self.servers:
-            results[name] = self.stop_server(name)
-        return results
-    
+
+
     def get_server_status(self, server_name: str) -> Optional[str]:
         """
         Get the status of an MCP server.

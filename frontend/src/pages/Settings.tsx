@@ -477,12 +477,41 @@ export default function Settings() {
 
   const handleToggleServer = async (serverName: string, enabled: boolean) => {
     try {
-      await mcpApi.setServerEnabled(serverName, enabled)
-      setMcpEnabled(prev => ({ ...prev, [serverName]: enabled }))
-      setMessage({ type: 'success', text: `${serverName} ${enabled ? 'enabled' : 'disabled'}` })
+      // Backend makes this transactional: the persist step also triggers
+      // a connect (on enable) or disconnect (on disable). If the connect
+      // fails — missing creds, missing binary, unreachable remote MCP —
+      // we flip the toggle back off so state stays honest and surface
+      // the actual reason in the snackbar.
+      const res = await mcpApi.setServerEnabled(serverName, enabled)
+      const { connected, error } = (res?.data || {}) as {
+        connected?: boolean | null
+        error?: string | null
+      }
+      if (enabled && connected === false) {
+        // Revert: persisted enabled=false on the backend too, to keep the
+        // UI and server in lockstep. Fire-and-forget — this is the
+        // "unhappy path" anyway.
+        mcpApi.setServerEnabled(serverName, false).catch(() => {})
+        setMcpEnabled(prev => ({ ...prev, [serverName]: false }))
+        setMessage({
+          type: 'error',
+          text: `Could not start ${serverName}${error ? `: ${error}` : ''}`,
+        })
+      } else {
+        setMcpEnabled(prev => ({ ...prev, [serverName]: enabled }))
+        setMessage({
+          type: 'success',
+          text: `${serverName} ${enabled ? 'enabled' : 'disabled'}`,
+        })
+      }
       loadMcpServers()
-    } catch { setMessage({ type: 'error', text: `Failed to ${enabled ? 'enable' : 'disable'} ${serverName}` }) }
-    setTimeout(() => setMessage(null), 3000)
+    } catch {
+      setMessage({
+        type: 'error',
+        text: `Failed to ${enabled ? 'enable' : 'disable'} ${serverName}`,
+      })
+    }
+    setTimeout(() => setMessage(null), 4500)
   }
 
   const handleSaveIntegration = async (integrationId: string, config: Record<string, any>) => {
