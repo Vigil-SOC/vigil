@@ -94,3 +94,16 @@ class SkillGenerateResponse(BaseModel):
     conversation_history: Optional[List[Dict[str, str]]] = None
     skill: Optional[SkillDraft] = None
     error: Optional[str] = None
+
+
+class SkillImportResponse(BaseModel):
+    """Response from `POST /api/skills/import` (Issue #130).
+
+    ``replaced`` is True when an existing skill with the same name was
+    overwritten (and its version bumped); False when a new row was created.
+    """
+
+    skill_id: str
+    name: str
+    version: int
+    replaced: bool

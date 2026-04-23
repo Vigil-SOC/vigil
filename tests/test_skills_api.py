@@ -6,7 +6,9 @@ by whether Postgres is running.
 """
 
 import importlib.util
+import io
 import sys
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -247,6 +249,105 @@ def test_generate_passes_through_clarification(client):
     assert body["needs_clarification"] is True
     assert "which SIEM" in body["message"]
     assert body["conversation_history"][-1]["role"] == "assistant"
+
+
+# ---------------------------------------------------------------------------
+# Import endpoint — Claude Desktop .zip bundles (Issue #130)
+# ---------------------------------------------------------------------------
+
+
+IMPORT_SKILL_MD = b"""---
+name: Imported Enrich IOC
+description: Enrich an IOC via VirusTotal.
+category: enrichment
+required_tools:
+  - virustotal.hash
+---
+Given {{ioc}}, query VirusTotal and summarize."""
+
+
+def _zip_bytes(entries):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, body in entries.items():
+            zf.writestr(name, body)
+    return buf.getvalue()
+
+
+@pytest.mark.api
+def test_import_creates_new_skill(client):
+    buf = _zip_bytes({"SKILL.md": IMPORT_SKILL_MD})
+    r = client.post(
+        "/api/skills/import",
+        files={"file": ("skill.zip", buf, "application/zip")},
+        data={"created_by": "alice"},
+    )
+    assert r.status_code == 201, r.text
+    body = r.json()
+    assert body["name"] == "Imported Enrich IOC"
+    assert body["replaced"] is False
+    assert body["version"] == 1
+
+    # Round-trip: the imported skill shows up in the list.
+    r = client.get("/api/skills")
+    names = [s["name"] for s in r.json()]
+    assert "Imported Enrich IOC" in names
+
+
+@pytest.mark.api
+def test_import_replaces_and_bumps_version_on_name_collision(client):
+    buf1 = _zip_bytes({"SKILL.md": IMPORT_SKILL_MD})
+    r1 = client.post(
+        "/api/skills/import",
+        files={"file": ("skill.zip", buf1, "application/zip")},
+    )
+    assert r1.status_code == 201
+    first_id = r1.json()["skill_id"]
+
+    # Second import with same name but tweaked body → replace + bump.
+    tweaked = IMPORT_SKILL_MD.replace(
+        b"Given {{ioc}}, query VirusTotal and summarize.",
+        b"Given {{ioc}}, query VirusTotal, Shodan, and summarize.",
+    )
+    buf2 = _zip_bytes({"SKILL.md": tweaked})
+    r2 = client.post(
+        "/api/skills/import",
+        files={"file": ("skill.zip", buf2, "application/zip")},
+    )
+    assert r2.status_code == 201, r2.text
+    body = r2.json()
+    assert body["replaced"] is True
+    assert body["skill_id"] == first_id
+    assert body["version"] == 2
+
+
+@pytest.mark.api
+def test_import_missing_skill_md_is_400(client):
+    buf = _zip_bytes({"README.md": b"not a skill"})
+    r = client.post(
+        "/api/skills/import",
+        files={"file": ("skill.zip", buf, "application/zip")},
+    )
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "SKILL.md" in detail["message"]
+
+
+@pytest.mark.api
+def test_import_extra_files_rejected_with_paths(client):
+    buf = _zip_bytes(
+        {
+            "SKILL.md": IMPORT_SKILL_MD,
+            "scripts/helper.py": b"x",
+        }
+    )
+    r = client.post(
+        "/api/skills/import",
+        files={"file": ("skill.zip", buf, "application/zip")},
+    )
+    assert r.status_code == 400
+    detail = r.json()["detail"]
+    assert "scripts/helper.py" in detail["details"]["rejected_paths"]
 
 
 @pytest.mark.api

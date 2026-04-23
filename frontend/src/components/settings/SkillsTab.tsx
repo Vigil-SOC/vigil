@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Alert,
   Box,
@@ -27,6 +27,7 @@ import {
   AutoAwesome as SparkIcon,
   Delete as DeleteIcon,
   Refresh as RefreshIcon,
+  UploadFile as UploadFileIcon,
 } from '@mui/icons-material'
 
 import {
@@ -49,9 +50,12 @@ export default function SkillsTab() {
   const [skills, setSkills] = useState<Skill[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [importInfo, setImportInfo] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
   const [categoryFilter, setCategoryFilter] = useState<SkillCategory | ''>('')
   const [builderOpen, setBuilderOpen] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<Skill | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -96,6 +100,40 @@ export default function SkillsTab() {
     }
   }
 
+  const handleImportClick = () => {
+    fileInputRef.current?.click()
+  }
+
+  const handleImportChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    // Reset the input so the same file can be re-picked after an error.
+    e.target.value = ''
+    if (!file) return
+    setImporting(true)
+    setError(null)
+    setImportInfo(null)
+    try {
+      const result = await skillsApi.importZip(file)
+      const verb = result.replaced ? 'updated' : 'imported'
+      setImportInfo(`Successfully ${verb} "${result.name}" (v${result.version}).`)
+      await load()
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const message =
+        typeof detail === 'string'
+          ? detail
+          : detail?.message || err.message || 'Failed to import skill zip'
+      const rejected: string[] | undefined = detail?.details?.rejected_paths
+      setError(
+        rejected && rejected.length > 0
+          ? `${message} (offending paths: ${rejected.join(', ')})`
+          : message
+      )
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
@@ -133,6 +171,21 @@ export default function SkillsTab() {
           Refresh
         </Button>
         <Button
+          variant="outlined"
+          startIcon={<UploadFileIcon />}
+          onClick={handleImportClick}
+          disabled={importing}
+        >
+          {importing ? 'Importing…' : 'Import Zip'}
+        </Button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".zip,application/zip"
+          hidden
+          onChange={handleImportChange}
+        />
+        <Button
           variant="contained"
           startIcon={<SparkIcon />}
           onClick={() => setBuilderOpen(true)}
@@ -140,6 +193,12 @@ export default function SkillsTab() {
           Build Skill
         </Button>
       </Box>
+
+      {importInfo && (
+        <Alert severity="success" sx={{ mb: 2 }} onClose={() => setImportInfo(null)}>
+          {importInfo}
+        </Alert>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>

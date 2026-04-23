@@ -53,6 +53,13 @@ export interface SkillGenerateResponse {
   error?: string
 }
 
+export interface SkillImportResult {
+  skill_id: string
+  name: string
+  version: number
+  replaced: boolean
+}
+
 const client = axios.create({
   baseURL: '/api/skills',
   headers: { 'Content-Type': 'application/json' },
@@ -84,4 +91,14 @@ export const skillsApi = {
 
   remove: (skillId: string) =>
     client.delete<{ success: boolean; skill_id: string }>(`/${skillId}`).then((r) => r.data),
+
+  importZip: (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    return client
+      .post<SkillImportResult>('/import', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      .then((r) => r.data)
+  },
 }

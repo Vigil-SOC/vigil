@@ -15,6 +15,7 @@ vi.mock('../../../services/skillsApi', async () => {
       update: vi.fn(),
       remove: vi.fn(),
       generate: vi.fn(),
+      importZip: vi.fn(),
     },
   }
 })

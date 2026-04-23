@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
@@ -17,8 +17,14 @@ from backend.schemas.skill import (  # noqa: E402
     SkillCreate,
     SkillGenerateRequest,
     SkillGenerateResponse,
+    SkillImportResponse,
     SkillResponse,
     SkillUpdate,
+)
+from services.skill_importer import (  # noqa: E402
+    MAX_ZIP_BYTES,
+    SkillImportError,
+    import_skill_zip,
 )
 from services.skill_service import SkillService  # noqa: E402
 
@@ -60,6 +66,45 @@ async def generate_skill(request: SkillGenerateRequest):
         raise
     except Exception as e:
         logger.error("Error generating skill: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/import", response_model=SkillImportResponse, status_code=201)
+async def import_skill(
+    file: UploadFile = File(...),
+    created_by: Optional[str] = Form(None),
+):
+    """Import a Claude Desktop-compatible skill ``.zip`` bundle (Issue #130).
+
+    The zip must contain a ``SKILL.md`` (YAML frontmatter + markdown body).
+    If a skill with the same name already exists, it is overwritten and its
+    version bumped; otherwise a new row is created.
+    """
+    try:
+        zip_bytes = await file.read()
+        if len(zip_bytes) > MAX_ZIP_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail={
+                    "message": (
+                        f"Zip exceeds {MAX_ZIP_BYTES // (1024 * 1024)} MB limit"
+                    ),
+                    "details": {
+                        "size_bytes": len(zip_bytes),
+                        "limit_bytes": MAX_ZIP_BYTES,
+                    },
+                },
+            )
+        return import_skill_zip(zip_bytes, created_by=created_by)
+    except SkillImportError as err:
+        raise HTTPException(
+            status_code=err.status_code,
+            detail={"message": err.message, "details": err.details},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Error importing skill zip: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
