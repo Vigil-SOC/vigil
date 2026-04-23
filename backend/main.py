@@ -283,6 +283,38 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Bifrost provider sync skipped: {e}")
 
+    # Discover live model catalogs upstream (Anthropic /v1/models, OpenAI
+    # /v1/models, Ollama /api/tags) and push the union per provider-type
+    # to Bifrost's allow-list. Single source of truth — one call populates
+    # both the UI dropdown cache and Bifrost's allow-list, so they can't
+    # drift. Scheduler loop refreshes every
+    # MODEL_CATALOG_REFRESH_INTERVAL_S (default 300s). Runs as a
+    # background task so startup isn't blocked on upstream reachability.
+    try:
+        import asyncio
+
+        from services.bifrost_admin import sync_all_provider_models
+
+        refresh_interval_s = int(
+            os.getenv("MODEL_CATALOG_REFRESH_INTERVAL_S", "300")
+        )
+
+        async def _model_catalog_refresher():
+            while True:
+                try:
+                    await sync_all_provider_models()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Model catalog refresh iteration failed: %s", exc,
+                    )
+                if refresh_interval_s <= 0:
+                    break
+                await asyncio.sleep(refresh_interval_s)
+
+        asyncio.create_task(_model_catalog_refresher())
+    except Exception as e:
+        logger.warning(f"Model catalog refresher skipped: {e}")
+
     # Initialize data storage backend
     logger.info("Initializing data storage...")
     try:

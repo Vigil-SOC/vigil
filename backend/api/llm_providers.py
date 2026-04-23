@@ -33,11 +33,13 @@ router = APIRouter()
 VALID_PROVIDER_TYPES = {"anthropic", "openai", "ollama"}
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 
-# Single source of truth lives in services.model_registry. The Anthropic
-# SDK doesn't expose a /models endpoint, so this static list is what
-# drives the Providers UI's model dropdown.
-from services.model_registry import ANTHROPIC_STATIC_MODELS
-ANTHROPIC_MODELS = list(ANTHROPIC_STATIC_MODELS)
+# Anthropic's live /v1/models endpoint is consulted via
+# ``services.provider_model_discovery``; the fallback tuple here is the
+# cold-boot list used only when the live call fails (e.g. no API key
+# was provided at /discover-models time).
+from services.model_registry import _FALLBACK_MODELS_BY_PROVIDER
+
+ANTHROPIC_FALLBACK_MODELS = list(_FALLBACK_MODELS_BY_PROVIDER["anthropic"])
 
 
 def _slugify(name: str) -> str:
@@ -120,6 +122,28 @@ def _clear_other_defaults(db: Session, provider_type: str, keep_id: str) -> None
     )
 
 
+def _schedule_catalog_resync(reason: str) -> None:
+    """Invalidate the model-list cache and fire a background sync.
+
+    Called from provider CRUD so the UI dropdown and Bifrost's allow-list
+    reflect the change immediately, rather than waiting up to the next
+    scheduled refresh. Best-effort — never blocks the response.
+    """
+    import asyncio
+
+    from services.bifrost_admin import sync_all_provider_models
+    from services.model_registry import invalidate_model_cache
+
+    invalidate_model_cache()
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        loop.create_task(sync_all_provider_models())
+    logger.info("Model catalog resync scheduled: %s", reason)
+
+
 @router.get("", response_model=List[LLMProviderResponse])
 @router.get("/", response_model=List[LLMProviderResponse])
 async def list_providers(db: Session = Depends(get_db_session)):
@@ -136,7 +160,9 @@ async def create_provider(
 
     provider_id = payload.provider_id or _slugify(payload.name)
     if db.get(LLMProviderConfig, provider_id) is not None:
-        raise HTTPException(status_code=409, detail=f"provider_id '{provider_id}' already exists")
+        raise HTTPException(
+            status_code=409, detail=f"provider_id '{provider_id}' already exists"
+        )
 
     api_key_ref: Optional[str] = None
     if payload.api_key:
@@ -165,6 +191,7 @@ async def create_provider(
 
     db.commit()
     db.refresh(row)
+    _schedule_catalog_resync(f"created provider {provider_id}")
     return _to_response(row)
 
 
@@ -212,6 +239,7 @@ async def update_provider(
 
     db.commit()
     db.refresh(row)
+    _schedule_catalog_resync(f"updated provider {provider_id}")
     return _to_response(row)
 
 
@@ -231,13 +259,12 @@ async def delete_provider(provider_id: str, db: Session = Depends(get_db_session
 
     db.delete(row)
     db.commit()
+    _schedule_catalog_resync(f"deleted provider {provider_id}")
     return {"success": True, "provider_id": provider_id}
 
 
 @router.post("/{provider_id}/set-default", response_model=LLMProviderResponse)
-async def set_default_provider(
-    provider_id: str, db: Session = Depends(get_db_session)
-):
+async def set_default_provider(provider_id: str, db: Session = Depends(get_db_session)):
     row = db.get(LLMProviderConfig, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
@@ -331,51 +358,52 @@ class DiscoverModelsRequest(BaseModel):
 
 @router.post("/discover-models")
 async def discover_models(req: DiscoverModelsRequest):
+    """Pre-save model discovery for the Add Provider dialog.
+
+    Delegates to ``services.provider_model_discovery``. Returns a flat
+    list of model IDs (unchanged contract). For Anthropic, falls back
+    to the hard-coded cold-boot list when no key is supplied so the
+    dialog still has something to render.
+    """
     if req.provider_type not in VALID_PROVIDER_TYPES:
         raise HTTPException(
             status_code=400,
             detail=f"unsupported provider_type: {req.provider_type}",
         )
 
-    if req.provider_type == "anthropic":
-        return {"models": ANTHROPIC_MODELS}
+    from services import provider_model_discovery as discovery
 
-    if req.provider_type == "ollama":
-        base_url = req.base_url or "http://localhost:11434"
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(f"{base_url.rstrip('/')}/api/tags")
-                resp.raise_for_status()
-                data = resp.json()
-        except httpx.HTTPError as e:
-            raise HTTPException(status_code=502, detail=f"ollama: {e}")
-        return {
-            "models": [m.get("name") for m in data.get("models", []) if m.get("name")]
-        }
-
-    # openai / openai-compatible
-    base_url = req.base_url or "https://api.openai.com/v1"
-    if not req.api_key:
-        raise HTTPException(
-            status_code=400, detail="api_key is required to discover OpenAI models"
-        )
-    headers = {"Authorization": f"Bearer {req.api_key}"}
-    if req.organization:
-        headers["OpenAI-Organization"] = req.organization
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        if req.provider_type == "anthropic":
+            if not req.api_key:
+                return {"models": ANTHROPIC_FALLBACK_MODELS}
+            meta = await discovery.fetch_anthropic_models(req.api_key)
+        elif req.provider_type == "openai":
+            if not req.api_key:
+                raise HTTPException(
+                    status_code=400,
+                    detail="api_key is required to discover OpenAI models",
+                )
+            meta = await discovery.fetch_openai_models(
+                req.api_key,
+                base_url=req.base_url,
+                organization=req.organization,
+            )
+        else:  # ollama
+            meta = await discovery.fetch_ollama_models(req.base_url)
     except httpx.HTTPStatusError as e:
-        # Surface auth errors cleanly so the dialog can show them
         raise HTTPException(
             status_code=e.response.status_code,
             detail=f"upstream error: {e.response.text[:200]}",
         )
     except httpx.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"openai: {e}")
-    return {"models": [m.get("id") for m in data.get("data", []) if m.get("id")]}
+        raise HTTPException(status_code=502, detail=f"{req.provider_type}: {e}")
+    except HTTPException:
+        raise
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(e))
+
+    return {"models": [m.id for m in meta]}
 
 
 @router.get("/{provider_id}/models")
@@ -384,29 +412,61 @@ async def list_models(provider_id: str, db: Session = Depends(get_db_session)):
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
 
-    if row.provider_type == "anthropic":
-        return {"models": ANTHROPIC_MODELS}
+    from services.model_registry import fetch_provider_models
 
-    if row.provider_type == "ollama":
-        base_url = row.base_url or "http://localhost:11434"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"{base_url.rstrip('/')}/api/tags")
-            resp.raise_for_status()
-            data = resp.json()
-        return {"models": [m.get("name") for m in data.get("models", []) if m.get("name")]}
+    # ``fetch_provider_models`` delegates to the discovery module and
+    # falls back to the cold-boot list on any error, so callers always
+    # get a usable payload.
+    try:
+        models = await fetch_provider_models(row)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"models": models}
 
-    if row.provider_type == "openai":
-        base_url = row.base_url or "https://api.openai.com/v1"
-        key = await _resolve_api_key(row)
-        if not key:
-            raise HTTPException(status_code=400, detail="no api key configured")
-        headers = {"Authorization": f"Bearer {key}"}
-        if row.config and row.config.get("organization"):
-            headers["OpenAI-Organization"] = row.config["organization"]
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-        return {"models": [m.get("id") for m in data.get("data", []) if m.get("id")]}
 
-    raise HTTPException(status_code=400, detail=f"unsupported provider_type: {row.provider_type}")
+@router.post("/{provider_id}/refresh-models")
+async def refresh_provider_models(
+    provider_id: str, db: Session = Depends(get_db_session)
+):
+    """Force a live rediscovery for one provider and push the union of
+    same-type providers' models to Bifrost's allow-list. Invalidates the
+    registry's TTL cache so the next dropdown fetch sees fresh data.
+    """
+    row = db.get(LLMProviderConfig, provider_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="provider not found")
+
+    from services.bifrost_admin import sync_all_provider_models
+    from services.model_registry import invalidate_model_cache
+
+    invalidate_model_cache()
+    # Run the same union-of-same-type sync used at startup so Bifrost
+    # sees the new state too, not just the backend's cache.
+    sync_results = await sync_all_provider_models()
+
+    from services.model_registry import fetch_provider_models
+
+    try:
+        models = await fetch_provider_models(row)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "provider_id": provider_id,
+        "provider_type": row.provider_type,
+        "models": models,
+        "bifrost_sync": sync_results.get(row.provider_type, False),
+    }
+
+
+@router.post("/refresh-models")
+async def refresh_all_provider_models():
+    """Force live rediscovery across every active provider and push the
+    resulting allow-lists to Bifrost. Useful after enabling a new
+    provider or rotating keys in bulk.
+    """
+    from services.bifrost_admin import sync_all_provider_models
+    from services.model_registry import invalidate_model_cache
+
+    invalidate_model_cache()
+    sync_results = await sync_all_provider_models()
+    return {"bifrost_sync": sync_results}

@@ -46,6 +46,34 @@ Health check: `curl http://localhost:8080/health`.
 
 `docker/bifrost/config.json` declares the providers, the models Bifrost will expose, and the cache backend. API keys are **not** written into the config file — they are injected as environment variables at container start time (`env.ANTHROPIC_API_KEY`, `env.OPENAI_API_KEY`, `env.OLLAMA_URL`). Vigil's backend reads per-provider keys from its own `secrets_manager`; what's in Bifrost's env are the fallback/default keys used when a provider row in `llm_provider_configs` doesn't override them.
 
+### Model allow-list: runtime sync, not the config file
+
+The `models` array under each `providers.<name>.keys[0]` in `config.json` is a **cold-boot bootstrap list only**. The backend runs `sync_all_provider_models()` ([services/bifrost_admin.py](../../services/bifrost_admin.py)) which:
+
+1. Queries each upstream provider's live catalog (Anthropic `/v1/models`, OpenAI `/v1/models`, Ollama `/api/tags`) via [services/provider_model_discovery.py](../../services/provider_model_discovery.py).
+2. Writes the per-row list into the backend's dropdown cache (`_MODEL_LIST_CACHE` in [services/model_registry.py](../../services/model_registry.py)).
+3. Unions the model IDs across all active providers of the same type and PUTs that union to Bifrost's admin API (`PUT /api/providers/{name}` with `keys[0].models` updated).
+
+**Single source of truth.** `sync_all_provider_models()` is the only writer to both caches — the UI dropdown and Bifrost's allow-list come from the same call over the same upstream fetch, so they cannot drift. `fetch_provider_models()` on the read path is a pure cache lookup that falls back to a lazy sync on a cold-start miss.
+
+**When it runs:**
+- At backend startup — launched as a background task ([backend/main.py](../../backend/main.py) startup handler).
+- **Periodically** — `MODEL_CATALOG_REFRESH_INTERVAL_S` (default 300s / 5min). Set to `0` to disable the loop and only sync once at startup.
+- On demand — `POST /api/llm-providers/refresh-models` (all) or `POST /api/llm-providers/{id}/refresh-models` (one).
+- Whenever a provider is added, updated, or deleted via the Providers UI — CRUD handlers invalidate the cache and schedule a background resync.
+
+The bootstrap list in `config.json` only matters for the cold-start window (seconds) before the first sync iteration completes, or for environments where the backend can't reach upstream at startup.
+
+### Legacy / non-listed models (extras)
+
+Some upstream providers drop older model IDs from their `/v1/models` listing even when those IDs are still callable (Anthropic did this with the Claude 3.x family). To surface those in the UI and let Bifrost route traffic for them, the backend unions a configurable "extras" set into both the dropdown and Bifrost's allow-list. Extras are flagged `deprecated=True` in the API response so the UI can badge them.
+
+The defaults live in [services/model_registry.py](../../services/model_registry.py) (`_DEFAULT_EXTRA_MODELS`) and currently cover Claude 3.5 Haiku, 3.5 Sonnet v2, and 3 Haiku. Override per deployment via env:
+
+- `ANTHROPIC_EXTRA_MODELS="id1,id2,..."` — replaces the default list.
+- `ANTHROPIC_EXTRA_MODELS=""` — disables extras for Anthropic entirely.
+- `OPENAI_EXTRA_MODELS="..."` — same mechanism for OpenAI if you need it.
+
 ### Caching — two layers
 
 Vigil benefits from two independent caching layers. They're **complementary**, not redundant:
