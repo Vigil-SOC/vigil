@@ -415,10 +415,17 @@ For each phase:
         self,
         workflow_id: str,
         parameters: Dict[str, Any],
+        triggered_by: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Execute a workflow by building a composite prompt and running it
-        through ClaudeService.run_agent_task().
+        """Execute a workflow as a playbook run (not a chat session).
+
+        Per #126, the execution path delegates to ``ClaudeService.chat``
+        as an internal Python primitive so backend_tools (including
+        ``skill_<slug>`` generated from the ``skills`` table) are in
+        scope for the model. Per #127, the run is persisted to
+        ``workflow_runs`` for history/audit — the row starts with
+        ``status='running'`` and is finalised with the terminal status
+        + result summary or error.
 
         Args:
             workflow_id: The workflow ID to execute
@@ -427,12 +434,16 @@ For each phase:
                 - case_id: Optional case to investigate
                 - context: Optional freeform context string
                 - hypothesis: Optional hunt hypothesis (for threat-hunt)
+            triggered_by: Identifier of what initiated the run
+                (user id, "daemon", "api", …). Persisted for audit.
 
         Returns:
-            Execution result dict
+            Execution result dict, including ``run_id`` so callers can
+            retrieve the persisted run via /api/workflows/runs/{run_id}.
         """
         from services.claude_service import ClaudeService
         from services.soc_agents import SOCAgentLibrary
+        from services.workflow_run_service import get_workflow_run_service
 
         workflow = self.get_workflow(workflow_id)
         if not workflow:
@@ -544,6 +555,21 @@ adopting different specialist agent roles for each phase.
         if not claude_service.has_api_key():
             return {"success": False, "error": "Claude API not configured"}
 
+        # Persist run start so history/audit reflects this invocation
+        # even if the chat() call below crashes. Best-effort: a DB
+        # hiccup yields ``run_id is None`` and the workflow still runs.
+        workflow_dict = workflow.to_dict(include_body=False)
+        run_service = get_workflow_run_service()
+        run_id = run_service.begin_run(
+            workflow_id=workflow_id,
+            workflow_name=workflow.name,
+            workflow_source=workflow_dict.get("source", "file"),
+            workflow_version=workflow_dict.get("version"),
+            trigger_context=dict(parameters or {}),
+            triggered_by=triggered_by,
+            skill_tools_available=skill_tool_names,
+        )
+
         # chat() is sync + has its own multi-iteration tool loop. Offload
         # to a thread so we don't block the asyncio loop of the caller.
         try:
@@ -563,14 +589,25 @@ adopting different specialist agent roles for each phase.
             error = f"{type(exc).__name__}: {exc}"
             logger.exception("Workflow execution failed for %s", workflow_id)
 
+        # Finalize the run record regardless of outcome so the row never
+        # dangles in ``status='running'``.
+        if run_id:
+            run_service.finalize_run(
+                run_id,
+                status="completed" if success else "failed",
+                result_summary=response_text or None,
+                error=error,
+            )
+
         return {
             "success": success,
-            "workflow": workflow.to_dict(include_body=False),
+            "run_id": run_id,
+            "workflow": workflow_dict,
             "result": response_text or "",
             # Playbook runs don't yet stream intermediate tool calls back
             # through this entry point; ClaudeService.chat captures them
             # internally for reasoning-trace persistence. A structured
-            # per-phase output + tool_calls list is tracked as #127.
+            # per-phase output + tool_calls feed is tracked as #128.
             "tool_calls": [],
             "error": error,
             "parameters": parameters,
