@@ -273,6 +273,7 @@ const EventTimeline = memo(function EventTimeline({
     if (!timelineRef.current || filteredEvents.length === 0) return
 
     setLoading(true)
+    let fitTimeoutId: ReturnType<typeof setTimeout> | null = null
 
     // Cleanup existing instance
     if (timelineInstance.current) {
@@ -308,8 +309,15 @@ const EventTimeline = memo(function EventTimeline({
       timelineInstance.current = timeline
 
       // Fit timeline to show all events
-      setTimeout(() => {
-        timeline.fit()
+      fitTimeoutId = setTimeout(() => {
+        fitTimeoutId = null
+        if (timelineInstance.current === timeline) {
+          try {
+            timeline.fit()
+          } catch (err) {
+            console.error('Error fitting timeline:', err)
+          }
+        }
         setLoading(false)
       }, 100)
     } catch (error) {
@@ -318,6 +326,10 @@ const EventTimeline = memo(function EventTimeline({
     }
 
     return () => {
+      if (fitTimeoutId !== null) {
+        clearTimeout(fitTimeoutId)
+        fitTimeoutId = null
+      }
       if (timelineInstance.current) {
         timelineInstance.current.destroy()
         timelineInstance.current = null
