@@ -175,6 +175,7 @@ cython_debug/
 .vscode/
 .idea/
 .cursor/
+.claude/
 *.swp
 *.swo
 *~
