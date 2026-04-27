@@ -8,8 +8,9 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from backend.schemas.system_prompt import validate_system_prompt
 from backend.services.custom_agent_service import (
     CustomAgentAlreadyExists,
     CustomAgentNotFound,
@@ -50,6 +51,11 @@ class CustomAgentCreate(BaseModel):
     enable_thinking: bool = False
     model: Optional[str] = None
 
+    @field_validator("system_prompt_override")
+    @classmethod
+    def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
+        return validate_system_prompt(v, source="custom_agent_create")
+
 
 class CustomAgentUpdate(BaseModel):
     """Partial update for an existing custom agent. All fields optional."""
@@ -67,6 +73,11 @@ class CustomAgentUpdate(BaseModel):
     max_tokens: Optional[int] = None
     enable_thinking: Optional[bool] = None
     model: Optional[str] = None
+
+    @field_validator("system_prompt_override")
+    @classmethod
+    def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
+        return validate_system_prompt(v, source="custom_agent_update")
 
 
 class ForkAgentRequest(BaseModel):
@@ -131,7 +142,9 @@ async def list_available_tools() -> Dict[str, Any]:
             import json
             from pathlib import Path
 
-            cache_file = Path(__file__).parent.parent.parent / "data" / "mcp_tools_cache.json"
+            cache_file = (
+                Path(__file__).parent.parent.parent / "data" / "mcp_tools_cache.json"
+            )
             if cache_file.exists():
                 with open(cache_file, "r") as f:
                     tools_dict = json.load(f)
@@ -141,9 +154,7 @@ async def list_available_tools() -> Dict[str, Any]:
                         name = t.get("name") if isinstance(t, dict) else None
                         if not name:
                             continue
-                        collected.add(
-                            f"{server_name}_{name}" if server_name else name
-                        )
+                        collected.add(f"{server_name}_{name}" if server_name else name)
                 tools = sorted(collected)
                 if tools:
                     logger.info(
@@ -231,7 +242,7 @@ async def fork_agent(
             raise HTTPException(
                 status_code=404, detail=f"Source agent not found: {source_agent_id}"
             )
-        new_name = (request.new_name if request else None)
+        new_name = request.new_name if request else None
         row = service.fork_from_profile(
             source_profile=source,
             source_id=source_agent_id,

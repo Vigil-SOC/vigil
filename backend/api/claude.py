@@ -15,6 +15,7 @@ import json
 import logging
 import base64
 
+from backend.schemas.system_prompt import validate_system_prompt
 from services.claude_service import ClaudeService
 from services.model_registry import get_registry
 
@@ -107,6 +108,11 @@ class ChatRequest(BaseModel):
     streaming: bool = False
     use_agent_sdk: bool = False  # Enable Agent SDK for agentic workflows
 
+    @field_validator("system_prompt")
+    @classmethod
+    def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
+        return validate_system_prompt(v, source="chat")
+
 
 class AgentTaskRequest(BaseModel):
     """Request for running an agent task."""
@@ -118,6 +124,11 @@ class AgentTaskRequest(BaseModel):
     model: Optional[str] = None  # GH #89 — resolved via ai_model_configs if omitted
     session_id: Optional[str] = None
     agent_id: Optional[str] = None
+
+    @field_validator("system_prompt")
+    @classmethod
+    def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
+        return validate_system_prompt(v, source="agent_task")
 
 
 @router.post("/chat")

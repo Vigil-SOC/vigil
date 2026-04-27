@@ -2162,6 +2162,13 @@ Provide a structured summary preserving all critical context."""
                     content_str = self._truncate_tool_response(
                         content_str, tool_name=tool_name
                     )
+                    # Issue #87: wrap untrusted tool output in a delimiter
+                    # block so the model can distinguish data from instructions.
+                    from services.prompt_security import wrap_tool_result
+
+                    content_str = wrap_tool_result(
+                        content_str, source="backend", tool=tool_name
+                    )
 
                     tool_results.append(
                         {
@@ -2177,11 +2184,16 @@ Provide a structured summary preserving all critical context."""
                     logger.error(
                         f"Error calling backend tool {tool_name}: {e}", exc_info=True
                     )
+                    from services.prompt_security import wrap_tool_result
+
+                    err_text = wrap_tool_result(
+                        f"Error: {str(e)}", source="backend", tool=tool_name
+                    )
                     tool_results.append(
                         {
                             "type": "tool_result",
                             "tool_use_id": tool_id,
-                            "content": [{"type": "text", "text": f"Error: {str(e)}"}],
+                            "content": [{"type": "text", "text": err_text}],
                         }
                     )
 
@@ -2241,6 +2253,11 @@ Provide a structured summary preserving all critical context."""
                                 )
                             else:
                                 content = [{"type": "text", "text": str(result)}]
+                            # Issue #87: truncate first, then wrap each text
+                            # block in <vigil:tool_result> so attacker payloads
+                            # in MCP responses are clearly framed as data.
+                            from services.prompt_security import wrap_tool_result
+
                             for block in content:
                                 if (
                                     isinstance(block, dict)
@@ -2248,6 +2265,11 @@ Provide a structured summary preserving all critical context."""
                                 ):
                                     block["text"] = self._truncate_tool_response(
                                         block["text"], tool_name=tool_name
+                                    )
+                                    block["text"] = wrap_tool_result(
+                                        block["text"],
+                                        source=server_name or "mcp",
+                                        tool=actual_tool_name,
                                     )
 
                             tool_results.append(
@@ -2259,12 +2281,19 @@ Provide a structured summary preserving all critical context."""
                             )
                     except Exception as e:
                         logger.error(f"Error calling tool {tool_name}: {e}")
+                        from services.prompt_security import wrap_tool_result
+
+                        err_text = wrap_tool_result(
+                            f"Error: {str(e)}",
+                            source=server_name or "mcp",
+                            tool=actual_tool_name,
+                        )
                         tool_results.append(
                             {
                                 "type": "tool_result",
                                 "tool_use_id": tool_id,
                                 "content": [
-                                    {"type": "text", "text": f"Error: {str(e)}"}
+                                    {"type": "text", "text": err_text}
                                 ],
                             }
                         )

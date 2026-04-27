@@ -29,7 +29,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +75,135 @@ def _bifrost_url() -> str:
     return os.getenv("BIFROST_URL", "http://bifrost:8080").rstrip("/")
 
 
-def select_path(provider: ProviderSpec, *, enable_thinking: bool = False) -> DispatchPath:
+def _block_on_injection() -> bool:
+    """Honoured by the pre-dispatch hook (issue #87). Off by default —
+    we observe before enforcing. Promote via env, not by editing code."""
+    return os.getenv("PROMPT_INJECTION_BLOCK", "false").lower() in ("true", "1", "yes")
+
+
+def select_path(
+    provider: ProviderSpec, *, enable_thinking: bool = False
+) -> DispatchPath:
     """All traffic goes through Bifrost; kept for backwards-compatible callers."""
     del provider, enable_thinking
     return "bifrost"
+
+
+# ---------------------------------------------------------------------------
+# Pre-dispatch sanitization (issue #87)
+# ---------------------------------------------------------------------------
+
+
+def _wrap_tool_results_in_messages(
+    messages: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Walk Anthropic-shape messages and wrap every ``tool_result`` block.
+
+    The wrapper is idempotent (see ``services.prompt_security.wrap_tool_result``)
+    so messages that already passed through ``ClaudeService`` won't be
+    double-wrapped here.
+    """
+    from services.prompt_security import wrap_tool_result
+
+    out: List[Dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            out.append(msg)
+            continue
+        new_content: List[Any] = []
+        rewritten = False
+        for block in content:
+            if not isinstance(block, dict) or block.get("type") != "tool_result":
+                new_content.append(block)
+                continue
+            tool_use_id = block.get("tool_use_id")
+            inner = block.get("content")
+            wrapped_inner: Any
+            if isinstance(inner, str):
+                wrapped_inner = wrap_tool_result(
+                    inner, source="router", tool=str(tool_use_id or "unknown")
+                )
+            elif isinstance(inner, list):
+                wrapped_inner = []
+                for sub in inner:
+                    if (
+                        isinstance(sub, dict)
+                        and sub.get("type") == "text"
+                        and isinstance(sub.get("text"), str)
+                    ):
+                        wrapped_inner.append(
+                            {
+                                **sub,
+                                "text": wrap_tool_result(
+                                    sub["text"],
+                                    source="router",
+                                    tool=str(tool_use_id or "unknown"),
+                                ),
+                            }
+                        )
+                    else:
+                        wrapped_inner.append(sub)
+            else:
+                wrapped_inner = inner
+            new_content.append({**block, "content": wrapped_inner})
+            rewritten = True
+        out.append({**msg, "content": new_content} if rewritten else msg)
+    return out
+
+
+def _scan_messages_for_injection(messages: List[Dict[str, Any]]) -> List[str]:
+    """Run pattern scan over text content in *messages*; return matched names."""
+    from services.prompt_security import scan_for_injection
+
+    patterns: List[str] = []
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, str):
+            patterns.extend(scan_for_injection(content).patterns)
+        elif isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "text" and isinstance(block.get("text"), str):
+                    patterns.extend(scan_for_injection(block["text"]).patterns)
+    return patterns
+
+
+def _pre_dispatch_sanitize(
+    messages: List[Dict[str, Any]],
+    system_prompt: Optional[str],
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Issue #87 chokepoint: wrap tool_results, log injection patterns,
+    optionally block when ``PROMPT_INJECTION_BLOCK=true``.
+
+    Returns the (possibly rewritten) ``messages`` and the system prompt
+    (returned as-is — we never silently mutate user system prompts).
+    """
+    from services.prompt_security import (
+        PromptInjectionBlocked,
+        scan_for_injection,
+    )
+
+    wrapped = _wrap_tool_results_in_messages(messages)
+
+    msg_patterns = _scan_messages_for_injection(messages)
+    sys_patterns = scan_for_injection(system_prompt).patterns
+
+    if msg_patterns or sys_patterns:
+        logger.info(
+            "prompt_injection scan",
+            extra={
+                "event": "prompt_injection.scan",
+                "message_patterns": msg_patterns,
+                "system_prompt_patterns": sys_patterns,
+                "block_mode": _block_on_injection(),
+            },
+        )
+        if _block_on_injection():
+            raise PromptInjectionBlocked(msg_patterns + sys_patterns)
+
+    return wrapped, system_prompt
 
 
 class LLMRouter:
@@ -122,6 +247,7 @@ class LLMRouter:
         extended thinking and native prompt caching round-trip intact.
         Other providers use Bifrost's OpenAI-format ``/v1`` endpoint.
         """
+        messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
         model = model or provider.default_model
         if provider.provider_type == "anthropic":
             return await self._dispatch_anthropic(
@@ -210,10 +336,7 @@ class LLMRouter:
             api_key = get_secret(provider.api_key_ref)
         if not api_key:
             # Fall back to common env names so local dev still works.
-            api_key = (
-                os.getenv("ANTHROPIC_API_KEY")
-                or os.getenv("CLAUDE_API_KEY")
-            )
+            api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
         if not api_key:
             raise RuntimeError(
                 f"Anthropic provider '{provider.provider_id}' has no resolvable API key"
@@ -247,11 +370,13 @@ class LLMRouter:
             elif btype == "thinking":
                 thinking_parts.append(getattr(block, "thinking", ""))
             elif btype == "tool_use":
-                tool_uses.append({
-                    "id": getattr(block, "id", None),
-                    "name": getattr(block, "name", None),
-                    "input": getattr(block, "input", None),
-                })
+                tool_uses.append(
+                    {
+                        "id": getattr(block, "id", None),
+                        "name": getattr(block, "name", None),
+                        "input": getattr(block, "input", None),
+                    }
+                )
 
         usage = getattr(resp, "usage", None)
         return {
