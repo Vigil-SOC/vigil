@@ -750,6 +750,23 @@ export const configApi = {
     review_model: string
     workdir_base: string
   }) => api.post('/config/orchestrator', data),
+
+  getMempalaceHealth: () => api.get<MempalaceHealth>('/config/mempalace/health'),
+}
+
+// GH #136 — Mempalace is hidden from the MCP servers list because it's an
+// always-on core dependency, so its health surfaces on the General tab.
+export interface MempalaceHealth {
+  connected: boolean
+  error: string | null
+  palace_path: string
+  palace_exists: boolean
+  size_bytes: number | null
+  size_human: string | null
+  last_modified_iso: string | null
+  closed_cases_count: number | null
+  memories_count: number | null
+  memories_count_source: 'chromadb' | 'unavailable'
 }
 
 // LLM Provider API (GH #88 — multi-provider LLM config)

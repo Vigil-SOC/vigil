@@ -1155,3 +1155,160 @@ async def set_darktrace_config(config: DarktraceConfig):
         logger.error(f"Error setting Darktrace config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ---------------------------------------------------------------------------
+# Mempalace health (#136)
+#
+# Mempalace is hidden from the MCP servers list because it's a core,
+# always-on dependency. This endpoint surfaces enough signal — connection
+# state, palace size, last write, entry counts — for operators to confirm
+# the memory store is actually healthy from the General tab in Settings.
+# ---------------------------------------------------------------------------
+
+
+def _format_size(num_bytes: int) -> str:
+    units = ["B", "KB", "MB", "GB", "TB"]
+    size = float(num_bytes)
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            return f"{size:.0f} {unit}" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} TB"
+
+
+def _scan_palace(palace_path: Path) -> Dict[str, Any]:
+    """Walk the palace tree once and return size + last-modified.
+
+    Best-effort: any unreadable entry is skipped, not raised. Returns
+    ``palace_exists=False`` if the root doesn't exist.
+    """
+    if not palace_path.exists():
+        return {
+            "palace_exists": False,
+            "size_bytes": None,
+            "size_human": None,
+            "last_modified_iso": None,
+        }
+
+    total = 0
+    latest_mtime = 0.0
+    stack = [palace_path]
+    while stack:
+        current = stack.pop()
+        try:
+            for entry in os.scandir(current):
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(Path(entry.path))
+                    else:
+                        st = entry.stat(follow_symlinks=False)
+                        total += st.st_size
+                        if st.st_mtime > latest_mtime:
+                            latest_mtime = st.st_mtime
+                except OSError:
+                    continue
+        except OSError:
+            continue
+
+    from datetime import datetime, timezone
+    last_iso = (
+        datetime.fromtimestamp(latest_mtime, tz=timezone.utc)
+        .isoformat()
+        .replace("+00:00", "Z")
+        if latest_mtime > 0
+        else None
+    )
+    return {
+        "palace_exists": True,
+        "size_bytes": total,
+        "size_human": _format_size(total),
+        "last_modified_iso": last_iso,
+    }
+
+
+def _count_memories(palace_path: Path) -> Dict[str, Any]:
+    """Best-effort ChromaDB collection count.
+
+    Returns a dict with ``count`` (int|None) and ``source`` (one of
+    ``chromadb``, ``unavailable``). Never raises — a missing or
+    incompatible chromadb install just degrades to ``unavailable``.
+    """
+    try:
+        import chromadb  # type: ignore
+    except Exception:
+        return {"count": None, "source": "unavailable"}
+
+    try:
+        client = chromadb.PersistentClient(path=str(palace_path))
+        collections = client.list_collections()
+        total = 0
+        for coll in collections:
+            try:
+                total += coll.count()
+            except Exception:
+                continue
+        return {"count": total, "source": "chromadb"}
+    except Exception as e:
+        logger.debug("ChromaDB count failed for %s: %s", palace_path, e)
+        return {"count": None, "source": "unavailable"}
+
+
+@router.get("/mempalace/health")
+async def get_mempalace_health():
+    """Health snapshot for the mempalace memory store.
+
+    Aggregates MCP connection state with filesystem facts about the
+    palace directory so operators can sanity-check at a glance whether
+    memories are actually being persisted. Always returns 200 — failures
+    are surfaced via ``connected: false`` and ``error`` fields rather
+    than HTTP errors, so the panel can render even when mempalace is
+    completely down.
+    """
+    import asyncio
+
+    from services.mempalace_paths import (
+        get_closed_cases_dir,
+        get_palace_path,
+    )
+
+    # Connection state — reuse the same signal /api/mcp/connections/status uses.
+    connected = False
+    error: Optional[str] = None
+    try:
+        from services.mcp_client import get_mcp_client
+        mcp_client = get_mcp_client()
+        if mcp_client is not None:
+            statuses = mcp_client.get_connection_status() or {}
+            connected = bool(statuses.get("mempalace", False))
+            error = mcp_client.get_last_error("mempalace")
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Could not read mempalace MCP status: %s", e)
+        error = str(e)
+
+    palace_path = get_palace_path(ensure_exists=False)
+
+    fs_stats = await asyncio.to_thread(_scan_palace, palace_path)
+
+    closed_cases_count: Optional[int] = None
+    try:
+        closed_dir = get_closed_cases_dir(ensure_exists=False)
+        if closed_dir.exists():
+            closed_cases_count = await asyncio.to_thread(
+                lambda: len(list(closed_dir.glob("*.json")))
+            )
+        else:
+            closed_cases_count = 0
+    except Exception as e:  # noqa: BLE001
+        logger.debug("Closed-cases count failed: %s", e)
+
+    memories = await asyncio.to_thread(_count_memories, palace_path)
+
+    return {
+        "connected": connected,
+        "error": error,
+        "palace_path": str(palace_path),
+        **fs_stats,
+        "closed_cases_count": closed_cases_count,
+        "memories_count": memories["count"],
+        "memories_count_source": memories["source"],
+    }

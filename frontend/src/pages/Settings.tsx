@@ -38,6 +38,7 @@ import {
   LinearProgress,
   ToggleButtonGroup,
   ToggleButton,
+  Link,
 } from '@mui/material'
 import { useNotifications } from '../contexts/NotificationContext'
 import { notificationService } from '../services/notifications'
@@ -57,7 +58,7 @@ import {
   UploadFile as UploadFileIcon,
   DeleteSweep as DeleteSweepIcon,
 } from '@mui/icons-material'
-import { configApi, mcpApi, storageApi, localServicesApi, ingestionApi, findingsApi } from '../services/api'
+import { configApi, mcpApi, storageApi, localServicesApi, ingestionApi, findingsApi, MempalaceHealth } from '../services/api'
 import IntegrationWizard, { IntegrationMetadata } from '../components/settings/IntegrationWizard'
 import CustomIntegrationBuilder from '../components/settings/CustomIntegrationBuilder'
 import { getAllIntegrations, loadCustomIntegrations } from '../config/integrations'
@@ -187,11 +188,16 @@ export default function Settings() {
   const [detectionRulesOpen, setDetectionRulesOpen] = useState(false)
   const [splunkStatus, setSplunkStatus] = useState<any>(null)
   const [splunkLoading, setSplunkLoading] = useState(false)
+  const [mempalaceHealth, setMempalaceHealth] = useState<MempalaceHealth | null>(null)
+  const [mempalaceLoading, setMempalaceLoading] = useState(false)
+  const [mempalaceTestResult, setMempalaceTestResult] = useState<{ ok: boolean; msg: string } | null>(null)
+  const [mempalaceTesting, setMempalaceTesting] = useState(false)
 
   useEffect(() => { loadConfigs() }, [])
   useEffect(() => { setGeneralConfig(prev => ({ ...prev, show_notifications: notificationsEnabled })) }, [notificationsEnabled])
   useEffect(() => {
     if (currentTab === tabIndex['integrations']) { loadMcpServers() }
+    else if (currentTab === tabIndex['general']) { loadMempalaceHealth() }
     else if (IS_DEV_MODE && currentTab === tabIndex['dev']) { loadSplunkStatus(); loadStorageStatus() }
   }, [currentTab, tabIndex])
 
@@ -293,6 +299,39 @@ export default function Settings() {
       setStorageStatus(status.data)
       setStorageHealth(health.data)
     } catch { /* ignore */ }
+  }
+
+  const loadMempalaceHealth = async () => {
+    setMempalaceLoading(true)
+    try {
+      const response = await configApi.getMempalaceHealth()
+      setMempalaceHealth(response.data)
+    } catch {
+      setMempalaceHealth(null)
+    } finally {
+      setMempalaceLoading(false)
+    }
+  }
+
+  const handleTestMempalace = async () => {
+    setMempalaceTesting(true)
+    setMempalaceTestResult(null)
+    try {
+      const response = await mcpApi.testServer('mempalace')
+      const ok = !!(response.data?.success ?? response.data?.connected ?? response.data?.ok)
+      setMempalaceTestResult({
+        ok,
+        msg: response.data?.message || (ok ? 'Mempalace MCP server responded.' : 'Test returned a non-success status.'),
+      })
+    } catch (error: any) {
+      setMempalaceTestResult({
+        ok: false,
+        msg: error?.response?.data?.detail || error?.message || 'Test failed.',
+      })
+    } finally {
+      setMempalaceTesting(false)
+      loadMempalaceHealth()
+    }
   }
 
   // ---- Action handlers ----
@@ -1606,6 +1645,119 @@ export default function Settings() {
             <Box sx={{ mt: 4 }}>
               <Divider sx={{ mb: 3 }} />
               <CostAnalytics />
+            </Box>
+
+            {/* GH #136 — mempalace is hidden from MCP servers list because it's
+                 always-on, so its health surfaces here on General. */}
+            <Box sx={{ mt: 4, maxWidth: 900 }}>
+              <Divider sx={{ mb: 3 }} />
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <Box
+                    component="span"
+                    sx={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      bgcolor: mempalaceHealth?.connected ? 'success.main' : (mempalaceHealth ? 'error.main' : 'grey.500'),
+                    }}
+                  />
+                  Mempalace Health
+                </Typography>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button size="small" startIcon={<RefreshIcon />} onClick={loadMempalaceHealth} disabled={mempalaceLoading}>
+                    {mempalaceLoading ? 'Refreshing...' : 'Refresh'}
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={handleTestMempalace}
+                    disabled={mempalaceTesting}
+                    startIcon={mempalaceTesting ? <CircularProgress size={14} color="inherit" /> : undefined}
+                  >
+                    {mempalaceTesting ? 'Testing...' : 'Test connection'}
+                  </Button>
+                </Box>
+              </Box>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Persistent memory store used by every agent. Always on — not toggleable from the Integrations tab.
+              </Typography>
+              {mempalaceHealth ? (
+                <Card variant="outlined">
+                  <CardContent>
+                    <Box sx={{ display: 'grid', gridTemplateColumns: '180px 1fr', rowGap: 1.5, columnGap: 2 }}>
+                      <Typography variant="body2" color="text.secondary">Status</Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Chip
+                          size="small"
+                          label={mempalaceHealth.connected ? 'Connected' : 'Disconnected'}
+                          color={mempalaceHealth.connected ? 'success' : 'error'}
+                          variant="outlined"
+                        />
+                        {mempalaceHealth.error && (
+                          <Typography variant="body2" color="error.main">{mempalaceHealth.error}</Typography>
+                        )}
+                      </Box>
+
+                      <Typography variant="body2" color="text.secondary">Palace path</Typography>
+                      <Typography variant="body2" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                        {mempalaceHealth.palace_path}
+                        {!mempalaceHealth.palace_exists && (
+                          <Typography component="span" variant="caption" color="error.main" sx={{ ml: 1 }}>
+                            (missing)
+                          </Typography>
+                        )}
+                      </Typography>
+
+                      <Typography variant="body2" color="text.secondary">Size on disk</Typography>
+                      <Typography variant="body2">{mempalaceHealth.size_human ?? '—'}</Typography>
+
+                      <Typography variant="body2" color="text.secondary">Last write</Typography>
+                      <Typography variant="body2">
+                        {mempalaceHealth.last_modified_iso
+                          ? new Date(mempalaceHealth.last_modified_iso).toLocaleString()
+                          : '—'}
+                      </Typography>
+
+                      <Typography variant="body2" color="text.secondary">Closed cases</Typography>
+                      <Typography variant="body2">{mempalaceHealth.closed_cases_count ?? '—'}</Typography>
+
+                      <Typography variant="body2" color="text.secondary">Stored memories</Typography>
+                      <Typography variant="body2">
+                        {mempalaceHealth.memories_count ?? '—'}
+                        {mempalaceHealth.memories_count_source === 'unavailable' && (
+                          <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                            (chromadb unavailable)
+                          </Typography>
+                        )}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ mt: 2 }}>
+                      <Link
+                        href="https://github.com/Vigil-SOC/vigil/blob/main/docs/STATE.md"
+                        target="_blank"
+                        rel="noopener"
+                        variant="body2"
+                      >
+                        Backup &amp; recovery guidance →
+                      </Link>
+                    </Box>
+                  </CardContent>
+                </Card>
+              ) : (
+                <Alert severity={mempalaceLoading ? 'info' : 'warning'}>
+                  {mempalaceLoading ? 'Loading mempalace health...' : 'Could not load mempalace health.'}
+                </Alert>
+              )}
+              {mempalaceTestResult && (
+                <Alert
+                  severity={mempalaceTestResult.ok ? 'success' : 'error'}
+                  onClose={() => setMempalaceTestResult(null)}
+                  sx={{ mt: 2 }}
+                >
+                  {mempalaceTestResult.msg}
+                </Alert>
+              )}
             </Box>
           </TabPanel>
         )
