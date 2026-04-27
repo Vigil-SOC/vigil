@@ -8,20 +8,19 @@
  * configured, we render the existing EntityGraph with the original props
  * passed through, so callers don't need to know which view is active.
  *
- * Configuration check fans out two requests in parallel:
- *   - vstrikeApi.health()       → confirms the legacy topology base_url is set
- *   - vstrikeApi.iframeToken()  → confirms the new MCP login + ui-login-token
- *                                 path actually works end-to-end
+ * The probe (`POST /api/integrations/vstrike/ui/iframe-token`) decides
+ * iframe-readiness. Result is cached at module level for `STALE_TIME_MS`
+ * so multiple mounts on the same page (Investigation graph + Case dialog
+ * + EventVisualizationDialog opening together) share one round-trip.
  *
- * The iframe-token probe is the authoritative signal. If it succeeds we
- * pass its returned URL straight through (saving the iframe component a
- * second round-trip). If it 503s with `missing_credentials` we fall back
- * to the legacy graph silently.
+ * The component intentionally does NOT depend on `@tanstack/react-query` —
+ * the rest of the app does not have a `QueryClientProvider` at the root,
+ * so any react-query hook crashes the host tree. Plain `useState` +
+ * `useEffect` with a module cache covers the same ground.
  */
 
 import { ReactNode, useEffect, useState } from 'react'
 import { Box, CircularProgress } from '@mui/material'
-import { useQuery } from '@tanstack/react-query'
 import EntityGraph, { GraphLink, GraphNode } from './EntityGraph'
 import VStrikeIframe from './VStrikeIframe'
 import { vstrikeApi } from '../../services/api'
@@ -49,57 +48,84 @@ export interface EntityVisualizationProps {
   emptyState?: ReactNode
 }
 
-interface VStrikeReadiness {
-  ready: boolean
-  // When ready, we already hold the iframe URL — VStrikeIframe doesn't
-  // need to refetch immediately. (It will still fetch its own short-lived
-  // token if the user reloads.)
-  initialIframeUrl?: string
-  initialToken?: string
+type ProbeState =
+  | { kind: 'pending' }
+  | { kind: 'ready' }
+  | { kind: 'unavailable' }
+
+interface CachedProbe {
+  state: ProbeState
+  fetchedAt: number
+  inFlight?: Promise<ProbeState>
 }
 
-async function probeVStrike(): Promise<VStrikeReadiness> {
+const STALE_TIME_MS = 60_000
+
+// Module-level cache. Mounting EntityVisualization in three places at
+// once should result in ONE network call, not three. The cache is
+// process-local so a refresh / route change starts fresh.
+const _cache: { entry: CachedProbe | null } = { entry: null }
+
+async function probeVStrike(): Promise<ProbeState> {
   try {
     const tokenResp = await vstrikeApi.iframeToken()
     if (tokenResp.data?.iframe_url && tokenResp.data?.token) {
-      return {
-        ready: true,
-        initialIframeUrl: tokenResp.data.iframe_url,
-        initialToken: tokenResp.data.token,
-      }
+      return { kind: 'ready' }
     }
-    return { ready: false }
-  } catch (err: any) {
-    // 503 = not configured; any other error = not iframe-ready right now.
-    return { ready: false }
+    return { kind: 'unavailable' }
+  } catch {
+    // 503 = not configured; transport error = not ready right now.
+    return { kind: 'unavailable' }
   }
 }
 
-export default function EntityVisualization(props: EntityVisualizationProps) {
-  const {
-    height = 500,
-    vstrikeNetworkId,
-    emptyState,
-    ...graphProps
-  } = props
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['vstrike', 'iframe-ready'],
-    queryFn: probeVStrike,
-    staleTime: 60_000,
-    refetchOnWindowFocus: false,
-    refetchOnMount: false,
-    retry: false,
+function getCachedOrFetch(): { state: ProbeState; promise?: Promise<ProbeState> } {
+  const now = Date.now()
+  const cached = _cache.entry
+  if (cached && now - cached.fetchedAt < STALE_TIME_MS) {
+    if (cached.inFlight) {
+      return { state: cached.state, promise: cached.inFlight }
+    }
+    return { state: cached.state }
+  }
+  const promise = probeVStrike().then((next) => {
+    _cache.entry = { state: next, fetchedAt: Date.now() }
+    return next
   })
+  _cache.entry = {
+    state: { kind: 'pending' },
+    fetchedAt: now,
+    inFlight: promise,
+  }
+  return { state: { kind: 'pending' }, promise }
+}
 
-  // Track when the probe has resolved at least once so the initial render
-  // doesn't flash the legacy graph before the iframe takes over.
-  const [resolved, setResolved] = useState(false)
+export default function EntityVisualization(props: EntityVisualizationProps) {
+  const { height = 500, vstrikeNetworkId, emptyState, ...graphProps } = props
+
+  // Initialize state from the cache so a remount after a recent probe
+  // doesn't flash the legacy graph for a frame.
+  const [state, setState] = useState<ProbeState>(
+    () => getCachedOrFetch().state,
+  )
+
   useEffect(() => {
-    if (data !== undefined) setResolved(true)
-  }, [data])
+    let cancelled = false
+    const result = getCachedOrFetch()
+    if (result.promise) {
+      result.promise.then((next) => {
+        if (!cancelled) setState(next)
+      })
+    } else {
+      // Cache hit — adopt the latest known state synchronously.
+      setState(result.state)
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
-  if (isLoading && !resolved) {
+  if (state.kind === 'pending') {
     return (
       <Box
         sx={{
@@ -114,13 +140,16 @@ export default function EntityVisualization(props: EntityVisualizationProps) {
     )
   }
 
-  if (data?.ready) {
+  if (state.kind === 'ready') {
     return (
       <VStrikeIframe height={height} initialNetworkId={vstrikeNetworkId} />
     )
   }
 
-  if (emptyState !== undefined && (!graphProps.nodes || graphProps.nodes.length === 0)) {
+  if (
+    emptyState !== undefined &&
+    (!graphProps.nodes || graphProps.nodes.length === 0)
+  ) {
     return <>{emptyState}</>
   }
 
