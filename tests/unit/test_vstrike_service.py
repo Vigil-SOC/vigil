@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -25,6 +26,26 @@ def _clear_jwt_cache():
     _jwt_cache.clear()
     yield
     _jwt_cache.clear()
+
+
+@pytest.fixture
+def isolate_secrets(monkeypatch):
+    """Force the factory's `get_secret` lookups to consult only os.environ.
+
+    The real secrets manager reads from encrypted store + env + dotenv +
+    keyring. On a developer machine that store may already contain
+    VSTRIKE_* values (e.g. saved via a live Settings UI test), which would
+    leak into tests that expect those keys to be unset. This fixture
+    patches the factory's get_secret import to a thin wrapper that only
+    looks at os.environ — which the test then controls via monkeypatch.
+    """
+    import backend.secrets_manager as sm
+
+    def _env_only(key, default=None):
+        return os.environ.get(key, default)
+
+    monkeypatch.setattr(sm, "get_secret", _env_only)
+    return monkeypatch
 
 
 def _service(**kwargs) -> VStrikeService:
@@ -199,22 +220,24 @@ def test_get_vstrike_service_with_only_ui_credentials(monkeypatch):
     assert svc.has_ui_credentials is True
 
 
-def test_get_vstrike_service_returns_none_with_only_username(monkeypatch):
-    monkeypatch.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
-    monkeypatch.delenv("VSTRIKE_API_KEY", raising=False)
-    monkeypatch.setenv("VSTRIKE_USERNAME", "deeptempo_manager")
-    monkeypatch.delenv("VSTRIKE_PASSWORD", raising=False)
+def test_get_vstrike_service_returns_none_with_only_username(isolate_secrets):
+    isolate_secrets.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
+    isolate_secrets.delenv("VSTRIKE_API_KEY", raising=False)
+    isolate_secrets.setenv("VSTRIKE_USERNAME", "deeptempo_manager")
+    isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
     with patch("core.config.get_integration_config", return_value={}):
         svc = get_vstrike_service()
     # Username alone is not enough.
     assert svc is None
 
 
-def test_get_vstrike_service_ui_credentials_from_integration_config(monkeypatch):
-    monkeypatch.delenv("VSTRIKE_BASE_URL", raising=False)
-    monkeypatch.delenv("VSTRIKE_API_KEY", raising=False)
-    monkeypatch.delenv("VSTRIKE_USERNAME", raising=False)
-    monkeypatch.delenv("VSTRIKE_PASSWORD", raising=False)
+def test_get_vstrike_service_ui_credentials_from_integration_config(
+    isolate_secrets,
+):
+    isolate_secrets.delenv("VSTRIKE_BASE_URL", raising=False)
+    isolate_secrets.delenv("VSTRIKE_API_KEY", raising=False)
+    isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
+    isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
     with patch(
         "core.config.get_integration_config",
         return_value={

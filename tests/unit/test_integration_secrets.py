@@ -112,3 +112,193 @@ def test_registry_is_a_mapping_not_a_dict_alias():
     assert len(secret_fields_for("vstrike")) == original_size
     # And the registry export is keyed by integration_id
     assert "vstrike" in INTEGRATION_SECRET_FIELDS
+
+
+# ---------------------------------------------------------------------------
+# Coverage of every password-typed integration in integrations.ts
+# ---------------------------------------------------------------------------
+
+
+def test_every_audited_integration_is_registered():
+    """Sweep test: every integration with password-typed fields in the
+    frontend metadata must have a corresponding registry entry, otherwise
+    its credentials would still flow through the plaintext path on save.
+
+    The list below was derived by parsing
+    ``frontend/src/config/integrations.ts`` for ``type: 'password'`` fields
+    grouped by their parent integration ``id``. If a new integration with
+    password-typed fields is added to the frontend, add it here AND to
+    ``_SECRET_FIELDS`` in services.integration_secrets.
+    """
+    expected = {
+        "github",
+        "virustotal",
+        "alienvault-otx",
+        "shodan",
+        "misp",
+        "gcp-threat-intel",
+        "url-analysis",
+        "ip-geolocation",
+        "crowdstrike",
+        "sentinelone",
+        "carbon-black",
+        "microsoft-defender",
+        "cortex-xdr",
+        "trend-micro-vision-one",
+        "sophos-intercept-x",
+        "cybereason",
+        "trellix",
+        "tanium",
+        "cynet",
+        "eset",
+        "bitdefender-gravityzone",
+        "fortinet-fortiedr",
+        "kaspersky",
+        "cisco-secure-endpoint",
+        "symantec-edr",
+        "splunk",
+        "cribl-stream",
+        "elastic-siem",
+        "azure-sentinel",
+        "qradar",
+        "arcsight",
+        "logrhythm",
+        "exabeam",
+        "securonix",
+        "sumo-logic",
+        "graylog",
+        "aws-security-hub",
+        "aws-guardduty",
+        "gcp-security",
+        "azure-defender",
+        "prisma-cloud",
+        "orca-security",
+        "wiz",
+        "lacework",
+        "aqua-security",
+        "snyk",
+        "okta",
+        "azure-ad",
+        "ping-identity",
+        "auth0",
+        "onelogin",
+        "duo-security",
+        "jumpcloud",
+        "sailpoint",
+        "cyberark",
+        "beyond-trust",
+        "palo-alto",
+        "cisco-firepower",
+        "fortinet",
+        "checkpoint",
+        "zscaler",
+        "sophos",
+        "cloudflare",
+        "cloudforce_one",
+        "juniper-srx",
+        "jira",
+        "servicenow",
+        "thehive",
+        "cortex-xsoar",
+        "swimlane",
+        "ibm-resilient",
+        "opsgenie",
+        "slack",
+        "pagerduty",
+        "microsoft-teams",
+        "email",
+        "webhook",
+        "discord",
+        "mattermost",
+        "hybrid-analysis",
+        "joe-sandbox",
+        "anyrun",
+        "timesketch",
+        "velociraptor",
+        "grr",
+        "autopsy",
+        "osquery",
+        "cuckoo",
+        "vstrike",
+    }
+    missing = expected - set(INTEGRATION_SECRET_FIELDS.keys())
+    assert not missing, f"Integrations missing from registry: {sorted(missing)}"
+
+
+def test_default_naming_convention_for_well_known_integrations():
+    """Sample of integrations that should follow ``<ID>_<FIELD>`` exactly."""
+    cases = [
+        ("virustotal", "api_key", "VIRUSTOTAL_API_KEY"),
+        ("shodan", "api_key", "SHODAN_API_KEY"),
+        ("github", "token", "GITHUB_TOKEN"),
+        ("splunk", "password", "SPLUNK_PASSWORD"),
+        ("sentinelone", "api_token", "SENTINELONE_API_TOKEN"),
+        ("aws-security-hub", "secret_access_key", "AWS_SECURITY_HUB_SECRET_ACCESS_KEY"),
+        ("microsoft-defender", "client_secret", "MICROSOFT_DEFENDER_CLIENT_SECRET"),
+        ("cribl-stream", "password", "CRIBL_STREAM_PASSWORD"),
+        ("cloudforce_one", "api_token", "CLOUDFORCE_ONE_API_TOKEN"),
+    ]
+    for integration_id, field, expected_env in cases:
+        actual = INTEGRATION_SECRET_FIELDS[integration_id][field]
+        assert (
+            actual == expected_env
+        ), f"{integration_id}.{field} expected {expected_env}, got {actual}"
+
+
+def test_overrides_take_precedence_over_default_naming():
+    """CrowdStrike's MCP server reads FALCON_*, not CROWDSTRIKE_*."""
+    assert (
+        INTEGRATION_SECRET_FIELDS["crowdstrike"]["client_secret"]
+        == "FALCON_CLIENT_SECRET"
+    )
+    # PagerDuty mcp-config.json source placeholder is PAGERDUTY_API_KEY.
+    assert INTEGRATION_SECRET_FIELDS["pagerduty"]["api_token"] == "PAGERDUTY_API_KEY"
+    # The other PagerDuty secret falls back to the default convention.
+    assert (
+        INTEGRATION_SECRET_FIELDS["pagerduty"]["integration_key"]
+        == "PAGERDUTY_INTEGRATION_KEY"
+    )
+
+
+def test_multi_secret_integrations_register_each_field():
+    """Integrations with multiple password fields must register every one."""
+    assert set(INTEGRATION_SECRET_FIELDS["trellix"].keys()) == {
+        "client_secret",
+        "api_key",
+    }
+    assert set(INTEGRATION_SECRET_FIELDS["zscaler"].keys()) == {
+        "api_key",
+        "password",
+    }
+    assert set(INTEGRATION_SECRET_FIELDS["timesketch"].keys()) == {
+        "password",
+        "api_token",
+    }
+    assert set(INTEGRATION_SECRET_FIELDS["pagerduty"].keys()) == {
+        "api_token",
+        "integration_key",
+    }
+    assert set(INTEGRATION_SECRET_FIELDS["vstrike"].keys()) == {
+        "api_key",
+        "inbound_api_key",
+        "username",
+        "password",
+    }
+
+
+def test_no_env_var_collisions_across_integrations():
+    """No two registered (integration, field) pairs may share an env-var
+    name unless that's an explicit override (e.g. shared keys across
+    integrations would collide silently in the secrets store)."""
+    seen: dict[str, tuple[str, str]] = {}
+    collisions: list[str] = []
+    for integration_id, fields in INTEGRATION_SECRET_FIELDS.items():
+        for field, env_var in fields.items():
+            if env_var in seen:
+                prior = seen[env_var]
+                collisions.append(
+                    f"{env_var}: {prior[0]}.{prior[1]} vs {integration_id}.{field}"
+                )
+            else:
+                seen[env_var] = (integration_id, field)
+    assert not collisions, "Env-var name collisions: " + ", ".join(collisions)
