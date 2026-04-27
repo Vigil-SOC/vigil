@@ -33,7 +33,7 @@ import FindingsTable from '../components/findings/FindingsTable'
 import AttackChart from '../components/attack/AttackChart'
 import ExportToTimesketchDialog from '../components/timesketch/ExportToTimesketchDialog'
 import EventTimeline from '../components/timeline/EventTimeline'
-import EntityGraph from '../components/graph/EntityGraph'
+import EntityVisualization from '../components/graph/EntityVisualization'
 import { StatCard, SearchInput } from '../components/ui'
 import { severityColors } from '../theme'
 
@@ -366,7 +366,7 @@ export default function Dashboard() {
               </Box>
             ) : (
               <Box sx={{ height: 500, overflow: 'hidden', position: 'relative' }}>
-                <EntityGraph
+                <EntityVisualization
                   nodes={graphData.nodes}
                   links={graphData.links}
                   onNodeClick={handleGraphNodeClick}

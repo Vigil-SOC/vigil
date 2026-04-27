@@ -432,10 +432,16 @@ export const webhooksApi = {
 // MCP Servers API
 export const mcpApi = {
   listServers: () => api.get('/mcp/servers'),
-  
+
   getStatuses: () => api.get('/mcp/servers/status'),
-  
+
   getServerStatus: (name: string) => api.get(`/mcp/servers/${name}/status`),
+
+  // Persistent connection status for all MCP servers — includes
+  // `connected: boolean` and (when not connected) `missing_credentials`
+  // and/or `error`. Used to detect whether an integration like VStrike is
+  // configured and ready.
+  getConnections: () => api.get('/mcp/connections/status'),
 
   // NOTE: startServer / stopServer / startAll / stopAll were removed —
   // every server in mcp-config.json is stdio-based, and the old endpoints
@@ -445,13 +451,36 @@ export const mcpApi = {
 
   getLogs: (name: string, lines: number = 100) =>
     api.get(`/mcp/servers/${name}/logs`, { params: { lines } }),
-  
+
   testServer: (name: string) => api.get(`/mcp/servers/${name}/test`),
-  
+
   getEnabledStates: () => api.get('/mcp/servers/enabled'),
-  
+
   setServerEnabled: (name: string, enabled: boolean) =>
     api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+}
+
+// VStrike (CloudCurrent) integration API
+// Routes are mounted at /api/integrations/vstrike; axios baseURL is /api.
+export const vstrikeApi = {
+  health: () => api.get('/integrations/vstrike/health'),
+
+  // 503 with detail.missing=['username','password'] when UI creds unset.
+  iframeToken: () =>
+    api.post<{ token: string; iframe_url: string }>(
+      '/integrations/vstrike/ui/iframe-token',
+    ),
+
+  listNetworks: () =>
+    api.get<{ networks: Array<Record<string, any>> }>(
+      '/integrations/vstrike/ui/networks',
+    ),
+
+  loadNetwork: (network_id: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/load-network',
+      { network_id },
+    ),
 }
 
 // Claude API

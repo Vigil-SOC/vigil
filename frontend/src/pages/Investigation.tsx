@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import {
   Box,
@@ -24,7 +24,8 @@ import {
 } from '@mui/icons-material'
 import { timelineApi, graphApi } from '../services/api'
 import EventTimeline, { TimelineEvent } from '../components/timeline/EventTimeline'
-import EntityGraph, { GraphNode, GraphLink } from '../components/graph/EntityGraph'
+import { GraphNode, GraphLink } from '../components/graph/EntityGraph'
+import EntityVisualization from '../components/graph/EntityVisualization'
 import {
   VSTRIKE_GRAPH_HIGHLIGHT_EVENT,
   VStrikeGraphHighlightDetail,
@@ -205,6 +206,22 @@ export default function Investigation() {
     return 'Investigation Workspace'
   }
 
+  // Derive a VStrike network id from the first node that carries one in its
+  // VStrike enrichment topology metadata. Used to auto-load the iframe to
+  // the relevant network when VStrike is configured. Falls back to undefined
+  // (user picks from the dropdown) when no enrichment carries an id.
+  // Must live above any early-return so React hook order stays stable.
+  const vstrikeNetworkId = useMemo<string | undefined>(() => {
+    for (const node of graphData.nodes) {
+      const vstrike = (node.metadata as any)?.vstrike
+      const fromTopology = vstrike?.topology_metadata?.network_id
+      if (typeof fromTopology === 'string' && fromTopology) return fromTopology
+      const direct = vstrike?.network_id
+      if (typeof direct === 'string' && direct) return direct
+    }
+    return undefined
+  }, [graphData.nodes])
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" alignItems="center" height="80vh">
@@ -338,12 +355,13 @@ export default function Investigation() {
                 </Tooltip>
               </Box>
               <Box sx={{ height: graphHeight, overflow: 'hidden', position: 'relative' }}>
-                <EntityGraph
+                <EntityVisualization
                   nodes={graphData.nodes}
                   links={graphData.links}
                   onNodeClick={handleGraphNodeClick}
                   height={graphHeight}
                   highlightedNodes={highlightedNodes}
+                  vstrikeNetworkId={vstrikeNetworkId}
                 />
               </Box>
             </Paper>

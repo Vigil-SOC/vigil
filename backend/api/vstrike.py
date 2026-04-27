@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
 
 from backend.schemas.vstrike import (
     VStrikeFindingResult,
@@ -27,6 +28,34 @@ from backend.schemas.vstrike import (
 )
 from services.database_data_service import DatabaseDataService
 from services.vstrike_service import get_vstrike_service
+
+
+class VStrikeLoadNetworkRequest(BaseModel):
+    network_id: str
+
+
+def _ui_service_or_503():
+    """Resolve the VStrike service for UI routes, raising 503 if unavailable.
+
+    Returns a service that is guaranteed to have UI (username/password)
+    credentials configured. The 503 body is structured so the frontend can
+    distinguish "credentials missing" from a transport failure.
+    """
+    service = get_vstrike_service()
+    if service is None or not service.has_ui_credentials:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": (
+                    "VStrike UI credentials not configured. Set "
+                    "VSTRIKE_USERNAME and VSTRIKE_PASSWORD or configure "
+                    "the integration in Settings."
+                ),
+                "missing": ["username", "password"],
+            },
+        )
+    return service
+
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -74,9 +103,7 @@ def verify_inbound_key(
         )
 
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(
-            status_code=401, detail="Missing bearer token"
-        )
+        raise HTTPException(status_code=401, detail="Missing bearer token")
 
     token = authorization.split(" ", 1)[1].strip()
     if token != expected:
@@ -184,9 +211,7 @@ async def ingest_findings(
                 created += 1
                 upserted_ids.append(item.finding_id)
                 results.append(
-                    VStrikeFindingResult(
-                        finding_id=item.finding_id, status="created"
-                    )
+                    VStrikeFindingResult(finding_id=item.finding_id, status="created")
                 )
             else:
                 failed += 1
@@ -268,9 +293,7 @@ async def get_asset_topology(asset_id: str) -> dict:
     """Proxy to VStrike asset-topology lookup (outbound)."""
     service = get_vstrike_service()
     if service is None:
-        raise HTTPException(
-            status_code=503, detail="VStrike not configured"
-        )
+        raise HTTPException(status_code=503, detail="VStrike not configured")
     topology = service.get_asset_topology(asset_id)
     if topology is None:
         raise HTTPException(
@@ -289,9 +312,7 @@ async def list_adjacent_assets(asset_id: str) -> dict:
     """Proxy to VStrike adjacent-assets lookup."""
     service = get_vstrike_service()
     if service is None:
-        raise HTTPException(
-            status_code=503, detail="VStrike not configured"
-        )
+        raise HTTPException(status_code=503, detail="VStrike not configured")
     adjacent = service.list_adjacent(asset_id)
     if adjacent is None:
         raise HTTPException(
@@ -306,9 +327,7 @@ async def get_blast_radius(asset_id: str) -> dict:
     """Proxy to VStrike blast-radius lookup."""
     service = get_vstrike_service()
     if service is None:
-        raise HTTPException(
-            status_code=503, detail="VStrike not configured"
-        )
+        raise HTTPException(status_code=503, detail="VStrike not configured")
     blast = service.get_blast_radius(asset_id)
     if blast is None:
         raise HTTPException(
@@ -316,3 +335,56 @@ async def get_blast_radius(asset_id: str) -> dict:
             detail=f"VStrike did not return blast radius for asset {asset_id}",
         )
     return {"asset_id": asset_id, "blast_radius": blast}
+
+
+# ---------------------------------------------------------------------------
+# UI control plane (iframe auto-login + remote network selection)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/ui/iframe-token")
+async def ui_iframe_token() -> dict:
+    """Return a short-lived auto-login token + the iframe URL.
+
+    Used by the VStrikeIframe frontend component to render
+    `<iframe src=iframe_url>`. The token comes from VStrike's `ui-login-token`
+    MCP tool and is meant to be one-shot.
+    """
+    service = _ui_service_or_503()
+    try:
+        token = service.get_ui_login_token()
+    except Exception as e:
+        logger.error("VStrike ui-login-token failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "token": token,
+        "iframe_url": f"{service.base_url}/login?token={token}",
+    }
+
+
+@router.get("/ui/networks")
+async def ui_list_networks() -> dict:
+    """List networks visible to the configured VStrike account."""
+    service = _ui_service_or_503()
+    try:
+        networks = service.list_networks()
+    except Exception as e:
+        logger.error("VStrike network-list failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"networks": networks}
+
+
+@router.post("/ui/load-network")
+async def ui_load_network(request: VStrikeLoadNetworkRequest) -> dict:
+    """Tell VStrike to load a network into the active iframe.
+
+    VStrike pushes the actual UI command via its own WebSocket; this endpoint
+    only triggers that push.
+    """
+    service = _ui_service_or_503()
+    try:
+        result = service.load_network_in_ui(request.network_id)
+    except Exception as e:
+        logger.error("VStrike ui-network-load failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}

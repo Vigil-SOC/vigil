@@ -3093,6 +3093,24 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
           'Required for /api/integrations/vstrike/findings unless DEV_MODE=true. Stored as VSTRIKE_INBOUND_API_KEY.',
       },
       {
+        name: 'username',
+        label: 'MCP Username',
+        type: 'text',
+        required: false,
+        placeholder: 'deeptempo_manager',
+        helpText:
+          'VStrike MCP login username. Required to enable the embedded VStrike visualization (iframe replaces the default entity graph). Stored as VSTRIKE_USERNAME.',
+      },
+      {
+        name: 'password',
+        label: 'MCP Password',
+        type: 'password',
+        required: false,
+        placeholder: 'Password for the MCP login user',
+        helpText:
+          'Password for the VStrike MCP login user. Stored as VSTRIKE_PASSWORD.',
+      },
+      {
         name: 'verify_ssl',
         label: 'Verify SSL Certificate',
         type: 'boolean',
