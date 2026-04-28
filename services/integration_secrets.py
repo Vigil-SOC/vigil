@@ -169,7 +169,7 @@ _SECRET_FIELDS: Mapping[str, tuple[str, ...]] = {
     "autopsy": ("password",),
     "osquery": ("api_token",),
     "cuckoo": ("api_token",),
-    "vstrike": ("api_key", "inbound_api_key", "username", "password"),
+    "vstrike": ("username", "password"),
 }
 
 

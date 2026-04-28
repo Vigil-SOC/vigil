@@ -152,55 +152,87 @@ def _extract_list(data: Any, keys: Tuple[str, ...]) -> Optional[List[Any]]:
 
 
 class VStrikeService:
-    """Thin REST + MCP client for the VStrike API."""
+    """Thin REST + MCP client for the VStrike API.
+
+    Auth is JWT-only: ``__init__`` takes username + password, exchanges them
+    for a JWT via ``/mcp-login`` on first use, and caches the token at the
+    module level. Every outbound call (REST or MCP tool) attaches the JWT
+    as ``Authorization: Bearer <jwt>``. On a 401 the cached JWT is dropped,
+    a fresh login runs, and the request retries once.
+
+    There is no static API-key path. Earlier revisions accepted a separate
+    ``api_key`` for the ``/api/v1/topology/*`` REST endpoints; that knob
+    has been retired so users only ever paste username + password into
+    Settings.
+    """
 
     def __init__(
         self,
         base_url: str,
-        api_key: Optional[str] = None,
         verify_ssl: bool = True,
         timeout: int = DEFAULT_TIMEOUT,
+        *,
         username: Optional[str] = None,
         password: Optional[str] = None,
     ):
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
         self.verify_ssl = verify_ssl
         self.timeout = timeout
         self.username = username
         self.password = password
-
-        self.session = requests.Session()
-        self.session.verify = verify_ssl
-        headers = {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
-        if api_key:
-            headers["Authorization"] = f"Bearer {api_key}"
-        self.session.headers.update(headers)
 
     # ------------------------------------------------------------------ #
     # Credential predicates (used by API layer to branch cleanly)
     # ------------------------------------------------------------------ #
 
     @property
-    def has_api_credentials(self) -> bool:
-        """True when we can authenticate to the legacy topology REST API."""
-        return bool(self.api_key)
-
-    @property
     def has_ui_credentials(self) -> bool:
         """True when we can perform mcp-login + MCP tool calls for UI control."""
         return bool(self.username and self.password)
 
+    # Back-compat shim: a few callers still test ``has_api_credentials`` as
+    # a synonym for "can this service make outbound calls to VStrike?". With
+    # JWT-only auth, that's equivalent to having UI creds.
+    @property
+    def has_api_credentials(self) -> bool:
+        return self.has_ui_credentials
+
     # ------------------------------------------------------------------ #
-    # Legacy REST topology methods (Bearer api_key)
+    # REST topology helpers (JWT auth, with one-shot 401 retry)
     # ------------------------------------------------------------------ #
 
+    def _bearer_headers(self, jwt: str) -> Dict[str, str]:
+        return {
+            "Authorization": f"Bearer {jwt}",
+            "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json",
+        }
+
     def _get(self, path: str, **kwargs) -> requests.Response:
+        """GET ``{base_url}{path}`` with JWT auth, retrying once on 401.
+
+        Used by every legacy ``/api/v1/*`` topology helper. The JWT is the
+        same one we use for MCP tool calls — VStrike accepts it anywhere.
+        """
         url = f"{self.base_url}{path}"
-        return self.session.get(url, timeout=self.timeout, **kwargs)
+        params = kwargs.pop("params", None)
+
+        def _do(jwt: str) -> requests.Response:
+            return requests.get(
+                url,
+                params=params,
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+                headers=self._bearer_headers(jwt),
+                **kwargs,
+            )
+
+        jwt = self._ensure_jwt()
+        resp = _do(jwt)
+        if resp.status_code == 401:
+            self._invalidate_jwt()
+            resp = _do(self._ensure_jwt())
+        return resp
 
     def test_connection(self) -> Tuple[bool, str]:
         """Ping the VStrike health endpoint.
@@ -441,21 +473,19 @@ def _config_value(key: str, config: Optional[Dict[str, Any]]) -> Optional[str]:
 
 
 def get_vstrike_service() -> Optional[VStrikeService]:
-    """Construct a VStrikeService from env or integration config, or None.
+    """Construct a VStrikeService from env / encrypted store, or None.
 
-    Configured when both `base_url` is set AND at least one credential set
-    is present:
+    Configured when ``VSTRIKE_BASE_URL`` is set AND ``VSTRIKE_USERNAME`` +
+    ``VSTRIKE_PASSWORD`` are both present. Credentials are looked up via
+    Vigil's secrets manager (encrypted store → env → dotenv → keyring,
+    in priority order). The non-secret ``url`` and ``verify_ssl`` values
+    can come from the same chain, or from ``IntegrationConfig`` (DB) and
+    its JSON back-compat mirror via ``core.config.get_integration_config``.
 
-      - api_key (`VSTRIKE_API_KEY`) — enables legacy topology REST calls.
-      - username + password (`VSTRIKE_USERNAME` / `VSTRIKE_PASSWORD`) —
-        enables the MCP UI-control plane (iframe auto-login + ui-network-load).
-
-    Either or both modes may be configured. Credential lookups go through
-    Vigil's secrets manager, which checks (in priority order) the encrypted
-    store at ``~/.vigil/secrets.enc``, process env vars, ``.env`` file, and
-    the keyring (if enabled). The non-secret ``url`` and ``verify_ssl``
-    values are read from ``IntegrationConfig`` (DB) or its JSON
-    back-compat mirror via ``core.config.get_integration_config``.
+    The legacy ``VSTRIKE_API_KEY`` / ``api_key`` field is deprecated —
+    Vigil now exchanges username + password for a JWT internally on first
+    call and refreshes it on 401. Old api_key values left over in the
+    secrets store are tolerated but ignored.
     """
     try:
         from backend.secrets_manager import get_secret
@@ -466,7 +496,6 @@ def get_vstrike_service() -> Optional[VStrikeService]:
             return os.environ.get(name)
 
     base_url = get_secret("VSTRIKE_BASE_URL")
-    api_key = get_secret("VSTRIKE_API_KEY")
     username = get_secret("VSTRIKE_USERNAME")
     password = get_secret("VSTRIKE_PASSWORD")
     verify_ssl_value = get_secret("VSTRIKE_VERIFY_SSL")
@@ -474,8 +503,8 @@ def get_vstrike_service() -> Optional[VStrikeService]:
     if verify_ssl_value is not None:
         verify_ssl_env = verify_ssl_value.lower() != "false"
 
-    # Non-secret fields (and any legacy plaintext credentials) may still
-    # live in the integration config — read it once for back-compat.
+    # Non-secret fields (and any legacy plaintext username/password) may
+    # still live in the integration config — read it once for back-compat.
     config: Optional[Dict[str, Any]] = None
     try:
         from core.config import get_integration_config
@@ -486,15 +515,12 @@ def get_vstrike_service() -> Optional[VStrikeService]:
         config = None
 
     base_url = base_url or _config_value("url", config)
-    # Credentials should normally come from the secrets store; fall back to
-    # the integration config only for legacy installs that haven't migrated.
-    api_key = api_key or _config_value("api_key", config)
     username = username or _config_value("username", config)
     password = password or _config_value("password", config)
 
     if not base_url:
         return None
-    if not (api_key or (username and password)):
+    if not (username and password):
         return None
 
     if verify_ssl_env is not None:
@@ -506,7 +532,6 @@ def get_vstrike_service() -> Optional[VStrikeService]:
 
     return VStrikeService(
         base_url=base_url,
-        api_key=api_key,
         verify_ssl=verify_ssl,
         username=username,
         password=password,

@@ -740,8 +740,11 @@ export default function Settings() {
               <Switch checked={isEnabled} onChange={(e) => handleToggleServer(serverName, e.target.checked)} size="small" />
             </Box>
 
-            {/* Row 2: Description */}
-            {SERVER_DESCRIPTIONS[serverName] && (
+            {/* Row 2: Description — curated SERVER_DESCRIPTIONS wins; otherwise
+                 fall back to the rich description carried on the integration
+                 metadata so cards like VStrike (no SERVER_DESCRIPTIONS entry)
+                 still render their integration blurb. */}
+            {(SERVER_DESCRIPTIONS[serverName] || integration?.description) && (
               <Typography
                 variant="caption"
                 color="text.secondary"
@@ -755,7 +758,7 @@ export default function Settings() {
                   mb: 0.75,
                 }}
               >
-                {SERVER_DESCRIPTIONS[serverName]}
+                {SERVER_DESCRIPTIONS[serverName] || integration?.description}
               </Typography>
             )}
 

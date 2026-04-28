@@ -19,12 +19,16 @@ from services.integration_secrets import (  # noqa: E402
 
 
 def test_vstrike_secret_fields_registered():
-    """The four VStrike secret fields must round-trip to env-var keys."""
+    """VStrike's secret fields round-trip to env-var keys.
+
+    JWT-only auth: only username + password are user-supplied secrets. The
+    legacy api_key / inbound_api_key entries were retired in favor of
+    Vigil minting/refreshing the token internally."""
     fields = secret_fields_for("vstrike")
-    assert fields["api_key"] == "VSTRIKE_API_KEY"
-    assert fields["inbound_api_key"] == "VSTRIKE_INBOUND_API_KEY"
-    assert fields["username"] == "VSTRIKE_USERNAME"
-    assert fields["password"] == "VSTRIKE_PASSWORD"
+    assert fields == {
+        "username": "VSTRIKE_USERNAME",
+        "password": "VSTRIKE_PASSWORD",
+    }
 
 
 def test_secret_fields_for_unregistered_returns_empty():
@@ -37,14 +41,12 @@ def test_split_secrets_partitions_correctly():
         "verify_ssl": True,
         "username": "alice",
         "password": "wonderland",
-        "api_key": "bearer-token",
     }
     secrets, non_secrets = split_secrets("vstrike", raw)
     # Secrets keyed by env-var name, ready for set_secret().
     assert secrets == {
         "VSTRIKE_USERNAME": "alice",
         "VSTRIKE_PASSWORD": "wonderland",
-        "VSTRIKE_API_KEY": "bearer-token",
     }
     # Non-secrets retain original field names; no plaintext credentials.
     assert non_secrets == {
@@ -77,13 +79,11 @@ def test_split_secrets_unregistered_integration_passthrough():
 def test_redact_secrets_removes_registered_fields():
     raw = {
         "url": "https://vstrike.net",
-        "api_key": "leaked-bearer",
         "username": "alice",
         "password": "wonderland",
         "verify_ssl": True,
     }
     redacted = redact_secrets("vstrike", raw)
-    assert "api_key" not in redacted
     assert "username" not in redacted
     assert "password" not in redacted
     assert redacted["url"] == "https://vstrike.net"
@@ -98,7 +98,7 @@ def test_redact_secrets_unregistered_integration_passthrough():
 
 def test_secret_field_names_returns_form_field_names():
     names = list(secret_field_names("vstrike"))
-    assert set(names) == {"api_key", "inbound_api_key", "username", "password"}
+    assert set(names) == {"username", "password"}
 
 
 def test_registry_is_a_mapping_not_a_dict_alias():
@@ -279,8 +279,6 @@ def test_multi_secret_integrations_register_each_field():
         "integration_key",
     }
     assert set(INTEGRATION_SECRET_FIELDS["vstrike"].keys()) == {
-        "api_key",
-        "inbound_api_key",
         "username",
         "password",
     }

@@ -49,24 +49,23 @@ def isolate_secrets(monkeypatch):
 
 
 def _service(**kwargs) -> VStrikeService:
+    """Build a fully-credentialed service. JWT-only auth — no api_key."""
     return VStrikeService(
         base_url=kwargs.get("base_url", "https://vstrike.example.com"),
-        api_key=kwargs.get("api_key", "test-key"),
         verify_ssl=kwargs.get("verify_ssl", False),
-        username=kwargs.get("username"),
-        password=kwargs.get("password"),
-    )
-
-
-def _ui_service(**kwargs) -> VStrikeService:
-    """Build a service configured for the UI/MCP path (no api_key)."""
-    return VStrikeService(
-        base_url=kwargs.get("base_url", "https://vstrike.example.com"),
-        api_key=kwargs.get("api_key"),
-        verify_ssl=False,
         username=kwargs.get("username", "deeptempo_manager"),
         password=kwargs.get("password", "secret"),
     )
+
+
+# Back-compat alias for tests that historically distinguished the two.
+def _ui_service(**kwargs) -> VStrikeService:
+    return _service(**kwargs)
+
+
+def _seed_jwt(svc: VStrikeService, value: str = "jwt-cached") -> None:
+    """Pre-seed the module-level JWT cache so REST tests skip /mcp-login."""
+    _jwt_cache[(svc.base_url, svc.username)] = (value, 9_999_999_999.0)
 
 
 def _mock_response(status_code=200, json_body=None, text=""):
@@ -74,17 +73,17 @@ def _mock_response(status_code=200, json_body=None, text=""):
     resp.status_code = status_code
     resp.json.return_value = json_body or {}
     resp.text = text
+    resp.headers = {"Content-Type": "application/json"}
     return resp
-
-
-def test_sets_bearer_auth_header():
-    svc = _service(api_key="abc123")
-    assert svc.session.headers["Authorization"] == "Bearer abc123"
 
 
 def test_test_connection_success():
     svc = _service()
-    with patch.object(svc.session, "get", return_value=_mock_response(200)):
+    _seed_jwt(svc)
+    with patch(
+        "services.vstrike_service.requests.get",
+        return_value=_mock_response(200),
+    ):
         ok, msg = svc.test_connection()
     assert ok is True
     assert "success" in msg.lower()
@@ -92,8 +91,10 @@ def test_test_connection_success():
 
 def test_test_connection_http_error():
     svc = _service()
-    with patch.object(
-        svc.session, "get", return_value=_mock_response(503, text="down")
+    _seed_jwt(svc)
+    with patch(
+        "services.vstrike_service.requests.get",
+        return_value=_mock_response(503, text="down"),
     ):
         ok, msg = svc.test_connection()
     assert ok is False
@@ -104,9 +105,9 @@ def test_test_connection_network_error():
     import requests
 
     svc = _service()
-    with patch.object(
-        svc.session,
-        "get",
+    _seed_jwt(svc)
+    with patch(
+        "services.vstrike_service.requests.get",
         side_effect=requests.exceptions.ConnectionError("boom"),
     ):
         ok, msg = svc.test_connection()
@@ -116,25 +117,76 @@ def test_test_connection_network_error():
 
 def test_get_asset_topology_returns_body_on_200():
     svc = _service()
+    _seed_jwt(svc)
     body = {"asset_id": "srv-01", "segment": "vlan-10"}
-    with patch.object(
-        svc.session, "get", return_value=_mock_response(200, json_body=body)
+    with patch(
+        "services.vstrike_service.requests.get",
+        return_value=_mock_response(200, json_body=body),
     ):
         result = svc.get_asset_topology("srv-01")
     assert result == body
 
 
+def test_get_asset_topology_attaches_jwt_bearer():
+    """Every legacy REST call must inject Authorization: Bearer <jwt>."""
+    svc = _service()
+    _seed_jwt(svc, "jwt-from-cache")
+    body = {"asset_id": "srv-01"}
+    with patch(
+        "services.vstrike_service.requests.get",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_get:
+        svc.get_asset_topology("srv-01")
+    headers = mock_get.call_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer jwt-from-cache"
+
+
 def test_get_asset_topology_returns_none_on_error():
     svc = _service()
-    with patch.object(svc.session, "get", return_value=_mock_response(404)):
+    _seed_jwt(svc)
+    with patch(
+        "services.vstrike_service.requests.get",
+        return_value=_mock_response(404),
+    ):
         assert svc.get_asset_topology("srv-missing") is None
+
+
+def test_legacy_rest_retries_on_401_after_invalidating_jwt():
+    """A 401 on the legacy REST path must drop the cached JWT, re-login,
+    and retry the request once — same pattern as `_call_mcp_tool`."""
+    svc = _service()
+    _seed_jwt(svc, "jwt-stale")
+
+    refreshed_login = _mock_response(200, json_body={"jsonwebtoken": "jwt-fresh"})
+    unauthorized = _mock_response(401, text="expired")
+    body = {"asset_id": "srv-01", "segment": "core"}
+    success = _mock_response(200, json_body=body)
+
+    with patch(
+        "services.vstrike_service.requests.get",
+        side_effect=[unauthorized, success],
+    ) as mock_get, patch(
+        "services.vstrike_service.requests.post",
+        return_value=refreshed_login,
+    ) as mock_post:
+        result = svc.get_asset_topology("srv-01")
+
+    assert result == body
+    # Two GETs: first 401 (jwt-stale), second 200 (jwt-fresh).
+    assert mock_get.call_count == 2
+    # One POST to /mcp-login between them.
+    assert mock_post.call_count == 1
+    # Cache now holds the refreshed JWT.
+    assert _jwt_cache[(svc.base_url, svc.username)][0] == "jwt-fresh"
 
 
 def test_list_adjacent_returns_list():
     svc = _service()
+    _seed_jwt(svc)
     body = {"adjacent": [{"asset_id": "dc-01", "hop_distance": 1}]}
-    with patch.object(
-        svc.session, "get", return_value=_mock_response(200, json_body=body)
+    with patch(
+        "services.vstrike_service.requests.get",
+        return_value=_mock_response(200, json_body=body),
     ):
         adjacent = svc.list_adjacent("srv-01")
     assert adjacent == [{"asset_id": "dc-01", "hop_distance": 1}]
@@ -142,82 +194,99 @@ def test_list_adjacent_returns_list():
 
 def test_find_findings_by_segment_uses_query_params():
     svc = _service()
+    _seed_jwt(svc)
     body = {"findings": [{"finding_id": "f1"}]}
-    with patch.object(
-        svc.session, "get", return_value=_mock_response(200, json_body=body)
+    with patch(
+        "services.vstrike_service.requests.get",
+        return_value=_mock_response(200, json_body=body),
     ) as mock_get:
         result = svc.find_findings_by_segment("dmz", limit=50)
 
     assert result == [{"finding_id": "f1"}]
-    call_kwargs = mock_get.call_args.kwargs
-    assert call_kwargs["params"] == {"segment": "dmz", "limit": 50}
+    assert mock_get.call_args.kwargs["params"] == {"segment": "dmz", "limit": 50}
 
 
-def test_get_vstrike_service_returns_none_when_unconfigured(monkeypatch):
-    monkeypatch.delenv("VSTRIKE_BASE_URL", raising=False)
-    monkeypatch.delenv("VSTRIKE_API_KEY", raising=False)
-    with patch(
-        "core.config.get_integration_config",
-        return_value={},
-    ):
+def test_get_vstrike_service_returns_none_when_unconfigured(isolate_secrets):
+    isolate_secrets.delenv("VSTRIKE_BASE_URL", raising=False)
+    isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
+    isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
+    with patch("core.config.get_integration_config", return_value={}):
         assert get_vstrike_service() is None
 
 
-def test_get_vstrike_service_from_env(monkeypatch):
-    monkeypatch.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
-    monkeypatch.setenv("VSTRIKE_API_KEY", "env-key")
+def test_get_vstrike_service_from_env(isolate_secrets):
+    isolate_secrets.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
+    isolate_secrets.setenv("VSTRIKE_USERNAME", "alice")
+    isolate_secrets.setenv("VSTRIKE_PASSWORD", "wonderland")
     svc = get_vstrike_service()
     assert svc is not None
     assert svc.base_url == "https://vstrike.example.com"
-    assert svc.api_key == "env-key"
+    assert svc.username == "alice"
+    assert svc.password == "wonderland"
 
 
-def test_get_vstrike_service_falls_back_to_integration_config(monkeypatch):
-    monkeypatch.delenv("VSTRIKE_BASE_URL", raising=False)
-    monkeypatch.delenv("VSTRIKE_API_KEY", raising=False)
-    monkeypatch.delenv("VSTRIKE_USERNAME", raising=False)
-    monkeypatch.delenv("VSTRIKE_PASSWORD", raising=False)
+def test_get_vstrike_service_falls_back_to_integration_config(isolate_secrets):
+    isolate_secrets.delenv("VSTRIKE_BASE_URL", raising=False)
+    isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
+    isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
     with patch(
         "core.config.get_integration_config",
         return_value={
             "url": "https://cfg.example.com",
-            "api_key": "cfg-key",
+            "username": "alice",
+            "password": "wonderland",
             "verify_ssl": False,
         },
     ):
         svc = get_vstrike_service()
     assert svc is not None
     assert svc.base_url == "https://cfg.example.com"
-    assert svc.api_key == "cfg-key"
+    assert svc.username == "alice"
+    assert svc.password == "wonderland"
     assert svc.verify_ssl is False
 
 
+def test_get_vstrike_service_ignores_legacy_api_key(isolate_secrets):
+    """Older installs may still have VSTRIKE_API_KEY in the secrets store —
+    the factory tolerates it but does not use it."""
+    isolate_secrets.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
+    isolate_secrets.setenv("VSTRIKE_API_KEY", "leftover-from-old-install")
+    isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
+    isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
+    with patch("core.config.get_integration_config", return_value={}):
+        svc = get_vstrike_service()
+    # Without username+password, an api_key alone is no longer enough.
+    assert svc is None
+
+
 # ---------------------------------------------------------------------------
-# Credential predicates + factory resolution for UI path
+# Credential predicates
 # ---------------------------------------------------------------------------
 
 
 def test_has_ui_credentials_only_true_with_both():
-    assert _service(username="u").has_ui_credentials is False
-    assert _service(password="p").has_ui_credentials is False
+    assert _service(username="u", password=None).has_ui_credentials is False
+    assert _service(username=None, password="p").has_ui_credentials is False
     assert _service(username="u", password="p").has_ui_credentials is True
 
 
-def test_has_api_credentials_tracks_api_key():
-    assert _service(api_key="k").has_api_credentials is True
-    assert _service(api_key=None).has_api_credentials is False
+def test_has_api_credentials_is_alias_for_has_ui_credentials():
+    """JWT-only auth: 'configured' means username+password, regardless of which
+    predicate name a caller queries."""
+    svc = _service()
+    assert svc.has_api_credentials is svc.has_ui_credentials is True
+    assert _service(username=None, password=None).has_api_credentials is False
 
 
-def test_get_vstrike_service_with_only_ui_credentials(monkeypatch):
-    monkeypatch.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
-    monkeypatch.delenv("VSTRIKE_API_KEY", raising=False)
-    monkeypatch.setenv("VSTRIKE_USERNAME", "deeptempo_manager")
-    monkeypatch.setenv("VSTRIKE_PASSWORD", "secret")
+def test_get_vstrike_service_with_only_ui_credentials(isolate_secrets):
+    isolate_secrets.setenv("VSTRIKE_BASE_URL", "https://vstrike.example.com")
+    isolate_secrets.setenv("VSTRIKE_USERNAME", "deeptempo_manager")
+    isolate_secrets.setenv("VSTRIKE_PASSWORD", "secret")
     with patch("core.config.get_integration_config", return_value={}):
         svc = get_vstrike_service()
     assert svc is not None
-    assert svc.has_api_credentials is False
     assert svc.has_ui_credentials is True
+    assert svc.has_api_credentials is True
 
 
 def test_get_vstrike_service_returns_none_with_only_username(isolate_secrets):
@@ -302,7 +371,8 @@ def test_mcp_login_raises_when_response_missing_token():
 
 
 def test_mcp_login_requires_credentials():
-    svc = _service(api_key="only-key")  # no username/password
+    """Without username + password, _ensure_jwt must refuse, not blank-login."""
+    svc = _service(username=None, password=None)
     with pytest.raises(RuntimeError, match="not configured"):
         svc._ensure_jwt()
 

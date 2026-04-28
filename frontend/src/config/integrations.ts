@@ -3063,7 +3063,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     name: 'CloudCurrent VStrike',
     category: 'Network Security',
     description:
-      'Network topology fusion layer. Correlates DeepTempo findings with asset, segment, mission system, and attack-path context, and pushes enriched findings back into Vigil.',
+      "Embed VStrike's network topology UI inside Vigil case investigations. Vigil drives which network and what kill-chain to play; VStrike streams the visualization back via WebSocket. Provides segment, criticality, mission-system, blast-radius, and attack-path enrichment to every Vigil agent.",
     functionality_type: 'Data Enrichment',
     fields: [
       {
@@ -3075,40 +3075,22 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
         helpText: 'Base URL of your VStrike deployment.',
       },
       {
-        name: 'api_key',
-        label: 'Outbound API Key',
-        type: 'password',
-        required: true,
-        placeholder: 'Bearer token for Vigil → VStrike calls',
-        helpText:
-          'Used for outbound topology lookups. Stored as VSTRIKE_API_KEY.',
-      },
-      {
-        name: 'inbound_api_key',
-        label: 'Inbound API Key',
-        type: 'password',
-        required: false,
-        placeholder: 'Bearer token VStrike presents to Vigil',
-        helpText:
-          'Required for /api/integrations/vstrike/findings unless DEV_MODE=true. Stored as VSTRIKE_INBOUND_API_KEY.',
-      },
-      {
         name: 'username',
-        label: 'MCP Username',
+        label: 'Username',
         type: 'text',
-        required: false,
+        required: true,
         placeholder: 'deeptempo_manager',
         helpText:
-          'VStrike MCP login username. Required to enable the embedded VStrike visualization (iframe replaces the default entity graph). Stored as VSTRIKE_USERNAME.',
+          'VStrike account username. Vigil exchanges username + password for a JWT via /mcp-login and refreshes it automatically — no API key paste needed.',
       },
       {
         name: 'password',
-        label: 'MCP Password',
+        label: 'Password',
         type: 'password',
-        required: false,
-        placeholder: 'Password for the MCP login user',
+        required: true,
+        placeholder: 'Password for the VStrike account',
         helpText:
-          'Password for the VStrike MCP login user. Stored as VSTRIKE_PASSWORD.',
+          'VStrike account password. Stored encrypted at ~/.vigil/secrets.enc — never written to disk in plaintext.',
       },
       {
         name: 'verify_ssl',
