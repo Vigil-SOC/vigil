@@ -359,7 +359,11 @@ def _adapt_router_result_to_raw(router_result: Dict[str, Any]) -> Dict[str, Any]
     """Shape an LLMRouter result to match _serialize_raw_response output.
 
     AgentRunner expects a dict with ``content`` (list of blocks),
-    ``stop_reason``, ``input_tokens``, ``output_tokens``.
+    ``stop_reason``, ``input_tokens``, ``output_tokens``. ``stop_reason`` must
+    reflect whether the response actually contained tool_use blocks — the
+    agent's tool-use loop only continues when ``stop_reason == "tool_use"``,
+    so hardcoding ``"end_turn"`` would silently drop every tool call from
+    router-dispatched providers.
     """
     blocks: List[Dict[str, Any]] = []
     text = router_result.get("content") or ""
@@ -368,7 +372,8 @@ def _adapt_router_result_to_raw(router_result: Dict[str, Any]) -> Dict[str, Any]
     thinking = router_result.get("thinking")
     if thinking:
         blocks.append({"type": "thinking", "thinking": thinking})
-    for tc in router_result.get("tool_calls") or []:
+    tool_calls = router_result.get("tool_calls") or []
+    for tc in tool_calls:
         blocks.append({
             "type": "tool_use",
             "id": tc.get("id"),
@@ -377,7 +382,7 @@ def _adapt_router_result_to_raw(router_result: Dict[str, Any]) -> Dict[str, Any]
         })
     return {
         "content": blocks,
-        "stop_reason": "end_turn",
+        "stop_reason": "tool_use" if tool_calls else "end_turn",
         "input_tokens": router_result.get("input_tokens", 0),
         "output_tokens": router_result.get("output_tokens", 0),
         "provider": router_result.get("provider"),

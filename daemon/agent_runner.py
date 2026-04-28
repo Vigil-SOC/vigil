@@ -218,6 +218,7 @@ class AgentRunner:
         self._claude_service = None
         self._data_service = None
         self._llm_gateway = None
+        self._db_smoke_checked = False
 
         self.stats = {
             "agents_started": 0,
@@ -248,6 +249,26 @@ class AgentRunner:
                 self._data_service = DatabaseDataService()
             except Exception as e:
                 logger.error(f"AgentRunner: Failed to init data service: {e}")
+
+        # Verify DB writes are reachable from this process at startup. Without
+        # this, a broken DB connection only surfaces later as silent heartbeat
+        # failures — which the supervisor then mistakes for a stale agent and
+        # kills as 'failed' (issue #147 follow-up).
+        if not self._db_smoke_checked:
+            try:
+                from database.connection import get_db_manager
+                from sqlalchemy import text
+
+                with get_db_manager().session_scope() as session:
+                    session.execute(text("SELECT 1"))
+                self._db_smoke_checked = True
+                logger.info("AgentRunner: DB write path verified")
+            except Exception as e:
+                logger.error(
+                    f"AgentRunner: DB write path unreachable; heartbeats will "
+                    f"fail and investigations may be stale-killed: {e}",
+                    exc_info=True,
+                )
 
     async def _ensure_gateway(self):
         """Lazily initialise the LLM gateway."""
@@ -1112,20 +1133,34 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         })
 
     def _update_db_record(self, inv_id: str, updates: Dict[str, Any]):
-        """Update the Investigation record in the database."""
-        if not self._data_service:
-            return
+        """Update the Investigation record in the database.
+
+        Uses ``session_scope()`` (auto-commit + auto-close) so that heartbeats
+        and status writes can't silently leak connections or get swallowed
+        when the agent is making real progress. See issue #147 — the previous
+        raw ``get_session()`` + ``logger.debug`` pattern hid heartbeat failures
+        and let the supervisor mark healthy investigations as ``Stale: no
+        activity``.
+        """
         try:
-            from database.connection import get_session
+            from database.connection import get_db_manager
             from database.models import Investigation
-            session = get_session()
-            inv = session.query(Investigation).filter_by(investigation_id=inv_id).first()
-            if inv:
+
+            with get_db_manager().session_scope() as session:
+                inv = (
+                    session.query(Investigation)
+                    .filter_by(investigation_id=inv_id)
+                    .first()
+                )
+                if inv is None:
+                    logger.warning(f"DB update for {inv_id}: row not found")
+                    return
                 for key, val in updates.items():
                     if hasattr(inv, key):
                         if key.endswith("_at") and isinstance(val, str):
                             val = datetime.fromisoformat(val)
                         setattr(inv, key, val)
-                session.commit()
         except Exception as e:
-            logger.debug(f"DB update for {inv_id} failed: {e}")
+            logger.error(
+                f"DB update for {inv_id} failed: {e}", exc_info=True
+            )
