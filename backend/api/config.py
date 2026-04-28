@@ -84,6 +84,26 @@ class DemoModeConfig(BaseModel):
     enabled: bool = False
 
 
+class PlatformDatabaseProxyConfig(BaseModel):
+    """Proxy configuration in front of the platform metadata Postgres.
+
+    Persisted in the encrypted secrets store (DB-independent — read at
+    boot before the engine exists). All fields optional; ``proxy_type``
+    of ``"none"`` (the default) disables the feature.
+
+    Empty-string secrets on POST mean "leave existing value untouched".
+    """
+
+    proxy_type: str = "none"  # none | pgbouncer | ssh_tunnel
+    proxy_host: str = ""
+    proxy_port: int = 0
+    proxy_username: str = ""
+    proxy_password: str = ""
+    ssh_private_key_path: str = ""
+    ssh_key_passphrase: str = ""
+    verify_proxy_tls: bool = True
+
+
 @router.get("/demo-mode")
 async def get_demo_mode():
     """
@@ -394,6 +414,128 @@ async def set_s3_config(config: S3Config):
         raise
     except Exception as e:
         logger.error(f"Error setting S3 config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Maps the form field names exposed in the UI to the secrets-store keys
+# read by ``database.connection._load_platform_db_proxy`` at boot. These
+# live in the encrypted secrets store rather than ``SystemConfig`` so
+# they're readable before the metadata DB connection exists.
+_PLATFORM_DB_PROXY_KEYS = {
+    "proxy_type": "PLATFORM_DB_PROXY_TYPE",
+    "proxy_host": "PLATFORM_DB_PROXY_HOST",
+    "proxy_port": "PLATFORM_DB_PROXY_PORT",
+    "proxy_username": "PLATFORM_DB_PROXY_USERNAME",
+    "proxy_password": "PLATFORM_DB_PROXY_PASSWORD",
+    "ssh_private_key_path": "PLATFORM_DB_SSH_PRIVATE_KEY_PATH",
+    "ssh_key_passphrase": "PLATFORM_DB_SSH_KEY_PASSPHRASE",
+    "verify_proxy_tls": "PLATFORM_DB_VERIFY_PROXY_TLS",
+}
+_PLATFORM_DB_SECRET_FIELDS = {"proxy_password", "ssh_key_passphrase"}
+
+
+@router.get("/platform-database")
+async def get_platform_database_config():
+    """Return the current proxy config in front of the platform DB.
+
+    Secret fields (proxy password, SSH key passphrase) are redacted.
+    A boolean ``has_*`` flag indicates whether a value is currently
+    stored, so the UI can show "set"/"not set" without exposing the
+    plaintext.
+    """
+    try:
+        result: Dict[str, Any] = {}
+        for field, key in _PLATFORM_DB_PROXY_KEYS.items():
+            value = get_secret(key)
+            if field in _PLATFORM_DB_SECRET_FIELDS:
+                result[f"has_{field}"] = bool(value)
+                continue
+            if field == "proxy_port":
+                try:
+                    result[field] = int(value) if value else 0
+                except (TypeError, ValueError):
+                    result[field] = 0
+                continue
+            if field == "verify_proxy_tls":
+                if value is None or value == "":
+                    result[field] = True
+                else:
+                    result[field] = str(value).lower() not in (
+                        "false",
+                        "0",
+                        "no",
+                        "off",
+                    )
+                continue
+            result[field] = value or ""
+        result.setdefault("proxy_type", "none")
+        return result
+    except Exception as e:
+        logger.error(f"Error getting platform DB proxy config: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/platform-database")
+async def set_platform_database_config(config: PlatformDatabaseProxyConfig):
+    """Persist the platform-DB proxy config to the encrypted secrets
+    store. Takes effect on the next backend restart — the live engine
+    can't be hot-swapped safely.
+
+    Empty-string secrets mean "leave existing value untouched".
+    """
+    try:
+        proxy_type = (config.proxy_type or "none").strip().lower()
+        if proxy_type not in ("none", "pgbouncer", "ssh_tunnel"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "proxy_type must be one of: none, pgbouncer, ssh_tunnel "
+                    "(http/socks5 are not supported for the platform DB)"
+                ),
+            )
+
+        # Non-secret fields — always overwrite so disabling a setting
+        # actually clears the stored value.
+        set_secret(_PLATFORM_DB_PROXY_KEYS["proxy_type"], proxy_type)
+        set_secret(_PLATFORM_DB_PROXY_KEYS["proxy_host"], config.proxy_host or "")
+        set_secret(
+            _PLATFORM_DB_PROXY_KEYS["proxy_port"],
+            str(config.proxy_port) if config.proxy_port else "",
+        )
+        set_secret(
+            _PLATFORM_DB_PROXY_KEYS["proxy_username"], config.proxy_username or ""
+        )
+        set_secret(
+            _PLATFORM_DB_PROXY_KEYS["ssh_private_key_path"],
+            config.ssh_private_key_path or "",
+        )
+        set_secret(
+            _PLATFORM_DB_PROXY_KEYS["verify_proxy_tls"],
+            "true" if config.verify_proxy_tls else "false",
+        )
+
+        # Secret fields — only overwrite when caller supplied a non-empty
+        # value, matching the integrations-config convention.
+        if config.proxy_password:
+            set_secret(_PLATFORM_DB_PROXY_KEYS["proxy_password"], config.proxy_password)
+        if config.ssh_key_passphrase:
+            set_secret(
+                _PLATFORM_DB_PROXY_KEYS["ssh_key_passphrase"],
+                config.ssh_key_passphrase,
+            )
+
+        return {
+            "success": True,
+            "message": (
+                "Platform DB proxy configuration saved. "
+                "Restart the backend for changes to take effect."
+            ),
+            "restart_required": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error setting platform DB proxy config: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

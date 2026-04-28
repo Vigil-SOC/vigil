@@ -69,6 +69,7 @@ import KafkaTab from '../components/settings/KafkaTab'
 import LLMProvidersTab from '../components/settings/LLMProvidersTab'
 import ModelAssignmentTab from '../components/settings/ModelAssignmentTab'
 import AIOperationsTab from '../components/settings/AIOperationsTab'
+import PlatformDatabaseTab from '../components/settings/PlatformDatabaseTab'
 import CostAnalytics from './CostAnalytics'
 
 interface TabPanelProps {
@@ -99,6 +100,7 @@ const TAB_DEFS: { key: string; label: string; devOnly: boolean }[] = [
   { key: 'integrations', label: 'Integrations / MCP', devOnly: false },
   { key: 'users', label: 'Users', devOnly: false },
   { key: 'autoinvestigate', label: 'Auto Investigate', devOnly: false },
+  { key: 'system', label: 'System', devOnly: false },
   { key: 'general', label: 'General', devOnly: false },
   { key: 'dev', label: 'Developer', devOnly: true },
 ]
@@ -1589,6 +1591,13 @@ export default function Settings() {
             <Box sx={{ maxWidth: 800 }}>
               <AutoInvestigateTab onMessage={setMessage} showConfirm={showConfirm} />
             </Box>
+          </TabPanel>
+        )
+
+      case 'system':
+        return (
+          <TabPanel value={currentTab} index={idx} key={tabKey}>
+            <PlatformDatabaseTab setMessage={setMessage} />
           </TabPanel>
         )
 

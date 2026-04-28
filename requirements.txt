@@ -39,6 +39,14 @@ sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.9
 alembic>=1.13.0
 
+# Optional proxy hops in front of the metadata DB and DB-shaped
+# integrations (Settings → System → Database, plus per-integration
+# proxy block). sshtunnel only loaded when the operator picks an SSH
+# tunnel; pysocks gives requests/urllib SOCKS5 support for
+# integrations whose clients pick up HTTPS_PROXY / ALL_PROXY.
+sshtunnel>=0.4.0
+pysocks>=1.7.1
+
 # MCP SDK (for MCP tools)
 # Install with: pip install mcp
 

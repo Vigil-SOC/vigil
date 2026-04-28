@@ -60,6 +60,11 @@ _DEFAULT_FIELD_SUFFIX: Mapping[str, str] = {
     "sec_token": "SEC_TOKEN",
     "api_key_secret": "API_KEY_SECRET",
     "inbound_api_key": "INBOUND_API_KEY",
+    # Proxy / SSH-tunnel credentials. Registered here so any integration
+    # that opts into the shared proxy field block (see PROXY_SUPPORTED
+    # below) gets its proxy secrets routed to the encrypted store too.
+    "proxy_password": "PROXY_PASSWORD",
+    "ssh_key_passphrase": "SSH_KEY_PASSPHRASE",
 }
 
 
@@ -190,19 +195,59 @@ _ENV_VAR_OVERRIDES: Mapping[str, Mapping[str, str]] = {
 }
 
 
+# Form-field names contributed by the shared proxy block (see
+# ``frontend/src/config/integrations.ts:PROXY_FIELDS``). Integrations
+# that opt in via ``PROXY_SUPPORTED`` get these added to their
+# secret-field registry so credentials are routed to the encrypted
+# store rather than persisted plaintext on the integration row.
+_PROXY_SECRET_FIELDS: tuple[str, ...] = ("proxy_password", "ssh_key_passphrase")
+
+
+# Integrations whose UI form includes the shared proxy field block.
+# Kept as a frozen set so the registry stays greppable: adding an
+# integration here means proxy_password / ssh_key_passphrase get the
+# same encrypted-store treatment as the integration's own credentials.
+PROXY_SUPPORTED: frozenset[str] = frozenset(
+    {
+        "splunk",
+        "elastic-siem",
+        "qradar",
+        "arcsight",
+        "logrhythm",
+        "exabeam",
+        "securonix",
+        "sumo-logic",
+        "graylog",
+        "cribl-stream",
+        "misp",
+    }
+)
+
+
 def _resolve_env_var(integration_id: str, field_name: str) -> str:
     """Resolve the secrets-store key for one integration field."""
     overrides = _ENV_VAR_OVERRIDES.get(integration_id, {})
     return overrides.get(field_name) or _default_env_var(integration_id, field_name)
 
 
+def _fields_for(integration_id: str) -> Iterable[str]:
+    """All secret-field names for an integration, including proxy fields
+    contributed by the shared block when the integration opts in."""
+    base = _SECRET_FIELDS.get(integration_id, ())
+    if integration_id in PROXY_SUPPORTED:
+        return (*base, *_PROXY_SECRET_FIELDS)
+    return base
+
+
 def _build_registry() -> Dict[str, Dict[str, str]]:
     """Materialize the per-integration secret registry from the field list."""
+    integration_ids = set(_SECRET_FIELDS) | PROXY_SUPPORTED
     return {
         integration_id: {
-            field: _resolve_env_var(integration_id, field) for field in fields
+            field: _resolve_env_var(integration_id, field)
+            for field in _fields_for(integration_id)
         }
-        for integration_id, fields in _SECRET_FIELDS.items()
+        for integration_id in integration_ids
     }
 
 

@@ -741,6 +741,21 @@ export const configApi = {
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),
 
+  // Platform metadata DB proxy (PgBouncer / SSH tunnel) — settings live
+  // in the encrypted secrets store so they're readable before the engine
+  // boots. Restart-required.
+  getPlatformDatabase: () => api.get<PlatformDatabaseProxyConfig>('/config/platform-database'),
+  setPlatformDatabase: (data: {
+    proxy_type: string
+    proxy_host?: string
+    proxy_port?: number
+    proxy_username?: string
+    proxy_password?: string
+    ssh_private_key_path?: string
+    ssh_key_passphrase?: string
+    verify_proxy_tls?: boolean
+  }) => api.post('/config/platform-database', data),
+
   // GH #84 PR-F — runtime AI cost/perf toggles
   getAIOperations: () => api.get('/config/ai-operations'),
   setAIOperations: (data: {
@@ -781,6 +796,18 @@ export const configApi = {
   }) => api.post('/config/orchestrator', data),
 
   getMempalaceHealth: () => api.get<MempalaceHealth>('/config/mempalace/health'),
+}
+
+export interface PlatformDatabaseProxyConfig {
+  proxy_type: string
+  proxy_host: string
+  proxy_port: number
+  proxy_username: string
+  ssh_private_key_path: string
+  verify_proxy_tls: boolean
+  // Booleans only — secret values are never returned by the API.
+  has_proxy_password: boolean
+  has_ssh_key_passphrase: boolean
 }
 
 // GH #136 — Mempalace is hidden from the MCP servers list because it's an

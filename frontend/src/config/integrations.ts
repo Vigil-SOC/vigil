@@ -82,6 +82,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     category: 'Threat Intelligence',
     description: 'Connect to MISP (Malware Information Sharing Platform) for threat sharing.',
     functionality_type: 'Data Enrichment',
+    proxy_supported: true,
     fields: [
       {
         name: 'url',
@@ -721,6 +722,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     description: 'Connect to Splunk Enterprise or Splunk Cloud for log aggregation, search, and analysis with natural language query generation.',
     functionality_type: 'Log Analysis & SIEM',
     has_ui: true,
+    proxy_supported: true,
     fields: [
       {
         name: 'server_url',
@@ -769,6 +771,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     description: 'Observability pipeline for collecting, processing, enriching, and routing security data. Normalize logs, reduce volume, and optimize data flow before AI analysis.',
     functionality_type: 'Data Pipeline & Enrichment',
     has_ui: false,
+    proxy_supported: true,
     fields: [
       {
         name: 'server_url',
@@ -816,6 +819,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     category: 'SIEM',
     description: 'Elastic Security SIEM with advanced analytics, threat hunting, and incident response capabilities.',
     functionality_type: 'Log Analysis & SIEM',
+    proxy_supported: true,
     fields: [
       {
         name: 'elasticsearch_url',
@@ -944,6 +948,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     category: 'SIEM',
     description: 'IBM QRadar SIEM for enterprise security intelligence and threat detection.',
     functionality_type: 'Log Analysis & SIEM',
+    proxy_supported: true,
     fields: [
       {
         name: 'console_url',
@@ -974,6 +979,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     category: 'SIEM',
     description: 'OpenText ArcSight ESM for enterprise security event management and correlation.',
     functionality_type: 'Log Analysis & SIEM',
+    proxy_supported: true,
     fields: [
       {
         name: 'manager_url',
@@ -1009,6 +1015,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     category: 'SIEM',
     description: 'LogRhythm SIEM platform with advanced analytics and automated response capabilities.',
     functionality_type: 'Log Analysis & SIEM',
+    proxy_supported: true,
     fields: [
       {
         name: 'api_url',
@@ -1039,6 +1046,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     category: 'SIEM',
     description: 'Exabeam Security Operations Platform with behavioral analytics and UEBA capabilities.',
     functionality_type: 'Log Analysis & SIEM',
+    proxy_supported: true,
     fields: [
       {
         name: 'api_url',
@@ -1074,6 +1082,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     category: 'SIEM',
     description: 'Securonix Next-Gen SIEM with advanced threat detection using machine learning and UEBA.',
     functionality_type: 'Log Analysis & SIEM',
+    proxy_supported: true,
     fields: [
       {
         name: 'api_url',
@@ -1110,6 +1119,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     category: 'SIEM',
     description: 'Cloud-native SIEM and log analytics platform with real-time insights and security analytics.',
     functionality_type: 'Log Analysis & SIEM',
+    proxy_supported: true,
     fields: [
       {
         name: 'access_id',
@@ -1146,6 +1156,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     category: 'SIEM',
     description: 'Open-source log management and SIEM solution for centralized log collection and analysis.',
     functionality_type: 'Log Analysis & SIEM',
+    proxy_supported: true,
     fields: [
       {
         name: 'server_url',
