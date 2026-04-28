@@ -19,6 +19,9 @@ import {
   Collapse,
   IconButton,
   Alert,
+  Stack,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material'
 import { 
   BarChart, 
@@ -43,6 +46,8 @@ import { severityColors as themeSeverityColors } from '../../theme'
 
 interface TechniqueData {
   technique_id: string
+  technique_name: string
+  tactic: string
   count: number
   severities: {
     critical: number
@@ -51,6 +56,8 @@ interface TechniqueData {
     low: number
   }
 }
+
+type TimeRange = '24h' | '7d' | '30d' | 'all'
 
 interface TacticData {
   tactic: string
@@ -62,6 +69,7 @@ export default function AttackChart() {
   const [techniquesData, setTechniquesData] = useState<TechniqueData[]>([])
   const [loading, setLoading] = useState(true)
   const [minConfidence, setMinConfidence] = useState(0.0)
+  const [timeRange, setTimeRange] = useState<TimeRange>('all')
   const [expandedTechnique, setExpandedTechnique] = useState<string | null>(null)
   const [techniqueFindings, setTechniqueFindings] = useState<any[]>([])
   const [loadingFindings, setLoadingFindings] = useState(false)
@@ -69,7 +77,8 @@ export default function AttackChart() {
 
   useEffect(() => {
     loadData()
-  }, [minConfidence])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [minConfidence, timeRange])
 
   const loadData = async () => {
     setLoading(true)
@@ -77,7 +86,7 @@ export default function AttackChart() {
     try {
       const [tacticsResponse, techniquesResponse] = await Promise.all([
         attackApi.getTacticsSummary(),
-        attackApi.getTechniqueRollup(minConfidence),
+        attackApi.getTechniqueRollup(minConfidence, timeRange),
       ])
       
       setTacticsData(tacticsResponse.data.tactics || [])
@@ -242,32 +251,53 @@ export default function AttackChart() {
         </Grid>
       </Grid>
 
-      {/* Confidence Filter */}
+      {/* Filters */}
       <Paper sx={{ p: 2, mb: 3 }}>
-        <Box display="flex" alignItems="center" gap={2}>
-          <Typography variant="body2" sx={{ minWidth: 150 }}>
-            Min Confidence: {minConfidence.toFixed(2)}
-          </Typography>
-          <Slider
-            value={minConfidence}
-            onChange={(_, value) => setMinConfidence(value as number)}
-            min={0}
-            max={1}
-            step={0.1}
-            marks
-            aria-label="Minimum confidence threshold"
-            sx={{ flex: 1 }}
-          />
-          <Button 
-            startIcon={loading ? <CircularProgress size={16} /> : <RefreshIcon />} 
-            onClick={loadData}
-            size="small"
-            variant="outlined"
-            disabled={loading}
-          >
-            Refresh
-          </Button>
-        </Box>
+        <Stack direction="column" spacing={2}>
+          <Box display="flex" alignItems="center" gap={2} flexWrap="wrap">
+            <Typography variant="body2" sx={{ minWidth: 100 }}>
+              Time Range:
+            </Typography>
+            <ToggleButtonGroup
+              value={timeRange}
+              exclusive
+              size="small"
+              onChange={(_, value) => {
+                if (value !== null) setTimeRange(value as TimeRange)
+              }}
+              aria-label="Time range"
+            >
+              <ToggleButton value="24h">24 Hours</ToggleButton>
+              <ToggleButton value="7d">7 Days</ToggleButton>
+              <ToggleButton value="30d">30 Days</ToggleButton>
+              <ToggleButton value="all">All Time</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+          <Box display="flex" alignItems="center" gap={2}>
+            <Typography variant="body2" sx={{ minWidth: 150 }}>
+              Min Confidence: {minConfidence.toFixed(2)}
+            </Typography>
+            <Slider
+              value={minConfidence}
+              onChange={(_, value) => setMinConfidence(value as number)}
+              min={0}
+              max={1}
+              step={0.1}
+              marks
+              aria-label="Minimum confidence threshold"
+              sx={{ flex: 1 }}
+            />
+            <Button
+              startIcon={loading ? <CircularProgress size={16} /> : <RefreshIcon />}
+              onClick={loadData}
+              size="small"
+              variant="outlined"
+              disabled={loading}
+            >
+              Refresh
+            </Button>
+          </Box>
+        </Stack>
       </Paper>
 
       {/* Charts Row */}
@@ -324,22 +354,24 @@ export default function AttackChart() {
         )}
       </Grid>
 
-      {/* Top Techniques Table */}
+      {/* MITRE Techniques Table */}
       {techniquesData.length > 0 && (
         <Paper sx={{ width: '100%' }}>
           <Box sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>
-              Top MITRE ATT&CK Techniques
+              MITRE ATT&CK Techniques by Occurrence
             </Typography>
             <Typography variant="body2" color="textSecondary" gutterBottom>
-              Click on a technique to see associated findings
+              {techniquesData.length} distinct technique{techniquesData.length === 1 ? '' : 's'} observed. Click a row to see associated findings.
             </Typography>
           </Box>
-          <TableContainer>
-            <Table>
+          <TableContainer sx={{ maxHeight: 600 }}>
+            <Table stickyHeader>
               <TableHead>
                 <TableRow>
                   <TableCell>Technique ID</TableCell>
+                  <TableCell>Technique Name</TableCell>
+                  <TableCell>Tactic</TableCell>
                   <TableCell align="right">Total Detections</TableCell>
                   <TableCell align="center">Critical</TableCell>
                   <TableCell align="center">High</TableCell>
@@ -349,7 +381,7 @@ export default function AttackChart() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {techniquesData.slice(0, 20).map((technique) => (
+                {techniquesData.map((technique) => (
                   <React.Fragment key={technique.technique_id}>
                     <TableRow
                       hover
@@ -360,6 +392,18 @@ export default function AttackChart() {
                         <Typography variant="body2" fontWeight="medium">
                           {technique.technique_id}
                         </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Typography variant="body2" noWrap sx={{ maxWidth: 240 }}>
+                          {technique.technique_name}
+                        </Typography>
+                      </TableCell>
+                      <TableCell>
+                        <Chip
+                          label={technique.tactic}
+                          size="small"
+                          variant="outlined"
+                        />
                       </TableCell>
                       <TableCell align="right">
                         <Chip label={technique.count} size="small" />
@@ -415,7 +459,7 @@ export default function AttackChart() {
                     </TableRow>
                     {/* Expanded Findings Row */}
                     <TableRow>
-                      <TableCell colSpan={7} sx={{ p: 0 }}>
+                      <TableCell colSpan={9} sx={{ p: 0 }}>
                         <Collapse 
                           in={expandedTechnique === technique.technique_id} 
                           timeout="auto" 
@@ -485,13 +529,6 @@ export default function AttackChart() {
               </TableBody>
             </Table>
           </TableContainer>
-          {techniquesData.length > 20 && (
-            <Box sx={{ p: 2, textAlign: 'center' }}>
-              <Typography variant="caption" color="textSecondary">
-                Showing top 20 of {techniquesData.length} techniques
-              </Typography>
-            </Box>
-          )}
         </Paper>
       )}
     </Box>

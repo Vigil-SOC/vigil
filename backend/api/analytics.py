@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from database.models import Finding, Case, CaseClosureInfo, LLMInteractionLog
 from database.connection import get_db_session
 from backend.services.ai_insights_service import AIInsightsService
+from services.mitre_lookup import resolve_technique
 
 logger = logging.getLogger(__name__)
 
@@ -617,75 +618,52 @@ async def get_mitre_technique_distribution(
         Finding.created_at.between(start_time, end_time)
     ).all()
     
-    technique_counts = {}
-    technique_tactics = {}
-    
+    technique_counts: dict[str, int] = {}
+    technique_meta: dict[str, tuple[str, str]] = {}
+
+    def _record(tech):
+        tid, name, tactic = resolve_technique(tech)
+        if not tid:
+            return
+        technique_counts[tid] = technique_counts.get(tid, 0) + 1
+        if tid not in technique_meta:
+            technique_meta[tid] = (name, tactic)
+
     for finding in findings:
         if not finding.mitre_predictions:
             continue
-        
+
         predictions = finding.mitre_predictions
-        
-        # Handle different mitre_predictions structures
+
         if isinstance(predictions, dict):
-            if all(isinstance(v, (int, float)) for v in predictions.values()) and predictions:
+            if predictions and all(
+                isinstance(v, (int, float)) for v in predictions.values()
+            ):
                 # Standard format: {tactic_or_technique_id: confidence}
-                for tech_id, confidence in predictions.items():
-                    if tech_id not in technique_counts:
-                        technique_counts[tech_id] = 0
-                        technique_tactics[tech_id] = {
-                            'name': tech_id,
-                            'tactic': tech_id
-                        }
-                    technique_counts[tech_id] += 1
+                for tech_id in predictions.keys():
+                    _record(tech_id)
             else:
-                techniques = []
                 if 'techniques' in predictions:
-                    techniques = predictions['techniques']
+                    nested = predictions['techniques']
                 elif 'predicted_techniques' in predictions:
-                    techniques = predictions['predicted_techniques']
+                    nested = predictions['predicted_techniques']
                 else:
-                    techniques = [predictions]
-                
-                for tech in techniques:
+                    nested = [predictions]
+
+                for tech in nested:
                     if isinstance(tech, dict):
-                        tech_id = tech.get('technique_id') or tech.get('id')
-                        tech_name = tech.get('technique_name') or tech.get('name') or tech_id
-                        tactics_val = tech.get('tactics')
-                        tactic = tech.get('tactic') or (tactics_val[0] if isinstance(tactics_val, list) and tactics_val else 'Unknown')
-                        
-                        if tech_id:
-                            if tech_id not in technique_counts:
-                                technique_counts[tech_id] = 0
-                                technique_tactics[tech_id] = {
-                                    'name': tech_name,
-                                    'tactic': tactic
-                                }
-                            technique_counts[tech_id] += 1
+                        _record(tech)
         elif isinstance(predictions, list):
             for tech in predictions:
                 if isinstance(tech, dict):
-                    tech_id = tech.get('technique_id') or tech.get('id')
-                    tech_name = tech.get('technique_name') or tech.get('name') or tech_id
-                    tactics_val = tech.get('tactics')
-                    tactic = tech.get('tactic') or (tactics_val[0] if isinstance(tactics_val, list) and tactics_val else 'Unknown')
-                    
-                    if tech_id:
-                        if tech_id not in technique_counts:
-                            technique_counts[tech_id] = 0
-                            technique_tactics[tech_id] = {
-                                'name': tech_name,
-                                'tactic': tactic
-                            }
-                        technique_counts[tech_id] += 1
-    
-    # Convert to list and sort
+                    _record(tech)
+
     techniques_list = [
         {
             'techniqueId': tech_id,
-            'techniqueName': technique_tactics[tech_id]['name'],
-            'tactic': technique_tactics[tech_id]['tactic'],
-            'count': count
+            'techniqueName': technique_meta[tech_id][0],
+            'tactic': technique_meta[tech_id][1],
+            'count': count,
         }
         for tech_id, count in technique_counts.items()
     ]

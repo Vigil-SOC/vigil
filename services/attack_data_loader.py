@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, List, Any
 from services.database_data_service import DatabaseDataService
 from services.ingestion_service import MITRE_TACTIC_MAP
+from services.mitre_lookup import TECHNIQUE_NAME_FALLBACKS
 
 VALID_TACTICS = set(MITRE_TACTIC_MAP.values())
 
@@ -137,22 +138,10 @@ def findings_to_attack_data(findings: List[Dict]) -> Dict:
     
     # Build MITRE techniques list
     mitre_techniques = []
-    technique_names = {
-        "T1071.001": ("Web Protocols", "Command and Control"),
-        "T1071.004": ("DNS", "Command and Control"),
-        "T1573.001": ("Encrypted Channel", "Command and Control"),
-        "T1021.001": ("RDP", "Lateral Movement"),
-        "T1021.002": ("SMB/Windows Admin Shares", "Lateral Movement"),
-        "T1048.003": ("Exfiltration Over DNS", "Exfiltration"),
-        "T1190": ("Exploit Public-Facing Application", "Initial Access"),
-        "T1078": ("Valid Accounts", "Initial Access"),
-        "T1059.001": ("PowerShell", "Execution"),
-        "T1018": ("Remote System Discovery", "Discovery"),
-    }
-    
+
     for technique, stats in technique_counts.items():
-        if technique in technique_names:
-            name, tactic = technique_names[technique]
+        if technique in TECHNIQUE_NAME_FALLBACKS:
+            name, tactic = TECHNIQUE_NAME_FALLBACKS[technique]
         elif technique in VALID_TACTICS:
             name, tactic = technique, technique
         else:
