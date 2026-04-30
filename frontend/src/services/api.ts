@@ -1247,6 +1247,8 @@ export const orchestratorApi = {
     api.post(`/orchestrator/investigations/${id}/review`, { action, notes }),
 
   getCost: () => api.get('/orchestrator/cost'),
+
+  resetData: () => api.post('/orchestrator/investigations/reset'),
 }
 
 // Reasoning-trace API (GH #79 — LLM chain-of-thought visibility)

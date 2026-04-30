@@ -173,6 +173,77 @@ async def kill_orchestrator():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/investigations/reset")
+async def reset_orchestrator_data():
+    """Wipe all orchestrator run data (DB rows + on-disk workdirs).
+
+    Preserves orchestrator config, findings, cases, and users. Kills any
+    in-flight agents first so nothing writes back to the DB after truncation.
+    """
+    import shutil
+    from pathlib import Path
+
+    try:
+        orch = _get_orchestrator()
+        if orch:
+            try:
+                await orch.kill()
+            except Exception as e:
+                logger.warning("orch.kill() before reset failed: %s", e)
+
+        from database.connection import get_session
+        from database.models import Investigation, LLMInteractionLog
+
+        with get_session() as session:
+            llm_deleted = (
+                session.query(LLMInteractionLog)
+                .filter(LLMInteractionLog.investigation_id.isnot(None))
+                .delete(synchronize_session=False)
+            )
+            inv_deleted = session.query(Investigation).delete(
+                synchronize_session=False
+            )
+            session.commit()
+
+        workdirs_removed = 0
+        workdir_base = Path(
+            orch.config.workdir_base if orch else "data/investigations"
+        )
+        if workdir_base.is_dir():
+            for child in workdir_base.iterdir():
+                try:
+                    if child.is_dir():
+                        shutil.rmtree(child)
+                        workdirs_removed += 1
+                    elif child.is_file():
+                        child.unlink()
+                except Exception as e:
+                    logger.warning("Failed to remove %s: %s", child, e)
+        workdir_base.mkdir(parents=True, exist_ok=True)
+
+        if orch and isinstance(orch.stats, dict):
+            orch.stats = {
+                k: (0.0 if isinstance(v, float) else 0)
+                for k, v in orch.stats.items()
+            }
+            orch._hourly_costs = []
+
+        logger.info(
+            "Orchestrator data reset: %s investigations, %s LLM logs, "
+            "%s workdirs",
+            inv_deleted, llm_deleted, workdirs_removed,
+        )
+        return {
+            "success": True,
+            "investigations_deleted": int(inv_deleted),
+            "llm_logs_deleted": int(llm_deleted),
+            "workdirs_removed": int(workdirs_removed),
+        }
+    except Exception as e:
+        logger.error(f"Error resetting orchestrator data: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---- Investigations ----
 
 @router.get("/investigations")

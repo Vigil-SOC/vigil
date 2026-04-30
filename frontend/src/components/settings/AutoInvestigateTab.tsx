@@ -8,6 +8,11 @@ import {
   Button,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   FormControl,
   FormControlLabel,
@@ -26,6 +31,7 @@ import {
 import RestoreIcon from '@mui/icons-material/Restore'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import TuneIcon from '@mui/icons-material/Tune'
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep'
 import { aiConfigApi, AIModelInfo, configApi, orchestratorApi } from '../../services/api'
 
 interface OrchestratorConfig {
@@ -146,6 +152,8 @@ export default function AutoInvestigateTab({ onMessage }: Props) {
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<any>(null)
   const [models, setModels] = useState<AIModelInfo[]>([])
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [resetting, setResetting] = useState(false)
   const lastSaved = useRef<OrchestratorConfig>(DEFAULTS)
 
   const loadConfig = async () => {
@@ -207,6 +215,33 @@ export default function AutoInvestigateTab({ onMessage }: Props) {
   const handleReset = () => {
     setConfig(DEFAULTS)
     persist(DEFAULTS)
+  }
+
+  const handleResetData = async () => {
+    setResetting(true)
+    try {
+      const res = await orchestratorApi.resetData()
+      const inv = res.data?.investigations_deleted ?? 0
+      const llm = res.data?.llm_logs_deleted ?? 0
+      const wd = res.data?.workdirs_removed ?? 0
+      onMessage({
+        type: 'success',
+        text: `Cleared ${inv} investigations, ${llm} LLM logs, ${wd} workdirs`,
+      })
+      setTimeout(() => onMessage({ type: 'success', text: '' }), 4000)
+      // Refresh status card so the cleared counters show immediately.
+      try {
+        const statusRes = await orchestratorApi.getStatus()
+        setStatus(statusRes.data)
+      } catch {
+        /* non-fatal */
+      }
+    } catch {
+      onMessage({ type: 'error', text: 'Failed to reset orchestrator data' })
+    } finally {
+      setResetting(false)
+      setConfirmReset(false)
+    }
   }
 
   // 0 is the sentinel for "unlimited" across all bounded numeric fields.
@@ -670,7 +705,40 @@ export default function AutoInvestigateTab({ onMessage }: Props) {
         <Button variant="outlined" startIcon={<RestoreIcon />} onClick={handleReset}>
           Reset to defaults
         </Button>
+        <Button
+          variant="outlined"
+          color="error"
+          startIcon={<DeleteSweepIcon />}
+          onClick={() => setConfirmReset(true)}
+        >
+          Reset run data
+        </Button>
       </Stack>
+
+      <Dialog open={confirmReset} onClose={() => !resetting && setConfirmReset(false)}>
+        <DialogTitle>Reset orchestrator run data?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This permanently deletes all investigations, agent logs, LLM
+            interaction logs, and on-disk working directories. Configuration
+            and findings are preserved. Any running agents will be killed.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmReset(false)} disabled={resetting}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleResetData}
+            color="error"
+            variant="contained"
+            disabled={resetting}
+            startIcon={resetting ? <CircularProgress size={16} /> : undefined}
+          >
+            {resetting ? 'Resetting…' : 'Reset run data'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
