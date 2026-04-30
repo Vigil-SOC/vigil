@@ -1,13 +1,25 @@
 """ATT&CK framework API endpoints."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 from fastapi import APIRouter, Query
 import logging
 
 from services.database_data_service import DatabaseDataService
 from services.mitre_lookup import iter_techniques, resolve_technique
-from backend.api.analytics import get_time_range
+
+
+def get_time_range(time_range: str) -> tuple[datetime, datetime]:
+    end_time = datetime.utcnow()
+    if time_range == '24h':
+        start_time = end_time - timedelta(hours=24)
+    elif time_range == '30d':
+        start_time = end_time - timedelta(days=30)
+    elif time_range == 'all':
+        start_time = datetime(2000, 1, 1)
+    else:
+        start_time = end_time - timedelta(days=7)
+    return start_time, end_time
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
