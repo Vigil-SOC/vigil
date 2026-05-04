@@ -95,15 +95,21 @@ class LLMWorkerManager:
     def _start_worker(self):
         """Spawn the ARQ worker as a child process."""
         env = {**os.environ, "PYTHONPATH": PROJECT_ROOT}
+        log_path = Path(PROJECT_ROOT) / "logs" / "llm_worker.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            log_file = open(log_path, "a")
             self._process = subprocess.Popen(
                 [sys.executable, "-m", "services.run_llm_worker"],
                 cwd=PROJECT_ROOT,
                 env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=log_file,
+                stderr=log_file,
             )
-            logger.info("LLM Worker started (PID: %d)", self._process.pid)
+            logger.info(
+                "LLM Worker started (PID: %d) — logs: %s",
+                self._process.pid, log_path,
+            )
         except Exception as exc:
             logger.error("Failed to start LLM Worker: %s", exc)
             self._process = None

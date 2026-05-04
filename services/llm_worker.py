@@ -66,7 +66,7 @@ async def llm_call(
     agent_id: Optional[str] = None,
     investigation_id: Optional[str] = None,
     provider_id: Optional[str] = None,
-) -> Any:
+) -> Dict[str, Any]:
     """Execute a single LLM call through the shared ClaudeService.
 
     This is the primary worker function.  It:
@@ -100,71 +100,82 @@ async def llm_call(
     except Exception:
         worker_span = None
 
-    # Load session history if applicable
-    if session_id:
-        history = await session_store.load(session_id)
-        if history:
-            messages = history + messages
+    try:
+        # Load session history if applicable
+        if session_id:
+            history = await session_store.load(session_id)
+            if history:
+                messages = history + messages
 
-    # Multi-provider routing (GH #88): if a non-default provider_id is set
-    # and the router wants the Bifrost path, dispatch there instead of
-    # hitting ClaudeService directly. provider_id=None preserves the
-    # pre-#88 Anthropic-SDK path exactly.
-    router_result = await _maybe_dispatch_via_router(
-        ctx,
-        provider_id=provider_id,
-        messages=messages,
-        system_prompt=system_prompt,
-        model=model,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        tools=tools,
-        enable_thinking=enable_thinking,
-        thinking_budget=thinking_budget,
-    )
-    if router_result is not None:
-        result = router_result
-    else:
-        await rate_limiter.acquire()
-        try:
-            response = await asyncio.to_thread(
-                _sync_claude_call,
-                claude_service,
-                messages=messages,
-                model=model,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-                enable_thinking=enable_thinking,
-                thinking_budget=thinking_budget,
-                tools=tools,
-                temperature=temperature,
-                session_id=session_id,
-                agent_id=agent_id,
-                investigation_id=investigation_id,
-            )
-        finally:
-            rate_limiter.release()
-        result = _extract_result(response)
-
-    if worker_span is not None:
-        try:
-            worker_span.end()
-        except Exception:
-            pass
-
-    # Persist session
-    if session_id:
-        # Bifrost results are always dicts; the legacy ClaudeService path
-        # can be a bare string, so guard against it.
-        assistant_content = (
-            result.get("content", "") if isinstance(result, dict) else result
+        # Multi-provider routing (GH #88): if a non-default provider_id is set
+        # and the router wants the Bifrost path, dispatch there instead of
+        # hitting ClaudeService directly. provider_id=None preserves the
+        # pre-#88 Anthropic-SDK path exactly.
+        router_result = await _maybe_dispatch_via_router(
+            ctx,
+            provider_id=provider_id,
+            messages=messages,
+            system_prompt=system_prompt,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            enable_thinking=enable_thinking,
+            thinking_budget=thinking_budget,
         )
-        updated = messages + [
-            {"role": "assistant", "content": assistant_content}
-        ]
-        await session_store.save(session_id, updated)
+        if router_result is not None:
+            result = router_result
+        else:
+            await rate_limiter.acquire()
+            try:
+                response = await asyncio.to_thread(
+                    _sync_claude_call,
+                    claude_service,
+                    messages=messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    system_prompt=system_prompt,
+                    enable_thinking=enable_thinking,
+                    thinking_budget=thinking_budget,
+                    tools=tools,
+                    temperature=temperature,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                    investigation_id=investigation_id,
+                )
+            finally:
+                rate_limiter.release()
+            result = _extract_result(response)
 
-    return result
+        if worker_span is not None:
+            try:
+                worker_span.end()
+            except Exception:
+                pass
+
+        # Persist session
+        if session_id:
+            # Bifrost results are always dicts; the legacy ClaudeService path
+            # can be a bare string, so guard against it.
+            assistant_content = (
+                result.get("content", "") if isinstance(result, dict) else result
+            )
+            updated = messages + [
+                {"role": "assistant", "content": assistant_content}
+            ]
+            await session_store.save(session_id, updated)
+
+        return result
+
+    except Exception as exc:
+        if worker_span is not None:
+            try:
+                worker_span.end()
+            except Exception:
+                pass
+        error_msg = f"{type(exc).__name__}: {exc}"
+        logger.error("llm_call failed (returning error dict): %s", error_msg)
+        return {"content": "", "type": "error", "error": error_msg}
 
 
 async def llm_call_raw(
@@ -207,54 +218,71 @@ async def llm_call_raw(
     except Exception:
         worker_span = None
 
-    router_result = await _maybe_dispatch_via_router(
-        ctx,
-        provider_id=provider_id,
-        messages=messages,
-        system_prompt=None,
-        model=model,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        tools=tools,
-        enable_thinking=enable_thinking,
-        thinking_budget=thinking_budget,
-    )
-    if router_result is not None:
-        result = _adapt_router_result_to_raw(router_result)
-    else:
-        await rate_limiter.acquire()
-        try:
-            response = await asyncio.to_thread(
-                _sync_claude_raw,
-                claude_service,
-                messages=messages,
-                model=model,
-                max_tokens=max_tokens,
-                enable_thinking=enable_thinking,
-                thinking_budget=thinking_budget,
-                tools=tools,
-                temperature=temperature,
-                investigation_id=investigation_id,
-                agent_id=agent_id,
-            )
-        finally:
-            rate_limiter.release()
-        result = _serialize_raw_response(response)
+    try:
+        router_result = await _maybe_dispatch_via_router(
+            ctx,
+            provider_id=provider_id,
+            messages=messages,
+            system_prompt=None,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            enable_thinking=enable_thinking,
+            thinking_budget=thinking_budget,
+        )
+        if router_result is not None:
+            result = _adapt_router_result_to_raw(router_result)
+        else:
+            await rate_limiter.acquire()
+            try:
+                response = await asyncio.to_thread(
+                    _sync_claude_raw,
+                    claude_service,
+                    messages=messages,
+                    model=model,
+                    max_tokens=max_tokens,
+                    enable_thinking=enable_thinking,
+                    thinking_budget=thinking_budget,
+                    tools=tools,
+                    temperature=temperature,
+                    investigation_id=investigation_id,
+                    agent_id=agent_id,
+                )
+            finally:
+                rate_limiter.release()
+            result = _serialize_raw_response(response)
 
-    if worker_span is not None:
-        try:
-            in_tok = result.get("input_tokens", 0)
-            out_tok = result.get("output_tokens", 0)
-            worker_span.set_attribute("gen_ai.usage.input_tokens", in_tok)
-            worker_span.set_attribute("gen_ai.usage.output_tokens", out_tok)
-            worker_span.set_attribute(
-                "gen_ai.finish_reason", result.get("stop_reason", "")
-            )
-            worker_span.end()
-        except Exception:
-            pass
+        if worker_span is not None:
+            try:
+                in_tok = result.get("input_tokens", 0)
+                out_tok = result.get("output_tokens", 0)
+                worker_span.set_attribute("gen_ai.usage.input_tokens", in_tok)
+                worker_span.set_attribute("gen_ai.usage.output_tokens", out_tok)
+                worker_span.set_attribute(
+                    "gen_ai.finish_reason", result.get("stop_reason", "")
+                )
+                worker_span.end()
+            except Exception:
+                pass
 
-    return result
+        return result
+
+    except Exception as exc:
+        if worker_span is not None:
+            try:
+                worker_span.end()
+            except Exception:
+                pass
+        error_msg = f"{type(exc).__name__}: {exc}"
+        logger.error("llm_call_raw failed (returning error dict): %s", error_msg)
+        return {
+            "content": [],
+            "stop_reason": "error",
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "error": error_msg,
+        }
 
 
 # ---------------------------------------------------------------------------
