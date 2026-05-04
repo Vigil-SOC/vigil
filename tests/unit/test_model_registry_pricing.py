@@ -89,6 +89,42 @@ def test_pricing_source_unknown_for_novel_provider():
     assert get_registry().get_pricing_source("foo-1", "future-vendor") == "unknown"
 
 
+def test_unknown_pricing_increments_counter(monkeypatch):
+    """#184 acceptance #2: the 'unknown' path must increment the OTEL
+    counter so dashboards/alerts can see unsupported models, not silently
+    record $0."""
+    from services import model_registry
+
+    calls = []
+    monkeypatch.setattr(
+        model_registry,
+        "_record_pricing_unknown",
+        lambda provider_type, model_id: calls.append((provider_type, model_id)),
+    )
+    # Trigger the unknown branch via the public API.
+    src = model_registry.get_registry().get_pricing_source("foo-1", "future-vendor")
+    assert src == "unknown"
+    assert ("future-vendor", "foo-1") in calls
+
+
+def test_known_pricing_does_not_increment_counter(monkeypatch):
+    """Known models must NOT increment the unknown-pricing counter."""
+    from services import model_registry
+
+    calls = []
+    monkeypatch.setattr(
+        model_registry,
+        "_record_pricing_unknown",
+        lambda provider_type, model_id: calls.append((provider_type, model_id)),
+    )
+    # claude-sonnet-4-5-20250929 should resolve to "exact" via _CATALOG.
+    src = model_registry.get_registry().get_pricing_source(
+        "claude-sonnet-4-5-20250929", "anthropic"
+    )
+    assert src in ("exact", "heuristic")
+    assert calls == []
+
+
 def test_infer_provider_type_anthropic():
     from services.model_registry import infer_provider_type
 

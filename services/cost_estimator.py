@@ -302,6 +302,22 @@ async def estimate_cost(
             max_tokens=max_tokens,
         )
 
+    # Genuinely unknown provider (not anthropic/openai/ollama). Surface the
+    # event so dashboards see it instead of silently recording $0 — same
+    # treatment we give unknown models in services.model_registry.
+    logger.warning(
+        "estimate_cost: unknown provider_type=%r model_id=%r — returning $0 "
+        "with pricing_source='unknown'",
+        provider_type,
+        model_id,
+    )
+    try:
+        from services.model_registry import _record_pricing_unknown
+
+        _record_pricing_unknown(provider_type or "unknown", model_id or "unknown")
+    except Exception:
+        pass
+
     text = _flatten_message_text(messages)
     if system_prompt:
         text = system_prompt + "\n" + text

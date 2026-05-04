@@ -493,6 +493,23 @@ class AgentRunner:
                 plan = self.workdir.read_file(inv_id, "plan.md")
                 prompt = self._build_prompt(inv_id, plan, state, iteration)
 
+                # Pre-flight cost gate (#184 acceptance #4). The post-hoc
+                # gate at line 460 only fires *after* the call has already
+                # been billed — one runaway iteration can blow the budget
+                # before we notice. This gate estimates the upcoming call's
+                # upper bound and aborts before dispatch when it would push
+                # the investigation over `max_cost_per_investigation`. A
+                # sentinel of 0 means "unlimited" (matches the
+                # AutoInvestigateTab convention) and skips the check.
+                if self.config.max_cost_per_investigation > 0:
+                    if await self._preflight_budget_blocked(
+                        inv_id=inv_id,
+                        iteration=iteration,
+                        prompt=prompt,
+                        total_cost=total_cost,
+                    ):
+                        break
+
                 # Iteration-level span
                 _iter_span = None
                 try:
@@ -641,6 +658,86 @@ class AgentRunner:
                     _agent_span.end()
             except Exception:
                 pass
+
+    async def _preflight_budget_blocked(
+        self,
+        *,
+        inv_id: str,
+        iteration: int,
+        prompt: str,
+        total_cost: float,
+    ) -> bool:
+        """Return True if the upcoming call's estimated upper bound would
+        push the investigation over its budget.
+
+        On True, marks the investigation failed and the caller should
+        ``break`` out of the agent loop. On False (including any error
+        during estimation) the caller proceeds — the post-hoc gate at
+        line 460 still catches actual overruns. Telemetry must never
+        block dispatch.
+        """
+        try:
+            from services.cost_estimator import estimate_cost
+        except Exception as e:
+            logger.debug("%s: estimate_cost import failed (%s); skipping gate", inv_id, e)
+            return False
+
+        # Match the max_token sizing _call_claude uses so the high_usd
+        # bound reflects the actual ceiling we'd request.
+        thinking_enabled = (
+            getattr(self._claude_service, "enable_thinking", False)
+            if self._claude_service else True
+        )
+        thinking_budget = (
+            getattr(
+                self._claude_service,
+                "thinking_budget",
+                _default_thinking_budget(),
+            )
+            if self._claude_service else _default_thinking_budget()
+        )
+        max_tok = max(16000, thinking_budget + 4096) if thinking_enabled else 4096
+
+        try:
+            estimate = await estimate_cost(
+                provider_type="anthropic",
+                model_id=self.config.plan_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=max_tok,
+            )
+        except Exception as e:
+            logger.debug("%s: pre-flight estimate failed (%s); proceeding", inv_id, e)
+            return False
+
+        projected = total_cost + (estimate.high_usd or 0.0)
+        budget = self.config.max_cost_per_investigation
+        if projected <= budget:
+            return False
+
+        logger.warning(
+            "%s: pre-flight cost gate aborted iteration %d — "
+            "projected $%.4f (current $%.4f + estimate.high $%.4f) "
+            "exceeds budget $%.4f",
+            inv_id,
+            iteration,
+            projected,
+            total_cost,
+            estimate.high_usd,
+            budget,
+        )
+        self.workdir.append_log(
+            inv_id,
+            {
+                "event": "preflight_budget_block",
+                "iteration": iteration,
+                "current_cost_usd": round(total_cost, 4),
+                "estimate_high_usd": round(estimate.high_usd, 4),
+                "max_cost_usd": budget,
+                "pricing_source": estimate.pricing_source,
+            },
+        )
+        self._mark_failed(inv_id, "Cost budget would be exceeded (pre-flight)")
+        return True
 
     def _build_prompt(self, inv_id: str, plan: str, state: Dict, iteration: int) -> str:
         """Build the Claude prompt from plan, context, and state."""

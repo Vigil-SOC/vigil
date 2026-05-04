@@ -196,6 +196,68 @@ async def test_dispatch_anthropic_with_thinking_routes_through_bifrost():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_bifrost_openai_extracts_cache_read_tokens():
+    """#184 acceptance #2: OpenAI prompt-cache tokens were dropped on the floor
+    by the dispatch layer, leaving cache hits billed at full input rate. Verify
+    `usage.prompt_tokens_details.cached_tokens` is now read into
+    `cache_read_tokens` (and `cache_creation_tokens` stays 0 — OpenAI doesn't
+    bill cache creation as a separate tier the way Anthropic does).
+    """
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="cached!", tool_calls=None)
+            )
+        ],
+        model="openai/gpt-4o",
+        usage=SimpleNamespace(
+            prompt_tokens=1000,
+            completion_tokens=200,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=750),
+        ),
+    )
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        out = await router.dispatch(
+            provider=_openai_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    assert out["input_tokens"] == 1000
+    assert out["output_tokens"] == 200
+    assert out["cache_read_tokens"] == 750
+    assert out["cache_creation_tokens"] == 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_bifrost_openai_no_cache_details_safe():
+    """When prompt_tokens_details is missing (older OpenAI responses or models
+    without cache support), cache_read_tokens defaults to 0 — must not raise.
+    """
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="x", tool_calls=None))
+        ],
+        model="openai/gpt-4o-mini",
+        usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5),
+        # no prompt_tokens_details attribute
+    )
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        out = await router.dispatch(
+            provider=_openai_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    assert out["cache_read_tokens"] == 0
+    assert out["cache_creation_tokens"] == 0
+
+
+@pytest.mark.asyncio
 async def test_anthropic_dispatch_raises_when_no_key():
     router = LLMRouter()
     with patch("services.llm_router.get_secret", return_value=None), \

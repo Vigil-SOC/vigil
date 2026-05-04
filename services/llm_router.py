@@ -307,12 +307,26 @@ class LLMRouter:
         resp = await client.chat.completions.create(**kwargs)
         choice = resp.choices[0].message
         usage = getattr(resp, "usage", None)
+        # OpenAI exposes prompt-cache hits via usage.prompt_tokens_details.cached_tokens.
+        # OpenAI bills cached tokens at a discounted rate but doesn't bill a
+        # separate "cache creation" tier the way Anthropic does — so we
+        # populate cache_read_tokens and leave cache_creation_tokens at 0.
+        # Without this extraction the cost-per-call math under-credits OpenAI
+        # cache hits (full input rate instead of the discounted cache rate),
+        # which is the asymmetry #184 acceptance #2 calls out.
+        cache_read = 0
+        if usage is not None:
+            details = getattr(usage, "prompt_tokens_details", None)
+            if details is not None:
+                cache_read = getattr(details, "cached_tokens", 0) or 0
         return {
             "content": choice.content or "",
             "tool_calls": getattr(choice, "tool_calls", None),
             "model": resp.model,
             "input_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
             "output_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
+            "cache_read_tokens": cache_read,
+            "cache_creation_tokens": 0,
             "provider": provider.provider_type,
             "path": "bifrost",
         }

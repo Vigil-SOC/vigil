@@ -82,19 +82,49 @@ def test_ollama_estimator_returns_zero_cost():
     assert est.pricing_source == "zero"
 
 
-def test_unknown_provider_returns_zero_with_unknown_source():
+def test_unknown_provider_returns_zero_with_unknown_source(caplog):
     from services.cost_estimator import estimate_cost
 
+    with caplog.at_level("WARNING"):
+        est = _run(
+            estimate_cost(
+                provider_type="some-future-vendor",
+                model_id="some-model",
+                messages=[{"role": "user", "content": "hi"}],
+            )
+        )
+    assert est.low_usd == 0.0
+    assert est.high_usd == 0.0
+    assert est.pricing_source == "unknown"
+    # #184 acceptance #2 — the unknown branch must surface, not silently $0.
+    assert any(
+        "unknown provider_type" in r.message and "some-future-vendor" in r.message
+        for r in caplog.records
+    )
+
+
+def test_unknown_provider_calls_record_pricing_unknown(monkeypatch):
+    """Counter side-effect fires for the unknown branch (#184 acceptance #2)."""
+    from services import cost_estimator
+
+    calls = []
+    # Patch where cost_estimator imports it from. The estimator does the
+    # import lazily inside the function, so patching at the model_registry
+    # module is what catches both the import and call.
+    monkeypatch.setattr(
+        "services.model_registry._record_pricing_unknown",
+        lambda provider_type, model_id: calls.append((provider_type, model_id)),
+    )
+
     est = _run(
-        estimate_cost(
+        cost_estimator.estimate_cost(
             provider_type="some-future-vendor",
             model_id="some-model",
             messages=[{"role": "user", "content": "hi"}],
         )
     )
-    assert est.low_usd == 0.0
-    assert est.high_usd == 0.0
     assert est.pricing_source == "unknown"
+    assert calls == [("some-future-vendor", "some-model")]
 
 
 def test_anthropic_estimator_uses_count_tokens_when_available(monkeypatch):
