@@ -62,6 +62,41 @@ export interface VStrikeIframeContextValue {
     steps: KillchainStep[],
     opts?: { networkId?: string; loop?: boolean; autoPlay?: boolean },
   ) => Promise<{ ok: true } | { ok: false; status: number; message: string }>
+  // -------------------------------------------------------------------------
+  // Storylines & legends
+  // -------------------------------------------------------------------------
+  storylines: Array<{ id: string; label: string; raw: Record<string, any> }>
+  selectedStoryline: string
+  setStoryline: (storylineId: string) => void
+  legendRuns: Array<{ id: string; label: string; raw: Record<string, any> }>
+  selectedLegendRun: string
+  setLegendRun: (legendRunId: string) => void
+  // -------------------------------------------------------------------------
+  // Iframe → toolbar sync (no API calls)
+  // -------------------------------------------------------------------------
+  syncNetworkFromIframe: (networkId: string) => void
+  syncStorylineFromIframe: (storylineId: string) => void
+  syncLegendRunFromIframe: (legendRunId: string) => void
+  // -------------------------------------------------------------------------
+  // Camera control
+  // -------------------------------------------------------------------------
+  cameraNode: (nodeIds: string[]) => Promise<{ ok: true } | { ok: false; message: string }>
+  cameraPosition: (
+    position: Record<string, number>,
+    rotation?: Record<string, number>,
+  ) => Promise<{ ok: true } | { ok: false; message: string }>
+  // -------------------------------------------------------------------------
+  // Storyline VCR playback
+  // -------------------------------------------------------------------------
+  applyStoryline: (storylineId: string) => Promise<{ ok: true } | { ok: false; message: string }>
+  setStorylineMode: (mode: string) => Promise<{ ok: true } | { ok: false; message: string }>
+  stepForward: () => Promise<{ ok: true } | { ok: false; message: string }>
+  stepBackward: () => Promise<{ ok: true } | { ok: false; message: string }>
+  // -------------------------------------------------------------------------
+  // Node search / drift
+  // -------------------------------------------------------------------------
+  searchNodes: (query: string) => Promise<Array<Record<string, any>>>
+  getNodeDrift: (nodeId: string) => Promise<Array<Record<string, any>>>
 }
 
 const VStrikeIframeContext = createContext<VStrikeIframeContextValue | null>(null)
@@ -85,6 +120,23 @@ function pickNetworkId(raw: Record<string, any>): string | null {
 
 function pickNetworkLabel(raw: Record<string, any>, fallbackId: string): string {
   for (const key of ['name', 'label', 'display_name', 'title']) {
+    const value = raw?.[key]
+    if (typeof value === 'string' && value) return value
+  }
+  return fallbackId
+}
+
+function pickId(raw: Record<string, any>): string | null {
+  for (const key of ['id', 'storyline_id', 'legend_run_id', 'uuid', 'runId']) {
+    const value = raw?.[key]
+    if (typeof value === 'string' && value) return value
+    if (typeof value === 'number') return String(value)
+  }
+  return null
+}
+
+function pickLabel(raw: Record<string, any>, fallbackId: string): string {
+  for (const key of ['name', 'label', 'display_name', 'title', 'description']) {
     const value = raw?.[key]
     if (typeof value === 'string' && value) return value
   }
@@ -140,9 +192,20 @@ export function VStrikeIframeProvider({ children }: ProviderProps) {
   >([])
   const [reloadKey, setReloadKey] = useState(0)
 
+  const [storylines, setStorylines] = useState<
+    Array<{ id: string; label: string; raw: Record<string, any> }>
+  >([])
+  const [selectedStoryline, setSelectedStoryline] = useState<string>('')
+  const [legendRuns, setLegendRuns] = useState<
+    Array<{ id: string; label: string; raw: Record<string, any> }>
+  >([])
+  const [selectedLegendRun, setSelectedLegendRun] = useState<string>('')
+
   const iframeReadyRef = useRef(false)
   const pendingNetworkRef = useRef<string | null>(null)
   const anchorOptsRef = useRef<Map<HTMLDivElement, AnchorOpts>>(new Map())
+  const currentNetworkRef = useRef<string>('')
+  const syncingFromIframeRef = useRef(false)
 
   // Fetch token + networks once per `reloadKey`. Mounted-once at provider
   // scope, so case-dialog opens never trigger a re-fetch.
@@ -196,7 +259,7 @@ export function VStrikeIframeProvider({ children }: ProviderProps) {
   }, [reloadKey])
 
   const applyNetwork = useCallback((networkId: string) => {
-    if (!networkId) return
+    if (!networkId || syncingFromIframeRef.current) return
     vstrikeApi.loadNetwork(networkId).catch((err) => {
       // eslint-disable-next-line no-console
       console.warn('VStrike loadNetwork failed:', err)
@@ -206,6 +269,7 @@ export function VStrikeIframeProvider({ children }: ProviderProps) {
   const setNetwork = useCallback(
     (networkId: string) => {
       setSelectedNetwork(networkId)
+      currentNetworkRef.current = networkId
       if (iframeReadyRef.current) {
         applyNetwork(networkId)
       } else {
@@ -214,6 +278,34 @@ export function VStrikeIframeProvider({ children }: ProviderProps) {
     },
     [applyNetwork],
   )
+
+  const syncNetworkFromIframe = useCallback((networkId: string) => {
+    syncingFromIframeRef.current = true
+    currentNetworkRef.current = networkId
+    setSelectedNetwork(networkId)
+    // Reset dependent selections when network changes from iframe.
+    setSelectedStoryline('')
+    setSelectedLegendRun('')
+    Promise.resolve().then(() => {
+      syncingFromIframeRef.current = false
+    })
+  }, [])
+
+  const syncStorylineFromIframe = useCallback((storylineId: string) => {
+    syncingFromIframeRef.current = true
+    setSelectedStoryline(storylineId)
+    Promise.resolve().then(() => {
+      syncingFromIframeRef.current = false
+    })
+  }, [])
+
+  const syncLegendRunFromIframe = useCallback((legendRunId: string) => {
+    syncingFromIframeRef.current = true
+    setSelectedLegendRun(legendRunId)
+    Promise.resolve().then(() => {
+      syncingFromIframeRef.current = false
+    })
+  }, [])
 
   const attach = useCallback(
     (anchor: HTMLDivElement, opts?: AnchorOpts) => {
@@ -300,6 +392,266 @@ export function VStrikeIframeProvider({ children }: ProviderProps) {
     [selectedNetwork],
   )
 
+  // -------------------------------------------------------------------------
+  // Data fetching (storylines, legend runs)
+  // -------------------------------------------------------------------------
+
+  const fetchStorylines = useCallback(
+    async (networkId: string) => {
+      if (!networkId) {
+        setStorylines([])
+        return
+      }
+      try {
+        const res = await vstrikeApi.listStorylines(networkId)
+        // Cancel if user switched networks while we were in-flight.
+        if (currentNetworkRef.current !== networkId) return
+        const items = res.data?.storylines || []
+        const opts: Array<{ id: string; label: string; raw: Record<string, any> }> =
+          []
+        for (const raw of items) {
+          const id = pickId(raw)
+          if (!id) continue
+          opts.push({ id, label: pickLabel(raw, id), raw })
+        }
+        setStorylines(opts)
+      } catch (err) {
+        if (currentNetworkRef.current !== networkId) return
+        // eslint-disable-next-line no-console
+        console.warn('VStrike listStorylines failed:', err)
+        setStorylines([])
+      }
+    },
+    [],
+  )
+
+  const fetchLegendRuns = useCallback(
+    async (networkId: string) => {
+      if (!networkId) {
+        setLegendRuns([])
+        return
+      }
+      try {
+        const res = await vstrikeApi.listLegendRuns(networkId)
+        // Cancel if user switched networks while we were in-flight.
+        if (currentNetworkRef.current !== networkId) return
+        const items = res.data?.legend_runs || []
+        const opts: Array<{ id: string; label: string; raw: Record<string, any> }> =
+          []
+        for (const raw of items) {
+          const id = pickId(raw)
+          if (!id) continue
+          opts.push({ id, label: pickLabel(raw, id), raw })
+        }
+        setLegendRuns(opts)
+      } catch (err) {
+        if (currentNetworkRef.current !== networkId) return
+        // eslint-disable-next-line no-console
+        console.warn('VStrike listLegendRuns failed:', err)
+        setLegendRuns([])
+      }
+    },
+    [],
+  )
+
+  // When network changes, fetch storylines and legend runs.
+  useEffect(() => {
+    let cancelled = false
+    if (selectedNetwork) {
+      fetchStorylines(selectedNetwork).then(() => {
+        if (cancelled) return
+      })
+      fetchLegendRuns(selectedNetwork).then(() => {
+        if (cancelled) return
+      })
+    } else {
+      setStorylines([])
+      setLegendRuns([])
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [selectedNetwork, fetchStorylines, fetchLegendRuns])
+
+  const setStoryline = useCallback(
+    (storylineId: string) => {
+      setSelectedStoryline(storylineId)
+    },
+    [],
+  )
+
+  const setLegendRun = useCallback(
+    (legendRunId: string) => {
+      setSelectedLegendRun(legendRunId)
+    },
+    [],
+  )
+
+  // -------------------------------------------------------------------------
+  // Camera control
+  // -------------------------------------------------------------------------
+
+  const cameraNode = useCallback(
+    async (nodeIds: string[]) => {
+      const networkId = selectedNetwork
+      if (!networkId) {
+        return { ok: false as const, message: 'No VStrike network selected.' }
+      }
+      try {
+        await vstrikeApi.uiCameraNode(nodeIds, networkId)
+        return { ok: true as const }
+      } catch (err: any) {
+        const detail = err?.response?.data?.detail
+        const message =
+          typeof detail === 'string'
+            ? detail
+            : detail?.message || err?.message || 'Camera node focus failed.'
+        return { ok: false as const, message }
+      }
+    },
+    [selectedNetwork],
+  )
+
+  const cameraPosition = useCallback(
+    async (
+      position: Record<string, number>,
+      rotation?: Record<string, number>,
+    ) => {
+      const networkId = selectedNetwork
+      if (!networkId) {
+        return { ok: false as const, message: 'No VStrike network selected.' }
+      }
+      try {
+        await vstrikeApi.uiCameraPosition(position, rotation, networkId)
+        return { ok: true as const }
+      } catch (err: any) {
+        const detail = err?.response?.data?.detail
+        const message =
+          typeof detail === 'string'
+            ? detail
+            : detail?.message || err?.message || 'Camera position failed.'
+        return { ok: false as const, message }
+      }
+    },
+    [selectedNetwork],
+  )
+
+  // -------------------------------------------------------------------------
+  // Storyline VCR playback
+  // -------------------------------------------------------------------------
+
+  const applyStoryline = useCallback(
+    async (storylineId: string) => {
+      const networkId = selectedNetwork
+      if (!networkId) {
+        return { ok: false as const, message: 'No VStrike network selected.' }
+      }
+      try {
+        await vstrikeApi.uiStorylineApply(storylineId, networkId)
+        return { ok: true as const }
+      } catch (err: any) {
+        const detail = err?.response?.data?.detail
+        const message =
+          typeof detail === 'string'
+            ? detail
+            : detail?.message || err?.message || 'Apply storyline failed.'
+        return { ok: false as const, message }
+      }
+    },
+    [selectedNetwork],
+  )
+
+  const setStorylineMode = useCallback(
+    async (mode: string) => {
+      const networkId = selectedNetwork
+      if (!networkId) {
+        return { ok: false as const, message: 'No VStrike network selected.' }
+      }
+      try {
+        await vstrikeApi.uiStorylineMode(mode, networkId)
+        return { ok: true as const }
+      } catch (err: any) {
+        const detail = err?.response?.data?.detail
+        const message =
+          typeof detail === 'string'
+            ? detail
+            : detail?.message || err?.message || 'Set storyline mode failed.'
+        return { ok: false as const, message }
+      }
+    },
+    [selectedNetwork],
+  )
+
+  const stepForward = useCallback(async () => {
+    const networkId = selectedNetwork
+    if (!networkId) {
+      return { ok: false as const, message: 'No VStrike network selected.' }
+    }
+    try {
+      await vstrikeApi.uiStorylineForward(networkId)
+      return { ok: true as const }
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const message =
+        typeof detail === 'string'
+          ? detail
+          : detail?.message || err?.message || 'Step forward failed.'
+      return { ok: false as const, message }
+    }
+  }, [selectedNetwork])
+
+  const stepBackward = useCallback(async () => {
+    const networkId = selectedNetwork
+    if (!networkId) {
+      return { ok: false as const, message: 'No VStrike network selected.' }
+    }
+    try {
+      await vstrikeApi.uiStorylineBackward(networkId)
+      return { ok: true as const }
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      const message =
+        typeof detail === 'string'
+          ? detail
+          : detail?.message || err?.message || 'Step backward failed.'
+      return { ok: false as const, message }
+    }
+  }, [selectedNetwork])
+
+  // -------------------------------------------------------------------------
+  // Node search / drift
+  // -------------------------------------------------------------------------
+
+  const searchNodes = useCallback(
+    async (query: string) => {
+      const networkId = selectedNetwork
+      try {
+        const res = await vstrikeApi.nodeSearch(query, networkId)
+        return res.data?.results || []
+      } catch (err: any) {
+        // eslint-disable-next-line no-console
+        console.warn('VStrike nodeSearch failed:', err)
+        return []
+      }
+    },
+    [selectedNetwork],
+  )
+
+  const getNodeDrift = useCallback(
+    async (nodeId: string) => {
+      const networkId = selectedNetwork
+      try {
+        const res = await vstrikeApi.nodeDrift(nodeId, networkId)
+        return res.data?.drift || []
+      } catch (err: any) {
+        // eslint-disable-next-line no-console
+        console.warn('VStrike nodeDrift failed:', err)
+        return []
+      }
+    },
+    [selectedNetwork],
+  )
+
   const value = useMemo<VStrikeIframeContextValue>(
     () => ({
       state,
@@ -317,6 +669,23 @@ export function VStrikeIframeProvider({ children }: ProviderProps) {
       detach,
       reload,
       triggerKillchain,
+      storylines,
+      selectedStoryline,
+      setStoryline,
+      legendRuns,
+      selectedLegendRun,
+      setLegendRun,
+      syncNetworkFromIframe,
+      syncStorylineFromIframe,
+      syncLegendRunFromIframe,
+      cameraNode,
+      cameraPosition,
+      applyStoryline,
+      setStorylineMode,
+      stepForward,
+      stepBackward,
+      searchNodes,
+      getNodeDrift,
     }),
     [
       state,
@@ -333,6 +702,23 @@ export function VStrikeIframeProvider({ children }: ProviderProps) {
       detach,
       reload,
       triggerKillchain,
+      storylines,
+      selectedStoryline,
+      setStoryline,
+      legendRuns,
+      selectedLegendRun,
+      setLegendRun,
+      syncNetworkFromIframe,
+      syncStorylineFromIframe,
+      syncLegendRunFromIframe,
+      cameraNode,
+      cameraPosition,
+      applyStoryline,
+      setStorylineMode,
+      stepForward,
+      stepBackward,
+      searchNodes,
+      getNodeDrift,
     ],
   )
 

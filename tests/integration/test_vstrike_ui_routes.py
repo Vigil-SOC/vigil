@@ -260,3 +260,256 @@ def test_killchain_replay_503_without_ui_credentials():
             asyncio.run(vstrike_module.ui_killchain_replay(_make_killchain_request()))
 
     assert exc_info.value.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Data-plane proxies (node search, drift, storylines, legends)
+# ---------------------------------------------------------------------------
+
+
+def _mock_data_service(**overrides):
+    svc = _mock_ui_service(**overrides)
+    svc.node_search.return_value = overrides.get(
+        "node_search", [{"node_id": "n1", "node_name": "Router-A"}]
+    )
+    svc.node_drift_get.return_value = overrides.get(
+        "node_drift", [{"timestamp": "t1", "source": "cve"}]
+    )
+    svc.storyline_list.return_value = overrides.get(
+        "storylines", [{"storyline_id": "s1", "name": "Exfil"}]
+    )
+    svc.storyline_events_get.return_value = overrides.get(
+        "storyline_events", [{"event_id": "e1", "timestamp": "t1"}]
+    )
+    svc.legend_run_list.return_value = overrides.get(
+        "legend_runs", [{"legend_run_id": "lr1", "name": "CVE-2026-001"}]
+    )
+    svc.legend_run_results_get.return_value = overrides.get(
+        "legend_results", {"legend_run_id": "lr1", "results": {"critical": 3}}
+    )
+    return svc
+
+
+def test_node_search_returns_results():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeNodeSearchRequest
+
+    svc = _mock_data_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.node_search(VStrikeNodeSearchRequest(query="router", network_id="net-1", limit=10))
+        )
+
+    assert result["query"] == "router"
+    assert result["results"] == [{"node_id": "n1", "node_name": "Router-A"}]
+    svc.node_search.assert_called_once_with("router", network_id="net-1", limit=10)
+
+
+def test_node_search_503_without_ui_credentials():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeNodeSearchRequest
+
+    svc = _mock_data_service(has_ui_credentials=False)
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(vstrike_module.node_search(VStrikeNodeSearchRequest(query="x")))
+
+    assert exc_info.value.status_code == 503
+
+
+def test_node_drift_returns_drift():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeNodeDriftRequest
+
+    svc = _mock_data_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.node_drift(VStrikeNodeDriftRequest(node_id="node-1", network_id="net-1"))
+        )
+
+    assert result["node_id"] == "node-1"
+    assert result["drift"] == [{"timestamp": "t1", "source": "cve"}]
+    svc.node_drift_get.assert_called_once_with("node-1", network_id="net-1")
+
+
+def test_list_storylines_returns_storylines():
+    from backend.api import vstrike as vstrike_module
+
+    svc = _mock_data_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(vstrike_module.list_storylines("net-1"))
+
+    assert result["storylines"] == [{"storyline_id": "s1", "name": "Exfil"}]
+    svc.storyline_list.assert_called_once_with(network_id="net-1")
+
+
+def test_storyline_events_returns_events():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeStorylineEventsRequest
+
+    svc = _mock_data_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.storyline_events(VStrikeStorylineEventsRequest(storyline_id="s1", network_id="net-1"))
+        )
+
+    assert result["storyline_id"] == "s1"
+    assert result["events"] == [{"event_id": "e1", "timestamp": "t1"}]
+    svc.storyline_events_get.assert_called_once_with("s1", network_id="net-1")
+
+
+def test_list_legend_runs_returns_runs():
+    from backend.api import vstrike as vstrike_module
+
+    svc = _mock_data_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(vstrike_module.list_legend_runs("net-1"))
+
+    assert result["legend_runs"] == [{"legend_run_id": "lr1", "name": "CVE-2026-001"}]
+    svc.legend_run_list.assert_called_once_with(network_id="net-1")
+
+
+def test_legend_run_results_returns_results():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeLegendRunResultsRequest
+
+    svc = _mock_data_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.legend_run_results(VStrikeLegendRunResultsRequest(legend_run_id="lr1", network_id="net-1"))
+        )
+
+    assert result["legend_run_id"] == "lr1"
+    assert result["results"] == {"legend_run_id": "lr1", "results": {"critical": 3}}
+    svc.legend_run_results_get.assert_called_once_with("lr1", network_id="net-1")
+
+
+# ---------------------------------------------------------------------------
+# UI control plane (camera, storyline, VCR playback)
+# ---------------------------------------------------------------------------
+
+
+def _mock_ui_control_service(**overrides):
+    svc = _mock_ui_service(**overrides)
+    svc.ui_camera_node.return_value = overrides.get("camera_node", {"ok": True})
+    svc.ui_camera_position.return_value = overrides.get("camera_position", {"ok": True})
+    svc.ui_storyline_apply.return_value = overrides.get("storyline_apply", {"ok": True})
+    svc.ui_storyline_mode.return_value = overrides.get("storyline_mode", {"ok": True})
+    svc.ui_storyline_forward.return_value = overrides.get("storyline_forward", {"ok": True})
+    svc.ui_storyline_backward.return_value = overrides.get("storyline_backward", {"ok": True})
+    return svc
+
+
+def test_ui_camera_node_calls_service():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeCameraNodeRequest
+
+    svc = _mock_ui_control_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.ui_camera_node(VStrikeCameraNodeRequest(node_ids=["n1", "n2"], network_id="net-1"))
+        )
+
+    assert result["ok"] is True
+    svc.ui_camera_node.assert_called_once_with(["n1", "n2"], network_id="net-1")
+
+
+def test_ui_camera_position_calls_service():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeCameraPositionRequest
+
+    svc = _mock_ui_control_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.ui_camera_position(
+                VStrikeCameraPositionRequest(
+                    position={"x": 1.0, "y": 2.0, "z": 3.0},
+                    rotation={"pitch": 0.5},
+                    network_id="net-1",
+                )
+            )
+        )
+
+    assert result["ok"] is True
+    svc.ui_camera_position.assert_called_once_with(
+        {"x": 1.0, "y": 2.0, "z": 3.0},
+        rotation={"pitch": 0.5},
+        network_id="net-1",
+    )
+
+
+def test_ui_storyline_apply_calls_service():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeStorylineApplyRequest
+
+    svc = _mock_ui_control_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.ui_storyline_apply(VStrikeStorylineApplyRequest(storyline_id="s1", network_id="net-1"))
+        )
+
+    assert result["ok"] is True
+    svc.ui_storyline_apply.assert_called_once_with("s1", network_id="net-1")
+
+
+def test_ui_storyline_mode_calls_service():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeStorylineModeRequest
+
+    svc = _mock_ui_control_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.ui_storyline_mode(VStrikeStorylineModeRequest(mode="replay", network_id="net-1"))
+        )
+
+    assert result["ok"] is True
+    svc.ui_storyline_mode.assert_called_once_with("replay", network_id="net-1")
+
+
+def test_ui_storyline_forward_calls_service():
+    from backend.api import vstrike as vstrike_module
+
+    svc = _mock_ui_control_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(vstrike_module.ui_storyline_forward("net-1"))
+
+    assert result["ok"] is True
+    svc.ui_storyline_forward.assert_called_once_with(network_id="net-1")
+
+
+def test_ui_storyline_backward_calls_service():
+    from backend.api import vstrike as vstrike_module
+
+    svc = _mock_ui_control_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(vstrike_module.ui_storyline_backward("net-1"))
+
+    assert result["ok"] is True
+    svc.ui_storyline_backward.assert_called_once_with(network_id="net-1")
+
+
+def test_ui_camera_node_501_when_tool_not_implemented():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeCameraNodeRequest
+    from services.vstrike_service import VStrikeToolNotImplemented
+
+    svc = _mock_ui_control_service()
+    svc.ui_camera_node.side_effect = VStrikeToolNotImplemented("ui-camera-node not implemented")
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(vstrike_module.ui_camera_node(VStrikeCameraNodeRequest(node_ids=["n1"])))
+
+    assert exc_info.value.status_code == 501
+
+
+def test_ui_storyline_forward_502_on_runtime_error():
+    from backend.api import vstrike as vstrike_module
+
+    svc = _mock_ui_control_service()
+    svc.ui_storyline_forward.side_effect = RuntimeError("websocket closed")
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(vstrike_module.ui_storyline_forward("net-1"))
+
+    assert exc_info.value.status_code == 502
+    assert "websocket closed" in str(exc_info.value.detail)

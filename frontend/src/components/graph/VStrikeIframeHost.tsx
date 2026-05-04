@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   Alert,
   Box,
@@ -13,6 +13,7 @@ import {
   SelectChangeEvent,
   Snackbar,
   Stack,
+  TextField,
   Tooltip,
   Typography,
 } from '@mui/material'
@@ -20,6 +21,9 @@ import {
   Fullscreen as FullscreenIcon,
   FullscreenExit as FullscreenExitIcon,
   PlayArrow as PlayIcon,
+  SkipNext as SkipNextIcon,
+  SkipPrevious as SkipPreviousIcon,
+  Search as SearchIcon,
 } from '@mui/icons-material'
 import {
   useVStrikeIframe,
@@ -47,8 +51,9 @@ const TOP_BAR_OFFSET_PX = 64
  * bounding rect via a `ResizeObserver` + `scroll` listener; it never unmounts,
  * so the VStrike session inside the iframe survives every navigation.
  *
- * The toolbar (network selector + Play + Fullscreen) floats at the top of the
- * iframe rect and is only visible when an anchor is active.
+ * The toolbar floats at the top of the iframe rect and is only visible when an
+ * anchor is active. It includes network selection, storyline/legend controls,
+ * VCR playback, node search, and the legacy kill-chain play button.
  */
 export default function VStrikeIframeHost() {
   const ctx = useVStrikeIframe()
@@ -59,6 +64,11 @@ export default function VStrikeIframeHost() {
     severity: 'success' | 'error' | 'info'
     message: string
   } | null>(null)
+
+  // Node search local state
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<Array<Record<string, any>>>([])
+  const [showSearchResults, setShowSearchResults] = useState(false)
 
   const anchor = internals.activeAnchor
   const fullscreen = ctx.fullscreen
@@ -104,8 +114,52 @@ export default function VStrikeIframeHost() {
     }
   }, [anchor, fullscreen])
 
-  // Bridge the iframe's `onLoad` event into the context (so it can apply the
-  // pending network selection once the VStrike app is ready inside the frame).
+  // Keep latest selection values inside a ref so the postMessage handler
+  // can read them without re-registering the listener on every change.
+  const selectedNetworkRef = useRef(ctx.selectedNetwork)
+  const selectedStorylineRef = useRef(ctx.selectedStoryline)
+  const selectedLegendRunRef = useRef(ctx.selectedLegendRun)
+  selectedNetworkRef.current = ctx.selectedNetwork
+  selectedStorylineRef.current = ctx.selectedStoryline
+  selectedLegendRunRef.current = ctx.selectedLegendRun
+
+  // Listen for state-change messages from the VStrike iframe.
+  useEffect(() => {
+    if (!ctx.iframeUrl) return
+    let expectedOrigin: string
+    try {
+      expectedOrigin = new URL(ctx.iframeUrl).origin
+    } catch {
+      return
+    }
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.origin !== expectedOrigin) return
+      const data = event.data
+      if (data?.type !== 'vstrike:state') return
+
+      const networkId = typeof data.networkId === 'string' ? data.networkId : undefined
+      const storylineId =
+        data.storylineId === null ? '' : typeof data.storylineId === 'string' ? data.storylineId : undefined
+      const legendRunId =
+        data.legendRunId === null ? '' : typeof data.legendRunId === 'string' ? data.legendRunId : undefined
+
+      if (networkId !== undefined && networkId !== selectedNetworkRef.current) {
+        ctx.syncNetworkFromIframe(networkId)
+      }
+      if (storylineId !== undefined && storylineId !== selectedStorylineRef.current) {
+        ctx.syncStorylineFromIframe(storylineId)
+      }
+      if (legendRunId !== undefined && legendRunId !== selectedLegendRunRef.current) {
+        ctx.syncLegendRunFromIframe(legendRunId)
+      }
+    }
+
+    window.addEventListener('message', handleMessage)
+    return () => window.removeEventListener('message', handleMessage)
+  }, [ctx.iframeUrl, ctx.syncNetworkFromIframe, ctx.syncStorylineFromIframe, ctx.syncLegendRunFromIframe])
+
+  // Bridge the iframe's `onLoad` event into the context.
   const handleLoad = () => {
     internals.handleIframeLoad()
   }
@@ -142,6 +196,86 @@ export default function VStrikeIframeHost() {
     !ctx.hasAnchor ||
     ctx.activeFindings.length === 0
 
+  // -------------------------------------------------------------------------
+  // Storyline controls
+  // -------------------------------------------------------------------------
+
+  const handleStorylineChange = (event: SelectChangeEvent<string>) => {
+    ctx.setStoryline(event.target.value)
+  }
+
+  const handleApplyStoryline = async () => {
+    if (!ctx.selectedStoryline) {
+      setSnackbar({ severity: 'info', message: 'Select a storyline first.' })
+      return
+    }
+    const result = await ctx.applyStoryline(ctx.selectedStoryline)
+    if (result.ok) {
+      setSnackbar({ severity: 'success', message: 'Storyline applied.' })
+      return
+    }
+    setSnackbar({ severity: 'error', message: result.message })
+  }
+
+  // -------------------------------------------------------------------------
+  // Legend run controls
+  // -------------------------------------------------------------------------
+
+  const handleLegendRunChange = (event: SelectChangeEvent<string>) => {
+    ctx.setLegendRun(event.target.value)
+  }
+
+  // -------------------------------------------------------------------------
+  // VCR playback controls
+  // -------------------------------------------------------------------------
+
+  const handleStepBackward = async () => {
+    const result = await ctx.stepBackward()
+    if (!result.ok) {
+      setSnackbar({ severity: 'error', message: result.message })
+    }
+  }
+
+  const handleStepForward = async () => {
+    const result = await ctx.stepForward()
+    if (!result.ok) {
+      setSnackbar({ severity: 'error', message: result.message })
+    }
+  }
+
+  const vcrDisabled = ctx.state !== 'ready' || !ctx.hasAnchor
+
+  // -------------------------------------------------------------------------
+  // Node search
+  // -------------------------------------------------------------------------
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return
+    const results = await ctx.searchNodes(searchQuery.trim())
+    setSearchResults(results)
+    setShowSearchResults(true)
+    if (results.length === 0) {
+      setSnackbar({ severity: 'info', message: 'No nodes matched your search.' })
+    }
+  }
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleSearch()
+    }
+  }
+
+  const handleFocusNode = async (nodeId: string) => {
+    const result = await ctx.cameraNode([nodeId])
+    if (result.ok) {
+      setShowSearchResults(false)
+      setSearchQuery('')
+      return
+    }
+    setSnackbar({ severity: 'error', message: result.message })
+  }
+
   // Error overlay positioned over the anchor.
   if (ctx.error && visible) {
     return (
@@ -153,8 +287,6 @@ export default function VStrikeIframeHost() {
           left: rect.left,
           width: rect.width,
           height: rect.height,
-          // Sit above MUI's modal layer (1300) so the iframe shows on top of
-          // the case dialog rather than behind it. Snackbars at 1400 still win.
           zIndex: 1301,
           display: 'flex',
           alignItems: 'center',
@@ -197,21 +329,14 @@ export default function VStrikeIframeHost() {
           left: rect.left,
           width: rect.width,
           height: rect.height,
-          // The iframe is always mounted, even when no anchor is active —
-          // visibility hidden + pointer-events none + offscreen rect parks it
-          // without unmounting (which would lose the VStrike session).
           visibility: visible ? 'visible' : 'hidden',
           pointerEvents: visible ? 'auto' : 'none',
           opacity: visible ? 1 : 0,
-          // 1301 puts the iframe above MUI's modal layer (1300) so it shows
-          // through case-dialog anchors instead of being hidden behind them.
           zIndex: 1301,
           transition: 'opacity 120ms ease',
           display: 'flex',
           flexDirection: 'column',
           bgcolor: 'background.paper',
-          // No border in fullscreen; subtle border otherwise to match the
-          // case-dialog look.
           border: fullscreen ? 0 : 1,
           borderColor: 'divider',
         }}
@@ -228,15 +353,19 @@ export default function VStrikeIframeHost() {
             borderColor: 'divider',
             bgcolor: 'background.paper',
             minHeight: 44,
+            gap: 1,
+            flexWrap: 'wrap',
           }}
         >
-          <Typography variant="subtitle2" sx={{ pl: 1 }}>
+          <Typography variant="subtitle2" sx={{ pl: 1, whiteSpace: 'nowrap' }}>
             VStrike Network View
           </Typography>
-          <Stack direction="row" spacing={1} alignItems="center">
+
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+            {/* Network selector */}
             <FormControl
               size="small"
-              sx={{ minWidth: 220 }}
+              sx={{ minWidth: 180 }}
               disabled={ctx.state !== 'ready'}
             >
               <InputLabel id="vstrike-network-label">Network</InputLabel>
@@ -259,6 +388,117 @@ export default function VStrikeIframeHost() {
                 ))}
               </Select>
             </FormControl>
+
+            {/* Storyline selector */}
+            <FormControl
+              size="small"
+              sx={{ minWidth: 160 }}
+              disabled={ctx.state !== 'ready' || ctx.storylines.length === 0}
+            >
+              <InputLabel id="vstrike-storyline-label">Storyline</InputLabel>
+              <Select
+                labelId="vstrike-storyline-label"
+                label="Storyline"
+                value={ctx.selectedStoryline}
+                onChange={handleStorylineChange}
+                displayEmpty
+              >
+                <MenuItem value="">
+                  <em>
+                    {ctx.storylines.length ? 'Select…' : 'None'}
+                  </em>
+                </MenuItem>
+                {ctx.storylines.map((opt) => (
+                  <MenuItem key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            <Button
+              size="small"
+              variant="outlined"
+              disabled={
+                ctx.state !== 'ready' || !ctx.selectedStoryline
+              }
+              onClick={handleApplyStoryline}
+            >
+              Apply
+            </Button>
+
+            {/* Legend run selector */}
+            <FormControl
+              size="small"
+              sx={{ minWidth: 140 }}
+              disabled={ctx.state !== 'ready' || ctx.legendRuns.length === 0}
+            >
+              <InputLabel id="vstrike-legend-label">Legend</InputLabel>
+              <Select
+                labelId="vstrike-legend-label"
+                label="Legend"
+                value={ctx.selectedLegendRun}
+                onChange={handleLegendRunChange}
+                displayEmpty
+              >
+                <MenuItem value="">
+                  <em>
+                    {ctx.legendRuns.length ? 'Select…' : 'None'}
+                  </em>
+                </MenuItem>
+                {ctx.legendRuns.map((opt) => (
+                  <MenuItem key={opt.id} value={opt.id}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {/* Node search */}
+            <TextField
+              size="small"
+              placeholder="Search nodes…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              disabled={ctx.state !== 'ready'}
+              sx={{ width: 140 }}
+              InputProps={{
+                endAdornment: (
+                  <IconButton size="small" onClick={handleSearch} disabled={ctx.state !== 'ready'}>
+                    <SearchIcon fontSize="small" />
+                  </IconButton>
+                ),
+              }}
+            />
+
+            {/* VCR controls */}
+            <Tooltip title="Step backward">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={handleStepBackward}
+                  disabled={vcrDisabled}
+                  aria-label="Step backward"
+                >
+                  <SkipPreviousIcon />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Step forward">
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={handleStepForward}
+                  disabled={vcrDisabled}
+                  aria-label="Step forward"
+                >
+                  <SkipNextIcon />
+                </IconButton>
+              </span>
+            </Tooltip>
+
+            {/* Legacy kill-chain play */}
             <Tooltip
               title={
                 playDisabled
@@ -277,6 +517,8 @@ export default function VStrikeIframeHost() {
                 </IconButton>
               </span>
             </Tooltip>
+
+            {/* Fullscreen */}
             <Tooltip title={fullscreen ? 'Exit full screen' : 'Full screen'}>
               <IconButton
                 size="small"
@@ -288,6 +530,52 @@ export default function VStrikeIframeHost() {
             </Tooltip>
           </Stack>
         </Box>
+
+        {/* Search results overlay */}
+        {showSearchResults && searchResults.length > 0 && (
+          <Paper
+            elevation={3}
+            sx={{
+              position: 'absolute',
+              top: 52,
+              right: 8,
+              width: 280,
+              maxHeight: 300,
+              overflow: 'auto',
+              zIndex: 10,
+              p: 1,
+            }}
+          >
+            <Stack spacing={0.5}>
+              <Typography variant="caption" color="text.secondary">
+                {searchResults.length} result{searchResults.length === 1 ? '' : 's'}
+              </Typography>
+              {searchResults.map((r) => {
+                const id = r.node_id || r.id || 'unknown'
+                const name = r.node_name || r.name || id
+                return (
+                  <Button
+                    key={id}
+                    size="small"
+                    variant="text"
+                    sx={{ justifyContent: 'flex-start' }}
+                    onClick={() => handleFocusNode(id)}
+                  >
+                    {name}
+                  </Button>
+                )
+              })}
+              <Button
+                size="small"
+                variant="text"
+                color="secondary"
+                onClick={() => setShowSearchResults(false)}
+              >
+                Close
+              </Button>
+            </Stack>
+          </Paper>
+        )}
 
         {/* Iframe + loading overlay */}
         <Box sx={{ flex: 1, position: 'relative', minHeight: 0 }}>
@@ -343,4 +631,3 @@ export default function VStrikeIframeHost() {
     </>
   )
 }
-

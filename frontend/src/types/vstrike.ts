@@ -43,3 +43,54 @@ export const VSTRIKE_GRAPH_HIGHLIGHT_EVENT = 'vstrike-graph-highlight'
 export interface VStrikeGraphHighlightDetail {
   nodeId: string
 }
+
+// ---------------------------------------------------------------------------
+// New VStrike data-plane types (storylines, legends, node search/drift)
+// ---------------------------------------------------------------------------
+
+export interface VStrikeNodeSearchResult {
+  node_id: string
+  node_name?: string
+  score?: number
+  [key: string]: any
+}
+
+export interface VStrikeNodeDriftEntry {
+  timestamp: string
+  source: string
+  state: string
+  [key: string]: any
+}
+
+export interface VStrikeStoryline {
+  storyline_id: string
+  name?: string
+  description?: string
+  [key: string]: any
+}
+
+export interface VStrikeStorylineEvent {
+  event_id: string
+  timestamp: string
+  properties: Record<string, any>
+  [key: string]: any
+}
+
+export interface VStrikeLegendRun {
+  legend_run_id: string
+  name?: string
+  status?: string
+  [key: string]: any
+}
+
+export interface VStrikeLegendRunResults {
+  legend_run_id: string
+  results: Record<string, any>
+  [key: string]: any
+}
+
+// ---------------------------------------------------------------------------
+// VCR / playback types
+// ---------------------------------------------------------------------------
+
+export type VStrikeStorylineMode = 'live' | 'replay' | 'pause'

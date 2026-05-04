@@ -8,6 +8,12 @@ Tools:
   - vstrike_list_adjacent_assets
   - vstrike_get_blast_radius
   - vstrike_get_segment_findings
+  - vstrike_node_search
+  - vstrike_node_drift_get
+  - vstrike_storyline_list
+  - vstrike_storyline_events_get
+  - vstrike_legend_run_list
+  - vstrike_legend_run_results_get
 """
 
 import asyncio
@@ -107,6 +113,91 @@ async def handle_list_tools():
                 "required": ["segment"],
             },
         ),
+        types.Tool(
+            name="vstrike_node_search",
+            description=(
+                "Omni-search across nodes in the active VStrike network. "
+                "Returns the nodes that caused the match."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "network_id": {"type": "string"},
+                    "limit": {"type": "integer", "default": 50},
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_node_drift_get",
+            description=(
+                "Returns the list of end-node state changes in order for the "
+                "supplied node and what source identified each change."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "node_id": {"type": "string"},
+                    "network_id": {"type": "string"},
+                },
+                "required": ["node_id"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_storyline_list",
+            description=(
+                "List the storylines available for the network."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "network_id": {"type": "string"},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="vstrike_storyline_events_get",
+            description=(
+                "List the events in the storylines along with their properties."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "storyline_id": {"type": "string"},
+                    "network_id": {"type": "string"},
+                },
+                "required": ["storyline_id"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_legend_run_list",
+            description=(
+                "List the legend runs available for the network."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "network_id": {"type": "string"},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="vstrike_legend_run_results_get",
+            description=(
+                "Returns the results for the legend provided."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "legend_run_id": {"type": "string"},
+                    "network_id": {"type": "string"},
+                },
+                "required": ["legend_run_id"],
+            },
+        ),
     ]
 
 
@@ -163,6 +254,61 @@ async def handle_call_tool(name: str, arguments: dict | None):
         return _result(
             {"segment": segment, "count": len(findings), "findings": findings}
         )
+
+    if name == "vstrike_node_search":
+        query = args.get("query")
+        if not query:
+            return _result({"error": "query required"})
+        network_id = args.get("network_id")
+        limit = int(args.get("limit", 50))
+        result = service.node_search(query, network_id=network_id, limit=limit)
+        if result is None:
+            return _result({"error": f"Node search failed for query {query}"})
+        return _result({"query": query, "network_id": network_id, "results": result})
+
+    if name == "vstrike_node_drift_get":
+        node_id = args.get("node_id")
+        if not node_id:
+            return _result({"error": "node_id required"})
+        network_id = args.get("network_id")
+        result = service.node_drift_get(node_id, network_id=network_id)
+        if result is None:
+            return _result({"error": f"Node drift failed for {node_id}"})
+        return _result({"node_id": node_id, "network_id": network_id, "drift": result})
+
+    if name == "vstrike_storyline_list":
+        network_id = args.get("network_id")
+        result = service.storyline_list(network_id=network_id)
+        if result is None:
+            return _result({"error": "Storyline list failed"})
+        return _result({"network_id": network_id, "storylines": result})
+
+    if name == "vstrike_storyline_events_get":
+        storyline_id = args.get("storyline_id")
+        if not storyline_id:
+            return _result({"error": "storyline_id required"})
+        network_id = args.get("network_id")
+        result = service.storyline_events_get(storyline_id, network_id=network_id)
+        if result is None:
+            return _result({"error": f"Storyline events failed for {storyline_id}"})
+        return _result({"storyline_id": storyline_id, "network_id": network_id, "events": result})
+
+    if name == "vstrike_legend_run_list":
+        network_id = args.get("network_id")
+        result = service.legend_run_list(network_id=network_id)
+        if result is None:
+            return _result({"error": "Legend run list failed"})
+        return _result({"network_id": network_id, "legend_runs": result})
+
+    if name == "vstrike_legend_run_results_get":
+        legend_run_id = args.get("legend_run_id")
+        if not legend_run_id:
+            return _result({"error": "legend_run_id required"})
+        network_id = args.get("network_id")
+        result = service.legend_run_results_get(legend_run_id, network_id=network_id)
+        if result is None:
+            return _result({"error": f"Legend run results failed for {legend_run_id}"})
+        return _result({"legend_run_id": legend_run_id, "network_id": network_id, "results": result})
 
     return _result({"error": f"Unknown tool: {name}"})
 
