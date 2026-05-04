@@ -2,7 +2,7 @@
 
 Vigil is the open-source AI SOC where your playbooks are plain-text files, your agent logic is readable Python, and your integrations use an open standard ([MCP](https://modelcontextprotocol.io/)). Every proprietary AI SOC on the market is a black box you rent. Vigil is a capability you own.
 
-The project is built on three pillars: **Agents** — 12 specialized AI agents you can read, fork, and rewire; **Workflows** — multi-agent playbooks defined as Markdown files you edit directly; and **Integrations** — 30+ tool connections via MCP that you configure, not a vendor. The most important pillar is **YOU** — this is your project. Contribute via feedback, code, a repo star, memes on Discord, or otherwise.
+The project is built on three pillars: **Agents** — 13 specialized AI agents you can read, fork, and rewire; **Workflows** — multi-agent playbooks defined as Markdown files you edit directly; and **Integrations** — 30+ tool connections via MCP that you configure, not a vendor. The most important pillar is **YOU** — this is your project. Contribute via feedback, code, a repo star, memes on Discord, or otherwise.
 
 ---
 
@@ -267,11 +267,11 @@ python daemon/main.py
                                │
                                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                   12 Specialized AI Agents                        │
+│                   13 Specialized AI Agents                        │
 │  Triage │ Investigator │ Hunter │ Correlator │ Responder │ ...   │
 └──────────────────────────────────────────────────────────────────┘
                 │                              │
-     Agent SDK (19 tools)              MCP (100+ tools)
+     Agent SDK (23 tools)              MCP (100+ tools)
                 │                              │
                 ▼                              ▼
 ┌──────────────────────────┐  ┌────────────────────────────────────┐
@@ -358,7 +358,7 @@ Claude: ✓ Found 3 similar findings via embedding search
 
 | Doc | Contents |
 |-----|----------|
-| [docs/AGENTS.md](docs/AGENTS.md) | 12 SOC AI agents reference |
+| [docs/AGENTS.md](docs/AGENTS.md) | 13 SOC AI agents reference |
 | [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md) | MCP integrations — Splunk, CrowdStrike, VirusTotal, 28+ tools |
 | [docs/DETECTION_ENGINEERING.md](docs/DETECTION_ENGINEERING.md) | Detection engineering with 7,200+ rules |
 | [docs/CHAT_CASE_MANAGEMENT.md](docs/CHAT_CASE_MANAGEMENT.md) | Chat-driven case building guide |

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The AI-OpenSOC platform supports **backend tool integration** via Claude Agent SDK. This enables autonomous tool execution through the Claude API with no desktop dependency.
+The Vigil platform supports **backend tool integration** via Claude Agent SDK. This enables autonomous tool execution through the Claude API with no desktop dependency.
 
 ## Architecture
 
@@ -38,17 +38,21 @@ Access to 7,200+ detection rules across Sigma, Splunk, Elastic, and KQL formats:
 - **get_coverage_stats** - Get overall coverage statistics
 - **get_detection_count** - Get detection counts by source format
 
-### DeepTempo Findings Tools (7)
+### Finding & Case Tools (11)
 
 Interact with security findings and cases:
 
 - **list_findings** - List findings with filters (severity, data source)
+- **search_findings** - Keyword search across findings
+- **get_findings_stats** - Finding statistics and aggregations
 - **get_finding** - Get detailed finding information
 - **nearest_neighbors** - Find similar findings via embedding search
 - **list_cases** - List investigation cases
 - **get_case** - Get detailed case information
 - **create_case** - Create new investigation case
 - **add_finding_to_case** - Add finding to case
+- **update_case** - Update case status, priority, assignee, and metadata
+- **add_resolution_step** - Document a resolution step with description, action, and result
 
 ### MITRE ATT&CK Tools (2)
 
@@ -141,10 +145,10 @@ Tool schemas are defined in `backend/schemas/tool_schemas.py`:
 ```python
 from backend.schemas.tool_schemas import ALL_TOOLS
 
-# Contains 19 tools total:
+# Contains 23 tools total:
 # - 5 security detection tools
-# - 7 findings/case tools  
-# - 2 attack layer tools
+# - 11 findings/case tools
+# - 2 MITRE ATT&CK tools
 # - 5 approval tools
 ```
 
@@ -179,7 +183,7 @@ Backend tools use the existing database configuration:
 
 ```bash
 # In .env file
-DATABASE_PATH="${PWD}/data/deeptempo.db"
+DATABASE_URL="postgresql://deeptempo:deeptempo_secure_password_change_me@localhost:5432/deeptempo_soc"
 ```
 
 ## Testing
@@ -196,8 +200,8 @@ python tests/test_integration_backend_tools.py
 
 ### Expected Results
 
-- All 19 tools should load successfully
-- Coverage analysis should work with 6,700+ rules
+- All 23 tools should load successfully
+- Coverage analysis should work with 7,200+ rules
 - Finding/case queries should work with database
 - Approval workflow should work with pending actions
 
@@ -210,7 +214,7 @@ python tests/test_integration_backend_tools.py
 | **Latency** | Lower (Agent SDK) | Higher (protocol overhead) |
 | **Configuration** | Simple (env vars) | Complex (MCP config) |
 | **Multi-user** | ✅ Production ready | ❌ Desktop only |
-| **Tool Count** | 19 core tools | 100+ (including external) |
+| **Tool Count** | 23 core tools | 100+ (including external) |
 | **Autonomy** | ✅ Autonomous execution | Manual tool use |
 
 ## Migration from MCP
@@ -239,7 +243,7 @@ If you're currently using MCP servers with a desktop application:
 # Check tool count
 claude = ClaudeService(use_backend_tools=True)
 print(f"Loaded: {len(claude.backend_tools)} tools")
-# Should show 19
+# Should show 23
 ```
 
 ### Detection Rules Not Found
@@ -256,18 +260,21 @@ ls -la ~/security-detections/
 ### Database Errors
 
 ```bash
-# Check database exists
-ls -la data/deeptempo.db
+# Check PostgreSQL is running
+docker ps | grep postgres
 
-# Initialize if missing
-python -c "from deeptempo_core.database import DatabaseService; DatabaseService()"
+# Check connection string
+echo $DATABASE_URL
+
+# Test connectivity
+python -c "from database.connection import get_db; import asyncio; asyncio.run(get_db())"
 ```
 
 ## Performance
 
 ### Detection Rule Loading
 
-- **First Load**: ~5-10 seconds (6,775 rules)
+- **First Load**: ~5-10 seconds (7,200+ rules)
 - **Subsequent**: Cached in memory
 - **Memory**: ~200MB for rule index
 

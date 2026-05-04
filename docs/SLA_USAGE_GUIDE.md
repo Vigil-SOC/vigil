@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide shows you how to add and manage SLA (Service Level Agreements) for cases in ai-opensoc.
+This guide shows you how to add and manage SLA (Service Level Agreements) for cases in Vigil.
 
 ## Automatic SLA Assignment ✨
 

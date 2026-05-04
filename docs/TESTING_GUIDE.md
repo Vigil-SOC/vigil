@@ -1,6 +1,6 @@
 # Testing Guide
 
-Complete guide to testing the AI-OpenSOC platform.
+Complete guide to testing the Vigil platform.
 
 ## Table of Contents
 
@@ -15,7 +15,7 @@ Complete guide to testing the AI-OpenSOC platform.
 
 ## Overview
 
-The AI-OpenSOC testing strategy includes:
+The Vigil testing strategy includes:
 
 - **Unit Tests**: Test individual functions and classes in isolation
 - **Integration Tests**: Test API endpoints with database and mocked external services

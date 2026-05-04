@@ -2,11 +2,11 @@
 
 ## Environment Variables
 
-Copy `env.example` to `~/.deeptempo/.env` and configure:
+Copy `env.example` to `.env` in the project root and configure:
 
 ```bash
-cp env.example ~/.deeptempo/.env
-chmod 600 ~/.deeptempo/.env
+cp env.example .env
+chmod 600 .env
 ```
 
 ### Required
@@ -38,7 +38,7 @@ chmod 600 ~/.deeptempo/.env
 
 When reading, backends are checked in order:
 1. Process environment variables
-2. `~/.deeptempo/.env` file
+2. `.env` file in the project root
 3. OS keyring (only if `ENABLE_KEYRING=true`)
 
 ## Deployment Examples
@@ -52,41 +52,41 @@ When reading, backends are checked in order:
 ### Docker
 
 ```bash
-docker run --env-file ~/.deeptempo/.env deeptempo-ai-soc
+docker run --env-file .env vigil
 ```
 
 ### Docker Compose
 
 ```yaml
 services:
-  deeptempo:
-    image: deeptempo-ai-soc
+  vigil:
+    image: vigil
     ports:
       - "6987:6987"
     env_file:
-      - ~/.deeptempo/.env
+      - .env
 ```
 
 ### Systemd
 
 ```ini
 [Service]
-EnvironmentFile=/etc/deeptempo/.env
-ExecStart=/opt/deeptempo/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 6987
+EnvironmentFile=/opt/vigil/.env
+ExecStart=/opt/vigil/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 6987
 ```
 
 ### Kubernetes
 
 ```bash
-kubectl create secret generic deeptempo-secrets \
-  --from-literal=CLAUDE_API_KEY="sk-ant-..." \
-  --from-literal=POSTGRESQL_CONNECTION_STRING="postgresql://..."
+kubectl create secret generic vigil-secrets \
+  --from-literal=ANTHROPIC_API_KEY="sk-ant-..." \
+  --from-literal=DATABASE_URL="postgresql://..."
 ```
 
 ```yaml
 envFrom:
   - secretRef:
-      name: deeptempo-secrets
+      name: vigil-secrets
 ```
 
 ## UI Configuration

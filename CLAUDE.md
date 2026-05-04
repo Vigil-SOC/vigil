@@ -6,10 +6,10 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ## Project Overview
 
-**Vigil** is an open-source, AI-native Security Operations Center (SOC) platform. It orchestrates 12 specialized AI agents via Claude to perform triage, investigation, threat hunting, forensics, and automated response across 30+ security integrations.
+**Vigil** is an open-source, AI-native Security Operations Center (SOC) platform. It orchestrates 13 specialized AI agents via Claude to perform triage, investigation, threat hunting, forensics, and automated response across 30+ security integrations.
 
 **Core pillars:**
-- **Agents** — 12 specialized AI agents (Triage, Investigator, Threat Hunter, Correlator, Responder, Reporter, MITRE Analyst, Forensics, Threat Intel, Compliance, Malware Analyst, Network Analyst)
+- **Agents** — 13 specialized AI agents (Triage, Investigator, Threat Hunter, Correlator, Responder, Reporter, MITRE Analyst, Forensics, Threat Intel, Compliance, Malware Analyst, Network Analyst)
 - **Workflows** — Multi-agent orchestrated playbooks (Incident Response, Full Investigation, Threat Hunt, Forensic Analysis)
 - **Integrations** — 30+ tools via MCP protocol (Splunk, CrowdStrike, VirusTotal, Shodan, Timesketch, Jira, Slack, etc.)
 
@@ -27,10 +27,10 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 vigil/
 ├── backend/              # FastAPI REST API
 │   ├── main.py           # App entry point, router registration
-│   ├── api/              # 27 route modules (findings, cases, claude, auth, etc.)
+│   ├── api/              # 38 route modules (findings, cases, claude, auth, etc.)
 │   ├── middleware/       # Auth middleware
 │   └── schemas/          # Pydantic request/response schemas
-├── services/             # 40+ business logic service classes
+├── services/             # 70+ business logic service classes
 │   ├── claude_service.py # Central AI orchestration (largest file ~124KB)
 │   ├── soc_agents.py     # Agent prompt definitions
 │   ├── mcp_service.py    # MCP server coordination

@@ -2,7 +2,7 @@
 
 ## Overview
 
-AI-OpenSOC uses **backend tool integration via Claude Agent SDK**. No desktop application or separate MCP servers required for core functionality.
+Vigil uses **backend tool integration via Claude Agent SDK**. No desktop application or separate MCP servers required for core functionality.
 
 ## Architecture Diagram
 
@@ -58,7 +58,7 @@ AI-OpenSOC uses **backend tool integration via Claude Agent SDK**. No desktop ap
 ### Backend
 - FastAPI (Python 3.10+)
 - Claude API integration
-- Backend tools (19 tools)
+- Backend tools (23 tools)
 - Port: 6987
 
 ### Database
@@ -67,7 +67,7 @@ AI-OpenSOC uses **backend tool integration via Claude Agent SDK**. No desktop ap
 - Port: 5432
 
 ### Detection Rules
-- 6,775 rules (Sigma, Splunk, Elastic, KQL)
+- 7,200+ rules (Sigma, Splunk, Elastic, KQL)
 - Loaded from: `~/security-detections/`
 - Indexed in memory on first use
 
@@ -81,15 +81,19 @@ Access to detection rule database:
 - `get_coverage_stats` - Statistics
 - `get_detection_count` - Counts by source
 
-### 2. Finding & Case Tools (7)
+### 2. Finding & Case Tools (10)
 SOC investigation workflow:
 - `list_findings` - Query findings
+- `search_findings` - Keyword search across findings
+- `get_findings_stats` - Finding statistics
 - `get_finding` - Get specific finding
 - `nearest_neighbors` - Similar findings
 - `list_cases` - Query cases
 - `get_case` - Get specific case
 - `create_case` - Create new case
 - `add_finding_to_case` - Associate findings
+- `update_case` - Update case status and metadata
+- `add_resolution_step` - Document resolution steps
 
 ### 3. MITRE ATT&CK Tools (2)
 Technique mapping and visualization:
@@ -103,6 +107,8 @@ Autonomous response workflow:
 - `approve_action` - Approve action
 - `reject_action` - Reject action
 - `get_approval_stats` - Statistics
+
+**Total: 23 backend tools**
 
 ## Request Flow
 
@@ -145,8 +151,7 @@ ELASTIC_PATHS="${HOME}/security-detections/detection-rules/rules"
 KQL_PATHS="${HOME}/security-detections/Hunting-Queries-Detection-Rules"
 
 # Database
-DATABASE_PATH="${PWD}/data/deeptempo.db"
-POSTGRESQL_CONNECTION_STRING=postgresql://user:pass@localhost:5432/deeptempo
+DATABASE_URL="postgresql://deeptempo:deeptempo_secure_password_change_me@localhost:5432/deeptempo_soc"
 ```
 
 ### Backend Tool Initialization
@@ -214,7 +219,7 @@ Includes:
 - **Concurrent users**: 50-100 (single instance)
 - **Detection rule index**: Shared across all users
 - **Claude API**: Rate limited by Anthropic
-- **Database**: Connection pooling enabled
+- **Database**: PostgreSQL with connection pooling enabled
 
 ## Monitoring
 
@@ -234,11 +239,11 @@ curl http://localhost:6987/api/storage/status
 ### Logs
 
 ```bash
-# Backend logs
-tail -f ~/.deeptempo/api.log
+# Backend logs (stdout when running uvicorn directly, or Docker logs)
+docker logs deeptempo-postgres  # PostgreSQL logs
+docker logs -f <backend-container>  # Backend API logs
 
-# Tool execution (debug)
-tail -f ~/.deeptempo/api.log | grep "Executed backend tool"
+# Tool execution (debug) — enable via LOG_LEVEL=DEBUG in .env
 ```
 
 ## Security
@@ -369,7 +374,7 @@ pytest tests/unit/
 ## Support
 
 For issues or questions:
-- GitHub Issues: https://github.com/deeptempo/ai-opensoc/issues
+- GitHub Issues: https://github.com/Vigil-SOC/vigil/issues
 - Label: `backend-tools`
 - Include: Backend logs, tool name, error message
 

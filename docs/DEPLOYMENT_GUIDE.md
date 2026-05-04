@@ -1,6 +1,6 @@
 # Deployment Guide
 
-Complete guide to deploying AI-OpenSOC to VMs and managing production environments.
+Complete guide to deploying Vigil to VMs and managing production environments.
 
 ## Table of Contents
 
@@ -17,7 +17,7 @@ Complete guide to deploying AI-OpenSOC to VMs and managing production environmen
 
 ## Overview
 
-AI-OpenSOC can be deployed in several configurations:
+Vigil can be deployed in several configurations:
 
 1. **Single VM**: All services on one machine (development/testing)
 2. **Multi-VM**: Distributed deployment (staging/production)
@@ -127,12 +127,12 @@ chmod 600 ~/.ssh/authorized_keys
 
 ```bash
 # As deployer user
-sudo mkdir -p /opt/ai-opensoc
-sudo chown deployer:deployer /opt/ai-opensoc
-cd /opt/ai-opensoc
+sudo mkdir -p /opt/vigil
+sudo chown deployer:deployer /opt/vigil
+cd /opt/vigil
 
 # Clone repository
-git clone https://github.com/your-org/ai-opensoc.git .
+git clone https://github.com/your-org/vigil.git .
 
 # Create necessary directories
 mkdir -p logs evidence backups
@@ -200,14 +200,14 @@ git push origin v1.2.3
 
 ```bash
 # On deployment machine
-cd /opt/ai-opensoc
+cd /opt/vigil
 
 # Pull latest code
 git pull origin main
 
 # Set environment variables
 export REGISTRY=ghcr.io
-export IMAGE_NAME=your-org/ai-opensoc
+export IMAGE_NAME=your-org/vigil
 export IMAGE_TAG=latest
 
 # Run deployment script
@@ -219,7 +219,7 @@ chmod +x scripts/deploy_to_vm.sh
 
 ```bash
 # On deployment machine
-cd /opt/ai-opensoc
+cd /opt/vigil
 
 # Set environment variables in .env file
 cp env.example .env
@@ -241,7 +241,7 @@ docker-compose ps
 
 ### Environment Variables
 
-**File**: `/opt/ai-opensoc/.env`
+**File**: `/opt/vigil/.env`
 
 ```bash
 # Database
@@ -271,7 +271,7 @@ SLACK_DEFAULT_CHANNEL=#soc-alerts
 
 ### Docker Compose Configuration
 
-**File**: `/opt/ai-opensoc/docker-compose.yml`
+**File**: `/opt/vigil/docker-compose.yml`
 
 ```yaml
 version: '3.8'
@@ -321,7 +321,7 @@ volumes:
 
 ### Nginx Reverse Proxy (Optional)
 
-**File**: `/etc/nginx/sites-available/ai-opensoc`
+**File**: `/etc/nginx/sites-available/vigil`
 
 ```nginx
 server {
@@ -351,7 +351,7 @@ server {
     
     # Frontend
     location / {
-        root /opt/ai-opensoc/frontend/build;
+        root /opt/vigil/frontend/build;
         try_files $uri $uri/ /index.html;
     }
 }
@@ -424,7 +424,7 @@ curl http://localhost:9090/metrics
 docker run -d -p 3000:3000 grafana/grafana
 
 # Add Prometheus datasource
-# Import AI-OpenSOC dashboard
+# Import Vigil dashboard
 ```
 
 ---
@@ -436,12 +436,12 @@ docker run -d -p 3000:3000 grafana/grafana
 **Automated Daily Backups**:
 ```bash
 # Create backup script
-vi /opt/ai-opensoc/scripts/backup.sh
+vi /opt/vigil/scripts/backup.sh
 ```
 
 ```bash
 #!/bin/bash
-BACKUP_DIR="/opt/ai-opensoc/backups"
+BACKUP_DIR="/opt/vigil/backups"
 DATE=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="$BACKUP_DIR/deeptempo_$DATE.sql"
 
@@ -463,7 +463,7 @@ echo "Backup completed: ${BACKUP_FILE}.gz"
 crontab -e
 
 # Add daily backup at 2 AM
-0 2 * * * /opt/ai-opensoc/scripts/backup.sh >> /opt/ai-opensoc/logs/backup.log 2>&1
+0 2 * * * /opt/vigil/scripts/backup.sh >> /opt/vigil/logs/backup.log 2>&1
 ```
 
 ### Database Restore
@@ -536,7 +536,7 @@ docker-compose exec postgres psql -U deeptempo -d deeptempo_soc -c "SELECT 1;"
 
 # Check network
 docker network ls
-docker network inspect ai-opensoc_default
+docker network inspect vigil_default
 ```
 
 ### High Memory Usage
@@ -570,10 +570,10 @@ df -h
 docker system prune -a --volumes
 
 # Remove old images
-docker images | grep ai-opensoc | grep -v latest | awk '{print $3}' | xargs docker rmi
+docker images | grep vigil | grep -v latest | awk '{print $3}' | xargs docker rmi
 
 # Cleanup old logs
-find /opt/ai-opensoc/logs -name "*.log" -mtime +7 -delete
+find /opt/vigil/logs -name "*.log" -mtime +7 -delete
 ```
 
 ---

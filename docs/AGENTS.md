@@ -1,6 +1,6 @@
 # SOC AI Agents
 
-12 specialized AI agents for different security operations tasks.
+13 specialized AI agents for different security operations tasks.
 
 ## Tool Access
 

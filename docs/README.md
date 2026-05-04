@@ -7,13 +7,13 @@ AI-powered Security Operations Center using Claude and MCP (Model Context Protoc
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Claude (Orchestration)                       │
-│   12 Specialized SOC Agents (Triage, Investigator, Hunter...)   │
+│   13 Specialized SOC Agents (Triage, Investigator, Hunter...)   │
 └─────────────────────────────────────────────────────────────────┘
                               │ MCP Protocol
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                      MCP Server Layer                            │
-│  DeepTempo Findings │ Approval │ Attack Layer │ 27+ Integrations │
+│  DeepTempo Findings │ Approval │ Attack Layer │ 30+ Integrations │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -45,8 +45,18 @@ AI-powered Security Operations Center using Claude and MCP (Model Context Protoc
 | Dashboard | `/` | Metrics, recent findings, system status |
 | Findings | `/findings` | Security findings, AI investigation |
 | Cases | `/cases` | Case management, timelines |
+| Investigation | `/investigation/:id` | Deep-dive finding investigation with entity graph |
+| Analytics | `/analytics` | Performance metrics, MTTR, kill-chain coverage |
+| Case Metrics | `/case-metrics` | Case workload, SLA, and team performance |
+| Cost Analytics | `/cost-analytics` | LLM spend tracking and token usage |
+| AI Decisions | `/ai-decisions` | Audit log of agent reasoning and tool calls |
 | Timesketch | `/timesketch` | Timeline forensic analysis |
-| Settings | `/settings` | All configuration (API, integrations, MCP) |
+| Orchestrator | `/orchestrator` | Daemon status, autonomous run queue |
+| Skills | `/skills` | Custom tool and skill management |
+| Workflow Builder | `/workflow-builder` | Visual multi-agent playbook designer |
+| Builder Tool | `/builder` | Custom integration and agent builder |
+| Settings | `/settings` | All configuration (API, integrations, MCP, LLM providers) |
+| Login | `/login` | Authentication (bypassed when `DEV_MODE=true`) |
 
 ## Quick Start
 
@@ -67,7 +77,7 @@ AI-powered Security Operations Center using Claude and MCP (Model Context Protoc
 ## Documentation
 
 - [CONFIGURATION.md](CONFIGURATION.md) - Environment variables, secrets, setup
-- [AGENTS.md](AGENTS.md) - 12 specialized SOC AI agents
+- [AGENTS.md](AGENTS.md) - 13 specialized SOC AI agents
 - [INTEGRATIONS.md](INTEGRATIONS.md) - Splunk, Timesketch, Cribl, 27+ tools
 - [KAFKA_INGESTION.md](KAFKA_INGESTION.md) - Stream findings from Kafka topics
 - [FEATURES.md](FEATURES.md) - Cases, approvals, enrichment, reports

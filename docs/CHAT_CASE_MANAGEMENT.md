@@ -2,7 +2,7 @@
 
 ## Overview
 
-The AI-OpenSOC chat interface now has powerful capabilities to automatically build out and manage cases based on natural language prompts. When you're examining findings and identify patterns that are part of a kill chain, you can simply tell the chat to add them to a case, and it will handle all the details automatically.
+The Vigil chat interface now has powerful capabilities to automatically build out and manage cases based on natural language prompts. When you're examining findings and identify patterns that are part of a kill chain, you can simply tell the chat to add them to a case, and it will handle all the details automatically.
 
 ## Core Capabilities
 

@@ -1,6 +1,6 @@
 # Detection Engineering
 
-Integration of security detection rules provides 7,200+ detection rules and AI-powered detection engineering capabilities to ai-opensoc.
+Integration of security detection rules provides 7,200+ detection rules and AI-powered detection engineering capabilities to vigil.
 
 ## Overview
 
@@ -17,7 +17,7 @@ Detection engineering features:
 - ✅ No additional setup required
 - ✅ Production-ready deployment
 - ✅ 5 core detection tools
-- ✅ Direct access to 6,700+ rules
+- ✅ Direct access to 7,200+ rules
 - ✅ Works through Claude API function calling
 
 **MCP Server (Advanced)**: Optional for extended detection engineering workflows
@@ -336,7 +336,7 @@ Recommends new detections to prevent recurrence:
 
 ### All Agents
 
-All 12 agents can:
+All 13 agents can:
 - Search detection rules
 - Query tribal knowledge
 - Validate coverage
