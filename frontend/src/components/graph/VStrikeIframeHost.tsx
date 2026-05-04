@@ -375,6 +375,7 @@ export default function VStrikeIframeHost() {
                 value={ctx.selectedNetwork}
                 onChange={handleNetworkChange}
                 displayEmpty
+                MenuProps={{ sx: { zIndex: 1302 } }}
               >
                 <MenuItem value="">
                   <em>
@@ -402,6 +403,7 @@ export default function VStrikeIframeHost() {
                 value={ctx.selectedStoryline}
                 onChange={handleStorylineChange}
                 displayEmpty
+                MenuProps={{ sx: { zIndex: 1302 } }}
               >
                 <MenuItem value="">
                   <em>
@@ -440,6 +442,7 @@ export default function VStrikeIframeHost() {
                 value={ctx.selectedLegendRun}
                 onChange={handleLegendRunChange}
                 displayEmpty
+                MenuProps={{ sx: { zIndex: 1302 } }}
               >
                 <MenuItem value="">
                   <em>
