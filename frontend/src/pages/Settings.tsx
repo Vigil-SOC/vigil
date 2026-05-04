@@ -1393,6 +1393,249 @@ export default function Settings() {
               )
             })()}
 
+            {/* Installed integrations — consolidated view above category accordions */}
+            {(() => {
+              // 1. Enabled MCP servers
+              const installedServerSet = new Set<string>()
+              visibleMcpServers.forEach(name => {
+                if (mcpEnabled[name]) installedServerSet.add(name)
+              })
+              // 2. Servers mapped from enabled integrations
+              integrationsConfig.enabled_integrations.forEach(intId => {
+                const serverName = REVERSE_INTEGRATION_MAP[intId]
+                if (serverName && visibleMcpServers.includes(serverName)) {
+                  installedServerSet.add(serverName)
+                } else if (visibleMcpServers.includes(intId)) {
+                  installedServerSet.add(intId)
+                }
+              })
+              const installedServers = Array.from(installedServerSet)
+              const filteredServers = filterBySearch(installedServers)
+
+              // 3. Standalone integrations (enabled but no visible MCP server)
+              const standaloneIntegrations = integrationsConfig.enabled_integrations
+                .filter(intId => {
+                  const serverName = REVERSE_INTEGRATION_MAP[intId]
+                  if (serverName && visibleMcpServers.includes(serverName)) return false
+                  if (visibleMcpServers.includes(intId)) return false
+                  return true
+                })
+                .map(intId => getAllIntegrations().find(i => i.id === intId))
+                .filter((i): i is IntegrationMetadata => !!i)
+              const filteredIntegrations = filterIntegrationsBySearch(standaloneIntegrations)
+
+              // 4. Configured Data Ingestion builtins
+              const builtinItems: { name: string; description: string; onConfigure: () => void }[] = []
+              if (s3Config.configured && s3Config.bucket_name) {
+                builtinItems.push({
+                  name: 'S3 Storage',
+                  description: 'AWS S3 bucket for parquet ingest, browsing, and file uploads.',
+                  onConfigure: () => setS3DialogOpen(true),
+                })
+              }
+              if (darktraceConfig.configured && darktraceConfig.enabled) {
+                builtinItems.push({
+                  name: 'Darktrace',
+                  description: 'Webhook receiver for Darktrace Model Breach, AI Analyst, and System Status alerts.',
+                  onConfigure: () => setDarktraceDialogOpen(true),
+                })
+              }
+              const filteredBuiltins = searchLower
+                ? builtinItems.filter(b =>
+                    b.name.toLowerCase().includes(searchLower) ||
+                    b.description.toLowerCase().includes(searchLower)
+                  )
+                : builtinItems
+
+              const totalInstalled = filteredServers.length + filteredIntegrations.length + filteredBuiltins.length
+
+              if (totalInstalled === 0) {
+                if (searchLower) return null
+                return (
+                  <Alert severity="info" sx={{ mb: 2 }}>
+                    No integrations configured yet — browse the categories below to get started.
+                  </Alert>
+                )
+              }
+
+              return (
+                <Box sx={{ mb: 2 }}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.5 }}>
+                    <Typography variant="body2" sx={{ fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', fontSize: '0.7rem', color: 'text.secondary' }}>
+                      Installed
+                    </Typography>
+                    <Chip label={`${totalInstalled} total`} size="small" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 600 }} />
+                  </Box>
+                  <Grid container spacing={2}>
+                    {filteredServers
+                      .sort((a, b) => {
+                        const nameA = a.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+                        const nameB = b.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+                        return nameA.localeCompare(nameB)
+                      })
+                      .map(renderServerCard)}
+                    {filteredBuiltins.map(b => {
+                      const indicatorColor = '#4caf50'
+                      return (
+                        <Grid item xs={12} sm={6} md={4} lg={3} key={b.name}>
+                          <Card
+                            variant="outlined"
+                            sx={{
+                              height: CARD_HEIGHT,
+                              display: 'flex',
+                              flexDirection: 'column',
+                              borderColor: alpha(theme.palette.primary.main, 0.5),
+                              borderWidth: 1,
+                              bgcolor: alpha(theme.palette.primary.main, 0.03),
+                              transition: 'border-color 0.2s, background-color 0.2s',
+                              '&:hover': { borderColor: 'primary.main' },
+                            }}
+                          >
+                            <CardContent sx={{ display: 'flex', flexDirection: 'column', flex: 1, p: 2, '&:last-child': { pb: 1.5 } }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
+                                <Typography variant="body2" noWrap sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                                  {b.name}
+                                </Typography>
+                              </Box>
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{
+                                  display: '-webkit-box',
+                                  WebkitLineClamp: 2,
+                                  WebkitBoxOrient: 'vertical',
+                                  overflow: 'hidden',
+                                  lineHeight: 1.35,
+                                  fontSize: '0.68rem',
+                                  mb: 0.75,
+                                }}
+                              >
+                                {b.description}
+                              </Typography>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 'auto' }}>
+                                <Chip
+                                  label="Configured"
+                                  size="small"
+                                  onClick={b.onConfigure}
+                                  sx={{
+                                    height: 22,
+                                    fontSize: '0.68rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    borderWidth: 1.5,
+                                    borderStyle: 'solid',
+                                    borderColor: alpha(indicatorColor, 0.5),
+                                    bgcolor: alpha(indicatorColor, 0.1),
+                                    color: indicatorColor,
+                                    '& .MuiChip-icon': { color: indicatorColor },
+                                    '&:hover': { bgcolor: alpha(indicatorColor, 0.2), borderColor: indicatorColor },
+                                  }}
+                                  icon={<Box component="span" sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: indicatorColor, ml: '5px !important', boxShadow: `0 0 4px ${alpha(indicatorColor, 0.6)}` }} />}
+                                />
+                              </Box>
+                            </CardContent>
+                          </Card>
+                        </Grid>
+                      )
+                    })}
+                    {filteredIntegrations
+                      .sort((a, b) => a.name.localeCompare(b.name))
+                      .map(integration => {
+                        const indicatorColor = '#4caf50'
+                        return (
+                          <Grid item xs={12} sm={6} md={4} lg={3} key={integration.id}>
+                            <Card
+                              variant="outlined"
+                              sx={{
+                                height: CARD_HEIGHT,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                borderColor: alpha(theme.palette.primary.main, 0.5),
+                                borderWidth: 1,
+                                bgcolor: alpha(theme.palette.primary.main, 0.03),
+                                transition: 'border-color 0.2s, background-color 0.2s',
+                                '&:hover': { borderColor: 'primary.main' },
+                              }}
+                            >
+                              <CardContent sx={{ display: 'flex', flexDirection: 'column', flex: 1, p: 2, '&:last-child': { pb: 1.5 } }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
+                                  <Typography variant="body2" noWrap sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                                    {integration.name}
+                                  </Typography>
+                                </Box>
+                                {integration.description && (
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                    sx={{
+                                      display: '-webkit-box',
+                                      WebkitLineClamp: 2,
+                                      WebkitBoxOrient: 'vertical',
+                                      overflow: 'hidden',
+                                      lineHeight: 1.35,
+                                      fontSize: '0.68rem',
+                                      mb: 0.75,
+                                    }}
+                                  >
+                                    {integration.description}
+                                  </Typography>
+                                )}
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 'auto' }}>
+                                  <Chip
+                                    label="Configured"
+                                    size="small"
+                                    onClick={() => { setSelectedIntegration(integration.id); setWizardOpen(true) }}
+                                    sx={{
+                                      height: 22,
+                                      fontSize: '0.68rem',
+                                      fontWeight: 600,
+                                      cursor: 'pointer',
+                                      borderWidth: 1.5,
+                                      borderStyle: 'solid',
+                                      borderColor: alpha(indicatorColor, 0.5),
+                                      bgcolor: alpha(indicatorColor, 0.1),
+                                      color: indicatorColor,
+                                      '& .MuiChip-icon': { color: indicatorColor },
+                                      '&:hover': { bgcolor: alpha(indicatorColor, 0.2), borderColor: indicatorColor },
+                                    }}
+                                    icon={<Box component="span" sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: indicatorColor, ml: '5px !important', boxShadow: `0 0 4px ${alpha(indicatorColor, 0.6)}` }} />}
+                                  />
+                                </Box>
+                                <Box sx={{ display: 'flex', gap: 0.75, flexWrap: 'wrap', pt: 0.75 }}>
+                                  {integration.docs_url && (
+                                    <Button
+                                      size="small"
+                                      variant="outlined"
+                                      endIcon={<OpenInNewIcon sx={{ fontSize: '11px !important' }} />}
+                                      href={integration.docs_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      sx={{
+                                        textTransform: 'none',
+                                        fontSize: '0.7rem',
+                                        py: 0.4,
+                                        px: 1.25,
+                                        minWidth: 0,
+                                        borderColor: 'divider',
+                                        color: 'text.secondary',
+                                        '&:hover': { borderColor: 'primary.main', color: 'primary.main', bgcolor: alpha(theme.palette.primary.main, 0.06) },
+                                      }}
+                                    >
+                                      Docs
+                                    </Button>
+                                  )}
+                                </Box>
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        )
+                      })}
+                  </Grid>
+                  <Divider sx={{ mt: 2, mb: 1 }} />
+                </Box>
+              )
+            })()}
+
             <Box>
               {MCP_CATEGORIES.map(category => {
                 const servers = filterBySearch(visibleMcpServers.filter(category.filter))
