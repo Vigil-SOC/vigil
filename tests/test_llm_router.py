@@ -341,6 +341,135 @@ async def test_dispatch_propagates_interaction_id_anthropic():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_attaches_vk_header_when_budget_enforce_active():
+    """#186: when budget_service.should_enforce() is True and a VK is
+    configured, dispatch must attach `x-bf-vk: <vk>` so Bifrost's
+    governance layer enforces the budget upstream of the call."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        model="openai/gpt-4o-mini",
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client), \
+         patch("services.budget_service.should_enforce", return_value=True), \
+         patch("services.budget_service.get_active_vk", return_value="sk-bf-test-vk"):
+        await router.dispatch(
+            provider=_openai_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+    headers = mock_client.chat.completions.create.call_args.kwargs.get("extra_headers")
+    assert headers is not None
+    assert headers.get("x-bf-vk") == "sk-bf-test-vk"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_omits_vk_header_when_enforcement_off():
+    """DEV_MODE / LLM_BUDGET_UNLIMITED → should_enforce() is False →
+    don't attach x-bf-vk so Bifrost's bootstrap (no-VK) path applies."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        model="openai/gpt-4o-mini",
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client), \
+         patch("services.budget_service.should_enforce", return_value=False), \
+         patch("services.budget_service.get_active_vk", return_value="sk-bf-test-vk"):
+        await router.dispatch(
+            provider=_openai_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    # No interaction_id and no enforcement → no extra_headers at all.
+    assert "extra_headers" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_dispatch_translates_402_into_budget_exceeded():
+    """Bifrost returns 402 when the VK budget is exhausted. The router
+    must translate that into the typed BudgetExceeded so the chat UI
+    can render a banner instead of a 500 toast."""
+    from services.budget_service import BudgetExceeded
+
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    err = SimpleNamespace(status_code=402, message="$5 of $5 spent")
+    raise_err = type("FakeAPIErr", (Exception,), {})("budget hit")
+    raise_err.status_code = 402  # type: ignore[attr-defined]
+    raise_err.message = "$5 of $5 spent"  # type: ignore[attr-defined]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=raise_err)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client), \
+         patch("services.budget_service.should_enforce", return_value=True), \
+         patch("services.budget_service.get_active_vk", return_value="sk-bf-test"):
+        with pytest.raises(BudgetExceeded) as excinfo:
+            await router.dispatch(
+                provider=_openai_spec(),
+                messages=[{"role": "user", "content": "hi"}],
+            )
+
+    assert excinfo.value.status_code == 402
+    assert excinfo.value.tier == "virtual_key"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_translates_429_into_budget_exceeded_rate_tier():
+    from services.budget_service import BudgetExceeded
+
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    raise_err = type("FakeAPIErr", (Exception,), {})("rate limited")
+    raise_err.status_code = 429  # type: ignore[attr-defined]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=raise_err)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        with pytest.raises(BudgetExceeded) as excinfo:
+            await router.dispatch(
+                provider=_openai_spec(),
+                messages=[{"role": "user", "content": "hi"}],
+            )
+
+    assert excinfo.value.status_code == 429
+    assert excinfo.value.tier == "rate_limit"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_swallow_non_budget_errors():
+    """Only 402/429 map to BudgetExceeded. A 500 should propagate as-is
+    so the caller sees the real error and doesn't think it's a budget
+    issue."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    raise_err = type("FakeAPIErr", (Exception,), {})("upstream blew up")
+    raise_err.status_code = 500  # type: ignore[attr-defined]
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=raise_err)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        with pytest.raises(Exception) as excinfo:
+            await router.dispatch(
+                provider=_openai_spec(),
+                messages=[{"role": "user", "content": "hi"}],
+            )
+    assert getattr(excinfo.value, "status_code", None) == 500
+    # Must not have been wrapped into BudgetExceeded.
+    from services.budget_service import BudgetExceeded
+
+    assert not isinstance(excinfo.value, BudgetExceeded)
+
+
+@pytest.mark.asyncio
 async def test_anthropic_dispatch_raises_when_no_key():
     router = LLMRouter()
     with patch("services.llm_router.get_secret", return_value=None), \

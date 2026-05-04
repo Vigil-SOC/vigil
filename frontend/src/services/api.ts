@@ -1073,6 +1073,52 @@ export interface RecalculateCostResult {
   remaining: number
 }
 
+// Budgets (Bifrost virtual-key config + live quota — #186)
+export interface BudgetSettings {
+  default_vk: string
+  budget_limit_usd: number
+  enforcement_mode: 'warning' | 'hard_stop'
+}
+
+export interface BifrostBudgetTier {
+  id: string
+  max_limit: number
+  current_usage: number
+  reset_duration: string
+  calendar_aligned: boolean
+  last_reset: string
+}
+
+export interface BifrostRateLimit {
+  id: string
+  token_max_limit: number
+  token_current_usage: number
+  token_reset_duration: string
+  request_max_limit: number | null
+  request_current_usage: number
+  request_reset_duration: string | null
+}
+
+export interface BudgetQuotaResponse {
+  configured: boolean
+  available?: boolean
+  virtual_key_id?: string
+  message?: string
+  quota?: {
+    virtual_key_name: string
+    is_active: boolean
+    budgets: BifrostBudgetTier[]
+    rate_limit?: BifrostRateLimit
+  }
+}
+
+export const budgetsApi = {
+  get: () => api.get<BudgetSettings>('/analytics/budget'),
+  set: (payload: BudgetSettings) =>
+    api.put<BudgetSettings>('/analytics/budget', payload),
+  getQuota: () => api.get<BudgetQuotaResponse>('/analytics/budget/quota'),
+}
+
 export const analyticsApi = {
   // Pre-call USD/token estimate. The chat composer calls this (debounced)
   // as the user types so they see what their message will cost before

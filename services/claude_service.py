@@ -1128,6 +1128,15 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             except Exception:
                 cost_usd = 0.0
 
+            # #186: capture which Bifrost VK serviced this call so we can
+            # group spend per-VK in analytics. Empty in dev / bypass mode.
+            try:
+                from services.budget_service import get_active_vk
+
+                _vk = get_active_vk()
+            except Exception:
+                _vk = None
+
             row = LLMInteractionLog(
                 # Caller-supplied interaction_id (#185 Bifrost correlation)
                 # falls back to a fresh UUID for legacy callers that don't
@@ -1153,6 +1162,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                 cost_usd=float(cost_usd or 0.0),
                 duration_ms=int(duration_ms or 0),
                 error=error,
+                virtual_key_id=_vk,
             )
             db_manager = get_db_manager()
             with db_manager.session_scope() as session:

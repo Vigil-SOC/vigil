@@ -25,6 +25,7 @@ import {
 } from '@mui/icons-material'
 import { llmProviderApi, LLMProvider } from '../../services/api'
 import LLMProviderDialog from './LLMProviderDialog'
+import BudgetsSection from './BudgetsSection'
 
 interface Props {
   setMessage: (m: { type: 'success' | 'error'; text: string } | null) => void
@@ -230,6 +231,11 @@ export default function LLMProvidersTab({ setMessage }: Props) {
           onError={(msg) => setMessage({ type: 'error', text: msg })}
         />
       )}
+
+      {/* Bifrost virtual-key budget config (#186) lives next to providers
+          since it gates the same upstream calls — operators set up a
+          provider and immediately want to know "how do I cap my spend". */}
+      <BudgetsSection setMessage={setMessage} />
     </Box>
   )
 }

@@ -55,6 +55,65 @@ except Exception:  # noqa: BLE001
 DispatchPath = Literal["bifrost"]
 
 
+# ---------------------------------------------------------------------------
+# Budget-error mapping (#186)
+# ---------------------------------------------------------------------------
+
+
+def _is_budget_status(status_code: Optional[int]) -> bool:
+    """Bifrost returns 429 when the VK rate limit is hit and 402 when a
+    budget tier is exceeded. We map both to ``BudgetExceeded`` so callers
+    can render a typed error rather than a generic 500. Some providers
+    map "insufficient quota" to 429 too, so the line between rate-limit
+    and budget-exceeded is fuzzy — we surface ``tier`` in the exception
+    so the UI can disambiguate when Bifrost adds richer error bodies."""
+    return status_code in (402, 429)
+
+
+def _classify_tier(status_code: Optional[int], body: str) -> str:
+    body_lc = (body or "").lower()
+    if status_code == 402 or "budget" in body_lc:
+        return "virtual_key"
+    if status_code == 429 or "rate" in body_lc:
+        return "rate_limit"
+    return "unknown"
+
+
+async def _wrap_budget_errors(coro):
+    """Run ``coro`` and translate Bifrost's budget/rate-limit responses
+    into ``services.budget_service.BudgetExceeded``.
+
+    Both the Anthropic and OpenAI SDKs raise their own ``APIStatusError``
+    subclasses with a ``status_code`` attribute. We don't import either
+    SDK here (lazy at call sites) so the catch is duck-typed.
+    """
+    try:
+        return await coro
+    except Exception as e:
+        status_code = getattr(e, "status_code", None)
+        if not _is_budget_status(status_code):
+            raise
+        # Best-effort body extraction. SDKs vary: some have .response.text,
+        # some .message, some neither.
+        body = ""
+        for attr in ("message", "body"):
+            v = getattr(e, attr, None)
+            if v:
+                body = str(v)
+                break
+        if not body:
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                body = getattr(resp, "text", "") or ""
+        from services.budget_service import BudgetExceeded
+
+        raise BudgetExceeded(
+            tier=_classify_tier(status_code, body),
+            message=body or f"Bifrost returned {status_code}",
+            status_code=status_code,
+        ) from e
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     """Minimal view of a row from llm_provider_configs.
@@ -256,32 +315,56 @@ class LLMRouter:
         """
         messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
         model = model or provider.default_model
-        extra_headers = (
-            {"x-bf-lh-vigil-interaction-id": interaction_id}
-            if interaction_id
-            else None
+
+        # #185: correlation header for Bifrost log lookup.
+        # #186: VK header so Bifrost's governance layer enforces budgets.
+        # Both share the extra_headers kwarg the SDKs forward to the upstream
+        # request. Only attach x-bf-vk when budget enforcement is on; while
+        # DEV_MODE / LLM_BUDGET_UNLIMITED is set, omit the header entirely
+        # so Bifrost's bootstrap "no VK" path applies.
+        extra_headers: Dict[str, str] = {}
+        if interaction_id:
+            extra_headers["x-bf-lh-vigil-interaction-id"] = interaction_id
+        try:
+            from services.budget_service import get_active_vk, should_enforce
+
+            if should_enforce():
+                vk = get_active_vk()
+                if vk:
+                    extra_headers["x-bf-vk"] = vk
+        except Exception as _be:
+            logger.debug("budget_service unavailable (%s); proceeding without x-bf-vk", _be)
+        # Convert empty dict back to None so the dispatch helpers can use a
+        # truthy check for "should I send any extra headers" without leaking
+        # an empty dict into the SDK call.
+        extra_headers_or_none: Optional[Dict[str, str]] = (
+            extra_headers if extra_headers else None
         )
         if provider.provider_type == "anthropic":
-            return await self._dispatch_anthropic(
+            return await _wrap_budget_errors(
+                self._dispatch_anthropic(
+                    provider=provider,
+                    messages=messages,
+                    system_prompt=system_prompt,
+                    model=model,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                    enable_thinking=enable_thinking,
+                    thinking_budget=thinking_budget,
+                    extra_headers=extra_headers_or_none,
+                )
+            )
+        return await _wrap_budget_errors(
+            self._dispatch_bifrost_openai(
                 provider=provider,
                 messages=messages,
                 system_prompt=system_prompt,
                 model=model,
                 max_tokens=max_tokens,
+                temperature=temperature,
                 tools=tools,
-                enable_thinking=enable_thinking,
-                thinking_budget=thinking_budget,
-                extra_headers=extra_headers,
+                extra_headers=extra_headers_or_none,
             )
-        return await self._dispatch_bifrost_openai(
-            provider=provider,
-            messages=messages,
-            system_prompt=system_prompt,
-            model=model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            tools=tools,
-            extra_headers=extra_headers,
         )
 
     # ---- backends --------------------------------------------------------

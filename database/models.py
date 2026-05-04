@@ -2131,12 +2131,18 @@ class LLMInteractionLog(Base):
     cost_usd: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Bifrost virtual-key attribution (#186). Stores the VK the call was
+    # made under so we can group spend per-tenant once Vigil grows a
+    # tenant model. Empty / NULL for calls made before the budget feature
+    # was enabled or while running in DEV_MODE / LLM_BUDGET_UNLIMITED.
+    virtual_key_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
         Index("idx_llm_interaction_session", "session_id"),
         Index("idx_llm_interaction_agent", "agent_id"),
         Index("idx_llm_interaction_investigation", "investigation_id"),
         Index("idx_llm_interaction_created", "created_at"),
+        Index("idx_llm_interaction_vk", "virtual_key_id", "created_at"),
     )
 
     def to_summary_dict(self) -> dict:
