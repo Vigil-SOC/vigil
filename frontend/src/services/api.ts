@@ -505,6 +505,90 @@ export const vstrikeApi = {
         auto_play: opts?.autoPlay ?? true,
       },
     ),
+
+  // -------------------------------------------------------------------------
+  // Data-plane proxies (node search, drift, storylines, legends)
+  // -------------------------------------------------------------------------
+
+  nodeSearch: (query: string, network_id?: string, limit?: number) =>
+    api.post<{ query: string; results: Array<Record<string, any>> }>(
+      '/integrations/vstrike/nodes/search',
+      { query, network_id, limit },
+    ),
+
+  nodeDrift: (node_id: string, network_id?: string) =>
+    api.post<{ node_id: string; drift: Array<Record<string, any>> }>(
+      '/integrations/vstrike/nodes/drift',
+      { node_id, network_id },
+    ),
+
+  listStorylines: (network_id?: string) =>
+    api.get<{ network_id?: string; storylines: Array<Record<string, any>> }>(
+      '/integrations/vstrike/storylines',
+      { params: { network_id } },
+    ),
+
+  storylineEvents: (storyline_id: string, network_id?: string) =>
+    api.post<{ storyline_id: string; events: Array<Record<string, any>> }>(
+      '/integrations/vstrike/storylines/events',
+      { storyline_id, network_id },
+    ),
+
+  listLegendRuns: (network_id?: string) =>
+    api.get<{ network_id?: string; legend_runs: Array<Record<string, any>> }>(
+      '/integrations/vstrike/legend-runs',
+      { params: { network_id } },
+    ),
+
+  legendRunResults: (legend_run_id: string, network_id?: string) =>
+    api.post<{ legend_run_id: string; results: Record<string, any> }>(
+      '/integrations/vstrike/legend-runs/results',
+      { legend_run_id, network_id },
+    ),
+
+  // -------------------------------------------------------------------------
+  // UI control plane (camera, storyline, VCR playback)
+  // -------------------------------------------------------------------------
+
+  uiCameraNode: (node_ids: string[], network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/camera-node',
+      { node_ids, network_id },
+    ),
+
+  uiCameraPosition: (
+    position: Record<string, number>,
+    rotation?: Record<string, number>,
+    network_id?: string,
+  ) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/camera-position',
+      { position, rotation, network_id },
+    ),
+
+  uiStorylineApply: (storyline_id: string, network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/storyline-apply',
+      { storyline_id, network_id },
+    ),
+
+  uiStorylineMode: (mode: string, network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/storyline-mode',
+      { mode, network_id },
+    ),
+
+  uiStorylineForward: (network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/storyline-forward',
+      { network_id },
+    ),
+
+  uiStorylineBackward: (network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/storyline-backward',
+      { network_id },
+    ),
 }
 
 // Claude API

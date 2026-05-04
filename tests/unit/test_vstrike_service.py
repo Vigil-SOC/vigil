@@ -534,6 +534,247 @@ def test_iframe_url_embeds_token():
 
 
 # ---------------------------------------------------------------------------
+# New data-plane MCP tools (node search, drift, storylines, legends)
+# ---------------------------------------------------------------------------
+
+
+def test_node_search_passes_query_and_network_id():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [
+                {"type": "text", "text": '{"nodes": [{"node_id": "n1", "name": "Router-A"}]}'}
+            ]
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        result = svc.node_search("router", network_id="net-1", limit=10)
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "node-search"
+    args = payload["params"]["arguments"]
+    assert args["query"] == "router"
+    assert args["networkId"] == "net-1"
+    assert args["limit"] == 10
+    assert result == [{"node_id": "n1", "name": "Router-A"}]
+
+
+def test_node_search_returns_none_on_error():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(500, text="boom"),
+    ):
+        assert svc.node_search("x") is None
+
+
+def test_node_drift_get_passes_node_id():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [
+                {"type": "text", "text": '{"drift": [{"timestamp": "t1", "source": "cve"}]}'}
+            ]
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        result = svc.node_drift_get("node-1", network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "node-drift-get"
+    assert payload["params"]["arguments"]["nodeId"] == "node-1"
+    assert payload["params"]["arguments"]["networkId"] == "net-1"
+    assert result == [{"timestamp": "t1", "source": "cve"}]
+
+
+def test_storyline_list_returns_storylines():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [
+                {"type": "text", "text": '{"storylines": [{"storyline_id": "s1", "name": "Exfil"}]}'}
+            ]
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ):
+        result = svc.storyline_list(network_id="net-1")
+    assert result == [{"storyline_id": "s1", "name": "Exfil"}]
+
+
+def test_storyline_events_get_passes_storyline_id():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [
+                {"type": "text", "text": '{"events": [{"event_id": "e1", "timestamp": "t1"}]}'}
+            ]
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        result = svc.storyline_events_get("s1", network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "storyline-events-get"
+    assert payload["params"]["arguments"]["storylineId"] == "s1"
+    assert result == [{"event_id": "e1", "timestamp": "t1"}]
+
+
+def test_legend_run_list_returns_runs():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [
+                {"type": "text", "text": '{"legendRuns": [{"legend_run_id": "lr1", "name": "CVE-2026-001"}]}'}
+            ]
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ):
+        result = svc.legend_run_list(network_id="net-1")
+    assert result == [{"legend_run_id": "lr1", "name": "CVE-2026-001"}]
+
+
+def test_legend_run_results_get_returns_dict():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [
+                {"type": "text", "text": '{"legend_run_id": "lr1", "results": {"critical": 3}}'}
+            ]
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        result = svc.legend_run_results_get("lr1", network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "legend-run-results-get"
+    assert payload["params"]["arguments"]["legendRunId"] == "lr1"
+    assert result == {"legend_run_id": "lr1", "results": {"critical": 3}}
+
+
+# ---------------------------------------------------------------------------
+# New UI control-plane MCP tools (camera, storyline, VCR)
+# ---------------------------------------------------------------------------
+
+
+def test_ui_camera_node_passes_node_ids():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body={"result": {"ok": True}}),
+    ) as mock_post:
+        svc.ui_camera_node(["n1", "n2"], network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "ui-camera-node"
+    args = payload["params"]["arguments"]
+    assert args["nodeIds"] == ["n1", "n2"]
+    assert args["networkId"] == "net-1"
+
+
+def test_ui_camera_position_passes_position_and_rotation():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body={"result": {"ok": True}}),
+    ) as mock_post:
+        svc.ui_camera_position(
+            {"x": 1.0, "y": 2.0, "z": 3.0},
+            {"pitch": 0.5, "yaw": 1.0},
+            network_id="net-1",
+        )
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "ui-camera-position"
+    args = payload["params"]["arguments"]
+    assert args["position"] == {"x": 1.0, "y": 2.0, "z": 3.0}
+    assert args["rotation"] == {"pitch": 0.5, "yaw": 1.0}
+    assert args["networkId"] == "net-1"
+
+
+def test_ui_storyline_apply_passes_storyline_id():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body={"result": {"ok": True}}),
+    ) as mock_post:
+        svc.ui_storyline_apply("s1", network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "ui-storyline-apply"
+    assert payload["params"]["arguments"]["storylineId"] == "s1"
+
+
+def test_ui_storyline_mode_passes_mode():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body={"result": {"ok": True}}),
+    ) as mock_post:
+        svc.ui_storyline_mode("replay", network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "ui-storyline-mode"
+    assert payload["params"]["arguments"]["mode"] == "replay"
+
+
+def test_ui_storyline_forward_passes_network_id():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body={"result": {"ok": True}}),
+    ) as mock_post:
+        svc.ui_storyline_forward(network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "ui-storyline-forward"
+    assert payload["params"]["arguments"]["networkId"] == "net-1"
+
+
+def test_ui_storyline_backward_passes_network_id():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body={"result": {"ok": True}}),
+    ) as mock_post:
+        svc.ui_storyline_backward(network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "ui-storyline-backward"
+    assert payload["params"]["arguments"]["networkId"] == "net-1"
+
+
+# ---------------------------------------------------------------------------
 # Wire-format regressions discovered against the live VStrike server
 # ---------------------------------------------------------------------------
 

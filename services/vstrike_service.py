@@ -44,6 +44,9 @@ _JWT_DEFAULT_TTL_SECONDS = 50 * 60
 # Key: (base_url, username) → (jwt, expires_at_epoch_seconds)
 _jwt_cache: Dict[Tuple[str, str], Tuple[str, float]] = {}
 _jwt_lock = threading.Lock()
+# Per-credential lock so concurrent requests for the same account
+# don't race _mcp_login() and end up with different JWTs.
+_jwt_login_locks: Dict[Tuple[str, str], threading.Lock] = {}
 
 
 class VStrikeToolNotImplemented(RuntimeError):
@@ -361,14 +364,30 @@ class VStrikeService:
                 "(VSTRIKE_USERNAME / VSTRIKE_PASSWORD)"
             )
         key = (self.base_url, self.username)
+
+        # Fast-path: check cache under the shared lock.
         with _jwt_lock:
             cached = _jwt_cache.get(key)
             if cached and cached[1] > time.time():
                 return cached[0]
-        jwt = self._mcp_login()
+
+        # Slow-path: we need to log in.  Grab a per-credential lock so
+        # concurrent requests for the same account don't race _mcp_login()
+        # and end up with different JWTs (which would orphan an iframe
+        # session and cause VStrike to return "Unknown token match!").
         with _jwt_lock:
-            _jwt_cache[key] = (jwt, time.time() + _JWT_DEFAULT_TTL_SECONDS)
-        return jwt
+            login_lock = _jwt_login_locks.setdefault(key, threading.Lock())
+
+        with login_lock:
+            # Another thread may have logged in while we were waiting.
+            with _jwt_lock:
+                cached = _jwt_cache.get(key)
+                if cached and cached[1] > time.time():
+                    return cached[0]
+            jwt = self._mcp_login()
+            with _jwt_lock:
+                _jwt_cache[key] = (jwt, time.time() + _JWT_DEFAULT_TTL_SECONDS)
+            return jwt
 
     def _invalidate_jwt(self) -> None:
         if self.username:
@@ -521,6 +540,178 @@ class VStrikeService:
         """Build the auto-login iframe URL using a fresh ui-login-token."""
         token = self.get_ui_login_token()
         return f"{self.base_url}/login?token={token}"
+
+    # ------------------------------------------------------------------ #
+    # Data-plane MCP tools (node search, drift, storylines, legends)
+    # ------------------------------------------------------------------ #
+
+    def node_search(
+        self, query: str, *, network_id: Optional[str] = None, limit: int = 50
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Omni-search across nodes in the active VStrike network."""
+        args: Dict[str, Any] = {"query": query, "limit": limit}
+        if network_id:
+            args["networkId"] = network_id
+        try:
+            result = self._call_mcp_tool("node-search", args)
+            return _extract_list(result, ("nodes", "results", "items", "data"))
+        except RuntimeError as e:
+            logger.error("VStrike node-search failed: %s", e)
+            return None
+
+    def node_drift_get(
+        self, node_id: str, *, network_id: Optional[str] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Return end-node state changes for the supplied node."""
+        args: Dict[str, Any] = {"nodeId": node_id}
+        if network_id:
+            args["networkId"] = network_id
+        try:
+            result = self._call_mcp_tool("node-drift-get", args)
+            return _extract_list(result, ("drift", "changes", "results", "items", "data"))
+        except RuntimeError as e:
+            logger.error("VStrike node-drift-get failed: %s", e)
+            return None
+
+    def storyline_list(
+        self, *, network_id: Optional[str] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """List storylines available for the network."""
+        args: Dict[str, Any] = {}
+        if network_id:
+            args["networkId"] = network_id
+        try:
+            result = self._call_mcp_tool("storyline-list", args)
+            return _extract_list(result, ("storylines", "results", "items", "data"))
+        except RuntimeError as e:
+            logger.error("VStrike storyline-list failed: %s", e)
+            return None
+
+    def storyline_events_get(
+        self, storyline_id: str, *, network_id: Optional[str] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """List events in a storyline along with their properties."""
+        args: Dict[str, Any] = {"storylineId": storyline_id}
+        if network_id:
+            args["networkId"] = network_id
+        try:
+            result = self._call_mcp_tool("storyline-events-get", args)
+            return _extract_list(result, ("events", "results", "items", "data"))
+        except RuntimeError as e:
+            logger.error("VStrike storyline-events-get failed: %s", e)
+            return None
+
+    def legend_run_list(
+        self, *, network_id: Optional[str] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """List legend runs available for the network."""
+        args: Dict[str, Any] = {}
+        if network_id:
+            args["networkId"] = network_id
+        try:
+            result = self._call_mcp_tool("legend-run-list", args)
+            return _extract_list(result, ("legendRuns", "results", "items", "data"))
+        except RuntimeError as e:
+            logger.error("VStrike legend-run-list failed: %s", e)
+            return None
+
+    def legend_run_results_get(
+        self, legend_run_id: str, *, network_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Return results for the specified legend run."""
+        args: Dict[str, Any] = {"legendRunId": legend_run_id}
+        if network_id:
+            args["networkId"] = network_id
+        try:
+            result = self._call_mcp_tool("legend-run-results-get", args)
+            if isinstance(result, dict):
+                # Unwrap structuredContent if present (VStrike's typed payload).
+                structured = result.get("structuredContent")
+                if isinstance(structured, dict):
+                    return structured
+                # If the dict only contains a content envelope with JSON text,
+                # parse the first text chunk.
+                content = result.get("content")
+                if isinstance(content, list) and content:
+                    text = content[0].get("text") if isinstance(content[0], dict) else None
+                    if isinstance(text, str):
+                        try:
+                            parsed = json.loads(text)
+                        except (json.JSONDecodeError, TypeError):
+                            parsed = None
+                        if isinstance(parsed, dict):
+                            return parsed
+                return result
+            if isinstance(result, list) and result:
+                return {"results": result}
+            return None
+        except RuntimeError as e:
+            logger.error("VStrike legend-run-results-get failed: %s", e)
+            return None
+
+    # ------------------------------------------------------------------ #
+    # UI control-plane MCP tools (camera, storyline, VCR)
+    # ------------------------------------------------------------------ #
+
+    def ui_camera_node(
+        self, node_ids: List[str], *, network_id: Optional[str] = None
+    ) -> Any:
+        """Move the camera to focus on the nodes provided."""
+        args: Dict[str, Any] = {"nodeIds": node_ids}
+        if network_id:
+            args["networkId"] = network_id
+        return self._call_mcp_tool("ui-camera-node", args)
+
+    def ui_camera_position(
+        self,
+        position: Dict[str, float],
+        rotation: Optional[Dict[str, float]] = None,
+        *,
+        network_id: Optional[str] = None,
+    ) -> Any:
+        """Set the camera position and rotation explicitly."""
+        args: Dict[str, Any] = {"position": position}
+        if rotation:
+            args["rotation"] = rotation
+        if network_id:
+            args["networkId"] = network_id
+        return self._call_mcp_tool("ui-camera-position", args)
+
+    def ui_storyline_apply(
+        self, storyline_id: str, *, network_id: Optional[str] = None
+    ) -> Any:
+        """Apply the specified storyline to the active network view."""
+        args: Dict[str, Any] = {"storylineId": storyline_id}
+        if network_id:
+            args["networkId"] = network_id
+        return self._call_mcp_tool("ui-storyline-apply", args)
+
+    def ui_storyline_mode(
+        self, mode: str, *, network_id: Optional[str] = None
+    ) -> Any:
+        """Set the timeslice mode for the VCR controls and reset frame counters."""
+        args: Dict[str, Any] = {"mode": mode}
+        if network_id:
+            args["networkId"] = network_id
+        return self._call_mcp_tool("ui-storyline-mode", args)
+
+    def ui_storyline_forward(
+        self, *, network_id: Optional[str] = None
+    ) -> Any:
+        """Step forward in the storyline timeline."""
+        args: Dict[str, Any] = {}
+        if network_id:
+            args["networkId"] = network_id
+        return self._call_mcp_tool("ui-storyline-forward", args)
+
+    def ui_storyline_backward(
+        self, *, network_id: Optional[str] = None
+    ) -> Any:
+        """Step backward in the storyline timeline."""
+        args: Dict[str, Any] = {}
+        if network_id:
+            args["networkId"] = network_id
+        return self._call_mcp_tool("ui-storyline-backward", args)
 
 
 def _config_value(key: str, config: Optional[Dict[str, Any]]) -> Optional[str]:
