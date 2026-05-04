@@ -232,6 +232,7 @@ temp/
 
 # Runtime data (stored in PostgreSQL)
 data/*.json
+data/investigations/
 !data/schemas/
 
 # Test data
