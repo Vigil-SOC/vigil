@@ -13,7 +13,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
@@ -742,6 +742,12 @@ async def get_cost_analytics(
     Cache hit rate is cached-input / total-input across the window; it
     should read 0 until prompt caching ships in GH #84 PR-C — this
     endpoint is the baseline dashboard that will surface the jump.
+
+    The ``time_series`` block is sourced from Bifrost's
+    ``/api/logs/histogram/cost`` (#185), giving us authoritative cost
+    actuals against current pricing. If Bifrost is unavailable the
+    block is omitted but the local aggregations still return — the UI
+    degrades gracefully from "actuals + trend" to "actuals only".
     """
     start_time, end_time = get_time_range(time_range)
 
@@ -754,6 +760,7 @@ async def get_cost_analytics(
     by_agent = _cost_group_by_agent(db, base_filter)
     by_model = _cost_group_by_model(db, base_filter)
     top_investigations = _cost_top_investigations(db, base_filter)
+    time_series = _cost_time_series_from_bifrost(start_time, end_time)
 
     return {
         "window": {
@@ -765,7 +772,27 @@ async def get_cost_analytics(
         "by_agent": by_agent,
         "by_model": by_model,
         "top_investigations": top_investigations,
+        "time_series": time_series,
     }
+
+
+def _cost_time_series_from_bifrost(start_time, end_time) -> Optional[Dict[str, Any]]:
+    """Pull time-bucketed cost from Bifrost's logging API (#185).
+
+    Returns the ``buckets``/``bucket_size_seconds``/``models`` payload
+    as-is so the frontend can chart it directly. Returns ``None`` on any
+    failure (Bifrost down, log plugin off, network) so the dashboard
+    keeps working with the local aggregations.
+    """
+    try:
+        from services.bifrost_cost_client import histogram_cost
+
+        return histogram_cost(
+            start_time=start_time.isoformat() if start_time else None,
+            end_time=end_time.isoformat() if end_time else None,
+        )
+    except Exception:
+        return None
 
 
 def _cache_hit_rate(input_tokens: int, cache_read_tokens: int) -> float:
@@ -984,3 +1011,71 @@ async def estimate_cost_endpoint(payload: EstimateCostRequest) -> Dict[str, Any]
         max_tokens=payload.max_tokens,
     )
     return estimate.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Recalculate cost — admin operation that fixes pricing rot (#185)
+# ---------------------------------------------------------------------------
+
+
+class RecalculateCostRequest(BaseModel):
+    """Body for POST /analytics/recalculate-cost.
+
+    Optional filters scope which Bifrost log rows get re-costed. The
+    common case (no filters) only touches rows where Bifrost recorded
+    ``missing_cost`` — i.e. calls that happened before pricing data
+    was available. After a known repricing event, scope by model or
+    time window to reprice only the affected rows.
+    """
+
+    providers: Optional[List[str]] = None
+    models: Optional[List[str]] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    missing_cost_only: Optional[bool] = True
+    limit: int = Field(default=200, ge=1, le=1000)
+
+
+@router.post("/analytics/recalculate-cost")
+async def recalculate_cost_endpoint(
+    payload: Optional[RecalculateCostRequest] = None,
+) -> Dict[str, Any]:
+    """Trigger Bifrost's batch cost-recompute against current pricing.
+
+    Admin operation. When Anthropic or OpenAI publishes new pricing,
+    Bifrost's catalog updates automatically — but historical log rows
+    keep the cost they were billed at the time. This endpoint asks
+    Bifrost to re-cost a batch of rows so the time-series and
+    histograms reflect the new pricing without a redeploy.
+
+    NOTE: this is a *cumulative* operation. Bifrost caps each call at
+    1000 rows; the response's ``remaining`` field tells the caller how
+    many rows still need processing. The UI button loops until
+    ``remaining == 0`` (or fails fast on a 5xx).
+    """
+    from services.bifrost_cost_client import recalculate_cost
+
+    p = payload or RecalculateCostRequest()
+    filters: Dict[str, Any] = {}
+    if p.providers:
+        filters["providers"] = p.providers
+    if p.models:
+        filters["models"] = p.models
+    if p.start_time:
+        filters["start_time"] = p.start_time
+    if p.end_time:
+        filters["end_time"] = p.end_time
+    if p.missing_cost_only is not None:
+        filters["missing_cost_only"] = p.missing_cost_only
+
+    result = recalculate_cost(filters=filters or None, limit=p.limit)
+    if result is None:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Bifrost recalculate-cost call failed — check that Bifrost "
+                "is reachable and the logging plugin is enabled with a "
+                "persistence backend (see docker/bifrost/README.md)."
+            ),
+        )
+    return result

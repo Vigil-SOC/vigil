@@ -240,15 +240,27 @@ class LLMRouter:
         tools: Optional[List[Dict[str, Any]]] = None,
         enable_thinking: bool = False,
         thinking_budget: int = 10000,
+        interaction_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Send a chat completion via Bifrost.
 
         Anthropic calls hit Bifrost's ``/anthropic`` passthrough so
         extended thinking and native prompt caching round-trip intact.
         Other providers use Bifrost's OpenAI-format ``/v1`` endpoint.
+
+        ``interaction_id`` (when set) is attached as the
+        ``x-bf-lh-vigil-interaction-id`` header — Bifrost's logging plugin
+        captures any ``x-bf-lh-*`` header into ``LogEntry.metadata``, so
+        operators can correlate Vigil's local ``LLMInteractionLog`` row
+        with the matching Bifrost log entry by that UUID. (#185)
         """
         messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
         model = model or provider.default_model
+        extra_headers = (
+            {"x-bf-lh-vigil-interaction-id": interaction_id}
+            if interaction_id
+            else None
+        )
         if provider.provider_type == "anthropic":
             return await self._dispatch_anthropic(
                 provider=provider,
@@ -259,6 +271,7 @@ class LLMRouter:
                 tools=tools,
                 enable_thinking=enable_thinking,
                 thinking_budget=thinking_budget,
+                extra_headers=extra_headers,
             )
         return await self._dispatch_bifrost_openai(
             provider=provider,
@@ -268,6 +281,7 @@ class LLMRouter:
             max_tokens=max_tokens,
             temperature=temperature,
             tools=tools,
+            extra_headers=extra_headers,
         )
 
     # ---- backends --------------------------------------------------------
@@ -282,6 +296,7 @@ class LLMRouter:
         max_tokens: int,
         temperature: Optional[float],
         tools: Optional[List[Dict[str, Any]]],
+        extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         from openai import AsyncOpenAI  # lazy — avoids hard dep for tests
 
@@ -303,6 +318,8 @@ class LLMRouter:
             kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = tools
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
 
         resp = await client.chat.completions.create(**kwargs)
         choice = resp.choices[0].message
@@ -342,6 +359,7 @@ class LLMRouter:
         tools: Optional[List[Dict[str, Any]]],
         enable_thinking: bool,
         thinking_budget: int,
+        extra_headers: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         from services.llm_clients import create_async_anthropic_client
 
@@ -371,6 +389,8 @@ class LLMRouter:
             kwargs["tools"] = tools
         if enable_thinking:
             kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
 
         resp = await client.messages.create(**kwargs)
         # Anthropic returns a list of content blocks (text, thinking, tool_use).

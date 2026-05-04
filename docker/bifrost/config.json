@@ -1,5 +1,16 @@
 {
   "$schema": "https://www.getbifrost.ai/schema",
+  "client": {
+    "enable_logging": true,
+    "disable_content_logging": false
+  },
+  "logs_store": {
+    "enabled": true,
+    "type": "sqlite",
+    "config": {
+      "path": "./logs.db"
+    }
+  },
   "providers": {
     "anthropic": {
       "network_config": {

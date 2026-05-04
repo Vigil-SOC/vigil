@@ -496,6 +496,18 @@ def _sync_claude_raw(
             "budget_tokens": thinking_budget,
         }
 
+    # #185: tag the upstream Bifrost call with a Vigil interaction UUID
+    # so the LogEntry on Bifrost's side can be correlated with the local
+    # LLMInteractionLog row this method writes below. Bifrost captures
+    # any `x-bf-lh-*` header into LogEntry.metadata.
+    import uuid as _uuid
+
+    _interaction_id = str(_uuid.uuid4())
+    kwargs["extra_headers"] = {
+        **(kwargs.get("extra_headers") or {}),
+        "x-bf-lh-vigil-interaction-id": _interaction_id,
+    }
+
     _raw_started = _time.monotonic()
     response = claude_service.client.messages.create(**kwargs)
     _raw_duration_ms = int((_time.monotonic() - _raw_started) * 1000)
@@ -523,6 +535,7 @@ def _sync_claude_raw(
                 getattr(_usage, "cache_creation_input_tokens", 0) if _usage else 0
             ),
             duration_ms=_raw_duration_ms,
+            interaction_id=_interaction_id,
         )
     except Exception as _pe:
         logger.debug(f"Reasoning-trace persist skipped (raw): {_pe}")
