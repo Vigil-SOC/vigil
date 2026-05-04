@@ -1333,6 +1333,47 @@ export const orchestratorApi = {
   getCost: () => api.get('/orchestrator/cost'),
 }
 
+// Federation API (federated monitoring of external SIEM/EDR sources)
+export interface FederationSourceView {
+  source_id: string
+  enabled: boolean
+  interval_seconds: number
+  max_items: number
+  min_severity: string | null
+  last_poll_at: string | null
+  last_success_at: string | null
+  last_error: string | null
+  consecutive_errors: number
+  is_configured: boolean
+  default_interval_seconds: number
+}
+
+export interface FederationListResponse {
+  sources: FederationSourceView[]
+  global: { enabled: boolean }
+}
+
+export const federationApi = {
+  getSettings: () => api.get<{ enabled: boolean }>('/federation/settings'),
+  setSettings: (enabled: boolean) =>
+    api.put<{ enabled: boolean }>('/federation/settings', { enabled }),
+  listSources: () => api.get<FederationListResponse>('/federation/sources'),
+  updateSource: (
+    sourceId: string,
+    patch: Partial<{
+      enabled: boolean
+      interval_seconds: number
+      max_items: number
+      min_severity: string | null
+    }>,
+  ) => api.patch<FederationSourceView>(`/federation/sources/${sourceId}`, patch),
+  pollNow: (sourceId: string) =>
+    api.post<{ ok: boolean; source_id: string }>(
+      `/federation/sources/${sourceId}/poll-now`,
+    ),
+  getHealth: () => api.get('/federation/health'),
+}
+
 // Reasoning-trace API (GH #79 — LLM chain-of-thought visibility)
 export const reasoningApi = {
   getSessionSummary: (sessionId: string) =>

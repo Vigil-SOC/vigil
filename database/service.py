@@ -59,6 +59,7 @@ class DatabaseService:
                     anomaly_score=anomaly_score,
                     timestamp=timestamp,
                     data_source=data_source,
+                    external_id=kwargs.get('external_id'),
                     description=kwargs.get('description'),
                     entity_context=kwargs.get('entity_context'),
                     evidence_links=kwargs.get('evidence_links'),
