@@ -1,4 +1,19 @@
-"""Data source polling for the SOC daemon."""
+"""Data source polling for the SOC daemon.
+
+Two modes coexist here:
+
+* **Legacy per-source loops** (``_poll_<source>_loop``) — driven by env-var
+  intervals in :class:`daemon.config.PollingConfig`. These predate federation
+  and remain the path used when the global federation toggle is off.
+* **Federation runner** (:class:`daemon.federation.runner.FederationRunner`) —
+  spawned alongside the legacy loops. When ``federation.settings.enabled`` is
+  true and a source has a ``federation_sources`` row enabled, the legacy loop
+  for that source defers (skips that tick) so federation owns the pull.
+
+This co-existence keeps existing deployments working unchanged while the new
+opt-in feature is under MVP. Once federation is the default path we can
+delete the legacy loops in a follow-up.
+"""
 
 import asyncio
 import logging
@@ -8,6 +23,7 @@ from dataclasses import dataclass
 
 from daemon.config import PollingConfig
 from daemon.dedup import RedisDedupSet
+from daemon.federation.runner import FederationRunner
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +45,12 @@ class DataPoller:
     def __init__(self, config: PollingConfig):
         self.config = config
         self._output_queue: Optional[asyncio.Queue] = None
-        
+
+        # Federation runner — owns pull for sources with a federation_sources
+        # row when the global federation.settings toggle is on. Always
+        # constructed; idle while federation is off.
+        self._federation = FederationRunner(output_queue=None)
+
         # Polling cursors for each source
         self._splunk_state = PollState()
         self._crowdstrike_state = PollState()
@@ -78,6 +99,7 @@ class DataPoller:
     def set_output_queue(self, queue: asyncio.Queue):
         """Set the output queue for processed findings."""
         self._output_queue = queue
+        self._federation.set_output_queue(queue)
     
     def _init_services(self):
         """Initialize data source services."""
@@ -160,10 +182,14 @@ class DataPoller:
         """Run the polling loop."""
         logger.info("Data poller starting...")
         self._init_services()
-        
+
         # Create polling tasks
         tasks = []
-        
+
+        # Federation runner is always spawned. It self-gates on the global
+        # federation.settings toggle and per-source rows; idle while disabled.
+        tasks.append(asyncio.create_task(self._federation.run(shutdown_event)))
+
         if self._splunk_service:
             tasks.append(asyncio.create_task(
                 self._poll_splunk_loop(shutdown_event)
@@ -237,6 +263,8 @@ class DataPoller:
         """Poll Splunk for new security alerts."""
         if not self._splunk_service:
             return
+        if self._federation.is_active_for("splunk"):
+            return  # Federation owns this source while globally + per-source enabled
         
         self.stats["splunk_polls"] += 1
         logger.debug("Polling Splunk for new alerts...")
@@ -360,6 +388,8 @@ class DataPoller:
     async def _poll_crowdstrike(self):
         """Poll CrowdStrike for new detections."""
         if not self._crowdstrike_service:
+            return
+        if self._federation.is_active_for("crowdstrike"):
             return
         
         self.stats["crowdstrike_polls"] += 1
@@ -542,6 +572,8 @@ class DataPoller:
         """Poll Azure Sentinel for new incidents."""
         if not self._azure_sentinel_service:
             return
+        if self._federation.is_active_for("azure_sentinel"):
+            return
         
         self.stats["azure_sentinel_polls"] += 1
         logger.debug("Polling Azure Sentinel for new incidents...")
@@ -582,6 +614,8 @@ class DataPoller:
     async def _poll_aws_security_hub(self):
         """Poll AWS Security Hub for new findings."""
         if not self._aws_security_hub_service:
+            return
+        if self._federation.is_active_for("aws_security_hub"):
             return
         
         self.stats["aws_security_hub_polls"] += 1
@@ -624,6 +658,8 @@ class DataPoller:
         """Poll Microsoft Defender for new alerts."""
         if not self._microsoft_defender_service:
             return
+        if self._federation.is_active_for("microsoft_defender"):
+            return
         
         self.stats["microsoft_defender_polls"] += 1
         logger.debug("Polling Microsoft Defender for new alerts...")
@@ -663,6 +699,8 @@ class DataPoller:
     async def _poll_elastic(self):
         """Poll Elastic Security for new detection alerts."""
         if not self._elastic_service:
+            return
+        if self._federation.is_active_for("elastic"):
             return
 
         self.stats["elastic_polls"] += 1

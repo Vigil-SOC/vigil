@@ -1054,6 +1054,32 @@ export const ingestionApi = {
   },
 }
 
+// Analytics API (#184 Phase 2)
+export interface CostEstimate {
+  provider_type: string
+  model_id: string
+  input_tokens: number
+  output_tokens_max: number
+  low_usd: number
+  high_usd: number
+  pricing_source: 'exact' | 'heuristic' | 'zero' | 'unknown'
+  token_count_method: 'anthropic_count_tokens' | 'tiktoken' | 'char_heuristic'
+}
+
+export const analyticsApi = {
+  // Pre-call USD/token estimate. The chat composer calls this (debounced)
+  // as the user types so they see what their message will cost before
+  // sending. token_count_method tells the UI how trustworthy the count is.
+  estimateCost: (payload: {
+    provider_type: string
+    model_id: string
+    messages: Array<{ role: string; content: any }>
+    system_prompt?: string
+    tools?: any[]
+    max_tokens?: number
+  }) => api.post<CostEstimate>('/analytics/estimate-cost', payload),
+}
+
 // Storage API
 export const storageApi = {
   getStatus: () => api.get('/storage/status'),
@@ -1331,6 +1357,47 @@ export const orchestratorApi = {
     api.post(`/orchestrator/investigations/${id}/review`, { action, notes }),
 
   getCost: () => api.get('/orchestrator/cost'),
+}
+
+// Federation API (federated monitoring of external SIEM/EDR sources)
+export interface FederationSourceView {
+  source_id: string
+  enabled: boolean
+  interval_seconds: number
+  max_items: number
+  min_severity: string | null
+  last_poll_at: string | null
+  last_success_at: string | null
+  last_error: string | null
+  consecutive_errors: number
+  is_configured: boolean
+  default_interval_seconds: number
+}
+
+export interface FederationListResponse {
+  sources: FederationSourceView[]
+  global: { enabled: boolean }
+}
+
+export const federationApi = {
+  getSettings: () => api.get<{ enabled: boolean }>('/federation/settings'),
+  setSettings: (enabled: boolean) =>
+    api.put<{ enabled: boolean }>('/federation/settings', { enabled }),
+  listSources: () => api.get<FederationListResponse>('/federation/sources'),
+  updateSource: (
+    sourceId: string,
+    patch: Partial<{
+      enabled: boolean
+      interval_seconds: number
+      max_items: number
+      min_severity: string | null
+    }>,
+  ) => api.patch<FederationSourceView>(`/federation/sources/${sourceId}`, patch),
+  pollNow: (sourceId: string) =>
+    api.post<{ ok: boolean; source_id: string }>(
+      `/federation/sources/${sourceId}/poll-now`,
+    ),
+  getHealth: () => api.get('/federation/health'),
 }
 
 // Reasoning-trace API (GH #79 — LLM chain-of-thought visibility)

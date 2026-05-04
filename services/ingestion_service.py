@@ -153,6 +153,7 @@ class IngestionService:
                     anomaly_score=float(finding_data.get('anomaly_score', 0.0)),
                     timestamp=timestamp,
                     data_source=finding_data.get('data_source', 'imported'),
+                    external_id=finding_data.get('external_id'),
                     description=finding_data.get('description'),
                     entity_context=finding_data.get('entity_context'),
                     evidence_links=finding_data.get('evidence_links'),

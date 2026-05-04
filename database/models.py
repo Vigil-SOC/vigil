@@ -78,6 +78,9 @@ class Finding(Base):
     # Metadata
     timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     data_source: Mapped[str] = mapped_column(String(50), nullable=False)
+    # Source-native ID. Combined with data_source it forms the dedup key
+    # for federated ingest (see uniq_findings_source_extid).
+    external_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     cluster_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     severity: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
     status: Mapped[str] = mapped_column(
@@ -118,6 +121,15 @@ class Finding(Base):
             postgresql_ops={"description": "gin_trgm_ops"},
             postgresql_using="gin",
         ),
+        Index(
+            "uniq_findings_source_extid",
+            "data_source",
+            "external_id",
+            unique=True,
+            postgresql_where=text(
+                "data_source IS NOT NULL AND external_id IS NOT NULL"
+            ),
+        ),
     )
 
     def to_dict(self) -> dict:
@@ -132,6 +144,7 @@ class Finding(Base):
             "evidence_links": self.evidence_links,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
             "data_source": self.data_source,
+            "external_id": self.external_id,
             "cluster_id": self.cluster_id,
             "severity": self.severity,
             "status": self.status,
@@ -601,6 +614,87 @@ class IntegrationConfig(Base):
             "last_test_success": self.last_test_success,
             "last_error": self.last_error,
             "updated_by": self.updated_by,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
+class FederationSource(Base):
+    """
+    Federation Source - Per-source state for the federated monitoring poller.
+
+    One row per data source the daemon pulls from on a configurable cadence.
+    Rows are auto-seeded on daemon boot from configured integrations (default
+    disabled). The global on/off lives in ``system_config`` under the key
+    ``federation.settings`` — a source only polls when both the global toggle
+    and its own ``enabled`` flag are true.
+    """
+
+    __tablename__ = "federation_sources"
+
+    # Primary key — matches integration ids (e.g. "splunk", "crowdstrike")
+    source_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    # Toggle + cadence
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    interval_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=300, server_default="300"
+    )
+    max_items: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=100, server_default="100"
+    )
+
+    # Optional severity floor: only ingest findings >= this severity.
+    # Nullable means "no filter".
+    min_severity: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+
+    # Adapter-defined cursor (e.g. {"earliest_time": "..."} for Splunk).
+    cursor: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+
+    # Health
+    last_poll_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    last_success_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    consecutive_errors: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default=text("now()"),
+    )
+
+    __table_args__ = (Index("idx_federation_sources_enabled", "enabled"),)
+
+    def to_dict(self) -> dict:
+        return {
+            "source_id": self.source_id,
+            "enabled": self.enabled,
+            "interval_seconds": self.interval_seconds,
+            "max_items": self.max_items,
+            "min_severity": self.min_severity,
+            "cursor": self.cursor,
+            "last_poll_at": (
+                self.last_poll_at.isoformat() if self.last_poll_at else None
+            ),
+            "last_success_at": (
+                self.last_success_at.isoformat() if self.last_success_at else None
+            ),
+            "last_error": self.last_error,
+            "consecutive_errors": self.consecutive_errors,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

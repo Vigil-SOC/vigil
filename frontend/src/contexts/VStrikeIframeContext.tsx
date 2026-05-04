@@ -403,10 +403,14 @@ export function VStrikeIframeProvider({ children }: ProviderProps) {
         return
       }
       try {
+        // eslint-disable-next-line no-console
+        console.log('[VStrike] fetching storylines for', networkId)
         const res = await vstrikeApi.listStorylines(networkId)
         // Cancel if user switched networks while we were in-flight.
         if (currentNetworkRef.current !== networkId) return
         const items = res.data?.storylines || []
+        // eslint-disable-next-line no-console
+        console.log('[VStrike] storylines response', items.length, 'items')
         const opts: Array<{ id: string; label: string; raw: Record<string, any> }> =
           []
         for (const raw of items) {
@@ -432,10 +436,14 @@ export function VStrikeIframeProvider({ children }: ProviderProps) {
         return
       }
       try {
+        // eslint-disable-next-line no-console
+        console.log('[VStrike] fetching legend runs for', networkId)
         const res = await vstrikeApi.listLegendRuns(networkId)
         // Cancel if user switched networks while we were in-flight.
         if (currentNetworkRef.current !== networkId) return
         const items = res.data?.legend_runs || []
+        // eslint-disable-next-line no-console
+        console.log('[VStrike] legend runs response', items.length, 'items')
         const opts: Array<{ id: string; label: string; raw: Record<string, any> }> =
           []
         for (const raw of items) {

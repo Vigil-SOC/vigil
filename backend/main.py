@@ -88,6 +88,9 @@ from api.detection_rules import router as detection_rules_router
 # Orchestrator router
 from api.orchestrator import router as orchestrator_router
 
+# Federation router (federated monitoring of external SIEM/EDR sources)
+from api.federation import router as federation_router
+
 # Kafka ingestion router
 from api.kafka import router as kafka_router
 
@@ -243,6 +246,10 @@ app.include_router(approvals_router, prefix="/api", tags=["approvals"])
 # Autonomous orchestrator
 app.include_router(
     orchestrator_router, prefix="/api/orchestrator", tags=["orchestrator"]
+)
+# Federated monitoring (per-source SIEM/EDR pull driven by federation_sources)
+app.include_router(
+    federation_router, prefix="/api/federation", tags=["federation"]
 )
 app.include_router(kafka_router)
 

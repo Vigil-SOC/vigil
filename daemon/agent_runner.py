@@ -26,7 +26,9 @@ def _default_thinking_budget() -> int:
     context (e.g. ClaudeService.chat).
     """
     from services.runtime_config import get_ai_operations_setting
+
     return get_ai_operations_setting("thinking_budget", 10000)
+
 
 from daemon.config import OrchestratorConfig
 from daemon.plan_generator import WORKFLOW_STEP_MAP, DEFAULT_STEPS
@@ -37,71 +39,124 @@ logger = logging.getLogger(__name__)
 try:
     from core.telemetry import get_tracer, extract_traceparent
     from opentelemetry.trace import SpanKind
+
     _tracer = get_tracer("vigil.daemon.agent_runner")
 except Exception:
     _tracer = None  # type: ignore[assignment]
+
 
 def compute_call_cost(
     model_id: Optional[str],
     provider_type: Optional[str],
     input_tokens: int,
     output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_creation_tokens: int = 0,
 ) -> float:
     """Compute USD cost of a single LLM call.
 
-    Looks up per-token rates from ``services.model_registry.get_cost_rates()``.
+    Looks up per-token rates from ``services.model_registry.get_cost_rates()``
+    and per-provider cache multipliers from ``get_cache_rates()``. Cache
+    tokens are billed at provider-specific rates (#184 Phase 3): Anthropic
+    ephemeral cache reads at 0.1× input, writes at 1.25× input; OpenAI
+    cached input at 0.5×. Counting them at full input rate (the pre-#184
+    behavior) over-bills cache reads by 10× and under-bills cache writes
+    by 25%, so this matters for any workload that uses prompt caching —
+    which after #84 PR-C is most of Vigil's traffic.
 
-    GH #84 PR-E removed the previous Sonnet-pricing fallback: with per-component
-    model selection (#89) active, silently billing a GPT-4o or Ollama call at
-    Sonnet rates would misattribute cost. On an unresolved model/provider we
-    return 0.0 and log at WARNING so the call surfaces as a visible zero on
-    the ``/analytics/cost`` dashboard rather than hiding inside a misattributed
-    bucket.
+    GH #84 PR-E removed the previous Sonnet-pricing fallback: with
+    per-component model selection (#89) active, silently billing a GPT-4o
+    or Ollama call at Sonnet rates would misattribute cost. On an
+    unresolved model/provider we return 0.0 and log at WARNING so the
+    call surfaces as a visible zero on the ``/analytics/cost`` dashboard
+    rather than hiding inside a misattributed bucket.
     """
     if not model_id or not provider_type:
         logger.warning(
             "compute_call_cost: missing model_id/provider_type (got %r / %r); "
             "recording cost as $0.00 (GH #84 PR-E)",
-            model_id, provider_type,
+            model_id,
+            provider_type,
         )
         return 0.0
     try:
         from services.model_registry import get_registry
-        in_rate, out_rate = get_registry().get_cost_rates(model_id, provider_type)
+
+        registry = get_registry()
+        in_rate, out_rate = registry.get_cost_rates(model_id, provider_type)
+        cache_read_rate, cache_creation_rate = registry.get_cache_rates(
+            model_id, provider_type
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "compute_call_cost: model_registry lookup failed for %s/%s (%s); "
             "recording cost as $0.00",
-            provider_type, model_id, exc,
+            provider_type,
+            model_id,
+            exc,
         )
         return 0.0
-    return input_tokens * in_rate + output_tokens * out_rate
+    return (
+        input_tokens * in_rate
+        + output_tokens * out_rate
+        + cache_read_tokens * cache_read_rate
+        + cache_creation_tokens * cache_creation_rate
+    )
+
 
 TOOL_TIERS = {
     "safe": [
-        "list_findings", "get_finding", "search_findings", "nearest_neighbors",
-        "get_findings_stats", "semantic_search_findings", "technique_rollup",
-        "list_cases", "get_case", "get_case_comments", "get_case_iocs",
-        "get_case_tasks", "search_detections", "get_coverage_stats",
-        "get_detection_count", "analyze_coverage", "identify_gaps",
-        "create_attack_layer", "get_attack_layer",
+        "list_findings",
+        "get_finding",
+        "search_findings",
+        "nearest_neighbors",
+        "get_findings_stats",
+        "semantic_search_findings",
+        "technique_rollup",
+        "list_cases",
+        "get_case",
+        "get_case_comments",
+        "get_case_iocs",
+        "get_case_tasks",
+        "search_detections",
+        "get_coverage_stats",
+        "get_detection_count",
+        "analyze_coverage",
+        "identify_gaps",
+        "create_attack_layer",
+        "get_attack_layer",
     ],
     "managed": [
-        "create_case", "update_case", "add_finding_to_case",
-        "bulk_add_findings_to_case", "remove_finding_from_case",
-        "add_case_activity", "add_case_timeline_entry",
-        "add_case_mitre_techniques", "add_resolution_step",
-        "add_case_comment", "add_case_evidence", "add_case_ioc",
-        "bulk_add_iocs", "add_case_task", "update_case_task",
-        "link_related_cases", "escalate_case",
+        "create_case",
+        "update_case",
+        "add_finding_to_case",
+        "bulk_add_findings_to_case",
+        "remove_finding_from_case",
+        "add_case_activity",
+        "add_case_timeline_entry",
+        "add_case_mitre_techniques",
+        "add_resolution_step",
+        "add_case_comment",
+        "add_case_evidence",
+        "add_case_ioc",
+        "bulk_add_iocs",
+        "add_case_task",
+        "update_case_task",
+        "link_related_cases",
+        "escalate_case",
         "create_approval_action",
     ],
     "requires_approval": [
-        "isolate_host", "block_ip", "disable_user",
-        "quarantine_file", "close_case",
+        "isolate_host",
+        "block_ip",
+        "disable_user",
+        "quarantine_file",
+        "close_case",
     ],
     "forbidden": [
-        "delete_case", "delete_finding", "approve_action",
+        "delete_case",
+        "delete_finding",
+        "approve_action",
         "reject_action",
     ],
 }
@@ -130,10 +185,13 @@ WORKDIR_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "filename": {"type": "string", "description": "Relative path to file (e.g. 'iocs.json', 'evidence/query_results/scan1.json')"}
+                "filename": {
+                    "type": "string",
+                    "description": "Relative path to file (e.g. 'iocs.json', 'evidence/query_results/scan1.json')",
+                }
             },
-            "required": ["filename"]
-        }
+            "required": ["filename"],
+        },
     },
     {
         "name": "write_investigation_file",
@@ -142,10 +200,10 @@ WORKDIR_TOOLS = [
             "type": "object",
             "properties": {
                 "filename": {"type": "string", "description": "Relative path to file"},
-                "content": {"type": "string", "description": "File content to write"}
+                "content": {"type": "string", "description": "File content to write"},
             },
-            "required": ["filename", "content"]
-        }
+            "required": ["filename", "content"],
+        },
     },
     {
         "name": "append_investigation_file",
@@ -154,18 +212,15 @@ WORKDIR_TOOLS = [
             "type": "object",
             "properties": {
                 "filename": {"type": "string", "description": "Relative path to file"},
-                "content": {"type": "string", "description": "Content to append"}
+                "content": {"type": "string", "description": "Content to append"},
             },
-            "required": ["filename", "content"]
-        }
+            "required": ["filename", "content"],
+        },
     },
     {
         "name": "list_investigation_files",
         "description": "List all files in the current investigation working directory.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "update_plan_step",
@@ -173,12 +228,22 @@ WORKDIR_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "step_number": {"type": "integer", "description": "Step number to update"},
-                "status": {"type": "string", "enum": ["in_progress", "completed", "blocked"], "description": "New status"},
-                "result_notes": {"type": "string", "description": "Optional notes about what was found/done"}
+                "step_number": {
+                    "type": "integer",
+                    "description": "Step number to update",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["in_progress", "completed", "blocked"],
+                    "description": "New status",
+                },
+                "result_notes": {
+                    "type": "string",
+                    "description": "Optional notes about what was found/done",
+                },
             },
-            "required": ["step_number", "status"]
-        }
+            "required": ["step_number", "status"],
+        },
     },
     {
         "name": "signal_complete",
@@ -186,7 +251,10 @@ WORKDIR_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "summary": {"type": "string", "description": "Brief summary of investigation findings"},
+                "summary": {
+                    "type": "string",
+                    "description": "Brief summary of investigation findings",
+                },
                 "proposed_actions": {
                     "type": "array",
                     "items": {
@@ -195,14 +263,14 @@ WORKDIR_TOOLS = [
                             "action": {"type": "string"},
                             "target": {"type": "string"},
                             "reason": {"type": "string"},
-                            "requires_approval": {"type": "boolean"}
-                        }
+                            "requires_approval": {"type": "boolean"},
+                        },
                     },
-                    "description": "List of proposed response actions"
-                }
+                    "description": "List of proposed response actions",
+                },
             },
-            "required": ["summary"]
-        }
+            "required": ["summary"],
+        },
     },
 ]
 
@@ -232,6 +300,7 @@ class AgentRunner:
         if self._claude_service is None:
             try:
                 from services.claude_service import ClaudeService
+
                 self._claude_service = ClaudeService(
                     use_backend_tools=True,
                     use_mcp_tools=True,
@@ -246,6 +315,7 @@ class AgentRunner:
         if self._data_service is None:
             try:
                 from services.database_data_service import DatabaseDataService
+
                 self._data_service = DatabaseDataService()
             except Exception as e:
                 logger.error(f"AgentRunner: Failed to init data service: {e}")
@@ -275,6 +345,7 @@ class AgentRunner:
         if self._llm_gateway is None:
             try:
                 from services.llm_gateway import get_llm_gateway
+
                 self._llm_gateway = await get_llm_gateway()
                 logger.info("AgentRunner: LLM gateway connected")
             except Exception as e:
@@ -288,7 +359,9 @@ class AgentRunner:
         task = self._active_agents.get(investigation_id)
         return task is not None and not task.done()
 
-    async def start_agent(self, investigation: Dict[str, Any], shutdown_event: asyncio.Event):
+    async def start_agent(
+        self, investigation: Dict[str, Any], shutdown_event: asyncio.Event
+    ):
         """Start a sub-agent for an investigation."""
         inv_id = investigation["investigation_id"]
         if self.is_running(inv_id):
@@ -325,7 +398,9 @@ class AgentRunner:
             return steps[idx]["title"]
         return f"Step {step_num}"
 
-    async def _run_agent(self, investigation: Dict[str, Any], shutdown_event: asyncio.Event):
+    async def _run_agent(
+        self, investigation: Dict[str, Any], shutdown_event: asyncio.Event
+    ):
         """The main sub-agent loop for a single investigation."""
         inv_id = investigation["investigation_id"]
         start_time = time.time()
@@ -346,7 +421,9 @@ class AgentRunner:
                     kind=SpanKind.INTERNAL,
                     attributes={
                         "vigil.investigation.id": inv_id,
-                        "vigil.investigation.workflow_id": investigation.get("workflow_id", ""),
+                        "vigil.investigation.workflow_id": investigation.get(
+                            "workflow_id", ""
+                        ),
                     },
                 )
         except Exception:
@@ -355,7 +432,12 @@ class AgentRunner:
         try:
             while not shutdown_event.is_set():
                 state = self.workdir.read_state(inv_id)
-                if state.get("status") in ("completed", "failed", "sleeping", "review_submitted"):
+                if state.get("status") in (
+                    "completed",
+                    "failed",
+                    "sleeping",
+                    "review_submitted",
+                ):
                     break
 
                 if state.get("status") == "waiting_approval":
@@ -369,30 +451,43 @@ class AgentRunner:
 
                 iteration += 1
                 if iteration > self.config.max_iterations_per_agent:
-                    logger.warning(f"{inv_id}: Max iterations ({self.config.max_iterations_per_agent}) exceeded")
+                    logger.warning(
+                        f"{inv_id}: Max iterations ({self.config.max_iterations_per_agent}) exceeded"
+                    )
                     self._mark_failed(inv_id, "Max iterations exceeded")
                     break
 
                 if total_cost >= self.config.max_cost_per_investigation:
-                    logger.warning(f"{inv_id}: Cost budget (${self.config.max_cost_per_investigation}) exceeded")
+                    logger.warning(
+                        f"{inv_id}: Cost budget (${self.config.max_cost_per_investigation}) exceeded"
+                    )
                     self._mark_failed(inv_id, "Cost budget exceeded")
                     break
 
                 elapsed = time.time() - start_time
                 if elapsed > self.config.max_runtime_per_investigation:
-                    logger.warning(f"{inv_id}: Runtime limit ({self.config.max_runtime_per_investigation}s) exceeded")
+                    logger.warning(
+                        f"{inv_id}: Runtime limit ({self.config.max_runtime_per_investigation}s) exceeded"
+                    )
                     self._mark_failed(inv_id, "Runtime limit exceeded")
                     break
 
-                self.workdir.append_log(inv_id, {
-                    "event": "iteration_start",
-                    "iteration": iteration,
-                    "elapsed_seconds": round(elapsed, 1),
-                    "cost_usd": round(total_cost, 4),
-                })
+                self.workdir.append_log(
+                    inv_id,
+                    {
+                        "event": "iteration_start",
+                        "iteration": iteration,
+                        "elapsed_seconds": round(elapsed, 1),
+                        "cost_usd": round(total_cost, 4),
+                    },
+                )
 
-                workflow_id = investigation.get("workflow_id") or state.get("workflow_id", "")
-                step_title = self._get_step_title(workflow_id, state.get("current_step", 1))
+                workflow_id = investigation.get("workflow_id") or state.get(
+                    "workflow_id", ""
+                )
+                step_title = self._get_step_title(
+                    workflow_id, state.get("current_step", 1)
+                )
                 self._update_db_record(inv_id, {"current_activity": step_title})
 
                 plan = self.workdir.read_file(inv_id, "plan.md")
@@ -408,7 +503,9 @@ class AgentRunner:
                             attributes={
                                 "vigil.investigation.id": inv_id,
                                 "vigil.agent.iteration": iteration,
-                                "vigil.investigation.current_step": state.get("current_step", 1),
+                                "vigil.investigation.current_step": state.get(
+                                    "current_step", 1
+                                ),
                             },
                         )
                 except Exception:
@@ -419,7 +516,9 @@ class AgentRunner:
                 except Exception as e:
                     logger.error(
                         "%s: iteration %d failed: %s",
-                        inv_id, iteration, e,
+                        inv_id,
+                        iteration,
+                        e,
                         exc_info=True,
                     )
                     self.workdir.append_log(inv_id, {"event": "error", "error": str(e)})
@@ -438,14 +537,22 @@ class AgentRunner:
 
                 in_tokens = result.get("input_tokens", 0)
                 out_tokens = result.get("output_tokens", 0)
+                cache_read = result.get("cache_read_tokens", 0)
+                cache_creation = result.get("cache_creation_tokens", 0)
                 # GH #89: provider_type defaults to "anthropic" since the
                 # plan_model used here is resolved from ai_model_configs or
                 # the default Anthropic provider.
+                # #184 Phase 3: cache tokens priced at provider-specific
+                # multipliers — without this an investigation that hits
+                # the cache heavily under-bills cache reads (10×) and
+                # under-bills the cache-write premium (25%).
                 cost = compute_call_cost(
                     self.config.plan_model,
                     result.get("provider") or "anthropic",
                     in_tokens,
                     out_tokens,
+                    cache_read_tokens=cache_read,
+                    cache_creation_tokens=cache_creation,
                 )
                 total_input_tokens += in_tokens
                 total_output_tokens += out_tokens
@@ -453,36 +560,48 @@ class AgentRunner:
                 self.stats["total_iterations"] += 1
                 self.stats["total_cost_usd"] += cost
 
-                self.workdir.append_log(inv_id, {
-                    "event": "iteration_complete",
-                    "iteration": iteration,
-                    "input_tokens": in_tokens,
-                    "output_tokens": out_tokens,
-                    "cost_usd": round(cost, 4),
-                    "tool_calls": len(result.get("tool_calls", [])),
-                })
+                self.workdir.append_log(
+                    inv_id,
+                    {
+                        "event": "iteration_complete",
+                        "iteration": iteration,
+                        "input_tokens": in_tokens,
+                        "output_tokens": out_tokens,
+                        "cost_usd": round(cost, 4),
+                        "tool_calls": len(result.get("tool_calls", [])),
+                    },
+                )
 
                 refreshed = self.workdir.read_state(inv_id)
 
-                self._update_db_record(inv_id, {
-                    "iteration_count": iteration,
-                    "input_tokens": total_input_tokens,
-                    "output_tokens": total_output_tokens,
-                    "cost_usd": round(total_cost, 4),
-                    "last_activity_at": datetime.utcnow().isoformat(),
-                    "current_step": refreshed.get("current_step", 0),
-                })
+                self._update_db_record(
+                    inv_id,
+                    {
+                        "iteration_count": iteration,
+                        "input_tokens": total_input_tokens,
+                        "output_tokens": total_output_tokens,
+                        "cost_usd": round(total_cost, 4),
+                        "last_activity_at": datetime.utcnow().isoformat(),
+                        "current_step": refreshed.get("current_step", 0),
+                    },
+                )
 
                 # Close iteration span with token/cost summary
                 try:
                     if _iter_span is not None:
                         _iter_span.set_attribute("gen_ai.usage.input_tokens", in_tokens)
-                        _iter_span.set_attribute("gen_ai.usage.output_tokens", out_tokens)
+                        _iter_span.set_attribute(
+                            "gen_ai.usage.output_tokens", out_tokens
+                        )
                         _iter_span.end()
                 except Exception:
                     pass
 
-                if refreshed.get("status") in ("completed", "review_submitted", "failed"):
+                if refreshed.get("status") in (
+                    "completed",
+                    "review_submitted",
+                    "failed",
+                ):
                     break
 
                 await asyncio.sleep(self.config.agent_loop_delay)
@@ -502,16 +621,23 @@ class AgentRunner:
                 self.stats["agents_completed"] += 1
             elif final_state.get("status") == "failed":
                 self.stats["agents_failed"] += 1
-            self._update_db_record(inv_id, {
-                "current_step": final_state.get("current_step", 0),
-            })
+            self._update_db_record(
+                inv_id,
+                {
+                    "current_step": final_state.get("current_step", 0),
+                },
+            )
         finally:
             self._active_agents.pop(inv_id, None)
             try:
                 if _agent_span is not None:
                     _agent_span.set_attribute("vigil.agent.total_iterations", iteration)
-                    _agent_span.set_attribute("gen_ai.usage.input_tokens", total_input_tokens)
-                    _agent_span.set_attribute("gen_ai.usage.output_tokens", total_output_tokens)
+                    _agent_span.set_attribute(
+                        "gen_ai.usage.input_tokens", total_input_tokens
+                    )
+                    _agent_span.set_attribute(
+                        "gen_ai.usage.output_tokens", total_output_tokens
+                    )
                     _agent_span.end()
             except Exception:
                 pass
@@ -522,12 +648,18 @@ class AgentRunner:
         if len(context_md) > self.config.context_max_chars:
             keep_head = 2000
             keep_tail = self.config.context_max_chars - keep_head - 100
-            context_md = context_md[:keep_head] + "\n\n...(earlier context summarized)...\n\n" + context_md[-keep_tail:]
+            context_md = (
+                context_md[:keep_head]
+                + "\n\n...(earlier context summarized)...\n\n"
+                + context_md[-keep_tail:]
+            )
 
         current_step = state.get("current_step", 1)
         total_steps = state.get("total_steps", 0)
         workflow_id = state.get("workflow_id", "unknown")
-        budget_remaining = self.config.max_cost_per_investigation - state.get("cost_usd", 0.0)
+        budget_remaining = self.config.max_cost_per_investigation - state.get(
+            "cost_usd", 0.0
+        )
 
         case_id = state.get("case_id")
         is_case_review = workflow_id == "case-review"
@@ -626,19 +758,28 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         all_tools = list(WORKDIR_TOOLS)
 
         try:
-            if self._claude_service and hasattr(self._claude_service, 'backend_tools') and self._claude_service.backend_tools:
+            if (
+                self._claude_service
+                and hasattr(self._claude_service, "backend_tools")
+                and self._claude_service.backend_tools
+            ):
                 all_tools.extend(self._claude_service.backend_tools)
         except Exception:
             pass
 
         try:
             from services.mcp_registry import get_mcp_registry
+
             registry = get_mcp_registry()
             mcp_schemas = registry.get_all_tools()
             if mcp_schemas:
                 backend_names = {t["name"] for t in all_tools}
                 for tool in mcp_schemas:
-                    raw_name = tool["name"].split("_", 1)[-1] if "_" in tool["name"] else tool["name"]
+                    raw_name = (
+                        tool["name"].split("_", 1)[-1]
+                        if "_" in tool["name"]
+                        else tool["name"]
+                    )
                     if raw_name not in backend_names:
                         all_tools.append(tool)
         except Exception:
@@ -648,11 +789,21 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         tool_calls_made = []
         total_input = 0
         total_output = 0
+        total_cache_read = 0
+        total_cache_creation = 0
         max_turns = 25
 
-        thinking_enabled = getattr(self._claude_service, 'enable_thinking', False) if self._claude_service else True
+        thinking_enabled = (
+            getattr(self._claude_service, "enable_thinking", False)
+            if self._claude_service
+            else True
+        )
         _fallback = _default_thinking_budget()
-        thinking_budget = getattr(self._claude_service, 'thinking_budget', _fallback) if self._claude_service else _fallback
+        thinking_budget = (
+            getattr(self._claude_service, "thinking_budget", _fallback)
+            if self._claude_service
+            else _fallback
+        )
         max_tok = max(16000, thinking_budget + 4096) if thinking_enabled else 4096
 
         for turn in range(max_turns):
@@ -709,15 +860,23 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
             try:
                 if _llm_span is not None:
-                    _llm_span.set_attribute("gen_ai.usage.input_tokens", response.get("input_tokens", 0))
-                    _llm_span.set_attribute("gen_ai.usage.output_tokens", response.get("output_tokens", 0))
-                    _llm_span.set_attribute("gen_ai.finish_reason", response.get("stop_reason", ""))
+                    _llm_span.set_attribute(
+                        "gen_ai.usage.input_tokens", response.get("input_tokens", 0)
+                    )
+                    _llm_span.set_attribute(
+                        "gen_ai.usage.output_tokens", response.get("output_tokens", 0)
+                    )
+                    _llm_span.set_attribute(
+                        "gen_ai.finish_reason", response.get("stop_reason", "")
+                    )
                     _llm_span.end()
             except Exception:
                 pass
 
             total_input += response.get("input_tokens", 0)
             total_output += response.get("output_tokens", 0)
+            total_cache_read += response.get("cache_read_tokens", 0)
+            total_cache_creation += response.get("cache_creation_tokens", 0)
 
             # Heartbeat: an LLM turn just returned, so the agent is making
             # progress even though the outer iteration hasn't finished. Without
@@ -744,7 +903,9 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 tool_input = tool_block["input"]
                 tool_calls_made.append({"tool": tool_name, "input": tool_input})
 
-                self._update_db_record(inv_id, {"current_activity": f"Calling {tool_name}"})
+                self._update_db_record(
+                    inv_id, {"current_activity": f"Calling {tool_name}"}
+                )
                 result = await self._execute_tool(inv_id, tool_name, tool_input)
                 # Heartbeat after each tool — same reason as the post-LLM update
                 # above. A burst of slow MCP calls inside one iteration must
@@ -752,17 +913,21 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 self._update_db_record(
                     inv_id, {"last_activity_at": datetime.utcnow().isoformat()}
                 )
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_block["id"],
-                    "content": str(result)[:10000],
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_block["id"],
+                        "content": str(result)[:10000],
+                    }
+                )
 
             messages.append({"role": "user", "content": tool_results})
 
         return {
             "input_tokens": total_input,
             "output_tokens": total_output,
+            "cache_read_tokens": total_cache_read,
+            "cache_creation_tokens": total_cache_creation,
             "tool_calls": tool_calls_made,
         }
 
@@ -773,11 +938,15 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 return self.workdir.read_file(inv_id, tool_input["filename"])
 
             elif tool_name == "write_investigation_file":
-                self.workdir.write_file(inv_id, tool_input["filename"], tool_input["content"])
+                self.workdir.write_file(
+                    inv_id, tool_input["filename"], tool_input["content"]
+                )
                 return f"Written to {tool_input['filename']}"
 
             elif tool_name == "append_investigation_file":
-                self.workdir.append_file(inv_id, tool_input["filename"], tool_input["content"])
+                self.workdir.append_file(
+                    inv_id, tool_input["filename"], tool_input["content"]
+                )
                 return f"Appended to {tool_input['filename']}"
 
             elif tool_name == "list_investigation_files":
@@ -859,26 +1028,36 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             review.append("## Proposed Actions")
             review.append("")
             for action in proposed:
-                approval = " [REQUIRES APPROVAL]" if action.get("requires_approval") else ""
-                review.append(f"- **{action.get('action', 'N/A')}** on {action.get('target', 'N/A')}: {action.get('reason', '')}{approval}")
+                approval = (
+                    " [REQUIRES APPROVAL]" if action.get("requires_approval") else ""
+                )
+                review.append(
+                    f"- **{action.get('action', 'N/A')}** on {action.get('target', 'N/A')}: {action.get('reason', '')}{approval}"
+                )
             review.append("")
 
         self.workdir.write_file(inv_id, "review.md", "\n".join(review))
 
-        self._update_db_record(inv_id, {
-            "status": "review_submitted",
-            "summary": summary,
-            "proposed_actions": proposed,
-            "completed_at": datetime.utcnow().isoformat(),
-            "current_step": state.get("total_steps", state.get("current_step", 0)),
-            "current_activity": "Complete",
-        })
+        self._update_db_record(
+            inv_id,
+            {
+                "status": "review_submitted",
+                "summary": summary,
+                "proposed_actions": proposed,
+                "completed_at": datetime.utcnow().isoformat(),
+                "current_step": state.get("total_steps", state.get("current_step", 0)),
+                "current_activity": "Complete",
+            },
+        )
 
         return "Investigation marked as complete. Awaiting master agent review."
 
-    async def _execute_external_tool(self, inv_id: str, tool_name: str, tool_input: Dict) -> str:
+    async def _execute_external_tool(
+        self, inv_id: str, tool_name: str, tool_input: Dict
+    ) -> str:
         """Route to backend or MCP tool execution, enforcing safety guardrails."""
         import time as _time
+
         tier = _get_tool_tier(tool_name)
 
         _tool_span = None
@@ -892,7 +1071,9 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                         "vigil.investigation.id": inv_id,
                         "vigil.tool.name": tool_name,
                         "vigil.tool.tier": tier,
-                        "vigil.tool.input_size": len(json.dumps(tool_input, default=str)),
+                        "vigil.tool.input_size": len(
+                            json.dumps(tool_input, default=str)
+                        ),
                     },
                 )
         except Exception:
@@ -901,9 +1082,14 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         if tier == "forbidden":
             msg = f"Tool '{tool_name}' is forbidden for autonomous agents."
             logger.warning(f"{inv_id}: Blocked forbidden tool call: {tool_name}")
-            self.workdir.append_log(inv_id, {
-                "event": "tool_blocked", "tool": tool_name, "tier": "forbidden",
-            })
+            self.workdir.append_log(
+                inv_id,
+                {
+                    "event": "tool_blocked",
+                    "tool": tool_name,
+                    "tier": "forbidden",
+                },
+            )
             try:
                 if _tool_span is not None:
                     _tool_span.set_attribute("vigil.tool.success", False)
@@ -914,26 +1100,40 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
         if self.config.dry_run and tier in ("managed", "requires_approval"):
             msg = f"[DRY RUN] Would execute {tool_name} with {json.dumps(tool_input, default=str)}"
-            self.workdir.append_log(inv_id, {
-                "event": "dry_run_skip", "tool": tool_name, "tier": tier,
-            })
+            self.workdir.append_log(
+                inv_id,
+                {
+                    "event": "dry_run_skip",
+                    "tool": tool_name,
+                    "tier": tier,
+                },
+            )
             return msg
 
         if tier == "requires_approval":
             return await self._request_tool_approval(inv_id, tool_name, tool_input)
 
-        if self._claude_service and hasattr(self._claude_service, '_execute_backend_tool'):
+        if self._claude_service and hasattr(
+            self._claude_service, "_execute_backend_tool"
+        ):
             try:
                 result = await self._claude_service._execute_backend_tool(
                     tool_name, tool_input
                 )
                 if result is not None:
-                    _r = json.dumps(result, default=str) if not isinstance(result, str) else result
+                    _r = (
+                        json.dumps(result, default=str)
+                        if not isinstance(result, str)
+                        else result
+                    )
                     try:
                         if _tool_span is not None:
                             _tool_span.set_attribute("vigil.tool.success", True)
                             _tool_span.set_attribute("vigil.tool.output_size", len(_r))
-                            _tool_span.set_attribute("vigil.tool.duration_ms", round((_time.monotonic() - _t0) * 1000, 1))
+                            _tool_span.set_attribute(
+                                "vigil.tool.duration_ms",
+                                round((_time.monotonic() - _t0) * 1000, 1),
+                            )
                             _tool_span.end()
                     except Exception:
                         pass
@@ -943,6 +1143,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
         try:
             from services.mcp_client import get_mcp_client
+
             client = get_mcp_client()
             if client:
                 server_name = None
@@ -962,14 +1163,25 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                             break
 
                 if server_name:
-                    result = await client.call_tool(server_name, actual_tool_name, tool_input)
+                    result = await client.call_tool(
+                        server_name, actual_tool_name, tool_input
+                    )
                     if result is not None:
-                        _r = json.dumps(result, default=str) if not isinstance(result, str) else result
+                        _r = (
+                            json.dumps(result, default=str)
+                            if not isinstance(result, str)
+                            else result
+                        )
                         try:
                             if _tool_span is not None:
                                 _tool_span.set_attribute("vigil.tool.success", True)
-                                _tool_span.set_attribute("vigil.tool.output_size", len(_r))
-                                _tool_span.set_attribute("vigil.tool.duration_ms", round((_time.monotonic() - _t0) * 1000, 1))
+                                _tool_span.set_attribute(
+                                    "vigil.tool.output_size", len(_r)
+                                )
+                                _tool_span.set_attribute(
+                                    "vigil.tool.duration_ms",
+                                    round((_time.monotonic() - _t0) * 1000, 1),
+                                )
                                 _tool_span.end()
                         except Exception:
                             pass
@@ -981,16 +1193,21 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         try:
             if _tool_span is not None:
                 _tool_span.set_attribute("vigil.tool.success", False)
-                _tool_span.set_attribute("vigil.tool.duration_ms", round((_time.monotonic() - _t0) * 1000, 1))
+                _tool_span.set_attribute(
+                    "vigil.tool.duration_ms", round((_time.monotonic() - _t0) * 1000, 1)
+                )
                 _tool_span.end()
         except Exception:
             pass
         return _result_str
 
-    async def _request_tool_approval(self, inv_id: str, tool_name: str, tool_input: Dict) -> str:
+    async def _request_tool_approval(
+        self, inv_id: str, tool_name: str, tool_input: Dict
+    ) -> str:
         """Create an approval request and put the agent into waiting_approval state."""
         try:
             from services.approval_service import get_approval_service, ActionType
+
             service = get_approval_service()
 
             try:
@@ -1002,7 +1219,9 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 action_type=action_type,
                 title=f"Auto-investigation tool: {tool_name}",
                 description=f"Investigation {inv_id} requests execution of {tool_name}",
-                target=tool_input.get("target", tool_input.get("ip", tool_input.get("host", "unknown"))),
+                target=tool_input.get(
+                    "target", tool_input.get("ip", tool_input.get("host", "unknown"))
+                ),
                 confidence=0.7,
                 reason=f"Autonomous investigation {inv_id} needs to execute {tool_name}",
                 evidence=[inv_id],
@@ -1023,20 +1242,27 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
             self._update_db_record(inv_id, {"status": "waiting_approval"})
 
-            self.workdir.append_log(inv_id, {
-                "event": "approval_requested",
-                "tool": tool_name,
-                "action_id": action_id,
-            })
+            self.workdir.append_log(
+                inv_id,
+                {
+                    "event": "approval_requested",
+                    "tool": tool_name,
+                    "action_id": action_id,
+                },
+            )
 
-            logger.info(f"{inv_id}: Approval requested for {tool_name} (action_id={action_id})")
+            logger.info(
+                f"{inv_id}: Approval requested for {tool_name} (action_id={action_id})"
+            )
             return f"Tool '{tool_name}' requires approval. Approval request created (action_id={action_id}). The agent will pause until the request is resolved."
 
         except Exception as e:
             logger.error(f"{inv_id}: Failed to create approval for {tool_name}: {e}")
             return f"Error creating approval for '{tool_name}': {e}"
 
-    async def _check_approval(self, inv_id: str, state: Dict, start_time: float) -> Optional[bool]:
+    async def _check_approval(
+        self, inv_id: str, state: Dict, start_time: float
+    ) -> Optional[bool]:
         """Check if a pending approval has been resolved.
 
         Returns True if approved and agent should continue, False if still
@@ -1053,11 +1279,14 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
         elapsed = time.time() - start_time
         if elapsed > self.config.max_runtime_per_investigation:
-            self._mark_failed(inv_id, "Runtime limit exceeded while waiting for approval")
+            self._mark_failed(
+                inv_id, "Runtime limit exceeded while waiting for approval"
+            )
             return None
 
         try:
             from services.approval_service import get_approval_service, ActionStatus
+
             service = get_approval_service()
             action = service.get_action(action_id)
 
@@ -1074,17 +1303,24 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 state.pop("pending_approval", None)
                 self.workdir.write_state(inv_id, state)
                 self._update_db_record(inv_id, {"status": "executing"})
-                self.workdir.append_log(inv_id, {
-                    "event": "approval_granted", "action_id": action_id,
-                    "tool": pending.get("tool_name"),
-                })
+                self.workdir.append_log(
+                    inv_id,
+                    {
+                        "event": "approval_granted",
+                        "action_id": action_id,
+                        "tool": pending.get("tool_name"),
+                    },
+                )
 
                 tool_name = pending.get("tool_name")
                 tool_input = pending.get("tool_input", {})
                 if tool_name:
                     result = await self._execute_approved_tool(tool_name, tool_input)
-                    self.workdir.append_file(inv_id, "context.md",
-                        f"\n\n### Approved tool result: {tool_name}\n```\n{result[:2000]}\n```\n")
+                    self.workdir.append_file(
+                        inv_id,
+                        "context.md",
+                        f"\n\n### Approved tool result: {tool_name}\n```\n{result[:2000]}\n```\n",
+                    )
                 return True
 
             if action.status == ActionStatus.REJECTED:
@@ -1095,18 +1331,26 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 self.workdir.write_state(inv_id, state)
                 self._update_db_record(inv_id, {"status": "executing"})
 
-                self.workdir.append_file(inv_id, "context.md",
-                    f"\n\n### Approval REJECTED for {pending.get('tool_name', 'unknown')}\nReason: {reason}\nAgent must find an alternative approach.\n")
+                self.workdir.append_file(
+                    inv_id,
+                    "context.md",
+                    f"\n\n### Approval REJECTED for {pending.get('tool_name', 'unknown')}\nReason: {reason}\nAgent must find an alternative approach.\n",
+                )
 
                 plan = self.workdir.read_file(inv_id, "plan.md")
                 step = state.get("current_step", 1)
                 plan += f"\n\n> **Note (Step {step}):** Tool `{pending.get('tool_name')}` was rejected. Reason: {reason}\n"
                 self.workdir.write_file(inv_id, "plan.md", plan)
 
-                self.workdir.append_log(inv_id, {
-                    "event": "approval_rejected", "action_id": action_id,
-                    "tool": pending.get("tool_name"), "reason": reason,
-                })
+                self.workdir.append_log(
+                    inv_id,
+                    {
+                        "event": "approval_rejected",
+                        "action_id": action_id,
+                        "tool": pending.get("tool_name"),
+                        "reason": reason,
+                    },
+                )
                 return True
 
             return False
@@ -1117,22 +1361,33 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
     async def _execute_approved_tool(self, tool_name: str, tool_input: Dict) -> str:
         """Execute a tool that has already been approved, bypassing guardrails."""
-        if self._claude_service and hasattr(self._claude_service, '_execute_backend_tool'):
+        if self._claude_service and hasattr(
+            self._claude_service, "_execute_backend_tool"
+        ):
             try:
                 result = await self._claude_service._execute_backend_tool(
                     tool_name, tool_input
                 )
                 if result is not None:
-                    return json.dumps(result, default=str) if not isinstance(result, str) else result
+                    return (
+                        json.dumps(result, default=str)
+                        if not isinstance(result, str)
+                        else result
+                    )
             except Exception:
                 pass
         try:
             from services.mcp_client import get_mcp_client
+
             client = get_mcp_client()
             if client:
                 result = await client.call_tool(tool_name, tool_input)
                 if result is not None:
-                    return json.dumps(result, default=str) if not isinstance(result, str) else result
+                    return (
+                        json.dumps(result, default=str)
+                        if not isinstance(result, str)
+                        else result
+                    )
         except Exception as e:
             logger.debug(f"Approved tool {tool_name} failed: {e}")
         return f"Tool '{tool_name}' execution failed"
@@ -1144,11 +1399,14 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         state["failed_at"] = datetime.utcnow().isoformat()
         self.workdir.write_state(inv_id, state)
         self.workdir.append_log(inv_id, {"event": "failed", "reason": reason})
-        self._update_db_record(inv_id, {
-            "status": "failed",
-            "last_error": reason,
-            "current_activity": "Failed",
-        })
+        self._update_db_record(
+            inv_id,
+            {
+                "status": "failed",
+                "last_error": reason,
+                "current_activity": "Failed",
+            },
+        )
 
     def _update_db_record(self, inv_id: str, updates: Dict[str, Any]):
         """Update the Investigation record in the database.
@@ -1179,6 +1437,4 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                             val = datetime.fromisoformat(val)
                         setattr(inv, key, val)
         except Exception as e:
-            logger.error(
-                f"DB update for {inv_id} failed: {e}", exc_info=True
-            )
+            logger.error(f"DB update for {inv_id} failed: {e}", exc_info=True)

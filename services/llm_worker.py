@@ -160,9 +160,7 @@ async def llm_call(
             assistant_content = (
                 result.get("content", "") if isinstance(result, dict) else result
             )
-            updated = messages + [
-                {"role": "assistant", "content": assistant_content}
-            ]
+            updated = messages + [{"role": "assistant", "content": assistant_content}]
             await session_store.save(session_id, updated)
 
         return result
@@ -289,6 +287,7 @@ async def llm_call_raw(
 # Multi-provider routing (GH #88)
 # ---------------------------------------------------------------------------
 
+
 def _is_default_anthropic_spec(spec) -> bool:
     """True when ``spec`` is the seeded Anthropic provider row whose key
     lives under the legacy CLAUDE_API_KEY/ANTHROPIC_API_KEY env vars.
@@ -346,13 +345,16 @@ async def _maybe_dispatch_via_router(
 
     try:
         from services.llm_router import get_provider_spec
+
         spec = get_provider_spec(provider_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to resolve provider %s: %s", provider_id, exc)
         return None
 
     if spec is None:
-        logger.warning("Provider %s not found; falling back to ClaudeService", provider_id)
+        logger.warning(
+            "Provider %s not found; falling back to ClaudeService", provider_id
+        )
         return None
 
     # All traffic now routes through Bifrost (GH #84 PR-B). We still hand off
@@ -402,17 +404,24 @@ def _adapt_router_result_to_raw(router_result: Dict[str, Any]) -> Dict[str, Any]
         blocks.append({"type": "thinking", "thinking": thinking})
     tool_calls = router_result.get("tool_calls") or []
     for tc in tool_calls:
-        blocks.append({
-            "type": "tool_use",
-            "id": tc.get("id"),
-            "name": tc.get("name"),
-            "input": tc.get("input") or {},
-        })
+        blocks.append(
+            {
+                "type": "tool_use",
+                "id": tc.get("id"),
+                "name": tc.get("name"),
+                "input": tc.get("input") or {},
+            }
+        )
     return {
         "content": blocks,
         "stop_reason": "tool_use" if tool_calls else "end_turn",
         "input_tokens": router_result.get("input_tokens", 0),
         "output_tokens": router_result.get("output_tokens", 0),
+        # #184 Phase 3: surface cache tokens so the daemon can price them
+        # correctly. Anthropic returns cache_read/creation in the usage
+        # object; non-Anthropic providers report 0 (handled in router).
+        "cache_read_tokens": router_result.get("cache_read_tokens", 0),
+        "cache_creation_tokens": router_result.get("cache_creation_tokens", 0),
         "provider": router_result.get("provider"),
         "path": router_result.get("path"),
     }
@@ -566,6 +575,12 @@ def _serialize_raw_response(response: Any) -> Dict[str, Any]:
             "stop_reason": response.stop_reason,
             "input_tokens": response.usage.input_tokens,
             "output_tokens": response.usage.output_tokens,
+            # #184 Phase 3: surface cache tokens so the daemon can price
+            # them at provider-specific rates instead of full input rate.
+            "cache_read_tokens": getattr(response.usage, "cache_read_input_tokens", 0),
+            "cache_creation_tokens": getattr(
+                response.usage, "cache_creation_input_tokens", 0
+            ),
         }
     except Exception as e:
         logger.error(f"Failed to serialise raw response: {e}")
@@ -574,6 +589,8 @@ def _serialize_raw_response(response: Any) -> Dict[str, Any]:
             "stop_reason": "error",
             "input_tokens": 0,
             "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_creation_tokens": 0,
             "error": str(e),
         }
 
@@ -632,8 +649,11 @@ async def on_startup(ctx: Dict[str, Any]):
     # mode and provider_id kwargs are silently ignored.
     try:
         from services.llm_router import LLMRouter
+
         ctx["llm_router"] = LLMRouter()
-        logger.info("LLM router initialized (Bifrost URL=%s)", ctx["llm_router"].bifrost_url)
+        logger.info(
+            "LLM router initialized (Bifrost URL=%s)", ctx["llm_router"].bifrost_url
+        )
     except Exception as _router_err:
         ctx["llm_router"] = None
         logger.warning("LLM router init skipped (non-fatal): %s", _router_err)
