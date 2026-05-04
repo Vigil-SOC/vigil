@@ -11,7 +11,31 @@ Findings in this codebase carry MITRE data in two shapes:
   iter_techniques below for the dispatching).
 """
 
+from datetime import datetime, timedelta
 from typing import Iterable, Optional
+
+
+def get_time_range(time_range: str) -> tuple[datetime, datetime]:
+    """Get start and end datetime for the given time range.
+
+    Lives here (not in backend.api.analytics) so that `services/` and
+    `backend/api/` modules can both depend on it without forming a cycle
+    through `backend/api/__init__.py`.
+    """
+    end_time = datetime.utcnow()
+
+    if time_range == "24h":
+        start_time = end_time - timedelta(hours=24)
+    elif time_range == "7d":
+        start_time = end_time - timedelta(days=7)
+    elif time_range == "30d":
+        start_time = end_time - timedelta(days=30)
+    elif time_range == "all":
+        start_time = datetime(2000, 1, 1)
+    else:
+        start_time = end_time - timedelta(days=7)  # Default to 7 days
+
+    return start_time, end_time
 
 # {technique_id: (name, tactic)} — extend as ATT&CK coverage grows.
 TECHNIQUE_NAME_FALLBACKS: dict[str, tuple[str, str]] = {

@@ -6,8 +6,7 @@ from fastapi import APIRouter, Query
 import logging
 
 from services.database_data_service import DatabaseDataService
-from services.mitre_lookup import iter_techniques, resolve_technique
-from backend.api.analytics import get_time_range
+from services.mitre_lookup import get_time_range, iter_techniques, resolve_technique
 
 router = APIRouter()
 logger = logging.getLogger(__name__)

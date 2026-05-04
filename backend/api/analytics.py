@@ -20,31 +20,12 @@ from sqlalchemy.orm import Session
 from database.models import Finding, Case, CaseClosureInfo, LLMInteractionLog
 from database.connection import get_db_session
 from backend.services.ai_insights_service import AIInsightsService
-from services.mitre_lookup import resolve_technique
+from services.mitre_lookup import get_time_range, resolve_technique  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 ai_insights_service = AIInsightsService()
-
-
-def get_time_range(time_range: str) -> tuple[datetime, datetime]:
-    """Get start and end datetime for the given time range."""
-    end_time = datetime.utcnow()
-    
-    if time_range == '24h':
-        start_time = end_time - timedelta(hours=24)
-    elif time_range == '7d':
-        start_time = end_time - timedelta(days=7)
-    elif time_range == '30d':
-        start_time = end_time - timedelta(days=30)
-    elif time_range == 'all':
-        # For "all time", use a very early date (e.g., year 2000)
-        start_time = datetime(2000, 1, 1)
-    else:
-        start_time = end_time - timedelta(days=7)  # Default to 7 days
-    
-    return start_time, end_time
 
 
 @router.get("/analytics")
