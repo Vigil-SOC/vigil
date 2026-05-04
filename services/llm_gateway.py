@@ -268,10 +268,16 @@ class LLMGateway:
             return await job.result(timeout=timeout)
         except DeserializationError as exc:
             logger.error(
-                "arq job result deserialization failed for investigation_turn job: %s",
-                exc,
+                "arq deserialization error for investigation_turn [inv=%s job=%s]: %s — "
+                "likely the worker raised an unserializable exception (e.g. APIStatusError). "
+                "Check llm-worker logs for the real error.",
+                inv_id, getattr(job, "job_id", "?"), exc,
+                exc_info=True,
             )
-            raise RuntimeError(f"LLM job result deserialization failed: {exc}") from exc
+            raise RuntimeError(
+                f"LLM worker returned an undeserializable result for {inv_id} "
+                f"(check llm-worker logs): {exc}"
+            ) from exc
 
     async def submit_chat(
         self,

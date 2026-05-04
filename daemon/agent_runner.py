@@ -417,7 +417,11 @@ class AgentRunner:
                 try:
                     result = await self._call_claude(inv_id, prompt)
                 except Exception as e:
-                    logger.error(f"{inv_id}: Claude call failed: {e}")
+                    logger.error(
+                        "%s: iteration %d failed: %s",
+                        inv_id, iteration, e,
+                        exc_info=True,
+                    )
                     self.workdir.append_log(inv_id, {"event": "error", "error": str(e)})
                     if _iter_span is not None:
                         try:
@@ -681,13 +685,27 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                     timeout=180,
                 )
             except Exception as e:
-                logger.error(f"{inv_id}: LLM queue error: {e}")
                 try:
                     if _llm_span is not None:
                         _llm_span.end()
                 except Exception:
                     pass
-                raise
+                raise RuntimeError(
+                    f"LLM turn {turn} failed [model={self.config.plan_model}]: {e}"
+                ) from e
+
+            # Worker returns an error dict instead of raising when the API call
+            # fails, so the result is always deserializable. Surface the error.
+            if response.get("stop_reason") == "error" or response.get("error"):
+                worker_error = response.get("error", "unknown worker error")
+                try:
+                    if _llm_span is not None:
+                        _llm_span.end()
+                except Exception:
+                    pass
+                raise RuntimeError(
+                    f"LLM turn {turn} failed [model={self.config.plan_model}]: {worker_error}"
+                )
 
             try:
                 if _llm_span is not None:

@@ -2,6 +2,9 @@
   "$schema": "https://www.getbifrost.ai/schema",
   "providers": {
     "anthropic": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800
+      },
       "keys": [
         {
           "name": "default-anthropic-key",
