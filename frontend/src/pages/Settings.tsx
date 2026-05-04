@@ -1254,145 +1254,6 @@ export default function Settings() {
               />
             </Box>
 
-            {/* Data Ingestion — first-party integrations with custom config forms (S3, Kafka) */}
-            {(() => {
-              const s3Configured = Boolean(s3Config.configured && s3Config.bucket_name)
-              const builtins: {
-                name: string
-                description: string
-                configured: boolean
-                onConfigure: () => void
-                matches: boolean
-              }[] = [
-                {
-                  name: 'S3 Storage',
-                  description: 'AWS S3 bucket for parquet ingest, browsing, and file uploads.',
-                  configured: s3Configured,
-                  onConfigure: () => setS3DialogOpen(true),
-                  matches: !searchLower || 's3 storage'.includes(searchLower) || 'aws s3 bucket parquet'.includes(searchLower),
-                },
-                {
-                  name: 'Kafka',
-                  description: 'Kafka topics for streaming finding ingest.',
-                  configured: false,
-                  onConfigure: () => setKafkaDialogOpen(true),
-                  matches: !searchLower || 'kafka'.includes(searchLower) || 'streaming'.includes(searchLower),
-                },
-                {
-                  name: 'Darktrace',
-                  description: 'Webhook receiver for Darktrace Model Breach, AI Analyst, and System Status alerts.',
-                  configured: Boolean(darktraceConfig.configured && darktraceConfig.enabled),
-                  onConfigure: () => setDarktraceDialogOpen(true),
-                  matches: !searchLower || 'darktrace'.includes(searchLower) || 'webhook'.includes(searchLower),
-                },
-              ]
-              const visible = builtins.filter(b => b.matches)
-              // Also include any MCP servers explicitly classified as Data Ingestion
-              const mcpForGroup = filterBySearch(visibleMcpServers.filter(n => DATA_INGESTION_MCP.has(n)))
-              if (visible.length === 0 && mcpForGroup.length === 0) return null
-              const configuredCount = visible.filter(b => b.configured).length
-                + mcpForGroup.filter(n => mcpEnabled[n]).length
-              const totalCount = visible.length + mcpForGroup.length
-              return (
-                <Accordion
-                  disableGutters
-                  elevation={0}
-                  sx={{
-                    border: '1px solid',
-                    borderColor: 'divider',
-                    borderRadius: '8px !important',
-                    mb: 1.5,
-                    '&:before': { display: 'none' },
-                    overflow: 'hidden',
-                  }}
-                >
-                  <AccordionSummary
-                    expandIcon={<ExpandMoreIcon />}
-                    sx={{
-                      minHeight: 44,
-                      px: 2,
-                      '& .MuiAccordionSummary-content': { my: 0.75, alignItems: 'center', gap: 1 },
-                    }}
-                  >
-                    <Typography variant="body2" sx={{ fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', fontSize: '0.7rem', color: 'text.secondary' }}>
-                      Data Ingestion
-                    </Typography>
-                    <Chip label={`${configuredCount}/${totalCount}`} size="small" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 600 }} />
-                  </AccordionSummary>
-                  <AccordionDetails sx={{ px: 2, pt: 0, pb: 2 }}>
-                    <Grid container spacing={2}>
-                      {visible.map(b => {
-                        const indicatorColor = b.configured ? '#4caf50' : '#9e9e9e'
-                        const indicatorLabel = b.configured ? 'Configured' : 'Configure'
-                        return (
-                          <Grid item xs={12} sm={6} md={4} lg={3} key={b.name}>
-                            <Card
-                              variant="outlined"
-                              sx={{
-                                height: CARD_HEIGHT,
-                                display: 'flex',
-                                flexDirection: 'column',
-                                borderColor: b.configured ? alpha(theme.palette.primary.main, 0.5) : 'divider',
-                                borderWidth: 1,
-                                bgcolor: b.configured ? alpha(theme.palette.primary.main, 0.03) : 'background.paper',
-                                transition: 'border-color 0.2s, background-color 0.2s',
-                                '&:hover': { borderColor: b.configured ? 'primary.main' : alpha(theme.palette.text.primary, 0.25) },
-                              }}
-                            >
-                              <CardContent sx={{ display: 'flex', flexDirection: 'column', flex: 1, p: 2, '&:last-child': { pb: 1.5 } }}>
-                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
-                                  <Typography variant="body2" noWrap sx={{ fontWeight: 600, lineHeight: 1.3 }}>
-                                    {b.name}
-                                  </Typography>
-                                </Box>
-                                <Typography
-                                  variant="caption"
-                                  color="text.secondary"
-                                  sx={{
-                                    display: '-webkit-box',
-                                    WebkitLineClamp: 2,
-                                    WebkitBoxOrient: 'vertical',
-                                    overflow: 'hidden',
-                                    lineHeight: 1.35,
-                                    fontSize: '0.68rem',
-                                    mb: 0.75,
-                                  }}
-                                >
-                                  {b.description}
-                                </Typography>
-                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 'auto' }}>
-                                  <Chip
-                                    label={indicatorLabel}
-                                    size="small"
-                                    onClick={b.onConfigure}
-                                    sx={{
-                                      height: 22,
-                                      fontSize: '0.68rem',
-                                      fontWeight: 600,
-                                      cursor: 'pointer',
-                                      borderWidth: 1.5,
-                                      borderStyle: 'solid',
-                                      borderColor: alpha(indicatorColor, 0.5),
-                                      bgcolor: alpha(indicatorColor, 0.1),
-                                      color: indicatorColor,
-                                      '& .MuiChip-icon': { color: indicatorColor },
-                                      '&:hover': { bgcolor: alpha(indicatorColor, 0.2), borderColor: indicatorColor },
-                                    }}
-                                    icon={<Box component="span" sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: indicatorColor, ml: '5px !important', boxShadow: `0 0 4px ${alpha(indicatorColor, 0.6)}` }} />}
-                                  />
-                                </Box>
-                              </CardContent>
-                            </Card>
-                          </Grid>
-                        )
-                      })}
-                      {mcpForGroup.map(renderServerCard)}
-                    </Grid>
-                  </AccordionDetails>
-                </Accordion>
-              )
-            })()}
-
             {/* Installed integrations — consolidated view above category accordions */}
             {(() => {
               // 1. Enabled MCP servers
@@ -1635,7 +1496,144 @@ export default function Settings() {
                 </Box>
               )
             })()}
-
+            {/* Data Ingestion — first-party integrations with custom config forms (S3, Kafka) */}
+            {(() => {
+              const s3Configured = Boolean(s3Config.configured && s3Config.bucket_name)
+              const builtins: {
+                name: string
+                description: string
+                configured: boolean
+                onConfigure: () => void
+                matches: boolean
+              }[] = [
+                {
+                  name: 'S3 Storage',
+                  description: 'AWS S3 bucket for parquet ingest, browsing, and file uploads.',
+                  configured: s3Configured,
+                  onConfigure: () => setS3DialogOpen(true),
+                  matches: !searchLower || 's3 storage'.includes(searchLower) || 'aws s3 bucket parquet'.includes(searchLower),
+                },
+                {
+                  name: 'Kafka',
+                  description: 'Kafka topics for streaming finding ingest.',
+                  configured: false,
+                  onConfigure: () => setKafkaDialogOpen(true),
+                  matches: !searchLower || 'kafka'.includes(searchLower) || 'streaming'.includes(searchLower),
+                },
+                {
+                  name: 'Darktrace',
+                  description: 'Webhook receiver for Darktrace Model Breach, AI Analyst, and System Status alerts.',
+                  configured: Boolean(darktraceConfig.configured && darktraceConfig.enabled),
+                  onConfigure: () => setDarktraceDialogOpen(true),
+                  matches: !searchLower || 'darktrace'.includes(searchLower) || 'webhook'.includes(searchLower),
+                },
+              ]
+              const visible = builtins.filter(b => b.matches)
+              // Also include any MCP servers explicitly classified as Data Ingestion
+              const mcpForGroup = filterBySearch(visibleMcpServers.filter(n => DATA_INGESTION_MCP.has(n)))
+              if (visible.length === 0 && mcpForGroup.length === 0) return null
+              const configuredCount = visible.filter(b => b.configured).length
+                + mcpForGroup.filter(n => mcpEnabled[n]).length
+              const totalCount = visible.length + mcpForGroup.length
+              return (
+                <Accordion
+                  disableGutters
+                  elevation={0}
+                  sx={{
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: '8px !important',
+                    mb: 1.5,
+                    '&:before': { display: 'none' },
+                    overflow: 'hidden',
+                  }}
+                >
+                  <AccordionSummary
+                    expandIcon={<ExpandMoreIcon />}
+                    sx={{
+                      minHeight: 44,
+                      px: 2,
+                      '& .MuiAccordionSummary-content': { my: 0.75, alignItems: 'center', gap: 1 },
+                    }}
+                  >
+                    <Typography variant="body2" sx={{ fontWeight: 700, letterSpacing: 0.5, textTransform: 'uppercase', fontSize: '0.7rem', color: 'text.secondary' }}>
+                      Data Ingestion
+                    </Typography>
+                    <Chip label={`${configuredCount}/${totalCount}`} size="small" sx={{ height: 20, fontSize: '0.65rem', fontWeight: 600 }} />
+                  </AccordionSummary>
+                  <AccordionDetails sx={{ px: 2, pt: 0, pb: 2 }}>
+                    <Grid container spacing={2}>
+                      {visible.map(b => {
+                        const indicatorColor = b.configured ? '#4caf50' : '#9e9e9e'
+                        const indicatorLabel = b.configured ? 'Configured' : 'Configure'
+                        return (
+                          <Grid item xs={12} sm={6} md={4} lg={3} key={b.name}>
+                            <Card
+                              variant="outlined"
+                              sx={{
+                                height: CARD_HEIGHT,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                borderColor: b.configured ? alpha(theme.palette.primary.main, 0.5) : 'divider',
+                                borderWidth: 1,
+                                bgcolor: b.configured ? alpha(theme.palette.primary.main, 0.03) : 'background.paper',
+                                transition: 'border-color 0.2s, background-color 0.2s',
+                                '&:hover': { borderColor: b.configured ? 'primary.main' : alpha(theme.palette.text.primary, 0.25) },
+                              }}
+                            >
+                              <CardContent sx={{ display: 'flex', flexDirection: 'column', flex: 1, p: 2, '&:last-child': { pb: 1.5 } }}>
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.75 }}>
+                                  <Typography variant="body2" noWrap sx={{ fontWeight: 600, lineHeight: 1.3 }}>
+                                    {b.name}
+                                  </Typography>
+                                </Box>
+                                <Typography
+                                  variant="caption"
+                                  color="text.secondary"
+                                  sx={{
+                                    display: '-webkit-box',
+                                    WebkitLineClamp: 2,
+                                    WebkitBoxOrient: 'vertical',
+                                    overflow: 'hidden',
+                                    lineHeight: 1.35,
+                                    fontSize: '0.68rem',
+                                    mb: 0.75,
+                                  }}
+                                >
+                                  {b.description}
+                                </Typography>
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 'auto' }}>
+                                  <Chip
+                                    label={indicatorLabel}
+                                    size="small"
+                                    onClick={b.onConfigure}
+                                    sx={{
+                                      height: 22,
+                                      fontSize: '0.68rem',
+                                      fontWeight: 600,
+                                      cursor: 'pointer',
+                                      borderWidth: 1.5,
+                                      borderStyle: 'solid',
+                                      borderColor: alpha(indicatorColor, 0.5),
+                                      bgcolor: alpha(indicatorColor, 0.1),
+                                      color: indicatorColor,
+                                      '& .MuiChip-icon': { color: indicatorColor },
+                                      '&:hover': { bgcolor: alpha(indicatorColor, 0.2), borderColor: indicatorColor },
+                                    }}
+                                    icon={<Box component="span" sx={{ width: 7, height: 7, borderRadius: '50%', bgcolor: indicatorColor, ml: '5px !important', boxShadow: `0 0 4px ${alpha(indicatorColor, 0.6)}` }} />}
+                                  />
+                                </Box>
+                              </CardContent>
+                            </Card>
+                          </Grid>
+                        )
+                      })}
+                      {mcpForGroup.map(renderServerCard)}
+                    </Grid>
+                  </AccordionDetails>
+                </Accordion>
+              )
+            })()}
             <Box>
               {MCP_CATEGORIES.map(category => {
                 const servers = filterBySearch(visibleMcpServers.filter(category.filter))
