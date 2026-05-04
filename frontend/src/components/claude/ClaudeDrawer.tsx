@@ -48,7 +48,14 @@ import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material'
-import { claudeApi, agentsApi, mcpApi, reasoningApi } from '../../services/api'
+import {
+  claudeApi,
+  agentsApi,
+  mcpApi,
+  reasoningApi,
+  analyticsApi,
+  type CostEstimate,
+} from '../../services/api'
 import { notificationService } from '../../services/notifications'
 import { createLogger } from '../../services/logger'
 
@@ -166,6 +173,10 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [mcpStatus, setMcpStatus] = useState<{ available: number; total: number } | null>(null)
   const [estimatedTokens, setEstimatedTokens] = useState(0)
+  // #184 Phase 2: pre-call USD estimate from /api/analytics/estimate-cost.
+  // Replaces the old client-side length/4 heuristic — that gave us tokens
+  // but no cost band, and undercounted multimodal/tool-call payloads.
+  const [costEstimate, setCostEstimate] = useState<CostEstimate | null>(null)
   const [streamingThinking, setStreamingThinking] = useState<string>('')
   const [isThinking, setIsThinking] = useState(false)
   const [streamingText, setStreamingText] = useState<string>('')
@@ -393,16 +404,48 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
 
   useEffect(() => { if (!open) setLastInvestigationId(null) }, [open])
 
+  // #184 Phase 2: ask the backend for an exact token count + USD estimate
+  // instead of doing the math client-side. The backend uses Anthropic's
+  // free count_tokens API for Anthropic models (so the number is exact,
+  // including system prompt + tools), and tiktoken for OpenAI. Debounced
+  // 400ms so we don't hammer the endpoint on every keystroke. The fetch
+  // is best-effort — on failure we keep the last good estimate rather
+  // than zeroing out the warning bar (which would mislead the user).
   useEffect(() => {
-    const msgs = tabs[currentTab]?.messages || []
-    let total = 0
-    msgs.forEach(msg => {
-      if (typeof msg.content === 'string') total += msg.content.length / 4
-      else msg.content.forEach(b => { if (b.type === 'text' && b.text) total += b.text.length / 4; else if (b.type === 'image') total += 85 })
-    })
-    total += input.length / 4 + (systemPrompt?.length || 0) / 4
-    setEstimatedTokens(Math.round(total))
-  }, [tabs, currentTab, input, systemPrompt])
+    const ctrl = new AbortController()
+    const debounce = setTimeout(async () => {
+      const msgs = tabs[currentTab]?.messages || []
+      const messagesPayload = [
+        ...msgs.map(m => ({ role: m.role, content: m.content })),
+        ...(input.trim() ? [{ role: 'user', content: input }] : []),
+      ]
+      // Nothing to estimate yet → reset so the warning bar disappears.
+      if (messagesPayload.length === 0 && !systemPrompt) {
+        setCostEstimate(null)
+        setEstimatedTokens(0)
+        return
+      }
+      try {
+        const res = await analyticsApi.estimateCost({
+          provider_type: 'anthropic',
+          model_id: model || 'claude-sonnet-4-5-20250929',
+          messages: messagesPayload,
+          system_prompt: systemPrompt || undefined,
+          max_tokens: maxTokens,
+        })
+        if (ctrl.signal.aborted) return
+        setCostEstimate(res.data)
+        setEstimatedTokens(res.data.input_tokens)
+      } catch {
+        // Keep previous estimate on failure — no point flashing $0 when
+        // the network blip resolves. Logged at debug elsewhere.
+      }
+    }, 400)
+    return () => {
+      clearTimeout(debounce)
+      ctrl.abort()
+    }
+  }, [tabs, currentTab, input, systemPrompt, model, maxTokens])
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
@@ -842,6 +885,31 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
                   Output max: {maxTokens.toLocaleString()} tokens
                 </Typography>
+                {costEstimate && (
+                  <Tooltip
+                    title={
+                      // The band's bounds: low = no output (immediate stop),
+                      // high = max_tokens of output. Real cost lands in
+                      // between, and is typically much closer to low_usd
+                      // when prompt caching is hot.
+                      `${costEstimate.token_count_method === 'anthropic_count_tokens'
+                        ? 'Exact token count via Anthropic count_tokens API.'
+                        : costEstimate.token_count_method === 'tiktoken'
+                        ? 'Token count via tiktoken (OpenAI encoder).'
+                        : 'Approximate token count (chars ÷ 4 fallback).'} ` +
+                      `Pricing: ${costEstimate.pricing_source}.`
+                    }
+                  >
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ display: 'block', mt: 0.25, fontFamily: 'monospace' }}
+                    >
+                      Est. cost: ${costEstimate.low_usd.toFixed(4)} – ${costEstimate.high_usd.toFixed(4)}
+                      {costEstimate.pricing_source !== 'exact' && ` · ${costEstimate.pricing_source}`}
+                    </Typography>
+                  </Tooltip>
+                )}
               </Box>
 
               {/* Model Settings Section */}

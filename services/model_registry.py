@@ -226,6 +226,65 @@ _TIER_HEURISTIC: Dict[str, Tuple[_TierPattern, ...]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Cache token pricing multipliers (#184 Phase 3)
+# ---------------------------------------------------------------------------
+# Cache token pricing is uniform across a provider's tier, not per-model, so
+# multipliers live here rather than in _CATALOG. Multiplier semantics:
+#   cache_read_cost     = cache_read_tokens     × input_per_token × read_mult
+#   cache_creation_cost = cache_creation_tokens × input_per_token × creation_mult
+#
+# Anthropic 5-minute ephemeral cache: write 1.25×, read 0.1× — the default for
+# every cache_control: {"type": "ephemeral"} block we send. The 1-hour cache
+# tier (write 2×) is a separate Anthropic feature we don't currently use; if
+# we adopt it, encode the choice in the call site, not here.
+#
+# OpenAI prompt caching: read 0.5×, write 0× (no premium — just regular input
+# tokens). Applies to gpt-4o family, o1, o3 when the prefix is reused.
+#
+# Ollama: self-hosted, $0 for all paths — multipliers are moot but defined
+# for symmetry.
+_CACHE_MULTIPLIERS: Dict[str, Tuple[float, float]] = {
+    # provider_type → (read_mult, creation_mult)
+    "anthropic": (0.10, 1.25),
+    "openai": (0.50, 0.0),
+    "ollama": (0.0, 0.0),
+}
+
+
+def get_cache_multipliers(provider_type: str) -> Tuple[float, float]:
+    """Return ``(read_mult, creation_mult)`` for ``provider_type``.
+
+    Unknown providers fall back to ``(1.0, 1.0)`` — i.e., charge cache
+    tokens at full input rate. That's a conservative over-estimate, which
+    is the right default when we don't know the provider's caching rules.
+    """
+    return _CACHE_MULTIPLIERS.get(provider_type, (1.0, 1.0))
+
+
+def infer_provider_type(model_id: str) -> str:
+    """Best-effort provider inference from a bare model id.
+
+    ``LLMInteractionLog`` only stores ``model``, not ``provider_type``,
+    so analytics needs to infer the provider when grouping by model to
+    look up pricing. This is good enough for cost-source badging — if it
+    misclassifies, the worst case is the badge shows ``"unknown"`` which
+    is exactly what we want a reader to see.
+    """
+    if not model_id:
+        return "unknown"
+    mid = model_id.lower()
+    if mid.startswith("claude-"):
+        return "anthropic"
+    if mid.startswith(("gpt-", "o1", "o3", "text-embedding")):
+        return "openai"
+    # Ollama has no canonical prefix; the remaining path is a soft match
+    # against common open-weight names.
+    if any(s in mid for s in ("llama", "mistral", "mixtral", "qwen", "gemma")):
+        return "ollama"
+    return "unknown"
+
+
 def _match_tier(provider_type: str, model_id: str) -> Optional[Tuple[float, float]]:
     for pattern, in_rate, out_rate in _TIER_HEURISTIC.get(provider_type, ()):
         if re.search(pattern, model_id, re.IGNORECASE):
@@ -594,6 +653,30 @@ class ModelRegistry:
         """
         entry = _catalog_entry(provider_type, model_id)
         return (entry["input_per_m"] / 1_000_000, entry["output_per_m"] / 1_000_000)
+
+    @staticmethod
+    def get_cache_rates(model_id: str, provider_type: str) -> Tuple[float, float]:
+        """Return ``(cache_read_per_token, cache_creation_per_token)`` in USD.
+
+        Built from the input rate × provider-specific multipliers so a
+        repricing of input automatically reprices cache tokens — there is
+        no second pricing table to keep in sync.
+        """
+        entry = _catalog_entry(provider_type, model_id)
+        input_per_token = entry["input_per_m"] / 1_000_000
+        read_mult, creation_mult = get_cache_multipliers(provider_type)
+        return (input_per_token * read_mult, input_per_token * creation_mult)
+
+    @staticmethod
+    def get_pricing_source(model_id: str, provider_type: str) -> str:
+        """Return the layer that resolved pricing for this model.
+
+        One of ``"exact"``, ``"heuristic"``, ``"zero"``, ``"unknown"``.
+        Lets callers (analytics, UI badges) tell the difference between a
+        $0 row that's accurate and a $0 row that's a missing-data
+        fallback.
+        """
+        return _catalog_entry(provider_type, model_id).get("pricing_source", "unknown")
 
     @staticmethod
     def get_model_info(

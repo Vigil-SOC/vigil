@@ -55,6 +55,12 @@ interface AgentBreakdown {
 
 interface ModelBreakdown {
   model: string
+  // #184 Phase 3: provider_type is inferred from the model id server-side
+  // when the row is built; pricing_source tells the UI whether cost_usd
+  // came from an exact catalog rate, a tier-regex heuristic, the
+  // self-hosted "$0" branch, or no data at all.
+  provider_type: string
+  pricing_source: 'exact' | 'heuristic' | 'zero' | 'unknown'
   calls: number
   input_tokens: number
   output_tokens: number
@@ -113,6 +119,46 @@ function formatCost(n: number): string {
 
 function formatPercent(n: number): string {
   return `${(n * 100).toFixed(1)}%`
+}
+
+// #184 Phase 3: turn the server's pricing_source string into a UI-visible
+// badge. The point is to distinguish a real $0 row (Ollama, self-hosted)
+// from a $0 row that's a missing-data fallback ("unknown") so an operator
+// can tell whether the dashboard is reporting reality or hiding gaps.
+function PricingSourceBadge({ source }: { source: ModelBreakdown['pricing_source'] }) {
+  const config: Record<
+    ModelBreakdown['pricing_source'],
+    { label: string; color: 'success' | 'warning' | 'info' | 'error'; tooltip: string }
+  > = {
+    exact: {
+      label: 'exact',
+      color: 'success',
+      tooltip: 'Pricing from hand-verified catalog entry.',
+    },
+    heuristic: {
+      label: 'heuristic',
+      color: 'warning',
+      tooltip:
+        'Pricing inferred from a tier regex (e.g. "any sonnet variant"). Approximate.',
+    },
+    zero: {
+      label: 'free',
+      color: 'info',
+      tooltip: 'Self-hosted (Ollama). No upstream API spend; compute cost not tracked.',
+    },
+    unknown: {
+      label: 'unknown',
+      color: 'error',
+      tooltip:
+        'No catalog entry matched. Cost recorded as $0 — real spend is hidden until pricing is added.',
+    },
+  }
+  const { label, color, tooltip } = config[source] || config.unknown
+  return (
+    <MuiTooltip title={tooltip}>
+      <Chip size="small" label={label} color={color} variant="outlined" />
+    </MuiTooltip>
+  )
 }
 
 export default function CostAnalytics() {
@@ -332,6 +378,67 @@ export default function CostAnalytics() {
               {(!data || data.by_agent.length === 0) && !loading && (
                 <TableRow>
                   <TableCell colSpan={8} align="center">
+                    <Typography color="text.secondary" sx={{ py: 2 }}>
+                      No LLM calls in this window.
+                    </Typography>
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+
+      <Paper sx={{ mb: 3 }}>
+        <Box sx={{ p: 2 }}>
+          <Typography variant="h6">Per-Model Breakdown</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Rows badged "heuristic" or "unknown" use approximate pricing — see the
+            tooltip on each badge for what that means.
+          </Typography>
+        </Box>
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Model</TableCell>
+                <TableCell>Provider</TableCell>
+                <TableCell>Pricing</TableCell>
+                <TableCell align="right">Calls</TableCell>
+                <TableCell align="right">Input</TableCell>
+                <TableCell align="right">Cache read</TableCell>
+                <TableCell align="right">Cache write</TableCell>
+                <TableCell align="right">Output</TableCell>
+                <TableCell align="right">Cache hit</TableCell>
+                <TableCell align="right">Cost</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {(data?.by_model || []).map((row) => (
+                <TableRow key={row.model} hover>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ fontFamily: 'monospace' }}>
+                      {row.model}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>
+                    <Chip size="small" label={row.provider_type} variant="outlined" />
+                  </TableCell>
+                  <TableCell>
+                    <PricingSourceBadge source={row.pricing_source} />
+                  </TableCell>
+                  <TableCell align="right">{row.calls}</TableCell>
+                  <TableCell align="right">{formatTokens(row.input_tokens)}</TableCell>
+                  <TableCell align="right">{formatTokens(row.cache_read_tokens)}</TableCell>
+                  <TableCell align="right">{formatTokens(row.cache_creation_tokens)}</TableCell>
+                  <TableCell align="right">{formatTokens(row.output_tokens)}</TableCell>
+                  <TableCell align="right">{formatPercent(row.cache_hit_rate)}</TableCell>
+                  <TableCell align="right">{formatCost(row.cost_usd)}</TableCell>
+                </TableRow>
+              ))}
+              {(!data || data.by_model.length === 0) && !loading && (
+                <TableRow>
+                  <TableCell colSpan={10} align="center">
                     <Typography color="text.secondary" sx={{ py: 2 }}>
                       No LLM calls in this window.
                     </Typography>

@@ -1111,10 +1111,18 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
             try:
                 # GH #89: use the model registry for per-provider pricing.
+                # #184 Phase 3: include cache tokens so reads (0.1×) and
+                # writes (1.25×) are priced correctly instead of being
+                # treated as full-rate input.
                 from daemon.agent_runner import compute_call_cost
 
                 cost_usd = compute_call_cost(
-                    model, "anthropic", int(input_tokens or 0), int(output_tokens or 0)
+                    model,
+                    "anthropic",
+                    int(input_tokens or 0),
+                    int(output_tokens or 0),
+                    cache_read_tokens=int(cache_read_tokens or 0),
+                    cache_creation_tokens=int(cache_creation_tokens or 0),
                 )
             except Exception:
                 cost_usd = 0.0
@@ -2292,9 +2300,7 @@ Provide a structured summary preserving all critical context."""
                             {
                                 "type": "tool_result",
                                 "tool_use_id": tool_id,
-                                "content": [
-                                    {"type": "text", "text": err_text}
-                                ],
+                                "content": [{"type": "text", "text": err_text}],
                             }
                         )
                 else:
@@ -2536,12 +2542,21 @@ Provide a structured summary preserving all critical context."""
             if _OTEL_CS_AVAILABLE and _chat_span is not None:
                 try:
                     _duration = _time.monotonic() - _chat_t0
+                    _usage_otel = getattr(response, "usage", None)
                     _in_tok = (
-                        response.usage.input_tokens if hasattr(response, "usage") else 0
+                        getattr(_usage_otel, "input_tokens", 0) if _usage_otel else 0
                     )
                     _out_tok = (
-                        response.usage.output_tokens
-                        if hasattr(response, "usage")
+                        getattr(_usage_otel, "output_tokens", 0) if _usage_otel else 0
+                    )
+                    _cache_read_tok = (
+                        getattr(_usage_otel, "cache_read_input_tokens", 0)
+                        if _usage_otel
+                        else 0
+                    )
+                    _cache_creation_tok = (
+                        getattr(_usage_otel, "cache_creation_input_tokens", 0)
+                        if _usage_otel
                         else 0
                     )
                     _model_used = (
@@ -2568,10 +2583,17 @@ Provide a structured summary preserving all critical context."""
                         _out_tok, {**_labels, "gen_ai.token.type": "output"}
                     )
                     # GH #89: use the model registry for per-provider pricing.
+                    # #184 Phase 3: include cache tokens at provider-specific
+                    # rates (Anthropic: 0.1× read / 1.25× write).
                     from daemon.agent_runner import compute_call_cost
 
                     _cost = compute_call_cost(
-                        model, "anthropic", int(_in_tok or 0), int(_out_tok or 0)
+                        model,
+                        "anthropic",
+                        int(_in_tok or 0),
+                        int(_out_tok or 0),
+                        cache_read_tokens=int(_cache_read_tok or 0),
+                        cache_creation_tokens=int(_cache_creation_tok or 0),
                     )
                     _cs_genai_metrics["llm_cost_usd"].add(_cost, _labels)
                 except Exception:

@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
@@ -30,50 +31,56 @@ ai_insights_service = AIInsightsService()
 
 @router.get("/analytics")
 async def get_analytics(
-    time_range: str = Query('7d', regex='^(24h|7d|30d|all)$'),
-    db: Session = Depends(get_db_session)
+    time_range: str = Query("7d", regex="^(24h|7d|30d|all)$"),
+    db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """
     Get comprehensive analytics data for the specified time range.
-    
+
     Args:
         time_range: Time range for analytics ('24h', '7d', '30d')
         db: Database session
-        
+
     Returns:
         Dictionary containing metrics, time series data, distributions, and AI insights
     """
     try:
         start_time, end_time = get_time_range(time_range)
-        
+
         # Get previous period for comparison
         period_duration = end_time - start_time
         prev_start = start_time - period_duration
-        
+
         # Calculate key metrics
-        metrics = await calculate_metrics(db, start_time, end_time, prev_start, start_time)
-        
+        metrics = await calculate_metrics(
+            db, start_time, end_time, prev_start, start_time
+        )
+
         # Get time series data
         time_series = await get_time_series_data(db, start_time, end_time, time_range)
-        
+
         # Get severity distribution
         severity_dist = await get_severity_distribution(db, start_time, end_time)
-        
+
         # Get top sources
         top_sources = await get_top_alert_sources(db, start_time, end_time)
-        
+
         # Get response time trend
-        response_time_data = await get_response_time_trend(db, start_time, end_time, time_range)
-        
+        response_time_data = await get_response_time_trend(
+            db, start_time, end_time, time_range
+        )
+
         # Get affected entities/devices
         affected_entities = await get_affected_entities(db, start_time, end_time)
-        
+
         # Get attack time heatmap
         attack_heatmap = await get_attack_time_heatmap(db, start_time, end_time)
-        
+
         # Get MITRE technique distribution
-        mitre_techniques = await get_mitre_technique_distribution(db, start_time, end_time)
-        
+        mitre_techniques = await get_mitre_technique_distribution(
+            db, start_time, end_time
+        )
+
         # NOTE: AI insights are intentionally NOT generated here — they are
         # served from an in-memory cache via GET /analytics/insights so this
         # endpoint returns fast and never blocks on the Claude API.
@@ -112,7 +119,7 @@ async def _collect_insights_inputs(
 
 @router.get("/analytics/insights")
 async def get_analytics_insights(
-    time_range: str = Query('7d', regex='^(24h|7d|30d|all)$'),
+    time_range: str = Query("7d", regex="^(24h|7d|30d|all)$"),
     db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """Return cached AI insights for the given time_range.
@@ -148,7 +155,7 @@ async def get_analytics_insights(
 
 @router.post("/analytics/insights/refresh")
 async def refresh_analytics_insights(
-    time_range: str = Query('7d', regex='^(24h|7d|30d|all)$'),
+    time_range: str = Query("7d", regex="^(24h|7d|30d|all)$"),
     db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """Force a background regeneration of insights for the given time_range.
@@ -183,113 +190,157 @@ async def calculate_metrics(
     start_time: datetime,
     end_time: datetime,
     prev_start: datetime,
-    prev_end: datetime
+    prev_end: datetime,
 ) -> Dict[str, Any]:
     """Calculate key SOC metrics and their period-over-period changes."""
-    
+
     # Current period metrics
-    total_findings = db.query(func.count(Finding.finding_id)).filter(
-        Finding.created_at.between(start_time, end_time)
-    ).scalar() or 0
-    
-    total_cases = db.query(func.count(Case.case_id)).filter(
-        Case.created_at.between(start_time, end_time)
-    ).scalar() or 0
-    
+    total_findings = (
+        db.query(func.count(Finding.finding_id))
+        .filter(Finding.created_at.between(start_time, end_time))
+        .scalar()
+        or 0
+    )
+
+    total_cases = (
+        db.query(func.count(Case.case_id))
+        .filter(Case.created_at.between(start_time, end_time))
+        .scalar()
+        or 0
+    )
+
     # Get average response time (time from case creation to first analyst interaction)
-    avg_response_time_result = db.query(
-        func.avg(
-            func.extract('epoch', Case.updated_at - Case.created_at) / 60
+    avg_response_time_result = (
+        db.query(
+            func.avg(func.extract("epoch", Case.updated_at - Case.created_at) / 60)
         )
-    ).filter(
-        and_(
-            Case.created_at.between(start_time, end_time),
-            Case.status != 'new'
+        .filter(
+            and_(Case.created_at.between(start_time, end_time), Case.status != "new")
         )
-    ).scalar()
-    
+        .scalar()
+    )
+
     avg_response_time = float(round(avg_response_time_result or 0, 1))
-    
+
     # Calculate false positive rate
-    total_closed = db.query(func.count(Case.case_id)).filter(
-        and_(
-            Case.created_at.between(start_time, end_time),
-            Case.status == 'closed'
+    total_closed = (
+        db.query(func.count(Case.case_id))
+        .filter(
+            and_(Case.created_at.between(start_time, end_time), Case.status == "closed")
         )
-    ).scalar() or 0
-    
-    false_positives = db.query(func.count(CaseClosureInfo.case_id)).join(
-        Case, Case.case_id == CaseClosureInfo.case_id
-    ).filter(
-        and_(
-            Case.created_at.between(start_time, end_time),
-            CaseClosureInfo.closure_category == 'false_positive'
+        .scalar()
+        or 0
+    )
+
+    false_positives = (
+        db.query(func.count(CaseClosureInfo.case_id))
+        .join(Case, Case.case_id == CaseClosureInfo.case_id)
+        .filter(
+            and_(
+                Case.created_at.between(start_time, end_time),
+                CaseClosureInfo.closure_category == "false_positive",
+            )
         )
-    ).scalar() or 0
-    
-    false_positive_rate = round((false_positives / total_closed * 100) if total_closed > 0 else 0, 1)
-    
+        .scalar()
+        or 0
+    )
+
+    false_positive_rate = round(
+        (false_positives / total_closed * 100) if total_closed > 0 else 0, 1
+    )
+
     # Previous period metrics for comparison
-    prev_total_findings = db.query(func.count(Finding.finding_id)).filter(
-        Finding.created_at.between(prev_start, prev_end)
-    ).scalar() or 0
-    
-    prev_total_cases = db.query(func.count(Case.case_id)).filter(
-        Case.created_at.between(prev_start, prev_end)
-    ).scalar() or 0
-    
-    prev_avg_response_time_result = db.query(
-        func.avg(
-            func.extract('epoch', Case.updated_at - Case.created_at) / 60
+    prev_total_findings = (
+        db.query(func.count(Finding.finding_id))
+        .filter(Finding.created_at.between(prev_start, prev_end))
+        .scalar()
+        or 0
+    )
+
+    prev_total_cases = (
+        db.query(func.count(Case.case_id))
+        .filter(Case.created_at.between(prev_start, prev_end))
+        .scalar()
+        or 0
+    )
+
+    prev_avg_response_time_result = (
+        db.query(
+            func.avg(func.extract("epoch", Case.updated_at - Case.created_at) / 60)
         )
-    ).filter(
-        and_(
-            Case.created_at.between(prev_start, prev_end),
-            Case.status != 'new'
+        .filter(
+            and_(Case.created_at.between(prev_start, prev_end), Case.status != "new")
         )
-    ).scalar()
-    
+        .scalar()
+    )
+
     prev_avg_response_time = round(prev_avg_response_time_result or 0, 1)
-    
-    prev_total_closed = db.query(func.count(Case.case_id)).filter(
-        and_(
-            Case.created_at.between(prev_start, prev_end),
-            Case.status == 'closed'
+
+    prev_total_closed = (
+        db.query(func.count(Case.case_id))
+        .filter(
+            and_(Case.created_at.between(prev_start, prev_end), Case.status == "closed")
         )
-    ).scalar() or 0
-    
-    prev_false_positives = db.query(func.count(CaseClosureInfo.case_id)).join(
-        Case, Case.case_id == CaseClosureInfo.case_id
-    ).filter(
-        and_(
-            Case.created_at.between(prev_start, prev_end),
-            CaseClosureInfo.closure_category == 'false_positive'
+        .scalar()
+        or 0
+    )
+
+    prev_false_positives = (
+        db.query(func.count(CaseClosureInfo.case_id))
+        .join(Case, Case.case_id == CaseClosureInfo.case_id)
+        .filter(
+            and_(
+                Case.created_at.between(prev_start, prev_end),
+                CaseClosureInfo.closure_category == "false_positive",
+            )
         )
-    ).scalar() or 0
-    
-    prev_false_positive_rate = round((prev_false_positives / prev_total_closed * 100) if prev_total_closed > 0 else 0, 1)
-    
+        .scalar()
+        or 0
+    )
+
+    prev_false_positive_rate = round(
+        (
+            (prev_false_positives / prev_total_closed * 100)
+            if prev_total_closed > 0
+            else 0
+        ),
+        1,
+    )
+
     # Calculate percentage changes
     findings_change = round(
-        ((total_findings - prev_total_findings) / prev_total_findings * 100) if prev_total_findings > 0 else 0,
-        1
+        (
+            ((total_findings - prev_total_findings) / prev_total_findings * 100)
+            if prev_total_findings > 0
+            else 0
+        ),
+        1,
     )
-    
+
     cases_change = round(
-        ((total_cases - prev_total_cases) / prev_total_cases * 100) if prev_total_cases > 0 else 0,
-        1
+        (
+            ((total_cases - prev_total_cases) / prev_total_cases * 100)
+            if prev_total_cases > 0
+            else 0
+        ),
+        1,
     )
-    
+
     response_time_change = round(
-        ((avg_response_time - prev_avg_response_time) / prev_avg_response_time * 100) if prev_avg_response_time > 0 else 0,
-        1
+        (
+            (
+                (avg_response_time - prev_avg_response_time)
+                / prev_avg_response_time
+                * 100
+            )
+            if prev_avg_response_time > 0
+            else 0
+        ),
+        1,
     )
-    
-    false_positive_change = round(
-        false_positive_rate - prev_false_positive_rate,
-        1
-    )
-    
+
+    false_positive_change = round(false_positive_rate - prev_false_positive_rate, 1)
+
     return {
         "totalFindings": total_findings,
         "totalCases": total_cases,
@@ -303,302 +354,323 @@ async def calculate_metrics(
 
 
 async def get_time_series_data(
-    db: Session,
-    start_time: datetime,
-    end_time: datetime,
-    time_range: str
+    db: Session, start_time: datetime, end_time: datetime, time_range: str
 ) -> List[Dict[str, Any]]:
     """Get time series data for findings, cases, and alerts."""
-    
+
     # Determine bucket size based on time range
-    if time_range == '24h':
+    if time_range == "24h":
         bucket_size = timedelta(hours=1)
         bucket_count = 24
-    elif time_range == '7d':
+    elif time_range == "7d":
         bucket_size = timedelta(hours=6)
         bucket_count = 28
     else:  # 30d
         bucket_size = timedelta(days=1)
         bucket_count = 30
-    
+
     time_series = []
     current_time = start_time
-    
+
     for _ in range(bucket_count):
         bucket_end = min(current_time + bucket_size, end_time)
-        
-        findings_count = db.query(func.count(Finding.finding_id)).filter(
-            Finding.created_at.between(current_time, bucket_end)
-        ).scalar() or 0
-        
-        cases_count = db.query(func.count(Case.case_id)).filter(
-            Case.created_at.between(current_time, bucket_end)
-        ).scalar() or 0
-        
+
+        findings_count = (
+            db.query(func.count(Finding.finding_id))
+            .filter(Finding.created_at.between(current_time, bucket_end))
+            .scalar()
+            or 0
+        )
+
+        cases_count = (
+            db.query(func.count(Case.case_id))
+            .filter(Case.created_at.between(current_time, bucket_end))
+            .scalar()
+            or 0
+        )
+
         # Alerts are high/critical severity findings
-        alerts_count = db.query(func.count(Finding.finding_id)).filter(
-            and_(
-                Finding.created_at.between(current_time, bucket_end),
-                Finding.severity.in_(['high', 'critical'])
+        alerts_count = (
+            db.query(func.count(Finding.finding_id))
+            .filter(
+                and_(
+                    Finding.created_at.between(current_time, bucket_end),
+                    Finding.severity.in_(["high", "critical"]),
+                )
             )
-        ).scalar() or 0
-        
-        time_series.append({
-            "timestamp": current_time.isoformat(),
-            "findings": findings_count,
-            "cases": cases_count,
-            "alerts": alerts_count,
-        })
-        
+            .scalar()
+            or 0
+        )
+
+        time_series.append(
+            {
+                "timestamp": current_time.isoformat(),
+                "findings": findings_count,
+                "cases": cases_count,
+                "alerts": alerts_count,
+            }
+        )
+
         current_time = bucket_end
-    
+
     return time_series
 
 
 async def get_severity_distribution(
-    db: Session,
-    start_time: datetime,
-    end_time: datetime
+    db: Session, start_time: datetime, end_time: datetime
 ) -> List[Dict[str, Any]]:
     """Get distribution of findings by severity."""
-    
+
     severity_colors = {
-        'critical': '#d32f2f',
-        'high': '#f57c00',
-        'medium': '#fbc02d',
-        'low': '#388e3c',
-        'informational': '#757575',
+        "critical": "#d32f2f",
+        "high": "#f57c00",
+        "medium": "#fbc02d",
+        "low": "#388e3c",
+        "informational": "#757575",
     }
-    
-    severity_counts = db.query(
-        Finding.severity,
-        func.count(Finding.finding_id).label('count')
-    ).filter(
-        Finding.created_at.between(start_time, end_time)
-    ).group_by(Finding.severity).all()
-    
+
+    severity_counts = (
+        db.query(Finding.severity, func.count(Finding.finding_id).label("count"))
+        .filter(Finding.created_at.between(start_time, end_time))
+        .group_by(Finding.severity)
+        .all()
+    )
+
     return [
         {
-            "name": severity.capitalize() if severity else 'Unknown',
+            "name": severity.capitalize() if severity else "Unknown",
             "value": count,
-            "color": severity_colors.get(severity, '#757575')
+            "color": severity_colors.get(severity, "#757575"),
         }
         for severity, count in severity_counts
     ]
 
 
 async def get_top_alert_sources(
-    db: Session,
-    start_time: datetime,
-    end_time: datetime,
-    limit: int = 10
+    db: Session, start_time: datetime, end_time: datetime, limit: int = 10
 ) -> List[Dict[str, Any]]:
     """Get top alert sources by finding count."""
-    
-    top_sources = db.query(
-        Finding.data_source,
-        func.count(Finding.finding_id).label('count')
-    ).filter(
-        Finding.created_at.between(start_time, end_time)
-    ).group_by(Finding.data_source).order_by(func.count(Finding.finding_id).desc()).limit(limit).all()
-    
+
+    top_sources = (
+        db.query(Finding.data_source, func.count(Finding.finding_id).label("count"))
+        .filter(Finding.created_at.between(start_time, end_time))
+        .group_by(Finding.data_source)
+        .order_by(func.count(Finding.finding_id).desc())
+        .limit(limit)
+        .all()
+    )
+
     return [
-        {
-            "name": source or 'Unknown',
-            "count": count
-        }
-        for source, count in top_sources
+        {"name": source or "Unknown", "count": count} for source, count in top_sources
     ]
 
 
 async def get_response_time_trend(
-    db: Session,
-    start_time: datetime,
-    end_time: datetime,
-    time_range: str
+    db: Session, start_time: datetime, end_time: datetime, time_range: str
 ) -> List[Dict[str, Any]]:
     """Get response time trend over the period."""
-    
+
     # Determine periods based on time range
-    if time_range == '24h':
+    if time_range == "24h":
         period_size = timedelta(hours=4)
         period_count = 6
-    elif time_range == '7d':
+    elif time_range == "7d":
         period_size = timedelta(days=1)
         period_count = 7
     else:  # 30d
         period_size = timedelta(days=5)
         period_count = 6
-    
+
     trend_data = []
     current_time = start_time
     target_time = 30  # 30 minute target response time
-    
+
     for i in range(period_count):
         period_end = min(current_time + period_size, end_time)
-        
-        avg_time_result = db.query(
-            func.avg(
-                func.extract('epoch', Case.updated_at - Case.created_at) / 60
+
+        avg_time_result = (
+            db.query(
+                func.avg(func.extract("epoch", Case.updated_at - Case.created_at) / 60)
             )
-        ).filter(
-            and_(
-                Case.created_at.between(current_time, period_end),
-                Case.status != 'new'
+            .filter(
+                and_(
+                    Case.created_at.between(current_time, period_end),
+                    Case.status != "new",
+                )
             )
-        ).scalar()
-        
+            .scalar()
+        )
+
         avg_time = round(avg_time_result or 0, 1)
-        
-        trend_data.append({
-            "period": f"P{i+1}",
-            "avgTime": avg_time,
-            "target": target_time,
-        })
-        
+
+        trend_data.append(
+            {
+                "period": f"P{i+1}",
+                "avgTime": avg_time,
+                "target": target_time,
+            }
+        )
+
         current_time = period_end
-    
+
     return trend_data
 
 
 async def get_affected_entities(
-    db: Session,
-    start_time: datetime,
-    end_time: datetime,
-    limit: int = 15
+    db: Session, start_time: datetime, end_time: datetime, limit: int = 15
 ) -> List[Dict[str, Any]]:
     """Get top affected entities/devices from findings."""
-    
-    findings = db.query(Finding).filter(
-        Finding.created_at.between(start_time, end_time)
-    ).all()
-    
+
+    findings = (
+        db.query(Finding).filter(Finding.created_at.between(start_time, end_time)).all()
+    )
+
     entity_counts = {}
     entity_severities = {}
-    
+
     for finding in findings:
         if not finding.entity_context:
             continue
-        
+
         # Extract entities from entity_context
         entities = []
         ctx = finding.entity_context
-        
+
         # Common entity types
         if isinstance(ctx, dict):
             # Network entities
-            for key in ['hostname', 'host', 'device', 'src_ip', 'dst_ip', 'dest_ip', 'ip_address', 'src_host', 'dst_host']:
+            for key in [
+                "hostname",
+                "host",
+                "device",
+                "src_ip",
+                "dst_ip",
+                "dest_ip",
+                "ip_address",
+                "src_host",
+                "dst_host",
+            ]:
                 if key in ctx and ctx[key]:
                     value = ctx[key]
-                    if value and value != 'null':  # Skip null values
+                    if value and value != "null":  # Skip null values
                         entities.append(str(value))
-            
+
             # User entities
-            for key in ['username', 'user', 'user_id', 'account']:
+            for key in ["username", "user", "user_id", "account"]:
                 if key in ctx and ctx[key]:
                     value = ctx[key]
-                    if value and value != 'null':
+                    if value and value != "null":
                         entities.append(str(value))
-        
+
         for entity in entities:
             if entity not in entity_counts:
                 entity_counts[entity] = 0
-                entity_severities[entity] = {'critical': 0, 'high': 0, 'medium': 0, 'low': 0}
-            
+                entity_severities[entity] = {
+                    "critical": 0,
+                    "high": 0,
+                    "medium": 0,
+                    "low": 0,
+                }
+
             entity_counts[entity] += 1
-            severity = finding.severity or 'low'
+            severity = finding.severity or "low"
             if severity in entity_severities[entity]:
                 entity_severities[entity][severity] += 1
-    
+
     # Convert to list and sort by count
     entities_list = [
         {
-            'entity': entity,
-            'count': count,
-            'critical': entity_severities[entity]['critical'],
-            'high': entity_severities[entity]['high'],
-            'medium': entity_severities[entity]['medium'],
-            'low': entity_severities[entity]['low'],
-            'riskScore': (
-                entity_severities[entity]['critical'] * 10 +
-                entity_severities[entity]['high'] * 5 +
-                entity_severities[entity]['medium'] * 2 +
-                entity_severities[entity]['low']
-            )
+            "entity": entity,
+            "count": count,
+            "critical": entity_severities[entity]["critical"],
+            "high": entity_severities[entity]["high"],
+            "medium": entity_severities[entity]["medium"],
+            "low": entity_severities[entity]["low"],
+            "riskScore": (
+                entity_severities[entity]["critical"] * 10
+                + entity_severities[entity]["high"] * 5
+                + entity_severities[entity]["medium"] * 2
+                + entity_severities[entity]["low"]
+            ),
         }
         for entity, count in entity_counts.items()
     ]
-    
+
     # Sort by risk score
-    entities_list.sort(key=lambda x: x['riskScore'], reverse=True)
-    
+    entities_list.sort(key=lambda x: x["riskScore"], reverse=True)
+
     return entities_list[:limit]
 
 
 async def get_attack_time_heatmap(
-    db: Session,
-    start_time: datetime,
-    end_time: datetime
+    db: Session, start_time: datetime, end_time: datetime
 ) -> List[Dict[str, Any]]:
     """Get attack time heatmap data (hour of day x day of week)."""
-    
-    findings = db.query(Finding).filter(
-        Finding.created_at.between(start_time, end_time)
-    ).all()
-    
+
+    findings = (
+        db.query(Finding).filter(Finding.created_at.between(start_time, end_time)).all()
+    )
+
     # Initialize heatmap grid (7 days x 24 hours)
     heatmap = {}
     for day in range(7):  # 0 = Monday, 6 = Sunday
         for hour in range(24):
             key = f"{day}:{hour}"
-            heatmap[key] = {'count': 0, 'critical': 0, 'high': 0}
-    
+            heatmap[key] = {"count": 0, "critical": 0, "high": 0}
+
     # Populate heatmap
     for finding in findings:
         timestamp = finding.timestamp
         day_of_week = timestamp.weekday()  # 0 = Monday
         hour = timestamp.hour
-        
+
         key = f"{day_of_week}:{hour}"
-        heatmap[key]['count'] += 1
-        
-        if finding.severity == 'critical':
-            heatmap[key]['critical'] += 1
-        elif finding.severity == 'high':
-            heatmap[key]['high'] += 1
-    
+        heatmap[key]["count"] += 1
+
+        if finding.severity == "critical":
+            heatmap[key]["critical"] += 1
+        elif finding.severity == "high":
+            heatmap[key]["high"] += 1
+
     # Convert to list format
     heatmap_data = []
-    day_names = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    
+    day_names = [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+    ]
+
     for day in range(7):
         for hour in range(24):
             key = f"{day}:{hour}"
-            heatmap_data.append({
-                'day': day_names[day],
-                'dayNum': day,
-                'hour': hour,
-                'count': heatmap[key]['count'],
-                'critical': heatmap[key]['critical'],
-                'high': heatmap[key]['high'],
-                'intensity': heatmap[key]['count']  # For heatmap color intensity
-            })
-    
+            heatmap_data.append(
+                {
+                    "day": day_names[day],
+                    "dayNum": day,
+                    "hour": hour,
+                    "count": heatmap[key]["count"],
+                    "critical": heatmap[key]["critical"],
+                    "high": heatmap[key]["high"],
+                    "intensity": heatmap[key]["count"],  # For heatmap color intensity
+                }
+            )
+
     return heatmap_data
 
 
 async def get_mitre_technique_distribution(
-    db: Session,
-    start_time: datetime,
-    end_time: datetime,
-    limit: int = 10
+    db: Session, start_time: datetime, end_time: datetime, limit: int = 10
 ) -> List[Dict[str, Any]]:
     """Get distribution of MITRE ATT&CK techniques from findings."""
-    
-    findings = db.query(Finding).filter(
-        Finding.created_at.between(start_time, end_time)
-    ).all()
-    
+
+    findings = (
+        db.query(Finding).filter(Finding.created_at.between(start_time, end_time)).all()
+    )
+
     technique_counts: dict[str, int] = {}
     technique_meta: dict[str, tuple[str, str]] = {}
 
@@ -624,10 +696,10 @@ async def get_mitre_technique_distribution(
                 for tech_id in predictions.keys():
                     _record(tech_id)
             else:
-                if 'techniques' in predictions:
-                    nested = predictions['techniques']
-                elif 'predicted_techniques' in predictions:
-                    nested = predictions['predicted_techniques']
+                if "techniques" in predictions:
+                    nested = predictions["techniques"]
+                elif "predicted_techniques" in predictions:
+                    nested = predictions["predicted_techniques"]
                 else:
                     nested = [predictions]
 
@@ -641,15 +713,15 @@ async def get_mitre_technique_distribution(
 
     techniques_list = [
         {
-            'techniqueId': tech_id,
-            'techniqueName': technique_meta[tech_id][0],
-            'tactic': technique_meta[tech_id][1],
-            'count': count,
+            "techniqueId": tech_id,
+            "techniqueName": technique_meta[tech_id][0],
+            "tactic": technique_meta[tech_id][1],
+            "count": count,
         }
         for tech_id, count in technique_counts.items()
     ]
-    
-    techniques_list.sort(key=lambda x: x['count'], reverse=True)
+
+    techniques_list.sort(key=lambda x: x["count"], reverse=True)
 
     return techniques_list[:limit]
 
@@ -658,9 +730,10 @@ async def get_mitre_technique_distribution(
 # LLM cost analytics (GH #84 — Phase 1 Measurement)
 # ---------------------------------------------------------------------------
 
+
 @router.get("/analytics/cost")
 async def get_cost_analytics(
-    time_range: str = Query('7d', regex='^(24h|7d|30d|all)$'),
+    time_range: str = Query("7d", regex="^(24h|7d|30d|all)$"),
     db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """Return LLM cost + token breakdown for the given window.
@@ -708,14 +781,18 @@ def _cache_hit_rate(input_tokens: int, cache_read_tokens: int) -> float:
 
 
 def _cost_totals(db: Session, base_filter) -> Dict[str, Any]:
-    row = db.query(
-        func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0),
-        func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0),
-        func.coalesce(func.sum(LLMInteractionLog.cache_read_tokens), 0),
-        func.coalesce(func.sum(LLMInteractionLog.cache_creation_tokens), 0),
-        func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0),
-        func.count(LLMInteractionLog.id),
-    ).filter(base_filter).one()
+    row = (
+        db.query(
+            func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0),
+            func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0),
+            func.coalesce(func.sum(LLMInteractionLog.cache_read_tokens), 0),
+            func.coalesce(func.sum(LLMInteractionLog.cache_creation_tokens), 0),
+            func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0),
+            func.count(LLMInteractionLog.id),
+        )
+        .filter(base_filter)
+        .one()
+    )
 
     input_tokens, output_tokens, cache_read, cache_creation, cost_usd, calls = row
     return {
@@ -730,73 +807,125 @@ def _cost_totals(db: Session, base_filter) -> Dict[str, Any]:
 
 
 def _cost_group_by_agent(db: Session, base_filter) -> List[Dict[str, Any]]:
-    rows = db.query(
-        LLMInteractionLog.agent_id,
-        func.count(LLMInteractionLog.id).label('calls'),
-        func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0).label('input_tokens'),
-        func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0).label('output_tokens'),
-        func.coalesce(func.sum(LLMInteractionLog.cache_read_tokens), 0).label('cache_read'),
-        func.coalesce(func.sum(LLMInteractionLog.cache_creation_tokens), 0).label('cache_creation'),
-        func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label('cost_usd'),
-    ).filter(base_filter).group_by(LLMInteractionLog.agent_id).order_by(
-        func.sum(LLMInteractionLog.cost_usd).desc().nullslast()
-    ).all()
+    rows = (
+        db.query(
+            LLMInteractionLog.agent_id,
+            func.count(LLMInteractionLog.id).label("calls"),
+            func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0).label(
+                "input_tokens"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0).label(
+                "output_tokens"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.cache_read_tokens), 0).label(
+                "cache_read"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.cache_creation_tokens), 0).label(
+                "cache_creation"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
+        )
+        .filter(base_filter)
+        .group_by(LLMInteractionLog.agent_id)
+        .order_by(func.sum(LLMInteractionLog.cost_usd).desc().nullslast())
+        .all()
+    )
 
     return [
         {
-            "agent_id": agent_id or 'unknown',
+            "agent_id": agent_id or "unknown",
             "calls": int(calls or 0),
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
             "cache_read_tokens": int(cache_read or 0),
             "cache_creation_tokens": int(cache_creation or 0),
             "cost_usd": float(cost_usd or 0),
-            "cache_hit_rate": _cache_hit_rate(int(input_tokens or 0), int(cache_read or 0)),
+            "cache_hit_rate": _cache_hit_rate(
+                int(input_tokens or 0), int(cache_read or 0)
+            ),
         }
         for agent_id, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd in rows
     ]
 
 
 def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
-    rows = db.query(
-        LLMInteractionLog.model,
-        func.count(LLMInteractionLog.id).label('calls'),
-        func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0).label('input_tokens'),
-        func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0).label('output_tokens'),
-        func.coalesce(func.sum(LLMInteractionLog.cache_read_tokens), 0).label('cache_read'),
-        func.coalesce(func.sum(LLMInteractionLog.cache_creation_tokens), 0).label('cache_creation'),
-        func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label('cost_usd'),
-    ).filter(base_filter).group_by(LLMInteractionLog.model).order_by(
-        func.sum(LLMInteractionLog.cost_usd).desc().nullslast()
-    ).all()
+    rows = (
+        db.query(
+            LLMInteractionLog.model,
+            func.count(LLMInteractionLog.id).label("calls"),
+            func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0).label(
+                "input_tokens"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0).label(
+                "output_tokens"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.cache_read_tokens), 0).label(
+                "cache_read"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.cache_creation_tokens), 0).label(
+                "cache_creation"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
+        )
+        .filter(base_filter)
+        .group_by(LLMInteractionLog.model)
+        .order_by(func.sum(LLMInteractionLog.cost_usd).desc().nullslast())
+        .all()
+    )
 
+    # #184 Phase 3: surface pricing_source per row so the dashboard can
+    # badge "heuristic" / "unknown" models — those rows record cost from
+    # tier-regex pricing (or $0 for unknown) and need to be visually
+    # distinguishable from "exact" rows. Provider is inferred from the
+    # model id since LLMInteractionLog doesn't carry provider_type.
+    from services.model_registry import (
+        get_registry,
+        infer_provider_type,
+    )
+
+    registry = get_registry()
     return [
         {
-            "model": model or 'unknown',
+            "model": model or "unknown",
+            "provider_type": infer_provider_type(model or ""),
+            "pricing_source": registry.get_pricing_source(
+                model or "", infer_provider_type(model or "")
+            ),
             "calls": int(calls or 0),
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
             "cache_read_tokens": int(cache_read or 0),
             "cache_creation_tokens": int(cache_creation or 0),
             "cost_usd": float(cost_usd or 0),
-            "cache_hit_rate": _cache_hit_rate(int(input_tokens or 0), int(cache_read or 0)),
+            "cache_hit_rate": _cache_hit_rate(
+                int(input_tokens or 0), int(cache_read or 0)
+            ),
         }
         for model, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd in rows
     ]
 
 
-def _cost_top_investigations(db: Session, base_filter, limit: int = 10) -> List[Dict[str, Any]]:
-    rows = db.query(
-        LLMInteractionLog.investigation_id,
-        func.count(LLMInteractionLog.id).label('calls'),
-        func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0).label('input_tokens'),
-        func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0).label('output_tokens'),
-        func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label('cost_usd'),
-    ).filter(
-        and_(base_filter, LLMInteractionLog.investigation_id.isnot(None))
-    ).group_by(LLMInteractionLog.investigation_id).order_by(
-        func.sum(LLMInteractionLog.cost_usd).desc().nullslast()
-    ).limit(limit).all()
+def _cost_top_investigations(
+    db: Session, base_filter, limit: int = 10
+) -> List[Dict[str, Any]]:
+    rows = (
+        db.query(
+            LLMInteractionLog.investigation_id,
+            func.count(LLMInteractionLog.id).label("calls"),
+            func.coalesce(func.sum(LLMInteractionLog.input_tokens), 0).label(
+                "input_tokens"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.output_tokens), 0).label(
+                "output_tokens"
+            ),
+            func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
+        )
+        .filter(and_(base_filter, LLMInteractionLog.investigation_id.isnot(None)))
+        .group_by(LLMInteractionLog.investigation_id)
+        .order_by(func.sum(LLMInteractionLog.cost_usd).desc().nullslast())
+        .limit(limit)
+        .all()
+    )
 
     return [
         {
@@ -808,3 +937,50 @@ def _cost_top_investigations(db: Session, base_filter, limit: int = 10) -> List[
         }
         for inv_id, calls, input_tokens, output_tokens, cost_usd in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Pre-call cost estimation (#184 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class EstimateCostRequest(BaseModel):
+    """Body for POST /analytics/estimate-cost.
+
+    Mirrors the shape of an LLM call so the same payload a caller is
+    about to send can be passed straight in for an estimate. ``messages``
+    matches Anthropic / OpenAI message format — list of role+content
+    dicts; multimodal blocks are tolerated but token-counted as text-only
+    in the heuristic path.
+    """
+
+    provider_type: str = Field(..., description="anthropic | openai | ollama")
+    model_id: str
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    system_prompt: Optional[str] = None
+    tools: Optional[List[Dict[str, Any]]] = None
+    max_tokens: int = Field(default=4096, ge=1, le=200_000)
+
+
+@router.post("/analytics/estimate-cost")
+async def estimate_cost_endpoint(payload: EstimateCostRequest) -> Dict[str, Any]:
+    """Return a USD low/high band for a hypothetical LLM call.
+
+    The chat composer and daemon planner call this before submitting a
+    real request so they can show the user a cost preview or gate the
+    call against a budget. ``low_usd`` assumes zero output tokens (e.g.
+    an immediate tool_use stop); ``high_usd`` assumes the call writes
+    out ``max_tokens`` of output. Real-world cost lands in between, and
+    is typically much closer to ``low_usd`` for cache-friendly workloads.
+    """
+    from services.cost_estimator import estimate_cost
+
+    estimate = await estimate_cost(
+        provider_type=payload.provider_type,
+        model_id=payload.model_id,
+        messages=payload.messages,
+        system_prompt=payload.system_prompt,
+        tools=payload.tools,
+        max_tokens=payload.max_tokens,
+    )
+    return estimate.to_dict()
