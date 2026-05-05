@@ -5,9 +5,13 @@ view investigations, read working directory files, and trigger manual
 investigations.
 """
 
+import io
+import json
 import logging
-from typing import Optional
+from typing import Any, Dict, List, Optional
+
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -474,4 +478,131 @@ async def get_cost_summary():
             return {"total_cost_usd": 0, "active_cost_usd": 0}
         return orch.get_cost_summary()
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---- Chain of Custody ----
+
+# Workdir files to include in the chain-of-custody package.
+_COC_WORKDIR_FILES = [
+    "plan.md",
+    "state.json",
+    "context.md",
+    "iocs.json",
+    "timeline.json",
+    "hypotheses.json",
+    "review.md",
+]
+
+
+def _assemble_chain_of_custody(investigation_id: str) -> Dict[str, Any]:
+    """Build the unified audit document for an investigation.
+
+    Queries the DB for investigation metadata, InvestigationLog rows,
+    LLMInteractionLog rows, and reads selected workdir files.
+    """
+    from database.connection import get_db_manager
+    from database.models import Investigation, InvestigationLog, LLMInteractionLog
+
+    db_manager = get_db_manager()
+    result: Dict[str, Any] = {
+        "investigation": None,
+        "logs": [],
+        "llm_interactions": [],
+        "workdir_files": {},
+        "otel_trace_id": None,
+    }
+
+    with db_manager.session_scope() as session:
+        inv = (
+            session.query(Investigation)
+            .filter_by(investigation_id=investigation_id)
+            .first()
+        )
+        if inv is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Investigation not found: {investigation_id}",
+            )
+        result["investigation"] = inv.to_dict()
+
+        # OTEL trace correlation: stored in workdir state if enabled
+        try:
+            orch = _get_orchestrator()
+            if orch:
+                state = orch.workdir.read_state(investigation_id)
+                tp = state.get("otel_traceparent", "")
+                if tp and "-" in tp:
+                    # traceparent format: 00-<trace_id>-<span_id>-<flags>
+                    parts = tp.split("-")
+                    if len(parts) >= 2:
+                        result["otel_trace_id"] = parts[1]
+        except Exception:
+            pass
+
+        logs = (
+            session.query(InvestigationLog)
+            .filter_by(investigation_id=investigation_id)
+            .order_by(InvestigationLog.timestamp.asc())
+            .all()
+        )
+        result["logs"] = [l.to_dict() for l in logs]
+
+        llm_rows = (
+            session.query(LLMInteractionLog)
+            .filter_by(investigation_id=investigation_id)
+            .order_by(LLMInteractionLog.created_at.asc())
+            .all()
+        )
+        result["llm_interactions"] = [r.to_dict() for r in llm_rows]
+
+    # Workdir files (best-effort; missing files are omitted)
+    try:
+        orch = _get_orchestrator()
+        if orch:
+            for fname in _COC_WORKDIR_FILES:
+                try:
+                    content = orch.workdir.read_file(investigation_id, fname)
+                    if content:
+                        result["workdir_files"][fname] = content
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    return result
+
+
+@router.get("/investigations/{investigation_id}/chain-of-custody")
+async def get_chain_of_custody(investigation_id: str):
+    """Return a unified audit document for an investigation.
+
+    Includes investigation metadata, chronological InvestigationLog rows,
+    LLM interaction traces, workdir files, and OTEL trace correlation.
+    """
+    try:
+        return _assemble_chain_of_custody(investigation_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error building chain of custody for {investigation_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/investigations/{investigation_id}/export")
+async def export_investigation(investigation_id: str):
+    """Export the complete chain-of-custody package as a downloadable JSON file."""
+    try:
+        payload = _assemble_chain_of_custody(investigation_id)
+        data = json.dumps(payload, indent=2, default=str).encode("utf-8")
+        filename = f"inv-{investigation_id}-chain-of-custody.json"
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exporting investigation {investigation_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
