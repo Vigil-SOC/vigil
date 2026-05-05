@@ -257,7 +257,7 @@ class MCPService:
             logger.error(f"Could not save MCP enabled state: {e}")
     
     # Internal/platform servers that should be on by default
-    _DEFAULT_ENABLED = {"deeptempo-findings", "tempo-flow", "security-detections", "approval", "attack-layer"}
+    _DEFAULT_ENABLED = {"deeptempo-findings", "tempo-flow", "security-detections", "approval", "attack-layer", "mempalace"}
 
     def is_server_enabled(self, server_name: str) -> bool:
         """Check whether a server is enabled. Internal platform servers default to True; all others default to False."""
@@ -286,25 +286,34 @@ class MCPService:
     def _substitute_env_vars(self, value: str) -> str:
         """
         Substitute environment variables in a string.
-        Supports ${VAR_NAME} format.
-        
+        Supports ${VAR_NAME} and ${VAR_NAME:-default} formats.
+
         Args:
             value: String that may contain environment variable references
-            
+
         Returns:
             String with environment variables substituted
         """
         import re
-        
-        # Pattern to match ${VAR_NAME}
-        pattern = r'\$\{([^}]+)\}'
-        
+
+        pattern = r'\$\{([^}:]+)(?::-((?:\$\{[^}]+\}|[^{}])*))?\}'
+
         def replace_var(match):
             var_name = match.group(1)
-            # Try to get from environment, return empty string if not found
-            return os.environ.get(var_name, '')
-        
-        return re.sub(pattern, replace_var, value)
+            default = match.group(2)
+            env_val = os.environ.get(var_name)
+            if env_val is not None:
+                return env_val
+            if default is not None:
+                return self._substitute_env_vars(default)
+            return ''
+
+        prev = None
+        while prev != value:
+            prev = value
+            value = re.sub(pattern, replace_var, value)
+
+        return value
     
     def _detect_server_type(self, args: List[str]) -> str:
         """
