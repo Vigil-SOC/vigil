@@ -147,6 +147,72 @@ class TestCredentialGate:
         assert client._missing_credentials_for(server) == []
 
 
+class TestSubstituteEnvVars:
+    """_substitute_env_vars must handle plain ${VAR} and bash-style ${VAR:-default}."""
+
+    def test_plain_substitution_when_set(self, monkeypatch):
+        from services.mcp_service import MCPService
+
+        service = MCPService()
+        monkeypatch.setenv("MY_VAR", "hello")
+        assert service._substitute_env_vars("${MY_VAR}") == "hello"
+
+    def test_plain_substitution_when_unset(self):
+        from services.mcp_service import MCPService
+
+        service = MCPService()
+        assert service._substitute_env_vars("${UNSET_VAR_XYZ}") == ""
+
+    def test_default_value_when_unset(self):
+        from services.mcp_service import MCPService
+
+        service = MCPService()
+        assert service._substitute_env_vars("${UNSET_VAR_XYZ:-default}") == "default"
+
+    def test_default_value_ignored_when_set(self, monkeypatch):
+        from services.mcp_service import MCPService
+
+        service = MCPService()
+        monkeypatch.setenv("MY_VAR", "override")
+        assert service._substitute_env_vars("${MY_VAR:-default}") == "override"
+
+    def test_nested_substitution_in_default(self, monkeypatch):
+        from services.mcp_service import MCPService
+
+        service = MCPService()
+        monkeypatch.setenv("HOME", "/Users/test")
+        assert (
+            service._substitute_env_vars("${UNSET_VAR_XYZ:-${HOME}/.vigil/palace}")
+            == "/Users/test/.vigil/palace"
+        )
+
+    def test_nested_default_when_both_unset(self):
+        from services.mcp_service import MCPService
+
+        service = MCPService()
+        assert (
+            service._substitute_env_vars("${A:-${B:-fallback}}") == "fallback"
+        )
+
+    def test_mempalace_config_path(self, monkeypatch):
+        """Real-world shape from mcp-config.json."""
+        from services.mcp_service import MCPService
+
+        service = MCPService()
+        monkeypatch.setenv("HOME", "/Users/test")
+        result = service._substitute_env_vars(
+            "${MEMPALACE_PALACE_PATH:-${HOME}/.vigil/mempalace/palace}"
+        )
+        assert result == "/Users/test/.vigil/mempalace/palace"
+
+        # When the env var is explicitly set, it wins.
+        monkeypatch.setenv("MEMPALACE_PALACE_PATH", "/custom/palace")
+        result = service._substitute_env_vars(
+            "${MEMPALACE_PALACE_PATH:-${HOME}/.vigil/mempalace/palace}"
+        )
+        assert result == "/custom/palace"
+
+
 class TestRetryDormantIfReady:
     """`retry_dormant_if_ready` should only retry servers whose creds now resolve."""
 
