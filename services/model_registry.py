@@ -26,6 +26,47 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Pricing observability (#184 acceptance: unknown pricing must not be silent)
+# ---------------------------------------------------------------------------
+
+# OTEL counter — fires when a (provider_type, model_id) pair has no exact,
+# heuristic, or zero pricing entry. Lazy-init so import order doesn't matter
+# and so tests that don't exercise telemetry stay fast.
+_pricing_unknown_counter = None
+
+
+def _record_pricing_unknown(provider_type: str, model_id: str) -> None:
+    """Record an unknown-pricing event on the OTEL counter.
+
+    No-ops if the OTEL bridge isn't installed (e.g. during unit tests that
+    haven't set up telemetry). The structured log line at the call site
+    handles the human-readable signal regardless.
+    """
+    global _pricing_unknown_counter
+    try:
+        if _pricing_unknown_counter is None:
+            from core.telemetry import get_meter
+
+            meter = get_meter("vigil.cost")
+            _pricing_unknown_counter = meter.create_counter(
+                name="vigil_llm_cost_pricing_unknown_total",
+                description=(
+                    "LLM calls priced against an unknown model — recorded as "
+                    "$0 in cost dashboards. Investigate the (provider, model) "
+                    "pair and add a catalog entry."
+                ),
+                unit="1",
+            )
+        _pricing_unknown_counter.add(
+            1,
+            {"provider_type": provider_type or "unknown", "model_id": model_id or "unknown"},
+        )
+    except Exception:
+        # Telemetry must never break cost math.
+        pass
+
 _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO / "backend") not in sys.path:
     sys.path.insert(0, str(_REPO / "backend"))
@@ -401,6 +442,7 @@ def _catalog_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
                 provider_type,
                 model_id,
             )
+            _record_pricing_unknown(provider_type, model_id)
 
     return entry
 
