@@ -626,13 +626,38 @@ For each phase:
             return {"success": False, "error": "Claude API not configured"}
 
         workflow_dict = workflow.to_dict(include_body=False)
+
+        # #184 Phase 2: pre-call cost estimate for the run record. Workflows
+        # don't have a per-run budget cap (Bifrost VK enforcement is the
+        # gate), but stashing the projected USD band into trigger_context
+        # gives operators an audit trail of expected vs. actual spend.
+        # Best-effort — telemetry never blocks a workflow.
+        trigger_context = dict(parameters or {})
+        try:
+            from services.cost_estimator import estimate_cost
+
+            _est = await estimate_cost(
+                provider_type="anthropic",
+                model_id="claude-sonnet-4-5-20250929",
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt=system_prompt,
+                max_tokens=8192,
+            )
+            trigger_context["cost_estimate"] = _est.to_dict()
+        except Exception as _est_err:  # noqa: BLE001
+            logger.debug(
+                "Workflow %s pre-flight estimate failed (%s); proceeding",
+                workflow.id,
+                _est_err,
+            )
+
         run_service = get_workflow_run_service()
         run_id = run_service.begin_run(
             workflow_id=workflow.id,
             workflow_name=workflow.name,
             workflow_source=workflow_dict.get("source", "file"),
             workflow_version=workflow_dict.get("version"),
-            trigger_context=dict(parameters or {}),
+            trigger_context=trigger_context,
             triggered_by=triggered_by,
             skill_tools_available=skill_tool_names,
         )
@@ -774,8 +799,7 @@ For each phase:
 
             prior_row = existing_phases.get(phase_id)
             already_approved = (
-                prior_row is not None
-                and prior_row.get("approval_state") == "approved"
+                prior_row is not None and prior_row.get("approval_state") == "approved"
             )
 
             # Pre-phase approval gate (#128). Skipped if the phase row
@@ -828,17 +852,6 @@ For each phase:
                     "executed_at": datetime.now().isoformat(),
                 }
 
-            # Run the phase.
-            run_service.upsert_phase(
-                run_id,
-                phase_id,
-                phase_order=phase_order,
-                agent_id=agent_id,
-                status="running",
-                input_context={"prior_outputs": accumulated},
-                started_at=datetime.utcnow(),
-            )
-
             profile = all_agents.get(agent_id)
             phase_prompt = self._build_phase_prompt(
                 workflow=workflow,
@@ -850,6 +863,41 @@ For each phase:
                 workflow, skill_tools_available, single_phase=phase
             )
             phase_tools = self._tools_for_phase(phase, profile, skill_tools_available)
+
+            # #184 Phase 2: per-phase pre-call estimate stashed into the
+            # phase's input_context so each phase row carries its own
+            # projected USD band. No gating — Bifrost VK is the budget
+            # gate. Best-effort, never blocks the phase.
+            phase_input_context: Dict[str, Any] = {"prior_outputs": accumulated}
+            try:
+                from services.cost_estimator import estimate_cost
+
+                _phase_est = await estimate_cost(
+                    provider_type="anthropic",
+                    model_id="claude-sonnet-4-5-20250929",
+                    messages=[{"role": "user", "content": phase_prompt}],
+                    system_prompt=system_prompt,
+                    max_tokens=8192,
+                )
+                phase_input_context["cost_estimate"] = _phase_est.to_dict()
+            except Exception as _phase_est_err:  # noqa: BLE001
+                logger.debug(
+                    "Workflow run %s phase %s estimate failed (%s); proceeding",
+                    run_id,
+                    phase_id,
+                    _phase_est_err,
+                )
+
+            # Run the phase.
+            run_service.upsert_phase(
+                run_id,
+                phase_id,
+                phase_order=phase_order,
+                agent_id=agent_id,
+                status="running",
+                input_context=phase_input_context,
+                started_at=datetime.utcnow(),
+            )
 
             try:
                 response_text = await asyncio.to_thread(
@@ -1027,7 +1075,7 @@ For each phase:
             else "multi-phase workflow"
         )
         header = (
-            f'You are the Vigil SOC Workflow Engine executing the '
+            f"You are the Vigil SOC Workflow Engine executing the "
             f'"{workflow.name}" {scope}.'
         )
         return f"""{header}
