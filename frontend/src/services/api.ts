@@ -1066,6 +1066,13 @@ export interface CostEstimate {
   token_count_method: 'anthropic_count_tokens' | 'tiktoken' | 'char_heuristic'
 }
 
+export interface RecalculateCostResult {
+  total_matched: number
+  updated: number
+  skipped: number
+  remaining: number
+}
+
 export const analyticsApi = {
   // Pre-call USD/token estimate. The chat composer calls this (debounced)
   // as the user types so they see what their message will cost before
@@ -1078,6 +1085,19 @@ export const analyticsApi = {
     tools?: any[]
     max_tokens?: number
   }) => api.post<CostEstimate>('/analytics/estimate-cost', payload),
+
+  // Re-cost historical Bifrost log rows against current pricing (#185).
+  // Admin operation. Bifrost caps each call at 1000 rows; the UI loops
+  // on `remaining` until it hits 0. Returns null/error if Bifrost is
+  // unreachable or the logging plugin isn't running.
+  recalculateCost: (payload?: {
+    providers?: string[]
+    models?: string[]
+    start_time?: string
+    end_time?: string
+    missing_cost_only?: boolean
+    limit?: number
+  }) => api.post<RecalculateCostResult>('/analytics/recalculate-cost', payload || {}),
 }
 
 // Storage API

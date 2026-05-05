@@ -1089,6 +1089,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         cache_creation_tokens: int = 0,
         duration_ms: int = 0,
         error: Optional[str] = None,
+        interaction_id: Optional[str] = None,
     ) -> None:
         """Fire-and-forget insert of an LLMInteractionLog row.
 
@@ -1128,7 +1129,10 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                 cost_usd = 0.0
 
             row = LLMInteractionLog(
-                interaction_id=str(uuid.uuid4()),
+                # Caller-supplied interaction_id (#185 Bifrost correlation)
+                # falls back to a fresh UUID for legacy callers that don't
+                # generate it upstream of the dispatch.
+                interaction_id=interaction_id or str(uuid.uuid4()),
                 session_id=session_id,
                 agent_id=agent_id,
                 investigation_id=investigation_id,
@@ -2513,6 +2517,17 @@ Provide a structured summary preserving all critical context."""
             # GH #84 PR-C: tag system prompt + last tool block for prompt caching.
             self._apply_prompt_cache_controls(api_kwargs)
 
+            # #185: tag the upstream Bifrost call with a Vigil interaction
+            # UUID so the LogEntry on Bifrost's side can be correlated with
+            # the local LLMInteractionLog row this method writes below.
+            # Bifrost captures any `x-bf-lh-*` header into LogEntry.metadata.
+            _interaction_id = str(uuid.uuid4())
+            _existing_extra = api_kwargs.get("extra_headers") or {}
+            api_kwargs["extra_headers"] = {
+                **_existing_extra,
+                "x-bf-lh-vigil-interaction-id": _interaction_id,
+            }
+
             logger.debug(f"🚀 Making API call with {len(messages)} messages")
             logger.debug(f"📋 API kwargs keys: {list(api_kwargs.keys())}")
 
@@ -2632,6 +2647,7 @@ Provide a structured summary preserving all critical context."""
                         else 0
                     ),
                     duration_ms=_call_duration_ms,
+                    interaction_id=_interaction_id,
                 )
             except Exception as _pe:
                 logger.debug(f"Reasoning-trace persist skipped: {_pe}")
@@ -2733,6 +2749,14 @@ Provide a structured summary preserving all critical context."""
                         logger.debug(
                             f"🔁 Making follow-up API call after tool use (round {tool_round + 1})"
                         )
+                        # #185: fresh interaction UUID per tool-loop round so
+                        # each upstream Bifrost call gets its own log row that
+                        # correlates back to the matching local interaction.
+                        _round_interaction_id = str(uuid.uuid4())
+                        api_kwargs["extra_headers"] = {
+                            **(api_kwargs.get("extra_headers") or {}),
+                            "x-bf-lh-vigil-interaction-id": _round_interaction_id,
+                        }
                         _fr_started = _time.monotonic()
                         final_response = self.client.messages.create(**api_kwargs)
                         _fr_duration_ms = int((_time.monotonic() - _fr_started) * 1000)
@@ -2789,6 +2813,7 @@ Provide a structured summary preserving all critical context."""
                                     else 0
                                 ),
                                 duration_ms=_fr_duration_ms,
+                                interaction_id=_round_interaction_id,
                             )
                         except Exception as _pe:
                             logger.debug(
@@ -3163,6 +3188,16 @@ Provide a structured summary preserving all critical context."""
                     await asyncio.sleep(delay)
                     iteration_delays.append(delay)
 
+                # #185: fresh interaction UUID per streaming iteration so each
+                # upstream Bifrost call (one per loop turn) lands its own log
+                # row that correlates with the local LLMInteractionLog row
+                # written below.
+                _stream_interaction_id = str(uuid.uuid4())
+                api_kwargs["extra_headers"] = {
+                    **(api_kwargs.get("extra_headers") or {}),
+                    "x-bf-lh-vigil-interaction-id": _stream_interaction_id,
+                }
+
                 # Use streaming API to avoid timeout issues with tool use
                 _stream_started = asyncio.get_event_loop().time()
                 async with self.async_client.messages.stream(**api_kwargs) as stream:
@@ -3298,6 +3333,7 @@ Provide a structured summary preserving all critical context."""
                             else 0
                         ),
                         duration_ms=_stream_duration_ms,
+                        interaction_id=_stream_interaction_id,
                     )
                 except Exception as _pe:
                     logger.debug(f"Reasoning-trace persist skipped (stream): {_pe}")

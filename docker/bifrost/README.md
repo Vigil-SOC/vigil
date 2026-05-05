@@ -74,6 +74,54 @@ The defaults live in [services/model_registry.py](../../services/model_registry.
 - `ANTHROPIC_EXTRA_MODELS=""` — disables extras for Anthropic entirely.
 - `OPENAI_EXTRA_MODELS="..."` — same mechanism for OpenAI if you need it.
 
+### Logging — authoritative cost source (#185)
+
+Bifrost's logging plugin is the source of truth for per-call cost. The
+config at `docker/bifrost/config.json` enables it explicitly with a
+local SQLite store (`./logs.db` inside the Bifrost container). Vigil's
+`/api/analytics/cost` time-series proxies Bifrost's
+`/api/logs/histogram/cost` endpoint; on a provider repricing, an admin
+hits `POST /api/analytics/recalculate-cost` (admin-only) which calls
+Bifrost's `POST /api/logs/recalculate-cost` to re-cost historical rows
+without a redeploy.
+
+**Per-call correlation:** Vigil attaches a custom header
+`x-bf-lh-vigil-interaction-id: <uuid>` to every upstream call (the
+`x-bf-lh-*` prefix is Bifrost's logging-headers convention). The UUID
+lands in Bifrost's `LogEntry.metadata` field for manual audit. We do
+**not** wire automated per-call cost reconcile from Bifrost back into
+`LLMInteractionLog.cost_usd` because Bifrost's `GET /api/logs` query
+parameters don't currently support filtering by custom metadata —
+reconciling would require pulling a time-window of logs and matching
+locally on `(model, timestamp, token_counts)`, which is brittle.
+Local `compute_call_cost()` remains the synchronous source for
+`LLMInteractionLog.cost_usd`; Bifrost is the authority for aggregate
+analytics. When Bifrost adds a metadata filter, swap to Bifrost as the
+authority for the `cost_usd` column too.
+
+**Production: switch to Postgres.** SQLite is fine for dev (the default
+config above); for production set:
+
+```json
+{
+  "logs_store": {
+    "enabled": true,
+    "type": "postgres",
+    "config": {
+      "host": "postgres",
+      "port": "5432",
+      "user": "bifrost",
+      "password": "<secret>",
+      "db_name": "bifrost_logs"
+    }
+  }
+}
+```
+
+Reuse the existing `postgres` service in `docker-compose.yml` with a
+separate database (UTF8 required by Bifrost). Inject the password via
+your secrets manager — same pattern as the provider API keys above.
+
 ### Caching — two layers
 
 Vigil benefits from two independent caching layers. They're **complementary**, not redundant:

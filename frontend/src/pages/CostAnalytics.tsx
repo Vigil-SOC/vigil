@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Alert,
   Box,
+  Button,
   Card,
   CardContent,
   Chip,
@@ -26,7 +27,9 @@ import {
   Psychology as AgentIcon,
   Refresh as RefreshIcon,
   SmartToy as ModelIcon,
+  Calculate as RecalculateIcon,
 } from '@mui/icons-material'
+import { analyticsApi } from '../services/api'
 import {
   Bar,
   BarChart,
@@ -166,6 +169,43 @@ export default function CostAnalytics() {
   const [data, setData] = useState<CostAnalyticsResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // #185: cumulative recalc state. Bifrost caps each call at 1000 rows;
+  // we loop until `remaining == 0` so the operator doesn't have to.
+  const [recalcRunning, setRecalcRunning] = useState(false)
+  const [recalcStatus, setRecalcStatus] = useState<string | null>(null)
+
+  const handleRecalculate = async () => {
+    setRecalcRunning(true)
+    setRecalcStatus('Asking Bifrost to recompute against current pricing…')
+    try {
+      let totalUpdated = 0
+      let totalSkipped = 0
+      // Cap iterations so a stuck loop doesn't hammer Bifrost forever.
+      for (let pass = 0; pass < 50; pass++) {
+        const res = await analyticsApi.recalculateCost({
+          missing_cost_only: true,
+          limit: 1000,
+        })
+        totalUpdated += res.data.updated || 0
+        totalSkipped += res.data.skipped || 0
+        if ((res.data.remaining || 0) <= 0) break
+        setRecalcStatus(
+          `Reprocessed ${totalUpdated} so far, ${res.data.remaining} remaining…`,
+        )
+      }
+      setRecalcStatus(
+        `Recalculate complete — ${totalUpdated} rows updated, ${totalSkipped} skipped.`,
+      )
+      // Refresh the dashboard so the new cost numbers show up.
+      fetchData()
+    } catch (e: any) {
+      setRecalcStatus(
+        `Recalculate failed: ${e?.response?.data?.detail || e?.message || 'unknown error'}`,
+      )
+    } finally {
+      setRecalcRunning(false)
+    }
+  }
 
   const fetchData = async () => {
     setLoading(true)
@@ -231,12 +271,35 @@ export default function CostAnalytics() {
           <IconButton onClick={fetchData} size="small" disabled={loading}>
             <RefreshIcon />
           </IconButton>
+          <MuiTooltip title="Re-cost historical Bifrost log rows against current pricing. Use after Anthropic/OpenAI publishes new rates.">
+            <span>
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<RecalculateIcon />}
+                onClick={handleRecalculate}
+                disabled={recalcRunning}
+              >
+                {recalcRunning ? 'Recalculating…' : 'Recalculate cost'}
+              </Button>
+            </span>
+          </MuiTooltip>
         </Box>
       </Box>
 
       {error && (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
           {error}
+        </Alert>
+      )}
+
+      {recalcStatus && (
+        <Alert
+          severity={recalcStatus.startsWith('Recalculate failed') ? 'error' : 'info'}
+          sx={{ mb: 2 }}
+          onClose={() => setRecalcStatus(null)}
+        >
+          {recalcStatus}
         </Alert>
       )}
 

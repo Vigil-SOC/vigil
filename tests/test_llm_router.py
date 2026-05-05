@@ -258,6 +258,89 @@ async def test_dispatch_bifrost_openai_no_cache_details_safe():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_propagates_interaction_id_as_bifrost_log_header_openai():
+    """#185: each LLM call carries an `x-bf-lh-vigil-interaction-id` header
+    so Bifrost's logging plugin can correlate the LogEntry back to Vigil's
+    local LLMInteractionLog row by UUID. The `x-bf-lh-*` prefix is
+    Bifrost's logging-headers convention — anything with that prefix gets
+    captured into LogEntry.metadata."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        model="openai/gpt-4o-mini",
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    interaction_id = "uuid-aaaa-1111"
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        await router.dispatch(
+            provider=_openai_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+            interaction_id=interaction_id,
+        )
+
+    headers = mock_client.chat.completions.create.call_args.kwargs.get("extra_headers")
+    assert headers is not None
+    assert headers.get("x-bf-lh-vigil-interaction-id") == interaction_id
+
+
+@pytest.mark.asyncio
+async def test_dispatch_omits_extra_headers_when_no_interaction_id():
+    """No interaction_id passed → no extra_headers kwarg, so we don't
+    accidentally inject empty headers into every call."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        model="openai/gpt-4o-mini",
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        await router.dispatch(
+            provider=_openai_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert "extra_headers" not in kwargs
+
+
+@pytest.mark.asyncio
+async def test_dispatch_propagates_interaction_id_anthropic():
+    """Same correlation header on the Anthropic dispatch path."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text="ok")],
+        model="claude-sonnet-4-5-20250929",
+        usage=SimpleNamespace(
+            input_tokens=1,
+            output_tokens=1,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        ),
+    )
+    mock_client = MagicMock()
+    mock_client.messages.create = AsyncMock(return_value=fake_resp)
+
+    interaction_id = "uuid-bbbb-2222"
+    with patch("anthropic.AsyncAnthropic", return_value=mock_client), \
+         patch("services.llm_router.get_secret", return_value="sk-ant-fake"):
+        await router.dispatch(
+            provider=_anthropic_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+            interaction_id=interaction_id,
+        )
+
+    headers = mock_client.messages.create.call_args.kwargs.get("extra_headers")
+    assert headers is not None
+    assert headers.get("x-bf-lh-vigil-interaction-id") == interaction_id
+
+
+@pytest.mark.asyncio
 async def test_anthropic_dispatch_raises_when_no_key():
     router = LLMRouter()
     with patch("services.llm_router.get_secret", return_value=None), \
