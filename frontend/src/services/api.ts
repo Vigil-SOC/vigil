@@ -1423,6 +1423,14 @@ export const orchestratorApi = {
     api.post(`/orchestrator/investigations/${id}/review`, { action, notes }),
 
   getCost: () => api.get('/orchestrator/cost'),
+
+  getChainOfCustody: (id: string) =>
+    api.get(`/orchestrator/investigations/${id}/chain-of-custody`),
+
+  exportInvestigation: (id: string) =>
+    api.get(`/orchestrator/investigations/${id}/export`, {
+      responseType: 'blob',
+    }),
 }
 
 // Federation API (federated monitoring of external SIEM/EDR sources)

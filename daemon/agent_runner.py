@@ -429,6 +429,8 @@ class AgentRunner:
         except Exception:
             pass
 
+        self._log_investigation_event(inv_id, "agent_started", {"workflow_id": investigation.get("workflow_id", "")})
+
         try:
             while not shutdown_event.is_set():
                 state = self.workdir.read_state(inv_id)
@@ -479,6 +481,16 @@ class AgentRunner:
                         "iteration": iteration,
                         "elapsed_seconds": round(elapsed, 1),
                         "cost_usd": round(total_cost, 4),
+                    },
+                )
+                self._log_investigation_event(
+                    inv_id,
+                    "iteration_start",
+                    {
+                        "iteration": iteration,
+                        "elapsed_seconds": round(elapsed, 1),
+                        "cost_usd": round(total_cost, 4),
+                        "current_step": state.get("current_step", 1),
                     },
                 )
 
@@ -539,6 +551,11 @@ class AgentRunner:
                         exc_info=True,
                     )
                     self.workdir.append_log(inv_id, {"event": "error", "error": str(e)})
+                    self._log_investigation_event(
+                        inv_id,
+                        "error",
+                        {"iteration": iteration, "error": str(e)},
+                    )
                     if _iter_span is not None:
                         try:
                             _iter_span.end()
@@ -588,6 +605,19 @@ class AgentRunner:
                         "tool_calls": len(result.get("tool_calls", [])),
                     },
                 )
+                self._log_investigation_event(
+                    inv_id,
+                    "iteration_complete",
+                    {
+                        "iteration": iteration,
+                        "input_tokens": in_tokens,
+                        "output_tokens": out_tokens,
+                        "cost_usd": round(cost, 4),
+                        "tool_calls": len(result.get("tool_calls", [])),
+                        "current_step": refreshed.get("current_step", 0),
+                    },
+                    tokens_used=in_tokens + out_tokens,
+                )
 
                 refreshed = self.workdir.read_state(inv_id)
 
@@ -628,16 +658,32 @@ class AgentRunner:
             state = self.workdir.read_state(inv_id)
             state["status"] = "sleeping"
             self.workdir.write_state(inv_id, state)
+            self._log_investigation_event(
+                inv_id, "status_change", {"status": "sleeping", "reason": "agent_cancelled"}
+            )
         except Exception as e:
             logger.error(f"{inv_id}: Unexpected agent error: {e}", exc_info=True)
             self._mark_failed(inv_id, str(e))
             self.stats["agents_failed"] += 1
         else:
             final_state = self.workdir.read_state(inv_id)
-            if final_state.get("status") == "review_submitted":
+            final_status = final_state.get("status", "unknown")
+            if final_status == "review_submitted":
                 self.stats["agents_completed"] += 1
-            elif final_state.get("status") == "failed":
+            elif final_status == "failed":
                 self.stats["agents_failed"] += 1
+            self._log_investigation_event(
+                inv_id,
+                "agent_finished",
+                {
+                    "status": final_status,
+                    "total_iterations": iteration,
+                    "total_input_tokens": total_input_tokens,
+                    "total_output_tokens": total_output_tokens,
+                    "total_cost_usd": round(total_cost, 4),
+                },
+                tokens_used=total_input_tokens + total_output_tokens,
+            )
             self._update_db_record(
                 inv_id,
                 {
@@ -729,6 +775,17 @@ class AgentRunner:
             inv_id,
             {
                 "event": "preflight_budget_block",
+                "iteration": iteration,
+                "current_cost_usd": round(total_cost, 4),
+                "estimate_high_usd": round(estimate.high_usd, 4),
+                "max_cost_usd": budget,
+                "pricing_source": estimate.pricing_source,
+            },
+        )
+        self._log_investigation_event(
+            inv_id,
+            "budget_blocked",
+            {
                 "iteration": iteration,
                 "current_cost_usd": round(total_cost, 4),
                 "estimate_high_usd": round(estimate.high_usd, 4),
@@ -1347,6 +1404,11 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                     "action_id": action_id,
                 },
             )
+            self._log_investigation_event(
+                inv_id,
+                "approval_requested",
+                {"tool": tool_name, "action_id": action_id},
+            )
 
             logger.info(
                 f"{inv_id}: Approval requested for {tool_name} (action_id={action_id})"
@@ -1404,6 +1466,14 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                     inv_id,
                     {
                         "event": "approval_granted",
+                        "action_id": action_id,
+                        "tool": pending.get("tool_name"),
+                    },
+                )
+                self._log_investigation_event(
+                    inv_id,
+                    "approval_granted",
+                    {
                         "action_id": action_id,
                         "tool": pending.get("tool_name"),
                     },
@@ -1496,6 +1566,9 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         state["failed_at"] = datetime.utcnow().isoformat()
         self.workdir.write_state(inv_id, state)
         self.workdir.append_log(inv_id, {"event": "failed", "reason": reason})
+        self._log_investigation_event(
+            inv_id, "failed", {"reason": reason}
+        )
         self._update_db_record(
             inv_id,
             {
@@ -1535,3 +1608,37 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                         setattr(inv, key, val)
         except Exception as e:
             logger.error(f"DB update for {inv_id} failed: {e}", exc_info=True)
+
+    def _log_investigation_event(
+        self,
+        inv_id: str,
+        event_type: str,
+        details: Optional[Dict[str, Any]] = None,
+        tokens_used: int = 0,
+    ):
+        """Persist an event to the InvestigationLog DB table.
+
+        Fire-and-forget: failures are logged but never re-raised so that
+        audit logging can never break the agent loop. See sub-issue #193.
+        """
+        try:
+            from database.connection import get_db_manager
+            from database.models import InvestigationLog
+
+            db_manager = get_db_manager()
+            with db_manager.session_scope() as session:
+                session.add(
+                    InvestigationLog(
+                        investigation_id=inv_id,
+                        event_type=event_type,
+                        details=details or {},
+                        tokens_used=tokens_used,
+                    )
+                )
+        except Exception as exc:
+            logger.warning(
+                "InvestigationLog persist failed for %s (%s): %s",
+                inv_id,
+                event_type,
+                exc,
+            )

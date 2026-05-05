@@ -49,6 +49,7 @@ import {
   ThumbUp as ApproveIcon,
   Replay as ReworkIcon,
   Psychology as DecisionsIcon,
+  Download as DownloadIcon,
 } from '@mui/icons-material'
 import { orchestratorApi, configApi, reasoningApi } from '../services/api'
 
@@ -140,6 +141,9 @@ export default function Orchestrator() {
   const [reasoningInteractions, setReasoningInteractions] = useState<any[]>([])
   const [reasoningLoading, setReasoningLoading] = useState(false)
   const [expandedInteraction, setExpandedInteraction] = useState<string | null>(null)
+  // GH #192 — chain of custody audit view
+  const [cocData, setCocData] = useState<any>(null)
+  const [cocLoading, setCocLoading] = useState(false)
 
   const fetchData = useCallback(async () => {
     try {
@@ -230,6 +234,17 @@ export default function Orchestrator() {
         setReasoningInteractions([])
       } finally {
         setReasoningLoading(false)
+      }
+      // GH #192 — load chain of custody
+      setCocLoading(true)
+      setCocData(null)
+      try {
+        const coc = await orchestratorApi.getChainOfCustody(id)
+        setCocData(coc.data)
+      } catch {
+        setCocData(null)
+      } finally {
+        setCocLoading(false)
       }
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load investigation')
@@ -333,6 +348,23 @@ export default function Orchestrator() {
       setError(err.response?.data?.detail || 'Failed to update agent limit')
     } finally {
       setSavingMaxAgents(false)
+    }
+  }
+
+  const handleExport = async (invId: string) => {
+    try {
+      const res = await orchestratorApi.exportInvestigation(invId)
+      const blob = new Blob([res.data], { type: 'application/json' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `inv-${invId}-chain-of-custody.json`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Export failed')
     }
   }
 
@@ -620,16 +652,26 @@ export default function Orchestrator() {
       <Dialog open={detailOpen} onClose={() => setDetailOpen(false)} maxWidth="lg" fullWidth>
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <span>Investigation: {selectedInv}</span>
-          <Tooltip title="View AI Decisions for this investigation">
+          <Stack direction="row" spacing={1}>
             <Button
               size="small"
               variant="outlined"
-              startIcon={<DecisionsIcon />}
-              onClick={() => navigate(`/ai-decisions?agent_id=orchestrator&investigation_id=${selectedInv}`)}
+              startIcon={<DownloadIcon />}
+              onClick={() => selectedInv && handleExport(selectedInv)}
             >
-              AI Decisions
+              Export
             </Button>
-          </Tooltip>
+            <Tooltip title="View AI Decisions for this investigation">
+              <Button
+                size="small"
+                variant="outlined"
+                startIcon={<DecisionsIcon />}
+                onClick={() => navigate(`/ai-decisions?agent_id=orchestrator&investigation_id=${selectedInv}`)}
+              >
+                AI Decisions
+              </Button>
+            </Tooltip>
+          </Stack>
         </DialogTitle>
         <DialogContent>
           {detailData && (
@@ -894,6 +936,112 @@ export default function Orchestrator() {
                         </Box>
                       )
                     })}
+                  </Paper>
+                )}
+              </Box>
+
+              {/* GH #192 — Chain of Custody audit timeline */}
+              <Box sx={{ mt: 3 }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                  <Typography variant="subtitle2">Chain of Custody</Typography>
+                  {cocData?.logs?.length > 0 && (
+                    <Chip size="small" label={`${cocData.logs.length} event${cocData.logs.length === 1 ? '' : 's'}`} />
+                  )}
+                  {cocData?.otel_trace_id && (
+                    <Chip size="small" variant="outlined" label={`OTEL: ${cocData.otel_trace_id.slice(0, 8)}...`} />
+                  )}
+                </Box>
+                {cocLoading ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}><CircularProgress size={18} /></Box>
+                ) : !cocData || (!cocData.logs?.length && !cocData.llm_interactions?.length) ? (
+                  <Typography variant="caption" color="text.secondary">
+                    No chain-of-custody data available for this investigation.
+                  </Typography>
+                ) : (
+                  <Paper variant="outlined" sx={{ maxHeight: 420, overflow: 'auto' }}>
+                    {/* Unified timeline: merge InvestigationLog + LLMInteractionLog + creation */}
+                    {(() => {
+                      const events: any[] = []
+                      if (cocData.investigation) {
+                        events.push({
+                          ts: cocData.investigation.created_at,
+                          type: 'created',
+                          label: 'Investigation Created',
+                          details: {
+                            workflow_id: cocData.investigation.workflow_id,
+                            trigger_type: cocData.investigation.trigger_type,
+                            priority: cocData.investigation.priority,
+                          },
+                        })
+                      }
+                      const cocLogs = cocData.logs || []
+                      cocLogs.forEach((log: any) => {
+                        events.push({
+                          ts: log.timestamp,
+                          type: log.event_type,
+                          label: log.event_type.replace(/_/g, ' '),
+                          details: log.details,
+                          tokens: log.tokens_used,
+                        })
+                      })
+                      const cocInteractions = cocData.llm_interactions || []
+                      cocInteractions.forEach((it: any) => {
+                        events.push({
+                          ts: it.created_at,
+                          type: 'llm_call',
+                          label: `LLM Call · ${it.model}`,
+                          details: {
+                            input_tokens: it.input_tokens,
+                            output_tokens: it.output_tokens,
+                            cost_usd: it.cost_usd,
+                            duration_ms: it.duration_ms,
+                            stop_reason: it.stop_reason,
+                            has_thinking: it.has_thinking || !!it.thinking_content,
+                            tool_count: (it.tool_calls || []).length,
+                          },
+                        })
+                      })
+                      events.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime())
+                      const typeColors: Record<string, string> = {
+                        created: '#2196f3',
+                        agent_started: '#4caf50',
+                        iteration_start: '#ff9800',
+                        iteration_complete: '#4caf50',
+                        error: '#f44336',
+                        budget_blocked: '#f44336',
+                        failed: '#f44336',
+                        approval_requested: '#9c27b0',
+                        approval_granted: '#4caf50',
+                        status_change: '#2196f3',
+                        agent_finished: '#4caf50',
+                        llm_call: '#00bcd4',
+                      }
+                      return events.map((ev, idx) => (
+                        <Box key={idx} sx={{ display: 'flex', alignItems: 'flex-start', gap: 1.5, px: 1.5, py: 1, borderBottom: idx < events.length - 1 ? 1 : 0, borderColor: 'divider' }}>
+                          <Box sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: typeColors[ev.type] || '#9e9e9e', mt: 0.8, flexShrink: 0 }} />
+                          <Box sx={{ minWidth: 80 }}>
+                            <Typography variant="caption" sx={{ fontFamily: 'monospace', color: 'text.secondary' }}>
+                              {ev.ts ? new Date(ev.ts).toLocaleTimeString() : ''}
+                            </Typography>
+                          </Box>
+                          <Box sx={{ flex: 1 }}>
+                            <Typography variant="caption" sx={{ fontWeight: 600, textTransform: 'capitalize' }}>
+                              {ev.label}
+                            </Typography>
+                            {ev.tokens ? (
+                              <Typography variant="caption" sx={{ color: 'text.secondary', ml: 1 }}>
+                                {ev.tokens} tok
+                              </Typography>
+                            ) : null}
+                            {ev.details && Object.keys(ev.details).length > 0 && (
+                              <Typography variant="body2" component="pre" sx={{ fontFamily: 'monospace', fontSize: '0.7rem', whiteSpace: 'pre-wrap', wordBreak: 'break-word', m: 0, mt: 0.5, color: 'text.secondary' }}>
+                                {JSON.stringify(ev.details, null, 2)}
+                              </Typography>
+                            )}
+                          </Box>
+                        </Box>
+                      ))
+                    })()}
                   </Paper>
                 )}
               </Box>
