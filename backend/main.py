@@ -91,6 +91,9 @@ from api.orchestrator import router as orchestrator_router
 # Federation router (federated monitoring of external SIEM/EDR sources)
 from api.federation import router as federation_router
 
+# Budgets (Bifrost VK config + live quota — #186)
+from api.budgets import router as budgets_router
+
 # Kafka ingestion router
 from api.kafka import router as kafka_router
 
@@ -196,6 +199,10 @@ app.include_router(jira_export_router, prefix="/api", tags=["jira-export"])
 
 # Analytics
 app.include_router(analytics_router, prefix="/api", tags=["analytics"])
+# Budgets — same prefix as analytics so /api/analytics/budget* lives next
+# to /api/analytics/cost. The router itself owns the /analytics path
+# segment per its endpoint definitions.
+app.include_router(budgets_router, prefix="/api", tags=["budgets"])
 
 # Core API endpoints
 app.include_router(findings_router, prefix="/api/findings", tags=["findings"])

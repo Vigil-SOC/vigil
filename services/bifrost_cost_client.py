@@ -266,11 +266,54 @@ def recalculate_cost(
 # ---------------------------------------------------------------------------
 
 
-def _get_json(path: str, *, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+# ---------------------------------------------------------------------------
+# Governance / virtual-key quota (#186)
+# ---------------------------------------------------------------------------
+
+
+def get_vk_quota(vk: str) -> Optional[Dict[str, Any]]:
+    """Return the budget + rate-limit quota for a virtual key.
+
+    Path: ``GET /api/governance/virtual-keys/quota``. Bifrost authenticates
+    this endpoint using the ``x-bf-vk`` header (the same header dispatch
+    attaches on every upstream call). Response shape:
+
+    .. code-block:: json
+
+        {
+          "virtual_key_name": "...",
+          "is_active": true,
+          "budgets": [
+            {"id": "...", "max_limit": 100.0, "current_usage": 42.0,
+             "reset_duration": "1mo", "calendar_aligned": true,
+             "last_reset": "..."}
+          ],
+          "rate_limit": {"id": "...", "token_max_limit": 1000000,
+                         "token_current_usage": 12345, ...}
+        }
+
+    The Settings → LLM Providers → Budgets sub-panel uses this directly
+    to render "$X of $Y consumed" without round-tripping through Vigil's
+    aggregations.
+    """
+    if not vk:
+        return None
+    return _get_json(
+        "/api/governance/virtual-keys/quota",
+        headers={"x-bf-vk": vk},
+    )
+
+
+def _get_json(
+    path: str,
+    *,
+    params: Optional[Dict[str, Any]] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
     url = f"{_bifrost_base_url()}{path}"
     try:
         with httpx.Client(timeout=_DEFAULT_TIMEOUT) as client:
-            r = client.get(url, params=params or {})
+            r = client.get(url, params=params or {}, headers=headers or {})
             if r.status_code >= 400:
                 logger.warning(
                     "bifrost_cost_client: GET %s returned %s: %s",

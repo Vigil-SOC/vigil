@@ -371,6 +371,37 @@ async def chat(request: ChatRequest):
 
     except Exception as e:
         elapsed_time = time.time() - start_time
+        # #186: surface budget/rate-limit blocks as a typed 402 instead of a
+        # generic 500 so the chat UI can render a "budget exceeded" banner
+        # rather than a useless error toast. We catch both our own
+        # BudgetExceeded (from llm_router) and the SDK-native exceptions
+        # whose `status_code` is 402/429 — the SDK exception path covers
+        # the direct claude_service.client.messages.create call sites that
+        # don't go through llm_router yet.
+        try:
+            from services.budget_service import BudgetExceeded as _BE
+        except Exception:
+            _BE = None  # type: ignore[assignment]
+
+        status_code = getattr(e, "status_code", None)
+        if (_BE is not None and isinstance(e, _BE)) or status_code in (402, 429):
+            tier = getattr(e, "tier", None) or (
+                "rate_limit" if status_code == 429 else "virtual_key"
+            )
+            logger.warning(
+                "[RequestID: %s] Chat blocked by budget enforcement after %.2fs: tier=%s",
+                request_id,
+                elapsed_time,
+                tier,
+            )
+            raise HTTPException(
+                status_code=402,
+                detail={
+                    "code": "budget_exceeded",
+                    "tier": tier,
+                    "message": str(e) or "LLM budget exceeded",
+                },
+            )
         logger.error(
             f"❌ [RequestID: {request_id}] Chat error after {elapsed_time:.2f}s: {e}",
             exc_info=True,

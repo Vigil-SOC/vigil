@@ -13,6 +13,16 @@ vi.mock('../../../services/api', () => ({
   },
 }))
 
+// LLMProvidersTab now renders <BudgetsSection /> as a child (#186).
+// BudgetsSection's mount kicks off async budgetsApi calls and re-renders
+// that race with the click-test below, making the find-by-label index
+// unstable. Stub the section to a no-op so this test stays focused on
+// LLMProvidersTab's own behavior. BudgetsSection has its own dedicated
+// test file (BudgetsSection.test.tsx).
+vi.mock('../BudgetsSection', () => ({
+  default: () => null,
+}))
+
 import LLMProvidersTab from '../LLMProvidersTab'
 import { llmProviderApi } from '../../../services/api'
 

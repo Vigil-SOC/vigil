@@ -641,11 +641,28 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
         timestamp: new Date().toISOString(),
         fullError: e
       })
+      // #186: render a typed inline message for budget-exceeded responses
+      // (HTTP 402, body.detail.code == 'budget_exceeded') so the user
+      // sees "budget exceeded — tier: virtual_key" instead of a generic
+      // error toast. Backend builds this body in backend/api/claude.py's
+      // chat handler.
+      const detail = e?.response?.data?.detail
+      const isBudgetBlock =
+        e?.response?.status === 402 &&
+        detail &&
+        typeof detail === 'object' &&
+        detail.code === 'budget_exceeded'
+      const userMessage = isBudgetBlock
+        ? `⚠️ LLM budget exceeded (tier: **${detail.tier || 'unknown'}**). ${
+            detail.message ||
+            'Bifrost rejected the call upstream of the model. Update the budget in Settings → LLM Providers → Budgets, or set DEV_MODE / LLM_BUDGET_UNLIMITED to bypass.'
+          }`
+        : `Error: ${typeof detail === 'string' ? detail : detail?.message || e?.message || 'Failed'}`
       setTabs(prevTabs => {
         const updatedTabs = [...prevTabs]
         updatedTabs[currentTab] = {
           ...updatedTabs[currentTab],
-          messages: [...updatedTabs[currentTab].messages, { role: 'assistant', content: `Error: ${e?.response?.data?.detail || e?.message || 'Failed'}` }]
+          messages: [...updatedTabs[currentTab].messages, { role: 'assistant', content: userMessage }]
         }
         return updatedTabs
       })
