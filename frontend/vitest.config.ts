@@ -8,6 +8,19 @@ export default defineConfig({
     globals: true,
     environment: 'jsdom',
     setupFiles: './src/test/setup.ts',
+    // Don't pick up test files inside agent worktrees — those copies of
+    // the repo lack node_modules and crash the run with "Cannot find
+    // package '@testing-library/react'". The .claude directory sits one
+    // level up from frontend/ so we need both relative-up and bare-glob
+    // patterns to catch it. Vitest's default excludes skip node_modules
+    // and .git only.
+    exclude: [
+      '**/node_modules/**',
+      '**/.git/**',
+      '**/.claude/**',
+      '../.claude/**',
+      '**/worktrees/**',
+    ],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html', 'lcov'],
