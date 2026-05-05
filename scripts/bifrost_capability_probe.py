@@ -66,7 +66,9 @@ async def probe_basic() -> bool:
             messages=[{"role": "user", "content": "Reply with the single word: ping"}],
         )
         text = "".join(
-            getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text"
+            getattr(b, "text", "")
+            for b in resp.content
+            if getattr(b, "type", "") == "text"
         )
         if not text.strip():
             _fail("basic round-trip: empty response text")
@@ -98,7 +100,9 @@ async def probe_extended_thinking() -> bool:
                 }
             ],
         )
-        has_thinking_block = any(getattr(b, "type", "") == "thinking" for b in resp.content)
+        has_thinking_block = any(
+            getattr(b, "type", "") == "thinking" for b in resp.content
+        )
         if not has_thinking_block:
             _fail(
                 "extended thinking: response contained no `thinking` block — "
@@ -188,6 +192,99 @@ async def probe_prompt_caching() -> Tuple[bool, bool]:
         return False, False
 
 
+async def probe_logging_metadata() -> bool:
+    """Probe 4 — Bifrost's logging plugin must persist requests and capture
+    arbitrary ``x-bf-lh-*`` headers as log metadata (#185).
+
+    Vigil tags every Anthropic call with ``x-bf-lh-vigil-interaction-id`` so
+    the dashboard can correlate Bifrost log rows back to a specific Vigil
+    interaction. If the logging plugin is off, or the persistence backend
+    isn't writing, the dashboard's Bifrost-sourced time series silently goes
+    dark and we fall back to local cost math without anyone noticing.
+    Catching this regression here is cheaper than catching it in prod.
+
+    Strategy:
+      1. Send a minimal Anthropic call carrying ``x-bf-lh-vigil-probe-id``
+         set to a fresh UUID (cache-busting, attribution-bearing).
+      2. Wait briefly for the log row to flush.
+      3. Hit Bifrost's admin ``GET /api/logs`` endpoint and scan the
+         ``metadata`` field of recent rows for the probe id.
+
+    Pass = the row exists AND ``vigil-probe-id`` round-tripped intact.
+    """
+    import httpx
+
+    bifrost_url = os.environ["BIFROST_URL"].rstrip("/")
+    probe_id = uuid.uuid4().hex
+    probe_marker = f"probe-{probe_id[:8]}"
+
+    try:
+        client = await _client()
+        await client.messages.create(
+            model=MODEL,
+            max_tokens=16,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"Reply with the word: {probe_marker}",
+                }
+            ],
+            extra_headers={"x-bf-lh-vigil-probe-id": probe_id},
+        )
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"logging metadata: probe call raised: {exc}")
+        return False
+
+    # Logs land asynchronously — give Bifrost a couple seconds to flush.
+    await asyncio.sleep(2)
+
+    try:
+        with httpx.Client(timeout=10.0) as http:
+            r = http.get(f"{bifrost_url}/api/logs", params={"limit": 50})
+            if r.status_code == 404:
+                _fail(
+                    "logging metadata: GET /api/logs returned 404 — "
+                    "the logging plugin is off. Set client.enable_logging "
+                    "and configure logs_store in docker/bifrost/config.json."
+                )
+                return False
+            if r.status_code >= 400:
+                _fail(
+                    f"logging metadata: GET /api/logs returned {r.status_code}: "
+                    f"{r.text[:200]}"
+                )
+                return False
+            payload = r.json()
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"logging metadata: GET /api/logs failed: {exc}")
+        return False
+
+    # Bifrost's response shape: { "logs": [...], "pagination": {...} } per
+    # docs.getbifrost.ai. Scan the most recent rows for the probe id.
+    rows = payload.get("logs") if isinstance(payload, dict) else None
+    if not rows:
+        _fail(
+            "logging metadata: /api/logs returned no rows — backend "
+            "persistence isn't writing (check logs_store config + volume)"
+        )
+        return False
+
+    for row in rows:
+        meta = row.get("metadata") or {}
+        # Bifrost strips the `x-bf-lh-` prefix when it stores the header,
+        # leaving the suffix as the metadata key.
+        if meta.get("vigil-probe-id") == probe_id:
+            _ok(f"logging metadata round-tripped (probe-id={probe_id[:8]}…)")
+            return True
+
+    _fail(
+        "logging metadata: probe id never appeared in /api/logs metadata. "
+        "Either x-bf-lh-* headers aren't being captured or the row hasn't "
+        "flushed yet — try increasing the post-call sleep."
+    )
+    return False
+
+
 async def main() -> int:
     if not os.getenv("BIFROST_URL"):
         _fail("BIFROST_URL is not set")
@@ -201,6 +298,7 @@ async def main() -> int:
     basic = await probe_basic()
     thinking = await probe_extended_thinking()
     cache_create, cache_read = await probe_prompt_caching()
+    logging_ok = await probe_logging_metadata()
 
     print()
     results = {
@@ -208,6 +306,7 @@ async def main() -> int:
         "extended thinking passthrough": thinking,
         "prompt cache creation": cache_create,
         "prompt cache read": cache_read,
+        "logging plugin metadata round-trip": logging_ok,
     }
     for name, passed in results.items():
         mark = "✅" if passed else "❌"

@@ -86,6 +86,9 @@ async def test_get_cost_analytics_response_shape(monkeypatch):
         "by_agent",
         "by_model",
         "top_investigations",
+        # #185: time_series block sourced from Bifrost's
+        # /api/logs/histogram/cost; None when Bifrost is unreachable.
+        "time_series",
     }
     assert result["totals"] == fake_totals
     assert result["by_agent"] == fake_agents
