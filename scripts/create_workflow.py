@@ -22,6 +22,7 @@ AVAILABLE_AGENTS = [
     "threat_hunter",
     "correlator",
     "responder",
+    "auto_responder",
     "reporter",
     "mitre_analyst",
     "forensics",
