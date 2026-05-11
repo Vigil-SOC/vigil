@@ -132,16 +132,50 @@ New features should include tests. Place them in `tests/` following existing nam
 
 ### Commit Messages
 
-Write clear, descriptive commit messages. Format:
+We **prefer** [Conventional Commits](https://www.conventionalcommits.org/) so we
+can automate changelogs and version bumps as the project grows. It is not
+strictly enforced — if your commits don't match the format, a maintainer will
+adjust the squash-merge title before merging. The DCO sign-off
+(`git commit -s`), however, is required on every commit.
+
+The preferred format is:
 
 ```
-Short summary (50 chars or less)
+<type>(<optional scope>): <short summary>
 
-Longer description if needed. Explain what changed and why,
-not how (the code shows how). Wrap at 72 characters.
+<optional body explaining what and why>
 
 Signed-off-by: Your Name <your@email.com>
 ```
+
+**Common types:**
+
+- `feat:` — a new feature (triggers a minor version bump)
+- `fix:` — a bug fix (triggers a patch bump)
+- `docs:` — documentation only
+- `chore:` — tooling, build, dependency bumps
+- `refactor:` — code change that neither fixes a bug nor adds a feature
+- `test:` — adding or fixing tests
+- `perf:` — performance improvement
+
+**Common scopes for Vigil:** `agents`, `workflows`, `mcp`, `frontend`,
+`daemon`, `helm`, `api`, `db`.
+
+**Breaking changes:** add `!` after the type/scope (`feat!:`) or include
+`BREAKING CHANGE:` in the body.
+
+**Examples:**
+
+```
+feat(mcp): add SentinelOne integration
+fix(daemon): prevent double-processing of correlated alerts
+docs(workflows): clarify threat-hunt phase ordering
+chore(deps): bump fastapi to 0.110.0
+feat(agents)!: rename Triage agent prompt schema
+```
+
+Don't sweat it if you forget — the format is a preference, not a gate. The
+only hard requirement is the DCO sign-off.
 
 ## Pull Request Guidelines
 
@@ -150,6 +184,13 @@ Signed-off-by: Your Name <your@email.com>
 - Update relevant documentation
 - Reference related issues: "Closes #123" or "Part of #456"
 - Keep PRs reviewable — if a feature is large, break it into smaller PRs
+
+### Pull Request Titles
+
+Because we squash-merge PRs, the PR title becomes the commit message on
+`main`. Please title your PR using the same Conventional Commits format
+described above (e.g., `feat(mcp): add SentinelOne integration`). If you
+forget, a maintainer will adjust it before merging.
 
 ## Community
 
