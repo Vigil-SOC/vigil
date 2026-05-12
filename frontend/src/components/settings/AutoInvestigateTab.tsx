@@ -26,6 +26,7 @@ import {
 import RestoreIcon from '@mui/icons-material/Restore'
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore'
 import TuneIcon from '@mui/icons-material/Tune'
+import DeleteSweepIcon from '@mui/icons-material/DeleteSweep'
 import { aiConfigApi, AIModelInfo, configApi, orchestratorApi } from '../../services/api'
 
 interface OrchestratorConfig {
@@ -136,12 +137,10 @@ const detectActivePreset = (cfg: OrchestratorConfig): PresetKey | 'custom' => {
 
 interface Props {
   onMessage: (msg: { type: 'success' | 'error'; text: string }) => void
-  // Kept for backwards compatibility with Settings.tsx wiring; no longer used
-  // now that the tab auto-saves. Safe to remove if Settings.tsx is updated.
   showConfirm?: (title: string, msg: string, onConfirm: () => void) => void
 }
 
-export default function AutoInvestigateTab({ onMessage }: Props) {
+export default function AutoInvestigateTab({ onMessage, showConfirm }: Props) {
   const [config, setConfig] = useState<OrchestratorConfig>(DEFAULTS)
   const [loading, setLoading] = useState(true)
   const [status, setStatus] = useState<any>(null)
@@ -207,6 +206,32 @@ export default function AutoInvestigateTab({ onMessage }: Props) {
   const handleReset = () => {
     setConfig(DEFAULTS)
     persist(DEFAULTS)
+  }
+
+  const handlePurgeAll = () => {
+    const doPurge = async () => {
+      try {
+        const res = await orchestratorApi.purgeAll()
+        const deleted = res.data?.deleted ?? 0
+        onMessage({
+          type: 'success',
+          text: `Cleared ${deleted} investigation${deleted === 1 ? '' : 's'}`,
+        })
+        setTimeout(() => onMessage({ type: 'success', text: '' }), 3000)
+        await loadConfig()
+      } catch {
+        onMessage({ type: 'error', text: 'Failed to clear investigations' })
+      }
+    }
+    if (showConfirm) {
+      showConfirm(
+        'Clear all auto-investigations?',
+        'This will kill any running investigations and permanently delete all investigation records, logs, and working directories. This cannot be undone.',
+        doPurge,
+      )
+    } else {
+      doPurge()
+    }
   }
 
   // 0 is the sentinel for "unlimited" across all bounded numeric fields.
@@ -389,14 +414,41 @@ export default function AutoInvestigateTab({ onMessage }: Props) {
         within ~60 seconds (the runtime-config cache TTL).
       </Typography>
 
-      {status && (
-        <Alert severity={status.enabled ? 'success' : 'info'} sx={{ mb: 3 }}>
-          Orchestrator is <strong>{status.enabled ? 'ENABLED' : 'DISABLED'}</strong>
-          {status.active_agents !== undefined && ` · ${status.active_agents} active agent(s)`}
-          {status.cost?.total_cost_usd !== undefined &&
-            ` · Total cost: $${status.cost.total_cost_usd.toFixed(2)}`}
-        </Alert>
-      )}
+      <Stack
+        direction={{ xs: 'column', sm: 'row' }}
+        spacing={1.5}
+        alignItems={{ xs: 'stretch', sm: 'flex-start' }}
+        sx={{ mb: 3 }}
+      >
+        {status ? (
+          <Alert severity={status.enabled ? 'success' : 'info'} sx={{ flex: 1, m: 0 }}>
+            Orchestrator is <strong>{status.enabled ? 'ENABLED' : 'DISABLED'}</strong>
+            {status.active_agents !== undefined && ` · ${status.active_agents} active agent(s)`}
+            {status.total_investigations !== undefined &&
+              ` · ${status.total_investigations} investigation(s)`}
+            {status.cost?.total_cost_usd !== undefined &&
+              ` · Total cost: $${status.cost.total_cost_usd.toFixed(2)}`}
+          </Alert>
+        ) : (
+          <Box sx={{ flex: 1 }} />
+        )}
+        <Tooltip
+          title="Kill any running investigations and delete all investigation records, logs, and workdirs."
+          placement="top"
+          arrow
+        >
+          <Button
+            variant="outlined"
+            color="error"
+            size="small"
+            startIcon={<DeleteSweepIcon />}
+            onClick={handlePurgeAll}
+            sx={{ whiteSpace: 'nowrap' }}
+          >
+            Clear All Investigations
+          </Button>
+        </Tooltip>
+      </Stack>
 
       {/* Master Controls */}
       <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1.5 }}>

@@ -1272,6 +1272,45 @@ class Orchestrator:
             "per_investigation_limit": self.config.max_cost_per_investigation,
         }
 
+    async def purge_all_investigations(self) -> Dict[str, Any]:
+        """Stop all running agents, delete every investigation row, and wipe
+        the on-disk workdir tree. Used by the Settings UI's "Clear All
+        Investigations" button as a hard reset for the auto-investigate
+        subsystem.
+        """
+        await self.agent_runner.stop_all()
+
+        deleted = 0
+        try:
+            from database.connection import get_db_manager
+            from database.models import Investigation
+
+            with get_db_manager().session_scope() as session:
+                deleted = session.query(Investigation).delete(
+                    synchronize_session=False
+                )
+        except Exception as e:
+            logger.error(f"Failed to delete investigations from DB: {e}")
+            raise
+
+        try:
+            base = self.workdir.base_dir
+            if base.is_dir():
+                import shutil
+
+                shutil.rmtree(base, ignore_errors=True)
+            base.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Workdir cleanup failed after purge: {e}")
+
+        self.shared_intel = SharedIntelligence()
+        self._hourly_costs = []
+
+        logger.warning(
+            f"Purged {deleted} investigations and reset workdir tree at {self.workdir.base_dir}"
+        )
+        return {"deleted": deleted}
+
     # -------------------------------------------------------------------------
     # Utilities
     # -------------------------------------------------------------------------

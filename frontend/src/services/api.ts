@@ -1400,6 +1400,7 @@ export const orchestratorApi = {
   enable: () => api.post('/orchestrator/enable'),
   disable: () => api.post('/orchestrator/disable'),
   kill: () => api.post('/orchestrator/kill'),
+  purgeAll: () => api.post('/orchestrator/investigations/purge'),
   
   listInvestigations: (status?: string) =>
     api.get('/orchestrator/investigations', { params: status ? { status } : {} }),

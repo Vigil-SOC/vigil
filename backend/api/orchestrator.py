@@ -177,6 +177,33 @@ async def kill_orchestrator():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/investigations/purge")
+async def purge_investigations():
+    """Hard reset: stop all running agents, delete every investigation
+    record (and its cascading logs), and wipe the on-disk workdir tree.
+
+    Triggered from the Settings → Auto Investigate "Clear All
+    Investigations" button.
+    """
+    try:
+        orch = _get_orchestrator()
+        if not orch:
+            raise HTTPException(
+                status_code=503, detail="Orchestrator not available"
+            )
+        result = await orch.purge_all_investigations()
+        return {
+            "success": True,
+            "deleted": result.get("deleted", 0),
+            "message": f"Purged {result.get('deleted', 0)} investigations",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error purging investigations: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ---- Investigations ----
 
 @router.get("/investigations")
