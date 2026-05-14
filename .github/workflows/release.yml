@@ -13,65 +13,15 @@ env:
 
 jobs:
   # ============================================================================
-  # Create GitHub Release
-  # ============================================================================
-  create-release:
-    name: Create GitHub Release
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
-    
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      
-      - name: Get version from tag
-        id: get_version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      
-      - name: Generate changelog
-        id: changelog
-        run: |
-          git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s (%h)" > CHANGELOG.txt
-          echo "changelog<<EOF" >> $GITHUB_OUTPUT
-          cat CHANGELOG.txt >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-      
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ steps.get_version.outputs.version }}
-          body: |
-            ## Changes in this Release
-            ${{ steps.changelog.outputs.changelog }}
-            
-            ## Docker Images
-            - Backend: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:v${{ steps.get_version.outputs.version }}`
-            - Daemon: `${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-daemon:v${{ steps.get_version.outputs.version }}`
-            
-            ## Installation
-            ```bash
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:v${{ steps.get_version.outputs.version }}
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-daemon:v${{ steps.get_version.outputs.version }}
-            ```
-          draft: false
-          prerelease: false
-
-  # ============================================================================
   # Build Production Images
   # ============================================================================
+  # Note: the GitHub Release object is created by release-please when the
+  # release PR is merged (see .github/workflows/release-please.yml). This
+  # workflow only builds, scans, deploys, and validates — it does not own
+  # the Release.
   build-production-images:
     name: Build Production Images
     runs-on: ubuntu-latest
-    needs: [create-release]
     permissions:
       contents: read
       packages: write

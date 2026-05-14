@@ -27,6 +27,12 @@ Vigil follows [Semantic Versioning](https://semver.org/).
 See "Chart version vs appVersion" below for why the chart's `version` is
 managed separately.
 
+The Python backend reads `VERSION` directly at import time (see
+`backend/__init__.py`), so the FastAPI app version, the
+`backend.__version__` attribute, and the `/health` endpoint's `version`
+field all stay in sync with `VERSION` automatically. No release-please
+configuration is needed for the backend.
+
 ## How a Release Happens
 
 Releases are driven by [release-please](https://github.com/googleapis/release-please).
@@ -35,8 +41,19 @@ automated.
 
 1. Every push to `main` runs `.github/workflows/release-please.yml`.
 2. release-please reads commits since the last tag and decides the next
-   version from Conventional Commit types (`feat:` → minor, `fix:` →
-   patch — see `CONTRIBUTING.md`).
+   version from [Conventional Commit](https://www.conventionalcommits.org/)
+   prefixes in commit messages on `main` (for squash-merged PRs, the PR
+   title becomes the commit — maintainers should adjust PR titles to
+   match the convention before squashing):
+
+   - `fix: ...` → patch bump (`0.1.0` → `0.1.1`)
+   - `feat: ...` → minor bump (`0.1.0` → `0.2.0`)
+   - `feat!: ...` or commits with `BREAKING CHANGE:` in the body → minor
+     bump while in `0.x`, major bump from `1.0.0` onward
+   - `docs:`, `chore:`, `refactor:`, `test:`, `perf:` appear in the
+     changelog but don't trigger a bump on their own
+   - Commits with no recognized prefix go under "Other" and don't
+     contribute to version selection
 3. It opens (or updates) a single **release PR** titled
    `chore(main): release X.Y.Z`. The PR bumps `VERSION`,
    `Chart.yaml` `appVersion`, `frontend/package.json` `version`, and
