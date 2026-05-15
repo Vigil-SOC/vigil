@@ -36,7 +36,7 @@ The workflows are currently configured for **Continuous Integration** only - the
 ### 3. `release.yml` - Tag-Triggered Production Pipeline
 - **Triggers**: Version tags (`v*.*.*`)
 - **Purpose**: Build production images, Trivy scan, deploy to production VMs, post-deploy validation. The GitHub Release object is created by `release-please.yml`, not this workflow.
-- **Deployment**: Disabled (would deploy to production VMs)
+- **Deployment**: Production (SSH to `PROD_VM_HOST` via `scripts/deploy_to_vm.sh production`, runs health checks, posts Slack notifications). Requires `SSH_PRIVATE_KEY`, `PROD_VM_HOST`, `PROD_VM_USER`, and `SLACK_WEBHOOK_URL` secrets.
 
 ### 4. `nightly.yml` - Scheduled Testing
 - **Triggers**: Daily at 2 AM UTC

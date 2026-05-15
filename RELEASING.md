@@ -82,6 +82,20 @@ chart itself changes — templates, values schema, dependencies.
 | Helm template fix, no app change    | unchanged    | bump manually   |
 | Both at once                        | bumps        | bump manually   |
 
+## GitHub App Setup
+
+The automated flow above depends on a GitHub App (referenced as
+`vars.RELEASE_PLEASE_APP_ID` and `secrets.RELEASE_PLEASE_PRIVATE_KEY` in
+`release-please.yml`) that mints short-lived tokens at runtime, no
+long-lived PATs, no per maintainer ownership. The App is **one time
+setup per fork**; once installed, day to day releases need no further
+configuration here.
+
+For initial setup or recreating the App, see
+[docs/RELEASE_SETUP.md](docs/RELEASE_SETUP.md), covers required
+permissions, App creation, `.pem` generation, and where to put the App
+ID and private key.
+
 ## Manual Release (fallback)
 
 If release-please is broken or unavailable, cut a release by hand:
