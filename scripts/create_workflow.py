@@ -29,6 +29,7 @@ AVAILABLE_AGENTS = [
     "compliance",
     "malware_analyst",
     "network_analyst",
+    "auto_responder",
 ]
 
 COMMON_TOOLS = [
