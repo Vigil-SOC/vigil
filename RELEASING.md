@@ -17,12 +17,13 @@ Vigil follows [Semantic Versioning](https://semver.org/).
 
 ## What Gets Versioned
 
-| File                     | Field        | Managed by release-please     |
-|--------------------------|--------------|-------------------------------|
-| `VERSION`                | (whole file) | yes                           |
-| `helm/vigil/Chart.yaml`  | `appVersion` | yes                           |
-| `frontend/package.json`  | `version`    | yes                           |
-| `helm/vigil/Chart.yaml`  | `version`    | **no** — bump manually in PR  |
+| File                          | Field                              | Managed by release-please     |
+|-------------------------------|------------------------------------|-------------------------------|
+| `VERSION`                     | (whole file)                       | yes                           |
+| `helm/vigil/Chart.yaml`       | `appVersion`                       | yes                           |
+| `frontend/package.json`       | `version`                          | yes                           |
+| `frontend/package-lock.json`  | `version` (root + `packages['']`)  | yes                           |
+| `helm/vigil/Chart.yaml`       | `version`                          | **no** — bump manually in PR  |
 
 See "Chart version vs appVersion" below for why the chart's `version` is
 managed separately.
