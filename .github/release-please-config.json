@@ -18,6 +18,16 @@
           "jsonpath": "$.version"
         },
         {
+          "type": "json",
+          "path": "frontend/package-lock.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "frontend/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        },
+        {
           "type": "yaml",
           "path": "helm/vigil/Chart.yaml",
           "jsonpath": "$.appVersion"

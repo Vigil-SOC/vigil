@@ -98,19 +98,37 @@ ID and private key.
 
 ## Manual Release (fallback)
 
-If release-please is broken or unavailable, cut a release by hand:
+If release-please is broken or unavailable, cut a release by hand. The
+manual flow must update **everything** release-please normally manages,
+including the manifest file that tracks the last-released version. If
+the manifest is not bumped, the next automated run reads its stale
+value, thinks the manual release never happened, and opens a release PR
+that overwrites it.
 
-1. Open a PR bumping `VERSION`, `Chart.yaml` `appVersion`, and
-   `frontend/package.json` `version`.
-2. Merge it.
+1. Open a PR bumping the version to the new release (e.g. `0.2.0`) in
+   all of the following:
+   - `VERSION`
+   - `helm/vigil/Chart.yaml` `appVersion`
+   - `frontend/package.json` `version`
+   - `frontend/package-lock.json` — both `$.version` and
+     `$.packages[''].version`
+   - `.github/.release-please-manifest.json` — set the `"."` entry to
+     the new version
+   - `CHANGELOG.md` — prepend a section with the new version, date, and
+     a summary of changes since the previous tag
+2. Merge the PR.
 3. Tag and push:
    ```bash
    git checkout main && git pull
    git tag -s v0.2.0 -m "Release v0.2.0"
    git push origin v0.2.0
    ```
-4. The tag push triggers `release.yml` as usual. Edit the GitHub Release
-   afterward to add notes if useful.
+4. The tag push triggers `release.yml` (build, scan, deploy).
+5. **Manually create the GitHub Release** at
+   [github.com/Vigil-SOC/vigil/releases/new](https://github.com/Vigil-SOC/vigil/releases/new),
+   selecting the tag you just pushed. release-please normally creates
+   this; in manual mode nothing else will. Use the `CHANGELOG.md`
+   section you wrote as the Release body.
 
 ## Future Improvements
 
