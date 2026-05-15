@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
@@ -32,14 +33,20 @@ def _cosine_sim(a, b):
 
 
 class DatabaseDataService:
+    # Minimum seconds between reconnection attempts when DB is unreachable.
+    # Without this, a Postgres outage during startup would trap the singleton
+    # in JSON-file fallback for the rest of the process lifetime.
+    _RECONNECT_INTERVAL_SECONDS = 10.0
+
     def __init__(self, require_db: bool = False):
         self._db_service = None
-        self._db_available = False
+        self._db_connected = False
         self._use_json_fallback = False
+        self._last_reconnect_attempt = 0.0
         self._demo_mode = is_demo_mode()
         self._demo_service = None
         self._s3_service = None
-        
+
         if self._demo_mode:
             logger.info("Demo mode enabled - using generated sample data")
             from services.demo_data_service import get_demo_service
@@ -47,7 +54,7 @@ class DatabaseDataService:
         else:
             self._init_database(require_db)
         DATA_DIR.mkdir(exist_ok=True)
-    
+
     def _init_database(self, require_db: bool = False):
         try:
             init_database(echo=False, create_tables=True)
@@ -55,14 +62,40 @@ class DatabaseDataService:
             if not db_manager.health_check():
                 raise DatabaseError("Database health check failed")
             self._db_service = DatabaseService()
-            self._db_available = True
-            logger.info("PostgreSQL connection established")
+            self._db_connected = True
+            if self._use_json_fallback:
+                logger.info("PostgreSQL reconnected - exiting JSON file fallback")
+                self._use_json_fallback = False
+            else:
+                logger.info("PostgreSQL connection established")
         except Exception as e:
+            self._db_connected = False
+            self._db_service = None
             logger.warning(f"PostgreSQL not available: {e}")
             if require_db:
                 raise DatabaseError(f"Failed to connect to PostgreSQL: {e}")
-            self._use_json_fallback = True
-            logger.info("Using JSON file fallback for data storage")
+            if not self._use_json_fallback:
+                self._use_json_fallback = True
+                logger.info("Using JSON file fallback for data storage")
+
+    @property
+    def _db_available(self) -> bool:
+        """True when the Postgres connection is healthy.
+
+        If currently disconnected, transparently retries `_init_database`
+        at most once per `_RECONNECT_INTERVAL_SECONDS` so the service
+        recovers automatically when Postgres becomes reachable again.
+        """
+        if self._db_connected:
+            return True
+        if self._demo_mode:
+            return False
+        now = time.monotonic()
+        if now - self._last_reconnect_attempt < self._RECONNECT_INTERVAL_SECONDS:
+            return False
+        self._last_reconnect_attempt = now
+        self._init_database(require_db=False)
+        return self._db_connected
     
     def is_using_database(self) -> bool:
         return self._db_available and self._db_service is not None
