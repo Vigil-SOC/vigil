@@ -23,9 +23,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from secrets_manager import delete_secret, get_secret, set_secret
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from backend.middleware.auth import get_current_active_user
+from backend.services.auth_service import AuthService
 from database.connection import get_db_session
-from database.models import LLMProviderConfig
+from database.models import LLMProviderConfig, User
 from services.bifrost_admin import push_provider_key
+from services.url_safety import UrlSafetyError, validate_provider_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,6 +51,51 @@ def _slugify(name: str) -> str:
 
 def _secret_ref_for(provider_id: str) -> str:
     return f"llm_provider_{provider_id}_api_key"
+
+
+def _require_settings_admin(current_user: User) -> None:
+    """Raise 403 unless the user has ``settings.write``.
+
+    Provider CRUD touches secrets and pushes them to Bifrost; the discover
+    and test endpoints make outbound HTTP requests that can be steered
+    by ``base_url``. Both gates are admin-only.
+    """
+    if not AuthService.check_permission(current_user.user_id, "settings.write"):
+        raise HTTPException(
+            status_code=403,
+            detail="Permission denied: settings.write required",
+        )
+
+
+def _validate_provider_base_url_shape(base_url: Optional[str]) -> None:
+    """Cheap shape-only validation for stored ``base_url``.
+
+    Admins legitimately persist loopback URLs for self-hosted Ollama or
+    private LLM gateways, so the SSRF IP gate doesn't apply here — it
+    runs at HTTP-request time inside the discovery/test helpers. We
+    still reject malformed inputs and obvious smuggling vectors (non-
+    http(s) scheme, userinfo, fragment) so they never reach disk.
+    """
+    if base_url is None or not base_url.strip():
+        return
+    from urllib.parse import urlparse
+
+    parsed = urlparse(base_url.strip())
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"base_url: scheme not allowed: {parsed.scheme or '(missing)'}",
+        )
+    if not parsed.hostname:
+        raise HTTPException(status_code=400, detail="base_url: missing host")
+    if parsed.username or parsed.password:
+        raise HTTPException(
+            status_code=400, detail="base_url: must not include userinfo"
+        )
+    if parsed.fragment:
+        raise HTTPException(
+            status_code=400, detail="base_url: must not include a fragment"
+        )
 
 
 class LLMProviderCreate(BaseModel):
@@ -146,7 +194,10 @@ def _schedule_catalog_resync(reason: str) -> None:
 
 @router.get("", response_model=List[LLMProviderResponse])
 @router.get("/", response_model=List[LLMProviderResponse])
-async def list_providers(db: Session = Depends(get_db_session)):
+async def list_providers(
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_active_user),
+):
     rows = db.query(LLMProviderConfig).order_by(LLMProviderConfig.created_at).all()
     return [_to_response(r) for r in rows]
 
@@ -154,9 +205,13 @@ async def list_providers(db: Session = Depends(get_db_session)):
 @router.post("", response_model=LLMProviderResponse, status_code=201)
 @router.post("/", response_model=LLMProviderResponse, status_code=201)
 async def create_provider(
-    payload: LLMProviderCreate, db: Session = Depends(get_db_session)
+    payload: LLMProviderCreate,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_active_user),
 ):
+    _require_settings_admin(current_user)
     _validate_type(payload.provider_type)
+    _validate_provider_base_url_shape(payload.base_url)
 
     provider_id = payload.provider_id or _slugify(payload.name)
     if db.get(LLMProviderConfig, provider_id) is not None:
@@ -200,7 +255,10 @@ async def update_provider(
     provider_id: str,
     payload: LLMProviderUpdate,
     db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_active_user),
 ):
+    _require_settings_admin(current_user)
+    _validate_provider_base_url_shape(payload.base_url)
     row = db.get(LLMProviderConfig, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
@@ -244,7 +302,12 @@ async def update_provider(
 
 
 @router.delete("/{provider_id}")
-async def delete_provider(provider_id: str, db: Session = Depends(get_db_session)):
+async def delete_provider(
+    provider_id: str,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_settings_admin(current_user)
     row = db.get(LLMProviderConfig, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
@@ -264,7 +327,12 @@ async def delete_provider(provider_id: str, db: Session = Depends(get_db_session
 
 
 @router.post("/{provider_id}/set-default", response_model=LLMProviderResponse)
-async def set_default_provider(provider_id: str, db: Session = Depends(get_db_session)):
+async def set_default_provider(
+    provider_id: str,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_settings_admin(current_user)
     row = db.get(LLMProviderConfig, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
@@ -282,7 +350,12 @@ async def _resolve_api_key(row: LLMProviderConfig) -> Optional[str]:
 
 
 @router.post("/{provider_id}/test")
-async def test_provider(provider_id: str, db: Session = Depends(get_db_session)):
+async def test_provider(
+    provider_id: str,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_settings_admin(current_user)
     row = db.get(LLMProviderConfig, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
@@ -294,26 +367,67 @@ async def test_provider(provider_id: str, db: Session = Depends(get_db_session))
 
     try:
         if row.provider_type == "ollama":
-            base_url = row.base_url or "http://localhost:11434"
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            raw_base = row.base_url or "http://localhost:11434"
+            # Ollama is the legitimate self-hosted provider, so an admin
+            # who has saved a loopback URL is allowed to test it. We
+            # still parse and sanitize to drop query string / userinfo
+            # and reject non-http(s) schemes.
+            from urllib.parse import urlparse, urlunparse
+
+            parsed = urlparse(raw_base.strip())
+            if parsed.scheme not in ("http", "https"):
+                raise RuntimeError(f"scheme not allowed: {parsed.scheme}")
+            if parsed.username or parsed.password or parsed.fragment:
+                raise RuntimeError(
+                    "ollama base_url must not include userinfo or fragment"
+                )
+            base_url = urlunparse(
+                (
+                    parsed.scheme,
+                    parsed.netloc.split("@")[-1],
+                    parsed.path or "",
+                    "",
+                    "",
+                    "",
+                )
+            )
+            async with httpx.AsyncClient(
+                timeout=10.0, follow_redirects=False
+            ) as client:
                 resp = await client.get(f"{base_url.rstrip('/')}/api/tags")
                 resp.raise_for_status()
                 success = True
         elif row.provider_type == "openai":
-            base_url = row.base_url or "https://api.openai.com/v1"
+            try:
+                safe = validate_provider_url(
+                    row.base_url or "https://api.openai.com/v1",
+                    allow_custom=True,
+                )
+            except UrlSafetyError as exc:
+                raise RuntimeError(f"invalid base_url: {exc}") from exc
+            base_url = safe.sanitized
             key = await _resolve_api_key(row)
             if not key:
                 raise RuntimeError("no api key configured")
-            headers = {"Authorization": f"Bearer {key}"}
-            if row.config and row.config.get("organization"):
-                headers["OpenAI-Organization"] = row.config["organization"]
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            headers: Dict[str, str] = {}
+            if safe.is_allowlisted_host:
+                headers["Authorization"] = f"Bearer {key}"
+                if row.config and row.config.get("organization"):
+                    headers["OpenAI-Organization"] = row.config["organization"]
+            async with httpx.AsyncClient(
+                timeout=15.0, follow_redirects=False
+            ) as client:
                 resp = await client.get(
                     f"{base_url.rstrip('/')}/models", headers=headers
                 )
                 resp.raise_for_status()
                 success = True
         elif row.provider_type == "anthropic":
+            if row.base_url:
+                try:
+                    validate_provider_url(row.base_url, allow_custom=True)
+                except UrlSafetyError as exc:
+                    raise RuntimeError(f"invalid base_url: {exc}") from exc
             key = await _resolve_api_key(row)
             if not key:
                 raise RuntimeError("no api key configured")
@@ -360,14 +474,21 @@ class DiscoverModelsRequest(BaseModel):
 
 
 @router.post("/discover-models")
-async def discover_models(req: DiscoverModelsRequest):
+async def discover_models(
+    req: DiscoverModelsRequest,
+    current_user: User = Depends(get_current_active_user),
+):
     """Pre-save model discovery for the Add Provider dialog.
 
-    Delegates to ``services.provider_model_discovery``. Returns a flat
-    list of model IDs (unchanged contract). For Anthropic, falls back
-    to the hard-coded cold-boot list when no key is supplied so the
-    dialog still has something to render.
+    Admin-only because it makes an outbound HTTP request whose target
+    is influenced by the request body (``base_url``). The URL is run
+    through :func:`services.url_safety.validate_provider_url` inside
+    each discovery helper, but we also require the caller to be an
+    authenticated admin so a stolen session is the only path to even
+    reach that validation.
     """
+    _require_settings_admin(current_user)
+
     if req.provider_type not in VALID_PROVIDER_TYPES:
         raise HTTPException(
             status_code=400,
@@ -395,7 +516,14 @@ async def discover_models(req: DiscoverModelsRequest):
                 organization=req.organization,
             )
         else:  # ollama
-            meta = await discovery.fetch_ollama_models(req.base_url)
+            # Admin opted in to a self-hosted Ollama URL — loopback is
+            # the legitimate default. The non-admin route never gets
+            # here (the admin check above gates the entire handler).
+            meta = await discovery.fetch_ollama_models(
+                req.base_url, allow_loopback=True
+            )
+    except UrlSafetyError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except httpx.HTTPStatusError as e:
         raise HTTPException(
             status_code=e.response.status_code,
@@ -412,7 +540,11 @@ async def discover_models(req: DiscoverModelsRequest):
 
 
 @router.get("/{provider_id}/models")
-async def list_models(provider_id: str, db: Session = Depends(get_db_session)):
+async def list_models(
+    provider_id: str,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_active_user),
+):
     row = db.get(LLMProviderConfig, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
@@ -431,12 +563,15 @@ async def list_models(provider_id: str, db: Session = Depends(get_db_session)):
 
 @router.post("/{provider_id}/refresh-models")
 async def refresh_provider_models(
-    provider_id: str, db: Session = Depends(get_db_session)
+    provider_id: str,
+    db: Session = Depends(get_db_session),
+    current_user: User = Depends(get_current_active_user),
 ):
     """Force a live rediscovery for one provider and push the union of
     same-type providers' models to Bifrost's allow-list. Invalidates the
     registry's TTL cache so the next dropdown fetch sees fresh data.
     """
+    _require_settings_admin(current_user)
     row = db.get(LLMProviderConfig, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
@@ -464,11 +599,14 @@ async def refresh_provider_models(
 
 
 @router.post("/refresh-models")
-async def refresh_all_provider_models():
+async def refresh_all_provider_models(
+    current_user: User = Depends(get_current_active_user),
+):
     """Force live rediscovery across every active provider and push the
     resulting allow-lists to Bifrost. Useful after enabling a new
     provider or rotating keys in bulk.
     """
+    _require_settings_admin(current_user)
     from services.bifrost_admin import sync_all_provider_models
     from services.model_registry import invalidate_model_cache
 

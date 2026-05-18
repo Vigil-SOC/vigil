@@ -102,6 +102,7 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: CustomInte
     try {
       const response = await fetch('http://localhost:6987/api/custom-integrations/generate', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -165,6 +166,7 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: CustomInte
       // First save the integration temporarily
       const saveResponse = await fetch('http://localhost:6987/api/custom-integrations/save', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -184,6 +186,7 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: CustomInte
         `http://localhost:6987/api/custom-integrations/${generatedIntegration.integration_id}/validate`,
         {
           method: 'POST',
+          credentials: 'include',
         }
       )
 
@@ -210,6 +213,7 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: CustomInte
     try {
       const response = await fetch('http://localhost:6987/api/custom-integrations/save', {
         method: 'POST',
+        credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
