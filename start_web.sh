@@ -183,7 +183,29 @@ if command -v docker &> /dev/null; then
         sleep 2
         echo "✓ Redis started"
     fi
-    
+
+    # Start Bifrost (LLM gateway — single path for all model traffic).
+    # Issue #292: without this, the backend's Anthropic SDK is pointed at
+    # http://bifrost:8080/anthropic and any chat call dies on a connection
+    # error to a host that isn't running. Bring it up alongside Postgres
+    # and Redis so a fresh dev install just works.
+    if docker ps --format '{{.Names}}' | grep -q "deeptempo-bifrost"; then
+        echo "✓ Bifrost is already running"
+    else
+        echo "Starting Bifrost (LLM gateway)..."
+        cd docker
+        $DOCKER_COMPOSE up -d bifrost
+        cd ..
+        echo "✓ Bifrost started"
+    fi
+    # The container publishes :8080 to the host; native uvicorn can't
+    # resolve the docker-internal hostname `bifrost`. If the user hasn't
+    # explicitly set BIFROST_URL, point at the host-published port.
+    if [ -z "${BIFROST_URL+x}" ] || [ "${BIFROST_URL}" = "http://bifrost:8080" ]; then
+        export BIFROST_URL="http://localhost:8080"
+        echo "✓ BIFROST_URL set to ${BIFROST_URL} for native run"
+    fi
+
     # Initialize database schema (SQLAlchemy Base.metadata.create_all)
     # Runs BEFORE init_default_user.py because user/role tables and all
     # case_* tables must exist before any bootstrap or API query.
@@ -253,7 +275,7 @@ cleanup() {
     echo "✓ Servers stopped"
     echo ""
     echo "Database and Redis are still running. To stop:"
-    echo "  cd docker && $DOCKER_COMPOSE stop postgres redis"
+    echo "  cd docker && $DOCKER_COMPOSE stop postgres redis bifrost"
     exit 0
 }
 

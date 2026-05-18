@@ -315,10 +315,17 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
     def _load_api_key(self) -> bool:
         """Load API key from secure storage.
 
-        When ``provider_api_key_ref`` is set (GH #88), the secret named by
-        that ref is tried first. This lets LLMRouter instantiate ClaudeService
-        with a non-default Anthropic provider row. Falls back to the legacy
-        CLAUDE_API_KEY / ANTHROPIC_API_KEY chain for backward compatibility.
+        Resolution order:
+
+        1. ``provider_api_key_ref`` when explicitly passed at init (GH #88).
+        2. Legacy ``CLAUDE_API_KEY`` / ``ANTHROPIC_API_KEY`` env / secret names.
+        3. UI-saved Anthropic provider rows in ``llm_provider_configs``.
+
+        Step 3 was the missing piece behind the "Claude API not configured"
+        chat-drawer error reported when users configured Anthropic only
+        through Settings → AI / LLM Providers: that path writes the key to
+        ``llm_provider_<id>_api_key`` (see ``backend/api/llm_providers.py``)
+        — not to the legacy names this method used to check.
         """
         try:
             # Use secrets manager with fallback to legacy names
@@ -334,6 +341,18 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                 or get_secret("claude_api_key")
                 or get_secret("anthropic_api_key")
             )
+
+            # Fallback: pick up keys saved by the LLM Providers UI. Lazy
+            # import keeps the legacy/no-DB code path (and the unit tests
+            # that pre-date this fallback) working when database.connection
+            # isn't importable.
+            if not self.api_key:
+                try:
+                    from services.llm_router import discover_anthropic_api_key
+
+                    self.api_key = discover_anthropic_api_key()
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("UI-provider key discovery skipped: %s", exc)
 
             if self.api_key and ANTHROPIC_AVAILABLE:
                 # Set longer timeout for operations that may take more than 10 minutes

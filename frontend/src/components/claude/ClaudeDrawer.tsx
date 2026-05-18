@@ -646,18 +646,34 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       // sees "budget exceeded — tier: virtual_key" instead of a generic
       // error toast. Backend builds this body in backend/api/claude.py's
       // chat handler.
+      //
+      // #292: same pattern for "no LLM provider configured" — backend
+      // returns 503 with detail.code == 'no_llm_provider_configured'
+      // and a settings_path. We render an actionable line that points
+      // users at Settings → AI / LLM Providers instead of a bare
+      // "Error: ..." bubble.
       const detail = e?.response?.data?.detail
       const isBudgetBlock =
         e?.response?.status === 402 &&
         detail &&
         typeof detail === 'object' &&
         detail.code === 'budget_exceeded'
-      const userMessage = isBudgetBlock
-        ? `⚠️ LLM budget exceeded (tier: **${detail.tier || 'unknown'}**). ${
-            detail.message ||
-            'Bifrost rejected the call upstream of the model. Update the budget in Settings → LLM Providers → Budgets, or set DEV_MODE / LLM_BUDGET_UNLIMITED to bypass.'
-          }`
-        : `Error: ${typeof detail === 'string' ? detail : detail?.message || e?.message || 'Failed'}`
+      const isMissingProvider =
+        e?.response?.status === 503 &&
+        detail &&
+        typeof detail === 'object' &&
+        detail.code === 'no_llm_provider_configured'
+      let userMessage: string
+      if (isBudgetBlock) {
+        userMessage = `⚠️ LLM budget exceeded (tier: **${detail.tier || 'unknown'}**). ${
+          detail.message ||
+          'Bifrost rejected the call upstream of the model. Update the budget in Settings → LLM Providers → Budgets, or set DEV_MODE / LLM_BUDGET_UNLIMITED to bypass.'
+        }`
+      } else if (isMissingProvider) {
+        userMessage = `🔌 ${detail.message || 'No LLM provider configured.'} Open **Settings → AI / LLM Providers** to add one.`
+      } else {
+        userMessage = `Error: ${typeof detail === 'string' ? detail : detail?.message || e?.message || 'Failed'}`
+      }
       setTabs(prevTabs => {
         const updatedTabs = [...prevTabs]
         updatedTabs[currentTab] = {

@@ -357,10 +357,9 @@ async def get_or_generate_enrichment(finding_id: str, force_regenerate: bool = Q
         
         # Check if API key is configured
         if not claude_service.has_api_key():
-            raise HTTPException(
-                status_code=503, 
-                detail="Claude API not configured. AI enrichment requires Claude API key."
-            )
+            from backend.api.claude import NO_PROVIDER_DETAIL
+
+            raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
         
         # Extract finding details (use `or` to guard against keys present with None values)
         severity = finding.get('severity') or 'unknown'

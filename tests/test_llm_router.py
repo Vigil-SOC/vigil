@@ -23,7 +23,6 @@ from services.llm_router import (
     select_path,
 )
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -86,9 +85,8 @@ def test_path_ollama_always_uses_bifrost():
 def test_router_class_method_matches_free_function():
     spec = _anthropic_spec()
     router = LLMRouter()
-    assert (
-        router.select_path(spec, enable_thinking=True)
-        == select_path(spec, enable_thinking=True)
+    assert router.select_path(spec, enable_thinking=True) == select_path(
+        spec, enable_thinking=True
     )
 
 
@@ -102,9 +100,7 @@ async def test_dispatch_bifrost_for_ollama():
     router = LLMRouter(bifrost_url="http://test-bifrost:8080")
     fake_resp = SimpleNamespace(
         choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(content="hello", tool_calls=None)
-            )
+            SimpleNamespace(message=SimpleNamespace(content="hello", tool_calls=None))
         ],
         model="ollama/llama3.1:8b",
         usage=SimpleNamespace(prompt_tokens=5, completion_tokens=7),
@@ -165,9 +161,9 @@ async def test_dispatch_anthropic_with_thinking_routes_through_bifrost():
 
     # Router builds its Anthropic client via services.llm_clients.create_async_anthropic_client,
     # which in turn instantiates anthropic.AsyncAnthropic with base_url=<bifrost>/anthropic.
-    with patch("anthropic.AsyncAnthropic", return_value=mock_client) as ac_ctor, \
-         patch("services.llm_router.get_secret", return_value="sk-ant-fake"), \
-         patch.dict("os.environ", {"BIFROST_URL": "http://test-bifrost:8080"}):
+    with patch("anthropic.AsyncAnthropic", return_value=mock_client) as ac_ctor, patch(
+        "services.llm_router.get_secret", return_value="sk-ant-fake"
+    ), patch.dict("os.environ", {"BIFROST_URL": "http://test-bifrost:8080"}):
         out = await router.dispatch(
             provider=_anthropic_spec(),
             messages=[{"role": "user", "content": "ponder"}],
@@ -206,9 +202,7 @@ async def test_dispatch_bifrost_openai_extracts_cache_read_tokens():
     router = LLMRouter(bifrost_url="http://test-bifrost:8080")
     fake_resp = SimpleNamespace(
         choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(content="cached!", tool_calls=None)
-            )
+            SimpleNamespace(message=SimpleNamespace(content="cached!", tool_calls=None))
         ],
         model="openai/gpt-4o",
         usage=SimpleNamespace(
@@ -266,7 +260,9 @@ async def test_dispatch_propagates_interaction_id_as_bifrost_log_header_openai()
     captured into LogEntry.metadata."""
     router = LLMRouter(bifrost_url="http://test-bifrost:8080")
     fake_resp = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))
+        ],
         model="openai/gpt-4o-mini",
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
     )
@@ -292,7 +288,9 @@ async def test_dispatch_omits_extra_headers_when_no_interaction_id():
     accidentally inject empty headers into every call."""
     router = LLMRouter(bifrost_url="http://test-bifrost:8080")
     fake_resp = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))
+        ],
         model="openai/gpt-4o-mini",
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
     )
@@ -327,8 +325,9 @@ async def test_dispatch_propagates_interaction_id_anthropic():
     mock_client.messages.create = AsyncMock(return_value=fake_resp)
 
     interaction_id = "uuid-bbbb-2222"
-    with patch("anthropic.AsyncAnthropic", return_value=mock_client), \
-         patch("services.llm_router.get_secret", return_value="sk-ant-fake"):
+    with patch("anthropic.AsyncAnthropic", return_value=mock_client), patch(
+        "services.llm_router.get_secret", return_value="sk-ant-fake"
+    ):
         await router.dispatch(
             provider=_anthropic_spec(),
             messages=[{"role": "user", "content": "hi"}],
@@ -347,16 +346,18 @@ async def test_dispatch_attaches_vk_header_when_budget_enforce_active():
     governance layer enforces the budget upstream of the call."""
     router = LLMRouter(bifrost_url="http://test-bifrost:8080")
     fake_resp = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))
+        ],
         model="openai/gpt-4o-mini",
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
     )
     mock_client = MagicMock()
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
-    with patch("openai.AsyncOpenAI", return_value=mock_client), \
-         patch("services.budget_service.should_enforce", return_value=True), \
-         patch("services.budget_service.get_active_vk", return_value="sk-bf-test-vk"):
+    with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
+        "services.budget_service.should_enforce", return_value=True
+    ), patch("services.budget_service.get_active_vk", return_value="sk-bf-test-vk"):
         await router.dispatch(
             provider=_openai_spec(),
             messages=[{"role": "user", "content": "hi"}],
@@ -373,16 +374,18 @@ async def test_dispatch_omits_vk_header_when_enforcement_off():
     don't attach x-bf-vk so Bifrost's bootstrap (no-VK) path applies."""
     router = LLMRouter(bifrost_url="http://test-bifrost:8080")
     fake_resp = SimpleNamespace(
-        choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))
+        ],
         model="openai/gpt-4o-mini",
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
     )
     mock_client = MagicMock()
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
-    with patch("openai.AsyncOpenAI", return_value=mock_client), \
-         patch("services.budget_service.should_enforce", return_value=False), \
-         patch("services.budget_service.get_active_vk", return_value="sk-bf-test-vk"):
+    with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
+        "services.budget_service.should_enforce", return_value=False
+    ), patch("services.budget_service.get_active_vk", return_value="sk-bf-test-vk"):
         await router.dispatch(
             provider=_openai_spec(),
             messages=[{"role": "user", "content": "hi"}],
@@ -409,9 +412,9 @@ async def test_dispatch_translates_402_into_budget_exceeded():
     mock_client = MagicMock()
     mock_client.chat.completions.create = AsyncMock(side_effect=raise_err)
 
-    with patch("openai.AsyncOpenAI", return_value=mock_client), \
-         patch("services.budget_service.should_enforce", return_value=True), \
-         patch("services.budget_service.get_active_vk", return_value="sk-bf-test"):
+    with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
+        "services.budget_service.should_enforce", return_value=True
+    ), patch("services.budget_service.get_active_vk", return_value="sk-bf-test"):
         with pytest.raises(BudgetExceeded) as excinfo:
             await router.dispatch(
                 provider=_openai_spec(),
@@ -472,8 +475,9 @@ async def test_dispatch_does_not_swallow_non_budget_errors():
 @pytest.mark.asyncio
 async def test_anthropic_dispatch_raises_when_no_key():
     router = LLMRouter()
-    with patch("services.llm_router.get_secret", return_value=None), \
-         patch.dict("os.environ", {"ANTHROPIC_API_KEY": "", "CLAUDE_API_KEY": ""}, clear=False):
+    with patch("services.llm_router.get_secret", return_value=None), patch.dict(
+        "os.environ", {"ANTHROPIC_API_KEY": "", "CLAUDE_API_KEY": ""}, clear=False
+    ):
         with pytest.raises(RuntimeError, match="no resolvable API key"):
             await router.dispatch(
                 provider=_anthropic_spec(),
@@ -556,12 +560,19 @@ async def test_non_default_anthropic_with_thinking_dispatches_via_router(monkeyp
 
     mock_router = MagicMock()
     mock_router.select_path = MagicMock(return_value="bifrost")
-    mock_router.dispatch = AsyncMock(return_value={
-        "content": "ok", "path": "bifrost", "provider": "anthropic",
-        "input_tokens": 1, "output_tokens": 1, "model": "x",
-    })
+    mock_router.dispatch = AsyncMock(
+        return_value={
+            "content": "ok",
+            "path": "bifrost",
+            "provider": "anthropic",
+            "input_tokens": 1,
+            "output_tokens": 1,
+            "model": "x",
+        }
+    )
 
     import asyncio
+
     ctx = {
         "llm_router": mock_router,
         "rate_limiter": asyncio.Semaphore(1),
@@ -617,6 +628,7 @@ async def test_default_anthropic_with_thinking_still_falls_back():
     mock_router.dispatch = AsyncMock()
 
     import asyncio
+
     ctx = {
         "llm_router": mock_router,
         "rate_limiter": asyncio.Semaphore(1),
@@ -657,3 +669,87 @@ def test_provider_spec_from_row_copies_fields():
     assert spec.api_key_ref == "ref"
     assert spec.default_model == "gpt-4o"
     assert spec.config == {"organization": "o"}
+    assert spec.config == {"organization": "o"}
+
+
+# ---------------------------------------------------------------------------
+# discover_anthropic_api_key — fallback path so the chat drawer works for
+# users who only configured Anthropic through the Settings UI (#292).
+# ---------------------------------------------------------------------------
+
+
+def _stub_session(rows):
+    """Build a fake SQLAlchemy session that returns *rows* from .query(...).all()."""
+    session = MagicMock()
+    chain = session.query.return_value.filter.return_value.order_by.return_value
+    chain.all.return_value = rows
+    return session
+
+
+def test_discover_anthropic_api_key_returns_secret_for_default_row():
+    from services import llm_router
+
+    default_row = SimpleNamespace(
+        provider_id="anthropic-default",
+        api_key_ref="llm_provider_anthropic-default_api_key",
+    )
+    session = _stub_session([default_row])
+
+    with patch.object(llm_router, "get_secret", return_value="sk-ant-ui-saved"), patch(
+        "database.connection.get_db_session", return_value=session
+    ):
+        assert llm_router.discover_anthropic_api_key() == "sk-ant-ui-saved"
+
+
+def test_discover_anthropic_api_key_falls_through_to_active_row():
+    """If the default row's secret is missing, the next active row wins."""
+    from services import llm_router
+
+    default_row = SimpleNamespace(
+        provider_id="anthropic-default",
+        api_key_ref="llm_provider_anthropic-default_api_key",
+    )
+    other_row = SimpleNamespace(
+        provider_id="anthropic-team",
+        api_key_ref="llm_provider_anthropic-team_api_key",
+    )
+    session = _stub_session([default_row, other_row])
+
+    def fake_get_secret(ref):
+        # Default row's secret missing; team's secret resolves.
+        return None if "default" in ref else "sk-ant-team-key"
+
+    with patch.object(llm_router, "get_secret", side_effect=fake_get_secret), patch(
+        "database.connection.get_db_session", return_value=session
+    ):
+        assert llm_router.discover_anthropic_api_key() == "sk-ant-team-key"
+
+
+def test_discover_anthropic_api_key_returns_none_when_no_rows():
+    from services import llm_router
+
+    session = _stub_session([])
+    with patch.object(llm_router, "get_secret", return_value=None), patch(
+        "database.connection.get_db_session", return_value=session
+    ):
+        assert llm_router.discover_anthropic_api_key() is None
+
+
+def test_discover_anthropic_api_key_returns_none_when_db_unavailable():
+    """DB import error => silent None, so the legacy chain stays usable
+    in environments where database.connection can't import."""
+    from services import llm_router
+
+    # Patch ``get_db_session`` to raise on import. Easiest: make the
+    # entire ``database.connection`` import fail by patching builtins.
+    import builtins
+
+    real_import = builtins.__import__
+
+    def boom_import(name, *args, **kwargs):
+        if name == "database.connection":
+            raise ImportError("simulated")
+        return real_import(name, *args, **kwargs)
+
+    with patch.object(builtins, "__import__", side_effect=boom_import):
+        assert llm_router.discover_anthropic_api_key() is None

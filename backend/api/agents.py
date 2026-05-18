@@ -269,7 +269,9 @@ Use the get_case tool first to retrieve full details, then investigate all assoc
         )
         
         if not claude_service.has_api_key():
-            raise HTTPException(status_code=503, detail="Claude API not configured")
+            from backend.api.claude import NO_PROVIDER_DETAIL
+
+            raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
         
         # Build allowed tools: combine agent's recommended tools with
         # dynamically discovered MCP tools from the registry

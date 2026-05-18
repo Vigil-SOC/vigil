@@ -184,6 +184,21 @@ if command -v docker &> /dev/null; then
         echo "✓ Redis started"
     fi
 
+    # Start Bifrost (LLM gateway — see issue #292).
+    if docker ps --format '{{.Names}}' | grep -q "deeptempo-bifrost"; then
+        echo "✓ Bifrost is already running"
+    else
+        echo "Starting Bifrost (LLM gateway)..."
+        cd docker
+        $DOCKER_COMPOSE up -d bifrost
+        cd ..
+        echo "✓ Bifrost started"
+    fi
+    if [ -z "${BIFROST_URL+x}" ] || [ "${BIFROST_URL}" = "http://bifrost:8080" ]; then
+        export BIFROST_URL="http://localhost:8080"
+        echo "✓ BIFROST_URL set to ${BIFROST_URL} for native run"
+    fi
+
     # Initialize default admin user
     echo ""
     echo "Initializing default admin user..."

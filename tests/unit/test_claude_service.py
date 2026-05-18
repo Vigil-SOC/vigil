@@ -68,6 +68,45 @@ class TestClaudeServiceInitialization:
         assert service.client is None
         assert service.async_client is None
 
+    @patch('services.llm_router.discover_anthropic_api_key')
+    @patch('services.claude_service.get_secret')
+    def test_init_discovers_ui_saved_key(self, mock_get_secret, mock_discover):
+        """Issue #292: when neither CLAUDE_API_KEY nor ANTHROPIC_API_KEY
+        is set in secrets/env, ClaudeService falls back to looking up an
+        Anthropic provider row in llm_provider_configs (the UI-saved
+        path) and reads its api_key_ref from the secrets manager.
+
+        Before this fix, a user who configured Anthropic only through
+        Settings → AI / LLM Providers got "Claude API not configured" in
+        the chat drawer because _load_api_key only checked the legacy
+        env/secret names.
+        """
+        # Legacy lookups all return None — simulates the user who only
+        # added a provider through the UI and never touched .env.
+        mock_get_secret.return_value = None
+        mock_discover.return_value = "sk-ant-ui-saved-key"
+
+        service = ClaudeService()
+
+        assert service.api_key == "sk-ant-ui-saved-key"
+        # Discovery should only be tried after the legacy chain comes up empty.
+        assert mock_discover.call_count == 1
+
+    @patch('services.llm_router.discover_anthropic_api_key')
+    @patch('services.claude_service.get_secret')
+    def test_init_does_not_call_discovery_when_legacy_key_present(
+        self, mock_get_secret, mock_discover
+    ):
+        """If CLAUDE_API_KEY is already in the secrets chain, the
+        UI-provider fallback is skipped — no spurious DB lookups on the
+        hot path."""
+        mock_get_secret.return_value = "sk-ant-legacy-env-key"
+
+        service = ClaudeService()
+
+        assert service.api_key == "sk-ant-legacy-env-key"
+        mock_discover.assert_not_called()
+
     # ------------------------------------------------------------------
     # MCP tools cache loading tests
     # ------------------------------------------------------------------

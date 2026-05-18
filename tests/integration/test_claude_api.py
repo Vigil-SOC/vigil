@@ -150,7 +150,13 @@ class TestChatEndpoint:
             )
 
             assert response.status_code == 503
-            assert "not configured" in response.json()["detail"].lower()
+            # #292: the 503 detail is now a structured payload the chat
+            # drawer renders as a CTA, not a bare string.
+            detail = response.json()["detail"]
+            assert isinstance(detail, dict)
+            assert detail["code"] == "no_llm_provider_configured"
+            assert "settings_path" in detail
+            assert "settings" in detail["message"].lower()
 
     def test_chat_endpoint_with_agent_id(self, test_client, mock_claude_service):
         """Test chat request with agent_id."""

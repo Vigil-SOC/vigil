@@ -333,7 +333,9 @@ class LLMRouter:
                 if vk:
                     extra_headers["x-bf-vk"] = vk
         except Exception as _be:
-            logger.debug("budget_service unavailable (%s); proceeding without x-bf-vk", _be)
+            logger.debug(
+                "budget_service unavailable (%s); proceeding without x-bf-vk", _be
+            )
         # Convert empty dict back to None so the dispatch helpers can use a
         # truthy check for "should I send any extra headers" without leaking
         # an empty dict into the SDK call.
@@ -560,5 +562,63 @@ def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
         if row is None:
             return None
         return provider_spec_from_row(row)
+    finally:
+        session.close()
+
+
+def discover_anthropic_api_key() -> Optional[str]:
+    """Resolve an Anthropic API key from the UI-saved provider rows.
+
+    Looks up rows in ``llm_provider_configs`` (the table populated by the
+    Settings → AI / LLM Providers UI) and resolves the secret each row
+    points at via ``api_key_ref``. Preference order:
+
+    1. The default Anthropic provider row.
+    2. Any active Anthropic row that has an ``api_key_ref`` set.
+
+    Returns ``None`` if the DB is unreachable, no Anthropic provider has
+    been configured via the UI, or the referenced secret is missing.
+
+    Callers should use this as a fallback after the legacy
+    ``CLAUDE_API_KEY`` / ``ANTHROPIC_API_KEY`` chain. The point is that
+    a user who configured Anthropic via the UI shouldn't get a
+    ``"Claude API not configured"`` error from chat endpoints just
+    because those endpoints went through ``ClaudeService`` instead of
+    ``LLMRouter``.
+    """
+    if get_secret is None:
+        return None
+    try:
+        from database.connection import get_db_session
+        from database.models import LLMProviderConfig
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("anthropic key discovery: DB unavailable (%s)", exc)
+        return None
+
+    session = get_db_session()
+    try:
+        # Default-active first, then any active row with a key ref.
+        candidates = (
+            session.query(LLMProviderConfig)
+            .filter(
+                LLMProviderConfig.provider_type == "anthropic",
+                LLMProviderConfig.is_active.is_(True),
+                LLMProviderConfig.api_key_ref.isnot(None),
+            )
+            .order_by(LLMProviderConfig.is_default.desc())
+            .all()
+        )
+        for row in candidates:
+            value = get_secret(row.api_key_ref)
+            if value:
+                logger.debug(
+                    "Resolved Anthropic API key from provider row %s",
+                    row.provider_id,
+                )
+                return value
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("anthropic key discovery failed: %s", exc)
+        return None
     finally:
         session.close()

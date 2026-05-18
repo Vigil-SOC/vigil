@@ -23,6 +23,24 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+# Structured payload returned when no Anthropic provider is configured.
+# The chat drawer matches on ``code`` and renders a "Configure a provider"
+# CTA instead of a generic ``Error: ...`` bubble.
+NO_PROVIDER_DETAIL: Dict[str, str] = {
+    "code": "no_llm_provider_configured",
+    "message": (
+        "No Anthropic LLM provider is configured. "
+        "Add one in Settings → AI / LLM Providers, then try again."
+    ),
+    "settings_path": "/settings#llm-providers",
+}
+
+
+def _raise_no_provider() -> None:
+    """Raise the canonical 503 for an unconfigured chat backend."""
+    raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
+
+
 def _resolve_model_for_request(
     requested_model: Optional[str], agent_id: Optional[str]
 ) -> str:
@@ -213,7 +231,7 @@ async def chat(request: ChatRequest):
     )
 
     if not claude_service.has_api_key():
-        raise HTTPException(status_code=503, detail="Claude API not configured")
+        _raise_no_provider()
 
     try:
         # Convert messages to format expected by Claude
@@ -491,7 +509,7 @@ async def chat_stream(request: ChatRequest):
 
     # Check if API key is configured (works for both implementations)
     if not claude_service.has_api_key():
-        raise HTTPException(status_code=503, detail="Claude API not configured")
+        _raise_no_provider()
 
     async def generate():
         try:
@@ -669,7 +687,7 @@ async def websocket_chat(websocket: WebSocket):
 
     # Check if API key is configured (works for both implementations)
     if not claude_service.has_api_key():
-        await websocket.send_json({"error": "Claude API not configured"})
+        await websocket.send_json({"error": NO_PROVIDER_DETAIL})
         await websocket.close()
         return
 
@@ -806,7 +824,7 @@ async def summarize_conversation(request: SummarizeRequest):
     claude_service = ClaudeService(use_backend_tools=False, enable_thinking=False)
 
     if not claude_service.has_api_key():
-        raise HTTPException(status_code=503, detail="Claude API not configured")
+        _raise_no_provider()
 
     # Build a flat text representation of the conversation
     conversation_text = []
@@ -937,7 +955,7 @@ async def run_agent_task(request: AgentTaskRequest):
     claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
 
     if not claude_service.has_api_key():
-        raise HTTPException(status_code=503, detail="Claude API not configured")
+        _raise_no_provider()
 
     try:
         result = await claude_service.run_agent_task(
@@ -999,7 +1017,7 @@ async def stream_agent_task(request: AgentTaskRequest):
     claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
 
     if not claude_service.has_api_key():
-        raise HTTPException(status_code=503, detail="Claude API not configured")
+        _raise_no_provider()
 
     async def generate():
         try:
@@ -1039,9 +1057,7 @@ async def websocket_agent(websocket: WebSocket):
     claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
 
     if not claude_service.has_api_key():
-        await websocket.send_json(
-            {"type": "error", "content": "Claude API not configured"}
-        )
+        await websocket.send_json({"type": "error", "content": NO_PROVIDER_DETAIL})
         await websocket.close()
         return
 
@@ -1184,7 +1200,7 @@ async def analyze_finding(finding_id: str, context: Optional[str] = None):
 
     # Check if API key is configured (works for both implementations)
     if not claude_service.has_api_key():
-        raise HTTPException(status_code=503, detail="Claude API not configured")
+        _raise_no_provider()
 
     # Construct analysis prompt
     prompt = f"""Please analyze this security finding:
