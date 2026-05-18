@@ -82,6 +82,47 @@ PROTECTED_ROUTES = [
         "/api/integrations/compatibility/install",
         {"integration_id": "misp"},
     ),
+    ("GET", "/api/claude/sdk-status", None),
+    ("GET", "/api/claude/models", None),
+    (
+        "POST",
+        "/api/claude/chat",
+        {
+            "messages": [{"role": "user", "content": "auth gate test"}],
+            "max_tokens": 1,
+            "enable_thinking": False,
+            "streaming": False,
+            "use_agent_sdk": False,
+        },
+    ),
+    (
+        "POST",
+        "/api/claude/chat/stream",
+        {
+            "messages": [{"role": "user", "content": "auth gate test"}],
+            "max_tokens": 1,
+        },
+    ),
+    (
+        "POST",
+        "/api/claude/agent/task",
+        {"task": "auth gate test only", "max_turns": 1, "allowed_tools": []},
+    ),
+    ("POST", "/api/claude/analyze-finding?finding_id=auth-gate-test", None),
+    ("GET", "/api/webhooks/", None),
+    (
+        "POST",
+        "/api/webhooks/",
+        {"name": "poc", "url": "https://example.com", "events": ["case_created"]},
+    ),
+    ("PUT", "/api/webhooks/webhook-001", {"name": "poc-updated"}),
+    ("DELETE", "/api/webhooks/webhook-001", None),
+    ("POST", "/api/webhooks/webhook-001/test", None),
+    ("GET", "/api/webhooks/webhook-001/deliveries", None),
+    ("GET", "/api/integrations/vstrike/health", None),
+    ("GET", "/api/integrations/vstrike/ui/networks", None),
+    ("POST", "/api/integrations/vstrike/ui/iframe-token", None),
+    ("GET", "/api/integrations/vstrike/topology/asset/test-asset", None),
 ]
 
 
@@ -100,6 +141,38 @@ def test_unauthenticated_request_is_rejected(app, method, path, body):
     # operation-failure 500" — accept either auth code.
     assert response.status_code in (401, 403), (
         f"{method} {path} returned {response.status_code} "
+        f"(body: {response.text[:200]})"
+    )
+
+
+def test_unauthenticated_claude_upload_file_is_rejected(app):
+    """The Claude file upload helper must not read files before auth."""
+    response = app.post(
+        "/api/claude/upload-file",
+        files={
+            "file": (
+                "auth-test.txt",
+                b"synthetic auth gate test\n",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code in (401, 403), (
+        f"POST /api/claude/upload-file returned {response.status_code} "
+        f"(body: {response.text[:200]})"
+    )
+
+
+def test_vstrike_inbound_without_bearer_uses_api_key_gate(app):
+    """VStrike /findings stays public from session auth but not open."""
+    response = app.post(
+        "/api/integrations/vstrike/findings",
+        json={"batch_id": "auth-gate", "findings": []},
+    )
+
+    assert response.status_code in (401, 403, 503), (
+        f"POST /api/integrations/vstrike/findings returned {response.status_code} "
         f"(body: {response.text[:200]})"
     )
 

@@ -123,14 +123,8 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset(
         "/api/auth/password-reset/confirm",
         # Health check — used by load balancers and Docker.
         "/api/health",
-        # Inbound integrations: auth via API key / HMAC, not user session.
-        "/api/integrations/vstrike/*",
-        "/api/webhooks/*",
-        # The /api/claude/* router has its own rate-limit dependency and
-        # uses bearer tokens issued to internal services. Treated as
-        # a separate auth domain — listed here so the inventory test
-        # doesn't flag it.
-        "/api/claude/*",
+        # VStrike inbound receiver uses its own bearer API-key dependency.
+        "/api/integrations/vstrike/findings",
     }
 )
 
@@ -264,14 +258,14 @@ app.include_router(
 app.include_router(
     mcp_router, prefix="/api/mcp", tags=["mcp"], dependencies=AUTH_DEPENDENCY
 )
-# /api/claude/* is the cross-service Claude bridge used by internal
-# workflows; it keeps its own rate-limit dependency and bearer-token
-# auth. Listed in PUBLIC_API_PATHS so the auth-coverage test passes.
+
+# Claude routes expose AI and agent execution capabilities and must require
+# an authenticated user session. Keep rate limiting in addition to auth.
 app.include_router(
     claude_router,
     prefix="/api/claude",
     tags=["claude"],
-    dependencies=[Depends(rate_limit_dependency)],
+    dependencies=[*AUTH_DEPENDENCY, Depends(rate_limit_dependency)],
 )
 app.include_router(
     reasoning_router,
@@ -327,8 +321,8 @@ app.include_router(
     tags=["ingestion"],
     dependencies=AUTH_DEPENDENCY,
 )
-# vstrike inbound API uses API-key auth, not user session — left public
-# (listed in PUBLIC_API_PATHS).
+# VStrike /findings is public-but-bearer-authenticated inside the router.
+# All VStrike management/UI/proxy routes require an authenticated user session.
 app.include_router(vstrike_router, prefix="/api/integrations/vstrike", tags=["vstrike"])
 app.include_router(
     storage_status_router,
@@ -410,9 +404,15 @@ app.include_router(
     tags=["case-search"],
     dependencies=AUTH_DEPENDENCY,
 )
-# Generic webhooks (HMAC / shared-secret auth via integration config) —
-# stays public-but-API-key-authed; listed in PUBLIC_API_PATHS.
-app.include_router(webhooks_router, prefix="/api/webhooks", tags=["webhooks"])
+# Webhook management routes require authenticated user sessions.
+# Inbound third-party webhook receivers should live in dedicated routers
+# with endpoint-specific HMAC/API-key validation.
+app.include_router(
+    webhooks_router,
+    prefix="/api/webhooks",
+    tags=["webhooks"],
+    dependencies=AUTH_DEPENDENCY,
+)
 # Darktrace inbound webhook receiver — only mount when explicitly enabled.
 # env.example and docs/integrations/DARKTRACE.md document DARKTRACE_ENABLED
 # as the on/off toggle; leaving it unset must leave the receiver off.
