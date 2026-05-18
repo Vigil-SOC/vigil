@@ -124,7 +124,8 @@ else
     if [ -f "env.example" ]; then
         cp env.example .env
         echo "✓ Created .env from env.example"
-        echo "   Edit .env to add your ANTHROPIC_API_KEY and customize settings"
+        echo "   Configure LLM provider keys in the web UI:"
+        echo "   Settings → AI / LLM Providers → Add provider"
         set -a
         source .env
         set +a

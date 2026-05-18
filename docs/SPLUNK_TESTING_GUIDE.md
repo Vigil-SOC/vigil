@@ -92,16 +92,14 @@ python scripts/test_splunk_claude_integration.py \
 ```
 
 **Prerequisites:**
-- Splunk configured in `.env`:
+- Splunk integration configured in the UI (Settings → Integrations → Splunk),
+  or via env vars for headless test runs:
   ```
   SPLUNK_URL=https://your-splunk:8089
   SPLUNK_USERNAME=admin
   SPLUNK_PASSWORD=your_password
   ```
-- Claude API key in `.env`:
-  ```
-  ANTHROPIC_API_KEY=sk-ant-api03-...
-  ```
+- An LLM provider configured in the UI (Settings → AI / LLM Providers)
 - Database running (`./scripts/start_database.sh`)
 
 ## Script Reference
@@ -195,13 +193,13 @@ Here's a complete end-to-end testing workflow:
 # Ensure database is running
 ./scripts/start_database.sh
 
-# Configure Splunk credentials
-cat >> .env << EOF
-SPLUNK_URL=https://your-splunk-server:8089
-SPLUNK_USERNAME=admin
-SPLUNK_PASSWORD=your_password
-ANTHROPIC_API_KEY=sk-ant-api03-your-key
-EOF
+# Configure Splunk credentials and an LLM provider via the web UI:
+#   Settings → Integrations → Splunk
+#   Settings → AI / LLM Providers → Add provider
+# For headless/CI runs you can still export Splunk env vars:
+export SPLUNK_URL=https://your-splunk-server:8089
+export SPLUNK_USERNAME=admin
+export SPLUNK_PASSWORD=your_password
 ```
 
 ### Step 2: Generate and Upload Test Data

@@ -243,30 +243,29 @@ docker-compose ps
 
 **File**: `/opt/vigil/.env`
 
+`.env` is for bootstrap-only settings. LLM provider keys, SIEM
+credentials, and other secrets are configured through the web UI
+(Settings → AI / LLM Providers, Settings → Integrations) and stored
+encrypted at `~/.vigil/secrets.enc`. For server-side / orchestrated
+deployments where the UI isn't available at first boot, inject secrets
+via the Helm chart values (see [HELM.md](HELM.md)) or your secret
+manager of choice.
+
 ```bash
 # Database
 DATABASE_URL=postgresql://deeptempo:secure_password@postgres:5432/deeptempo_soc
 POSTGRES_PASSWORD=secure_password_change_me
 
-# API Keys
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-
 # Backend
 SECRET_KEY=your-secret-key-here
 ENVIRONMENT=production
 
+# LLM gateway (Bifrost) — provider keys are NOT set here
+BIFROST_URL=http://bifrost:8080
+
 # Monitoring
 SENTRY_DSN=https://your-sentry-dsn
 RELEASE_VERSION=v1.2.3
-
-# SIEM Integrations
-SPLUNK_URL=https://splunk.example.com:8089
-SPLUNK_USERNAME=admin
-SPLUNK_PASSWORD=splunk_password
-
-# External Services
-SLACK_BOT_TOKEN=xoxb-your-token
-SLACK_DEFAULT_CHANNEL=#soc-alerts
 ```
 
 ### Docker Compose Configuration
@@ -293,9 +292,13 @@ services:
     container_name: deeptempo-backend
     environment:
       - DATABASE_URL
-      - ANTHROPIC_API_KEY
       - SECRET_KEY
       - SENTRY_DSN
+      - BIFROST_URL
+    volumes:
+      # Persist the encrypted secret store across container restarts so
+      # provider keys configured via the UI survive image upgrades.
+      - vigil_secrets:/root/.vigil
     ports:
       - "6987:6987"
     depends_on:
@@ -307,7 +310,9 @@ services:
     container_name: deeptempo-daemon
     environment:
       - DATABASE_URL
-      - ANTHROPIC_API_KEY
+      - BIFROST_URL
+    volumes:
+      - vigil_secrets:/root/.vigil
     ports:
       - "8081:8081"  # Webhook
       - "9090:9090"  # Metrics
@@ -317,6 +322,7 @@ services:
 
 volumes:
   postgres_data:
+  vigil_secrets:
 ```
 
 ### Nginx Reverse Proxy (Optional)

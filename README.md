@@ -161,7 +161,8 @@ git submodule update --init --recursive
 
 # Environment (DEV_MODE enabled by default)
 cp env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY (optional for testing)
+# LLM provider keys (Anthropic / OpenAI / Ollama) are configured in the
+# web UI at Settings → AI / LLM Providers — not in .env.
 
 # Backend setup
 python3 -m venv venv

@@ -128,7 +128,7 @@ if [ -f ".env" ]; then
 elif [ -f "env.example" ]; then
     echo "⚠️  .env not found. Creating from env.example..."
     cp env.example .env
-    echo "✓ Created .env — edit to add your ANTHROPIC_API_KEY"
+    echo "✓ Created .env — configure LLM provider keys in Settings → AI / LLM Providers"
     set -a
     source .env
     set +a

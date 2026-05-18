@@ -1,45 +1,59 @@
 # Configuration
 
-## Environment Variables
+## Where do secrets live?
 
-Copy `env.example` to `.env` in the project root and configure:
+Vigil splits configuration into two stores:
+
+1. **`.env`** — bootstrap-only settings the backend needs before the DB is
+   reachable (URLs, ports, dev flags). Nothing sensitive belongs here.
+2. **The encrypted secret store** at `~/.vigil/secrets.enc` — every API key,
+   token, and password. Written by the web UI (Settings → AI / LLM Providers
+   and Settings → Integrations) or by `set_secret()` programmatically. The
+   master key sits next to it at `~/.vigil/master.key`.
+
+LLM provider keys (Anthropic, OpenAI, Ollama) are managed entirely through
+the UI — they land in the encrypted store and are pushed to Bifrost via its
+admin API in the same request. See [STATE.md](STATE.md) for the full secret
+inventory.
+
+## `.env`
+
+Copy `env.example` to `.env`:
 
 ```bash
 cp env.example .env
 chmod 600 .env
 ```
 
-### Required
+### What goes in `.env`
 
 | Variable | Description |
 |----------|-------------|
-| `CLAUDE_API_KEY` | Anthropic Claude API key ([get one](https://console.anthropic.com/)) |
-| `POSTGRESQL_CONNECTION_STRING` | PostgreSQL connection (default in docker-compose) |
+| `DEV_MODE` | Bypass auth for local development |
+| `DATABASE_URL` | PostgreSQL connection (default in docker-compose) |
+| `REDIS_URL` | ARQ job queue connection |
+| `BIFROST_URL` | LLM gateway address (default `http://bifrost:8080`) |
+| `BIND_HOST` / port numbers | Network binding |
+| `SECRETS_BACKEND` | `encrypted` (default), `dotenv`, `env`, `keyring` — where new secrets are written |
+| `ENABLE_KEYRING` | `false` (default), `true` — include OS keyring in read chain |
+| `SENTRY_DSN` | Error reporting endpoint |
 
-### Optional Integrations
+### What does NOT go in `.env`
 
-| Variable | Service |
-|----------|---------|
-| `AWS_ACCESS_KEY_ID` | S3 storage |
-| `AWS_SECRET_ACCESS_KEY` | S3 storage |
-| `TIMESKETCH_PASSWORD` | Timeline analysis |
-| `SPLUNK_PASSWORD` | SIEM integration |
-| `CRIBL_PASSWORD` | Data pipeline |
-| `GITHUB_TOKEN` | MCP GitHub server |
+- `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / Ollama config — Settings → AI / LLM Providers
+- `SPLUNK_PASSWORD`, `CROWDSTRIKE_CLIENT_SECRET`, `VIRUSTOTAL_API_KEY`, etc. — Settings → Integrations
+- Any password, token, or private key
 
-### Secrets Backend
+Placeholder values for these in `.env` are ignored once the encrypted store
+has a value, and a stale placeholder can mask the real key.
 
-| Variable | Values | Description |
-|----------|--------|-------------|
-| `SECRETS_BACKEND` | `dotenv` (default), `env`, `keyring` | Where to write secrets |
-| `ENABLE_KEYRING` | `false` (default), `true` | Enable OS keyring for reading |
-
-## Secrets Priority
+## Secrets read priority
 
 When reading, backends are checked in order:
-1. Process environment variables
-2. `.env` file in the project root
-3. OS keyring (only if `ENABLE_KEYRING=true`)
+1. Encrypted file (`~/.vigil/secrets.enc`)
+2. Process environment variables
+3. `.env` file (legacy / interoperability)
+4. OS keyring (only if `ENABLE_KEYRING=true`)
 
 ## Deployment Examples
 
@@ -77,9 +91,13 @@ ExecStart=/opt/vigil/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 698
 
 ### Kubernetes
 
+For server-side deployments, LLM provider keys can be injected as
+environment variables at pod start (operator path — distinct from
+the local-dev UI path). See [HELM.md](HELM.md) for the recommended
+Helm chart values, including `secrets.anthropicApiKey`.
+
 ```bash
 kubectl create secret generic vigil-secrets \
-  --from-literal=ANTHROPIC_API_KEY="sk-ant-..." \
   --from-literal=DATABASE_URL="postgresql://..."
 ```
 
