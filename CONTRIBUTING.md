@@ -66,6 +66,17 @@ git config user.name "Your Name"
 git config user.email "your@email.com"
 ```
 
+### Versioning and Releases
+
+Vigil follows [Semantic Versioning](https://semver.org/). While in `0.x`,
+minor version bumps may include breaking changes to agent prompts, workflow
+schemas, and MCP integration interfaces. Patch bumps are always backward
+compatible. See [`RELEASING.md`](RELEASING.md) for the full release process.
+
+The Helm chart at `helm/vigil/` is versioned independently of the
+application — `appVersion` tracks the Vigil release; chart `version` bumps
+when the chart itself changes.
+
 ## What to Work On
 
 ### Good First Issues
@@ -133,9 +144,13 @@ New features should include tests. Place them in `tests/` following existing nam
 ### Commit Messages
 
 We **prefer** [Conventional Commits](https://www.conventionalcommits.org/) so we
-can automate changelogs and version bumps as the project grows. It is not
-strictly enforced — if your commits don't match the format, a maintainer will
-adjust the squash-merge title before merging. The DCO sign-off
+can automate changelogs and version bumps via
+[release-please](https://github.com/googleapis/release-please) (see
+[`RELEASING.md`](RELEASING.md)). It is not strictly enforced at the
+per-commit level — if your individual commits don't match the format, please
+update your **PR title** to follow the convention before requesting review
+(since we squash-merge, the PR title becomes the commit on `main`). If you
+forget, a maintainer may adjust the title before merging. The DCO sign-off
 (`git commit -s`), however, is required on every commit.
 
 The preferred format is:
@@ -188,9 +203,12 @@ only hard requirement is the DCO sign-off.
 ### Pull Request Titles
 
 Because we squash-merge PRs, the PR title becomes the commit message on
-`main`. Please title your PR using the same Conventional Commits format
-described above (e.g., `feat(mcp): add SentinelOne integration`). If you
-forget, a maintainer will adjust it before merging.
+`main` — which is what `release-please` reads to decide version bumps and
+changelog entries. **Setting a Conventional Commits-style PR title is the
+author's responsibility** (e.g., `feat(mcp): add SentinelOne integration`).
+You can update the title at any point before merge by editing the PR. If
+you forget, a maintainer may adjust it before merging, but please don't
+rely on that.
 
 ## Community
 
