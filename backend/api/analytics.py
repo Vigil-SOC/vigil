@@ -119,7 +119,7 @@ async def _collect_insights_inputs(
 
 @router.get("/analytics/insights")
 async def get_analytics_insights(
-    time_range: str = Query("7d", regex="^(24h|7d|30d|all)$"),
+    time_range: str = Query("7d", pattern="^(24h|7d|30d|all)$"),
     db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """Return cached AI insights for the given time_range.
@@ -155,7 +155,7 @@ async def get_analytics_insights(
 
 @router.post("/analytics/insights/refresh")
 async def refresh_analytics_insights(
-    time_range: str = Query("7d", regex="^(24h|7d|30d|all)$"),
+    time_range: str = Query("7d", pattern="^(24h|7d|30d|all)$"),
     db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """Force a background regeneration of insights for the given time_range.
@@ -733,7 +733,7 @@ async def get_mitre_technique_distribution(
 
 @router.get("/analytics/cost")
 async def get_cost_analytics(
-    time_range: str = Query("7d", regex="^(24h|7d|30d|all)$"),
+    time_range: str = Query("7d", pattern="^(24h|7d|30d|all)$"),
     db: Session = Depends(get_db_session),
 ) -> Dict[str, Any]:
     """Return LLM cost + token breakdown for the given window.
