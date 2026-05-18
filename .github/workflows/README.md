@@ -28,12 +28,17 @@ The workflows are currently configured for **Continuous Integration** only - the
 - **Purpose**: Test everything and build images
 - **Deployment**: Disabled (testing only)
 
-### 2. `release.yml` - Release Management  
-- **Triggers**: Version tags (v1.0.0)
-- **Purpose**: Create GitHub releases
-- **Deployment**: Disabled (would deploy to production VMs)
+### 2. `release-please.yml` - Automated Release PRs
+- **Triggers**: Push to `main`, manual dispatch
+- **Purpose**: Read Conventional Commits since the last tag; open or update a release PR that bumps `VERSION`, `helm/vigil/Chart.yaml` `appVersion`, and `frontend/package.json`, and updates `CHANGELOG.md`. On merge, push the `vX.Y.Z` tag and create the GitHub Release. See `RELEASING.md`.
+- **Deployment**: None (tagging only — downstream `release.yml` handles deploys)
 
-### 3. `nightly.yml` - Scheduled Testing
+### 3. `release.yml` - Tag-Triggered Production Pipeline
+- **Triggers**: Version tags (`v*.*.*`)
+- **Purpose**: Build production images, Trivy scan, deploy to production VMs, post-deploy validation. The GitHub Release object is created by `release-please.yml`, not this workflow.
+- **Deployment**: Production (SSH to `PROD_VM_HOST` via `scripts/deploy_to_vm.sh production`, runs health checks, posts Slack notifications). Requires `SSH_PRIVATE_KEY`, `PROD_VM_HOST`, `PROD_VM_USER`, and `SLACK_WEBHOOK_URL` secrets.
+
+### 4. `nightly.yml` - Scheduled Testing
 - **Triggers**: Daily at 2 AM UTC
 - **Purpose**: Comprehensive testing and security audits
 - **Deployment**: None

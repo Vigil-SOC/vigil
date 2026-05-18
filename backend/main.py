@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse
 from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
 
+from backend import __version__
 from backend.middleware.csrf import CSRFMiddleware
 from backend.middleware.rate_limit import limiter
 from backend.middleware.security_headers import SecurityHeadersMiddleware
@@ -124,7 +125,7 @@ init_sentry()
 app = FastAPI(
     title="Vigil SOC API",
     description="REST API for Vigil SOC Application",
-    version="1.0.0",
+    version=__version__,
 )
 
 # Wire the shared slowapi Limiter used by auth endpoints. The decorator-based
@@ -688,7 +689,7 @@ async def health_check():
 
         return {
             "status": "healthy",
-            "version": "1.0.0",
+            "version": __version__,
             "demo_mode": is_demo_mode(),
             "storage": {
                 "backend": backend_info["backend"],
@@ -700,7 +701,7 @@ async def health_check():
         logger.error(f"Health check error: {e}")
         return {
             "status": "healthy",
-            "version": "1.0.0",
+            "version": __version__,
             "demo_mode": False,
             "storage": {"backend": "unknown", "error": str(e)},
         }
