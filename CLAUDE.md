@@ -113,17 +113,23 @@ cd frontend && npm run dev
 
 ### Environment Variables
 
-Copy `env.example` to `.env` and populate as needed. Key variables:
+Copy `env.example` to `.env` and populate as needed. `.env` is for
+bootstrap-only settings (DB URL, ports, dev flags). LLM provider keys,
+integration credentials, and other secrets are configured in the web UI
+(Settings → AI / LLM Providers, Settings → Integrations) and stored
+encrypted at `~/.vigil/secrets.enc` — see [docs/STATE.md](docs/STATE.md).
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `DEV_MODE` | Bypass all authentication | `true` |
-| `ANTHROPIC_API_KEY` | Claude API access | required for AI features |
 | `DATABASE_URL` | PostgreSQL connection | auto-set by docker-compose |
 | `REDIS_URL` | ARQ job queue | `redis://localhost:6379/0` |
-| `SPLUNK_URL` / credentials | Splunk SIEM | optional |
-| `CROWDSTRIKE_CLIENT_ID/SECRET` | CrowdStrike EDR | optional |
-| `VIRUSTOTAL_API_KEY` | Threat intel | optional |
+| `BIFROST_URL` | LLM gateway address | `http://bifrost:8080` |
+| `SECRETS_BACKEND` | Where new secrets are written | `encrypted` |
+
+> ⚠️ Do **not** put `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, Splunk
+> credentials, etc. in `.env`. Use the UI. Placeholder values in `.env`
+> are ignored when the encrypted store has a value.
 
 Default dev login: **admin / admin123** (when `DEV_MODE=false`)
 

@@ -138,12 +138,18 @@ Autonomous response workflow:
 
 ## Configuration
 
+LLM provider credentials (Anthropic / OpenAI / Ollama) are configured in
+the web UI under **Settings → AI / LLM Providers** and stored in the
+encrypted secret store at `~/.vigil/secrets.enc`. The backend pushes them
+to Bifrost over its admin API in the same request. See
+[CONFIGURATION.md](CONFIGURATION.md) and [STATE.md](STATE.md) for the
+full split between bootstrap config and secrets.
+
 ### Environment Variables (.env)
 
-```bash
-# Claude API
-ANTHROPIC_API_KEY=sk-ant-...
+Bootstrap-only — nothing sensitive belongs here.
 
+```bash
 # Detection Rules
 SIGMA_PATHS="${HOME}/security-detections/sigma/rules"
 SPLUNK_PATHS="${HOME}/security-detections/security_content/detections"
@@ -152,6 +158,9 @@ KQL_PATHS="${HOME}/security-detections/Hunting-Queries-Detection-Rules"
 
 # Database
 DATABASE_URL="postgresql://deeptempo:deeptempo_secure_password_change_me@localhost:5432/deeptempo_soc"
+
+# LLM gateway (Bifrost) — provider keys are NOT set here
+BIFROST_URL="http://bifrost:8080"
 ```
 
 ### Backend Tool Initialization
