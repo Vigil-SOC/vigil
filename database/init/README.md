@@ -75,7 +75,7 @@ the Job will check `_vigil_schema_versions`, see the ghost row, and
 **SKIP** the file on every pre-existing deployment. The schema change
 silently never runs in production.
 
-Pick any other prefix. The rest of this directory uses non-zero-padded
+Pick any other prefix. The rest of this directory uses two-digit
 `NN_` (`01_`, `04_`, …, `16_`); follow that convention.
 
 ## When you modify an existing init SQL file

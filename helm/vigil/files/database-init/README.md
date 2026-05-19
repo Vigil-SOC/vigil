@@ -21,9 +21,13 @@ When a new init SQL file lands under `database/init/`:
 Two failure modes to know about:
 
 - **Filename listed in `dbInit.sqlFiles` but missing from this directory**
-  (e.g. ghost entries from a values.yaml typo or a `cp` that never ran):
-  the `db-init` Job's `apply()` function **hard-fails** the install/upgrade
-  with a clear error. Loud, immediate, easy to fix.
+  (e.g. a values.yaml typo or a `cp` that never ran): the `db-init` Job's
+  `apply()` function **hard-fails** the install/upgrade with a clear error
+  — *unless* the filename already has a row in `_vigil_schema_versions`,
+  in which case it's SKIPped as already-applied (so existing v0.1.x
+  upgrades don't trip on the historical `003_*` ghost rows). Loud and
+  immediate for genuinely new drift; quietly idempotent for the legacy
+  ghost-row case.
 - **File present in this directory but missing from `dbInit.sqlFiles`**
   (e.g. step 1 done, step 2 forgotten): silent on `helm install` —
   the file ships in the ConfigMap but the Job never applies it. The

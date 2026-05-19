@@ -220,9 +220,11 @@ the ConfigMap key and the SQL header comment). CI catches step 1
 (`Helm Chart / Lint and Template` runs `diff -r` between the two
 directories). Skipping step 2 is silent (the file is in the ConfigMap
 but never applied); skipping step 1 while keeping the file in
-`dbInit.sqlFiles` makes the Job hard-fail at runtime (the `apply()`
-function refuses listed-but-missing files — added in this PR to prevent
-silent ghost rows in `_vigil_schema_versions`). See
+`dbInit.sqlFiles` makes the Job hard-fail at runtime — *unless* the
+filename already has a row in `_vigil_schema_versions`, in which case
+it SKIPs as already-applied (the marker-table check runs before the
+file-existence check, so legacy `003_*` ghost rows on v0.1.x upgrades
+don't break `helm upgrade --reuse-values`). See
 [`database/init/README.md`](database/init/README.md), which also lists
 two filenames that are reserved and must never be reused.
 
