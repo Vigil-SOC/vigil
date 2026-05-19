@@ -3141,7 +3141,9 @@ let allIntegrations: IntegrationMetadata[] = [...INTEGRATIONS]
  */
 export async function loadCustomIntegrations(): Promise<void> {
   try {
-    const response = await fetch('http://localhost:6987/api/custom-integrations/list')
+    const response = await fetch('http://localhost:6987/api/custom-integrations/list', {
+      credentials: 'include',
+    })
     const data = await response.json()
     
     if (data.success && data.integrations) {

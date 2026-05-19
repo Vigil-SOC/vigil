@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -11,104 +12,178 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 
+# Strict allowlist for integration IDs. Anchored, lowercase, no path
+# separators, no traversal. Closes the path-traversal-to-RCE chain in
+# the 2026-05 disclosure where ``integration_id=../../../proc/self/cwd/
+# mempalace/mempalace/mcp`` was used to overwrite a runtime module.
+_INTEGRATION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+# Server code is meant to be a single small MCP server module — anything
+# bigger is almost certainly abuse.
+_MAX_SERVER_CODE_BYTES = 256 * 1024
+
+
+class InvalidIntegrationIdError(ValueError):
+    """Raised when an integration_id fails validation."""
+
+
+def _validate_integration_id(integration_id: str) -> str:
+    """Validate and return a safe integration_id.
+
+    Raises ``InvalidIntegrationIdError`` on any input that could escape
+    the custom-integrations directory.
+    """
+    if not isinstance(integration_id, str) or not _INTEGRATION_ID_RE.match(
+        integration_id
+    ):
+        raise InvalidIntegrationIdError(
+            "integration_id must match ^[a-z0-9][a-z0-9_-]{0,63}$"
+        )
+    return integration_id
+
+
 class CustomIntegrationService:
     """Service for AI-powered custom integration generation."""
-    
+
     def __init__(self):
         """Initialize the custom integration service."""
-        self.custom_integrations_dir = Path.home() / '.deeptempo' / 'custom_integrations'
+        self.custom_integrations_dir = (
+            Path.home() / ".deeptempo" / "custom_integrations"
+        ).resolve()
         self.custom_integrations_dir.mkdir(parents=True, exist_ok=True)
-        self.metadata_file = self.custom_integrations_dir / 'metadata.json'
-        
+        self.metadata_file = self.custom_integrations_dir / "metadata.json"
+
+    def _server_path_for(self, integration_id: str) -> Path:
+        """Return the validated absolute server file path for an integration.
+
+        Validates the ID, builds the path under
+        ``custom_integrations_dir``, resolves it, and verifies the
+        result is still inside the base directory. Anything that
+        traverses out (e.g. via a symlink within the base directory) is
+        rejected.
+        """
+        integration_id = _validate_integration_id(integration_id)
+        base = self.custom_integrations_dir
+        candidate = (base / f"{integration_id}_server.py").resolve()
+        # ``Path.is_relative_to`` (3.9+) handles ``..`` and symlink
+        # traversal cleanly. We add a startswith check too in case the
+        # base path itself is a symlink target on macOS.
+        try:
+            candidate.relative_to(base)
+        except ValueError as exc:
+            raise InvalidIntegrationIdError(
+                "integration path escapes custom_integrations directory"
+            ) from exc
+        if not str(candidate).startswith(str(base) + os.sep):
+            raise InvalidIntegrationIdError(
+                "integration path escapes custom_integrations directory"
+            )
+        return candidate
+
     async def generate_integration(
         self,
         documentation: str,
         integration_name: Optional[str] = None,
         category: str = "Custom",
-        conversation_history: Optional[List[Dict[str, str]]] = None
+        conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Dict[str, Any]:
         """
         Generate a custom integration from API documentation using Claude.
-        
+
         Args:
             documentation: API or MCP documentation text
             integration_name: Optional custom name for the integration
             category: Integration category
             conversation_history: Optional list of previous messages for interactive mode
-        
+
         Returns:
             Dictionary with integration metadata and server code
         """
         try:
             # Import Claude service
             from services.claude_service import ClaudeService
-            
+
             # Initialize Claude
             claude = ClaudeService(use_mcp_tools=False)
-            
+
             # Check if Claude is configured
             if not claude.api_key or not claude.client:
                 return {
                     "success": False,
-                    "error": "Claude API is not configured. Please configure it in Settings."
+                    "error": "Claude API is not configured. Please configure it in Settings.",
                 }
-            
+
             # Create prompt for Claude to analyze the documentation
             system_prompt = "You are an expert at analyzing API documentation and generating Python MCP (Model Context Protocol) server code for security integrations."
-            
+
             if conversation_history:
                 # Interactive mode - continue the conversation
                 # Extract the last user message
-                last_message = conversation_history[-1]["content"] if conversation_history else ""
-                context = conversation_history[:-1] if len(conversation_history) > 1 else None
-                
+                last_message = (
+                    conversation_history[-1]["content"] if conversation_history else ""
+                )
+                context = (
+                    conversation_history[:-1] if len(conversation_history) > 1 else None
+                )
+
                 response = claude.chat(
                     message=last_message,
                     context=context,
                     system_prompt=system_prompt,
-                    model="claude-sonnet-4-20250514"
+                    model="claude-sonnet-4-20250514",
                 )
             else:
                 # Initial generation - create the analysis prompt
-                prompt = self._create_analysis_prompt(documentation, integration_name, category)
-                
+                prompt = self._create_analysis_prompt(
+                    documentation, integration_name, category
+                )
+
                 response = claude.chat(
                     message=prompt,
                     system_prompt=system_prompt,
-                    model="claude-sonnet-4-20250514"
+                    model="claude-sonnet-4-20250514",
                 )
-            
+
             # Check if Claude is asking questions or ready to generate
             if self._is_asking_questions(response):
                 # Claude needs more information
                 # Build the full conversation history
                 if conversation_history:
-                    full_history = conversation_history + [{"role": "assistant", "content": response}]
-                else:
-                    full_history = [
-                        {"role": "user", "content": self._create_analysis_prompt(documentation, integration_name, category)},
+                    full_history = conversation_history + [
                         {"role": "assistant", "content": response}
                     ]
-                
+                else:
+                    full_history = [
+                        {
+                            "role": "user",
+                            "content": self._create_analysis_prompt(
+                                documentation, integration_name, category
+                            ),
+                        },
+                        {"role": "assistant", "content": response},
+                    ]
+
                 return {
                     "success": True,
                     "needs_clarification": True,
                     "message": response,
-                    "conversation_history": full_history
+                    "conversation_history": full_history,
                 }
-            
+
             # Parse Claude's response
             integration_data = self._parse_claude_response(response, category)
-            
+
             if not integration_data:
                 return {
                     "success": False,
-                    "error": "Failed to parse Claude's response. The documentation may be unclear or incomplete."
+                    "error": "Failed to parse Claude's response. The documentation may be unclear or incomplete.",
                 }
-            
+
             # Generate integration ID
-            integration_id = integration_data.get("id", self._generate_id(integration_data["name"]))
-            
+            integration_id = integration_data.get(
+                "id", self._generate_id(integration_data["name"])
+            )
+
             return {
                 "success": True,
                 "needs_clarification": False,
@@ -116,21 +191,24 @@ class CustomIntegrationService:
                 "integration_name": integration_data["name"],
                 "metadata": integration_data["metadata"],
                 "server_code": integration_data["server_code"],
-                "message": f"Successfully generated custom integration '{integration_data['name']}'"
+                "message": f"Successfully generated custom integration '{integration_data['name']}'",
             }
-        
+
         except Exception as e:
             logger.error(f"Error generating custom integration: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
-    def _create_analysis_prompt(self, documentation: str, integration_name: Optional[str], category: str) -> str:
+            return {"success": False, "error": str(e)}
+
+    def _create_analysis_prompt(
+        self, documentation: str, integration_name: Optional[str], category: str
+    ) -> str:
         """Create a prompt for Claude to analyze the documentation."""
-        
-        name_hint = f"The integration should be named '{integration_name}'." if integration_name else ""
-        
+
+        name_hint = (
+            f"The integration should be named '{integration_name}'."
+            if integration_name
+            else ""
+        )
+
         return f"""I need you to analyze the following API documentation and generate a complete MCP (Model Context Protocol) server integration for a security operations platform.
 
 {name_hint}
@@ -318,7 +396,7 @@ Analyze the documentation carefully and generate the most useful integration pos
 Ask me specific questions BEFORE generating the code. Start your response with "I have some questions:" and list your questions.
 
 Only generate the JSON response when you have enough information to create a complete, production-ready integration."""
-    
+
     def _is_asking_questions(self, response: str) -> bool:
         """Check if Claude is asking for clarification instead of generating code."""
         question_indicators = [
@@ -328,122 +406,142 @@ Only generate the JSON response when you have enough information to create a com
             "Can you provide",
             "Which endpoints",
             "What authentication",
-            "Before I generate"
+            "Before I generate",
         ]
-        
+
         # If response contains question indicators and doesn't contain JSON, it's asking questions
-        has_questions = any(indicator.lower() in response.lower() for indicator in question_indicators)
+        has_questions = any(
+            indicator.lower() in response.lower() for indicator in question_indicators
+        )
         has_json = "```json" in response or '"metadata"' in response
-        
+
         return has_questions and not has_json
-    
-    def _parse_claude_response(self, response: str, category: str) -> Optional[Dict[str, Any]]:
+
+    def _parse_claude_response(
+        self, response: str, category: str
+    ) -> Optional[Dict[str, Any]]:
         """Parse Claude's response to extract integration data."""
         try:
             # Try to find JSON in the response
             # Look for code blocks first
-            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
-            
+            json_match = re.search(
+                r"```(?:json)?\s*(\{.*?\})\s*```", response, re.DOTALL
+            )
+
             if json_match:
                 json_str = json_match.group(1)
             else:
                 # Try to find raw JSON
-                json_match = re.search(r'\{.*"metadata".*"server_code".*\}', response, re.DOTALL)
+                json_match = re.search(
+                    r'\{.*"metadata".*"server_code".*\}', response, re.DOTALL
+                )
                 if json_match:
                     json_str = json_match.group(0)
                 else:
                     logger.error("Could not find JSON in Claude's response")
                     return None
-            
+
             # Parse JSON
             data = json.loads(json_str)
-            
+
             # Validate structure
-            if not all(key in data for key in ["id", "name", "metadata", "server_code"]):
+            if not all(
+                key in data for key in ["id", "name", "metadata", "server_code"]
+            ):
                 logger.error("Missing required fields in Claude's response")
                 return None
-            
+
             # Ensure metadata has the category
             data["metadata"]["category"] = category
-            
+
             return data
-        
+
         except json.JSONDecodeError as e:
             logger.error(f"Failed to parse JSON from Claude's response: {e}")
             return None
         except Exception as e:
             logger.error(f"Error parsing Claude's response: {e}", exc_info=True)
             return None
-    
+
     def _generate_id(self, name: str) -> str:
         """Generate an integration ID from a name."""
         # Convert to lowercase, replace spaces with hyphens
-        integration_id = name.lower().replace(' ', '-')
+        integration_id = name.lower().replace(" ", "-")
         # Remove non-alphanumeric characters (except hyphens)
-        integration_id = re.sub(r'[^a-z0-9-]', '', integration_id)
+        integration_id = re.sub(r"[^a-z0-9-]", "", integration_id)
         # Remove consecutive hyphens
-        integration_id = re.sub(r'-+', '-', integration_id)
+        integration_id = re.sub(r"-+", "-", integration_id)
         # Strip leading/trailing hyphens
-        integration_id = integration_id.strip('-')
-        
+        integration_id = integration_id.strip("-")
+
         # Add custom prefix
         return f"custom-{integration_id}"
-    
+
     async def save_integration(
         self,
         integration_id: str,
         metadata: Dict[str, Any],
-        server_code: str
+        server_code: str,
     ) -> Dict[str, Any]:
-        """
-        Save a generated custom integration.
-        
-        Args:
-            integration_id: Unique integration identifier
-            metadata: Integration metadata
-            server_code: MCP server Python code
-        
-        Returns:
-            Success status
+        """Save a generated custom integration.
+
+        Validates ``integration_id`` and the resolved write path so a
+        crafted ID can't escape ``custom_integrations_dir``. The
+        response carries only the integration_id, never an absolute
+        filesystem path.
         """
         try:
+            try:
+                _validate_integration_id(integration_id)
+                server_file = self._server_path_for(integration_id)
+            except InvalidIntegrationIdError as exc:
+                return {"success": False, "error": str(exc)}
+
+            if not isinstance(server_code, str):
+                return {"success": False, "error": "server_code must be a string"}
+            if len(server_code.encode("utf-8")) > _MAX_SERVER_CODE_BYTES:
+                return {
+                    "success": False,
+                    "error": (
+                        f"server_code exceeds {_MAX_SERVER_CODE_BYTES} byte limit"
+                    ),
+                }
+
             # Save metadata
             all_metadata = self._load_metadata()
             all_metadata[integration_id] = {
                 **metadata,
                 "created_at": datetime.now().isoformat(),
-                "is_custom": True
+                "is_custom": True,
             }
             self._save_metadata(all_metadata)
-            
+
             # Save server code
-            server_file = self.custom_integrations_dir / f"{integration_id}_server.py"
             server_file.write_text(server_code)
-            
+
             # Create __init__.py if it doesn't exist
             init_file = self.custom_integrations_dir / "__init__.py"
             if not init_file.exists():
                 init_file.write_text('"""Custom integrations directory."""\n')
-            
+
             logger.info(f"Saved custom integration '{integration_id}'")
-            
+
             return {
                 "success": True,
-                "message": f"Custom integration '{integration_id}' saved successfully",
-                "server_path": str(server_file)
+                "message": (
+                    f"Custom integration '{integration_id}' saved successfully"
+                ),
+                "integration_id": integration_id,
             }
-        
+
         except Exception as e:
             logger.error(f"Error saving custom integration: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
+            return {"success": False, "error": str(e)}
+
     def list_custom_integrations(self) -> List[Dict[str, Any]]:
         """
         List all custom integrations.
-        
+
         Returns:
             List of custom integration metadata
         """
@@ -453,128 +551,113 @@ Only generate the JSON response when you have enough information to create a com
         except Exception as e:
             logger.error(f"Error listing custom integrations: {e}")
             return []
-    
+
     async def delete_integration(self, integration_id: str) -> Dict[str, Any]:
-        """
-        Delete a custom integration.
-        
-        Args:
-            integration_id: Integration identifier
-        
-        Returns:
-            Success status
-        """
+        """Delete a custom integration."""
         try:
+            try:
+                _validate_integration_id(integration_id)
+                server_file = self._server_path_for(integration_id)
+            except InvalidIntegrationIdError as exc:
+                return {"success": False, "error": str(exc)}
+
             # Remove from metadata
             all_metadata = self._load_metadata()
-            
+
             if integration_id not in all_metadata:
                 return {
                     "success": False,
-                    "error": f"Integration '{integration_id}' not found"
+                    "error": f"Integration '{integration_id}' not found",
                 }
-            
+
             del all_metadata[integration_id]
             self._save_metadata(all_metadata)
-            
+
             # Remove server file
-            server_file = self.custom_integrations_dir / f"{integration_id}_server.py"
             if server_file.exists():
                 server_file.unlink()
-            
+
             logger.info(f"Deleted custom integration '{integration_id}'")
-            
+
             return {
                 "success": True,
-                "message": f"Custom integration '{integration_id}' deleted successfully"
+                "message": f"Custom integration '{integration_id}' deleted successfully",
             }
-        
+
         except Exception as e:
             logger.error(f"Error deleting custom integration: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
+            return {"success": False, "error": str(e)}
+
     async def validate_integration(self, integration_id: str) -> Dict[str, Any]:
-        """
-        Validate a custom integration's server code.
-        
-        Args:
-            integration_id: Integration identifier
-        
-        Returns:
-            Validation results
-        """
+        """Validate a custom integration's server code."""
         try:
-            server_file = self.custom_integrations_dir / f"{integration_id}_server.py"
-            
+            try:
+                _validate_integration_id(integration_id)
+                server_file = self._server_path_for(integration_id)
+            except InvalidIntegrationIdError as exc:
+                return {"success": False, "valid": False, "error": str(exc)}
+
             if not server_file.exists():
                 return {
                     "success": False,
                     "valid": False,
-                    "error": "Server file not found"
+                    "error": "Server file not found",
                 }
-            
+
             # Try to compile the code
             code = server_file.read_text()
             try:
-                compile(code, str(server_file), 'exec')
+                compile(code, str(server_file), "exec")
                 syntax_valid = True
                 syntax_error = None
             except SyntaxError as e:
                 syntax_valid = False
                 syntax_error = str(e)
-            
+
             # Check for required components
-            has_server_init = 'Server(' in code
-            has_list_tools = '@server.list_tools()' in code
-            has_call_tool = '@server.call_tool()' in code
-            has_main = 'async def main():' in code
-            
+            has_server_init = "Server(" in code
+            has_list_tools = "@server.list_tools()" in code
+            has_call_tool = "@server.call_tool()" in code
+            has_main = "async def main():" in code
+
             validation_checks = {
                 "syntax_valid": syntax_valid,
                 "has_server_init": has_server_init,
                 "has_list_tools": has_list_tools,
                 "has_call_tool": has_call_tool,
-                "has_main": has_main
+                "has_main": has_main,
             }
-            
+
             all_valid = all(validation_checks.values())
-            
+
             return {
                 "success": True,
                 "valid": all_valid,
                 "checks": validation_checks,
-                "syntax_error": syntax_error
+                "syntax_error": syntax_error,
             }
-        
+
         except Exception as e:
             logger.error(f"Error validating integration: {e}", exc_info=True)
-            return {
-                "success": False,
-                "valid": False,
-                "error": str(e)
-            }
-    
+            return {"success": False, "valid": False, "error": str(e)}
+
     def _load_metadata(self) -> Dict[str, Any]:
         """Load custom integrations metadata."""
         if not self.metadata_file.exists():
             return {}
-        
+
         try:
-            with open(self.metadata_file, 'r') as f:
+            with open(self.metadata_file, "r") as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Error loading metadata: {e}")
             return {}
-    
+
     def _save_metadata(self, metadata: Dict[str, Any]) -> None:
         """Save custom integrations metadata."""
         try:
-            with open(self.metadata_file, 'w') as f:
+            with open(self.metadata_file, "w") as f:
                 json.dump(metadata, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving metadata: {e}")
             raise
-

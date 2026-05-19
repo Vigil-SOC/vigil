@@ -264,7 +264,11 @@ def test_ollama_extracts_context_from_show():
         "AsyncClient",
         lambda **kw: _FakeClient(get_handler=_get, post_handler=_post),
     ):
-        out = asyncio.run(discovery.fetch_ollama_models("http://localhost:11434"))
+        out = asyncio.run(
+            discovery.fetch_ollama_models(
+                "http://localhost:11434", allow_loopback=True
+            )
+        )
 
     by_id = {m.id: m for m in out}
     assert by_id["llama3.1:8b"].context_window == 131072
@@ -285,7 +289,7 @@ def test_ollama_context_defaults_to_zero_when_show_fails():
         "AsyncClient",
         lambda **kw: _FakeClient(get_handler=_get, post_handler=_post),
     ):
-        out = asyncio.run(discovery.fetch_ollama_models())
+        out = asyncio.run(discovery.fetch_ollama_models(allow_loopback=True))
 
     assert out[0].id == "unknown-model"
     assert out[0].context_window == 0

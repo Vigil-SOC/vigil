@@ -21,11 +21,25 @@ sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "backend"))
 
 from backend.api.llm_providers import router as llm_providers_router
+from backend.middleware.auth import get_current_active_user
 from database.connection import get_db_session
-from database.models import LLMProviderConfig
+from database.models import LLMProviderConfig, User
 
 
 pytestmark = pytest.mark.unit
+
+
+def _fake_admin_user() -> User:
+    """Stand-in admin user for tests that bypass real JWT/cookie auth."""
+    return User(
+        user_id="test-admin",
+        username="test-admin",
+        email="admin@test.local",
+        password_hash="",
+        role_id="admin-role",
+        is_active=True,
+        mfa_enabled=False,
+    )
 
 
 class _FakeQuery:
@@ -97,7 +111,16 @@ def client(session):
         return session
 
     app.dependency_overrides[get_db_session] = _get_session
-    return TestClient(app)
+    # Bypass cookie/JWT auth for unit tests — the security-coverage tests
+    # in tests/security/ exercise the real path.
+    app.dependency_overrides[get_current_active_user] = _fake_admin_user
+
+    # Permission checks read DEV_MODE at call time; force-allow in tests.
+    with patch(
+        "backend.services.auth_service.AuthService.check_permission",
+        return_value=True,
+    ):
+        yield TestClient(app)
 
 
 @pytest.fixture()
