@@ -99,7 +99,35 @@ from api.budgets import router as budgets_router
 from api.kafka import router as kafka_router
 
 from core.rate_limit import rate_limit_dependency
+from backend.middleware.auth import get_current_active_user
 from monitoring import init_sentry, PROMETHEUS_AVAILABLE, get_metrics_response
+
+# Single source of truth for the "require an authenticated active user"
+# dependency. Applied to every non-public /api/* router below so that any
+# new endpoint added under a protected router inherits auth by default.
+# Endpoints that must stay public (auth, inbound webhooks, health) are
+# either left off the dependency or listed in ``PUBLIC_API_PATHS`` so the
+# route-inventory test in ``tests/security/test_route_auth_coverage.py``
+# still passes.
+AUTH_DEPENDENCY = [Depends(get_current_active_user)]
+
+
+# Intentionally-public routes. The route-inventory test asserts every
+# /api/* route either inherits AUTH_DEPENDENCY or is listed here.
+# Patterns ending in '/*' match any sub-path.
+PUBLIC_API_PATHS: frozenset[str] = frozenset(
+    {
+        "/api/auth/login",
+        "/api/auth/refresh",
+        "/api/auth/logout",
+        "/api/auth/password-reset/request",
+        "/api/auth/password-reset/confirm",
+        # Health check — used by load balancers and Docker.
+        "/api/health",
+        # VStrike inbound receiver uses its own bearer API-key dependency.
+        "/api/integrations/vstrike/findings",
+    }
+)
 
 if PROMETHEUS_AVAILABLE:
     from monitoring import PrometheusMiddleware
@@ -191,85 +219,201 @@ if PROMETHEUS_AVAILABLE:
 
 # Include API routers
 
-# Authentication (public endpoints)
+# Authentication routes: login/refresh/password-reset are public; the
+# inner /me, /change-password, /mfa routes already use get_current_active_user
+# inline. Leaving the router itself unwrapped preserves that mix.
 app.include_router(auth_router, prefix="/api/auth", tags=["authentication"])
-app.include_router(users_router, prefix="/api/users", tags=["users"])
+app.include_router(
+    users_router, prefix="/api/users", tags=["users"], dependencies=AUTH_DEPENDENCY
+)
 
 # JIRA export
-app.include_router(jira_export_router, prefix="/api", tags=["jira-export"])
+app.include_router(
+    jira_export_router,
+    prefix="/api",
+    tags=["jira-export"],
+    dependencies=AUTH_DEPENDENCY,
+)
 
 # Analytics
-app.include_router(analytics_router, prefix="/api", tags=["analytics"])
+app.include_router(
+    analytics_router, prefix="/api", tags=["analytics"], dependencies=AUTH_DEPENDENCY
+)
 # Budgets — same prefix as analytics so /api/analytics/budget* lives next
 # to /api/analytics/cost. The router itself owns the /analytics path
 # segment per its endpoint definitions.
-app.include_router(budgets_router, prefix="/api", tags=["budgets"])
+app.include_router(
+    budgets_router, prefix="/api", tags=["budgets"], dependencies=AUTH_DEPENDENCY
+)
 
 # Core API endpoints
-app.include_router(findings_router, prefix="/api/findings", tags=["findings"])
-app.include_router(cases_router, prefix="/api/cases", tags=["cases"])
-app.include_router(mcp_router, prefix="/api/mcp", tags=["mcp"])
+app.include_router(
+    findings_router,
+    prefix="/api/findings",
+    tags=["findings"],
+    dependencies=AUTH_DEPENDENCY,
+)
+app.include_router(
+    cases_router, prefix="/api/cases", tags=["cases"], dependencies=AUTH_DEPENDENCY
+)
+app.include_router(
+    mcp_router, prefix="/api/mcp", tags=["mcp"], dependencies=AUTH_DEPENDENCY
+)
+
+# Claude routes expose AI and agent execution capabilities and must require
+# an authenticated user session. Keep rate limiting in addition to auth.
 app.include_router(
     claude_router,
     prefix="/api/claude",
     tags=["claude"],
-    dependencies=[Depends(rate_limit_dependency)],
+    dependencies=[*AUTH_DEPENDENCY, Depends(rate_limit_dependency)],
 )
-app.include_router(reasoning_router, prefix="/api/reasoning", tags=["reasoning"])
-app.include_router(config_router, prefix="/api/config", tags=["config"])
 app.include_router(
-    llm_providers_router, prefix="/api/llm/providers", tags=["llm-providers"]
+    reasoning_router,
+    prefix="/api/reasoning",
+    tags=["reasoning"],
+    dependencies=AUTH_DEPENDENCY,
 )
-app.include_router(ai_config_router, prefix="/api/ai", tags=["ai-config"])
-app.include_router(attack_router, prefix="/api/attack", tags=["attack"])
-app.include_router(custom_agents_router, prefix="/api", tags=["custom-agents"])
-app.include_router(agents_router, prefix="/api/agents", tags=["agents"])
 app.include_router(
-    compatibility_router, prefix="/api/integrations", tags=["integrations"]
+    config_router, prefix="/api/config", tags=["config"], dependencies=AUTH_DEPENDENCY
+)
+app.include_router(
+    llm_providers_router,
+    prefix="/api/llm/providers",
+    tags=["llm-providers"],
+    dependencies=AUTH_DEPENDENCY,
+)
+app.include_router(
+    ai_config_router, prefix="/api/ai", tags=["ai-config"], dependencies=AUTH_DEPENDENCY
+)
+app.include_router(
+    attack_router, prefix="/api/attack", tags=["attack"], dependencies=AUTH_DEPENDENCY
+)
+app.include_router(
+    custom_agents_router,
+    prefix="/api",
+    tags=["custom-agents"],
+    dependencies=AUTH_DEPENDENCY,
+)
+app.include_router(
+    agents_router, prefix="/api/agents", tags=["agents"], dependencies=AUTH_DEPENDENCY
+)
+app.include_router(
+    compatibility_router,
+    prefix="/api/integrations",
+    tags=["integrations"],
+    dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
     custom_integrations_router,
     prefix="/api/custom-integrations",
     tags=["custom-integrations"],
+    dependencies=AUTH_DEPENDENCY,
 )
-app.include_router(skills_router, prefix="/api/skills", tags=["skills"])
-app.include_router(ingestion_router, prefix="/api/ingest", tags=["ingestion"])
+app.include_router(
+    skills_router,
+    prefix="/api/skills",
+    tags=["skills"],
+    dependencies=AUTH_DEPENDENCY,
+)
+app.include_router(
+    ingestion_router,
+    prefix="/api/ingest",
+    tags=["ingestion"],
+    dependencies=AUTH_DEPENDENCY,
+)
+# VStrike /findings is public-but-bearer-authenticated inside the router.
+# All VStrike management/UI/proxy routes require an authenticated user session.
 app.include_router(vstrike_router, prefix="/api/integrations/vstrike", tags=["vstrike"])
-app.include_router(storage_status_router, prefix="/api/storage", tags=["storage"])
-app.include_router(ai_decisions_router, prefix="/api/ai", tags=["ai-decisions"])
-app.include_router(timeline_router, prefix="/api/timeline", tags=["timeline"])
-app.include_router(graph_router, prefix="/api/graph", tags=["graph"])
-app.include_router(logs_router, prefix="/api/logs", tags=["logs"])
 app.include_router(
-    local_services_router, prefix="/api/services", tags=["local-services"]
+    storage_status_router,
+    prefix="/api/storage",
+    tags=["storage"],
+    dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
-    detection_rules_router, prefix="/api/detection-rules", tags=["detection-rules"]
+    ai_decisions_router,
+    prefix="/api/ai",
+    tags=["ai-decisions"],
+    dependencies=AUTH_DEPENDENCY,
+)
+app.include_router(
+    timeline_router,
+    prefix="/api/timeline",
+    tags=["timeline"],
+    dependencies=AUTH_DEPENDENCY,
+)
+app.include_router(
+    graph_router, prefix="/api/graph", tags=["graph"], dependencies=AUTH_DEPENDENCY
+)
+app.include_router(
+    logs_router, prefix="/api/logs", tags=["logs"], dependencies=AUTH_DEPENDENCY
+)
+app.include_router(
+    local_services_router,
+    prefix="/api/services",
+    tags=["local-services"],
+    dependencies=AUTH_DEPENDENCY,
+)
+app.include_router(
+    detection_rules_router,
+    prefix="/api/detection-rules",
+    tags=["detection-rules"],
+    dependencies=AUTH_DEPENDENCY,
 )
 
 # Workflows engine
-app.include_router(workflows_router, prefix="/api", tags=["workflows"])
-app.include_router(approvals_router, prefix="/api", tags=["approvals"])
+app.include_router(
+    workflows_router, prefix="/api", tags=["workflows"], dependencies=AUTH_DEPENDENCY
+)
+app.include_router(
+    approvals_router, prefix="/api", tags=["approvals"], dependencies=AUTH_DEPENDENCY
+)
 
 # Autonomous orchestrator
 app.include_router(
-    orchestrator_router, prefix="/api/orchestrator", tags=["orchestrator"]
+    orchestrator_router,
+    prefix="/api/orchestrator",
+    tags=["orchestrator"],
+    dependencies=AUTH_DEPENDENCY,
 )
 # Federated monitoring (per-source SIEM/EDR pull driven by federation_sources)
 app.include_router(
-    federation_router, prefix="/api/federation", tags=["federation"]
+    federation_router,
+    prefix="/api/federation",
+    tags=["federation"],
+    dependencies=AUTH_DEPENDENCY,
 )
-app.include_router(kafka_router)
+app.include_router(kafka_router, dependencies=AUTH_DEPENDENCY)
 
 # Enhanced case management routers
 app.include_router(
-    case_templates_router, prefix="/api/cases/templates", tags=["case-templates"]
+    case_templates_router,
+    prefix="/api/cases/templates",
+    tags=["case-templates"],
+    dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
-    case_metrics_router, prefix="/api/cases/metrics", tags=["case-metrics"]
+    case_metrics_router,
+    prefix="/api/cases/metrics",
+    tags=["case-metrics"],
+    dependencies=AUTH_DEPENDENCY,
 )
-app.include_router(case_search_router, prefix="/api/cases/search", tags=["case-search"])
-app.include_router(webhooks_router, prefix="/api/webhooks", tags=["webhooks"])
+app.include_router(
+    case_search_router,
+    prefix="/api/cases/search",
+    tags=["case-search"],
+    dependencies=AUTH_DEPENDENCY,
+)
+# Webhook management routes require authenticated user sessions.
+# Inbound third-party webhook receivers should live in dedicated routers
+# with endpoint-specific HMAC/API-key validation.
+app.include_router(
+    webhooks_router,
+    prefix="/api/webhooks",
+    tags=["webhooks"],
+    dependencies=AUTH_DEPENDENCY,
+)
 # Darktrace inbound webhook receiver — only mount when explicitly enabled.
 # env.example and docs/integrations/DARKTRACE.md document DARKTRACE_ENABLED
 # as the on/off toggle; leaving it unset must leave the receiver off.
@@ -292,7 +436,10 @@ if cloudy_ingestion_enabled():
         tags=["cloudflare"],
     )
 app.include_router(
-    sla_policies_router, prefix="/api/sla-policies", tags=["sla-policies"]
+    sla_policies_router,
+    prefix="/api/sla-policies",
+    tags=["sla-policies"],
+    dependencies=AUTH_DEPENDENCY,
 )
 
 
