@@ -9,7 +9,10 @@ env:
   PYTHON_VERSION: '3.10'
   NODE_VERSION: '18'
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  # Image name is computed per-job via `Compute image name (lowercase)` —
+  # github.repository preserves owner casing (e.g. "Vigil-SOC/vigil"), and
+  # OCI/GHCR requires fully lowercase paths. Don't reintroduce a workflow-
+  # level env that uses ${{ github.repository }} directly.
 
 jobs:
   # ============================================================================
@@ -38,11 +41,20 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      
+
+      - name: Compute image name (lowercase)
+        id: image
+        # OCI/GHCR requires repository paths to be entirely lowercase.
+        # github.repository preserves the casing of the owner/repo names
+        # (e.g. "Vigil-SOC/vigil"), so we lowercase here before using it
+        # as part of an image tag. docker/metadata-action does this
+        # automatically; we don't use it in this workflow, so do it manually.
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Extract version
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      
+
       - name: Build and push backend image
         uses: docker/build-push-action@v5
         with:
@@ -50,15 +62,15 @@ jobs:
           file: docker/Dockerfile.backend
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:v${{ steps.version.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:latest
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:v${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:latest
           labels: |
             org.opencontainers.image.title=AI-OpenSOC Backend
             org.opencontainers.image.version=v${{ steps.version.outputs.version }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      
+
       - name: Build and push daemon image
         uses: docker/build-push-action@v5
         with:
@@ -66,8 +78,8 @@ jobs:
           file: docker/Dockerfile.daemon
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-daemon:v${{ steps.version.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-daemon:latest
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:v${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:latest
           labels: |
             org.opencontainers.image.title=AI-OpenSOC Daemon
             org.opencontainers.image.version=v${{ steps.version.outputs.version }}
@@ -83,23 +95,29 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-production-images]
     steps:
+      - name: Compute image name (lowercase)
+        id: image
+        # Mirrors the lowercasing step in build-production-images so Trivy
+        # references the same tag that was pushed. See note there.
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Get version
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      
+
       - name: Run Trivy scanner on backend
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-backend:v${{ steps.version.outputs.version }}
+          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:v${{ steps.version.outputs.version }}
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
         continue-on-error: true
-      
+
       - name: Run Trivy scanner on daemon
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-daemon:v${{ steps.version.outputs.version }}
+          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:v${{ steps.version.outputs.version }}
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
@@ -118,11 +136,17 @@ jobs:
     
     steps:
       - uses: actions/checkout@v4
-      
+
+      - name: Compute image name (lowercase)
+        id: image
+        # Mirrors the lowercasing step in build-production-images so deploy
+        # scripts pull the same tag that was pushed. See note there.
+        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
       - name: Get version
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-      
+
       - name: Configure SSH
         run: |
           mkdir -p ~/.ssh
@@ -147,7 +171,7 @@ jobs:
           VM_HOST: ${{ secrets.PROD_VM_HOST }}
           VM_USER: ${{ secrets.PROD_VM_USER }}
           REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
           IMAGE_TAG: v${{ steps.version.outputs.version }}
       
       - name: Health check
