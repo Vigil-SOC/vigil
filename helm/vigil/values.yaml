@@ -295,8 +295,6 @@ dbInit:
   # Update this list when new init SQL lands.
   sqlFiles:
     - 01_init_schema.sql
-    - 003_add_ai_enrichment.sql
-    - 003_ai_decision_logs.sql
     - 04_config_tables.sql
     - 05_case_management_extended.sql
     - 06_auth_tables.sql
@@ -304,6 +302,10 @@ dbInit:
     - 07_skills.sql
     - 08_custom_workflows.sql
     - 09_llm_providers.sql
+    - 10_ai_model_configs.sql
+    - 11_custom_agent_component_category.sql
+    - 12_workflow_runs.sql
+    - 13_approval_actions.sql
     - 14_threat_indicators.sql
     - 15_federation.sql
     - 16_llm_budgets.sql

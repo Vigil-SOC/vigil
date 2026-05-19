@@ -59,8 +59,8 @@ After the CI builds your images, you can run them anywhere:
 
 ```bash
 # Pull the built images
-docker pull ghcr.io/deeptempo/ai-opensoc-backend:main
-docker pull ghcr.io/deeptempo/ai-opensoc-daemon:main
+docker pull ghcr.io/vigil-soc/vigil-backend:main
+docker pull ghcr.io/vigil-soc/vigil-daemon:main
 
 # Run with docker-compose
 docker-compose up -d

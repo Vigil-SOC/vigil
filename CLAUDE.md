@@ -214,10 +214,17 @@ chart bundles a *copy* under `helm/vigil/files/database-init/` (Helm can
 only read files inside the chart directory). You must (1) copy the file
 into the chart bundle, (2) add it to `helm/vigil/values.yaml`
 `dbInit.sqlFiles` in the correct execution order, and (3) verify with
-`helm template` that the dbInit Job script references it. CI catches step
-1 (`Helm Chart / Lint and Template` runs `diff -r` between the two
-directories); steps 2 and 3 are silent if missed. See
-[`database/init/README.md`](database/init/README.md).
+`helm template ... | grep -E '^[[:space:]]*apply "NEWFILE\.sql"'` that
+the dbInit Job script applies it (a bare `grep NEWFILE.sql` false-matches
+the ConfigMap key and the SQL header comment). CI catches step 1
+(`Helm Chart / Lint and Template` runs `diff -r` between the two
+directories). Skipping step 2 is silent (the file is in the ConfigMap
+but never applied); skipping step 1 while keeping the file in
+`dbInit.sqlFiles` makes the Job hard-fail at runtime (the `apply()`
+function refuses listed-but-missing files — added in this PR to prevent
+silent ghost rows in `_vigil_schema_versions`). See
+[`database/init/README.md`](database/init/README.md), which also lists
+two filenames that are reserved and must never be reused.
 
 ### Authentication
 

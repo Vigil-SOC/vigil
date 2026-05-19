@@ -56,6 +56,28 @@ steps 2 and 3:
    ```
    No matches → the file is in the ConfigMap but the Job won't run it.
 
+## Reserved filenames — do not use
+
+**Don't name a file `003_add_ai_enrichment.sql` or `003_ai_decision_logs.sql`.**
+
+Earlier versions of `helm/vigil/values.yaml` listed these as ghost
+entries in `dbInit.sqlFiles` — files that didn't exist on disk. The
+chart's `db-init` Job ran psql against them, got "file not found,"
+treated that as a benign warning (it has to, because some real
+migrations legitimately fail when SQLAlchemy hasn't created their
+target tables yet), then unconditionally inserted the filename into
+`_vigil_schema_versions` to mark it "applied." So every v0.1.x Helm
+deployment now has rows in that table claiming those two filenames
+have been applied.
+
+If a future PR ever ships a real file with one of those exact names,
+the Job will check `_vigil_schema_versions`, see the ghost row, and
+**SKIP** the file on every pre-existing deployment. The schema change
+silently never runs in production.
+
+Pick any other prefix. The rest of this directory uses non-zero-padded
+`NN_` (`01_`, `04_`, …, `16_`); follow that convention.
+
 ## When you modify an existing init SQL file
 
 Same drill — copy the updated file to `helm/vigil/files/database-init/`
