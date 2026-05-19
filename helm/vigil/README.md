@@ -90,10 +90,20 @@ integration creds you use (`SPLUNK_PASSWORD`, `SLACK_BOT_TOKEN`, …).
 ## Upgrades
 
 ```bash
-helm upgrade vigil ./helm/vigil \
-  -n vigil --reuse-values \
-  --set backend.image.tag=v0.2.0 \
-  --set daemon.image.tag=v0.2.0
+helm upgrade vigil ./helm/vigil -n vigil --reuse-values
+```
+
+The chart's default image tag resolves to `Chart.AppVersion`, which
+release-please bumps in lockstep with the chart `version` on every
+release — so a `helm upgrade` after pulling the new chart version
+picks up the matching images automatically. Override only if you need
+to pin to a different tag than the chart's `appVersion` (for example,
+to deploy a `:latest` build for testing):
+
+```bash
+helm upgrade vigil ./helm/vigil -n vigil --reuse-values \
+  --set backend.image.tag=latest \
+  --set daemon.image.tag=latest
 ```
 
 The `db-init` Job re-runs on every upgrade but is idempotent — it tracks

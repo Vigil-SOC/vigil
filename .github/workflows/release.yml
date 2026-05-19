@@ -62,11 +62,11 @@ jobs:
           file: docker/Dockerfile.backend
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:v${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:latest
           labels: |
             org.opencontainers.image.title=AI-OpenSOC Backend
-            org.opencontainers.image.version=v${{ steps.version.outputs.version }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -78,11 +78,11 @@ jobs:
           file: docker/Dockerfile.daemon
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:v${{ steps.version.outputs.version }}
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:latest
           labels: |
             org.opencontainers.image.title=AI-OpenSOC Daemon
-            org.opencontainers.image.version=v${{ steps.version.outputs.version }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -108,7 +108,7 @@ jobs:
       - name: Run Trivy scanner on backend
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:v${{ steps.version.outputs.version }}
+          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:${{ steps.version.outputs.version }}
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
@@ -117,7 +117,7 @@ jobs:
       - name: Run Trivy scanner on daemon
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:v${{ steps.version.outputs.version }}
+          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:${{ steps.version.outputs.version }}
           format: 'table'
           exit-code: '1'
           severity: 'CRITICAL,HIGH'
@@ -172,7 +172,7 @@ jobs:
           VM_USER: ${{ secrets.PROD_VM_USER }}
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME: ${{ steps.image.outputs.name }}
-          IMAGE_TAG: v${{ steps.version.outputs.version }}
+          IMAGE_TAG: ${{ steps.version.outputs.version }}
       
       - name: Health check
         id: health_check

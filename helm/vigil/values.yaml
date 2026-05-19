@@ -304,6 +304,9 @@ dbInit:
     - 07_skills.sql
     - 08_custom_workflows.sql
     - 09_llm_providers.sql
+    - 14_threat_indicators.sql
+    - 15_federation.sql
+    - 16_llm_budgets.sql
   resources:
     requests:
       cpu: 50m

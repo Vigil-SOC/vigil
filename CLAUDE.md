@@ -58,7 +58,7 @@ vigil/
 ├── mcp-servers/          # Git submodule: MCP server implementations
 ├── deeptempo-core/       # Git submodule: core AI/detection library
 ├── database/
-│   └── init/             # PostgreSQL init SQL (ordering set by helm/vigil/values.yaml dbInit.sqlFiles)
+│   └── init/             # PostgreSQL init SQL (docker-compose: lex order by filename; Helm: values.yaml dbInit.sqlFiles)
 ├── core/                 # Config, secrets management, rate limiting
 ├── data/                 # Schemas, MITRE taxonomy, detection registry
 ├── tests/                # pytest + vitest test suites
@@ -199,9 +199,13 @@ Agents access external tools through the MCP protocol. Tool definitions live in 
 ### Database
 
 - PostgreSQL 16 via SQLAlchemy ORM (`services/models.py`)
-- Schema initialized by `database/init/` SQL files (executed in the order
-  defined by `helm/vigil/values.yaml` `dbInit.sqlFiles`, not by filename
-  prefix)
+- Schema initialized by `database/init/` SQL files. **Execution order
+  differs by deploy path:** docker-compose mounts the directory at
+  `/docker-entrypoint-initdb.d`, where Postgres runs files in
+  **lexicographic filename order** (the `01_`/`04_`/…/`16_` prefixes
+  are authoritative there). The Helm chart, by contrast, iterates
+  `helm/vigil/values.yaml`'s `dbInit.sqlFiles` list in the **order
+  written there** — prefixes are decorative for the chart path
 - pgvector extension for embeddings
 - Use `services/database_data_service.py` for data access — do not query the DB directly from API handlers
 
