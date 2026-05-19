@@ -13,4 +13,9 @@ When a new init SQL file lands under `database/init/`:
 3. Verify `helm template` produces a Job script that sources it.
 
 CI check `.github/workflows/helm-chart.yml` will fail if these copies drift
-from the source-of-truth files under `database/init/`.
+from the source-of-truth files under `database/init/`. Note: that check only
+catches directory drift — if you forget step 2 (`values.yaml`), the chart
+deploys without your schema change and the failure is silent.
+
+See also: [`database/init/README.md`](../../../../database/init/README.md)
+for the same convention from the source side.
