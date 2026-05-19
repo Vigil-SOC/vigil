@@ -24,15 +24,18 @@ CREATE TABLE IF NOT EXISTS federation_sources (
 CREATE INDEX IF NOT EXISTS idx_federation_sources_enabled
     ON federation_sources (enabled);
 
--- Add external_id to findings to support a strong (data_source, external_id)
--- dedup guarantee. Existing rows leave external_id NULL (the partial unique
--- index below excludes NULLs), so legacy findings are not affected.
-ALTER TABLE findings
-    ADD COLUMN IF NOT EXISTS external_id VARCHAR(255);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uniq_findings_source_extid
-    ON findings (data_source, external_id)
-    WHERE data_source IS NOT NULL AND external_id IS NOT NULL;
+-- NOTE: the `external_id` column and the `uniq_findings_source_extid`
+-- partial unique index on `findings` are declared on the ORM model
+-- (`database/models.py` `Finding`) and materialized by SQLAlchemy's
+-- create_all() at backend startup — not here. An earlier revision of
+-- this file ran `ALTER TABLE findings ADD COLUMN ...` + `CREATE UNIQUE
+-- INDEX ... ON findings ...` at init time, but `findings` doesn't exist
+-- yet when init SQL runs (the table is created by the ORM after the
+-- backend boots). docker-compose's postgres entrypoint runs init files
+-- under `set -Eeo pipefail` with `psql -v ON_ERROR_STOP=1`, so the ALTER
+-- aborted the entrypoint before the system_config seed below could land
+-- — leaving the federation feature silently unconfigured on every fresh
+-- docker-compose stack.
 
 -- Seed the global federation toggle (off by default — opt-in feature).
 INSERT INTO system_config (key, value, description, config_type)

@@ -7,11 +7,12 @@
 -- `virtual_key_id` column lands now to future-proof per-tenant attribution
 -- once tenancy ships (#165).
 
-ALTER TABLE llm_interaction_logs
-    ADD COLUMN IF NOT EXISTS virtual_key_id VARCHAR(64);
-
-CREATE INDEX IF NOT EXISTS idx_llm_interaction_vk
-    ON llm_interaction_logs (virtual_key_id, created_at);
+-- NOTE: the `virtual_key_id` column and `idx_llm_interaction_vk` index on
+-- `llm_interaction_logs` are declared on the ORM model
+-- (`database/models.py` `LLMInteractionLog`) and materialized by
+-- SQLAlchemy's create_all() at backend startup — not here. See
+-- `15_federation.sql` for the long explanation of why init-time ALTER
+-- against an ORM-owned table breaks docker-compose's first-boot.
 
 -- Seed the single bifrost.virtual_keys settings row. Empty default_vk
 -- means "no enforcement yet" — Bifrost will accept calls without

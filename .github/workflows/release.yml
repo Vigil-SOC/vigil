@@ -65,7 +65,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:latest
           labels: |
-            org.opencontainers.image.title=AI-OpenSOC Backend
+            org.opencontainers.image.title=Vigil Backend
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha
@@ -81,7 +81,7 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:${{ steps.version.outputs.version }}
             ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:latest
           labels: |
-            org.opencontainers.image.title=AI-OpenSOC Daemon
+            org.opencontainers.image.title=Vigil Daemon
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           cache-from: type=gha

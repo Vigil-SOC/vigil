@@ -185,6 +185,25 @@ Pod checksums on the ConfigMap + Secret force pod restarts when config
 changes, so `helm upgrade --set config.X=Y --reuse-values` will do the right
 thing.
 
+> ⚠️ **First upgrade when `dbInit.sqlFiles` has changed** — `helm
+> upgrade --reuse-values` reuses the *previous release's* coalesced
+> values, which means a longer `dbInit.sqlFiles` list in the new chart
+> is silently overwritten by the previous (shorter) one. Any new SQL
+> files in the bump won't run, and code that touches their tables
+> crashes at runtime. On the first upgrade after a chart bump that
+> added init SQL, use one of:
+>
+> ```bash
+> # Helm 3.14+ — reset to new defaults, then layer user overrides on top
+> helm upgrade vigil ./helm/vigil -n vigil --reset-then-reuse-values --wait
+>
+> # Or pass an explicit values file so the new defaults aren't lost
+> helm upgrade vigil ./helm/vigil -n vigil -f my-values.yaml --wait
+> ```
+>
+> Subsequent upgrades that don't touch `dbInit.sqlFiles` can go back to
+> plain `--reuse-values`.
+
 ## Uninstall
 
 ```bash
