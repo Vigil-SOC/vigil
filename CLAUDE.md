@@ -58,7 +58,7 @@ vigil/
 ├── mcp-servers/          # Git submodule: MCP server implementations
 ├── deeptempo-core/       # Git submodule: core AI/detection library
 ├── database/
-│   └── init/             # PostgreSQL init SQL (runs in order 01-06)
+│   └── init/             # PostgreSQL init SQL (docker-compose: lex order by filename; Helm: values.yaml dbInit.sqlFiles)
 ├── core/                 # Config, secrets management, rate limiting
 ├── data/                 # Schemas, MITRE taxonomy, detection registry
 ├── tests/                # pytest + vitest test suites
@@ -199,9 +199,34 @@ Agents access external tools through the MCP protocol. Tool definitions live in 
 ### Database
 
 - PostgreSQL 16 via SQLAlchemy ORM (`services/models.py`)
-- Schema initialized by `database/init/` SQL files (executed in numeric order)
+- Schema initialized by `database/init/` SQL files. **Execution order
+  differs by deploy path:** docker-compose mounts the directory at
+  `/docker-entrypoint-initdb.d`, where Postgres runs files in
+  **lexicographic filename order** (the `01_`/`04_`/…/`16_` prefixes
+  are authoritative there). The Helm chart, by contrast, iterates
+  `helm/vigil/values.yaml`'s `dbInit.sqlFiles` list in the **order
+  written there** — prefixes are decorative for the chart path
 - pgvector extension for embeddings
 - Use `services/database_data_service.py` for data access — do not query the DB directly from API handlers
+
+**When adding or modifying an init SQL file under `database/init/`:** the
+chart bundles a *copy* under `helm/vigil/files/database-init/` (Helm can
+only read files inside the chart directory). You must (1) copy the file
+into the chart bundle, (2) add it to `helm/vigil/values.yaml`
+`dbInit.sqlFiles` in the correct execution order, and (3) verify with
+`helm template ... | grep -E '^[[:space:]]*apply "NEWFILE\.sql"'` that
+the dbInit Job script applies it (a bare `grep NEWFILE.sql` false-matches
+the ConfigMap key and the SQL header comment). CI catches step 1
+(`Helm Chart / Lint and Template` runs `diff -r` between the two
+directories). Skipping step 2 is silent (the file is in the ConfigMap
+but never applied); skipping step 1 while keeping the file in
+`dbInit.sqlFiles` makes the Job hard-fail at runtime — *unless* the
+filename already has a row in `_vigil_schema_versions`, in which case
+it SKIPs as already-applied (the marker-table check runs before the
+file-existence check, so legacy `003_*` ghost rows on v0.1.x upgrades
+don't break `helm upgrade --reuse-values`). See
+[`database/init/README.md`](database/init/README.md), which also lists
+two filenames that are reserved and must never be reused.
 
 ### Authentication
 
@@ -302,7 +327,7 @@ GitHub Actions workflows in `.github/workflows/`:
 | Workflow | Trigger | Jobs |
 |----------|---------|------|
 | `ci-cd.yml` | Push/PR to main, develop | Lint → Unit Tests → Integration Tests → Security Scan → Docker Build |
-| `release-please.yml` | Push to `main`, manual | Read Conventional Commits since last tag → open/update a release PR with bumped `VERSION` / `Chart.yaml` `appVersion` / `frontend/package.json` + `CHANGELOG.md`. On merge, push `vX.Y.Z` tag and create the GitHub Release. See `RELEASING.md`. |
+| `release-please.yml` | Push to `main`, manual | Read Conventional Commits since last tag → open/update a release PR with bumped `VERSION` / `Chart.yaml` (`appVersion` + `version`, lockstep) / `frontend/package.json` / `frontend/package-lock.json` + `CHANGELOG.md`. On merge, push `vX.Y.Z` tag and create the GitHub Release. See `RELEASING.md`. |
 | `release.yml` | Version tags (`v*.*.*`) | Build production images → Trivy scan → deploy to production VM → post-deploy validation. Does **not** create the GitHub Release (release-please owns it). |
 | `nightly.yml` | Daily 2 AM UTC | Comprehensive security & performance audits |
 
@@ -326,7 +351,7 @@ All CI checks must pass before merging.
 | `services/claude_service.py` | Central AI/agent orchestration (~124KB) |
 | `services/soc_agents.py` | All agent system prompts |
 | `services/mcp_service.py` | MCP protocol coordination |
-| `database/init/` | Schema SQL (01–06, applied in order) |
+| `database/init/` | Schema SQL — see Database section for the add/modify checklist |
 | `mcp-config.json` | All MCP server definitions |
 | `env.example` | Every supported environment variable |
 | `docker/docker-compose.yml` | Full local stack definition |

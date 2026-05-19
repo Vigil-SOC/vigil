@@ -633,7 +633,7 @@ sudo systemctl start fail2ban
 docker-compose down
 
 # Pull previous version
-export IMAGE_TAG=v1.2.2
+export IMAGE_TAG=1.2.2  # image tags are pushed without the v prefix (git tags still use v)
 docker-compose pull
 docker-compose up -d
 
@@ -654,7 +654,7 @@ gunzip -c backups/pre-v1.2.3.sql.gz | docker-compose exec -T postgres psql -U de
 git checkout v1.2.2
 
 # 4. Deploy previous version
-export IMAGE_TAG=v1.2.2
+export IMAGE_TAG=1.2.2  # image tags are pushed without the v prefix (git tags still use v)
 docker-compose up -d
 
 # 5. Verify

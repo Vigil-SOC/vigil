@@ -373,7 +373,7 @@ docker images | grep vigil
 
 # Rollback to previous version
 cd /opt/vigil
-export IMAGE_TAG=v1.2.2  # Previous version
+export IMAGE_TAG=1.2.2  # Previous version (image tags are pushed without the v prefix; git tags still use v)
 docker-compose up -d --force-recreate
 ```
 

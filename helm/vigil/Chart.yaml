@@ -2,15 +2,15 @@ apiVersion: v2
 name: vigil
 description: Vigil SOC — open-source, AI-native Security Operations Center
 type: application
-version: 0.1.0
+version: 0.1.1
 appVersion: "0.1.0"
 kubeVersion: ">=1.25.0-0"
 home: https://github.com/Vigil-SOC/vigil
 sources:
   - https://github.com/Vigil-SOC/vigil
 maintainers:
-  - name: Vigil SOC maintainers
-    url: https://github.com/Vigil-SOC/vigil
+  - name: Vigil-SOC
+    url: https://github.com/Vigil-SOC
 keywords:
   - security
   - soc

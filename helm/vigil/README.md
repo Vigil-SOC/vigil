@@ -90,14 +90,43 @@ integration creds you use (`SPLUNK_PASSWORD`, `SLACK_BOT_TOKEN`, …).
 ## Upgrades
 
 ```bash
-helm upgrade vigil ./helm/vigil \
-  -n vigil --reuse-values \
-  --set backend.image.tag=v0.2.0 \
-  --set daemon.image.tag=v0.2.0
+helm upgrade vigil ./helm/vigil -n vigil --reuse-values
+```
+
+The chart's default image tag resolves to `Chart.AppVersion`, which
+release-please bumps in lockstep with the chart `version` on every
+release — so a `helm upgrade` after pulling the new chart version
+picks up the matching images automatically. Override only if you need
+to pin to a different tag than the chart's `appVersion` (for example,
+to deploy a `:latest` build for testing):
+
+```bash
+helm upgrade vigil ./helm/vigil -n vigil --reuse-values \
+  --set backend.image.tag=latest \
+  --set daemon.image.tag=latest
 ```
 
 The `db-init` Job re-runs on every upgrade but is idempotent — it tracks
 applied files in a `_vigil_schema_versions` table.
+
+> ⚠️ **First upgrade when `dbInit.sqlFiles` has changed** — `helm
+> upgrade --reuse-values` reuses the *previous release's* coalesced
+> values, which means a longer `dbInit.sqlFiles` list in the new chart
+> is silently overwritten by the previous (shorter) one. Any new SQL
+> files in the bump won't run, and code that touches their tables
+> crashes at runtime. On the first upgrade after a chart bump that
+> added init SQL, use one of:
+>
+> ```bash
+> # Helm 3.14+ — reset to new defaults, then layer user overrides on top
+> helm upgrade vigil ./helm/vigil -n vigil --reset-then-reuse-values
+>
+> # Or pass an explicit values file so the new defaults aren't lost
+> helm upgrade vigil ./helm/vigil -n vigil -f my-values.yaml
+> ```
+>
+> Subsequent upgrades that don't touch `dbInit.sqlFiles` can go back to
+> plain `--reuse-values`.
 
 ## Values reference
 

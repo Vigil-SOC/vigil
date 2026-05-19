@@ -78,11 +78,44 @@ spec:
               # works on upgrade.
               apply() {
                 local f="$1"
+                # Marker-table check goes FIRST so already-applied filenames
+                # short-circuit before the file-existence check below.
+                #
+                # This ordering matters for `helm upgrade --reuse-values`
+                # from v0.1.x: those deployments have ghost rows in
+                # _vigil_schema_versions for the phantom
+                # 003_add_ai_enrichment.sql / 003_ai_decision_logs.sql
+                # entries from the original values.yaml drift. Helm
+                # `--reuse-values` reuses the previous release's coalesced
+                # values regardless of the new chart's defaults, so those
+                # ghost entries persist in dbInit.sqlFiles on first upgrade
+                # — and we want them to SKIP cleanly via the marker rather
+                # than hard-fail at the file check. The marker says "the
+                # cluster already accepted these as applied," which is
+                # exactly the contract upgrade-time idempotency relies on.
+                # See database/init/README.md for the reserved-filenames
+                # warning that prevents these names being reused.
                 local marker
                 marker=$(psql -tA -c "SELECT 1 FROM _vigil_schema_versions WHERE filename='$f' LIMIT 1" || true)
                 if [ "$marker" = "1" ]; then
                   echo "SKIP $f (already applied)"
                   return 0
+                fi
+                # File-existence check only fires for entries that have
+                # NOT been recorded as applied. Genuinely new drift (a
+                # filename added to dbInit.sqlFiles without being copied
+                # into the chart bundle) still hard-fails loudly. The
+                # previous behavior — silently logging "applied with
+                # warnings" + INSERTing into _vigil_schema_versions — is
+                # what produced the historical ghost rows in the first
+                # place; refusing to extend the bug is the whole point of
+                # this guard.
+                if [ ! -f "/sql/$f" ]; then
+                  echo "ERROR: $f is listed in dbInit.sqlFiles but not present in the chart bundle." >&2
+                  echo "  helm/vigil/values.yaml dbInit.sqlFiles has likely drifted from" >&2
+                  echo "  helm/vigil/files/database-init/. Either copy the file into the" >&2
+                  echo "  bundle or remove the entry from values.yaml." >&2
+                  return 1
                 fi
                 echo "APPLY $f"
                 if psql -f "/sql/$f"; then

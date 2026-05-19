@@ -30,7 +30,7 @@ The workflows are currently configured for **Continuous Integration** only - the
 
 ### 2. `release-please.yml` - Automated Release PRs
 - **Triggers**: Push to `main`, manual dispatch
-- **Purpose**: Read Conventional Commits since the last tag; open or update a release PR that bumps `VERSION`, `helm/vigil/Chart.yaml` `appVersion`, and `frontend/package.json`, and updates `CHANGELOG.md`. On merge, push the `vX.Y.Z` tag and create the GitHub Release. See `RELEASING.md`.
+- **Purpose**: Read Conventional Commits since the last tag; open or update a release PR that bumps `VERSION`, `helm/vigil/Chart.yaml` (both `appVersion` and `version`, in lockstep), `frontend/package.json`, and `frontend/package-lock.json`, and updates `CHANGELOG.md`. On merge, push the `vX.Y.Z` tag and create the GitHub Release. See `RELEASING.md`.
 - **Deployment**: None (tagging only — downstream `release.yml` handles deploys)
 
 ### 3. `release.yml` - Tag-Triggered Production Pipeline
@@ -59,8 +59,8 @@ After the CI builds your images, you can run them anywhere:
 
 ```bash
 # Pull the built images
-docker pull ghcr.io/deeptempo/ai-opensoc-backend:main
-docker pull ghcr.io/deeptempo/ai-opensoc-daemon:main
+docker pull ghcr.io/vigil-soc/vigil-backend:main
+docker pull ghcr.io/vigil-soc/vigil-daemon:main
 
 # Run with docker-compose
 docker-compose up -d

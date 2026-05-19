@@ -21,12 +21,12 @@ Vigil follows [Semantic Versioning](https://semver.org/).
 |-------------------------------|------------------------------------|-------------------------------|
 | `VERSION`                     | (whole file)                       | yes                           |
 | `helm/vigil/Chart.yaml`       | `appVersion`                       | yes                           |
+| `helm/vigil/Chart.yaml`       | `version`                          | yes (lockstep with appVersion)|
 | `frontend/package.json`       | `version`                          | yes                           |
 | `frontend/package-lock.json`  | `version` (root + `packages['']`)  | yes                           |
-| `helm/vigil/Chart.yaml`       | `version`                          | **no** — bump manually in PR  |
 
-See "Chart version vs appVersion" below for why the chart's `version` is
-managed separately.
+See "Chart version vs appVersion" below for why both chart fields are
+bumped together.
 
 The Python backend reads `VERSION` directly at import time (see
 `backend/__init__.py`), so the FastAPI app version, the
@@ -57,8 +57,9 @@ automated.
      contribute to version selection
 3. It opens (or updates) a single **release PR** titled
    `chore(main): release X.Y.Z`. The PR bumps `VERSION`,
-   `Chart.yaml` `appVersion`, `frontend/package.json` `version`, and
-   updates `CHANGELOG.md`.
+   `Chart.yaml` `appVersion` and `version`, `frontend/package.json`
+   `version`, `frontend/package-lock.json` (both `$.version` and
+   `$.packages[''].version`), and updates `CHANGELOG.md`.
 4. The release PR stays open and accumulates more commits as they merge.
    This is the grouping mechanism — every commit since the last release
    lives in one PR until you ship.
@@ -72,16 +73,30 @@ The only human decision per release is **when to merge the release PR**.
 
 ## Chart Version vs appVersion
 
-The Helm chart's `version:` (chart packaging version) is independent of
-`appVersion:` (the Vigil release the chart deploys). release-please only
-manages `appVersion`. Bump chart `version` manually in your PR when the
-chart itself changes — templates, values schema, dependencies.
+The Helm chart has two version fields:
+
+- **`appVersion`** — the Vigil release the chart deploys.
+- **`version`** — the chart packaging version. Helm clients, `helm package`
+  tarball names (`vigil-X.Y.Z.tgz`), Helm's local cache, and ArtifactHub all
+  key off this field, not `appVersion`. If chart contents change without a
+  `version` bump, consumers see "no new chart" even though the bytes
+  differ — silent breakage.
+
+release-please bumps **both fields in lockstep** with every release. This
+is a deliberate trade-off: it gives up the (rarely-used) ability to ship a
+chart-only patch with a chart `version` bump but no app version bump, in
+exchange for eliminating a drift footgun that's hard to catch in review
+(release-please's YAML library reformats `Chart.yaml` when it edits, which
+can produce semantically-equivalent but byte-different output).
 
 | Change                              | `appVersion` | chart `version` |
 |-------------------------------------|--------------|-----------------|
-| New Vigil release, no chart change  | bumps        | unchanged       |
-| Helm template fix, no app change    | unchanged    | bump manually   |
-| Both at once                        | bumps        | bump manually   |
+| Any release-please release          | bumps        | bumps           |
+
+If you ever need a chart-only fix between app releases (e.g. a Helm
+template hotfix with no app code change), edit `helm/vigil/Chart.yaml`'s
+`version` manually in a separate PR outside the release-please flow. This
+is the escape hatch, not the default path.
 
 ## GitHub App Setup
 
@@ -110,6 +125,7 @@ that overwrites it.
    all of the following:
    - `VERSION`
    - `helm/vigil/Chart.yaml` `appVersion`
+   - `helm/vigil/Chart.yaml` `version` (lockstep with `appVersion`)
    - `frontend/package.json` `version`
    - `frontend/package-lock.json` — both `$.version` and
      `$.packages[''].version`
