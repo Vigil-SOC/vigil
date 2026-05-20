@@ -559,6 +559,11 @@ _FALLBACK_MODELS_BY_PROVIDER: Dict[str, Tuple[str, ...]] = {
 
 _DEFAULT_EXTRA_MODELS: Dict[str, Tuple[str, ...]] = {
     "anthropic": (
+        # Legacy 4.x IDs kept routable for users with persisted
+        # localStorage settings still referencing them. Tagged deprecated
+        # in the UI dropdown via the extras-tracking mechanism below.
+        "claude-sonnet-4-20250514",
+        "claude-opus-4-20250514",
         "claude-3-5-haiku-20241022",
         "claude-3-5-sonnet-20241022",
         "claude-3-haiku-20240307",
