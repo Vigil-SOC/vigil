@@ -9,6 +9,7 @@
   "packages": {
     ".": {
       "package-name": "vigil",
+      "include-component-in-tag": false,
       "version-file": "VERSION",
       "changelog-path": "CHANGELOG.md",
       "extra-files": [
