@@ -113,6 +113,29 @@ def fix_cases_updated_at(conn):
 
 
 # ---------------------------------------------------------------------------
+# llm_interaction_logs table
+# ---------------------------------------------------------------------------
+
+# Bifrost virtual-key attribution (#186). The column is declared on the ORM
+# model but create_all() does not ALTER existing tables, so databases
+# initialized before #186 landed are missing the column and every
+# /api/reasoning/* read returns 500.
+@migration("Add virtual_key_id column to llm_interaction_logs")
+def add_llm_interaction_virtual_key_id(conn):
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs
+        ADD COLUMN IF NOT EXISTS virtual_key_id VARCHAR(64);
+    """))
+
+@migration("Create idx_llm_interaction_vk index")
+def create_llm_interaction_vk_index(conn):
+    conn.execute(text("""
+        CREATE INDEX IF NOT EXISTS idx_llm_interaction_vk
+        ON llm_interaction_logs (virtual_key_id, created_at);
+    """))
+
+
+# ---------------------------------------------------------------------------
 # New tables (create if missing via SQLAlchemy create_all)
 # ---------------------------------------------------------------------------
 
