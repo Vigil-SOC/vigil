@@ -605,6 +605,9 @@ class AgentRunner:
                         "tool_calls": len(result.get("tool_calls", [])),
                     },
                 )
+
+                refreshed = self.workdir.read_state(inv_id)
+
                 self._log_investigation_event(
                     inv_id,
                     "iteration_complete",
@@ -618,8 +621,6 @@ class AgentRunner:
                     },
                     tokens_used=in_tokens + out_tokens,
                 )
-
-                refreshed = self.workdir.read_state(inv_id)
 
                 self._update_db_record(
                     inv_id,
