@@ -1133,7 +1133,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                 border: 1, borderColor: msg.role === 'user' ? alpha(theme.palette.primary.main, 0.2) : 'divider',
               }}>
                 <Typography variant="caption" sx={{ fontWeight: 600, color: msg.role === 'user' ? 'primary.main' : 'text.secondary', mb: 0.5, display: 'block' }}>
-                  {msg.role === 'user' ? 'You' : 'DeepTempo'}
+                  {msg.role === 'user' ? 'You' : 'Vigil'}
                 </Typography>
                 {renderContent(msg.content, i)}
               </Box>
@@ -1148,11 +1148,11 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
               border: 1, borderColor: 'divider',
             }}>
               <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', mb: 0.5, display: 'block' }}>
-                DeepTempo
+                Vigil
               </Typography>
-              <Box sx={{ 
-                p: 1.5, 
-                borderRadius: 1, 
+              <Box sx={{
+                p: 1.5,
+                borderRadius: 1,
                 bgcolor: alpha(theme.palette.info.main, 0.05),
                 borderLeft: 2,
                 borderColor: 'info.main',
@@ -1190,7 +1190,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
               border: 1, borderColor: 'divider',
             }}>
               <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', mb: 0.5, display: 'block' }}>
-                DeepTempo
+                Vigil
               </Typography>
               <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{streamingText}</Typography>
             </Box>
