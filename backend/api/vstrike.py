@@ -616,9 +616,7 @@ async def ui_storyline_mode(request: VStrikeStorylineModeRequest) -> dict:
     """Set the timeslice mode for the VCR controls and reset frame counters."""
     service = _ui_service_or_503()
     try:
-        result = service.ui_storyline_mode(
-            request.mode, network_id=request.network_id
-        )
+        result = service.ui_storyline_mode(request.mode, network_id=request.network_id)
     except VStrikeToolNotImplemented as e:
         raise HTTPException(status_code=501, detail=str(e))
     except Exception as e:
@@ -651,6 +649,99 @@ async def ui_storyline_backward(network_id: Optional[str] = None) -> dict:
         raise HTTPException(status_code=501, detail=str(e))
     except Exception as e:
         logger.error("VStrike ui-storyline-backward failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+# ---------------------------------------------------------------------------
+# Net-new VStrike tools: network-graph-get, ui-legend-apply, ui-rightpanel-focus
+#
+# Input shapes are defensive: known fields are typed, unknown fields pass
+# through verbatim (model_config extra="allow") so corrections from VStrike
+# engineering don't require a route refactor.
+# ---------------------------------------------------------------------------
+
+
+class _PassthroughModel(BaseModel):
+    model_config = {"extra": "allow"}
+
+
+def _passthrough_extras(model: _PassthroughModel, known: set[str]) -> dict:
+    """Return any unknown keys the client sent, ready to splat as **kwargs."""
+    return {k: v for k, v in model.model_dump().items() if k not in known}
+
+
+class VStrikeNetworkGraphRequest(_PassthroughModel):
+    network_id: Optional[str] = None
+
+
+@router.post("/network-graph")
+async def network_graph(request: VStrikeNetworkGraphRequest) -> dict:
+    """Fetch the active network graph: {label, nodes, edges, bbox}."""
+    service = _ui_service_or_503()
+    extras = _passthrough_extras(request, {"network_id"})
+    try:
+        graph = service.network_graph_get(network_id=request.network_id, **extras)
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike network-graph-get failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    if graph is None:
+        raise HTTPException(status_code=502, detail="VStrike returned no graph data")
+    return {"network_id": request.network_id, "graph": graph}
+
+
+class VStrikeLegendApplyRequest(_PassthroughModel):
+    legend_run_id: str
+    network_id: Optional[str] = None
+
+
+@router.post("/ui/legend-apply")
+async def ui_legend_apply(request: VStrikeLegendApplyRequest) -> dict:
+    """Apply a legend run inside the active VStrike iframe session."""
+    service = _ui_service_or_503()
+    extras = _passthrough_extras(request, {"legend_run_id", "network_id"})
+    try:
+        result = service.ui_legend_apply(
+            request.legend_run_id,
+            network_id=request.network_id,
+            **extras,
+        )
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-legend-apply failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+class VStrikeRightpanelFocusRequest(_PassthroughModel):
+    """No declared fields. VStrike confirmed the tool takes no parameters.
+
+    The passthrough model is preserved so a future schema bump on VStrike's
+    end can be exercised by simply including the new fields in the request
+    body; they'll forward verbatim to the MCP call.
+    """
+
+
+@router.post("/ui/rightpanel-focus")
+async def ui_rightpanel_focus(
+    request: VStrikeRightpanelFocusRequest = VStrikeRightpanelFocusRequest(),
+) -> dict:
+    """Open the right-hand details panel in the VStrike iframe.
+
+    Takes no parameters; the panel opens for whatever node is currently
+    selected in the session.
+    """
+    service = _ui_service_or_503()
+    extras = _passthrough_extras(request, set())
+    try:
+        result = service.ui_rightpanel_focus(**extras)
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-rightpanel-focus failed: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
 

@@ -200,11 +200,17 @@ AGENT_CONFIGS = {
         "color": "#4ECDC4",
         "description": "Deep-dive security investigations",
         "specialization": "Deep Security Investigations",
-        "tools": ["list_findings", "get_finding", "create_approval_action"],
+        "tools": [
+            "list_findings",
+            "get_finding",
+            "create_approval_action",
+            "vstrike_ui_legend_apply",
+            "vstrike_ui_rightpanel_focus",
+        ],
         "max_tokens": 16384,
         "thinking": True,
         "thinking_budget": 10000,
-        "extra_principles": "- Be thorough - follow systematic methodology\n- Document chain of evidence\n- Proactively suggest containment actions\n- Memory: mempalace_search all IOCs before starting; mempalace_add_drawer to wing=investigations/active-cases during; mempalace_kg_add for entity relationships found",
+        "extra_principles": "- Be thorough - follow systematic methodology\n- Document chain of evidence\n- Proactively suggest containment actions\n- Memory: mempalace_search all IOCs before starting; mempalace_add_drawer to wing=investigations/active-cases during; mempalace_kg_add for entity relationships found\n- When a VStrike network is loaded, drive the analyst's view in lockstep: vstrike_ui_legend_apply to set the right legend for your narrative, vstrike_ui_rightpanel_focus on the node currently under discussion",
         "methodology": """<methodology>
 1. Retrieve data via MCP tools
 2. Collect context: related findings, logs, threat intel
@@ -379,7 +385,12 @@ Confidence scoring:
         "color": "#B4A7D6",
         "description": "Threat intelligence analysis and enrichment",
         "specialization": "Threat Intelligence",
-        "tools": ["get_finding", "list_findings", "cf_lookup_ip_threat", "cf_lookup_domain_threat"],
+        "tools": [
+            "get_finding",
+            "list_findings",
+            "cf_lookup_ip_threat",
+            "cf_lookup_domain_threat",
+        ],
         "max_tokens": 16384,
         "thinking": True,
         "thinking_budget": 6000,
@@ -462,11 +473,18 @@ Confidence scoring:
         "color": "#56CCF2",
         "description": "Network traffic and protocol analysis",
         "specialization": "Network Security Analysis",
-        "tools": ["list_findings", "get_finding", "cf_lookup_ip_threat", "cf_lookup_domain_threat"],
+        "tools": [
+            "list_findings",
+            "get_finding",
+            "cf_lookup_ip_threat",
+            "cf_lookup_domain_threat",
+            "vstrike_network_graph_get",
+            "vstrike_ui_rightpanel_focus",
+        ],
         "max_tokens": 16384,
         "thinking": True,
         "thinking_budget": 8000,
-        "extra_principles": "- Understand normal traffic to spot anomalies\n- Deep dive protocol-specific attacks\n- Always look for C2 indicators\n- Memory: mempalace_search in infrastructure/network-baselines for known-good patterns; mempalace_add_drawer new C2 infrastructure to wing=threat-intel/ioc-registry",
+        "extra_principles": "- Understand normal traffic to spot anomalies\n- Deep dive protocol-specific attacks\n- Always look for C2 indicators\n- Memory: mempalace_search in infrastructure/network-baselines for known-good patterns; mempalace_add_drawer new C2 infrastructure to wing=threat-intel/ioc-registry\n- VStrike topology: use vstrike_network_graph_get for full {label, nodes, edges, bbox} when reasoning about blast radius or lateral paths; call vstrike_ui_rightpanel_focus to surface a node's panel for the analyst as you cite it",
         "methodology": """<methodology>
 1. Retrieve network findings and extract IOCs
 2. Flow analysis: Patterns, destinations, volumes
