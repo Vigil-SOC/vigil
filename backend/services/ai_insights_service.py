@@ -38,7 +38,7 @@ class AIInsightsService:
             self.client = None
         else:
             self.client = create_anthropic_client(api_key)
-        self.model = "claude-sonnet-4-20250514"  # Claude 4.5 Sonnet
+        self.model = "claude-sonnet-4-6"
 
         # In-memory cache of insights keyed by time_range.
         # Each entry: {"insights": List[Dict], "generated_at": datetime, "generating": bool}
