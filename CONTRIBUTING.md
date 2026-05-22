@@ -73,9 +73,11 @@ minor version bumps may include breaking changes to agent prompts, workflow
 schemas, and MCP integration interfaces. Patch bumps are always backward
 compatible. See [`RELEASING.md`](RELEASING.md) for the full release process.
 
-The Helm chart at `helm/vigil/` is versioned independently of the
-application — `appVersion` tracks the Vigil release; chart `version` bumps
-when the chart itself changes.
+The Helm chart at `helm/vigil/` has two version fields: `appVersion`
+(the Vigil release the chart deploys) and chart `version` (the chart
+packaging version). release-please bumps **both in lockstep** on every
+release. See [`RELEASING.md`](RELEASING.md) for the rationale and the
+escape hatch for chart-only changes between app releases.
 
 ## What to Work On
 
@@ -188,9 +190,6 @@ docs(workflows): clarify threat-hunt phase ordering
 chore(deps): bump fastapi to 0.110.0
 feat(agents)!: rename Triage agent prompt schema
 ```
-
-Don't sweat it if you forget — the format is a preference, not a gate. The
-only hard requirement is the DCO sign-off.
 
 ## Pull Request Guidelines
 
