@@ -165,7 +165,18 @@ function pickNetworkLabel(raw: Record<string, any>, fallbackId: string): string 
 }
 
 function pickId(raw: Record<string, any>): string | null {
-  for (const key of ['id', 'storyline_id', 'legend_run_id', 'uuid', 'runId']) {
+  // VStrike's real MCP responses use storylineSetId / legendId / legendRunId;
+  // the snake_case variants are kept for forward-compat with future shapes.
+  for (const key of [
+    'id',
+    'storylineSetId',
+    'storyline_id',
+    'legendId',
+    'legendRunId',
+    'legend_run_id',
+    'uuid',
+    'runId',
+  ]) {
     const value = raw?.[key]
     if (typeof value === 'string' && value) return value
     if (typeof value === 'number') return String(value)
