@@ -623,6 +623,32 @@ def test_storyline_list_returns_storylines():
     assert result == [{"storyline_id": "s1", "name": "Exfil"}]
 
 
+def test_storyline_list_unwraps_vstrike_structured_content():
+    """VStrike's real MCP response puts the list under
+    structuredContent.storylineSets (not under "storylines"). Regression
+    test for empty-dropdown bug."""
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [],
+            "structuredContent": {
+                "storylineSets": [
+                    {"storylineSetId": "ss1", "label": "Exfil"}
+                ],
+                "count": 1,
+            },
+            "isError": False,
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ):
+        result = svc.storyline_list(network_id="net-1")
+    assert result == [{"storylineSetId": "ss1", "label": "Exfil"}]
+
+
 def test_storyline_events_get_passes_storyline_id():
     svc = _ui_service()
     _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
@@ -667,6 +693,31 @@ def test_legend_run_list_returns_runs():
     ):
         result = svc.legend_run_list(network_id="net-1")
     assert result == [{"legend_run_id": "lr1", "name": "CVE-2026-001"}]
+
+
+def test_legend_run_list_unwraps_vstrike_structured_content():
+    """VStrike's real MCP response puts the list under
+    structuredContent.legends (not under "legendRuns")."""
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [],
+            "structuredContent": {
+                "legends": [
+                    {"legendId": "lg1", "label": "Vendor"}
+                ],
+                "count": 1,
+            },
+            "isError": False,
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ):
+        result = svc.legend_run_list(network_id="net-1")
+    assert result == [{"legendId": "lg1", "label": "Vendor"}]
 
 
 def test_legend_run_results_get_returns_dict():

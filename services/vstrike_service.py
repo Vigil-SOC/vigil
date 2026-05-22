@@ -584,7 +584,9 @@ class VStrikeService:
             args["networkId"] = network_id
         try:
             result = self._call_mcp_tool("storyline-list", args)
-            return _extract_list(result, ("storylines", "results", "items", "data"))
+            return _extract_list(
+                result, ("storylineSets", "storylines", "results", "items", "data")
+            )
         except RuntimeError as e:
             logger.error("VStrike storyline-list failed: %s", e)
             return None
@@ -612,7 +614,9 @@ class VStrikeService:
             args["networkId"] = network_id
         try:
             result = self._call_mcp_tool("legend-run-list", args)
-            return _extract_list(result, ("legendRuns", "results", "items", "data"))
+            return _extract_list(
+                result, ("legends", "legendRuns", "results", "items", "data")
+            )
         except RuntimeError as e:
             logger.error("VStrike legend-run-list failed: %s", e)
             return None
