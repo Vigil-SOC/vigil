@@ -66,6 +66,19 @@ git config user.name "Your Name"
 git config user.email "your@email.com"
 ```
 
+### Versioning and Releases
+
+Vigil follows [Semantic Versioning](https://semver.org/). While in `0.x`,
+minor version bumps may include breaking changes to agent prompts, workflow
+schemas, and MCP integration interfaces. Patch bumps are always backward
+compatible. See [`RELEASING.md`](RELEASING.md) for the full release process.
+
+The Helm chart at `helm/vigil/` has two version fields: `appVersion`
+(the Vigil release the chart deploys) and chart `version` (the chart
+packaging version). release-please bumps **both in lockstep** on every
+release. See [`RELEASING.md`](RELEASING.md) for the rationale and the
+escape hatch for chart-only changes between app releases.
+
 ## What to Work On
 
 ### Good First Issues
@@ -132,15 +145,50 @@ New features should include tests. Place them in `tests/` following existing nam
 
 ### Commit Messages
 
-Write clear, descriptive commit messages. Format:
+We **prefer** [Conventional Commits](https://www.conventionalcommits.org/) so we
+can automate changelogs and version bumps via
+[release-please](https://github.com/googleapis/release-please) (see
+[`RELEASING.md`](RELEASING.md)). It is not strictly enforced at the
+per-commit level — if your individual commits don't match the format, please
+update your **PR title** to follow the convention before requesting review
+(since we squash-merge, the PR title becomes the commit on `main`). If you
+forget, a maintainer may adjust the title before merging. The DCO sign-off
+(`git commit -s`), however, is required on every commit.
+
+The preferred format is:
 
 ```
-Short summary (50 chars or less)
+<type>(<optional scope>): <short summary>
 
-Longer description if needed. Explain what changed and why,
-not how (the code shows how). Wrap at 72 characters.
+<optional body explaining what and why>
 
 Signed-off-by: Your Name <your@email.com>
+```
+
+**Common types:**
+
+- `feat:` — a new feature (triggers a minor version bump)
+- `fix:` — a bug fix (triggers a patch bump)
+- `docs:` — documentation only
+- `chore:` — tooling, build, dependency bumps
+- `refactor:` — code change that neither fixes a bug nor adds a feature
+- `test:` — adding or fixing tests
+- `perf:` — performance improvement
+
+**Common scopes for Vigil:** `agents`, `workflows`, `mcp`, `frontend`,
+`daemon`, `helm`, `api`, `db`.
+
+**Breaking changes:** add `!` after the type/scope (`feat!:`) or include
+`BREAKING CHANGE:` in the body.
+
+**Examples:**
+
+```
+feat(mcp): add SentinelOne integration
+fix(daemon): prevent double-processing of correlated alerts
+docs(workflows): clarify threat-hunt phase ordering
+chore(deps): bump fastapi to 0.110.0
+feat(agents)!: rename Triage agent prompt schema
 ```
 
 ## Pull Request Guidelines
@@ -150,6 +198,16 @@ Signed-off-by: Your Name <your@email.com>
 - Update relevant documentation
 - Reference related issues: "Closes #123" or "Part of #456"
 - Keep PRs reviewable — if a feature is large, break it into smaller PRs
+
+### Pull Request Titles
+
+Because we squash-merge PRs, the PR title becomes the commit message on
+`main` — which is what `release-please` reads to decide version bumps and
+changelog entries. **Setting a Conventional Commits-style PR title is the
+author's responsibility** (e.g., `feat(mcp): add SentinelOne integration`).
+You can update the title at any point before merge by editing the PR. If
+you forget, a maintainer may adjust it before merging, but please don't
+rely on that.
 
 ## Community
 

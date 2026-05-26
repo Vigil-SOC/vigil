@@ -71,6 +71,37 @@ automated.
 
 The only human decision per release is **when to merge the release PR**.
 
+## Forcing a specific version
+
+release-please normally picks the next version from Conventional Commit
+prefixes — highest bump wins (`feat:` → minor, `fix:` → patch, etc.).
+Sometimes you need to override that: to unstick a stalled release PR,
+to reserve a milestone version, or to skip a number on purpose. Push
+an empty commit to `main` with a `Release-As:` trailer:
+
+```bash
+git commit --allow-empty \
+  -m "chore: release 0.1.2" \
+  -m "Release-As: 0.1.2"
+git push origin main
+```
+
+The next release-please run reads the trailer and forces the release
+PR to use that exact version, regardless of what the Conventional
+Commits in the window would otherwise compute. The override is
+one-shot — subsequent merged commits go back to normal accounting.
+
+A common reason to reach for this: `ct lint` is blocking the release
+PR because the chart `version` field "didn't bump" — release-please
+computed the same patch number that's already on disk (e.g. after a
+manual chart-version bump in an earlier PR). Forcing the next patch
+gives the chart-testing job a real diff to validate and unblocks the
+release.
+
+The opposite trailer also exists: `Release-As: skip` tells
+release-please to ignore the commit entirely — useful for `chore:` or
+similar commits you don't want appearing in any release's changelog.
+
 ## Chart Version vs appVersion
 
 The Helm chart has two version fields:
