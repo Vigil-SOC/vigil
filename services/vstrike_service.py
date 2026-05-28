@@ -462,6 +462,71 @@ class VStrikeService:
             return result
         return body.get("result", body) if isinstance(body, dict) else body
 
+    def list_tools(self) -> List[Dict[str, Any]]:
+        """Return the live upstream `tools/list` catalog.
+
+        Diagnostic-only: lets us see which MCP tools VStrike currently
+        exposes so we can spot ones we haven't wrapped yet. Mirrors
+        `_call_mcp_tool`'s transport (JWT, 401-retry, SSE parsing).
+        """
+        url = f"{self.base_url}{MCP_RPC_PATH}"
+        payload = {
+            "jsonrpc": "2.0",
+            "id": int(time.time() * 1000),
+            "method": "tools/list",
+            "params": {},
+        }
+
+        def _post(jwt: str) -> requests.Response:
+            return requests.post(
+                url,
+                json=payload,
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+                headers=self._bearer_headers(jwt),
+            )
+
+        jwt = self._ensure_jwt()
+        try:
+            resp = _post(jwt)
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"VStrike MCP tools/list failed: {e}") from e
+
+        if resp.status_code == 401:
+            self._invalidate_jwt()
+            jwt = self._ensure_jwt()
+            try:
+                resp = _post(jwt)
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(
+                    f"VStrike MCP tools/list retry failed: {e}"
+                ) from e
+
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"VStrike MCP tools/list HTTP {resp.status_code}: "
+                f"{resp.text[:200]}"
+            )
+
+        try:
+            body = _parse_response_body(resp)
+        except ValueError as e:
+            raise RuntimeError(
+                f"VStrike MCP tools/list non-JSON response: {e}"
+            ) from e
+
+        if isinstance(body, dict) and body.get("error"):
+            raise RuntimeError(f"VStrike MCP tools/list error: {body['error']}")
+
+        result = body.get("result") if isinstance(body, dict) else None
+        tools = result.get("tools") if isinstance(result, dict) else None
+        if not isinstance(tools, list):
+            raise RuntimeError(
+                f"VStrike MCP tools/list returned unexpected shape: "
+                f"{str(body)[:200]}"
+            )
+        return tools
+
     def get_ui_login_token(self) -> str:
         """Return a short-lived auto-login token for the iframe URL.
 
