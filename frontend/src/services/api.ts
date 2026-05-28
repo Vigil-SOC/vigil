@@ -589,6 +589,39 @@ export const vstrikeApi = {
       '/integrations/vstrike/ui/storyline-backward',
       { network_id },
     ),
+
+  // -------------------------------------------------------------------------
+  // Net-new VStrike tools (network-graph-get, ui-legend-apply,
+  // ui-rightpanel-focus). The `extra` bag lets callers forward additional
+  // fields verbatim, matching the defensive shape on the backend.
+  // -------------------------------------------------------------------------
+
+  networkGraph: (network_id?: string, extra?: Record<string, any>) =>
+    api.post<{
+      network_id?: string
+      graph: {
+        label?: string
+        nodes: Array<Record<string, any>>
+        edges: Array<Record<string, any>>
+        bbox?: any
+      }
+    }>('/integrations/vstrike/network-graph', { network_id, ...(extra ?? {}) }),
+
+  uiLegendApply: (
+    legend_run_id: string,
+    network_id?: string,
+    extra?: Record<string, any>,
+  ) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/legend-apply',
+      { legend_run_id, network_id, ...(extra ?? {}) },
+    ),
+
+  uiRightpanelFocus: (extra?: Record<string, any>) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/rightpanel-focus',
+      { ...(extra ?? {}) },
+    ),
 }
 
 // Claude API

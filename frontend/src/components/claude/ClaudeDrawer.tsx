@@ -142,8 +142,8 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       logger.error('Failed to load settings', e)
     }
     return {
-      model: 'claude-sonnet-4-20250514', 
-      maxTokens: 4096, 
+      model: 'claude-sonnet-4-6',
+      maxTokens: 4096,
       systemPrompt: '', 
       selectedAgent: '',
       enableThinking: false,
@@ -324,7 +324,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
             },
             body: JSON.stringify({
               messages: initialMessages,
-              model: model || 'claude-sonnet-4-20250514',
+              model: model || 'claude-sonnet-4-6',
               max_tokens: maxTokens,
               enable_thinking: enableThinking,
               thinking_budget: enableThinking ? thinkingBudget : undefined,
@@ -950,7 +950,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
               <FormControl fullWidth size="small" sx={{ mb: 1.5 }}>
                 <Select value={model} onChange={(e) => setModel(e.target.value)} displayEmpty>
                   {models.map(m => <MenuItem key={m.id} value={m.id}>{m.name}</MenuItem>)}
-                  {models.length === 0 && <MenuItem value="claude-sonnet-4-20250514">Claude 4 Sonnet</MenuItem>}
+                  {models.length === 0 && <MenuItem value="claude-sonnet-4-6">Claude Sonnet 4.6</MenuItem>}
                 </Select>
               </FormControl>
               <TextField 
@@ -1133,7 +1133,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                 border: 1, borderColor: msg.role === 'user' ? alpha(theme.palette.primary.main, 0.2) : 'divider',
               }}>
                 <Typography variant="caption" sx={{ fontWeight: 600, color: msg.role === 'user' ? 'primary.main' : 'text.secondary', mb: 0.5, display: 'block' }}>
-                  {msg.role === 'user' ? 'You' : 'DeepTempo'}
+                  {msg.role === 'user' ? 'You' : 'Vigil'}
                 </Typography>
                 {renderContent(msg.content, i)}
               </Box>
@@ -1148,11 +1148,11 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
               border: 1, borderColor: 'divider',
             }}>
               <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', mb: 0.5, display: 'block' }}>
-                DeepTempo
+                Vigil
               </Typography>
-              <Box sx={{ 
-                p: 1.5, 
-                borderRadius: 1, 
+              <Box sx={{
+                p: 1.5,
+                borderRadius: 1,
                 bgcolor: alpha(theme.palette.info.main, 0.05),
                 borderLeft: 2,
                 borderColor: 'info.main',
@@ -1190,7 +1190,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
               border: 1, borderColor: 'divider',
             }}>
               <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', mb: 0.5, display: 'block' }}>
-                DeepTempo
+                Vigil
               </Typography>
               <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{streamingText}</Typography>
             </Box>

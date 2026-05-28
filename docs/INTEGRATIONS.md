@@ -449,7 +449,26 @@ radius.
 | Vigil → VStrike | `GET /api/integrations/vstrike/topology/asset/{id}` | Asset topology lookup |
 | Vigil → VStrike | `GET /api/integrations/vstrike/topology/asset/{id}/adjacent` | One-hop neighbors |
 | Vigil → VStrike | `GET /api/integrations/vstrike/topology/asset/{id}/blast-radius` | Blast radius |
-| MCP | `tools/vstrike.py` (`vstrike_*` tools) | Agent-invokable topology queries |
+| Vigil → VStrike | `POST /api/integrations/vstrike/network-graph` | Full network graph: `{label, nodes, edges, bbox}` |
+| Vigil → VStrike | `POST /api/integrations/vstrike/ui/legend-apply` | Apply selected legend in the iframe |
+| Vigil → VStrike | `POST /api/integrations/vstrike/ui/rightpanel-focus` | Open / focus the iframe's right-hand details panel |
+| MCP | `tools/vstrike.py` (`vstrike_*` tools) | Agent-invokable topology queries + UI control |
+
+#### Recently added MCP tools
+
+| Tool | Input | Behavior |
+|------|-------|----------|
+| `vstrike_network_graph_get` | `networkId` (optional) | Returns `{label, nodes, edges, bbox}` for the active (or specified) network. Useful for blast-radius, path-finding, and layout reasoning beyond single-asset lookups. |
+| `vstrike_ui_legend_apply` | `legendId` (required, value from `legend-run-list`), `networkId` (optional) | Applies the selected legend run inside the active VStrike iframe session. |
+| `vstrike_ui_rightpanel_focus` | none | Opens the VStrike iframe's right-hand details panel for whatever node is currently selected. |
+
+UX wiring:
+
+- The toolbar's Legend dropdown now has an Apply button parallel to the existing Storyline Apply.
+- Picking a node from the toolbar search results chains `ui-camera-node` → `ui-rightpanel-focus` so the camera selects the node and its details panel opens automatically.
+- Clicking an adjacent-asset chip in `NetworkContextPanel` chains the same way: Vigil highlights the node in its own EntityGraph, then drives VStrike with `cameraNode` + `focusRightPanel`.
+
+Service methods accept `**kwargs` and REST routes use `extra="allow"` Pydantic models, so future schema bumps on VStrike's side don't require a Vigil refactor.
 
 ### Configuration
 

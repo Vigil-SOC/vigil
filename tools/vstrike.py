@@ -14,6 +14,9 @@ Tools:
   - vstrike_storyline_events_get
   - vstrike_legend_run_list
   - vstrike_legend_run_results_get
+  - vstrike_network_graph_get
+  - vstrike_ui_legend_apply
+  - vstrike_ui_rightpanel_focus
 """
 
 import asyncio
@@ -46,7 +49,9 @@ server = Server("vstrike")
 
 
 def _result(data) -> list[types.TextContent]:
-    return [types.TextContent(type="text", text=json.dumps(data, indent=2, default=str))]
+    return [
+        types.TextContent(type="text", text=json.dumps(data, indent=2, default=str))
+    ]
 
 
 def _get_service():
@@ -101,9 +106,7 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="vstrike_get_segment_findings",
-            description=(
-                "List VStrike-enriched findings for a given network segment."
-            ),
+            description=("List VStrike-enriched findings for a given network segment."),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -146,9 +149,7 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="vstrike_storyline_list",
-            description=(
-                "List the storylines available for the network."
-            ),
+            description=("List the storylines available for the network."),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -173,9 +174,7 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="vstrike_legend_run_list",
-            description=(
-                "List the legend runs available for the network."
-            ),
+            description=("List the legend runs available for the network."),
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -186,8 +185,38 @@ async def handle_list_tools():
         ),
         types.Tool(
             name="vstrike_legend_run_results_get",
+            description=("Returns the results for the legend provided."),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "legend_run_id": {"type": "string"},
+                    "network_id": {"type": "string"},
+                },
+                "required": ["legend_run_id"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_network_graph_get",
             description=(
-                "Returns the results for the legend provided."
+                "Fetch the active VStrike network graph as "
+                "{label, nodes, edges, bbox}. Use this when you need the "
+                "full topology of a network for layout, blast-radius, or "
+                "path-finding reasoning rather than a single-asset lookup."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "network_id": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        ),
+        types.Tool(
+            name="vstrike_ui_legend_apply",
+            description=(
+                "Apply a legend run to the active VStrike iframe session. "
+                "Re-colors / re-labels nodes per the legend. Returns once "
+                "VStrike has accepted the request."
             ),
             inputSchema={
                 "type": "object",
@@ -196,6 +225,22 @@ async def handle_list_tools():
                     "network_id": {"type": "string"},
                 },
                 "required": ["legend_run_id"],
+                "additionalProperties": True,
+            },
+        ),
+        types.Tool(
+            name="vstrike_ui_rightpanel_focus",
+            description=(
+                "Open the right-hand details panel in the VStrike iframe. "
+                "Takes no parameters; the panel opens for whatever node is "
+                "currently selected in the active session. Pair with "
+                "vstrike_ui_camera_node or other selection tools first if "
+                "you want the panel to target a specific node."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
             },
         ),
     ]
@@ -291,7 +336,9 @@ async def handle_call_tool(name: str, arguments: dict | None):
         result = service.storyline_events_get(storyline_id, network_id=network_id)
         if result is None:
             return _result({"error": f"Storyline events failed for {storyline_id}"})
-        return _result({"storyline_id": storyline_id, "network_id": network_id, "events": result})
+        return _result(
+            {"storyline_id": storyline_id, "network_id": network_id, "events": result}
+        )
 
     if name == "vstrike_legend_run_list":
         network_id = args.get("network_id")
@@ -308,7 +355,50 @@ async def handle_call_tool(name: str, arguments: dict | None):
         result = service.legend_run_results_get(legend_run_id, network_id=network_id)
         if result is None:
             return _result({"error": f"Legend run results failed for {legend_run_id}"})
-        return _result({"legend_run_id": legend_run_id, "network_id": network_id, "results": result})
+        return _result(
+            {
+                "legend_run_id": legend_run_id,
+                "network_id": network_id,
+                "results": result,
+            }
+        )
+
+    if name == "vstrike_network_graph_get":
+        network_id = args.get("network_id")
+        extra = {k: v for k, v in args.items() if k != "network_id"}
+        graph = service.network_graph_get(network_id=network_id, **extra)
+        if graph is None:
+            return _result({"error": "Failed to fetch network graph from VStrike"})
+        return _result({"network_id": network_id, "graph": graph})
+
+    if name == "vstrike_ui_legend_apply":
+        legend_run_id = args.get("legend_run_id")
+        if not legend_run_id:
+            return _result({"error": "legend_run_id required"})
+        network_id = args.get("network_id")
+        extra = {
+            k: v for k, v in args.items() if k not in {"legend_run_id", "network_id"}
+        }
+        try:
+            result = service.ui_legend_apply(
+                legend_run_id, network_id=network_id, **extra
+            )
+        except RuntimeError as e:
+            return _result({"error": f"VStrike ui-legend-apply failed: {e}"})
+        return _result(
+            {
+                "legend_run_id": legend_run_id,
+                "network_id": network_id,
+                "result": result,
+            }
+        )
+
+    if name == "vstrike_ui_rightpanel_focus":
+        try:
+            result = service.ui_rightpanel_focus(**args)
+        except RuntimeError as e:
+            return _result({"error": f"VStrike ui-rightpanel-focus failed: {e}"})
+        return _result({"result": result})
 
     return _result({"error": f"Unknown tool: {name}"})
 

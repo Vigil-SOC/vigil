@@ -462,6 +462,71 @@ class VStrikeService:
             return result
         return body.get("result", body) if isinstance(body, dict) else body
 
+    def list_tools(self) -> List[Dict[str, Any]]:
+        """Return the live upstream `tools/list` catalog.
+
+        Diagnostic-only: lets us see which MCP tools VStrike currently
+        exposes so we can spot ones we haven't wrapped yet. Mirrors
+        `_call_mcp_tool`'s transport (JWT, 401-retry, SSE parsing).
+        """
+        url = f"{self.base_url}{MCP_RPC_PATH}"
+        payload = {
+            "jsonrpc": "2.0",
+            "id": int(time.time() * 1000),
+            "method": "tools/list",
+            "params": {},
+        }
+
+        def _post(jwt: str) -> requests.Response:
+            return requests.post(
+                url,
+                json=payload,
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+                headers=self._bearer_headers(jwt),
+            )
+
+        jwt = self._ensure_jwt()
+        try:
+            resp = _post(jwt)
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"VStrike MCP tools/list failed: {e}") from e
+
+        if resp.status_code == 401:
+            self._invalidate_jwt()
+            jwt = self._ensure_jwt()
+            try:
+                resp = _post(jwt)
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(
+                    f"VStrike MCP tools/list retry failed: {e}"
+                ) from e
+
+        if resp.status_code != 200:
+            raise RuntimeError(
+                f"VStrike MCP tools/list HTTP {resp.status_code}: "
+                f"{resp.text[:200]}"
+            )
+
+        try:
+            body = _parse_response_body(resp)
+        except ValueError as e:
+            raise RuntimeError(
+                f"VStrike MCP tools/list non-JSON response: {e}"
+            ) from e
+
+        if isinstance(body, dict) and body.get("error"):
+            raise RuntimeError(f"VStrike MCP tools/list error: {body['error']}")
+
+        result = body.get("result") if isinstance(body, dict) else None
+        tools = result.get("tools") if isinstance(result, dict) else None
+        if not isinstance(tools, list):
+            raise RuntimeError(
+                f"VStrike MCP tools/list returned unexpected shape: "
+                f"{str(body)[:200]}"
+            )
+        return tools
+
     def get_ui_login_token(self) -> str:
         """Return a short-lived auto-login token for the iframe URL.
 
@@ -568,7 +633,9 @@ class VStrikeService:
             args["networkId"] = network_id
         try:
             result = self._call_mcp_tool("node-drift-get", args)
-            return _extract_list(result, ("drift", "changes", "results", "items", "data"))
+            return _extract_list(
+                result, ("drift", "changes", "results", "items", "data")
+            )
         except RuntimeError as e:
             logger.error("VStrike node-drift-get failed: %s", e)
             return None
@@ -582,7 +649,9 @@ class VStrikeService:
             args["networkId"] = network_id
         try:
             result = self._call_mcp_tool("storyline-list", args)
-            return _extract_list(result, ("storylines", "results", "items", "data"))
+            return _extract_list(
+                result, ("storylineSets", "storylines", "results", "items", "data")
+            )
         except RuntimeError as e:
             logger.error("VStrike storyline-list failed: %s", e)
             return None
@@ -610,7 +679,9 @@ class VStrikeService:
             args["networkId"] = network_id
         try:
             result = self._call_mcp_tool("legend-run-list", args)
-            return _extract_list(result, ("legendRuns", "results", "items", "data"))
+            return _extract_list(
+                result, ("legends", "legendRuns", "results", "items", "data")
+            )
         except RuntimeError as e:
             logger.error("VStrike legend-run-list failed: %s", e)
             return None
@@ -633,7 +704,9 @@ class VStrikeService:
                 # parse the first text chunk.
                 content = result.get("content")
                 if isinstance(content, list) and content:
-                    text = content[0].get("text") if isinstance(content[0], dict) else None
+                    text = (
+                        content[0].get("text") if isinstance(content[0], dict) else None
+                    )
                     if isinstance(text, str):
                         try:
                             parsed = json.loads(text)
@@ -686,32 +759,104 @@ class VStrikeService:
             args["networkId"] = network_id
         return self._call_mcp_tool("ui-storyline-apply", args)
 
-    def ui_storyline_mode(
-        self, mode: str, *, network_id: Optional[str] = None
-    ) -> Any:
+    def ui_storyline_mode(self, mode: str, *, network_id: Optional[str] = None) -> Any:
         """Set the timeslice mode for the VCR controls and reset frame counters."""
         args: Dict[str, Any] = {"mode": mode}
         if network_id:
             args["networkId"] = network_id
         return self._call_mcp_tool("ui-storyline-mode", args)
 
-    def ui_storyline_forward(
-        self, *, network_id: Optional[str] = None
-    ) -> Any:
+    def ui_storyline_forward(self, *, network_id: Optional[str] = None) -> Any:
         """Step forward in the storyline timeline."""
         args: Dict[str, Any] = {}
         if network_id:
             args["networkId"] = network_id
         return self._call_mcp_tool("ui-storyline-forward", args)
 
-    def ui_storyline_backward(
-        self, *, network_id: Optional[str] = None
-    ) -> Any:
+    def ui_storyline_backward(self, *, network_id: Optional[str] = None) -> Any:
         """Step backward in the storyline timeline."""
         args: Dict[str, Any] = {}
         if network_id:
             args["networkId"] = network_id
         return self._call_mcp_tool("ui-storyline-backward", args)
+
+    # ------------------------------------------------------------------ #
+    # Defensive wrappers for VStrike's net-new MCP tools.
+    #
+    # Aaron published `network-graph-get`, `ui-legend-apply`, and
+    # `ui-rightpanel-focus` to production but the input parameter names
+    # are not yet documented. Each method accepts the high-confidence
+    # fields explicitly and forwards any additional kwargs to the MCP
+    # call verbatim, so corrections from Aaron only require a one-line
+    # change here (and possibly the REST schema) — not a refactor.
+    # ------------------------------------------------------------------ #
+
+    def network_graph_get(
+        self,
+        *,
+        network_id: Optional[str] = None,
+        **extra: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch the active network's graph payload.
+
+        Returns ``{label, nodes, edges, bbox}`` per Aaron's note. The
+        VStrike MCP tool may wrap this in ``structuredContent`` or a
+        ``content[0].text`` JSON envelope — both shapes are unwrapped.
+        """
+        args: Dict[str, Any] = dict(extra)
+        if network_id:
+            args["networkId"] = network_id
+        try:
+            result = self._call_mcp_tool("network-graph-get", args)
+        except RuntimeError as e:
+            logger.error("VStrike network-graph-get failed: %s", e)
+            return None
+        if isinstance(result, dict):
+            for key in ("structuredContent", "graph", "data"):
+                value = result.get(key)
+                if isinstance(value, dict):
+                    return value
+            content = result.get("content")
+            if isinstance(content, list) and content:
+                first = content[0] if isinstance(content[0], dict) else None
+                text = first.get("text") if first else None
+                if isinstance(text, str):
+                    try:
+                        parsed = json.loads(text)
+                    except (json.JSONDecodeError, TypeError):
+                        parsed = None
+                    if isinstance(parsed, dict):
+                        return parsed
+            return result
+        return None
+
+    def ui_legend_apply(
+        self,
+        legend_run_id: str,
+        *,
+        network_id: Optional[str] = None,
+        **extra: Any,
+    ) -> Any:
+        """Apply the selected legend run in the active VStrike UI session.
+
+        Confirmed against live VStrike: the MCP tool expects the parameter
+        named ``legendId`` (not ``legendRunId``, despite the legend-run-list
+        IDs being keyed by that name in their payloads).
+        """
+        args: Dict[str, Any] = {"legendId": legend_run_id, **extra}
+        if network_id:
+            args["networkId"] = network_id
+        return self._call_mcp_tool("ui-legend-apply", args)
+
+    def ui_rightpanel_focus(self, **extra: Any) -> Any:
+        """Open the right-hand details panel in the VStrike UI.
+
+        VStrike engineering confirmed this tool takes no parameters; the
+        panel opens for whatever node is currently selected in the session.
+        ``**extra`` is kept as a defensive escape hatch in case the schema
+        grows later, but callers should not rely on it.
+        """
+        return self._call_mcp_tool("ui-rightpanel-focus", dict(extra))
 
 
 def _config_value(key: str, config: Optional[Dict[str, Any]]) -> Optional[str]:
