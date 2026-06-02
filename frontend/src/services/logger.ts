@@ -8,6 +8,8 @@
  * - ERROR: Error messages for failures
  */
 
+import { basePath } from '../config/basePath'
+
 enum LogLevel {
   DEBUG = 0,
   INFO = 1,
@@ -42,7 +44,7 @@ class Logger {
       })
 
       // Fire and forget - don't await to avoid blocking
-      fetch('/api/logs/frontend', {
+      fetch(`${basePath}/api/logs/frontend`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

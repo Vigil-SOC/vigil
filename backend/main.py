@@ -156,6 +156,13 @@ app = FastAPI(
     version=__version__,
 )
 
+# Optional context path (sub-path) the whole app is served under, e.g. when
+# Vigil sits behind a reverse proxy at https://host/vigil. Empty by default
+# (served at root). All API routers, the health endpoint, the static/assets
+# mounts and the SPA catch-all are prefixed with this; the frontend learns it
+# at runtime via the window.__VIGIL_BASE_PATH__ injected into index.html below.
+_CONTEXT_PATH = os.getenv("VIGIL_CONTEXT_PATH", "").rstrip("/")
+
 # Wire the shared slowapi Limiter used by auth endpoints. The decorator-based
 # limits (@limiter.limit) read state from app.state.limiter, so both must be set.
 app.state.limiter = limiter
@@ -222,186 +229,186 @@ if PROMETHEUS_AVAILABLE:
 # Authentication routes: login/refresh/password-reset are public; the
 # inner /me, /change-password, /mfa routes already use get_current_active_user
 # inline. Leaving the router itself unwrapped preserves that mix.
-app.include_router(auth_router, prefix="/api/auth", tags=["authentication"])
+app.include_router(auth_router, prefix=f"{_CONTEXT_PATH}/api/auth", tags=["authentication"])
 app.include_router(
-    users_router, prefix="/api/users", tags=["users"], dependencies=AUTH_DEPENDENCY
+    users_router, prefix=f"{_CONTEXT_PATH}/api/users", tags=["users"], dependencies=AUTH_DEPENDENCY
 )
 
 # JIRA export
 app.include_router(
     jira_export_router,
-    prefix="/api",
+    prefix=f"{_CONTEXT_PATH}/api",
     tags=["jira-export"],
     dependencies=AUTH_DEPENDENCY,
 )
 
 # Analytics
 app.include_router(
-    analytics_router, prefix="/api", tags=["analytics"], dependencies=AUTH_DEPENDENCY
+    analytics_router, prefix=f"{_CONTEXT_PATH}/api", tags=["analytics"], dependencies=AUTH_DEPENDENCY
 )
 # Budgets — same prefix as analytics so /api/analytics/budget* lives next
 # to /api/analytics/cost. The router itself owns the /analytics path
 # segment per its endpoint definitions.
 app.include_router(
-    budgets_router, prefix="/api", tags=["budgets"], dependencies=AUTH_DEPENDENCY
+    budgets_router, prefix=f"{_CONTEXT_PATH}/api", tags=["budgets"], dependencies=AUTH_DEPENDENCY
 )
 
 # Core API endpoints
 app.include_router(
     findings_router,
-    prefix="/api/findings",
+    prefix=f"{_CONTEXT_PATH}/api/findings",
     tags=["findings"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
-    cases_router, prefix="/api/cases", tags=["cases"], dependencies=AUTH_DEPENDENCY
+    cases_router, prefix=f"{_CONTEXT_PATH}/api/cases", tags=["cases"], dependencies=AUTH_DEPENDENCY
 )
 app.include_router(
-    mcp_router, prefix="/api/mcp", tags=["mcp"], dependencies=AUTH_DEPENDENCY
+    mcp_router, prefix=f"{_CONTEXT_PATH}/api/mcp", tags=["mcp"], dependencies=AUTH_DEPENDENCY
 )
 
 # Claude routes expose AI and agent execution capabilities and must require
 # an authenticated user session. Keep rate limiting in addition to auth.
 app.include_router(
     claude_router,
-    prefix="/api/claude",
+    prefix=f"{_CONTEXT_PATH}/api/claude",
     tags=["claude"],
     dependencies=[*AUTH_DEPENDENCY, Depends(rate_limit_dependency)],
 )
 app.include_router(
     reasoning_router,
-    prefix="/api/reasoning",
+    prefix=f"{_CONTEXT_PATH}/api/reasoning",
     tags=["reasoning"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
-    config_router, prefix="/api/config", tags=["config"], dependencies=AUTH_DEPENDENCY
+    config_router, prefix=f"{_CONTEXT_PATH}/api/config", tags=["config"], dependencies=AUTH_DEPENDENCY
 )
 app.include_router(
     llm_providers_router,
-    prefix="/api/llm/providers",
+    prefix=f"{_CONTEXT_PATH}/api/llm/providers",
     tags=["llm-providers"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
-    ai_config_router, prefix="/api/ai", tags=["ai-config"], dependencies=AUTH_DEPENDENCY
+    ai_config_router, prefix=f"{_CONTEXT_PATH}/api/ai", tags=["ai-config"], dependencies=AUTH_DEPENDENCY
 )
 app.include_router(
-    attack_router, prefix="/api/attack", tags=["attack"], dependencies=AUTH_DEPENDENCY
+    attack_router, prefix=f"{_CONTEXT_PATH}/api/attack", tags=["attack"], dependencies=AUTH_DEPENDENCY
 )
 app.include_router(
     custom_agents_router,
-    prefix="/api",
+    prefix=f"{_CONTEXT_PATH}/api",
     tags=["custom-agents"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
-    agents_router, prefix="/api/agents", tags=["agents"], dependencies=AUTH_DEPENDENCY
+    agents_router, prefix=f"{_CONTEXT_PATH}/api/agents", tags=["agents"], dependencies=AUTH_DEPENDENCY
 )
 app.include_router(
     compatibility_router,
-    prefix="/api/integrations",
+    prefix=f"{_CONTEXT_PATH}/api/integrations",
     tags=["integrations"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
     custom_integrations_router,
-    prefix="/api/custom-integrations",
+    prefix=f"{_CONTEXT_PATH}/api/custom-integrations",
     tags=["custom-integrations"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
     skills_router,
-    prefix="/api/skills",
+    prefix=f"{_CONTEXT_PATH}/api/skills",
     tags=["skills"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
     ingestion_router,
-    prefix="/api/ingest",
+    prefix=f"{_CONTEXT_PATH}/api/ingest",
     tags=["ingestion"],
     dependencies=AUTH_DEPENDENCY,
 )
 # VStrike /findings is public-but-bearer-authenticated inside the router.
 # All VStrike management/UI/proxy routes require an authenticated user session.
-app.include_router(vstrike_router, prefix="/api/integrations/vstrike", tags=["vstrike"])
+app.include_router(vstrike_router, prefix=f"{_CONTEXT_PATH}/api/integrations/vstrike", tags=["vstrike"])
 app.include_router(
     storage_status_router,
-    prefix="/api/storage",
+    prefix=f"{_CONTEXT_PATH}/api/storage",
     tags=["storage"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
     ai_decisions_router,
-    prefix="/api/ai",
+    prefix=f"{_CONTEXT_PATH}/api/ai",
     tags=["ai-decisions"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
     timeline_router,
-    prefix="/api/timeline",
+    prefix=f"{_CONTEXT_PATH}/api/timeline",
     tags=["timeline"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
-    graph_router, prefix="/api/graph", tags=["graph"], dependencies=AUTH_DEPENDENCY
+    graph_router, prefix=f"{_CONTEXT_PATH}/api/graph", tags=["graph"], dependencies=AUTH_DEPENDENCY
 )
 app.include_router(
-    logs_router, prefix="/api/logs", tags=["logs"], dependencies=AUTH_DEPENDENCY
+    logs_router, prefix=f"{_CONTEXT_PATH}/api/logs", tags=["logs"], dependencies=AUTH_DEPENDENCY
 )
 app.include_router(
     local_services_router,
-    prefix="/api/services",
+    prefix=f"{_CONTEXT_PATH}/api/services",
     tags=["local-services"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
     detection_rules_router,
-    prefix="/api/detection-rules",
+    prefix=f"{_CONTEXT_PATH}/api/detection-rules",
     tags=["detection-rules"],
     dependencies=AUTH_DEPENDENCY,
 )
 
 # Workflows engine
 app.include_router(
-    workflows_router, prefix="/api", tags=["workflows"], dependencies=AUTH_DEPENDENCY
+    workflows_router, prefix=f"{_CONTEXT_PATH}/api", tags=["workflows"], dependencies=AUTH_DEPENDENCY
 )
 app.include_router(
-    approvals_router, prefix="/api", tags=["approvals"], dependencies=AUTH_DEPENDENCY
+    approvals_router, prefix=f"{_CONTEXT_PATH}/api", tags=["approvals"], dependencies=AUTH_DEPENDENCY
 )
 
 # Autonomous orchestrator
 app.include_router(
     orchestrator_router,
-    prefix="/api/orchestrator",
+    prefix=f"{_CONTEXT_PATH}/api/orchestrator",
     tags=["orchestrator"],
     dependencies=AUTH_DEPENDENCY,
 )
 # Federated monitoring (per-source SIEM/EDR pull driven by federation_sources)
 app.include_router(
     federation_router,
-    prefix="/api/federation",
+    prefix=f"{_CONTEXT_PATH}/api/federation",
     tags=["federation"],
     dependencies=AUTH_DEPENDENCY,
 )
-app.include_router(kafka_router, dependencies=AUTH_DEPENDENCY)
+app.include_router(kafka_router, prefix=_CONTEXT_PATH, dependencies=AUTH_DEPENDENCY)
 
 # Enhanced case management routers
 app.include_router(
     case_templates_router,
-    prefix="/api/cases/templates",
+    prefix=f"{_CONTEXT_PATH}/api/cases/templates",
     tags=["case-templates"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
     case_metrics_router,
-    prefix="/api/cases/metrics",
+    prefix=f"{_CONTEXT_PATH}/api/cases/metrics",
     tags=["case-metrics"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(
     case_search_router,
-    prefix="/api/cases/search",
+    prefix=f"{_CONTEXT_PATH}/api/cases/search",
     tags=["case-search"],
     dependencies=AUTH_DEPENDENCY,
 )
@@ -410,7 +417,7 @@ app.include_router(
 # with endpoint-specific HMAC/API-key validation.
 app.include_router(
     webhooks_router,
-    prefix="/api/webhooks",
+    prefix=f"{_CONTEXT_PATH}/api/webhooks",
     tags=["webhooks"],
     dependencies=AUTH_DEPENDENCY,
 )
@@ -420,7 +427,7 @@ app.include_router(
 if os.environ.get("DARKTRACE_ENABLED", "false").lower() == "true":
     app.include_router(
         darktrace_webhook_router,
-        prefix="/api/webhooks/darktrace",
+        prefix=f"{_CONTEXT_PATH}/api/webhooks/darktrace",
         tags=["darktrace"],
     )
 
@@ -432,12 +439,12 @@ if os.environ.get("DARKTRACE_ENABLED", "false").lower() == "true":
 if cloudy_ingestion_enabled():
     app.include_router(
         cloudflare_webhooks_router,
-        prefix="/api/webhooks/cloudflare",
+        prefix=f"{_CONTEXT_PATH}/api/webhooks/cloudflare",
         tags=["cloudflare"],
     )
 app.include_router(
     sla_policies_router,
-    prefix="/api/sla-policies",
+    prefix=f"{_CONTEXT_PATH}/api/sla-policies",
     tags=["sla-policies"],
     dependencies=AUTH_DEPENDENCY,
 )
@@ -824,7 +831,7 @@ async def metrics():
 
 
 # Health check endpoint
-@app.get("/api/health")
+@app.get(f"{_CONTEXT_PATH}/api/health")
 async def health_check():
     """Health check endpoint with storage backend info."""
     try:
@@ -862,7 +869,7 @@ static_dir = frontend_build_dir / "static"
 # This prevents errors during development when frontend hasn't been built
 if frontend_build_dir.exists() and static_dir.exists():
     try:
-        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+        app.mount(f"{_CONTEXT_PATH}/static", StaticFiles(directory=static_dir), name="static")
         logger.info(f"Serving static files from: {static_dir}")
     except Exception as e:
         logger.warning(f"Failed to mount static files: {e}")
@@ -880,25 +887,46 @@ else:
 assets_dir = frontend_build_dir / "assets"
 if frontend_build_dir.exists() and assets_dir.exists():
     try:
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        app.mount(f"{_CONTEXT_PATH}/assets", StaticFiles(directory=assets_dir), name="assets")
         logger.info(f"Serving frontend assets from: {assets_dir}")
     except Exception as e:
         logger.warning(f"Failed to mount frontend assets: {e}")
 
 if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
+    from fastapi.responses import HTMLResponse
 
-    @app.get("/{full_path:path}")
+    # index.html is served with the active context path injected as
+    # window.__VIGIL_BASE_PATH__ so the SPA (see frontend src/config/basePath.ts)
+    # can prefix its router basename and API calls at runtime — no rebuild
+    # needed per deployment path. Cached after first read.
+    _index_html_cache: "str | None" = None
+
+    def _get_index_html() -> str:
+        global _index_html_cache
+        if _index_html_cache is None:
+            raw = (frontend_build_dir / "index.html").read_text()
+            config_script = (
+                f'<script>window.__VIGIL_BASE_PATH__="{_CONTEXT_PATH}";</script>'
+            )
+            _index_html_cache = raw.replace("<head>", f"<head>\n    {config_script}", 1)
+        return _index_html_cache
+
+    # When served under a context path, redirect the bare path (no trailing
+    # slash) to the slash form so relative asset URLs resolve correctly.
+    if _CONTEXT_PATH:
+        from fastapi.responses import RedirectResponse
+
+        @app.get(_CONTEXT_PATH, include_in_schema=False)
+        async def redirect_to_trailing_slash():
+            return RedirectResponse(url=f"{_CONTEXT_PATH}/", status_code=301)
+
+    @app.get(f"{_CONTEXT_PATH}/{{full_path:path}}")
     async def serve_react_app(full_path: str):
         """Serve React app for all non-API routes."""
         # Don't interfere with API routes
         if full_path.startswith("api/"):
             return {"error": "Not found"}, 404
-
-        # Serve index.html for React routing
-        index_file = frontend_build_dir / "index.html"
-        if index_file.exists():
-            return FileResponse(index_file)
-        return {"error": "Frontend not built"}, 404
+        return HTMLResponse(_get_index_html())
 
 
 if __name__ == "__main__":

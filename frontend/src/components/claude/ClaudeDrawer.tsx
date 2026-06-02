@@ -58,6 +58,7 @@ import {
 } from '../../services/api'
 import { notificationService } from '../../services/notifications'
 import { createLogger } from '../../services/logger'
+import { basePath } from '../../config/basePath'
 
 const logger = createLogger('ClaudeDrawer')
 
@@ -316,7 +317,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
             messageCount: initialMessages.length
           })
 
-          const response = await fetch('/api/claude/chat/stream', {
+          const response = await fetch(`${basePath}/api/claude/chat/stream`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -511,7 +512,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
         timestamp: new Date().toISOString()
       })
       
-      const response = await fetch('/api/claude/chat/stream', {
+      const response = await fetch(`${basePath}/api/claude/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
