@@ -873,6 +873,18 @@ else:
         "  Run 'npm run build' in the frontend directory to enable production mode"
     )
 
+# Vite emits hashed JS/CSS bundles under build/assets and references them as
+# /assets/* from index.html. Mount that directory explicitly; otherwise the
+# catch-all below returns index.html (text/html) for every bundle request and
+# the browser refuses to execute the module ("disallowed MIME type").
+assets_dir = frontend_build_dir / "assets"
+if frontend_build_dir.exists() and assets_dir.exists():
+    try:
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        logger.info(f"Serving frontend assets from: {assets_dir}")
+    except Exception as e:
+        logger.warning(f"Failed to mount frontend assets: {e}")
+
 if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
 
     @app.get("/{full_path:path}")
