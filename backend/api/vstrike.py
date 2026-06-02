@@ -675,7 +675,7 @@ class VStrikeNetworkGraphRequest(_PassthroughModel):
     network_id: Optional[str] = None
 
 
-@router.post("/network-graph")
+@authenticated_router.post("/network-graph")
 async def network_graph(request: VStrikeNetworkGraphRequest) -> dict:
     """Fetch the active network graph: {label, nodes, edges, bbox}."""
     service = _ui_service_or_503()
@@ -697,7 +697,7 @@ class VStrikeLegendApplyRequest(_PassthroughModel):
     network_id: Optional[str] = None
 
 
-@router.post("/ui/legend-apply")
+@authenticated_router.post("/ui/legend-apply")
 async def ui_legend_apply(request: VStrikeLegendApplyRequest) -> dict:
     """Apply a legend run inside the active VStrike iframe session."""
     service = _ui_service_or_503()
@@ -725,7 +725,7 @@ class VStrikeRightpanelFocusRequest(_PassthroughModel):
     """
 
 
-@router.post("/ui/rightpanel-focus")
+@authenticated_router.post("/ui/rightpanel-focus")
 async def ui_rightpanel_focus(
     request: VStrikeRightpanelFocusRequest = VStrikeRightpanelFocusRequest(),
 ) -> dict:
