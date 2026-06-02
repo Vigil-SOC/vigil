@@ -17,7 +17,7 @@ Thank you for your interest in contributing to Vigil. This document covers how t
 ```bash
 git clone --recurse-submodules https://github.com/Vigil-SOC/vigil.git
 cd vigil
-./start_web.sh
+./start.sh
 ```
 
 Access the frontend at http://localhost:6988 and the API at http://localhost:6987.

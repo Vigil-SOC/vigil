@@ -115,7 +115,7 @@ overwritten at runtime.
   transcripts, context docs, agent output).
 - `data/mitre/`, `data/schemas/` — static reference data.
 - `logs/*.log`, `logs/*.pid` — runtime logs and process pids (started
-  via `start_web.sh`, `start_daemon.sh`).
+  via `start.sh`).
 
 ## MemPalace (persistent agent memory)
 
@@ -143,7 +143,7 @@ drift again.
 ```
 
 **Persistence guarantee.** Survives `docker compose down`,
-`./start_web.sh` restarts, `venv` rebuilds, and `git submodule update`.
+`./start.sh` restarts, `venv` rebuilds, and `git submodule update`.
 Does *not* survive `rm -rf ~/.vigil/`.
 
 **Backup.** Tar the directory as a unit:

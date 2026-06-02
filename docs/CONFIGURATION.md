@@ -60,7 +60,7 @@ When reading, backends are checked in order:
 ### Local Development
 
 ```bash
-./start_web.sh
+./start.sh
 ```
 
 ### Docker

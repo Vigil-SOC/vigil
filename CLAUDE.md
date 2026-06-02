@@ -78,7 +78,7 @@ vigil/
 ```bash
 git clone --recurse-submodules https://github.com/Vigil-SOC/vigil.git
 cd vigil
-./start_web.sh       # Starts PostgreSQL (Docker), backend, and frontend
+./start.sh           # Starts PostgreSQL (Docker), backend, and frontend
 ```
 
 ### Manual Start
@@ -95,7 +95,7 @@ uvicorn backend.main:app --host 0.0.0.0 --port 6987 --reload
 cd frontend && npm run dev
 
 # 4. (Optional) Daemon
-./start_daemon.sh
+./start.sh --daemon
 ```
 
 ### Fresh Environment
@@ -384,7 +384,7 @@ git submodule update --remote
 | `deeptempo-core` | `./deeptempo-core` | Core AI and detection library |
 | `mcp-servers` | `./mcp-servers` | MCP server implementations |
 
-Both are installed as editable packages (`-e ./deeptempo-core`, `-e ./mcp-servers`) in `requirements.txt`. If submodules aren't initialized, `start_web.sh` skips their installation gracefully.
+Both are installed as editable packages (`-e ./deeptempo-core`, `-e ./mcp-servers`) in `requirements.txt`. If submodules aren't initialized, `start.sh` skips their installation gracefully.
 
 ---
 
