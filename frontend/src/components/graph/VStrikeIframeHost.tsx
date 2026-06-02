@@ -21,6 +21,7 @@ import {
   Fullscreen as FullscreenIcon,
   FullscreenExit as FullscreenExitIcon,
   PlayArrow as PlayIcon,
+  Refresh as RefreshIcon,
   SkipNext as SkipNextIcon,
   SkipPrevious as SkipPreviousIcon,
   Search as SearchIcon,
@@ -41,6 +42,24 @@ interface Rect {
 const HIDDEN_RECT: Rect = { top: -10000, left: -10000, width: 1, height: 1 }
 
 const TOP_BAR_OFFSET_PX = 64
+
+/**
+ * Produce the placeholder string for a `<Select displayEmpty>` dropdown.
+ *
+ * Three states matter to the analyst:
+ *   - in-flight   → "Loading…"
+ *   - empty array → "No <kind> for this network" (so they don't think it's broken)
+ *   - populated   → "Select…"
+ */
+function emptyLabel(
+  items: ReadonlyArray<unknown>,
+  loading: boolean,
+  kind: string,
+): string {
+  if (loading) return 'Loading…'
+  if (items.length === 0) return `No ${kind} for this network`
+  return 'Select…'
+}
 
 /**
  * Host for the single, app-wide VStrike iframe.
@@ -225,6 +244,19 @@ export default function VStrikeIframeHost() {
     ctx.setLegendRun(event.target.value)
   }
 
+  const handleApplyLegend = async () => {
+    if (!ctx.selectedLegendRun) {
+      setSnackbar({ severity: 'info', message: 'Select a legend first.' })
+      return
+    }
+    const result = await ctx.applyLegendRun(ctx.selectedLegendRun)
+    if (result.ok) {
+      setSnackbar({ severity: 'success', message: 'Legend applied.' })
+      return
+    }
+    setSnackbar({ severity: 'error', message: result.message })
+  }
+
   // -------------------------------------------------------------------------
   // VCR playback controls
   // -------------------------------------------------------------------------
@@ -243,7 +275,12 @@ export default function VStrikeIframeHost() {
     }
   }
 
-  const vcrDisabled = ctx.state !== 'ready' || !ctx.hasAnchor
+  // VCR step controls only make sense once a storyline is actually loaded
+  // in the iframe. We use `appliedStoryline` (not `selectedStoryline`) so a
+  // half-finished pick — user opened the dropdown but never clicked Apply —
+  // doesn't enable the controls.
+  const vcrDisabled =
+    ctx.state !== 'ready' || !ctx.hasAnchor || !ctx.appliedStoryline
 
   // -------------------------------------------------------------------------
   // Node search
@@ -269,6 +306,14 @@ export default function VStrikeIframeHost() {
   const handleFocusNode = async (nodeId: string) => {
     const result = await ctx.cameraNode([nodeId])
     if (result.ok) {
+      // Camera focus selects the node; opening the right panel then surfaces
+      // its details for that selection. Fire-and-forget, non-fatal on error.
+      void ctx.focusRightPanel().then((r) => {
+        if (!r.ok) {
+          // eslint-disable-next-line no-console
+          console.warn('VStrike focusRightPanel failed:', r.message)
+        }
+      })
       setShowSearchResults(false)
       setSearchQuery('')
       return
@@ -361,26 +406,34 @@ export default function VStrikeIframeHost() {
             VStrike Network View
           </Typography>
 
-          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-            {/* Network selector */}
+          <Stack
+            direction="row"
+            spacing={0.5}
+            alignItems="center"
+            flexWrap="wrap"
+          >
+            {/* Network selector. No always-on refresh — networks rarely
+                change at runtime, and a full page reload covers the rare
+                case where one appears on VStrike's side mid-session. */}
             <FormControl
               size="small"
-              sx={{ minWidth: 180 }}
+              sx={{ minWidth: 160 }}
               disabled={ctx.state !== 'ready'}
             >
-              <InputLabel id="vstrike-network-label">Network</InputLabel>
+              <InputLabel id="vstrike-network-label" shrink>
+                Network
+              </InputLabel>
               <Select
                 labelId="vstrike-network-label"
                 label="Network"
+                notched
                 value={ctx.selectedNetwork}
                 onChange={handleNetworkChange}
                 displayEmpty
                 MenuProps={{ sx: { zIndex: 1302 } }}
               >
                 <MenuItem value="">
-                  <em>
-                    {ctx.networks.length ? 'Select a network…' : 'No networks'}
-                  </em>
+                  <em>{emptyLabel(ctx.networks, ctx.networksLoading, 'networks')}</em>
                 </MenuItem>
                 {ctx.networks.map((opt) => (
                   <MenuItem key={opt.id} value={opt.id}>
@@ -391,89 +444,200 @@ export default function VStrikeIframeHost() {
             </FormControl>
 
             {/* Storyline selector */}
-            <FormControl
-              size="small"
-              sx={{ minWidth: 160 }}
-              disabled={ctx.state !== 'ready' || ctx.storylines.length === 0}
+            <Tooltip
+              title={
+                !ctx.storylinesLoading && ctx.storylines.length === 0
+                  ? 'Storylines are authored on the VStrike side. None are currently configured for this network — once one is published in VStrike, click the refresh icon to load it here.'
+                  : ''
+              }
+              disableHoverListener={
+                ctx.storylinesLoading || ctx.storylines.length > 0
+              }
             >
-              <InputLabel id="vstrike-storyline-label">Storyline</InputLabel>
-              <Select
-                labelId="vstrike-storyline-label"
-                label="Storyline"
-                value={ctx.selectedStoryline}
-                onChange={handleStorylineChange}
-                displayEmpty
-                MenuProps={{ sx: { zIndex: 1302 } }}
-              >
-                <MenuItem value="">
-                  <em>
-                    {ctx.storylines.length ? 'Select…' : 'None'}
-                  </em>
-                </MenuItem>
-                {ctx.storylines.map((opt) => (
-                  <MenuItem key={opt.id} value={opt.id}>
-                    {opt.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+              {/* inline-flex on the span ensures MUI can measure the
+                  FormControl's label correctly for `notched` outline rendering;
+                  default `inline` causes a strikethrough-through-label bug
+                  when the row wraps. */}
+              <span style={{ display: 'inline-flex' }}>
+                <FormControl
+                  size="small"
+                  sx={{ minWidth: 140 }}
+                  disabled={ctx.state !== 'ready' || ctx.storylines.length === 0}
+                >
+                  <InputLabel id="vstrike-storyline-label" shrink>
+                    Storyline
+                  </InputLabel>
+                  <Select
+                    labelId="vstrike-storyline-label"
+                    label="Storyline"
+                    notched
+                    value={ctx.selectedStoryline}
+                    onChange={handleStorylineChange}
+                    displayEmpty
+                    MenuProps={{ sx: { zIndex: 1302 } }}
+                  >
+                    <MenuItem value="">
+                      <em>
+                        {emptyLabel(
+                          ctx.storylines,
+                          ctx.storylinesLoading,
+                          'storylines',
+                        )}
+                      </em>
+                    </MenuItem>
+                    {ctx.storylines.map((opt) => (
+                      <MenuItem key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </span>
+            </Tooltip>
+
+            {/* Refresh storylines — only when empty (when it's actually
+                actionable). Hidden once items load so the toolbar stays calm. */}
+            {ctx.selectedNetwork &&
+              (ctx.storylines.length === 0 || ctx.storylinesLoading) && (
+                <Tooltip title="Refresh storylines">
+                  <span>
+                    <IconButton
+                      size="small"
+                      onClick={ctx.refreshStorylines}
+                      disabled={ctx.state !== 'ready' || ctx.storylinesLoading}
+                      aria-label="Refresh storylines"
+                    >
+                      {ctx.storylinesLoading ? (
+                        <CircularProgress size={16} />
+                      ) : (
+                        <RefreshIcon fontSize="small" />
+                      )}
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              )}
 
             <Button
               size="small"
               variant="outlined"
-              disabled={
-                ctx.state !== 'ready' || !ctx.selectedStoryline
-              }
+              disabled={ctx.state !== 'ready' || !ctx.selectedStoryline}
               onClick={handleApplyStoryline}
             >
               Apply
             </Button>
 
             {/* Legend run selector */}
-            <FormControl
-              size="small"
-              sx={{ minWidth: 140 }}
-              disabled={ctx.state !== 'ready' || ctx.legendRuns.length === 0}
+            <Tooltip
+              title={
+                !ctx.legendRunsLoading && ctx.legendRuns.length === 0
+                  ? 'Legends are authored on the VStrike side. None are currently configured for this network — once one is published in VStrike, click the refresh icon to load it here.'
+                  : ''
+              }
+              disableHoverListener={
+                ctx.legendRunsLoading || ctx.legendRuns.length > 0
+              }
             >
-              <InputLabel id="vstrike-legend-label">Legend</InputLabel>
-              <Select
-                labelId="vstrike-legend-label"
-                label="Legend"
-                value={ctx.selectedLegendRun}
-                onChange={handleLegendRunChange}
-                displayEmpty
-                MenuProps={{ sx: { zIndex: 1302 } }}
-              >
-                <MenuItem value="">
-                  <em>
-                    {ctx.legendRuns.length ? 'Select…' : 'None'}
-                  </em>
-                </MenuItem>
-                {ctx.legendRuns.map((opt) => (
-                  <MenuItem key={opt.id} value={opt.id}>
-                    {opt.label}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
+              <span style={{ display: 'inline-flex' }}>
+                <FormControl
+                  size="small"
+                  sx={{ minWidth: 120 }}
+                  disabled={ctx.state !== 'ready' || ctx.legendRuns.length === 0}
+                >
+                  <InputLabel id="vstrike-legend-label" shrink>
+                    Legend
+                  </InputLabel>
+                  <Select
+                    labelId="vstrike-legend-label"
+                    label="Legend"
+                    notched
+                    value={ctx.selectedLegendRun}
+                    onChange={handleLegendRunChange}
+                    displayEmpty
+                    MenuProps={{ sx: { zIndex: 1302 } }}
+                  >
+                    <MenuItem value="">
+                      <em>
+                        {emptyLabel(
+                          ctx.legendRuns,
+                          ctx.legendRunsLoading,
+                          'legends',
+                        )}
+                      </em>
+                    </MenuItem>
+                    {ctx.legendRuns.map((opt) => (
+                      <MenuItem key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+              </span>
+            </Tooltip>
 
-            {/* Node search */}
-            <TextField
+            {/* Refresh legends — same conditional rule as storylines. */}
+            {ctx.selectedNetwork &&
+              (ctx.legendRuns.length === 0 || ctx.legendRunsLoading) && (
+                <Tooltip title="Refresh legends">
+                  <span>
+                    <IconButton
+                      size="small"
+                      onClick={ctx.refreshLegendRuns}
+                      disabled={ctx.state !== 'ready' || ctx.legendRunsLoading}
+                      aria-label="Refresh legends"
+                    >
+                      {ctx.legendRunsLoading ? (
+                        <CircularProgress size={16} />
+                      ) : (
+                        <RefreshIcon fontSize="small" />
+                      )}
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              )}
+
+            <Button
               size="small"
-              placeholder="Search nodes…"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={handleSearchKeyDown}
-              disabled={ctx.state !== 'ready'}
-              sx={{ width: 140 }}
-              InputProps={{
-                endAdornment: (
-                  <IconButton size="small" onClick={handleSearch} disabled={ctx.state !== 'ready'}>
-                    <SearchIcon fontSize="small" />
-                  </IconButton>
-                ),
-              }}
-            />
+              variant="outlined"
+              disabled={ctx.state !== 'ready' || !ctx.selectedLegendRun}
+              onClick={handleApplyLegend}
+            >
+              Apply
+            </Button>
+
+            {/* Node search — only meaningful once a network is loaded. */}
+            <Tooltip
+              title={
+                ctx.state === 'ready' && !ctx.selectedNetwork
+                  ? 'Select a network before searching nodes.'
+                  : ''
+              }
+              disableHoverListener={
+                ctx.state !== 'ready' || Boolean(ctx.selectedNetwork)
+              }
+            >
+              <span style={{ display: 'inline-flex' }}>
+                <TextField
+                  size="small"
+                  placeholder="Search nodes…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  disabled={ctx.state !== 'ready' || !ctx.selectedNetwork}
+                  sx={{ width: 140 }}
+                  InputProps={{
+                    endAdornment: (
+                      <IconButton
+                        size="small"
+                        onClick={handleSearch}
+                        disabled={ctx.state !== 'ready' || !ctx.selectedNetwork}
+                      >
+                        <SearchIcon fontSize="small" />
+                      </IconButton>
+                    ),
+                  }}
+                />
+              </span>
+            </Tooltip>
 
             {/* VCR controls */}
             <Tooltip title="Step backward">

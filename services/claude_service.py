@@ -18,7 +18,7 @@ from secrets_manager import get_secret, set_secret
 # GH #89 — resolve the summarization model via ai_model_configs with a safe
 # fallback to the historical hardcoded default. Defined at module scope so
 # the registry import stays lazy and tests can monkeypatch it trivially.
-_SUMMARIZATION_DEFAULT = "claude-sonnet-4-20250514"
+_SUMMARIZATION_DEFAULT = "claude-sonnet-4-6"
 
 
 def _resolve_summarization_model() -> str:
@@ -1474,7 +1474,7 @@ Provide a structured summary preserving all critical context."""
         self,
         messages: List[Dict],
         system_prompt: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-sonnet-4-6",
         max_context_tokens: int = 180000,
     ) -> tuple:
         """
@@ -1560,7 +1560,7 @@ Provide a structured summary preserving all critical context."""
         self,
         messages: List[Dict],
         system_prompt: Optional[str] = None,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-sonnet-4-6",
         max_context_tokens: int = 180000,
     ) -> tuple:
         """

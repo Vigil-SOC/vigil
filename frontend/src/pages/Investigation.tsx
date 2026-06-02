@@ -30,6 +30,7 @@ import {
   VSTRIKE_GRAPH_HIGHLIGHT_EVENT,
   VStrikeGraphHighlightDetail,
 } from '../types/vstrike'
+import { useVStrikeIframe } from '../contexts/VStrikeIframeContext'
 
 export default function Investigation() {
   const [searchParams] = useSearchParams()
@@ -55,14 +56,33 @@ export default function Investigation() {
     loadData()
   }, [caseId, findingIds, clusterId])
 
+  const vstrike = useVStrikeIframe()
+
   // Listen for pivot events dispatched by the VStrike NetworkContextPanel.
+  // In addition to highlighting the node in Vigil's entity graph, ask the
+  // VStrike iframe to select the same node (via cameraNode) and then open
+  // its right-hand details panel, so the analyst sees full context without
+  // an extra click. rightpanel-focus itself takes no node argument; it
+  // opens for whatever's selected, so the cameraNode step is what makes
+  // the chain meaningful.
   useEffect(() => {
-    const handleVStrikeHighlight = (event: Event) => {
+    const handleVStrikeHighlight = async (event: Event) => {
       const detail = (event as CustomEvent<VStrikeGraphHighlightDetail>).detail
       if (!detail?.nodeId) return
       setHighlightedNodes((prev) =>
         prev.includes(detail.nodeId) ? prev : [detail.nodeId]
       )
+      const cam = await vstrike.cameraNode([detail.nodeId])
+      if (!cam.ok) {
+        // eslint-disable-next-line no-console
+        console.warn('VStrike cameraNode failed:', cam.message)
+        return
+      }
+      const panel = await vstrike.focusRightPanel()
+      if (!panel.ok) {
+        // eslint-disable-next-line no-console
+        console.warn('VStrike focusRightPanel failed:', panel.message)
+      }
     }
     window.addEventListener(
       VSTRIKE_GRAPH_HIGHLIGHT_EVENT,
@@ -74,7 +94,7 @@ export default function Investigation() {
         handleVStrikeHighlight as EventListener
       )
     }
-  }, [])
+  }, [vstrike])
 
   const loadData = async () => {
     setLoading(true)

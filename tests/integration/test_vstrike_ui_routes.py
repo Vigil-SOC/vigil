@@ -297,7 +297,9 @@ def test_node_search_returns_results():
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
         result = asyncio.run(
-            vstrike_module.node_search(VStrikeNodeSearchRequest(query="router", network_id="net-1", limit=10))
+            vstrike_module.node_search(
+                VStrikeNodeSearchRequest(query="router", network_id="net-1", limit=10)
+            )
         )
 
     assert result["query"] == "router"
@@ -324,7 +326,9 @@ def test_node_drift_returns_drift():
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
         result = asyncio.run(
-            vstrike_module.node_drift(VStrikeNodeDriftRequest(node_id="node-1", network_id="net-1"))
+            vstrike_module.node_drift(
+                VStrikeNodeDriftRequest(node_id="node-1", network_id="net-1")
+            )
         )
 
     assert result["node_id"] == "node-1"
@@ -350,7 +354,9 @@ def test_storyline_events_returns_events():
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
         result = asyncio.run(
-            vstrike_module.storyline_events(VStrikeStorylineEventsRequest(storyline_id="s1", network_id="net-1"))
+            vstrike_module.storyline_events(
+                VStrikeStorylineEventsRequest(storyline_id="s1", network_id="net-1")
+            )
         )
 
     assert result["storyline_id"] == "s1"
@@ -376,7 +382,9 @@ def test_legend_run_results_returns_results():
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
         result = asyncio.run(
-            vstrike_module.legend_run_results(VStrikeLegendRunResultsRequest(legend_run_id="lr1", network_id="net-1"))
+            vstrike_module.legend_run_results(
+                VStrikeLegendRunResultsRequest(legend_run_id="lr1", network_id="net-1")
+            )
         )
 
     assert result["legend_run_id"] == "lr1"
@@ -395,8 +403,12 @@ def _mock_ui_control_service(**overrides):
     svc.ui_camera_position.return_value = overrides.get("camera_position", {"ok": True})
     svc.ui_storyline_apply.return_value = overrides.get("storyline_apply", {"ok": True})
     svc.ui_storyline_mode.return_value = overrides.get("storyline_mode", {"ok": True})
-    svc.ui_storyline_forward.return_value = overrides.get("storyline_forward", {"ok": True})
-    svc.ui_storyline_backward.return_value = overrides.get("storyline_backward", {"ok": True})
+    svc.ui_storyline_forward.return_value = overrides.get(
+        "storyline_forward", {"ok": True}
+    )
+    svc.ui_storyline_backward.return_value = overrides.get(
+        "storyline_backward", {"ok": True}
+    )
     return svc
 
 
@@ -407,7 +419,9 @@ def test_ui_camera_node_calls_service():
     svc = _mock_ui_control_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
         result = asyncio.run(
-            vstrike_module.ui_camera_node(VStrikeCameraNodeRequest(node_ids=["n1", "n2"], network_id="net-1"))
+            vstrike_module.ui_camera_node(
+                VStrikeCameraNodeRequest(node_ids=["n1", "n2"], network_id="net-1")
+            )
         )
 
     assert result["ok"] is True
@@ -445,7 +459,9 @@ def test_ui_storyline_apply_calls_service():
     svc = _mock_ui_control_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
         result = asyncio.run(
-            vstrike_module.ui_storyline_apply(VStrikeStorylineApplyRequest(storyline_id="s1", network_id="net-1"))
+            vstrike_module.ui_storyline_apply(
+                VStrikeStorylineApplyRequest(storyline_id="s1", network_id="net-1")
+            )
         )
 
     assert result["ok"] is True
@@ -459,7 +475,9 @@ def test_ui_storyline_mode_calls_service():
     svc = _mock_ui_control_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
         result = asyncio.run(
-            vstrike_module.ui_storyline_mode(VStrikeStorylineModeRequest(mode="replay", network_id="net-1"))
+            vstrike_module.ui_storyline_mode(
+                VStrikeStorylineModeRequest(mode="replay", network_id="net-1")
+            )
         )
 
     assert result["ok"] is True
@@ -494,10 +512,14 @@ def test_ui_camera_node_501_when_tool_not_implemented():
     from services.vstrike_service import VStrikeToolNotImplemented
 
     svc = _mock_ui_control_service()
-    svc.ui_camera_node.side_effect = VStrikeToolNotImplemented("ui-camera-node not implemented")
+    svc.ui_camera_node.side_effect = VStrikeToolNotImplemented(
+        "ui-camera-node not implemented"
+    )
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(vstrike_module.ui_camera_node(VStrikeCameraNodeRequest(node_ids=["n1"])))
+            asyncio.run(
+                vstrike_module.ui_camera_node(VStrikeCameraNodeRequest(node_ids=["n1"]))
+            )
 
     assert exc_info.value.status_code == 501
 
@@ -513,3 +535,181 @@ def test_ui_storyline_forward_502_on_runtime_error():
 
     assert exc_info.value.status_code == 502
     assert "websocket closed" in str(exc_info.value.detail)
+
+
+# --------------------------------------------------------------------------- #
+# Net-new VStrike routes: /network-graph, /ui/legend-apply, /ui/rightpanel-focus
+# --------------------------------------------------------------------------- #
+
+
+def _mock_new_tools_service(**overrides):
+    svc = _mock_ui_service(**overrides)
+    svc.network_graph_get.return_value = overrides.get(
+        "graph",
+        {
+            "label": "Prod-A",
+            "nodes": [{"id": "n1"}],
+            "edges": [],
+            "bbox": {"x": 0, "y": 0, "w": 10, "h": 10},
+        },
+    )
+    svc.ui_legend_apply.return_value = overrides.get("legend_apply", {"ok": True})
+    svc.ui_rightpanel_focus.return_value = overrides.get(
+        "rightpanel_focus", {"ok": True}
+    )
+    return svc
+
+
+def test_network_graph_returns_graph():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeNetworkGraphRequest
+
+    svc = _mock_new_tools_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.network_graph(VStrikeNetworkGraphRequest(network_id="net-1"))
+        )
+
+    assert result["network_id"] == "net-1"
+    assert result["graph"]["label"] == "Prod-A"
+    svc.network_graph_get.assert_called_once_with(network_id="net-1")
+
+
+def test_network_graph_502_when_upstream_empty():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeNetworkGraphRequest
+
+    svc = _mock_new_tools_service()
+    svc.network_graph_get.return_value = None
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                vstrike_module.network_graph(
+                    VStrikeNetworkGraphRequest(network_id="net-1")
+                )
+            )
+    assert exc_info.value.status_code == 502
+
+
+def test_network_graph_forwards_passthrough_fields():
+    """`extra="allow"` on the request model lets unknown keys ride along."""
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeNetworkGraphRequest
+
+    svc = _mock_new_tools_service()
+    req = VStrikeNetworkGraphRequest.model_validate(
+        {"network_id": "net-1", "focusNodeId": "n9", "depth": 2}
+    )
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        asyncio.run(vstrike_module.network_graph(req))
+
+    kwargs = svc.network_graph_get.call_args.kwargs
+    assert kwargs["network_id"] == "net-1"
+    assert kwargs["focusNodeId"] == "n9"
+    assert kwargs["depth"] == 2
+
+
+def test_network_graph_503_without_ui_credentials():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeNetworkGraphRequest
+
+    svc = _mock_new_tools_service(has_ui_credentials=False)
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                vstrike_module.network_graph(
+                    VStrikeNetworkGraphRequest(network_id="net-1")
+                )
+            )
+    assert exc_info.value.status_code == 503
+
+
+def test_ui_legend_apply_calls_service():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeLegendApplyRequest
+
+    svc = _mock_new_tools_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.ui_legend_apply(
+                VStrikeLegendApplyRequest(legend_run_id="lr-1", network_id="net-1")
+            )
+        )
+
+    assert result["ok"] is True
+    svc.ui_legend_apply.assert_called_once_with("lr-1", network_id="net-1")
+
+
+def test_ui_legend_apply_501_when_tool_not_implemented():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeLegendApplyRequest
+    from services.vstrike_service import VStrikeToolNotImplemented
+
+    svc = _mock_new_tools_service()
+    svc.ui_legend_apply.side_effect = VStrikeToolNotImplemented(
+        "ui-legend-apply not implemented"
+    )
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                vstrike_module.ui_legend_apply(
+                    VStrikeLegendApplyRequest(legend_run_id="lr-1", network_id="net-1")
+                )
+            )
+    assert exc_info.value.status_code == 501
+
+
+def test_ui_legend_apply_502_on_runtime_error():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeLegendApplyRequest
+
+    svc = _mock_new_tools_service()
+    svc.ui_legend_apply.side_effect = RuntimeError("upstream boom")
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                vstrike_module.ui_legend_apply(
+                    VStrikeLegendApplyRequest(legend_run_id="lr-1", network_id="net-1")
+                )
+            )
+    assert exc_info.value.status_code == 502
+
+
+def test_ui_rightpanel_focus_calls_service_with_no_args():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeRightpanelFocusRequest
+
+    svc = _mock_new_tools_service()
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        result = asyncio.run(
+            vstrike_module.ui_rightpanel_focus(VStrikeRightpanelFocusRequest())
+        )
+
+    assert result["ok"] is True
+    svc.ui_rightpanel_focus.assert_called_once_with()
+
+
+def test_ui_rightpanel_focus_forwards_passthrough_fields():
+    """Unknown body fields ride through for forward compatibility."""
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeRightpanelFocusRequest
+
+    svc = _mock_new_tools_service()
+    req = VStrikeRightpanelFocusRequest.model_validate({"future_field": "x"})
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        asyncio.run(vstrike_module.ui_rightpanel_focus(req))
+
+    svc.ui_rightpanel_focus.assert_called_once_with(future_field="x")
+
+
+def test_ui_rightpanel_focus_503_without_ui_credentials():
+    from backend.api import vstrike as vstrike_module
+    from backend.api.vstrike import VStrikeRightpanelFocusRequest
+
+    svc = _mock_new_tools_service(has_ui_credentials=False)
+    with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                vstrike_module.ui_rightpanel_focus(VStrikeRightpanelFocusRequest())
+            )
+    assert exc_info.value.status_code == 503

@@ -479,7 +479,7 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
             None,
             lambda: claude_service.chat(
                 message=prompt,
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=4096
             )
         )
@@ -525,7 +525,7 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
         
         # Add metadata
         enrichment['generated_at'] = datetime.utcnow().isoformat() + 'Z'
-        enrichment['model'] = 'claude-sonnet-4-20250514'
+        enrichment['model'] = 'claude-sonnet-4-6'
         
         # Save enrichment to database
         success = data_service.update_finding(finding_id, ai_enrichment=enrichment)

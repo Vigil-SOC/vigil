@@ -544,7 +544,10 @@ def test_node_search_passes_query_and_network_id():
     body = {
         "result": {
             "content": [
-                {"type": "text", "text": '{"nodes": [{"node_id": "n1", "name": "Router-A"}]}'}
+                {
+                    "type": "text",
+                    "text": '{"nodes": [{"node_id": "n1", "name": "Router-A"}]}',
+                }
             ]
         }
     }
@@ -579,7 +582,10 @@ def test_node_drift_get_passes_node_id():
     body = {
         "result": {
             "content": [
-                {"type": "text", "text": '{"drift": [{"timestamp": "t1", "source": "cve"}]}'}
+                {
+                    "type": "text",
+                    "text": '{"drift": [{"timestamp": "t1", "source": "cve"}]}',
+                }
             ]
         }
     }
@@ -602,7 +608,10 @@ def test_storyline_list_returns_storylines():
     body = {
         "result": {
             "content": [
-                {"type": "text", "text": '{"storylines": [{"storyline_id": "s1", "name": "Exfil"}]}'}
+                {
+                    "type": "text",
+                    "text": '{"storylines": [{"storyline_id": "s1", "name": "Exfil"}]}',
+                }
             ]
         }
     }
@@ -614,13 +623,42 @@ def test_storyline_list_returns_storylines():
     assert result == [{"storyline_id": "s1", "name": "Exfil"}]
 
 
+def test_storyline_list_unwraps_vstrike_structured_content():
+    """VStrike's real MCP response puts the list under
+    structuredContent.storylineSets (not under "storylines"). Regression
+    test for empty-dropdown bug."""
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [],
+            "structuredContent": {
+                "storylineSets": [
+                    {"storylineSetId": "ss1", "label": "Exfil"}
+                ],
+                "count": 1,
+            },
+            "isError": False,
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ):
+        result = svc.storyline_list(network_id="net-1")
+    assert result == [{"storylineSetId": "ss1", "label": "Exfil"}]
+
+
 def test_storyline_events_get_passes_storyline_id():
     svc = _ui_service()
     _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
     body = {
         "result": {
             "content": [
-                {"type": "text", "text": '{"events": [{"event_id": "e1", "timestamp": "t1"}]}'}
+                {
+                    "type": "text",
+                    "text": '{"events": [{"event_id": "e1", "timestamp": "t1"}]}',
+                }
             ]
         }
     }
@@ -642,7 +680,10 @@ def test_legend_run_list_returns_runs():
     body = {
         "result": {
             "content": [
-                {"type": "text", "text": '{"legendRuns": [{"legend_run_id": "lr1", "name": "CVE-2026-001"}]}'}
+                {
+                    "type": "text",
+                    "text": '{"legendRuns": [{"legend_run_id": "lr1", "name": "CVE-2026-001"}]}',
+                }
             ]
         }
     }
@@ -654,13 +695,41 @@ def test_legend_run_list_returns_runs():
     assert result == [{"legend_run_id": "lr1", "name": "CVE-2026-001"}]
 
 
+def test_legend_run_list_unwraps_vstrike_structured_content():
+    """VStrike's real MCP response puts the list under
+    structuredContent.legends (not under "legendRuns")."""
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {
+        "result": {
+            "content": [],
+            "structuredContent": {
+                "legends": [
+                    {"legendId": "lg1", "label": "Vendor"}
+                ],
+                "count": 1,
+            },
+            "isError": False,
+        }
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ):
+        result = svc.legend_run_list(network_id="net-1")
+    assert result == [{"legendId": "lg1", "label": "Vendor"}]
+
+
 def test_legend_run_results_get_returns_dict():
     svc = _ui_service()
     _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
     body = {
         "result": {
             "content": [
-                {"type": "text", "text": '{"legend_run_id": "lr1", "results": {"critical": 3}}'}
+                {
+                    "type": "text",
+                    "text": '{"legend_run_id": "lr1", "results": {"critical": 3}}',
+                }
             ]
         }
     }
@@ -888,3 +957,143 @@ def test_call_mcp_tool_raises_on_tool_isError():
     ):
         with pytest.raises(RuntimeError, match="tool error"):
             svc.load_network_in_ui("does-not-exist")
+
+
+# ---------------------------------------------------------------------------
+# Net-new VStrike tools (network-graph-get, ui-legend-apply,
+# ui-rightpanel-focus). Defensive wrappers — keys passed through verbatim.
+# ---------------------------------------------------------------------------
+
+
+def test_network_graph_get_unwraps_structured_content():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    graph = {
+        "label": "Prod-A",
+        "nodes": [{"id": "n1"}, {"id": "n2"}],
+        "edges": [{"source": "n1", "target": "n2"}],
+        "bbox": {"x": 0, "y": 0, "w": 100, "h": 100},
+    }
+    body = {
+        "result": {"structuredContent": graph},
+        "jsonrpc": "2.0",
+        "id": 1,
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        result = svc.network_graph_get(network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "network-graph-get"
+    assert payload["params"]["arguments"]["networkId"] == "net-1"
+    assert result == graph
+
+
+def test_network_graph_get_unwraps_text_envelope():
+    """When VStrike returns the graph as JSON-in-text, we still get a dict."""
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    graph_json = '{"label":"X","nodes":[],"edges":[],"bbox":null}'
+    body = {
+        "result": {"content": [{"type": "text", "text": graph_json}]},
+        "jsonrpc": "2.0",
+        "id": 1,
+    }
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ):
+        result = svc.network_graph_get(network_id="net-1")
+    assert result == {"label": "X", "nodes": [], "edges": [], "bbox": None}
+
+
+def test_network_graph_get_forwards_unknown_kwargs():
+    """Defensive: extra kwargs are forwarded into the MCP arguments dict."""
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {"result": {"label": "x", "nodes": [], "edges": []}}
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        svc.network_graph_get(network_id="net-1", focusNodeId="n1", depth=2)
+
+    args = mock_post.call_args.kwargs["json"]["params"]["arguments"]
+    assert args["networkId"] == "net-1"
+    assert args["focusNodeId"] == "n1"
+    assert args["depth"] == 2
+
+
+def test_network_graph_get_returns_none_on_runtime_error():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(500, text="boom"),
+    ):
+        assert svc.network_graph_get(network_id="net-1") is None
+
+
+def test_ui_legend_apply_passes_legend_run_id():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {"result": {"ok": True}, "jsonrpc": "2.0", "id": 1}
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        svc.ui_legend_apply("lr-1", network_id="net-1")
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "ui-legend-apply"
+    args = payload["params"]["arguments"]
+    assert args["legendId"] == "lr-1"
+    assert args["networkId"] == "net-1"
+
+
+def test_ui_legend_apply_forwards_unknown_kwargs():
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {"result": {"ok": True}}
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        svc.ui_legend_apply("lr-1", network_id="net-1", overlay="dim")
+
+    args = mock_post.call_args.kwargs["json"]["params"]["arguments"]
+    assert args["legendId"] == "lr-1"
+    assert args["overlay"] == "dim"
+
+
+def test_ui_rightpanel_focus_sends_empty_args():
+    """VStrike confirmed the tool takes no parameters; we send an empty dict."""
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {"result": {"ok": True}, "jsonrpc": "2.0", "id": 1}
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        svc.ui_rightpanel_focus()
+
+    payload = mock_post.call_args.kwargs["json"]
+    assert payload["params"]["name"] == "ui-rightpanel-focus"
+    assert payload["params"]["arguments"] == {}
+
+
+def test_ui_rightpanel_focus_forwards_extras_for_future_compat():
+    """Unknown kwargs still pass through verbatim — defensive escape hatch."""
+    svc = _ui_service()
+    _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
+    body = {"result": {"ok": True}}
+    with patch(
+        "services.vstrike_service.requests.post",
+        return_value=_mock_response(200, json_body=body),
+    ) as mock_post:
+        svc.ui_rightpanel_focus(future_field="x")
+
+    args = mock_post.call_args.kwargs["json"]["params"]["arguments"]
+    assert args == {"future_field": "x"}
