@@ -160,7 +160,7 @@ app = FastAPI(
 # Vigil sits behind a reverse proxy at https://host/vigil. Empty by default
 # (served at root). All API routers, the health endpoint, the static/assets
 # mounts and the SPA catch-all are prefixed with this; the frontend learns it
-# at runtime via the window.__VIGIL_BASE_PATH__ injected into index.html below.
+# at runtime via the <meta name="vigil-base-path"> injected into index.html below.
 _CONTEXT_PATH = os.getenv("VIGIL_CONTEXT_PATH", "").rstrip("/")
 
 # Wire the shared slowapi Limiter used by auth endpoints. The decorator-based
@@ -895,20 +895,20 @@ if frontend_build_dir.exists() and assets_dir.exists():
 if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
     from fastapi.responses import HTMLResponse
 
-    # index.html is served with the active context path injected as
-    # window.__VIGIL_BASE_PATH__ so the SPA (see frontend src/config/basePath.ts)
-    # can prefix its router basename and API calls at runtime — no rebuild
-    # needed per deployment path. Cached after first read.
+    # index.html is served with the active context path injected as a
+    # <meta name="vigil-base-path"> tag so the SPA (see frontend
+    # src/config/basePath.ts) can prefix its router basename and API calls at
+    # runtime — no rebuild needed per deployment path. A meta tag (not an inline
+    # <script>) is used because the CSP is script-src 'self', which blocks inline
+    # scripts. Cached after first read.
     _index_html_cache: "str | None" = None
 
     def _get_index_html() -> str:
         global _index_html_cache
         if _index_html_cache is None:
             raw = (frontend_build_dir / "index.html").read_text()
-            config_script = (
-                f'<script>window.__VIGIL_BASE_PATH__="{_CONTEXT_PATH}";</script>'
-            )
-            _index_html_cache = raw.replace("<head>", f"<head>\n    {config_script}", 1)
+            config_tag = f'<meta name="vigil-base-path" content="{_CONTEXT_PATH}">'
+            _index_html_cache = raw.replace("<head>", f"<head>\n    {config_tag}", 1)
         return _index_html_cache
 
     # When served under a context path, redirect the bare path (no trailing

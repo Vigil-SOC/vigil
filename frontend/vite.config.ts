@@ -16,9 +16,9 @@ export default defineConfig(({ mode }) => {
   const devMode = env.DEV_MODE === 'true' ? 'true' : 'false'
 
   // Context path (sub-path) the app is served under. Empty = root. In prod the
-  // backend injects window.__VIGIL_BASE_PATH__ into index.html and the bundle
+  // backend injects <meta name="vigil-base-path"> into index.html and the bundle
   // uses relative asset URLs (base './'); in dev we set base to the context
-  // path and inject the same script so basePath.ts resolves identically.
+  // path and inject the same meta tag so basePath.ts resolves identically.
   const contextPath = process.env.VIGIL_CONTEXT_PATH || env.VIGIL_CONTEXT_PATH || ''
   const isDev = mode === 'development'
   const base = isDev && contextPath ? `${contextPath}/` : './'
@@ -32,7 +32,7 @@ export default defineConfig(({ mode }) => {
           if (!contextPath) return html
           return html.replace(
             '<head>',
-            `<head>\n    <script>window.__VIGIL_BASE_PATH__="${contextPath}";</script>`,
+            `<head>\n    <meta name="vigil-base-path" content="${contextPath}">`,
           )
         },
       },
