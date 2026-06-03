@@ -209,11 +209,11 @@ class AuthService:
             ).first()
 
             if not user:
-                logger.warning(f"User not found: {username_or_email}")
+                logger.warning("Login attempt for unknown identifier")
                 return None
 
             if not user.is_active:
-                logger.warning(f"User is inactive: {username_or_email}")
+                logger.warning("Login attempt for inactive account: %s", user.username)
                 return None
 
             # Reject while locked. Lockout is authoritative even over a correct
@@ -222,8 +222,9 @@ class AuthService:
             now = datetime.utcnow()
             if user.locked_until and user.locked_until > now:
                 logger.warning(
-                    f"Login rejected, account locked: {username_or_email} "
-                    f"until {user.locked_until.isoformat()}"
+                    "Login rejected, account locked: %s until %s",
+                    user.username,
+                    user.locked_until.isoformat(),
                 )
                 raise AccountLockedError(user.locked_until)
 
@@ -233,11 +234,12 @@ class AuthService:
                 if user.failed_login_count >= LOCKOUT_THRESHOLD:
                     user.locked_until = now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
                     logger.warning(
-                        f"Account locked after {user.failed_login_count} failed "
-                        f"attempts: {username_or_email}"
+                        "Account locked after %d failed attempts: %s",
+                        user.failed_login_count,
+                        user.username,
                     )
                 session.commit()
-                logger.warning(f"Invalid password for user: {username_or_email}")
+                logger.warning("Invalid password for user: %s", user.username)
                 return None
 
             # Success — reset lockout state and update session tracking
