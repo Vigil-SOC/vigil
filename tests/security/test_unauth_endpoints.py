@@ -123,6 +123,10 @@ PROTECTED_ROUTES = [
     ("GET", "/api/integrations/vstrike/ui/networks", None),
     ("POST", "/api/integrations/vstrike/ui/iframe-token", None),
     ("GET", "/api/integrations/vstrike/topology/asset/test-asset", None),
+    # Routes that were on bare `router` (no auth) — fixed in issue #286.
+    ("POST", "/api/integrations/vstrike/network-graph", {"network_id": "test"}),
+    ("POST", "/api/integrations/vstrike/ui/legend-apply", {"legend_run_id": "test"}),
+    ("POST", "/api/integrations/vstrike/ui/rightpanel-focus", None),
 ]
 
 

@@ -36,11 +36,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements + editable-install sources first for better caching.
-# requirements.txt references `-e ./deeptempo-core` and `-e ./mcp-servers`,
-# so those directories must exist at pip-install time.
+# Every `-e ./<dir>` line in requirements.txt needs its source tree
+# present at pip-install time. Keep this COPY list in sync with the
+# editable entries in requirements.txt — currently:
+#   - deeptempo-core
+#   - mcp-servers
+#   - mempalace
 COPY requirements.txt .
 COPY deeptempo-core/ ./deeptempo-core/
 COPY mcp-servers/ ./mcp-servers/
+COPY mempalace/ ./mempalace/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
