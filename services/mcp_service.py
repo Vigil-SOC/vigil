@@ -375,10 +375,20 @@ class MCPService:
                         for k, v in (server_config.get("env") or {}).items()
                         if not k.startswith("_")
                     }
-                    env = {
-                        k: self._substitute_env_vars(v)
-                        for k, v in raw_env_strs.items()
-                    }
+                    # Inherit the backend's environment so servers that need
+                    # runtime config not declared in mcp-config.json can connect
+                    # — notably the POSTGRES_* vars DatabaseService reads for
+                    # case/DB tools (deeptempo-findings). Declared config env
+                    # entries still take precedence. Required-credential
+                    # detection scans the raw config above, not this spawn env,
+                    # so dormancy behavior is unchanged.
+                    env = os.environ.copy()
+                    env.update(
+                        {
+                            k: self._substitute_env_vars(v)
+                            for k, v in raw_env_strs.items()
+                        }
+                    )
                     env["PYTHONPATH"] = project_path_str
 
                     # Get args and perform environment variable substitution

@@ -1025,6 +1025,56 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                 )
         return out
 
+    # Keys the Anthropic content-block wire schema accepts per block type.
+    # Response blocks are replayed verbatim into the next request during the
+    # tool-use loop; some gateways (e.g. a LiteLLM proxy fronting
+    # ANTHROPIC_BASE_URL) annotate returned tool_use blocks with a bookkeeping
+    # "caller" field, and the Anthropic SDK retains such unknown fields. Strict
+    # request validation then rejects them ("Extra inputs are not permitted").
+    # Unlike _serialize_response_blocks, this preserves every spec field —
+    # notably thinking-block "signature", which the API requires when extended
+    # thinking and tool use are combined.
+    _RESEND_ALLOWED_BLOCK_KEYS: Dict[str, set] = {
+        "text": {"type", "text", "citations", "cache_control"},
+        "thinking": {"type", "thinking", "signature", "cache_control"},
+        "redacted_thinking": {"type", "data", "cache_control"},
+        "tool_use": {"type", "id", "name", "input", "cache_control"},
+        "tool_result": {
+            "type",
+            "tool_use_id",
+            "content",
+            "is_error",
+            "cache_control",
+        },
+        "image": {"type", "source", "cache_control"},
+    }
+
+    @classmethod
+    def _clean_blocks_for_resend(cls, content) -> List[Dict]:
+        """Convert response content blocks to Anthropic-spec dicts for replay.
+
+        Accepts SDK block objects or dicts. Drops non-spec keys (e.g. a
+        "caller" field injected by a proxy) per block type while preserving all
+        valid fields. Unknown block types are passed through untouched.
+        """
+        out: List[Dict] = []
+        for block in content or []:
+            if isinstance(block, dict):
+                d = block
+            elif hasattr(block, "model_dump"):
+                d = block.model_dump(exclude_none=True)
+            elif hasattr(block, "dict"):
+                d = block.dict()
+            else:
+                out.append(block)
+                continue
+            allowed = cls._RESEND_ALLOWED_BLOCK_KEYS.get(d.get("type"))
+            if allowed is None or set(d).issubset(allowed):
+                out.append(d)
+            else:
+                out.append({k: v for k, v in d.items() if k in allowed})
+        return out
+
     @staticmethod
     def _sanitize_messages_for_log(messages: List[Dict]) -> List[Dict]:
         """Strip heavy image base64 payloads from messages before logging."""
@@ -2750,7 +2800,16 @@ Provide a structured summary preserving all critical context."""
                         assistant_content = (
                             [assistant_content] if assistant_content else []
                         )
-                    messages.append({"role": "assistant", "content": assistant_content})
+                    # Strip non-spec keys (e.g. a proxy-injected "caller" on
+                    # tool_use blocks) before replaying into the next request.
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": self._clean_blocks_for_resend(
+                                assistant_content
+                            ),
+                        }
+                    )
                     # Tool results need to be wrapped in a user message
                     messages.append({"role": "user", "content": tool_results})
 
@@ -3409,9 +3468,17 @@ Provide a structured summary preserving all critical context."""
                         f"✅ Tool processing complete in stream - {len(tool_results)} results"
                     )
 
-                    # Add assistant message and tool results to conversation
+                    # Add assistant message and tool results to conversation.
+                    # Strip non-spec keys from the replayed response blocks so a
+                    # proxy-injected "caller" field doesn't fail strict request
+                    # validation on the next iteration.
                     messages.append(
-                        {"role": "assistant", "content": accumulated_content}
+                        {
+                            "role": "assistant",
+                            "content": self._clean_blocks_for_resend(
+                                accumulated_content
+                            ),
+                        }
                     )
                     messages.append({"role": "user", "content": tool_results})
 
