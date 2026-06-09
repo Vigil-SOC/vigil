@@ -25,7 +25,7 @@ from secrets_manager import delete_secret, get_secret, set_secret
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from backend.middleware.auth import get_current_active_user
 from backend.services.auth_service import AuthService
-from database.connection import get_db, get_db_session
+from database.connection import get_db, get_db_session
 from database.models import LLMProviderConfig, User
 from services.bifrost_admin import push_provider_key
 from services.url_safety import UrlSafetyError, validate_provider_url

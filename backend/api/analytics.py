@@ -19,7 +19,7 @@ from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from database.models import Finding, Case, CaseClosureInfo, LLMInteractionLog
-from database.connection import get_db, get_db_session
+from database.connection import get_db, get_db_session
 from backend.services.ai_insights_service import AIInsightsService
 from services.mitre_lookup import get_time_range, resolve_technique  # noqa: F401
 
