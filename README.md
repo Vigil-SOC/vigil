@@ -122,7 +122,7 @@ MCP servers live in `mcp-servers/` and are configured via the Settings UI or `mc
 ```bash
 git clone --recurse-submodules https://github.com/Vigil-SOC/vigil.git
 cd vigil
-./start_web.sh
+./start.sh
 ```
 
 > **Note:** Docker must be running before you start. The startup script handles everything else: creates the Python virtual environment, installs dependencies, starts PostgreSQL, initializes the database with a default admin user, installs frontend packages, and launches both backend and frontend servers.
@@ -198,10 +198,10 @@ Postgres/Redis setup, ingress configuration, and troubleshooting.
 
 ```bash
 # Interactive mode (keeps terminal attached, Ctrl+C to stop)
-./start_web.sh
+./start.sh
 
 # OR background mode (frees terminal)
-./start_daemon.sh
+./start.sh --daemon
 ```
 
 **Option B: Manual (separate terminals)**

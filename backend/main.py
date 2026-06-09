@@ -570,7 +570,7 @@ async def startup_event():
         import os
 
         # Defense-in-depth: ensure the SQLAlchemy-managed schema exists before
-        # any endpoint tries to query it. start_web.sh runs scripts/init_schema.py
+        # any endpoint tries to query it. start.sh runs scripts/init_schema.py
         # first, but this covers environments that launch uvicorn directly
         # (e.g. Docker, systemd, CI). When DATA_BACKEND=database, a failure
         # here is fatal — we do NOT silently fall back to JSON because that
@@ -621,7 +621,7 @@ async def startup_event():
                         logger.warning(
                             "    1. Start database: ./scripts/start_database.sh"
                         )
-                        logger.warning("    2. Restart application: ./start_web.sh")
+                        logger.warning("    2. Restart application: ./start.sh")
 
                 except Exception as e:
                     logger.warning(f"⚠ Could not connect to PostgreSQL: {e}")

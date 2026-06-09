@@ -119,7 +119,7 @@ DELETE FROM users WHERE username = 'admin';
 1. Clear browser cache/cookies
 2. Start the backend:
    ```bash
-   ./start_web.sh
+   ./start.sh
    ```
 3. Check backend logs for errors
 

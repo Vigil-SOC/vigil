@@ -46,7 +46,7 @@ This script copies the `.env` file with DEV_MODE enabled by default!
 cp .env.example .env
 
 # Start services - auth will be bypassed!
-./start_web.sh
+./start.sh
 ```
 
 That's it! **One file, one setting** - both backend and frontend will bypass authentication. 🚀
@@ -65,9 +65,9 @@ The frontend automatically reads this setting - no separate frontend configurati
 DEV_MODE=true
 
 # Then restart services
-./start_web.sh
+./start.sh
 # OR
-./start_daemon.sh
+./start.sh --daemon
 ```
 
 **Option 2: Docker Compose**
@@ -82,7 +82,7 @@ services:
 **Option 3: Terminal Export**
 ```bash
 export DEV_MODE=true
-./start_web.sh
+./start.sh
 ```
 
 ### How It Works
@@ -246,7 +246,7 @@ docker-compose exec soc-api env | grep DEV_MODE
 echo "DEV_MODE=true" >> .env
 
 # Restart both services
-./start_web.sh
+./start.sh
 # OR
 docker-compose restart soc-api
 cd frontend && npm run dev
@@ -307,7 +307,7 @@ npm run dev
 DEV_MODE=false
 
 # Restart services (both backend and frontend will use auth)
-./start_web.sh
+./start.sh
 # OR
 docker-compose restart soc-api
 
@@ -359,11 +359,11 @@ Use it:
 ```bash
 # Enable (controls both backend and frontend!)
 ./toggle_dev_mode.sh on
-./start_web.sh
+./start.sh
 
 # Disable
 ./toggle_dev_mode.sh off
-./start_web.sh
+./start.sh
 ```
 
 ---
@@ -457,7 +457,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 echo "DEV_MODE=true" >> .env
 
 # 2. Start all services
-./start_web.sh
+./start.sh
 # OR
 docker-compose up -d
 cd frontend && npm run dev

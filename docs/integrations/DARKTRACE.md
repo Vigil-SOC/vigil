@@ -58,7 +58,7 @@ breach or AI Analyst incident URL).
 
 ## Verifying end-to-end
 
-1. Run Vigil's backend (`./start_web.sh` or `uvicorn backend.main:app --reload`).
+1. Run Vigil's backend (`./start.sh` or `uvicorn backend.main:app --reload`).
 2. Confirm the receiver is live:
    ```bash
    curl https://<vigil-host>:6987/api/webhooks/darktrace/health
