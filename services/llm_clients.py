@@ -27,13 +27,25 @@ _DEFAULT_TIMEOUT = 1800.0
 
 
 def _bifrost_anthropic_base_url() -> str:
-    """Return the Bifrost endpoint Anthropic traffic should hit.
+    """Return the endpoint Anthropic traffic should hit.
 
-    Bifrost exposes an Anthropic-compatible passthrough at ``/anthropic``
-    alongside its OpenAI-format surface. Hitting that path with the
-    regular Anthropic SDK preserves extended thinking, ``cache_control``
-    blocks, and the cache-token usage counters.
+    Normally this is Bifrost's Anthropic-compatible passthrough at
+    ``/anthropic`` (alongside its OpenAI-format surface), which preserves
+    extended thinking, ``cache_control`` blocks, and the cache-token usage
+    counters while Bifrost layers in caching/cost tracking.
+
+    In deployments where Bifrost cannot reach the Anthropic upstream — e.g.
+    ``api.anthropic.com`` is firewalled and an internal Anthropic-compatible
+    proxy (LiteLLM, etc.) must be used instead — set ``ANTHROPIC_BASE_URL``
+    to that proxy's root. Bifrost's built-in ``anthropic`` provider ignores
+    its own ``network_config.base_url``, so the redirect has to happen here
+    on the SDK client. When the override is set we point the SDK straight at
+    it (the SDK appends ``/v1/messages`` and ``/v1/messages/count_tokens``),
+    bypassing Bifrost for Anthropic traffic.
     """
+    override = os.getenv("ANTHROPIC_BASE_URL", "").strip()
+    if override:
+        return override.rstrip("/")
     base = os.getenv("BIFROST_URL", "http://bifrost:8080").rstrip("/")
     return f"{base}/anthropic"
 
