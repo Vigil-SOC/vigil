@@ -41,7 +41,7 @@ from backend.services.token_blacklist import (
 from backend.middleware.auth import get_current_user, get_current_active_user
 from backend.middleware.rate_limit import limiter
 from database.models import User
-from database.connection import get_db_session
+from database.connection import get_db, get_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +132,7 @@ async def login(
     request: Request,
     response: Response,
     payload: LoginRequest,
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Authenticate user and issue tokens.
@@ -263,6 +263,29 @@ async def logout(
                         exc,
                     )
 
+    # Blacklist the refresh token JTI too so a captured copy cannot be
+    # used to mint new access tokens after logout.
+    raw_refresh: Optional[str] = request.cookies.get(REFRESH_COOKIE_NAME)
+    if raw_refresh:
+        refresh_payload = AuthService.verify_jwt_token(raw_refresh)
+        if refresh_payload:
+            refresh_jti = refresh_payload.get("jti")
+            refresh_exp_ts = refresh_payload.get("exp")
+            refresh_exp_dt = (
+                datetime.utcfromtimestamp(refresh_exp_ts)
+                if refresh_exp_ts is not None
+                else None
+            )
+            if refresh_jti:
+                try:
+                    await blacklist_jti(refresh_jti, refresh_exp_dt)
+                except Exception as exc:
+                    logger.error(
+                        "Failed to blacklist refresh token for %s: %s",
+                        current_user.username,
+                        exc,
+                    )
+
     clear_auth_cookies(response)
 
     logger.info(f"User logged out: {current_user.username}")
@@ -275,7 +298,7 @@ async def refresh_token(
     request: Request,
     response: Response,
     body: Optional[RefreshTokenRequest] = None,
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Refresh access token using refresh token.
@@ -346,22 +369,23 @@ async def refresh_token(
 
 
 @router.get("/me")
-async def get_current_user_info(current_user: User = Depends(get_current_active_user)):
+async def get_current_user_info(
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_db),
+):
     """
     Get current user information.
-    
+
     Args:
         current_user: Current authenticated user
-    
+        session: Database session
+
     Returns:
         User information with permissions
     """
     user_dict = current_user.to_dict()
-    
-    # Add permissions
-    permissions = AuthService.get_user_permissions(current_user.user_id)
+    permissions = AuthService.get_user_permissions(current_user.user_id, session)
     user_dict["permissions"] = permissions
-    
     return user_dict
 
 
@@ -370,7 +394,7 @@ async def update_current_user(
     full_name: Optional[str] = None,
     email: Optional[EmailStr] = None,
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Update current user profile.
@@ -385,31 +409,43 @@ async def update_current_user(
         Updated user information
     """
     try:
+        email_changed = False
         if full_name:
             current_user.full_name = full_name
-        
+
         if email:
             # Check if email is already taken
             existing = session.query(User).filter(
                 User.email == email,
                 User.user_id != current_user.user_id
             ).first()
-            
+
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email already in use"
                 )
-            
+
             current_user.email = email
-            current_user.is_verified = False  # Require re-verification
-        
+            current_user.is_verified = False
+            email_changed = True
+
         session.commit()
         session.refresh(current_user)
-        
+
+        if email_changed:
+            try:
+                await revoke_all_for_user(current_user.user_id)
+            except Exception as exc:
+                logger.error(
+                    "Email changed for %s but revoke_all_for_user failed: %s",
+                    current_user.username,
+                    exc,
+                )
+
         logger.info(f"User profile updated: {current_user.username}")
         return current_user.to_dict()
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -425,9 +461,10 @@ async def update_current_user(
 @limiter.limit("5/minute")
 async def change_password(
     request: Request,
+    response: Response,
     body: ChangePasswordRequest,
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Change user password.
@@ -474,8 +511,9 @@ async def change_password(
                 exc,
             )
 
+        clear_auth_cookies(response)
         logger.info(f"Password changed for user: {current_user.username}")
-        return {"message": "Password changed successfully"}
+        return {"message": "Password changed successfully. Please log in again."}
     
     except Exception as e:
         logger.error(f"Password change error: {e}")
@@ -489,7 +527,7 @@ async def change_password(
 @router.post("/mfa/setup", response_model=MFASetupResponse)
 async def setup_mfa(
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Setup MFA for current user.
@@ -522,7 +560,7 @@ async def setup_mfa(
 async def verify_mfa(
     request: MFAVerifyRequest,
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Verify MFA code and enable MFA.
@@ -549,7 +587,7 @@ async def verify_mfa(
 @router.delete("/mfa")
 async def disable_mfa(
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Disable MFA for current user.
@@ -588,7 +626,7 @@ async def disable_mfa(
 async def password_reset_request(
     request: Request,
     body: PasswordResetRequest,
-    session: Session = Depends(get_db_session),
+    session: Session = Depends(get_db),
 ):
     """
     Begin a password reset. Always returns 200 regardless of whether the
@@ -640,7 +678,7 @@ async def password_reset_request(
 async def password_reset_confirm(
     request: Request,
     body: PasswordResetConfirm,
-    session: Session = Depends(get_db_session),
+    session: Session = Depends(get_db),
 ):
     """
     Complete a password reset. Validates the signed token, enforces the

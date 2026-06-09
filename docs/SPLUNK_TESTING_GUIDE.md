@@ -266,7 +266,7 @@ The enrichment creates two files:
 
 ```bash
 # Start the web interface
-./start_web.sh
+./start.sh
 
 # Navigate to:
 # http://localhost:3000

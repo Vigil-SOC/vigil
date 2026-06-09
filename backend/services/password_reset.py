@@ -56,16 +56,21 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+_reset_redis_client = None
+
+
 def _redis_client():
-    # Reuse the helper pattern from token_blacklist; keep imports local
-    # so a missing redis dep doesn't break module import.
+    global _reset_redis_client
+    if _reset_redis_client is not None:
+        return _reset_redis_client
     try:
         from redis import asyncio as redis_asyncio
     except Exception as exc:
         logger.warning("redis.asyncio unavailable: %s — reset single-use check disabled", exc)
         return None
     url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    return redis_asyncio.from_url(url, decode_responses=True)
+    _reset_redis_client = redis_asyncio.from_url(url, decode_responses=True)
+    return _reset_redis_client
 
 
 def generate_reset_token(user_id: str) -> str:

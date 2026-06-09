@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from backend.middleware.auth import get_current_user
 from backend.services.auth_service import AuthService
 from database.models import User, Case, Finding
-from database.connection import get_db_session
+from database.connection import get_db, get_db_session
 from core.config import get_integration_config
 import requests
 
@@ -50,7 +50,7 @@ async def export_case_to_jira(
     case_id: str,
     request: JiraExportRequest,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Export a case to JIRA as a ticket with findings as subtasks.
@@ -216,7 +216,7 @@ async def export_remediation_to_jira(
     case_id: str,
     request: JiraRemediationExportRequest,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Export remediation steps to JIRA as subtasks.

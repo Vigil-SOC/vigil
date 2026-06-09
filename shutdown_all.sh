@@ -66,7 +66,7 @@ fi
 # Kill processes by name
 echo "2. Stopping backend processes..."
 pkill -f "uvicorn backend.main:app"
-pkill -f "start_web.sh"
+pkill -f "start.sh"
 
 # Kill by port
 echo "3. Stopping processes on ports..."
@@ -143,7 +143,7 @@ echo "=========================================="
 echo "Status Check"
 echo "=========================================="
 
-REMAINING=$(ps aux | grep -E "(uvicorn|daemon.main|mcp_servers|start_web)" | grep -v grep | grep -v shutdown_all)
+REMAINING=$(ps aux | grep -E "(uvicorn|daemon.main|mcp_servers|start\.sh)" | grep -v grep | grep -v shutdown_all)
 
 if [ -z "$REMAINING" ]; then
     echo "✅ All processes stopped!"
@@ -191,8 +191,8 @@ else
 fi
 echo ""
 echo "To restart:"
-echo "  ./start_web.sh          - Interactive (keeps terminal)"
-echo "  ./start_daemon.sh       - Background (frees terminal)"
+echo "  ./start.sh              - Interactive (keeps terminal)"
+echo "  ./start.sh --daemon     - Background (frees terminal)"
 echo ""
 echo "Shutdown options:"
 echo "  ./shutdown_all.sh              - Stop native processes only (current)"
