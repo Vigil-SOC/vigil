@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from database.connection import get_db_session  # noqa: E402
+from database.connection import get_db, get_db_session
 from database.models import AIModelConfig, LLMProviderConfig  # noqa: E402
 from services.model_registry import (  # noqa: E402
     COMPONENTS,
@@ -81,7 +81,7 @@ class ModelsListResponse(BaseModel):
 
 
 @router.get("/config", response_model=AIConfigResponse)
-def get_ai_config(db: Session = Depends(get_db_session)):
+def get_ai_config(db: Session = Depends(get_db)):
     rows = db.query(AIModelConfig).all()
     assignments = {
         r.component: ComponentAssignmentResponse(
@@ -101,7 +101,7 @@ def get_ai_config(db: Session = Depends(get_db_session)):
 def set_component_assignment(
     component: str,
     payload: ComponentAssignmentUpdate,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db),
 ):
     if not is_valid_component(component):
         raise HTTPException(status_code=400, detail=f"unknown component: {component}")
@@ -145,7 +145,7 @@ def set_component_assignment(
 
 
 @router.delete("/config/{component}")
-def clear_component_assignment(component: str, db: Session = Depends(get_db_session)):
+def clear_component_assignment(component: str, db: Session = Depends(get_db)):
     if not is_valid_component(component):
         raise HTTPException(status_code=400, detail=f"unknown component: {component}")
     row = db.get(AIModelConfig, component)

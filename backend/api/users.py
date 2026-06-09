@@ -12,8 +12,10 @@ from sqlalchemy.orm import Session
 
 from backend.services.auth_service import AuthService
 from backend.middleware.auth import get_current_user
+from backend.services.password_validator import PasswordPolicyError, validate_password_strength
+from backend.services.token_blacklist import revoke_all_for_user
 from database.models import User, Role
-from database.connection import get_db_session
+from database.connection import get_db, get_db_session
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,19 @@ class ChangeUserRoleRequest(BaseModel):
     role_id: str
 
 
+def _can_assign_role(current_user: User, target_role: Role, session: Session) -> bool:
+    """Return True only if current_user holds every permission granted by target_role.
+
+    Prevents a user with users.write from assigning a role that grants
+    more privileges than they themselves have.
+    """
+    current_perms = AuthService.get_user_permissions(current_user.user_id, session)
+    for perm, granted in (target_role.permissions or {}).items():
+        if granted and not current_perms.get(perm, False):
+            return False
+    return True
+
+
 @router.get("/")
 async def list_users(
     skip: int = Query(0, ge=0),
@@ -51,7 +66,7 @@ async def list_users(
     is_active: Optional[bool] = None,
     search: Optional[str] = None,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     List all users (requires users.read permission).
@@ -118,7 +133,7 @@ async def list_users(
 async def get_user(
     user_id: str,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Get user by ID (requires users.read permission).
@@ -163,7 +178,7 @@ async def get_user(
 async def create_user(
     request: CreateUserRequest,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Create a new user (requires users.write permission).
@@ -183,19 +198,27 @@ async def create_user(
             detail="Permission denied: users.write required"
         )
     
-    # Validate password
-    if len(request.password) < 8:
+    # Validate password against the full strength policy
+    try:
+        validate_password_strength(request.password)
+    except PasswordPolicyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must be at least 8 characters"
+            detail=str(exc),
         )
-    
+
     # Verify role exists
     role = session.query(Role).filter(Role.role_id == request.role_id).first()
     if not role:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid role ID"
+        )
+
+    if not _can_assign_role(current_user, role, session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot assign a role with more privileges than your own",
         )
     
     # Create user
@@ -223,7 +246,7 @@ async def update_user(
     user_id: str,
     request: UpdateUserRequest,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Update user information (requires users.write permission).
@@ -254,25 +277,27 @@ async def update_user(
     
     try:
         # Update fields
+        email_changed = False
         if request.full_name is not None:
             user.full_name = request.full_name
-        
+
         if request.email is not None:
             # Check if email is already taken
             existing = session.query(User).filter(
                 User.email == request.email,
                 User.user_id != user_id
             ).first()
-            
+
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email already in use"
                 )
-            
+
             user.email = request.email
             user.is_verified = False
-        
+            email_changed = True
+
         if request.role_id is not None:
             # Verify role exists
             role = session.query(Role).filter(Role.role_id == request.role_id).first()
@@ -281,17 +306,32 @@ async def update_user(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid role ID"
                 )
+            if not _can_assign_role(current_user, role, session):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Cannot assign a role with more privileges than your own",
+                )
             user.role_id = request.role_id
-        
+
         if request.is_active is not None:
             user.is_active = request.is_active
-        
+
         session.commit()
         session.refresh(user)
-        
+
+        if email_changed:
+            try:
+                await revoke_all_for_user(user.user_id)
+            except Exception as exc:
+                logger.error(
+                    "Email changed for %s but revoke_all_for_user failed: %s",
+                    user.username,
+                    exc,
+                )
+
         logger.info(f"User updated by {current_user.username}: {user.username}")
         return user.to_dict()
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -307,7 +347,7 @@ async def update_user(
 async def delete_user(
     user_id: str,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Delete a user (requires users.delete permission).
@@ -364,7 +404,7 @@ async def change_user_role(
     user_id: str,
     request: ChangeUserRoleRequest,
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     Change user role (requires users.write permission).
@@ -400,7 +440,13 @@ async def change_user_role(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid role ID"
         )
-    
+
+    if not _can_assign_role(current_user, role, session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Cannot assign a role with more privileges than your own",
+        )
+
     try:
         old_role_id = user.role_id
         user.role_id = request.role_id
@@ -436,18 +482,23 @@ async def change_user_role(
 @router.get("/roles/list")
 async def list_roles(
     current_user: User = Depends(get_current_user),
-    session: Session = Depends(get_db_session)
+    session: Session = Depends(get_db)
 ):
     """
     List all available roles.
-    
+
     Args:
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         List of roles
     """
+    if not AuthService.check_permission(current_user.user_id, "users.read"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied: users.read required",
+        )
     try:
         roles = session.query(Role).all()
         return {

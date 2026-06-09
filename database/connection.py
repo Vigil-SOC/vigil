@@ -125,8 +125,8 @@ class DatabaseConfig:
         )
 
         # Connection pool settings
-        self.pool_size = int(os.getenv("DB_POOL_SIZE", "5"))
-        self.max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "10"))
+        self.pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
+        self.max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "20"))
         self.pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
         self.pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
 
@@ -377,13 +377,26 @@ def get_db_session() -> Session:
     """
     Get a new database session.
 
-    This is a convenience function for dependency injection in FastAPI.
-
     Returns:
         SQLAlchemy session
     """
     db_manager = get_db_manager()
     return db_manager.get_session()
+
+
+def get_db() -> Generator[Session, None, None]:
+    """Generator dependency for FastAPI — always closes the session after the request.
+
+    Use this with ``Depends(get_db)`` instead of ``Depends(get_db_session)``.
+    ``get_db_session`` returns a plain Session; FastAPI only calls cleanup for
+    generator dependencies, so ``Depends(get_db_session)`` leaks a connection
+    on every request.
+    """
+    session = get_db_manager().get_session()
+    try:
+        yield session
+    finally:
+        session.close()
 
 
 def get_session() -> Session:

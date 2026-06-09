@@ -25,7 +25,7 @@ from secrets_manager import delete_secret, get_secret, set_secret
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from backend.middleware.auth import get_current_active_user
 from backend.services.auth_service import AuthService
-from database.connection import get_db_session
+from database.connection import get_db, get_db_session
 from database.models import LLMProviderConfig, User
 from services.bifrost_admin import push_provider_key
 from services.url_safety import UrlSafetyError, validate_provider_url
@@ -195,7 +195,7 @@ def _schedule_catalog_resync(reason: str) -> None:
 @router.get("", response_model=List[LLMProviderResponse])
 @router.get("/", response_model=List[LLMProviderResponse])
 async def list_providers(
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     rows = db.query(LLMProviderConfig).order_by(LLMProviderConfig.created_at).all()
@@ -206,7 +206,7 @@ async def list_providers(
 @router.post("/", response_model=LLMProviderResponse, status_code=201)
 async def create_provider(
     payload: LLMProviderCreate,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     _require_settings_admin(current_user)
@@ -254,7 +254,7 @@ async def create_provider(
 async def update_provider(
     provider_id: str,
     payload: LLMProviderUpdate,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     _require_settings_admin(current_user)
@@ -304,7 +304,7 @@ async def update_provider(
 @router.delete("/{provider_id}")
 async def delete_provider(
     provider_id: str,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     _require_settings_admin(current_user)
@@ -329,7 +329,7 @@ async def delete_provider(
 @router.post("/{provider_id}/set-default", response_model=LLMProviderResponse)
 async def set_default_provider(
     provider_id: str,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     _require_settings_admin(current_user)
@@ -352,7 +352,7 @@ async def _resolve_api_key(row: LLMProviderConfig) -> Optional[str]:
 @router.post("/{provider_id}/test")
 async def test_provider(
     provider_id: str,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     _require_settings_admin(current_user)
@@ -542,7 +542,7 @@ async def discover_models(
 @router.get("/{provider_id}/models")
 async def list_models(
     provider_id: str,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     row = db.get(LLMProviderConfig, provider_id)
@@ -564,7 +564,7 @@ async def list_models(
 @router.post("/{provider_id}/refresh-models")
 async def refresh_provider_models(
     provider_id: str,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """Force a live rediscovery for one provider and push the union of
