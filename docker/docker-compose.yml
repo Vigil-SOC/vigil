@@ -49,7 +49,7 @@ services:
     container_name: deeptempo-backend
     environment:
       - DATABASE_URL=postgresql://deeptempo:${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}@postgres:5432/deeptempo_soc
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
@@ -78,7 +78,7 @@ services:
       # Database
       - DATABASE_URL=postgresql://deeptempo:${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}@postgres:5432/deeptempo_soc
       # AI
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
@@ -162,7 +162,7 @@ services:
     command: ["python", "-m", "services.run_llm_worker"]
     environment:
       - DATABASE_URL=postgresql://deeptempo:${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}@postgres:5432/deeptempo_soc
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
