@@ -92,7 +92,7 @@ async def get_attack_layer():
 @router.get("/techniques/rollup")
 async def get_technique_rollup(
     min_confidence: float = 0.0,
-    time_range: str = Query("all", regex="^(24h|7d|30d|all)$"),
+    time_range: str = Query("all", pattern="^(24h|7d|30d|all)$"),
 ):
     """
     Get rollup of ATT&CK techniques across all findings.

@@ -31,7 +31,7 @@ ai_insights_service = AIInsightsService()
 
 @router.get("/analytics")
 async def get_analytics(
-    time_range: str = Query("7d", regex="^(24h|7d|30d|all)$"),
+    time_range: str = Query("7d", pattern="^(24h|7d|30d|all)$"),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
     """
