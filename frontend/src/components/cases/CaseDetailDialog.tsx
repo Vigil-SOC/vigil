@@ -153,9 +153,11 @@ export default function CaseDetailDialog({
       )
       setFindings(findingsData.filter((f) => f !== null))
 
-      // Load activities and resolution steps from metadata
-      setActivities(response.data.metadata?.activities || [])
-      setResolutionSteps(response.data.metadata?.resolution_steps || [])
+      // activities and resolution_steps are top-level fields on the case
+      // payload (see Case.to_dict in database/models.py) — there is no
+      // `metadata` wrapper, so reading metadata?.* always yielded [].
+      setActivities(response.data.activities || [])
+      setResolutionSteps(response.data.resolution_steps || [])
     } catch (error) {
       console.error('Failed to load case:', error)
       setSnackbar({
