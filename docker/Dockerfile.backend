@@ -1,72 +1,100 @@
-# SOC Backend API Dockerfile
-# Multi-stage build: node builds the SPA, python runs the FastAPI backend
-# which serves both the API and the bundled SPA as static files.
+# docker/Dockerfile.backend
+# =============================================================================
+# Multi-stage build: React SPA → Python FastAPI backend
+#
+# Final image runs:  uvicorn backend.main:app --host 0.0.0.0 --port 6987
+# Serves static SPA at /app/frontend/dist  (via FastAPI StaticFiles mount)
+# =============================================================================
 
-# -----------------------------------------------------------------------------
-# Stage 1: build the React SPA
-# -----------------------------------------------------------------------------
-FROM node:18-alpine AS frontend-builder
+# ---------------------------------------------------------------------------
+# Stage 1: build the React frontend
+# ---------------------------------------------------------------------------
+FROM node:20-slim AS frontend-builder
 
-WORKDIR /src/frontend
+WORKDIR /build/frontend
 
-# Copy manifest first for better caching of the install step.
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+# Install deps before copying source so layer is cached on package.json changes
+COPY frontend/package*.json ./
+RUN npm ci --prefer-offline
 
-# Copy the rest of the frontend source and build.
-COPY frontend/ ./
-# Cap node's heap so builds don't OOM on memory-constrained hosts
-# (Docker Desktop with <2GB, small CI runners). The SPA builds comfortably
-# under 768MB; leave the remainder for the OS and other build stages.
-RUN NODE_OPTIONS=--max-old-space-size=1536 npm run build
+COPY frontend/ .
+RUN npm run build
+# Output: /build/frontend/dist
 
-# -----------------------------------------------------------------------------
-# Stage 2: Python backend + bundled SPA
-# -----------------------------------------------------------------------------
-FROM python:3.11-slim
+# ---------------------------------------------------------------------------
+# Stage 2: install Python dependencies
+# (separate stage so dep layer is cached independently of app code)
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS python-deps
 
-# Set working directory
-WORKDIR /app
+WORKDIR /install
 
-# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
-    curl \
+      build-essential \
+      libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements + editable-install sources first for better caching.
-# Every `-e ./<dir>` line in requirements.txt needs its source tree
-# present at pip-install time. Keep this COPY list in sync with the
-# editable entries in requirements.txt — currently:
-#   - deeptempo-core
-#   - mcp-servers
-#   - mempalace
 COPY requirements.txt .
-COPY deeptempo-core/ ./deeptempo-core/
-COPY mcp-servers/ ./mcp-servers/
-COPY mempalace/ ./mempalace/
+RUN pip install --no-cache-dir --prefix=/install/deps -r requirements.txt
 
-# Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# ---------------------------------------------------------------------------
+# Stage 3: runtime image
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS runtime
 
-# Copy application code
-COPY . .
+ARG VIGIL_VERSION=dev
+LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 
-# Copy the pre-built SPA from the frontend-builder stage.
-# backend/main.py reads from frontend/build/ at runtime.
-COPY --from=frontend-builder /src/frontend/build ./frontend/build
+# Runtime system deps only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libpq5 \
+      curl \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
-RUN useradd -m -u 1000 backend && chown -R backend:backend /app
-USER backend
+# Non-root user
+RUN groupadd -r vigil && useradd -r -g vigil -d /app -s /sbin/nologin vigil
 
-# Expose port
+WORKDIR /app
+
+# Installed Python packages from the deps stage
+COPY --from=python-deps /install/deps /usr/local
+
+# Application source — copy each top-level package separately so
+# modifying one doesn't bust the cache for all the others.
+COPY --chown=vigil:vigil backend/     ./backend/
+COPY --chown=vigil:vigil core/        ./core/
+COPY --chown=vigil:vigil services/    ./services/
+COPY --chown=vigil:vigil tools/       ./tools/
+COPY --chown=vigil:vigil database/    ./database/
+COPY --chown=vigil:vigil data/        ./data/
+COPY --chown=vigil:vigil workflows/   ./workflows/
+COPY --chown=vigil:vigil mcp-servers/ ./mcp-servers/
+COPY --chown=vigil:vigil mempalace/   ./mempalace/
+COPY --chown=vigil:vigil VERSION      ./VERSION
+COPY --chown=vigil:vigil setup.cfg    ./setup.cfg
+
+# Built SPA — served by FastAPI StaticFiles (or nginx sidecar)
+COPY --from=frontend-builder --chown=vigil:vigil /build/frontend/dist ./frontend/dist/
+
+# Writable dirs the app needs at runtime
+RUN mkdir -p /app/data/investigations /app/data/mempalace \
+    && chown -R vigil:vigil /app/data
+
+# Bake version into the image so `backend.__version__` resolves at import time
+# (backend/__init__.py reads VERSION from disk)
+RUN echo "${VIGIL_VERSION}" > /app/VERSION
+
+USER vigil
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PORT=6987
+
 EXPOSE 6987
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:6987/api/health || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://localhost:6987/api/health || exit 1
 
-# Default command
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "6987"]
+CMD ["python", "-m", "uvicorn", "backend.main:app", \
+     "--host", "0.0.0.0", "--port", "6987", \
+     "--workers", "2"]

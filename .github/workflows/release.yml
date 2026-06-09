@@ -1,289 +1,235 @@
-name: Release & Production Deployment
+# .github/workflows/release.yml
+#
+# Triggered when release-please merges a release PR and pushes a vX.Y.Z tag.
+# Builds and publishes two OCI images to ghcr.io:
+#
+#   ghcr.io/vigil-soc/vigil-backend:<tag>   (FastAPI API + bundled SPA)
+#   ghcr.io/vigil-soc/vigil-daemon:<tag>    (headless SOC daemon)
+#
+# The llm-worker Deployment reuses the backend image (different command),
+# so no third image is needed.
+#
+# Prerequisites (one-time, per RELEASING.md):
+#   • GitHub App installed with id=vars.RELEASE_PLEASE_APP_ID
+#     and private key at secrets.RELEASE_PLEASE_PRIVATE_KEY
+#   • "Read and write" Packages permission on the repo
+#     (Settings → Actions → General → Workflow permissions)
+
+name: Release
 
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v[0-9]+.[0-9]+.[0-9]+"   # only vX.Y.Z tags from release-please
 
-env:
-  PYTHON_VERSION: '3.10'
-  NODE_VERSION: '18'
-  REGISTRY: ghcr.io
-  # Image name is computed per-job via `Compute image name (lowercase)` —
-  # github.repository preserves owner casing (e.g. "Vigil-SOC/vigil"), and
-  # OCI/GHCR requires fully lowercase paths. Don't reintroduce a workflow-
-  # level env that uses ${{ github.repository }} directly.
+# Least-privilege defaults; each job overrides what it needs.
+permissions:
+  contents: read
 
 jobs:
-  # ============================================================================
-  # Build Production Images
-  # ============================================================================
-  # Note: the GitHub Release object is created by release-please when the
-  # release PR is merged (see .github/workflows/release-please.yml). This
-  # workflow only builds, scans, deploys, and validates — it does not own
-  # the Release.
-  build-production-images:
-    name: Build Production Images
+  # ---------------------------------------------------------------------------
+  # Build + push: backend (also used by llm-worker)
+  # ---------------------------------------------------------------------------
+  build-backend:
+    name: Build backend image
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-    
+      packages: write          # push to ghcr.io
+      id-token: write          # keyless cosign signing (future)
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
         with:
-          submodules: true
-      
+          submodules: recursive
+          fetch-depth: 0
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-      
-      - name: Log in to Container Registry
+
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image name (lowercase)
-        id: image
-        # OCI/GHCR requires repository paths to be entirely lowercase.
-        # github.repository preserves the casing of the owner/repo names
-        # (e.g. "Vigil-SOC/vigil"), so we lowercase here before using it
-        # as part of an image tag. docker/metadata-action does this
-        # automatically; we don't use it in this workflow, so do it manually.
-        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/vigil-soc/vigil-backend
+          tags: |
+            # vX.Y.Z → X.Y.Z (strip leading v)
+            type=semver,pattern={{version}}
+            # vX.Y.Z → X.Y (minor)
+            type=semver,pattern={{major}}.{{minor}}
+            # short SHA for traceability
+            type=sha,prefix=sha-
+            # latest on default branch tags
+            type=raw,value=latest,enable=${{ github.ref == format('refs/tags/v{0}', needs.version.outputs.version) }}
+          labels: |
+            org.opencontainers.image.title=vigil-backend
+            org.opencontainers.image.description=Vigil SOC — FastAPI backend + bundled SPA
+            org.opencontainers.image.vendor=Vigil-SOC
+            org.opencontainers.image.source=https://github.com/Vigil-SOC/vigil
+            org.opencontainers.image.licenses=Apache-2.0
 
-      - name: Extract version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Build and push backend image
+      - name: Build and push backend
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/Dockerfile.backend
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:${{ steps.version.outputs.version }}
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:latest
-          labels: |
-            org.opencontainers.image.title=Vigil Backend
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache layers in the registry — free for public repos
+          cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-backend:buildcache
+          cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-backend:buildcache,mode=max
+          # Pass the version into the image
+          build-args: |
+            VIGIL_VERSION=${{ github.ref_name }}
+          platforms: linux/amd64,linux/arm64
 
-      - name: Build and push daemon image
+  # ---------------------------------------------------------------------------
+  # Build + push: daemon
+  # ---------------------------------------------------------------------------
+  build-daemon:
+    name: Build daemon image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/vigil-soc/vigil-daemon
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+            type=raw,value=latest
+          labels: |
+            org.opencontainers.image.title=vigil-daemon
+            org.opencontainers.image.description=Vigil SOC — headless autonomous SOC daemon
+            org.opencontainers.image.vendor=Vigil-SOC
+            org.opencontainers.image.source=https://github.com/Vigil-SOC/vigil
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Build and push daemon
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/Dockerfile.daemon
           push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:${{ steps.version.outputs.version }}
-            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:latest
-          labels: |
-            org.opencontainers.image.title=Vigil Daemon
-            org.opencontainers.image.version=${{ steps.version.outputs.version }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=ghcr.io/vigil-soc/vigil-daemon:buildcache
+          cache-to:   type=registry,ref=ghcr.io/vigil-soc/vigil-daemon:buildcache,mode=max
+          build-args: |
+            VIGIL_VERSION=${{ github.ref_name }}
+          platforms: linux/amd64,linux/arm64
 
-  # ============================================================================
-  # Security Scan Production Images
-  # ============================================================================
-  scan-production-images:
-    name: Scan Production Images
+  # ---------------------------------------------------------------------------
+  # Smoke-test: pull the images and verify they start
+  # ---------------------------------------------------------------------------
+  smoke-test:
+    name: Smoke test images
     runs-on: ubuntu-latest
-    needs: [build-production-images]
+    needs: [build-backend, build-daemon]
+    permissions:
+      packages: read
+
     steps:
-      - name: Compute image name (lowercase)
-        id: image
-        # Mirrors the lowercasing step in build-production-images so Trivy
-        # references the same tag that was pushed. See note there.
-        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
-
-      - name: Get version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Run Trivy scanner on backend
-        uses: aquasecurity/trivy-action@master
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-backend:${{ steps.version.outputs.version }}
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
-        continue-on-error: true
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Trivy scanner on daemon
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}-daemon:${{ steps.version.outputs.version }}
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
-        continue-on-error: true
+      - name: Backend — version check
+        run: |
+          docker run --rm \
+            -e DEV_MODE=true \
+            -e DATABASE_URL=postgresql://x:x@localhost/x \
+            -e REDIS_URL=redis://localhost:6379 \
+            ghcr.io/vigil-soc/vigil-backend:${{ github.ref_name }} \
+            python -c "import backend; print('backend version:', backend.__version__)"
 
-  # ============================================================================
-  # Deploy to Production
-  # ============================================================================
-  deploy-production:
-    name: Deploy to Production
+      - name: Daemon — import check
+        run: |
+          docker run --rm \
+            -e DEV_MODE=true \
+            ghcr.io/vigil-soc/vigil-daemon:${{ github.ref_name }} \
+            python -c "import daemon; print('daemon ok')"
+
+  # ---------------------------------------------------------------------------
+  # Attach image digests to the GitHub Release
+  # ---------------------------------------------------------------------------
+  update-release:
+    name: Annotate GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-production-images, scan-production-images]
-    environment:
-      name: production
-      url: https://app.deeptempo.ai
-    
+    needs: [smoke-test]
+    permissions:
+      contents: write    # edit release body
+      packages: read
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
-          submodules: true
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Compute image name (lowercase)
-        id: image
-        # Mirrors the lowercasing step in build-production-images so deploy
-        # scripts pull the same tag that was pushed. See note there.
-        run: echo "name=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - name: Fetch digests
+        id: digests
+        run: |
+          BACKEND=$(docker manifest inspect ghcr.io/vigil-soc/vigil-backend:${{ github.ref_name }} \
+            | python3 -c "import sys,json; m=json.load(sys.stdin); print(m.get('config',{}).get('digest','unknown'))")
+          DAEMON=$(docker manifest inspect ghcr.io/vigil-soc/vigil-daemon:${{ github.ref_name }} \
+            | python3 -c "import sys,json; m=json.load(sys.stdin); print(m.get('config',{}).get('digest','unknown'))")
+          echo "backend=$BACKEND" >> "$GITHUB_OUTPUT"
+          echo "daemon=$DAEMON"   >> "$GITHUB_OUTPUT"
 
-      - name: Get version
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Configure SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
-          ssh-keyscan -H ${{ secrets.PROD_VM_HOST }} >> ~/.ssh/known_hosts
-      
-      - name: Backup current deployment
-        run: |
-          ssh ${{ secrets.PROD_VM_USER }}@${{ secrets.PROD_VM_HOST }} '
-            cd /opt/ai-opensoc &&
-            docker compose ps > backup-${{ steps.version.outputs.version }}.txt &&
-            docker images | grep ai-opensoc >> backup-${{ steps.version.outputs.version }}.txt
-          '
-      
-      - name: Deploy to production
-        id: deploy
-        run: |
-          chmod +x scripts/deploy_to_vm.sh
-          ./scripts/deploy_to_vm.sh production
-        env:
-          VM_HOST: ${{ secrets.PROD_VM_HOST }}
-          VM_USER: ${{ secrets.PROD_VM_USER }}
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE_NAME: ${{ steps.image.outputs.name }}
-          IMAGE_TAG: ${{ steps.version.outputs.version }}
-      
-      - name: Health check
-        id: health_check
-        run: |
-          sleep 60  # Wait for services to stabilize
-          
-          # Check API health
-          response=$(curl -s -o /dev/null -w "%{http_code}" https://app.deeptempo.ai/health)
-          if [ $response -ne 200 ]; then
-            echo "Health check failed with status $response"
-            exit 1
-          fi
-          
-          # Check daemon metrics
-          daemon_response=$(curl -s -o /dev/null -w "%{http_code}" http://${{ secrets.PROD_VM_HOST }}:9090/metrics)
-          if [ $daemon_response -ne 200 ]; then
-            echo "Daemon health check failed"
-            exit 1
-          fi
-          
-          echo "All health checks passed"
-      
-      - name: Rollback on failure
-        if: failure() && steps.deploy.outcome == 'failure'
-        run: |
-          echo "Deployment failed, initiating rollback..."
-          ssh ${{ secrets.PROD_VM_USER }}@${{ secrets.PROD_VM_HOST }} '
-            cd /opt/ai-opensoc &&
-            docker compose down &&
-            docker compose up -d --force-recreate
-          '
-      
-      - name: Cleanup old images
-        if: success()
-        run: |
-          ssh ${{ secrets.PROD_VM_USER }}@${{ secrets.PROD_VM_HOST }} '
-            docker image prune -a -f --filter "until=720h"
-          '
-      
-      - name: Notify Slack - Success
-        if: success()
-        uses: slackapi/slack-github-action@v1
+      - name: Append image refs to release notes
+        uses: softprops/action-gh-release@v2
         with:
-          payload: |
-            {
-              "text": "🚀 Production Deployment Successful",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*🚀 Production Deployment Successful*\n*Version:* v${{ steps.version.outputs.version }}\n*Environment:* Production\n*URL:* https://app.deeptempo.ai"
-                  }
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-      
-      - name: Notify Slack - Failure
-        if: failure()
-        uses: slackapi/slack-github-action@v1
-        with:
-          payload: |
-            {
-              "text": "❌ Production Deployment Failed",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*❌ Production Deployment Failed*\n*Version:* v${{ steps.version.outputs.version }}\n*Rollback:* Initiated\n*Action Required:* Check logs immediately"
-                  }
-                }
-              ]
-            }
-        env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          append_body: true
+          body: |
 
-  # ============================================================================
-  # Post-Deployment Validation
-  # ============================================================================
-  post-deployment-validation:
-    name: Post-Deployment Validation
-    runs-on: ubuntu-latest
-    needs: [deploy-production]
-    steps:
-      - name: Run smoke tests
-        run: |
-          # Test API endpoints
-          curl -f https://app.deeptempo.ai/health || exit 1
-          curl -f https://app.deeptempo.ai/api/docs || exit 1
-          
-          echo "Smoke tests passed"
-      
-      - name: Performance check
-        run: |
-          response_time=$(curl -o /dev/null -s -w '%{time_total}' https://app.deeptempo.ai/health)
-          if (( $(echo "$response_time > 1.0" | bc -l) )); then
-            echo "Warning: API response time is slow: ${response_time}s"
-          else
-            echo "API response time OK: ${response_time}s"
-          fi
-      
-      - name: Update monitoring
-        if: success()
-        run: |
-          echo "Deployment successful, updating monitoring dashboards..."
-          # Add Sentry release tracking, Grafana annotation, etc.
+            ---
+            ### Container Images
 
+            | Image | Tag | Digest |
+            |-------|-----|--------|
+            | `ghcr.io/vigil-soc/vigil-backend` | `${{ github.ref_name }}` | `${{ steps.digests.outputs.backend }}` |
+            | `ghcr.io/vigil-soc/vigil-daemon`  | `${{ github.ref_name }}` | `${{ steps.digests.outputs.daemon }}`  |
+
+            ```bash
+            # Pull by tag
+            docker pull ghcr.io/vigil-soc/vigil-backend:${{ github.ref_name }}
+            docker pull ghcr.io/vigil-soc/vigil-daemon:${{ github.ref_name }}
+            ```
