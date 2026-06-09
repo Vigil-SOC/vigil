@@ -14,14 +14,36 @@ export default defineConfig(({ mode }) => {
   
   // If DEV_MODE is set in root .env, pass it to frontend as VITE_DEV_MODE
   const devMode = env.DEV_MODE === 'true' ? 'true' : 'false'
-  
+
+  // Context path (sub-path) the app is served under. Empty = root. In prod the
+  // backend injects <meta name="vigil-base-path"> into index.html and the bundle
+  // uses relative asset URLs (base './'); in dev we set base to the context
+  // path and inject the same meta tag so basePath.ts resolves identically.
+  const contextPath = process.env.VIGIL_CONTEXT_PATH || env.VIGIL_CONTEXT_PATH || ''
+  const isDev = mode === 'development'
+  const base = isDev && contextPath ? `${contextPath}/` : './'
+
   return {
-    plugins: [react()],
+    base,
+    plugins: [
+      {
+        name: 'inject-base-path',
+        transformIndexHtml(html) {
+          if (!contextPath) return html
+          return html.replace(
+            '<head>',
+            `<head>\n    <meta name="vigil-base-path" content="${contextPath}">`,
+          )
+        },
+      },
+      react(),
+    ],
     server: {
       port: 6988,
       host: '127.0.0.1', // Use IPv4 explicitly
       proxy: {
-        '/api': {
+        // Dev proxy must match the context-path-prefixed API calls.
+        [`${contextPath}/api`]: {
           target: 'http://127.0.0.1:6987', // Use IPv4 explicitly instead of localhost
           changeOrigin: true,
         },

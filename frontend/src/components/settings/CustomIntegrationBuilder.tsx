@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { basePath } from '../../config/basePath'
 import {
   Box,
   Button,
@@ -100,7 +101,7 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: CustomInte
     setError(null)
 
     try {
-      const response = await fetch('http://localhost:6987/api/custom-integrations/generate', {
+      const response = await fetch(`${basePath}/api/custom-integrations/generate`, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -164,7 +165,7 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: CustomInte
 
     try {
       // First save the integration temporarily
-      const saveResponse = await fetch('http://localhost:6987/api/custom-integrations/save', {
+      const saveResponse = await fetch(`${basePath}/api/custom-integrations/save`, {
         method: 'POST',
         credentials: 'include',
         headers: {
@@ -183,7 +184,7 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: CustomInte
 
       // Now validate it
       const validateResponse = await fetch(
-        `http://localhost:6987/api/custom-integrations/${generatedIntegration.integration_id}/validate`,
+        `${basePath}/api/custom-integrations/${generatedIntegration.integration_id}/validate`,
         {
           method: 'POST',
           credentials: 'include',
@@ -211,7 +212,7 @@ export default function CustomIntegrationBuilder({ onClose, onSave }: CustomInte
     setError(null)
 
     try {
-      const response = await fetch('http://localhost:6987/api/custom-integrations/save', {
+      const response = await fetch(`${basePath}/api/custom-integrations/save`, {
         method: 'POST',
         credentials: 'include',
         headers: {

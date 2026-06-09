@@ -1,10 +1,11 @@
 import axios from 'axios'
+import { basePath } from '../config/basePath'
 
 // Auth is cookie-based (HttpOnly access_token + refresh_token set by the
 // backend). withCredentials ensures axios sends those cookies on every
 // request, including via the Vite dev proxy.
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: `${basePath}/api`,
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
