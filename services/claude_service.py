@@ -86,6 +86,11 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Sub-module imports (lazy to avoid circular deps at module load)
+from services.chat.session_manager import SessionManager  # noqa: E402
+from services.chat.context_manager import ContextManager  # noqa: E402
+from services.chat.tool_executor import ToolExecutor  # noqa: E402
+
 
 class ClaudeService:
     """Service for interacting with Claude API with Agent SDK support."""
@@ -127,16 +132,19 @@ class ClaudeService:
         self.thinking_budget = thinking_budget
         self.use_agent_sdk = use_agent_sdk and AGENT_SDK_AVAILABLE
 
-        # Session management for multi-turn conversations
-        # L1: in-memory (fast); L2: MemPalace (durable across restarts)
-        self.sessions: Dict[str, List[Dict]] = {}
-        self._mempalace = None  # lazy-initialized on first session access
+        # Sub-modules — own session lifecycle, context reduction, and tool dispatch.
+        self._session_mgr = SessionManager()
+        self._context_mgr = ContextManager()
+        self._tool_executor = ToolExecutor()
 
         # Default system prompt with Claude 4.5 best practices
         self.default_system_prompt = self._get_default_system_prompt()
 
         # Try to load API key
         self._load_api_key()
+
+        # Keep ContextManager clients in sync after key load.
+        self._context_mgr.update_clients(self.client, self.async_client)
 
         # Load backend tools if enabled
         if self.use_backend_tools and BACKEND_TOOLS_AVAILABLE:
@@ -408,6 +416,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                     f"Backend tools refreshed: {len(self.backend_tools)} total "
                     f"(incl. {len(skill_tools)} skill tool(s))"
                 )
+            self._tool_executor.skill_tool_index = self._skill_tool_index
             return len(skill_tools)
         except Exception as e:
             logger.debug(f"Could not load skill tools: {e}")
@@ -790,6 +799,19 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                         "description": f"[{server_name}] {tool.get('description', '')}",
                         "input_schema": input_schema,
                     }
+                    from services.prompt_security import scan_tool_schema, PromptInjectionBlocked as _PIB
+                    _schema_scan = scan_tool_schema(claude_tool)
+                    if _schema_scan:
+                        logger.warning(
+                            "prompt_injection in MCP tool schema: server=%s tool=%s patterns=%s",
+                            server_name,
+                            tool_name,
+                            _schema_scan.patterns,
+                        )
+                        import os as _os
+                        if _os.getenv("PROMPT_INJECTION_BLOCK", "false").lower() in ("true", "1", "yes"):
+                            logger.error("Skipping poisoned tool %s", tool_name)
+                            continue
                     self.mcp_tools.append(claude_tool)
 
             if self.mcp_tools:
@@ -888,6 +910,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                 # Save using secrets manager
                 set_secret("CLAUDE_API_KEY", self.api_key)
 
+            self._context_mgr.update_clients(self.client, self.async_client)
             return True
 
         except Exception as e:
@@ -895,8 +918,22 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             return False
 
     def has_api_key(self) -> bool:
-        """Check if API key is configured."""
-        return self.api_key is not None and self.client is not None
+        """Return True if any usable LLM provider is configured.
+
+        Anthropic: requires api_key + initialized SDK client.
+        Other providers (Ollama, OpenAI, …): a configured row in
+        llm_provider_configs is sufficient — the chat endpoint routes them
+        through LLMRouter instead of calling the Anthropic SDK directly.
+        """
+        if self.api_key is not None and self.client is not None:
+            return True
+        try:
+            from services.llm_router import get_default_provider_spec
+
+            spec = get_default_provider_spec()
+            return spec is not None
+        except Exception:
+            return False
 
     def _extract_content_blocks(
         self, content, include_thinking: bool = False
@@ -1289,34 +1326,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         return cleaned_messages
 
     def _estimate_tokens(self, content: any) -> int:
-        """
-        Estimate token count for content (rough: ~4 chars per token).
-
-        Args:
-            content: String, list of content blocks, or list of messages
-
-        Returns:
-            Estimated token count
-        """
-        if isinstance(content, str):
-            return len(content) // 4
-        elif isinstance(content, list):
-            total = 0
-            for item in content:
-                if isinstance(item, str):
-                    total += len(item) // 4
-                elif isinstance(item, dict):
-                    # Message or content block
-                    if "content" in item:
-                        total += self._estimate_tokens(item["content"])
-                    if "text" in item:
-                        total += len(item["text"]) // 4
-                    if "input" in item:
-                        total += len(json.dumps(item["input"])) // 4
-                elif hasattr(item, "text"):
-                    total += len(getattr(item, "text", "")) // 4
-            return total
-        return 0
+        return ContextManager.estimate_tokens(content)
 
     def _needs_context_reduction(
         self,
@@ -1324,201 +1334,34 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         system_prompt: Optional[str] = None,
         max_context_tokens: int = 180000,
     ) -> tuple:
-        """
-        Check if messages exceed the context window and calculate budget.
-
-        Returns:
-            Tuple of (needs_reduction: bool, total_tokens: int, available_tokens: int)
-        """
-        system_tokens = self._estimate_tokens(system_prompt) if system_prompt else 0
-
-        tool_tokens = 0
-        if self.use_backend_tools and self.backend_tools:
-            tool_tokens += self._estimate_tokens(json.dumps(self.backend_tools))
-        if self.use_mcp_tools and self.mcp_tools:
-            tool_tokens += self._estimate_tokens(json.dumps(self.mcp_tools))
-
-        available_tokens = max_context_tokens - system_tokens - tool_tokens
-        if available_tokens <= 0:
-            available_tokens = 50000
-
-        total_tokens = sum(
-            self._estimate_tokens(msg.get("content", "")) for msg in messages
+        return self._context_mgr.needs_context_reduction(
+            messages,
+            system_prompt,
+            backend_tools=self.backend_tools if self.use_backend_tools else None,
+            mcp_tools=self.mcp_tools if self.use_mcp_tools else None,
+            max_context_tokens=max_context_tokens,
         )
-        return total_tokens > available_tokens, total_tokens, available_tokens
 
     def _split_messages_for_summary(
         self, messages: List[Dict], available_tokens: int
     ) -> tuple:
-        """
-        Split messages into (older_to_summarize, recent_to_keep).
-
-        Keeps enough recent messages to fit in ~60% of the budget,
-        leaving room for the summary of older messages.
-
-        Returns:
-            Tuple of (messages_to_summarize, messages_to_keep)
-        """
-        if not messages:
-            return [], []
-
-        # Reserve budget: 60% for recent messages, 40% for summary of old messages
-        recent_budget = int(available_tokens * 0.6)
-
-        # Always keep the last message (current user input)
-        keep = []
-        used = 0
-        for msg in reversed(messages):
-            msg_tokens = self._estimate_tokens(msg.get("content", ""))
-            if used + msg_tokens > recent_budget and len(keep) >= 2:
-                break
-            keep.insert(0, msg)
-            used += msg_tokens
-
-        # Everything not in keep gets summarized
-        keep_start_idx = len(messages) - len(keep)
-        to_summarize = messages[:keep_start_idx]
-
-        return to_summarize, keep
+        return ContextManager.split_messages_for_summary(messages, available_tokens)
 
     def _format_messages_for_summary(self, messages: List[Dict]) -> str:
-        """Convert messages to plain text for summarization."""
-        parts = []
-        for msg in messages:
-            role = msg.get("role", "unknown").upper()
-            content = msg.get("content", "")
-            if isinstance(content, str):
-                parts.append(f"{role}: {content}")
-            elif isinstance(content, list):
-                text_parts = []
-                for block in content:
-                    if isinstance(block, dict):
-                        if block.get("type") == "text" and block.get("text"):
-                            text_parts.append(block["text"])
-                        elif block.get("type") == "thinking" and block.get("text"):
-                            text_parts.append(f"[Thinking: {block['text'][:300]}...]")
-                        elif block.get("type") == "image":
-                            text_parts.append("[Image]")
-                    elif hasattr(block, "type"):
-                        if block.type == "text" and hasattr(block, "text"):
-                            text_parts.append(block.text)
-                if text_parts:
-                    parts.append(f"{role}: {' '.join(text_parts)}")
-        return "\n\n".join(parts)
+        return ContextManager.format_messages_for_summary(messages)
 
     def _build_summary_prompt(self, conversation_text: str) -> str:
-        """Build the prompt for summarizing a conversation."""
-        # Cap input to ~100k tokens for the summarization call itself
-        max_chars = 400000
-        if len(conversation_text) > max_chars:
-            conversation_text = (
-                conversation_text[:max_chars]
-                + "\n\n[... earlier messages truncated ...]"
-            )
-
-        return f"""Summarize the following conversation between a user and an AI security assistant.
-You MUST preserve ALL of the following:
-- Every finding ID (f-XXXXXXXX-XXXXXXXX), case ID (case-XXXXXXXX), and IOC mentioned
-- All investigation decisions, conclusions, and action items
-- Key analysis results and threat assessments
-- Entity references (IPs, domains, hashes, hostnames, usernames)
-- The current state of any ongoing investigation
-- Any pending questions or next steps
-
-Be thorough. This summary replaces the conversation history — anything you omit is lost.
-
-CONVERSATION ({len(conversation_text)} chars):
-{conversation_text}
-
-Provide a structured summary preserving all critical context."""
+        return ContextManager.build_summary_prompt(conversation_text)
 
     def _summarize_messages_sync(
         self, messages: List[Dict], model: Optional[str] = None
     ) -> Optional[str]:
-        """
-        Synchronously summarize a list of messages using a lightweight Claude call.
-
-        Returns:
-            Summary text, or None if summarization fails
-        """
-        if not messages or not self.has_api_key():
-            return None
-
-        conversation_text = self._format_messages_for_summary(messages)
-        if not conversation_text.strip():
-            return None
-
-        prompt = self._build_summary_prompt(conversation_text)
-
-        # GH #89: use ai_model_configs['summarization'] when caller didn't pin one.
-        model = model or _resolve_summarization_model()
-
-        try:
-            logger.info(
-                f"📝 Auto-summarizing {len(messages)} messages (~{len(conversation_text)} chars)..."
-            )
-            response = self.client.messages.create(
-                model=model,
-                max_tokens=4096,
-                system="You are a precise conversation summarizer for a security operations platform. Preserve all entity IDs, findings, and investigation context.",
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-            if response.content:
-                for block in response.content:
-                    if hasattr(block, "text") and block.text:
-                        logger.info(
-                            f"✅ Summarized {len(messages)} messages into ~{len(block.text)} chars"
-                        )
-                        return block.text
-            return None
-        except Exception as e:
-            logger.error(f"❌ Auto-summarization failed: {e}")
-            return None
+        return self._context_mgr._summarize_messages_sync(messages, model)
 
     async def _summarize_messages_async(
         self, messages: List[Dict], model: Optional[str] = None
     ) -> Optional[str]:
-        """
-        Asynchronously summarize a list of messages using a lightweight Claude call.
-
-        Returns:
-            Summary text, or None if summarization fails
-        """
-        if not messages or not self.has_api_key():
-            return None
-
-        conversation_text = self._format_messages_for_summary(messages)
-        if not conversation_text.strip():
-            return None
-
-        prompt = self._build_summary_prompt(conversation_text)
-
-        # GH #89: use ai_model_configs['summarization'] when caller didn't pin one.
-        model = model or _resolve_summarization_model()
-
-        try:
-            logger.info(
-                f"📝 Auto-summarizing {len(messages)} messages (~{len(conversation_text)} chars) [async]..."
-            )
-            response = await self.async_client.messages.create(
-                model=model,
-                max_tokens=4096,
-                system="You are a precise conversation summarizer for a security operations platform. Preserve all entity IDs, findings, and investigation context.",
-                messages=[{"role": "user", "content": prompt}],
-            )
-
-            if response.content:
-                for block in response.content:
-                    if hasattr(block, "text") and block.text:
-                        logger.info(
-                            f"✅ Summarized {len(messages)} messages into ~{len(block.text)} chars"
-                        )
-                        return block.text
-            return None
-        except Exception as e:
-            logger.error(f"❌ Auto-summarization failed: {e}")
-            return None
+        return await self._context_mgr._summarize_messages_async(messages, model)
 
     def _prepare_context_sync(
         self,
@@ -1526,85 +1369,20 @@ Provide a structured summary preserving all critical context."""
         system_prompt: Optional[str] = None,
         model: str = "claude-sonnet-4-6",
         max_context_tokens: int = 180000,
+        session_id: Optional[str] = None,
     ) -> tuple:
-        """
-        Prepare messages for API call, auto-summarizing if context is too long.
-        Synchronous version for chat().
-
-        Returns:
-            Tuple of (prepared_messages, summarized_count) where summarized_count
-            is the number of messages that were summarized (0 if none).
-        """
-        needs_reduction, total_tokens, available_tokens = self._needs_context_reduction(
-            messages, system_prompt, max_context_tokens
+        summary = self._session_mgr.get_summary(session_id) if session_id else ""
+        prepared, overflow = self._context_mgr.prepare_context(
+            messages,
+            summary,
+            system_prompt,
+            backend_tools=self.backend_tools if self.use_backend_tools else None,
+            mcp_tools=self.mcp_tools if self.use_mcp_tools else None,
+            max_context_tokens=max_context_tokens,
         )
-
-        if not needs_reduction:
-            return messages, 0
-
-        logger.warning(
-            f"⚠️ Context too long (~{total_tokens} tokens > {available_tokens} available), auto-summarizing..."
-        )
-
-        to_summarize, to_keep = self._split_messages_for_summary(
-            messages, available_tokens
-        )
-
-        if not to_summarize:
-            return messages, 0
-
-        # Archive overflow messages to MemPalace before summarizing (lossless preservation)
-        def _archive_overflow():
-            sessions_dir = self._get_mempalace_sessions_dir()
-            if not sessions_dir:
-                return
-            try:
-                import time
-
-                overflow_dir = sessions_dir.parent / "overflow"
-                overflow_dir.mkdir(parents=True, exist_ok=True)
-                dest = overflow_dir / f"overflow_{int(time.time())}.json"
-                dest.write_text(
-                    json.dumps({"messages": to_summarize, "reason": "context_overflow"})
-                )
-            except Exception:
-                pass
-
-        threading.Thread(target=_archive_overflow, daemon=True).start()
-
-        # GH #89: pass model=None so summarization resolves to its own
-        # component in ai_model_configs, independent of the chat model.
-        summary = self._summarize_messages_sync(to_summarize, model=None)
-
-        if summary:
-            summary_msg = {
-                "role": "user",
-                "content": f"[CONVERSATION CONTEXT - Auto-summary of {len(to_summarize)} earlier messages]\n\n{summary}\n\n[END OF SUMMARY - The conversation continues below]",
-            }
-            # Ensure alternating roles: summary is "user", so next must be "assistant"
-            prepared = [summary_msg]
-            if to_keep and to_keep[0].get("role") == "user":
-                prepared.append(
-                    {
-                        "role": "assistant",
-                        "content": "Understood, I have the context from our previous conversation. Let me continue helping you.",
-                    }
-                )
-            prepared.extend(to_keep)
-
-            new_tokens = sum(
-                self._estimate_tokens(msg.get("content", "")) for msg in prepared
-            )
-            logger.info(
-                f"✅ Context reduced: {total_tokens} → ~{new_tokens} tokens ({len(to_summarize)} messages summarized, {len(to_keep)} kept)"
-            )
-            return prepared, len(to_summarize)
-        else:
-            # Summarization failed - fall back to keeping only recent messages
-            logger.warning(
-                "⚠️ Summarization failed, falling back to recent messages only"
-            )
-            return to_keep, len(to_summarize)
+        if overflow and session_id:
+            self._fold_overflow_background(session_id, overflow, summary)
+        return prepared, len(overflow)
 
     async def _prepare_context_async(
         self,
@@ -1612,223 +1390,61 @@ Provide a structured summary preserving all critical context."""
         system_prompt: Optional[str] = None,
         model: str = "claude-sonnet-4-6",
         max_context_tokens: int = 180000,
+        session_id: Optional[str] = None,
     ) -> tuple:
-        """
-        Prepare messages for API call, auto-summarizing if context is too long.
-        Async version for chat_stream().
-
-        Returns:
-            Tuple of (prepared_messages, summarized_count)
-        """
-        needs_reduction, total_tokens, available_tokens = self._needs_context_reduction(
-            messages, system_prompt, max_context_tokens
+        summary = self._session_mgr.get_summary(session_id) if session_id else ""
+        prepared, overflow = self._context_mgr.prepare_context(
+            messages,
+            summary,
+            system_prompt,
+            backend_tools=self.backend_tools if self.use_backend_tools else None,
+            mcp_tools=self.mcp_tools if self.use_mcp_tools else None,
+            max_context_tokens=max_context_tokens,
         )
+        if overflow and session_id:
+            self._fold_overflow_background(session_id, overflow, summary)
+        return prepared, len(overflow)
 
-        if not needs_reduction:
-            return messages, 0
-
-        logger.warning(
-            f"⚠️ Context too long (~{total_tokens} tokens > {available_tokens} available), auto-summarizing..."
-        )
-
-        to_summarize, to_keep = self._split_messages_for_summary(
-            messages, available_tokens
-        )
-
-        if not to_summarize:
-            return messages, 0
-
-        # Archive overflow messages to MemPalace before summarizing (lossless preservation)
-        def _archive_overflow_async():
-            sessions_dir = self._get_mempalace_sessions_dir()
-            if not sessions_dir:
-                return
+    def _fold_overflow_background(
+        self, session_id: str, overflow: List[Dict], existing_summary: str
+    ) -> None:
+        """Fold aged-out messages into the session summary in a daemon thread."""
+        def _fold() -> None:
             try:
-                import time
-
-                overflow_dir = sessions_dir.parent / "overflow"
-                overflow_dir.mkdir(parents=True, exist_ok=True)
-                dest = overflow_dir / f"overflow_{int(time.time())}.json"
-                dest.write_text(
-                    json.dumps({"messages": to_summarize, "reason": "context_overflow"})
+                new_summary = ContextManager.fold_overflow(overflow, existing_summary)
+                self._session_mgr.update_summary(session_id, new_summary)
+                logger.debug(
+                    "Folded %d overflow messages into summary for session %s",
+                    len(overflow),
+                    session_id,
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("fold_overflow failed: %s", exc)
 
-        threading.Thread(target=_archive_overflow_async, daemon=True).start()
-
-        # GH #89: pass model=None so summarization resolves to its own
-        # component in ai_model_configs, independent of the chat model.
-        summary = await self._summarize_messages_async(to_summarize, model=None)
-
-        if summary:
-            summary_msg = {
-                "role": "user",
-                "content": f"[CONVERSATION CONTEXT - Auto-summary of {len(to_summarize)} earlier messages]\n\n{summary}\n\n[END OF SUMMARY - The conversation continues below]",
-            }
-            prepared = [summary_msg]
-            if to_keep and to_keep[0].get("role") == "user":
-                prepared.append(
-                    {
-                        "role": "assistant",
-                        "content": "Understood, I have the context from our previous conversation. Let me continue helping you.",
-                    }
-                )
-            prepared.extend(to_keep)
-
-            new_tokens = sum(
-                self._estimate_tokens(msg.get("content", "")) for msg in prepared
-            )
-            logger.info(
-                f"✅ Context reduced: {total_tokens} → ~{new_tokens} tokens ({len(to_summarize)} messages summarized, {len(to_keep)} kept)"
-            )
-            return prepared, len(to_summarize)
-        else:
-            logger.warning(
-                "⚠️ Summarization failed, falling back to recent messages only"
-            )
-            return to_keep, len(to_summarize)
+        threading.Thread(target=_fold, daemon=True).start()
 
     @staticmethod
     def _apply_history_window(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Cap conversation history to the most-recent N turns (GH #84 PR-D).
-
-        Window size resolves through ``services.runtime_config`` (GH #84 PR-F):
-        Settings-UI value → ``CLAUDE_HISTORY_WINDOW`` env → 20 turns default.
-        20 turns = up to 40 messages. Applied *before* ``_prepare_context_sync``
-        so summarization only fires when even the window-trimmed history
-        overflows the model's context budget — summarization itself costs
-        tokens, so avoiding it on most calls is a net win.
-
-        The trailing user turn is always preserved; older messages are
-        dropped from the head. Set the toggle to 0 to disable.
-        """
-        from services.runtime_config import get_ai_operations_setting
-
-        window = get_ai_operations_setting("history_window", 20)
-        if window <= 0:
-            return messages
-        max_msgs = window * 2
-        if len(messages) <= max_msgs:
-            return messages
-        return messages[-max_msgs:]
+        return ContextManager.apply_history_window(messages)
 
     @staticmethod
     def _filter_tools_by_name(
         tools: List[Dict[str, Any]],
         recommended: Optional[List[str]],
     ) -> List[Dict[str, Any]]:
-        """Keep only the tools whose name is in ``recommended`` (GH #84 PR-D).
-
-        No-op when ``recommended`` is None or empty. MCP tool names are
-        prefixed with ``{server}_`` — callers may pass either the raw name
-        (e.g. ``get_finding``) or the prefixed form; we match on both.
-        """
-        if not recommended:
-            return tools
-        wanted = set(recommended)
-        out: List[Dict[str, Any]] = []
-        for t in tools:
-            name = t.get("name", "")
-            if name in wanted:
-                out.append(t)
-                continue
-            # MCP tools arrive as "<server>_<tool_name>". Strip the first
-            # segment and retry so per-agent recommended_tools lists (which
-            # use bare names from soc_agents.py) continue to match.
-            if "_" in name and name.split("_", 1)[1] in wanted:
-                out.append(t)
-        return out
+        return ContextManager.filter_tools_by_name(tools, recommended)
 
     @staticmethod
     def _apply_prompt_cache_controls(api_kwargs: Dict[str, Any]) -> None:
-        """Add Anthropic ``cache_control`` markers to system + tool blocks (GH #84 PR-C).
+        ContextManager.apply_prompt_cache_controls(api_kwargs)
 
-        Mutates ``api_kwargs`` in place. The last block of the system prompt
-        and the last tool definition are tagged as ``{"type": "ephemeral"}``
-        cache breakpoints. Anthropic caches everything up to and including a
-        tagged block, so tagging these two stable prefixes lets repeated
-        calls in the same session read them from cache at ~10% the input
-        cost. Routed through Bifrost's /anthropic passthrough (GH #84 PR-B),
-        which preserves the ``cache_control`` blocks unchanged.
-
-        Kill-switch lives at Settings → AI Config → AI Operations (GH #84 PR-F)
-        and falls back to the ``ANTHROPIC_PROMPT_CACHE_ENABLED`` env var.
-        """
-        from services.runtime_config import get_ai_operations_setting
-
-        if not get_ai_operations_setting("prompt_cache_enabled", True):
-            return
-
-        system = api_kwargs.get("system")
-        if isinstance(system, str) and system:
-            api_kwargs["system"] = [
-                {
-                    "type": "text",
-                    "text": system,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ]
-        elif isinstance(system, list) and system:
-            # Already block-formatted — tag the trailing block if it's untagged.
-            last = system[-1]
-            if isinstance(last, dict) and "cache_control" not in last:
-                system[-1] = {**last, "cache_control": {"type": "ephemeral"}}
-
-        tools = api_kwargs.get("tools")
-        if isinstance(tools, list) and tools:
-            last_tool = tools[-1]
-            if isinstance(last_tool, dict) and "cache_control" not in last_tool:
-                api_kwargs["tools"] = tools[:-1] + [
-                    {**last_tool, "cache_control": {"type": "ephemeral"}}
-                ]
-
-    # GH #84 PR-D: per-tool truncation budgets. Defaults to 8k (down from the
-    # previous flat 30k); specific tools that legitimately need more — raw
-    # log fetches, bulk listings — are overridden here. Bumping a tool is
-    # cheap; forgetting to bump it just truncates the tail. Tune from the
-    # /analytics/cost dashboard once we have real data.
-    #
-    # Keys are matched against the bare tool name AND the MCP-prefixed form
-    # ("<server>_<tool>") so callers can pass either.
-    TOOL_RESPONSE_BUDGETS: Dict[str, int] = {
-        # Raw log / forensic dumps — legitimately large.
-        "get_raw_logs": 30000,
-        "timesketch_search": 30000,
-        "splunk_search": 30000,
-        # Bulk listings — medium.
-        "list_findings": 12000,
-        "search_findings": 12000,
-        "list_cases": 12000,
-        "semantic_search_findings": 12000,
-        "nearest_neighbors": 12000,
-    }
-
-    # Back-compat: historical constant some callers may import. New code
-    # should use ``TOOL_RESPONSE_BUDGETS`` or the env-configurable default.
-    MAX_TOOL_RESPONSE_TOKENS = 30000
+    # Back-compat class attributes — delegated to ContextManager.
+    TOOL_RESPONSE_BUDGETS: Dict[str, int] = ContextManager.TOOL_RESPONSE_BUDGETS
+    MAX_TOOL_RESPONSE_TOKENS = ContextManager.MAX_TOOL_RESPONSE_TOKENS
 
     @classmethod
     def _response_budget_for(cls, tool_name: Optional[str]) -> int:
-        """Lookup the truncation budget for ``tool_name`` (GH #84 PR-D).
-
-        Order of resolution:
-          1. Exact match in ``TOOL_RESPONSE_BUDGETS``
-          2. Match on the un-prefixed name (strip leading ``<server>_``)
-          3. ``TOOL_RESPONSE_BUDGET_DEFAULT`` env var
-          4. 8000 (hard default)
-        """
-        if tool_name:
-            if tool_name in cls.TOOL_RESPONSE_BUDGETS:
-                return cls.TOOL_RESPONSE_BUDGETS[tool_name]
-            if "_" in tool_name:
-                bare = tool_name.split("_", 1)[1]
-                if bare in cls.TOOL_RESPONSE_BUDGETS:
-                    return cls.TOOL_RESPONSE_BUDGETS[bare]
-        # GH #84 PR-F: Settings-UI value → env var → hard default.
-        from services.runtime_config import get_ai_operations_setting
-
-        return get_ai_operations_setting("tool_response_budget_default", 8000)
+        return ContextManager.response_budget_for(tool_name)
 
     def _truncate_tool_response(
         self,
@@ -1836,23 +1452,7 @@ Provide a structured summary preserving all critical context."""
         tool_name: Optional[str] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
-        """Truncate a tool response if it exceeds the token budget.
-
-        Budget resolution (GH #84 PR-D): explicit ``max_tokens`` wins; else
-        the per-tool budget from ``TOOL_RESPONSE_BUDGETS``; else the
-        ``TOOL_RESPONSE_BUDGET_DEFAULT`` env var; else 8000.
-        """
-        if max_tokens is None:
-            max_tokens = self._response_budget_for(tool_name)
-        estimated_tokens = len(content) // 4
-        if estimated_tokens <= max_tokens:
-            return content
-        truncated = content[: max_tokens * 4]
-        return (
-            truncated
-            + f"\n\n[TRUNCATED: Response was ~{estimated_tokens} tokens, showing first ~{max_tokens}. "
-            "Use more specific filters or pagination to see remaining data.]"
-        )
+        return ContextManager.truncate_tool_response(content, tool_name, max_tokens)
 
     async def _process_backend_tool_use(self, content: List) -> List[Dict]:
         """Process tool use requests and call backend tools directly."""
@@ -2568,13 +2168,9 @@ Provide a structured summary preserving all critical context."""
                 )
                 thinking_config = {"type": "enabled", "budget_tokens": budget}
 
-            # GH #84 PR-D: trim to a sliding window so summarization (which
-            # itself costs tokens) only fires on genuinely long investigations.
-            messages = self._apply_history_window(messages)
-
-            # Auto-summarize if context is too long (preserves context instead of dropping)
-            messages, _summarized = self._prepare_context_sync(
-                messages, effective_system_prompt, model=model
+            # Sliding window + rolling summary compression (no LLM call).
+            messages, _windowed_out = self._prepare_context_sync(
+                messages, effective_system_prompt, model=model, session_id=session_id
             )
 
             # Make API call
@@ -3197,17 +2793,14 @@ Provide a structured summary preserving all critical context."""
                 )
                 thinking_config = {"type": "enabled", "budget_tokens": budget}
 
-            # GH #84 PR-D: sliding window before summarization (see chat() for rationale).
-            messages = self._apply_history_window(messages)
-
-            # Auto-summarize if context is too long (preserves context instead of dropping)
-            messages, summarized_count = await self._prepare_context_async(
-                messages, effective_system_prompt, model=model
+            # Sliding window + rolling summary compression (no LLM call).
+            messages, windowed_out = await self._prepare_context_async(
+                messages, effective_system_prompt, model=model, session_id=session_id
             )
-            if summarized_count > 0:
+            if windowed_out > 0:
                 yield {
-                    "type": "context_summarized",
-                    "summarized_messages": summarized_count,
+                    "type": "context_windowed",
+                    "windowed_messages": windowed_out,
                     "remaining_messages": len(messages),
                 }
 
