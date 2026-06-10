@@ -71,11 +71,14 @@ export default function LLMProvidersTab({ setMessage }: Props) {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!window.confirm(`Delete provider "${id}"? This also removes its stored API key.`)) return
+  const handleDelete = async (p: LLMProvider) => {
+    const warn = p.is_default
+      ? `"${p.name}" is the default provider. Deleting it will promote the next active provider of the same type. Any model assignments for this provider will also be removed.`
+      : `Delete provider "${p.name}"? Any model assignments for this provider will be removed.`
+    if (!window.confirm(`${warn}\n\nThis also removes its stored API key. Continue?`)) return
     try {
-      await llmProviderApi.remove(id)
-      setMessage({ type: 'success', text: `Deleted ${id}` })
+      await llmProviderApi.remove(p.provider_id)
+      setMessage({ type: 'success', text: `Deleted ${p.name}` })
       await load()
     } catch (e: any) {
       setMessage({ type: 'error', text: e?.response?.data?.detail || 'Delete failed' })
@@ -163,14 +166,21 @@ export default function LLMProvidersTab({ setMessage }: Props) {
                     </TableCell>
                     <TableCell>{statusChip(p)}</TableCell>
                     <TableCell>
-                      <Tooltip title={p.is_default ? 'Default for this provider type' : 'Set as default'}>
-                        <IconButton
-                          size="small"
-                          onClick={() => !p.is_default && handleSetDefault(p.provider_id)}
-                          color={p.is_default ? 'primary' : 'default'}
-                        >
-                          {p.is_default ? <DefaultIcon fontSize="small" /> : <NotDefaultIcon fontSize="small" />}
-                        </IconButton>
+                      <Tooltip title={
+                        p.is_default
+                          ? 'Default for this provider type — to change, set another provider as default first'
+                          : 'Set as default'
+                      }>
+                        <span>
+                          <IconButton
+                            size="small"
+                            onClick={() => !p.is_default && handleSetDefault(p.provider_id)}
+                            color={p.is_default ? 'primary' : 'default'}
+                            disabled={p.is_default}
+                          >
+                            {p.is_default ? <DefaultIcon fontSize="small" /> : <NotDefaultIcon fontSize="small" />}
+                          </IconButton>
+                        </span>
                       </Tooltip>
                     </TableCell>
                     <TableCell align="right">
@@ -198,10 +208,10 @@ export default function LLMProvidersTab({ setMessage }: Props) {
                           <EditIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
-                      <Tooltip title="Delete">
+                      <Tooltip title="Delete provider">
                         <IconButton
                           size="small"
-                          onClick={() => handleDelete(p.provider_id)}
+                          onClick={() => handleDelete(p)}
                         >
                           <DeleteIcon fontSize="small" />
                         </IconButton>
