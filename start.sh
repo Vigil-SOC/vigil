@@ -306,6 +306,25 @@ fi
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 BIND_HOST="${BIND_HOST:-127.0.0.1}"
 
+# Poll the backend health endpoint until it responds, so the frontend
+# isn't started while uvicorn is still importing the app (the browser's
+# initial API burst would otherwise spam vite proxy ECONNREFUSED errors).
+wait_for_backend() {
+    local host="$BIND_HOST"
+    [ "$host" = "0.0.0.0" ] && host="127.0.0.1"
+    local url="http://${host}:6987/api/health"
+    echo "Waiting for backend to be ready..."
+    for i in {1..60}; do
+        if curl -sf --max-time 2 "$url" > /dev/null 2>&1; then
+            echo "✓ Backend is ready"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "⚠️  Backend not ready after 60s — starting frontend anyway"
+    return 1
+}
+
 if [ "$DAEMON_MODE" -eq 0 ]; then
     # ------------------------------------------------------------------
     # FOREGROUND MODE
@@ -366,6 +385,7 @@ if [ "$DAEMON_MODE" -eq 0 ]; then
 
     # Start frontend (skip when Node.js prereq unmet)
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
+        wait_for_backend || true
         echo "Starting frontend dev server..."
         cd frontend
         npm run dev &
@@ -446,6 +466,7 @@ else
 
     # Start frontend if available (skip when Node.js prereq unmet)
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
+        wait_for_backend || true
         echo "Starting frontend server..."
         cd frontend
         nohup npm run dev > ../logs/frontend-app.log 2>&1 &

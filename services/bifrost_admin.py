@@ -447,7 +447,14 @@ async def _fetch_meta_for_row(row_dict: Dict[str, Any], discovery) -> Optional[l
         )
 
     if provider_type == "ollama":
-        return await discovery.fetch_ollama_models(base_url)
+        # ``base_url`` comes from a persisted provider row, which only a
+        # ``settings.write`` admin can create/update (shape-validated at
+        # save time). Self-hosted Ollama on a loopback/private address is
+        # the expected deployment, so skip the SSRF IP gate here — the
+        # same trust anchor as the admin-gated test and discover-models
+        # endpoints. Without this, sync fails for any RFC1918 host even
+        # though the UI dropdown populated fine.
+        return await discovery.fetch_ollama_models(base_url, allow_loopback=True)
 
     logger.debug("Bifrost sync: unsupported provider_type %s", provider_type)
     return None

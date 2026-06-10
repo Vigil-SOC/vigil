@@ -421,3 +421,42 @@ def test_cache_has_no_ttl(monkeypatch):
     finally:
         _time.time = original  # type: ignore[assignment]
     _MODEL_LIST_CACHE.invalidate()
+
+
+def test_fetch_meta_for_row_ollama_bypasses_ssrf_ip_gate():
+    """The ollama branch must pass ``allow_loopback=True``.
+
+    The row's ``base_url`` was persisted by a ``settings.write`` admin
+    (shape-validated at save time), and self-hosted Ollama on a
+    loopback/private address is the expected deployment. Without the
+    flag, the scheduled sync re-runs the SSRF IP gate and fails with
+    "resolved address ... is disallowed: private address" for any
+    RFC1918 host — even though the admin-gated discover-models and
+    test endpoints reach the same URL fine.
+    """
+    import asyncio
+
+    calls: Dict[str, Any] = {}
+
+    class _FakeDiscovery:
+        @staticmethod
+        async def fetch_ollama_models(base_url=None, *, allow_loopback=False):
+            calls["base_url"] = base_url
+            calls["allow_loopback"] = allow_loopback
+            return []
+
+    row = {
+        "provider_id": "ollama",
+        "provider_type": "ollama",
+        "base_url": "http://10.64.201.1:11434",
+        "api_key_ref": None,
+        "config": {},
+    }
+
+    out = asyncio.run(bifrost_admin._fetch_meta_for_row(row, _FakeDiscovery))
+
+    assert out == []
+    assert calls == {
+        "base_url": "http://10.64.201.1:11434",
+        "allow_loopback": True,
+    }
