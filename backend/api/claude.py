@@ -17,6 +17,7 @@ import base64
 
 from backend.schemas.system_prompt import validate_system_prompt
 from services.claude_service import ClaudeService
+from services.defaults import DEFAULT_MODEL
 from services.model_registry import get_registry
 
 router = APIRouter()
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 NO_PROVIDER_DETAIL: Dict[str, str] = {
     "code": "no_llm_provider_configured",
     "message": (
-        "No Anthropic LLM provider is configured. "
+        "No LLM provider is configured. "
         "Add one in Settings → AI / LLM Providers, then try again."
     ),
     "settings_path": "/settings#llm-providers",
@@ -80,8 +81,29 @@ def _resolve_model_for_request(
         resolved = registry.resolve_model_for_component(category)
 
     if resolved is not None:
-        return resolved[1]
-    return "claude-sonnet-4-5-20250929"
+        model_id = resolved[1]
+        # #326: if the resolved model is a Claude name but the active provider is
+        # non-Anthropic, the fallback came from a stale seed row.  Override with
+        # the provider's own default so Bifrost doesn't try to route it as Anthropic.
+        if model_id.startswith("claude-"):
+            try:
+                from services.llm_router import get_default_provider_spec
+                provider = get_default_provider_spec()
+                if provider is not None and provider.provider_type != "anthropic":
+                    return provider.default_model
+            except Exception:
+                pass
+        return model_id
+
+    # Hard fallback — try the active provider's default model before hardcoding Claude.
+    try:
+        from services.llm_router import get_default_provider_spec
+        provider = get_default_provider_spec()
+        if provider is not None:
+            return provider.default_model
+    except Exception:
+        pass
+    return DEFAULT_MODEL
 
 
 class ContentBlock(BaseModel):
@@ -501,15 +523,28 @@ async def chat_stream(request: ChatRequest):
     if max_tokens is None:
         max_tokens = 4096
 
-    claude_service = ClaudeService(
-        use_backend_tools=True,
-        enable_thinking=enable_thinking,
-        thinking_budget=thinking_budget,
-    )
+    # #327: resolve the active provider before touching ClaudeService.
+    # Non-Anthropic providers (Ollama, OpenAI) must route through LLMRouter
+    # so ClaudeService (Anthropic SDK) is never instantiated for them.
+    try:
+        from services.llm_router import LLMRouter, get_default_provider_spec
+        _active_provider = get_default_provider_spec()
+    except Exception:
+        _active_provider = None
 
-    # Check if API key is configured (works for both implementations)
-    if not claude_service.has_api_key():
+    if _active_provider is None:
         _raise_no_provider()
+
+    _use_router = _active_provider.provider_type != "anthropic"
+
+    if not _use_router:
+        claude_service = ClaudeService(
+            use_backend_tools=True,
+            enable_thinking=enable_thinking,
+            thinking_budget=thinking_budget,
+        )
+        if not claude_service.has_api_key():
+            _raise_no_provider()
 
     async def generate():
         try:
@@ -579,6 +614,34 @@ async def chat_stream(request: ChatRequest):
             if len(messages) == 0:
                 logger.error("❌ No valid messages after validation")
                 yield f"data: {json.dumps({'error': 'No valid messages after filtering'})}\n\n"
+                return
+
+            # #327: Non-Anthropic path — stream via LLMRouter / Bifrost OpenAI surface.
+            if _use_router:
+                chunk_count = 0
+                text_chunks = 0
+                total_text_length = 0
+                logger.info(
+                    f"🚀 [RequestID: {request_id}] Starting router stream ({_active_provider.provider_type}) "
+                    f"with {len(messages)} messages"
+                )
+                async for chunk in LLMRouter().dispatch_stream(
+                    provider=_active_provider,
+                    messages=messages,
+                    system_prompt=system_prompt,
+                    model=request.model,
+                    max_tokens=max_tokens,
+                    interaction_id=request_id,
+                ):
+                    chunk_count += 1
+                    text_chunks += 1
+                    total_text_length += len(chunk.get("content", ""))
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                elapsed_time = time.time() - start_time
+                logger.info(
+                    f"✅ [RequestID: {request_id}] Router stream complete in {elapsed_time:.2f}s — "
+                    f"{text_chunks} chunks ({total_text_length} chars)"
+                )
                 return
 
             # Get the last message as the current message
@@ -1071,7 +1134,7 @@ async def websocket_agent(websocket: WebSocket):
             system_prompt = data.get("system_prompt")
             allowed_tools = data.get("allowed_tools")
             max_turns = data.get("max_turns", 10)
-            model = data.get("model", "claude-sonnet-4-6")
+            model = data.get("model", DEFAULT_MODEL)
             agent_id = data.get("agent_id")
 
             # Handle session management
@@ -1227,7 +1290,7 @@ Please provide:
         gateway = await get_llm_gateway()
         response = await gateway.submit_chat(
             messages=[{"role": "user", "content": prompt}],
-            model="claude-sonnet-4-6",
+            model=DEFAULT_MODEL,
             max_tokens=4096,
         )
         # Unwrap gateway envelope

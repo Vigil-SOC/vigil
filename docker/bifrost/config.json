@@ -46,6 +46,16 @@
           ]
         }
       ]
+    },
+    "ollama": {
+      "base_url": "env.OLLAMA_URL",
+      "keys": [
+        {
+          "name": "default-ollama",
+          "weight": 1,
+          "value": "ollama"
+        }
+      ]
     }
   }
 }

@@ -15,10 +15,12 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 from secrets_manager import get_secret, set_secret
 
+from services.defaults import DEFAULT_MODEL
+
 # GH #89 — resolve the summarization model via ai_model_configs with a safe
 # fallback to the historical hardcoded default. Defined at module scope so
 # the registry import stays lazy and tests can monkeypatch it trivially.
-_SUMMARIZATION_DEFAULT = "claude-sonnet-4-6"
+_SUMMARIZATION_DEFAULT = DEFAULT_MODEL
 
 
 def _resolve_summarization_model() -> str:
@@ -1367,7 +1369,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         self,
         messages: List[Dict],
         system_prompt: Optional[str] = None,
-        model: str = "claude-sonnet-4-6",
+        model: str = DEFAULT_MODEL,
         max_context_tokens: int = 180000,
         session_id: Optional[str] = None,
     ) -> tuple:
@@ -1388,7 +1390,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         self,
         messages: List[Dict],
         system_prompt: Optional[str] = None,
-        model: str = "claude-sonnet-4-6",
+        model: str = DEFAULT_MODEL,
         max_context_tokens: int = 180000,
         session_id: Optional[str] = None,
     ) -> tuple:
@@ -2037,7 +2039,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         message: Union[str, List[Dict]],
         system_prompt: Optional[str] = None,
         context: Optional[List[Dict]] = None,
-        model: str = "claude-sonnet-4-5-20250929",
+        model: str = DEFAULT_MODEL,
         images: Optional[List[Dict]] = None,
         prefill: Optional[str] = None,
         max_tokens: int = 4096,
@@ -2680,7 +2682,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         message: Union[str, List[Dict]],
         system_prompt: Optional[str] = None,
         context: Optional[List[Dict]] = None,
-        model: str = "claude-sonnet-4-5-20250929",
+        model: str = DEFAULT_MODEL,
         images: Optional[List[Dict]] = None,
         prefill: Optional[str] = None,
         max_tokens: int = 4096,
@@ -3113,7 +3115,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         message = f"Analyze this security finding:\n\n{finding_text}\n\nProvide a detailed analysis."
 
         return self.chat(
-            message, system_prompt=system_prompt, model="claude-sonnet-4-5-20250929"
+            message, system_prompt=system_prompt, model=DEFAULT_MODEL
         )
 
     def correlate_findings(self, findings: List[Dict]) -> str:
@@ -3141,7 +3143,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         message = f"Correlate these security findings:\n\n{findings_text}\n\nProvide correlation analysis."
 
         return self.chat(
-            message, system_prompt=system_prompt, model="claude-sonnet-4-5-20250929"
+            message, system_prompt=system_prompt, model=DEFAULT_MODEL
         )
 
     def generate_case_summary(self, case: Dict, findings: List[Dict]) -> str:
@@ -3178,7 +3180,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         )
 
         return self.chat(
-            message, system_prompt=system_prompt, model="claude-sonnet-4-5-20250929"
+            message, system_prompt=system_prompt, model=DEFAULT_MODEL
         )
 
     async def generate_event_analysis(
@@ -3325,7 +3327,7 @@ Provide only the JSON, no additional text."""
         try:
             # Use chat method to get analysis
             response = self.chat(
-                prompt, system_prompt=system_prompt, model="claude-sonnet-4-5-20250929"
+                prompt, system_prompt=system_prompt, model=DEFAULT_MODEL
             )
 
             # Parse JSON response
@@ -3395,7 +3397,7 @@ Provide only the JSON, no additional text."""
         allowed_tools: Optional[List[str]] = None,
         max_turns: int = 10,
         session_id: Optional[str] = None,
-        model: str = "claude-sonnet-4-5-20250929",
+        model: str = DEFAULT_MODEL,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Run an agentic workflow using Claude Agent SDK with streaming.
@@ -3619,7 +3621,7 @@ Provide only the JSON, no additional text."""
         system_prompt = config.get("system_prompt")
         allowed_tools = config.get("allowed_tools")
         max_turns = config.get("max_turns", 10)
-        model = config.get("model", "claude-sonnet-4-5-20250929")
+        model = config.get("model", DEFAULT_MODEL)
 
         results = {"task": task, "tool_calls": [], "final_result": "", "success": True}
 

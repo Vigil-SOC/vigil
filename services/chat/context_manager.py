@@ -15,6 +15,8 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+from services.defaults import DEFAULT_MODEL
+
 logger = logging.getLogger(__name__)
 
 # Rolling summary is capped to avoid unbounded growth.
@@ -411,7 +413,7 @@ class ContextManager:
         self,
         messages: List[Dict],
         system_prompt: Optional[str] = None,
-        model: str = "claude-sonnet-4-6",
+        model: str = DEFAULT_MODEL,
         max_context_tokens: int = 180000,
         backend_tools: Optional[List] = None,
         mcp_tools: Optional[List] = None,
@@ -425,7 +427,7 @@ class ContextManager:
         self,
         messages: List[Dict],
         system_prompt: Optional[str] = None,
-        model: str = "claude-sonnet-4-6",
+        model: str = DEFAULT_MODEL,
         max_context_tokens: int = 180000,
         backend_tools: Optional[List] = None,
         mcp_tools: Optional[List] = None,
