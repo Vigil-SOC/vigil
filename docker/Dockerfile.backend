@@ -3,7 +3,7 @@
 # Multi-stage build: React SPA → Python FastAPI backend
 #
 # Final image runs:  uvicorn backend.main:app --host 0.0.0.0 --port 6987
-# Serves static SPA at /app/frontend/dist  (via FastAPI StaticFiles mount)
+# Serves static SPA at /app/frontend/build  (via FastAPI StaticFiles mount)
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ RUN npm ci --prefer-offline
 
 COPY frontend/ .
 RUN npm run build
-# Output: /build/frontend/dist
+# Output: /build/frontend/build
 
 # ---------------------------------------------------------------------------
 # Stage 2: install Python dependencies
@@ -34,8 +34,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# requirements.txt pins the submodules as editable installs (`-e ./<dir>`)
+# for local development. In the image we install them as regular packages
+# from the copied source, so the runtime stage needs only /usr/local and no
+# editable source tree (an `-e` install writes a .pth pointing at the build
+# path, which won't exist in the runtime stage). Keep this COPY list in sync
+# with the `-e ./` lines in requirements.txt: deeptempo-core, mcp-servers,
+# mempalace.
 COPY requirements.txt .
-RUN pip install --no-cache-dir --prefix=/install/deps -r requirements.txt
+COPY deeptempo-core/ ./deeptempo-core/
+COPY mcp-servers/    ./mcp-servers/
+COPY mempalace/      ./mempalace/
+RUN grep -vE '^[[:space:]]*-e[[:space:]]+\./' requirements.txt > requirements.runtime.txt \
+    && pip install --no-cache-dir --prefix=/install/deps \
+         -r requirements.runtime.txt \
+         ./deeptempo-core ./mcp-servers ./mempalace
 
 # ---------------------------------------------------------------------------
 # Stage 3: runtime image
@@ -74,7 +87,7 @@ COPY --chown=vigil:vigil VERSION      ./VERSION
 COPY --chown=vigil:vigil setup.cfg    ./setup.cfg
 
 # Built SPA — served by FastAPI StaticFiles (or nginx sidecar)
-COPY --from=frontend-builder --chown=vigil:vigil /build/frontend/dist ./frontend/dist/
+COPY --from=frontend-builder --chown=vigil:vigil /build/frontend/build ./frontend/build/
 
 # Writable dirs the app needs at runtime
 RUN mkdir -p /app/data/investigations /app/data/mempalace \

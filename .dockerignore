@@ -46,6 +46,13 @@ LICENSE
 # requirements.txt is needed by Dockerfile.backend + Dockerfile.daemon;
 # the wildcard above would otherwise exclude it.
 !requirements.txt
+# The submodule packages are pip-installed during the image build, and their
+# build backends read README.md for metadata (mempalace's pyproject declares
+# `readme = "README.md"`, which hard-fails if the file is absent). The `*.md`
+# wildcard above would otherwise strip them from the build context.
+!deeptempo-core/README.md
+!mcp-servers/README.md
+!mempalace/README.md
 
 # Logs
 logs/
