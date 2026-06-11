@@ -109,7 +109,7 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
   const chatDefaultModel = useMemo(() => {
     const a = initialAssignments[CHAT_DEFAULT_KEY]
     if (!a) return null
-    return models.find((m) => m.model_id === a.model_id) ?? null
+    return models.find((m) => m.provider_id === a.provider_id && m.model_id === a.model_id) ?? null
   }, [initialAssignments, models])
 
   const chatDefaultLabel = chatDefaultModel
@@ -219,7 +219,8 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
       </Typography>
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
         Pick a model for each system component. Unassigned rows fall back to the{' '}
-        <code>Chat Default</code>. Model list is live-queried from each provider.
+        <code>Chat Default</code>, then to the active provider's default model if Chat Default is
+        also unset. Model list is live-queried from each provider.
       </Typography>
 
       {providerIds.length === 0 ? (
@@ -286,6 +287,10 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
                             {chatDefaultLabel}
                           </Typography>
                         </MenuItem>
+                      )}
+                      {/* Hidden sentinel so MUI doesn't warn when chat_default has no assignment */}
+                      {isChatDefault && (
+                        <MenuItem value={INHERIT_VALUE} sx={{ display: 'none' }} />
                       )}
 
                       {/* Models grouped by provider */}
