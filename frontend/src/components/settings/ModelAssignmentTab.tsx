@@ -1,11 +1,11 @@
 /**
- * ModelAssignmentTab — per-component AI model picker (GH #89).
+ * ModelAssignmentTab — per-component AI model picker (GH #89, #331).
  *
- * Renders one row per component (chat_default, triage, investigation,
- * orchestrator_plan, orchestrator_review, summarization, reporting). Each
- * row has a provider + model selector populated from /api/ai/models.
- * "Inherit from Chat Default" clears the assignment so the component
- * falls back through the chain in services/model_registry.py.
+ * Each row has a single combined dropdown. The first option is
+ * "Use Chat Default (model-name)" — selecting it clears the explicit
+ * assignment and the component falls back through the chain in
+ * services/model_registry.py. Selecting a specific model pins that
+ * component to it. No separate checkbox needed.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -21,10 +21,9 @@ import {
   Paper,
   Select,
   MenuItem,
+  ListSubheader,
   Chip,
   CircularProgress,
-  Checkbox,
-  FormControlLabel,
   Stack,
 } from '@mui/material'
 import PsychologyIcon from '@mui/icons-material/Psychology'
@@ -72,12 +71,21 @@ const COMPONENT_LABELS: Record<string, { label: string; description: string }> =
 }
 
 const CHAT_DEFAULT_KEY = 'chat_default'
+const INHERIT_VALUE = ''
 
-type RowState = {
-  inherit: boolean
-  providerId: string
-  modelId: string
+// Encode/decode a compound dropdown value so a single <Select> covers
+// both provider and model without a separate provider dropdown.
+const encode = (providerId: string, modelId: string) =>
+  providerId && modelId ? `${providerId}::${modelId}` : INHERIT_VALUE
+
+const decode = (value: string): { providerId: string; modelId: string } => {
+  if (!value) return { providerId: '', modelId: '' }
+  const sep = value.indexOf('::')
+  if (sep === -1) return { providerId: '', modelId: '' }
+  return { providerId: value.slice(0, sep), modelId: value.slice(sep + 2) }
 }
+
+type RowState = { providerId: string; modelId: string }
 
 export default function ModelAssignmentTab({ setMessage }: Props) {
   const [components, setComponents] = useState<string[]>([])
@@ -97,6 +105,17 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
 
   const providerIds = useMemo(() => Object.keys(modelsByProvider).sort(), [modelsByProvider])
 
+  // Resolved model shown in "Use Chat Default (...)" label.
+  const chatDefaultModel = useMemo(() => {
+    const a = initialAssignments[CHAT_DEFAULT_KEY]
+    if (!a) return null
+    return models.find((m) => m.provider_id === a.provider_id && m.model_id === a.model_id) ?? null
+  }, [initialAssignments, models])
+
+  const chatDefaultLabel = chatDefaultModel
+    ? `Use Chat Default (${chatDefaultModel.display_name || chatDefaultModel.model_id})`
+    : 'Use Chat Default'
+
   const load = async () => {
     setLoading(true)
     try {
@@ -111,19 +130,9 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
       const nextRows: Record<string, RowState> = {}
       for (const c of cfgResp.data.components) {
         const a = cfgResp.data.assignments[c]
-        if (a) {
-          nextRows[c] = {
-            inherit: false,
-            providerId: a.provider_id,
-            modelId: a.model_id,
-          }
-        } else {
-          nextRows[c] = {
-            inherit: c !== CHAT_DEFAULT_KEY,
-            providerId: '',
-            modelId: '',
-          }
-        }
+        nextRows[c] = a
+          ? { providerId: a.provider_id, modelId: a.model_id }
+          : { providerId: '', modelId: '' }
       }
       setRows(nextRows)
     } catch (e: any) {
@@ -143,8 +152,9 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
 
   const persistRow = async (component: string, next: RowState) => {
     const initial = initialAssignments[component]
+    const isInherit = !next.providerId || !next.modelId
     try {
-      if (next.inherit) {
+      if (isInherit) {
         if (initial !== undefined) {
           await aiConfigApi.clearComponent(component)
           setInitialAssignments((prev) => {
@@ -152,18 +162,16 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
             delete copy[component]
             return copy
           })
-          setMessage({ type: 'success', text: `${component} set to inherit` })
+          setMessage({ type: 'success', text: `${component} reset to Chat Default` })
         }
         return
       }
-      if (!next.providerId || !next.modelId) return
       if (
         initial &&
         initial.provider_id === next.providerId &&
         initial.model_id === next.modelId
-      ) {
-        return
-      }
+      ) return
+
       await aiConfigApi.setComponent(component, {
         provider_id: next.providerId,
         model_id: next.modelId,
@@ -188,30 +196,11 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
     }
   }
 
-  const updateRow = (component: string, patch: Partial<RowState>) => {
+  const updateRow = (component: string, next: RowState) => {
     setRows((prev) => {
-      const next = { ...prev[component], ...patch }
       persistRow(component, next)
       return { ...prev, [component]: next }
     })
-  }
-
-  const renderModelMenuItem = (m: AIModelInfo) => {
-    const ctx = m.context_window ? `${Math.round(m.context_window / 1000)}K` : '?'
-    const cost =
-      m.input_cost_per_1k > 0 || m.output_cost_per_1k > 0
-        ? `$${m.input_cost_per_1k.toFixed(4)} in / $${m.output_cost_per_1k.toFixed(4)} out (per 1K)`
-        : 'self-hosted'
-    return (
-      <MenuItem value={m.model_id} key={`${m.provider_id}-${m.model_id}`}>
-        <Stack>
-          <Typography variant="body2">{m.display_name || m.model_id}</Typography>
-          <Typography variant="caption" color="text.secondary">
-            {ctx} ctx · {cost}
-          </Typography>
-        </Stack>
-      </MenuItem>
-    )
   }
 
   if (loading) {
@@ -229,15 +218,14 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
         Model Assignment
       </Typography>
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-        Pick a provider + model for each system component. Unassigned rows fall back to
-        the <code>chat_default</code> assignment. Model list is live-queried from each
-        provider.
+        Pick a model for each system component. Unassigned rows fall back to the{' '}
+        <code>Chat Default</code>, then to the active provider's default model if Chat Default is
+        also unset. Model list is live-queried from each provider.
       </Typography>
 
       {providerIds.length === 0 ? (
         <Typography variant="body2" color="warning.main" sx={{ mb: 2 }}>
-          No models discovered — add at least one active provider below before
-          assigning models.
+          No models discovered — add at least one active provider before assigning models.
         </Typography>
       ) : null}
 
@@ -245,23 +233,30 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell sx={{ fontWeight: 600 }}>Component</TableCell>
-              <TableCell sx={{ fontWeight: 600 }}>Provider</TableCell>
-              <TableCell sx={{ fontWeight: 600 }}>Model</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: '30%' }}>Component</TableCell>
+              <TableCell sx={{ fontWeight: 600, width: '45%' }}>Model</TableCell>
               <TableCell sx={{ fontWeight: 600 }}>Capabilities</TableCell>
-              <TableCell sx={{ fontWeight: 600 }}>Inherit</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {components.map((c) => {
               const meta = COMPONENT_LABELS[c] || { label: c, description: '' }
-              const row = rows[c] || { inherit: true, providerId: '', modelId: '' }
+              const row = rows[c] || { providerId: '', modelId: '' }
               const isChatDefault = c === CHAT_DEFAULT_KEY
-              const providerModels = row.providerId
-                ? modelsByProvider[row.providerId] || []
-                : []
-              const selectedModel =
-                providerModels.find((m) => m.model_id === row.modelId) || null
+              const dropdownValue = encode(row.providerId, row.modelId)
+
+              // Resolve selected model for capabilities display.
+              // When inheriting, show the chat_default model's capabilities.
+              const resolvedModel: AIModelInfo | null = (() => {
+                if (row.providerId && row.modelId) {
+                  return (
+                    (modelsByProvider[row.providerId] || []).find(
+                      (m) => m.model_id === row.modelId,
+                    ) ?? null
+                  )
+                }
+                return chatDefaultModel
+              })()
 
               return (
                 <TableRow key={c}>
@@ -273,79 +268,83 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
                       {meta.description}
                     </Typography>
                   </TableCell>
+
                   <TableCell>
                     <Select
                       size="small"
                       fullWidth
-                      disabled={row.inherit}
-                      value={row.providerId}
+                      value={dropdownValue}
                       displayEmpty
-                      onChange={(e) =>
-                        updateRow(c, {
-                          providerId: e.target.value as string,
-                          modelId: '',
-                        })
-                      }
+                      onChange={(e) => {
+                        const next = decode(e.target.value as string)
+                        updateRow(c, next)
+                      }}
                     >
-                      <MenuItem value="" disabled>
-                        <em>Select provider</em>
-                      </MenuItem>
-                      {providerIds.map((pid) => (
-                        <MenuItem value={pid} key={pid}>
-                          {pid}
+                      {/* "Use Chat Default" option — hidden for chat_default itself */}
+                      {!isChatDefault && (
+                        <MenuItem value={INHERIT_VALUE}>
+                          <Typography variant="body2" color="text.secondary">
+                            {chatDefaultLabel}
+                          </Typography>
                         </MenuItem>
-                      ))}
+                      )}
+                      {/* Hidden sentinel so MUI doesn't warn when chat_default has no assignment */}
+                      {isChatDefault && (
+                        <MenuItem value={INHERIT_VALUE} sx={{ display: 'none' }} />
+                      )}
+
+                      {/* Models grouped by provider */}
+                      {providerIds.flatMap((pid) => {
+                        const providerModels = modelsByProvider[pid] || []
+                        return [
+                          <ListSubheader key={`header-${pid}`} sx={{ lineHeight: '28px', fontSize: 11 }}>
+                            {pid}
+                          </ListSubheader>,
+                          ...providerModels.map((m) => {
+                            const ctx = m.context_window
+                              ? `${Math.round(m.context_window / 1000)}K`
+                              : '?'
+                            const cost =
+                              m.input_cost_per_1k > 0 || m.output_cost_per_1k > 0
+                                ? `$${m.input_cost_per_1k.toFixed(4)}/$${m.output_cost_per_1k.toFixed(4)} per 1K`
+                                : 'self-hosted'
+                            return (
+                              <MenuItem
+                                value={encode(pid, m.model_id)}
+                                key={`${pid}::${m.model_id}`}
+                              >
+                                <Stack>
+                                  <Typography variant="body2">
+                                    {m.display_name || m.model_id}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary">
+                                    {ctx} ctx · {cost}
+                                  </Typography>
+                                </Stack>
+                              </MenuItem>
+                            )
+                          }),
+                        ]
+                      })}
                     </Select>
                   </TableCell>
-                  <TableCell>
-                    <Select
-                      size="small"
-                      fullWidth
-                      disabled={row.inherit || !row.providerId}
-                      value={row.modelId}
-                      displayEmpty
-                      onChange={(e) => updateRow(c, { modelId: e.target.value as string })}
-                    >
-                      <MenuItem value="" disabled>
-                        <em>Select model</em>
-                      </MenuItem>
-                      {providerModels.map(renderModelMenuItem)}
-                    </Select>
-                  </TableCell>
-                  <TableCell>
-                    <Stack direction="row" spacing={0.5}>
-                      {selectedModel?.supports_tools ? (
+
+                  <TableCell sx={{ verticalAlign: 'middle' }}>
+                    <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                      {resolvedModel?.supports_tools ? (
                         <Chip size="small" label="Tools" icon={<BuildIcon sx={{ fontSize: 14 }} />} />
                       ) : null}
-                      {selectedModel?.supports_thinking ? (
+                      {resolvedModel?.supports_thinking ? (
                         <Chip
                           size="small"
                           label="Thinking"
                           icon={<PsychologyIcon sx={{ fontSize: 14 }} />}
                         />
                       ) : null}
-                      {selectedModel?.supports_vision ? (
+                      {resolvedModel?.supports_vision ? (
                         <Chip size="small" label="Vision" icon={<ImageIcon sx={{ fontSize: 14 }} />} />
                       ) : null}
                     </Stack>
-                  </TableCell>
-                  <TableCell sx={{ verticalAlign: 'top' }}>
-                    <FormControlLabel
-                      disabled={isChatDefault}
-                      control={
-                        <Checkbox
-                          size="small"
-                          checked={row.inherit}
-                          onChange={(e) =>
-                            updateRow(c, {
-                              inherit: e.target.checked,
-                              ...(e.target.checked ? { providerId: '', modelId: '' } : {}),
-                            })
-                          }
-                        />
-                      }
-                      label={<Typography variant="caption">From Chat Default</Typography>}
-                    />
                   </TableCell>
                 </TableRow>
               )
