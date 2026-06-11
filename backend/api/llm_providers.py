@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import update
+from sqlalchemy import delete as sa_delete, update
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from backend.middleware.auth import get_current_active_user
 from backend.services.auth_service import AuthService
 from database.connection import get_db, get_db_session
-from database.models import LLMProviderConfig, User
+from database.models import AIModelConfig, LLMProviderConfig, User
 from services.bifrost_admin import push_provider_key
 from services.url_safety import UrlSafetyError, validate_provider_url
 
@@ -293,6 +293,25 @@ async def update_provider(
         row.is_default = True
         _clear_other_defaults(db, row.provider_type, provider_id)
     elif payload.is_default is False:
+        if row.is_default:
+            # Guard: only enforce when transitioning True → False.
+            other_default = (
+                db.query(LLMProviderConfig)
+                .filter(
+                    LLMProviderConfig.provider_type == row.provider_type,
+                    LLMProviderConfig.provider_id != provider_id,
+                    LLMProviderConfig.is_default.is_(True),
+                )
+                .first()
+            )
+            if other_default is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Cannot unset the only default provider. "
+                        "Set another provider as default first."
+                    ),
+                )
         row.is_default = False
 
     db.commit()
@@ -312,12 +331,41 @@ async def delete_provider(
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
 
+    # Guard: refuse to delete the only active default for this provider type.
+    if row.is_default:
+        other_active = (
+            db.query(LLMProviderConfig)
+            .filter(
+                LLMProviderConfig.provider_type == row.provider_type,
+                LLMProviderConfig.provider_id != provider_id,
+                LLMProviderConfig.is_active.is_(True),
+            )
+            .order_by(LLMProviderConfig.created_at)
+            .first()
+        )
+        if other_active is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot delete the only active {row.provider_type} provider. "
+                    "Add or activate another provider of this type first."
+                ),
+            )
+        # Unset current default first, flush to satisfy the unique partial index,
+        # then promote the next active provider.
+        row.is_default = False
+        db.flush()
+        other_active.is_default = True
+
+    # Cascade: remove model-config rows that reference this provider before
+    # deleting — the FK is ON DELETE RESTRICT so this must happen first.
+    db.execute(sa_delete(AIModelConfig).where(AIModelConfig.provider_id == provider_id))
+
     if row.api_key_ref:
         try:
             delete_secret(row.api_key_ref)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to delete secret %s: %s", row.api_key_ref, exc)
-        # Wipe the corresponding value on Bifrost too.
         push_provider_key(row.provider_type, "")
 
     db.delete(row)
