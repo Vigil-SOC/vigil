@@ -26,6 +26,14 @@ chart-templated).
 {{- define "vigil.env" -}}
 - name: DATABASE_URL
   value: {{ printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:%s/%s" (include "vigil.postgres.username" .) (include "vigil.postgres.host" .) (include "vigil.postgres.port" . | toString) (include "vigil.postgres.database" .) | quote }}
+- name: POSTGRES_HOST
+  value: {{ include "vigil.postgres.host" . | quote }}
+- name: POSTGRES_PORT
+  value: {{ include "vigil.postgres.port" . | toString | quote }}
+- name: POSTGRES_DB
+  value: {{ include "vigil.postgres.database" . | quote }}
+- name: POSTGRES_USER
+  value: {{ include "vigil.postgres.username" . | quote }}
 {{- if .Values.redis.bitnami.enabled }}
 {{- if .Values.redis.bitnami.auth.enabled }}
 - name: REDIS_PASSWORD
