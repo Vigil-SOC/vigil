@@ -72,9 +72,22 @@ export default function LLMProvidersTab({ setMessage }: Props) {
   }
 
   const handleDelete = async (p: LLMProvider) => {
-    const warn = p.is_default
-      ? `"${p.name}" is the default provider. Deleting it will promote the next active provider of the same type. Any model assignments for this provider will also be removed.`
-      : `Delete provider "${p.name}"? Any model assignments for this provider will be removed.`
+    let warn: string
+    if (p.is_default) {
+      const otherActive = providers.some(
+        (q) => q.provider_id !== p.provider_id && q.provider_type === p.provider_type && q.is_active,
+      )
+      if (!otherActive) {
+        window.alert(
+          `"${p.name}" is the only active ${p.provider_type} provider and cannot be deleted. ` +
+            'Add or activate another provider of this type first.',
+        )
+        return
+      }
+      warn = `"${p.name}" is the default provider. Deleting it will promote the next active ${p.provider_type} provider to default. Any model assignments for this provider will also be removed.`
+    } else {
+      warn = `Delete provider "${p.name}"? Any model assignments for this provider will be removed.`
+    }
     if (!window.confirm(`${warn}\n\nThis also removes its stored API key. Continue?`)) return
     try {
       await llmProviderApi.remove(p.provider_id)

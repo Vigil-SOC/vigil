@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import update
+from sqlalchemy import delete as sa_delete, update
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -293,24 +293,25 @@ async def update_provider(
         row.is_default = True
         _clear_other_defaults(db, row.provider_type, provider_id)
     elif payload.is_default is False:
-        # Guard: refuse to unset the only default for this provider type.
-        other_default = (
-            db.query(LLMProviderConfig)
-            .filter(
-                LLMProviderConfig.provider_type == row.provider_type,
-                LLMProviderConfig.provider_id != provider_id,
-                LLMProviderConfig.is_default.is_(True),
+        if row.is_default:
+            # Guard: only enforce when transitioning True → False.
+            other_default = (
+                db.query(LLMProviderConfig)
+                .filter(
+                    LLMProviderConfig.provider_type == row.provider_type,
+                    LLMProviderConfig.provider_id != provider_id,
+                    LLMProviderConfig.is_default.is_(True),
+                )
+                .first()
             )
-            .first()
-        )
-        if other_default is None:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Cannot unset the only default provider. "
-                    "Set another provider as default first."
-                ),
-            )
+            if other_default is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Cannot unset the only default provider. "
+                        "Set another provider as default first."
+                    ),
+                )
         row.is_default = False
 
     db.commit()
@@ -339,6 +340,7 @@ async def delete_provider(
                 LLMProviderConfig.provider_id != provider_id,
                 LLMProviderConfig.is_active.is_(True),
             )
+            .order_by(LLMProviderConfig.created_at)
             .first()
         )
         if other_active is None:
@@ -357,7 +359,7 @@ async def delete_provider(
 
     # Cascade: remove model-config rows that reference this provider before
     # deleting — the FK is ON DELETE RESTRICT so this must happen first.
-    db.query(AIModelConfig).filter(AIModelConfig.provider_id == provider_id).delete()
+    db.execute(sa_delete(AIModelConfig).where(AIModelConfig.provider_id == provider_id))
 
     if row.api_key_ref:
         try:
