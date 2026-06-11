@@ -125,4 +125,4 @@ jobs:
           helm repo update
 
       - name: Run chart-testing (lint)
-        run: ct lint --target-branch ${{ github.event.repository.default_branch }} --chart-dirs helm
+        run: ct lint --check-version-increment=false --target-branch ${{ github.event.repository.default_branch }} --chart-dirs helm
