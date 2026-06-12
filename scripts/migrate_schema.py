@@ -14,6 +14,7 @@ Usage:
 import os
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
@@ -38,7 +39,10 @@ def get_connection_url():
     user = os.environ.get('POSTGRES_USER', 'deeptempo')
     pw = os.environ.get('POSTGRES_PASSWORD', 'deeptempo_secure_password_change_me')
     db = os.environ.get('POSTGRES_DB', 'deeptempo_soc')
-    return f'postgresql://{user}:{pw}@{host}:{port}/{db}'
+    return (
+        f'postgresql://{quote(user, safe="")}:{quote(pw, safe="")}'
+        f'@{host}:{port}/{db}'
+    )
 
 
 MIGRATIONS = []

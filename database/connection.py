@@ -7,6 +7,7 @@ Handles database connections, session management, and connection pooling.
 import os
 import logging
 from typing import Optional, Generator, TYPE_CHECKING
+from urllib.parse import quote
 from contextlib import contextmanager
 from sqlalchemy import create_engine, event, pool, text
 from sqlalchemy.orm import sessionmaker, Session
@@ -159,8 +160,10 @@ class DatabaseConfig:
         driver = "postgresql+asyncpg" if async_driver else "postgresql+psycopg2"
         effective_host = host or self.host
         effective_port = port or self.port
+        user = quote(self.user, safe="")
+        password = quote(self.password, safe="")
         url = (
-            f"{driver}://{self.user}:{self.password}"
+            f"{driver}://{user}:{password}"
             f"@{effective_host}:{effective_port}/{self.database}"
         )
 

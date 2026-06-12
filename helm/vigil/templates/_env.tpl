@@ -8,8 +8,10 @@ Usage (inside a container spec):
     {{- include "vigil.env" . | nindent 12 }}
 
 Both helpers take the root context directly. They pull the generated ConfigMap
-and Secret, plus DATABASE_URL and REDIS_URL (which have to be assembled at
-render time because they embed service DNS + a secret reference).
+and Secret, plus the discrete POSTGRES_* connection parts and REDIS_URL (which
+have to be assembled at render time because they embed service DNS + a secret
+reference). The app builds and URL-encodes the DSN from POSTGRES_* itself, so
+passwords with special characters survive intact (no pre-built DATABASE_URL).
 
 NOTE: secret.yaml is only rendered when secrets.existingSecret is empty AND
 secrets.externalSecret.enabled is false. Either way the secretRef below points
@@ -24,8 +26,6 @@ chart-templated).
 {{- end -}}
 
 {{- define "vigil.env" -}}
-- name: DATABASE_URL
-  value: {{ printf "postgresql://%s:$(POSTGRES_PASSWORD)@%s:%s/%s" (include "vigil.postgres.username" .) (include "vigil.postgres.host" .) (include "vigil.postgres.port" . | toString) (include "vigil.postgres.database" .) | quote }}
 - name: POSTGRES_HOST
   value: {{ include "vigil.postgres.host" . | quote }}
 - name: POSTGRES_PORT
