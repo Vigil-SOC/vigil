@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
+from services.defaults import DEFAULT_MODEL
+
 logger = logging.getLogger(__name__)
 
 
@@ -130,7 +132,7 @@ class CustomIntegrationService:
                     message=last_message,
                     context=context,
                     system_prompt=system_prompt,
-                    model="claude-sonnet-4-6",
+                    model=DEFAULT_MODEL,
                 )
             else:
                 # Initial generation - create the analysis prompt
@@ -141,7 +143,7 @@ class CustomIntegrationService:
                 response = claude.chat(
                     message=prompt,
                     system_prompt=system_prompt,
-                    model="claude-sonnet-4-6",
+                    model=DEFAULT_MODEL,
                 )
 
             # Check if Claude is asking questions or ready to generate

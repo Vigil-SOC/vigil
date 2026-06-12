@@ -515,6 +515,59 @@ class LLMRouter:
             "path": "bifrost",
         }
 
+    async def dispatch_stream(
+        self,
+        *,
+        provider: ProviderSpec,
+        messages: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: Optional[float] = None,
+        interaction_id: Optional[str] = None,
+    ):
+        """Yield ``{"type": "text", "content": "..."}`` dicts from a
+        non-Anthropic provider via Bifrost's OpenAI-compatible SSE surface.
+
+        Anthropic streaming is handled by ``ClaudeService.chat_stream``; this
+        method exists solely for Ollama / OpenAI providers so that the chat
+        endpoint doesn't require an Anthropic key.
+        """
+        from openai import AsyncOpenAI  # lazy
+
+        model = model or provider.default_model
+        oai_messages: List[Dict[str, Any]] = []
+        if system_prompt:
+            oai_messages.append({"role": "system", "content": system_prompt})
+        oai_messages.extend(messages)
+
+        extra_headers: Dict[str, str] = {}
+        if interaction_id:
+            extra_headers["x-bf-lh-vigil-interaction-id"] = interaction_id
+
+        client = AsyncOpenAI(
+            base_url=f"{self.bifrost_url}/v1",
+            api_key="bifrost",
+        )
+        kwargs: Dict[str, Any] = {
+            "model": f"{provider.provider_type}/{model}",
+            "messages": oai_messages,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
+
+        stream = await client.chat.completions.create(**kwargs)
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+            content = chunk.choices[0].delta.content
+            if content:
+                yield {"type": "text", "content": content}
+
 
 # ---------------------------------------------------------------------------
 # DB-facing helpers — importable without circular deps
@@ -562,6 +615,50 @@ def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
         if row is None:
             return None
         return provider_spec_from_row(row)
+    finally:
+        session.close()
+
+
+def get_default_provider_spec() -> Optional[ProviderSpec]:
+    """Load the default active provider of any type.
+
+    Preference order:
+    1. Any provider with ``is_default=True`` and ``is_active=True``
+    2. Any provider with ``is_active=True`` (first row, arbitrary order)
+
+    Returns None when no provider is configured or the DB is unavailable.
+    Used by the chat endpoint to route non-Anthropic providers through the
+    OpenAI-format Bifrost surface rather than requiring an Anthropic key.
+    """
+    try:
+        from database.connection import get_db_session
+        from database.models import LLMProviderConfig
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("default provider spec DB lookup skipped: %s", exc)
+        return None
+
+    session = get_db_session()
+    try:
+        row = (
+            session.query(LLMProviderConfig)
+            .filter(
+                LLMProviderConfig.is_active.is_(True),
+                LLMProviderConfig.is_default.is_(True),
+            )
+            .first()
+        )
+        if row is None:
+            row = (
+                session.query(LLMProviderConfig)
+                .filter(LLMProviderConfig.is_active.is_(True))
+                .first()
+            )
+        if row is None:
+            return None
+        return provider_spec_from_row(row)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("default provider spec lookup failed: %s", exc)
+        return None
     finally:
         session.close()
 
