@@ -114,6 +114,10 @@ async def _wrap_budget_errors(coro):
         ) from e
 
 
+async def _raise_async(exc: Exception):
+    raise exc
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     """Minimal view of a row from llm_provider_configs.
@@ -432,6 +436,73 @@ class LLMRouter:
             "provider": provider.provider_type,
             "path": "bifrost",
         }
+
+    async def dispatch_openai_stream(
+        self,
+        *,
+        provider: ProviderSpec,
+        messages: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: Optional[float] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        interaction_id: Optional[str] = None,
+    ):
+        """Yield OpenAI-format text chunks for non-Anthropic Bifrost providers."""
+        from openai import AsyncOpenAI
+
+        messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
+        model = model or provider.default_model
+
+        extra_headers: Dict[str, str] = {}
+        if interaction_id:
+            extra_headers["x-bf-lh-vigil-interaction-id"] = interaction_id
+        try:
+            from services.budget_service import get_active_vk, should_enforce
+
+            if should_enforce():
+                vk = get_active_vk()
+                if vk:
+                    extra_headers["x-bf-vk"] = vk
+        except Exception as _be:
+            logger.debug(
+                "budget_service unavailable (%s); proceeding without x-bf-vk", _be
+            )
+
+        oai_messages: List[Dict[str, Any]] = []
+        if system_prompt:
+            oai_messages.append({"role": "system", "content": system_prompt})
+        oai_messages.extend(messages)
+
+        client = AsyncOpenAI(
+            base_url=f"{self.bifrost_url}/v1",
+            api_key="bifrost",
+        )
+        kwargs: Dict[str, Any] = {
+            "model": f"{provider.provider_type}/{model}",
+            "messages": oai_messages,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if tools:
+            kwargs["tools"] = tools
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
+
+        try:
+            stream = await client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None)
+                if content:
+                    yield {"type": "text", "content": content}
+        except Exception as exc:
+            await _wrap_budget_errors(_raise_async(exc))
 
     async def _dispatch_anthropic(
         self,

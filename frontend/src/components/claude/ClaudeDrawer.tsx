@@ -349,7 +349,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
             },
             body: JSON.stringify({
               messages: initialMessages,
-              model: model || 'claude-sonnet-4-6',
+              model: undefined,
               max_tokens: maxTokens,
               enable_thinking: enableThinking,
               thinking_budget: enableThinking ? thinkingBudget : undefined,
