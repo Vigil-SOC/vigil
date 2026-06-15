@@ -47,6 +47,12 @@ interface Agent {
 
 type ColumnKey = 'id' | 'severity' | 'tactic' | 'source' | 'time' | 'score' | 'actions'
 
+const formatAnomalyScore = (score: unknown) => {
+  const value = Number(score)
+  if (!Number.isFinite(value)) return '-'
+  return `${Math.round(value * 100)}%`
+}
+
 export default function FindingsTable({ filters = {}, searchQuery = '', limit, refreshKey = 0, onInvestigate }: FindingsTableProps) {
   const [findings, setFindings] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -75,7 +81,7 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
     tactic: 160,
     source: 100,
     time: 200,
-    score: 80,
+    score: 120,
     actions: 110,
   })
   
@@ -349,12 +355,14 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
     column, 
     sortKey, 
     label, 
-    align = 'left' 
+    align = 'left',
+    tooltip,
   }: { 
     column: ColumnKey
     sortKey?: string
     label: string
-    align?: 'left' | 'right' 
+    align?: 'left' | 'right'
+    tooltip?: string
   }) => (
     <TableCell 
       align={align}
@@ -370,17 +378,21 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
         },
       }}
     >
-      {sortKey ? (
-        <TableSortLabel
-          active={orderBy === sortKey}
-          direction={orderBy === sortKey ? order : 'asc'}
-          onClick={() => handleRequestSort(sortKey)}
-        >
-          {label}
-        </TableSortLabel>
-      ) : (
-        label
-      )}
+      <Tooltip title={tooltip || ''} disableHoverListener={!tooltip}>
+        <Box component="span">
+          {sortKey ? (
+            <TableSortLabel
+              active={orderBy === sortKey}
+              direction={orderBy === sortKey ? order : 'asc'}
+              onClick={() => handleRequestSort(sortKey)}
+            >
+              {label}
+            </TableSortLabel>
+          ) : (
+            label
+          )}
+        </Box>
+      </Tooltip>
       <Box
         onMouseDown={(e) => handleResizeMouseDown(e, column)}
         sx={{
@@ -421,7 +433,12 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
               <ResizableHeaderCell column="tactic" label="MITRE Tactic" />
               <ResizableHeaderCell column="source" sortKey="data_source" label="Source" />
               <ResizableHeaderCell column="time" sortKey="timestamp" label="Time" />
-              <ResizableHeaderCell column="score" sortKey="anomaly_score" label="Score" />
+              <ResizableHeaderCell
+                column="score"
+                sortKey="anomaly_score"
+                label="Anomaly"
+                tooltip="Finding-level anomaly or criticality score, shown as a percentage. This is separate from MITRE technique confidence."
+              />
               <ResizableHeaderCell column="actions" label="Actions" align="right" />
             </TableRow>
           </TableHead>
@@ -532,7 +549,7 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
                     borderRight: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
                   }}
                 >
-                  {finding.anomaly_score ? finding.anomaly_score.toFixed(2) : '-'}
+                  {formatAnomalyScore(finding.anomaly_score)}
                 </TableCell>
                 <TableCell 
                   align="right" 
