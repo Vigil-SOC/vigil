@@ -58,6 +58,7 @@ import {
 } from '../../services/api'
 import { notificationService } from '../../services/notifications'
 import { createLogger } from '../../services/logger'
+import { MarkdownMessage } from './MarkdownMessage'
 import { basePath } from '../../config/basePath'
 
 const logger = createLogger('ClaudeDrawer')
@@ -181,6 +182,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
   const [streamingThinking, setStreamingThinking] = useState<string>('')
   const [isThinking, setIsThinking] = useState(false)
   const [streamingText, setStreamingText] = useState<string>('')
+  const [isProcessingTools, setIsProcessingTools] = useState(false)
   const [summarizing, setSummarizing] = useState(false)
   // GH #79 — Reasoning trace state
   const [sessionSummary, setSessionSummary] = useState<{
@@ -365,7 +367,11 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                   } else if (event.type === 'thinking_end') {
                     setIsThinking(false)
                     if (currentThinking) thinkingContent.push({ type: 'thinking', text: currentThinking })
+                  } else if (event.type === 'tool_processing') {
+                    setIsProcessingTools(true)
+                    if (currentText && !currentText.endsWith('\n\n')) currentText += '\n\n'
                   } else if (event.type === 'text') {
+                    setIsProcessingTools(false)
                     currentText += event.content
                     setStreamingText(currentText)
                   }
@@ -376,6 +382,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
             }
           }
 
+          setIsProcessingTools(false)
           if (currentText) textContent.push({ type: 'text', text: currentText })
           const responseContent: ContentBlock[] = [...thinkingContent, ...textContent]
 
@@ -501,7 +508,8 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
     setStreamingThinking('')
     setStreamingText('')
     setIsThinking(false)
-    
+    setIsProcessingTools(false)
+
     try {
       logger.request('📤 === API REQUEST ===', {
         sessionId,
@@ -582,7 +590,12 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                       thinkingContent.push({ type: 'thinking', text: currentThinking })
                     }
                     logger.receive('💭 Thinking ended', { totalLength: currentThinking.length })
+                  } else if (event.type === 'tool_processing') {
+                    setIsProcessingTools(true)
+                    if (currentText && !currentText.endsWith('\n\n')) currentText += '\n\n'
+                    logger.receive('🛠️ Processing tools')
                   } else if (event.type === 'text') {
+                    setIsProcessingTools(false)
                     currentText += event.content
                     setStreamingText(currentText)
                   }
@@ -778,7 +791,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
   const renderContent = (content: string | ContentBlock[], messageIndex?: number) => {
     if (typeof content === 'string') {
       logger.render(`Rendering string content: ${content.length} chars`, { preview: content.substring(0, 100) })
-      return <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{content}</Typography>
+      return <MarkdownMessage>{content}</MarkdownMessage>
     }
 
     if (!Array.isArray(content)) {
@@ -796,7 +809,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       const collapsed = collapsedThinking[thinkingKey] ?? false
       return (
         <Box key={i} sx={{ mb: 1 }}>
-          {b.type === 'text' && b.text && <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{b.text}</Typography>}
+          {b.type === 'text' && b.text && <MarkdownMessage>{b.text}</MarkdownMessage>}
           {b.type === 'image' && b.source && <img src={`data:${b.source.media_type};base64,${b.source.data}`} alt="" style={{ maxWidth: '100%', borderRadius: 8, marginTop: 8 }} />}
           {b.type === 'thinking' && b.text && (
             <Box sx={{
@@ -1196,8 +1209,23 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
               <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{streamingText}</Typography>
             </Box>
           )}
-          
-          {loading && !streamingText && !isThinking && <Box display="flex" justifyContent="center" my={2}><CircularProgress size={20} /></Box>}
+
+          {/* Tool-processing indicator (replaces the old inline "[Processing tools...]" text) */}
+          {loading && isProcessingTools && (
+            <Box sx={{
+              display: 'inline-flex', alignItems: 'center', gap: 1,
+              mb: 1.5, px: 1.5, py: 0.75, borderRadius: 2,
+              bgcolor: alpha(theme.palette.primary.main, 0.06),
+              border: 1, borderColor: alpha(theme.palette.primary.main, 0.25),
+            }}>
+              <CircularProgress size={12} thickness={5} />
+              <Typography variant="caption" sx={{ fontWeight: 600, color: 'primary.main' }}>
+                Running tools…
+              </Typography>
+            </Box>
+          )}
+
+          {loading && !streamingText && !isThinking && !isProcessingTools && <Box display="flex" justifyContent="center" my={2}><CircularProgress size={20} /></Box>}
           <div ref={messagesEndRef} />
         </Box>
 

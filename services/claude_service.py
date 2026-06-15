@@ -3458,7 +3458,7 @@ Provide a structured summary preserving all critical context."""
                     if len(last_tool_calls) > 5:
                         last_tool_calls.pop(0)
 
-                    yield {"type": "text", "content": "\n\n[Processing tools...]\n"}
+                    yield {"type": "tool_processing"}
 
                     # Route each tool call to the correct processor (backend or MCP)
                     tool_results = await self._process_mixed_tool_use(
