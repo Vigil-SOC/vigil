@@ -362,7 +362,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
 
           if (reader) {
             try {
-              while (true) {
+              for (;;) {
                 const { done, value } = await reader.read()
                 if (done) break
                 const chunk = decoder.decode(value)
@@ -569,7 +569,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       
       if (reader) {
         try {
-          while (true) {
+          for (;;) {
             const { done, value } = await reader.read()
             if (done) break
             
