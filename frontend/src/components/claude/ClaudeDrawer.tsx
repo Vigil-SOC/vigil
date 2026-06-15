@@ -183,6 +183,10 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
   const [isThinking, setIsThinking] = useState(false)
   const [streamingText, setStreamingText] = useState<string>('')
   const [isProcessingTools, setIsProcessingTools] = useState(false)
+  // The tab id that owns the in-progress stream. Streaming UI renders only
+  // in this tab and the completed message is routed back to it, so switching
+  // tabs mid-stream doesn't leak tokens into the wrong session.
+  const [streamingTabId, setStreamingTabId] = useState<string | null>(null)
   const [summarizing, setSummarizing] = useState(false)
   // GH #79 — Reasoning trace state
   const [sessionSummary, setSessionSummary] = useState<{
@@ -328,6 +332,8 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       setStreamingThinking('')
       setStreamingText('')
       setIsThinking(false)
+      setIsProcessingTools(false)
+      setStreamingTabId(newTab.id)
       setTimeout(async () => {
         try {
           logger.investigate('Starting auto-investigation (streaming)', {
@@ -421,7 +427,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
           setStreamingThinking('')
           setStreamingText('')
           setIsThinking(false)
-        } finally { setLoading(false) }
+        } finally { setLoading(false); setIsProcessingTools(false); setStreamingTabId(null) }
       }, 300)
     }
   }, [open, initialMessages, initialAgentId, initialTitle, lastInvestigationId])
@@ -513,10 +519,13 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       ...newTabs[currentTab],
       messages: [...newTabs[currentTab].messages, userMsg]
     }
-    
+    // Pin this stream to the tab that initiated it, so the reply is routed
+    // back here even if the user switches tabs while it streams.
+    const originTabId = newTabs[currentTab].id
+
     // Strip thinking blocks from history before sending - backend/agent controls thinking
     const toSend = stripThinkingBlocks(newTabs[currentTab].messages)
-    
+
     setTabs(newTabs)
     setInput('')
     setAttachedFiles([])
@@ -525,6 +534,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
     setStreamingText('')
     setIsThinking(false)
     setIsProcessingTools(false)
+    setStreamingTabId(originTabId)
     stickToBottomRef.current = true  // re-engage auto-scroll for the new reply
 
     try {
@@ -638,21 +648,18 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
         timestamp: new Date().toISOString()
       })
       
-      setTabs(prevTabs => {
-        const updatedTabs = [...prevTabs]
-        updatedTabs[currentTab] = {
-          ...updatedTabs[currentTab],
-          messages: [...updatedTabs[currentTab].messages, { role: 'assistant', content: responseContent }]
-        }
-        return updatedTabs
-      })
-      
+      setTabs(prevTabs => prevTabs.map(t =>
+        t.id === originTabId
+          ? { ...t, messages: [...t.messages, { role: 'assistant' as const, content: responseContent }] }
+          : t
+      ))
+
       setStreamingThinking('')
       setStreamingText('')
       setIsThinking(false)
 
       // GH #79 — refresh reasoning-trace summary for this session
-      const sid = tabs[currentTab]?.id
+      const sid = originTabId
       if (sid) {
         reasoningApi.getSessionSummary(sid)
           .then(s => setSessionSummary({
@@ -705,15 +712,12 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       } else {
         userMessage = `Error: ${typeof detail === 'string' ? detail : detail?.message || e?.message || 'Failed'}`
       }
-      setTabs(prevTabs => {
-        const updatedTabs = [...prevTabs]
-        updatedTabs[currentTab] = {
-          ...updatedTabs[currentTab],
-          messages: [...updatedTabs[currentTab].messages, { role: 'assistant', content: userMessage }]
-        }
-        return updatedTabs
-      })
-    } finally { setLoading(false) }
+      setTabs(prevTabs => prevTabs.map(t =>
+        t.id === originTabId
+          ? { ...t, messages: [...t.messages, { role: 'assistant' as const, content: userMessage }] }
+          : t
+      ))
+    } finally { setLoading(false); setIsProcessingTools(false); setStreamingTabId(null) }
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }
@@ -868,6 +872,9 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       )
     })}</>
   }
+
+  // Streaming UI only belongs in the tab that owns the active stream.
+  const streamHere = streamingTabId !== null && streamingTabId === tabs[currentTab]?.id
 
   return (
     <Drawer anchor="right" open={open} onClose={onClose} sx={{ '& .MuiDrawer-paper': { width: { xs: '100%', sm: 420, md: 480 }, bgcolor: 'background.default' } }}>
@@ -1171,7 +1178,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
             ))}
           
           {/* Show streaming thinking in real-time */}
-          {isThinking && streamingThinking && (
+          {streamHere && isThinking && streamingThinking && (
             <Box sx={{
               p: 1.5, mb: 1.5, borderRadius: 2,
               bgcolor: 'background.paper',
@@ -1213,7 +1220,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
           )}
           
           {/* Show streaming text in real-time */}
-          {loading && streamingText && (
+          {streamHere && streamingText && (
             <Box sx={{
               p: 1.5, mb: 1.5, borderRadius: 2,
               bgcolor: 'background.paper',
@@ -1228,7 +1235,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
           )}
 
           {/* Tool-processing indicator (replaces the old inline "[Processing tools...]" text) */}
-          {loading && isProcessingTools && (
+          {streamHere && isProcessingTools && (
             <Box sx={{
               display: 'inline-flex', alignItems: 'center', gap: 1,
               mb: 1.5, px: 1.5, py: 0.75, borderRadius: 2,
@@ -1242,7 +1249,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
             </Box>
           )}
 
-          {loading && !streamingText && !isThinking && !isProcessingTools && <Box display="flex" justifyContent="center" my={2}><CircularProgress size={20} /></Box>}
+          {streamHere && !streamingText && !isThinking && !isProcessingTools && <Box display="flex" justifyContent="center" my={2}><CircularProgress size={20} /></Box>}
           <div ref={messagesEndRef} />
         </Box>
 
