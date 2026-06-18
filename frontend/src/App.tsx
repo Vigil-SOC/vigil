@@ -4,6 +4,7 @@ import { Box, CircularProgress } from '@mui/material'
 import { AuthProvider } from './contexts/AuthContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import MainLayout from './components/layout/MainLayout'
+import SetupGate from './components/setup/SetupGate'
 
 // Lazy-load every page so a refresh on any route only pulls that page's
 // module graph (plus shared deps). Previously every page was eagerly
@@ -21,6 +22,7 @@ const Analytics = lazy(() => import('./pages/Analytics'))
 const Skills = lazy(() => import('./pages/Skills'))
 const Orchestrator = lazy(() => import('./pages/Orchestrator'))
 const BuilderTool = lazy(() => import('./pages/BuilderTool'))
+const Setup = lazy(() => import('./pages/Setup'))
 
 const PageFallback = () => (
   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 200 }}>
@@ -36,13 +38,27 @@ function App() {
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
-          
+
+          {/* First-run setup wizard. Protected (the readiness check requires
+              auth), but OUTSIDE SetupGate so it stays reachable while
+              unconfigured — otherwise the gate would redirect to itself. */}
+          <Route
+            path="/setup"
+            element={
+              <ProtectedRoute>
+                <Setup />
+              </ProtectedRoute>
+            }
+          />
+
           {/* Protected routes */}
           <Route
             path="/"
             element={
               <ProtectedRoute>
-                <MainLayout />
+                <SetupGate>
+                  <MainLayout />
+                </SetupGate>
               </ProtectedRoute>
             }
           >
