@@ -219,7 +219,7 @@ export const casesApi = {
   
   // Comments
   getComments: (id: string) => api.get(`/cases/${id}/comments`),
-  addComment: (id: string, data: { content: string; author: string; parent_comment_id?: string }) =>
+  addComment: (id: string, data: { content: string; author: string; parent_comment_id?: number | string }) =>
     api.post(`/cases/${id}/comments`, data),
   
   // Watchers

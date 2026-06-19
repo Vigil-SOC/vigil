@@ -21,6 +21,8 @@ const Analytics = lazy(() => import('./pages/Analytics'))
 const Skills = lazy(() => import('./pages/Skills'))
 const Orchestrator = lazy(() => import('./pages/Orchestrator'))
 const BuilderTool = lazy(() => import('./pages/BuilderTool'))
+// UI redesign preview (Claude Design handoff) — full-screen, mock data.
+const SocConsole = lazy(() => import('./redesign/SocConsole'))
 
 const PageFallback = () => (
   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 200 }}>
@@ -36,6 +38,14 @@ function App() {
         <Routes>
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
+
+          {/* UI redesign preview — standalone, full-screen, illustrative mock data.
+              Each screen owns a URL (/redesign/<screen>); cases deep-link to a
+              specific case via the ?case=<caseId> query param. */}
+          <Route path="/redesign" element={<Navigate to="/redesign/dashboard" replace />} />
+          <Route path="/redesign/:screen" element={<SocConsole />} />
+          {/* deeper junk paths (/redesign/a/b/…) fall through to the in-shell 404 */}
+          <Route path="/redesign/*" element={<SocConsole />} />
           
           {/* Protected routes */}
           <Route
