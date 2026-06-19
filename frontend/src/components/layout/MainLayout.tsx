@@ -3,7 +3,7 @@ import { Outlet } from 'react-router-dom'
 import { Box, IconButton, Tooltip, alpha, useTheme as useMuiTheme } from '@mui/material'
 import { Chat as ChatIcon, Brightness4, Brightness7 } from '@mui/icons-material'
 import { useTheme } from '../../contexts/ThemeContext'
-import NavigationRail, { COLLAPSED_WIDTH } from './NavigationRail'
+import NavigationRail, { COLLAPSED_WIDTH,EXPANDED_WIDTH } from './NavigationRail'
 import ClaudeDrawer from '../claude/ClaudeDrawer'
 import VStrikeIframeHost from '../graph/VStrikeIframeHost'
 import { VStrikeIframeProvider } from '../../contexts/VStrikeIframeContext'
@@ -11,6 +11,7 @@ import { configApi, orchestratorApi } from '../../services/api'
 
 export default function MainLayout() {
   const [claudeOpen, setClaudeOpen] = useState(false)
+  const [navExpanded, setNavExpanded] = useState(false)
   const [investigationData, setInvestigationData] = useState<{
     messages: Array<{ role: 'user' | 'assistant'; content: string }>
     agentId: string
@@ -49,13 +50,14 @@ export default function MainLayout() {
   return (
     <VStrikeIframeProvider>
     <Box sx={{ display: 'flex', height: '100vh', overflow: 'hidden', bgcolor: 'background.default' }}>
-      <NavigationRail enabledIntegrations={enabledIntegrations} orchestratorEnabled={orchestratorEnabled} />
+      <NavigationRail expanded={navExpanded}  onExpandedChange={setNavExpanded}  enabledIntegrations={enabledIntegrations}  orchestratorEnabled={orchestratorEnabled}/>
 
       <Box
         component="main"
         sx={{
           flex: 1,
-          ml: `${COLLAPSED_WIDTH}px`,
+          width: `calc(100vw - ${navExpanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH}px)`,
+          ml: `${navExpanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH}px`,
           height: '100vh',
           display: 'flex',
           flexDirection: 'column',

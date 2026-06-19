@@ -290,8 +290,8 @@ export default function Analytics() {
 
   if (loading && !analyticsData) {
     return (
-      <Box p={3}>
-        <Typography variant="h4" gutterBottom>
+      <Box>
+        <Typography variant="h5" gutterBottom>
           Analytics Dashboard
         </Typography>
         <Grid container spacing={3} mt={2}>
@@ -313,9 +313,9 @@ export default function Analytics() {
   // Show empty state if no data and not loading
   if (!loading && !analyticsData) {
     return (
-      <Box p={3}>
-        <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-          <Typography variant="h4">Analytics Dashboard</Typography>
+      <Box>
+          <Box display="flex" justifyContent="space-between" alignItems="flex-start"  sx={{ mb: 3, pr: 8 }}>
+          <Typography variant="h5">Analytics Dashboard</Typography>
           <IconButton onClick={handleRefresh}>
             <RefreshIcon />
           </IconButton>
@@ -347,10 +347,10 @@ export default function Analytics() {
   }
 
   return (
-    <Box p={3}>
+    <Box>
       {/* Header */}
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h4">Analytics Dashboard</Typography>
+        <Box display="flex" justifyContent="space-between" alignItems="flex-start"  sx={{ mb: 3, pr: 8 }}>
+        <Typography variant="h5">Analytics Dashboard</Typography>
         <Box display="flex" gap={2} alignItems="center">
           <ToggleButtonGroup
             value={timeRange}

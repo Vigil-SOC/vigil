@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import {
   Box,
@@ -53,12 +52,18 @@ const navItems: NavItem[] = [
 ]
 
 interface NavigationRailProps {
+  expanded: boolean
+  onExpandedChange: (expanded: boolean) => void
   enabledIntegrations?: string[]
   orchestratorEnabled?: boolean
 }
 
-export default function NavigationRail({ enabledIntegrations = [], orchestratorEnabled = false }: NavigationRailProps) {
-  const [expanded, setExpanded] = useState(false)
+export default function NavigationRail({
+  expanded,
+  onExpandedChange,
+  enabledIntegrations = [],
+  orchestratorEnabled = false,
+}: NavigationRailProps){
   const navigate = useNavigate()
   const location = useLocation()
   const theme = useTheme()
@@ -126,7 +131,7 @@ export default function NavigationRail({ enabledIntegrations = [], orchestratorE
                 letterSpacing: '-0.02em',
               }}
             >
-              DeepTempo SOC
+              AI-SOC
             </Typography>
           )}
         </Box>
@@ -197,7 +202,7 @@ export default function NavigationRail({ enabledIntegrations = [], orchestratorE
 
       <Box sx={{ p: 1, borderTop: 1, borderColor: 'divider' }}>
         <IconButton
-          onClick={() => setExpanded(!expanded)}
+          onClick={() => onExpandedChange(!expanded)}
           sx={{
             width: '100%',
             borderRadius: 2,

@@ -216,7 +216,7 @@ export default function AIDecisionsPage() {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}>
+      <Box display="flex" justifyContent="space-between" alignItems="flex-start"  sx={{ mb: 3, pr: 10 }}>
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 700, mb: 0.5 }}>AI Decisions</Typography>
           <Typography variant="body2" color="text.secondary">Review and provide feedback for AI decisions</Typography>

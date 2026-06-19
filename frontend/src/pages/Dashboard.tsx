@@ -206,7 +206,7 @@ export default function Dashboard() {
 
   return (
     <Box>
-      <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={3}>
+      <Box display="flex" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 3, pr: 10 }}>
         <Box>
           <Typography variant="h5" sx={{ fontWeight: 700, mb: 0.5 }}>
             Dashboard

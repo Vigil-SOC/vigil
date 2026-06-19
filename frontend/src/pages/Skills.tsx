@@ -327,9 +327,8 @@ export default function Skills() {
   }
 
   return (
-    <Box sx={{ p: 3 }}>
-      {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+    <Box>
+       <Box display="flex" justifyContent="space-between" alignItems="flex-start"  sx={{ mb: 3, pr: 8 }}>
         <Box>
           <Typography variant="h5" fontWeight={700}>
             Workflows & Skills

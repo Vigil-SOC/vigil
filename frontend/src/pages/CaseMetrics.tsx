@@ -106,10 +106,10 @@ export default function CaseMetricsDashboard() {
   }
 
   return (
-    <Container maxWidth="xl" sx={{ py: 4 }}>
-      <Box display="flex" justifyContent="space-between" alignItems="center" mb={4}>
+    <Box>
+      <Box display="flex" justifyContent="space-between" alignItems="flex-start"  sx={{ mb: 3, pr: 8 }}>
         <Box>
-          <Typography variant="h4" gutterBottom>
+          <Typography variant="h5" gutterBottom>
             Case Metrics Dashboard
           </Typography>
           <Typography variant="body2" color="text.secondary">
@@ -343,7 +343,7 @@ export default function CaseMetricsDashboard() {
           </Paper>
         </Grid>
       </Grid>
-    </Container>
+    </Box>
   )
 }
 

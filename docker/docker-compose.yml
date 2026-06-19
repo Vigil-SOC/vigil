@@ -59,6 +59,8 @@ services:
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       - REDIS_URL=redis://redis:6379/0
       - PYTHONUNBUFFERED=1
+      - DEV_MODE=true
+      - JWT_SECRET_KEY=dev-secret-key-123456789
     ports:
       - "6987:6987"
     depends_on:
@@ -71,6 +73,9 @@ services:
     restart: unless-stopped
     networks:
       - deeptempo-network
+    volumes:
+      - ../logs:/app/logs
+      - ../.deeptempo:/app/.deeptempo
 
   # SOC Daemon - Autonomous monitoring and response
   soc-daemon:
@@ -180,6 +185,8 @@ services:
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       - REDIS_URL=redis://redis:6379/0
       - PYTHONUNBUFFERED=1
+      - DEV_MODE=true
+      - JWT_SECRET_KEY=dev-secret-key-123456789
     depends_on:
       postgres:
         condition: service_healthy

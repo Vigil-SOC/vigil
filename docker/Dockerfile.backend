@@ -77,6 +77,7 @@ COPY --from=python-deps /install/deps /usr/local
 COPY --chown=vigil:vigil backend/     ./backend/
 COPY --chown=vigil:vigil core/        ./core/
 COPY --chown=vigil:vigil services/    ./services/
+COPY --chown=vigil:vigil daemon/ ./daemon/
 COPY --chown=vigil:vigil tools/       ./tools/
 COPY --chown=vigil:vigil database/    ./database/
 COPY --chown=vigil:vigil data/        ./data/
