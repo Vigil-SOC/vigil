@@ -141,6 +141,8 @@ function DecKpis({ s }: { s: DecisionStats | null }) {
 }
 
 /* ---------------- decisions table (Pending + All tabs) ---------------- */
+const DECISIONS_PAGE = 25
+
 function DecisionRows({
   rows,
   phase,
@@ -156,6 +158,17 @@ function DecisionRows({
   onSelect: (id: string) => void
   empty: string
 }) {
+  // Cap visible rows so the table doesn't scroll endlessly; "Show more" reveals
+  // another page. Reset to the first page whenever the row set changes
+  // (tab switch / filter / search) — keyed on a stable signature, not the
+  // array identity, so it doesn't reset on every render.
+  const [visible, setVisible] = useState(DECISIONS_PAGE)
+  const sig = `${rows.length}:${rows[0]?.id ?? ''}:${rows[rows.length - 1]?.id ?? ''}`
+  useEffect(() => { setVisible(DECISIONS_PAGE) }, [sig])
+
+  const shown = rows.slice(0, visible)
+  const more = rows.length - shown.length
+
   return (
     <div className="table-wrap list-scroll">
       <table className="tbl decisions-tbl">
@@ -170,7 +183,7 @@ function DecisionRows({
           {phase === 'error' && <StateRow cols={9}><RetryState msg={error} reload={reload} /></StateRow>}
           {phase === 'ready' && rows.length === 0 && <StateRow cols={9}>{empty}</StateRow>}
           {phase === 'ready' &&
-            rows.map((d) => (
+            shown.map((d) => (
               <tr key={d.id} className="clickable decisions-tbl-row" onClick={() => onSelect(d.id)}>
                 <td><span className="chip" style={{ borderColor: 'var(--accent-line)', color: 'var(--accent-2)' }}>{d.agent}</span></td>
                 <td>{d.type}</td>
@@ -187,6 +200,18 @@ function DecisionRows({
                 </td>
               </tr>
             ))}
+          {phase === 'ready' && more > 0 && (
+            <tr className="decisions-more-row">
+              <td colSpan={9} style={{ textAlign: 'center', padding: '12px 0' }}>
+                <span className="muted" style={{ marginRight: 12 }}>
+                  Showing {shown.length} of {rows.length}
+                </span>
+                <button className="btn ghost" onClick={() => setVisible((v) => v + DECISIONS_PAGE)}>
+                  Show {Math.min(DECISIONS_PAGE, more)} more
+                </button>
+              </td>
+            </tr>
+          )}
         </tbody>
       </table>
     </div>

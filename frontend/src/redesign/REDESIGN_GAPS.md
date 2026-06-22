@@ -1,5 +1,10 @@
 # SOC Console redesign — gaps & follow-up work
 
+> 📋 For the current at-a-glance **"what's left"** checklist, see
+> [`REDESIGN_TODO.md`](./REDESIGN_TODO.md). This file is the detailed audit
+> history; some §7 "not represented" notes below have since landed (Auto-Ops
+> runtime, Login) — the TODO reflects current state.
+
 This documents the UI redesign ported from the **Claude Design** handoff bundle
 (`full-screen-design-update`) and, importantly, everything the design **did not
 account for** so we can tackle it in future passes.
@@ -605,19 +610,23 @@ page replaced the floating Tweaks panel).
 frontend/tailwind.config.cjs   Tailwind config (scoped to src/redesign, preflight off; re-exposes CSS vars as utilities)
 frontend/postcss.config.cjs    PostCSS: tailwindcss + autoprefixer
 frontend/src/redesign/
-  SocConsole.tsx       shell: rail, topbar, view router, chat dock, FAB, tweaks, error boundary
+  SocConsole.tsx       shell: rail, topbar, view router, chat dock, FAB, error boundary
   SocConsole.test.tsx  smoke test: mount, nav, dashboard tabs, master-detail, chat, decisions, skills
   styles.css           Tailwind directives + scoped .soc-console root (base tokens in :root) + design system in @layer components; IBM Plex @import at line 1
 
   shell/               app-shell-only pieces
     Chat.tsx           Vigil chat dock (real SSE via streamFetch; see §5 for open items)
     UserMenu.tsx       rail account menu (name/email/role, Settings, Logout) — useAuth
-    Tweaks.tsx         theme tweaks panel (in-memory; see §12)
+    theme.tsx          RedesignThemeProvider (light/dark + accent → data-theme/CSS vars)
+    toast.tsx          global snackbar (useToast, scoped under .soc-console; §10)
+    Loader.tsx         redesign-styled Suspense fallback (used by App.tsx for /redesign)
+    useDesktopNotifications.ts  OS notifications for new findings, gated by settings (§10)
     ErrorBoundary.tsx  wraps the active screen, resets on screen change
     accent.ts          accent presets + hex/lighten helpers + accentVars()
 
   shared/              cross-screen primitives
-    ui.tsx             shared UI primitives (select, etc.)
+    ui.tsx             shared UI primitives (select, Rating, Slider, etc.)
+    VigilLogo.tsx      inline-SVG brand lockup + mark (recolor via currentColor)
     icons.tsx          Icon component + ICON path map
     charts.tsx         Donut / Spark / Trend / Hbars / Heatmap (inline-SVG, accent-aware)
     Markdown.tsx       markdown renderer (chat + case/workflow text)
@@ -637,7 +646,10 @@ frontend/src/redesign/
     metrics/           MetricsScreen, useCaseMetrics
     analytics/         AnalyticsScreen, useAnalytics
     workflows/         WorkflowsScreen, WorkflowBuilder, useWorkflowsData
+    autoops/           AutoOpsScreen, InvestigationDetail, statusBadge, useAutoOps, useInvestigationDetail
+    login/             LoginScreen (routed at /redesign/login via App.tsx)
+    notfound/          NotFoundScreen (in-shell 404)
     settings/          SettingsScreen, useSettings + section components (General/System/
-                       Federation/Users/SlaPolicies/AutoInvestigate/AiConfig/Integrations/
-                       Developer + dialogs); useSlaPolicies hook for the SLA section
+                       Federation/Users/Appearance/SlaPolicies/AutoInvestigate/AiConfig/
+                       Integrations/Developer + dialogs); useSlaPolicies hook for the SLA section
 ```
