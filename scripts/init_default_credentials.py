@@ -21,22 +21,22 @@ from backend.services.auth_service import AuthService
 from sqlalchemy import text
 import logging
 
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
 
 
 def init_default_credentials():
     """Initialize default roles and admin user in the database."""
-    
+
     print("=" * 50)
     print("Vigil SOC - Default Credentials Setup")
     print("=" * 50)
-    
+
     # Initialize database connection
     try:
         db_manager = get_db_manager()
         db_manager.initialize()
-        
+
         if not db_manager.health_check():
             print("❌ Database connection failed")
             print("   Make sure PostgreSQL is running:")
@@ -49,7 +49,7 @@ def init_default_credentials():
         print("   Make sure PostgreSQL is running:")
         print("   ./scripts/start_database.sh")
         return False
-    
+
     # SQL to create tables if they don't exist
     create_tables_sql = """
     -- Roles table
@@ -88,7 +88,7 @@ def init_default_credentials():
     CREATE INDEX IF NOT EXISTS idx_user_role_id ON users(role_id);
     CREATE INDEX IF NOT EXISTS idx_user_is_active ON users(is_active);
     """
-    
+
     # SQL to insert default roles
     roles_sql = """
     INSERT INTO roles (role_id, name, description, permissions, is_system_role) VALUES
@@ -171,48 +171,52 @@ def init_default_credentials():
     }', true)
     ON CONFLICT (role_id) DO NOTHING;
     """
-    
+
     # SQL to insert default admin user
     # Password: admin123
-    # Hash: $2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5aeWG6QErKLzG
+    # Hash: $2b$12$UDHjKgaPFv4j2LdYUHZdGeTV2mAXCN/XIFKsKxF.vzJlexxniSmNy
     admin_user_sql = """
     INSERT INTO users (user_id, username, email, password_hash, full_name, role_id, is_active, is_verified) VALUES
-    ('user-admin-default', 'admin', 'admin@deeptempo.ai', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5aeWG6QErKLzG', 'System Administrator', 'role-admin', true, true)
+    ('user-admin-default', 'admin', 'admin@deeptempo.ai', '$2b$12$UDHjKgaPFv4j2LdYUHZdGeTV2mAXCN/XIFKsKxF.vzJlexxniSmNy', 'System Administrator', 'role-admin', true, true)
     ON CONFLICT (user_id) DO NOTHING;
     """
-    
+
     try:
         with db_manager.session_scope() as session:
             # Create tables
             session.execute(text(create_tables_sql))
             print("✓ Roles table ready")
             print("✓ Users table ready")
-            
+
             # Insert default roles
             session.execute(text(roles_sql))
-            
+
             # Count roles
             result = session.execute(text("SELECT COUNT(*) FROM roles"))
             count = result.scalar()
             print(f"✓ Default roles inserted ({count} roles)")
-            
+
             # Insert default admin user
             session.execute(text(admin_user_sql))
-            
+
             # Check if admin user exists
-            result = session.execute(text("SELECT username, email, full_name FROM users WHERE username = 'admin'"))
+            result = session.execute(
+                text(
+                    "SELECT username, email, full_name FROM users WHERE username = 'admin'"
+                )
+            )
             admin = result.fetchone()
-            
+
             if admin:
                 print("✓ Default admin user created")
             else:
                 print("⚠️  Admin user may already exist")
-        
+
         # Verify authentication
         print("")
         print("Verifying authentication...")
         user = AuthService.authenticate_user("admin", "admin123")
-        
+
         if user:
             print("✓ Authentication verified")
             print("")
@@ -226,25 +230,30 @@ def init_default_credentials():
             print("")
             print("⚠️  IMPORTANT: Change the default password after first login!")
             print("")
-            
+
             # List all available roles
             with db_manager.session_scope() as session:
-                result = session.execute(text("SELECT role_id, name, description FROM roles ORDER BY role_id"))
+                result = session.execute(
+                    text(
+                        "SELECT role_id, name, description FROM roles ORDER BY role_id"
+                    )
+                )
                 roles = result.fetchall()
                 print("Available roles:")
                 for role in roles:
                     print(f"  - {role[1]}: {role[2]}")
-            
+
             return True
         else:
             print("❌ Authentication verification failed")
             print("   The admin user was created but login doesn't work")
             print("   Check database logs for more information")
             return False
-    
+
     except Exception as e:
         print(f"❌ Failed to initialize credentials: {e}")
         import traceback
+
         traceback.print_exc()
         return False
 
@@ -252,4 +261,3 @@ def init_default_credentials():
 if __name__ == "__main__":
     success = init_default_credentials()
     sys.exit(0 if success else 1)
-

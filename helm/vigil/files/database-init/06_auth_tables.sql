@@ -131,7 +131,7 @@ ON CONFLICT (role_id) DO NOTHING;
 -- Create default admin user (password: admin123 - CHANGE IN PRODUCTION!)
 -- Password hash for 'admin123' using bcrypt
 INSERT INTO users (user_id, username, email, password_hash, full_name, role_id, is_active, is_verified) VALUES
-('user-admin-default', 'admin', 'admin@deeptempo.ai', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5aeWG6QErKLzG', 'System Administrator', 'role-admin', true, true)
+('user-admin-default', 'admin', 'admin@deeptempo.ai', '$2b$12$UDHjKgaPFv4j2LdYUHZdGeTV2mAXCN/XIFKsKxF.vzJlexxniSmNy', 'System Administrator', 'role-admin', true, true)
 ON CONFLICT (user_id) DO NOTHING;
 
 -- Update trigger for updated_at
