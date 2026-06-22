@@ -1,10 +1,11 @@
 // frontend/src/redesign/screens/setup/BudgetDialog.tsx
 //
-// Onboarding step dialog — sets the Bifrost virtual key + spend cap that the
+// Onboarding step panel — sets the Bifrost virtual key + spend cap that the
 // "cost guardrails" checklist step keys off (ready === non-empty default_vk).
-// Direct budgetsApi calls; no redesign settings-section dependency.
+// Renders inline on the setup screen (no modal). Direct budgetsApi calls; no
+// redesign settings-section dependency.
 import { useEffect, useState } from 'react'
-import { Field, NumberInput, Popup, Select, TextInput } from '../../shared/ui'
+import { Field, NumberInput, Select, TextInput } from '../../shared/ui'
 import { budgetsApi, type BudgetSettings } from '../../../services/api'
 
 interface Props {
@@ -57,43 +58,41 @@ const BudgetDialog = ({ onClose, onSaved, onError }: Props) => {
   }
 
   return (
-    <Popup open onClose={onClose} title="Set cost guardrails" width={480} dismissOnBackdrop={false}>
-      <div className="flex flex-col gap-3.5">
-        <p className="text-sm text-tx-2">
-          Cap spend through a Bifrost virtual key. Vigil reads the key&apos;s live usage and
-          enforces the limit on every model call.
-        </p>
-        <Field
-          label="Bifrost virtual key"
-          hint="The virtual key Vigil bills against — copy it from your Bifrost dashboard."
-        >
-          <TextInput value={vk} placeholder="vk-…" onChange={(e) => setVk(e.target.value)} />
-        </Field>
-        <Field label="Monthly spend cap (USD)">
-          <NumberInput
-            min={0}
-            value={limit}
-            placeholder="e.g. 500"
-            onChange={(e) => setLimit(e.target.value)}
-          />
-        </Field>
-        <Field label="Enforcement">
-          <Select
-            value={enforcement}
-            options={ENFORCEMENT_OPTIONS}
-            onSelect={(v) => setEnforcement(v as BudgetSettings['enforcement_mode'])}
-          />
-        </Field>
-        <div className="flex justify-end gap-2.5 mt-2">
-          <button className="btn ghost" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button className="btn primary" onClick={save} disabled={saving || !vk.trim()}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
+    <div className="flex flex-col gap-3.5">
+      <p className="text-sm text-tx-2">
+        Cap spend through a Bifrost virtual key. Vigil reads the key&apos;s live usage and
+        enforces the limit on every model call.
+      </p>
+      <Field
+        label="Bifrost virtual key"
+        hint="The virtual key Vigil bills against — copy it from your Bifrost dashboard."
+      >
+        <TextInput value={vk} placeholder="vk-…" onChange={(e) => setVk(e.target.value)} />
+      </Field>
+      <Field label="Monthly spend cap (USD)">
+        <NumberInput
+          min={0}
+          value={limit}
+          placeholder="e.g. 500"
+          onChange={(e) => setLimit(e.target.value)}
+        />
+      </Field>
+      <Field label="Enforcement">
+        <Select
+          value={enforcement}
+          options={ENFORCEMENT_OPTIONS}
+          onSelect={(v) => setEnforcement(v as BudgetSettings['enforcement_mode'])}
+        />
+      </Field>
+      <div className="flex justify-end gap-2.5 mt-2">
+        <button className="btn ghost" onClick={onClose} disabled={saving}>
+          Cancel
+        </button>
+        <button className="btn primary" onClick={save} disabled={saving || !vk.trim()}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
       </div>
-    </Popup>
+    </div>
   )
 }
 

@@ -1,10 +1,12 @@
 /* ============================================================
    LLM provider add/edit wizard (redesign port of LLMProviderDialog).
-   3 steps: pick type → connection + model discovery → test & save.
+   3 steps: pick type → connection → test, then pick a model from the
+   verified list & save. (Model selection lives on step 2 only — picking
+   before the connection is tested was flaky, so it was removed.)
    Draft-upsert so /test and /models can run before the final save;
    retries update the draft row rather than re-POSTing (avoids 409).
    ============================================================ */
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { Field, Popup, PasswordInput, Select, TextInput, Toggle } from '../../shared/ui'
 import {
@@ -38,9 +40,21 @@ interface Props {
   onClose: () => void
   onSaved: () => void
   onError: (msg: string) => void
+  // Hide the footer Cancel button. The inline setup screen sets this false — its
+  // accordion row already has a Close toggle, so an in-panel Cancel is redundant.
+  showCancel?: boolean
 }
 
-export default function LlmProviderDialog({ existing, onClose, onSaved, onError }: Props) {
+// The wizard body, with no modal chrome. Rendered inline by the first-access
+// setup screen; wrapped in a Popup by the default export below (Settings uses
+// the modal form).
+export function LlmProviderWizard({
+  existing,
+  onClose,
+  onSaved,
+  onError,
+  showCancel = true,
+}: Props) {
   const editing = !!existing
   const [step, setStep] = useState(editing ? 1 : 0)
 
@@ -62,62 +76,6 @@ export default function LlmProviderDialog({ existing, onClose, onSaved, onError 
   const [testError, setTestError] = useState<string | null>(null)
   const [tested, setTested] = useState(false)
   const [availableModels, setAvailableModels] = useState<string[]>([])
-
-  const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
-  const [discovering, setDiscovering] = useState(false)
-  const [discoverError, setDiscoverError] = useState<string | null>(null)
-  const discoverDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // Monotonic id so only the latest discovery applies its result. Without this,
-  // a slow request against a half-typed URL can resolve *after* a later
-  // successful one and clobber the good state with a stale error.
-  const discoverSeq = useRef(0)
-
-  const runDiscovery = async (manual = false) => {
-    const seq = ++discoverSeq.current
-    setDiscovering(true)
-    setDiscoverError(null)
-    try {
-      const res = await llmProviderApi.discoverModels({
-        provider_type: providerType,
-        base_url: baseUrl || undefined,
-        api_key: apiKey || undefined,
-        organization: organization || undefined,
-      })
-      if (seq !== discoverSeq.current) return // superseded by a newer discovery
-      const ids = res.data.models || []
-      setDiscoveredModels(ids)
-      // Keep the dropdown selection valid: pick the first model whenever the
-      // current value isn't one the provider actually offers.
-      if (ids.length > 0 && !ids.includes(defaultModel)) setDefaultModel(ids[0])
-    } catch (e) {
-      if (seq !== discoverSeq.current) return // stale failure — ignore
-      // Auto-discovery (debounced while typing) is only a convenience to
-      // pre-fill the model list; step 2's "Test & continue" is the real
-      // connection check. Surfacing its failures would flash errors on every
-      // half-typed URL, so only an explicit refresh click reports an error.
-      if (manual) {
-        const err = e as { response?: { data?: { detail?: string } }; message?: string }
-        setDiscoverError(err?.response?.data?.detail || err?.message || 'Failed to list models')
-      }
-      setDiscoveredModels([])
-    } finally {
-      if (seq === discoverSeq.current) setDiscovering(false)
-    }
-  }
-
-  // Auto-discover on step 1 once we have enough info (debounced).
-  useEffect(() => {
-    if (step !== 1) return
-    const needsKey = providerType === 'openai' || providerType === 'anthropic'
-    if (needsKey && !apiKey && !editing) return
-    if (providerType === 'ollama' && !baseUrl) return
-    if (discoverDebounce.current) clearTimeout(discoverDebounce.current)
-    discoverDebounce.current = setTimeout(() => runDiscovery(false), 500)
-    return () => {
-      if (discoverDebounce.current) clearTimeout(discoverDebounce.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, providerType, baseUrl, apiKey, organization])
 
   const selectProviderType = (t: ProviderType) => {
     if (t === providerType) return
@@ -195,16 +153,8 @@ export default function LlmProviderDialog({ existing, onClose, onSaved, onError 
     }
   }
 
-  const modelOptions = discoveredModels.map((m) => ({ value: m, label: m }))
-
   return (
-    <Popup
-      open
-      onClose={onClose}
-      title={editing ? 'Edit provider' : 'Add LLM provider'}
-      width={520}
-      dismissOnBackdrop={false}
-    >
+    <>
       {/* step indicator */}
       <div className="flex items-center gap-2 mb-5">
         {STEPS.map((s, i) => (
@@ -277,45 +227,9 @@ export default function LlmProviderDialog({ existing, onClose, onSaved, onError 
               <TextInput value={organization} onChange={(e) => setOrganization(e.target.value)} />
             </Field>
           )}
-
-          <Field
-            label="Default model"
-            error={discoverError ? `Model discovery failed — enter a model ID manually. (${discoverError})` : undefined}
-            hint={
-              discovering
-                ? 'Fetching available models…'
-                : discoveredModels.length
-                  ? `${discoveredModels.length} model(s) available from this provider.`
-                  : 'Enter the model ID, or click refresh to fetch a list from the provider.'
-            }
-          >
-            <div className="flex items-start gap-2">
-              <div className="flex-1">
-                {discoveredModels.length > 0 ? (
-                  <Select
-                    value={discoveredModels.includes(defaultModel) ? defaultModel : ''}
-                    placeholder="Select a model"
-                    options={modelOptions}
-                    onSelect={setDefaultModel}
-                  />
-                ) : (
-                  <TextInput
-                    value={defaultModel}
-                    placeholder={DEFAULT_MODEL[providerType]}
-                    onChange={(e) => setDefaultModel(e.target.value)}
-                  />
-                )}
-              </div>
-              <button
-                className="btn ghost icon"
-                title="Fetch model list from provider"
-                onClick={() => runDiscovery(true)}
-                disabled={discovering}
-              >
-                <Icon name="refresh" size={15} />
-              </button>
-            </div>
-          </Field>
+          <p className="text-tx-3 text-xs">
+            You&apos;ll choose the model on the next step, once the connection is verified.
+          </p>
         </div>
       )}
 
@@ -336,15 +250,29 @@ export default function LlmProviderDialog({ existing, onClose, onSaved, onError 
               <div className="settings-banner ok">
                 <Icon name="check2" size={14} /> Connection OK
               </div>
-              {availableModels.length > 0 && (
-                <Field label="Model">
+              <Field
+                label="Model"
+                hint={
+                  availableModels.length
+                    ? `${availableModels.length} model(s) available from this provider.`
+                    : 'Enter the model ID to use.'
+                }
+              >
+                {availableModels.length > 0 ? (
                   <Select
                     value={defaultModel}
+                    placeholder="Select a model"
                     options={availableModels.map((m) => ({ value: m, label: m }))}
                     onSelect={setDefaultModel}
                   />
-                </Field>
-              )}
+                ) : (
+                  <TextInput
+                    value={defaultModel}
+                    placeholder={DEFAULT_MODEL[providerType]}
+                    onChange={(e) => setDefaultModel(e.target.value)}
+                  />
+                )}
+              </Field>
               <label className="flex items-center gap-2.5 text-sm text-tx-2 mt-1">
                 <Toggle checked={isDefault} onChange={setIsDefault} />
                 Set as default for this provider type
@@ -356,7 +284,11 @@ export default function LlmProviderDialog({ existing, onClose, onSaved, onError 
 
       {/* footer */}
       <div className="flex justify-end gap-2.5 mt-6">
-        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        {showCancel && (
+          <button className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+        )}
         {step > 0 && !testing && (
           <button className="btn ghost" onClick={() => setStep(step - 1)}>Back</button>
         )}
@@ -380,6 +312,21 @@ export default function LlmProviderDialog({ existing, onClose, onSaved, onError 
           </button>
         )}
       </div>
+    </>
+  )
+}
+
+// Modal form used by Settings (Add/Edit provider). The setup screen renders
+// <LlmProviderWizard> directly, inline, instead of this wrapper.
+export default function LlmProviderDialog(props: Props) {
+  return (
+    <Popup
+      open
+      onClose={props.onClose}
+      title={props.existing ? 'Edit provider' : 'Add LLM provider'}
+      width={520}
+    >
+      <LlmProviderWizard {...props} />
     </Popup>
   )
 }

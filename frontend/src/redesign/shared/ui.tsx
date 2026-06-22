@@ -23,17 +23,12 @@ export function Popup({
   title,
   children,
   width = 560,
-  dismissOnBackdrop = true,
 }: {
   open: boolean
   onClose: () => void
   title: ReactNode
   children: ReactNode
   width?: number
-  // When false, clicking the backdrop won't close the dialog — use for forms
-  // where a stray click would discard entered data. Escape and the X/Cancel
-  // buttons still close it.
-  dismissOnBackdrop?: boolean
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
   // Keep the latest onClose in a ref so the focus effect can depend on `open`
@@ -59,7 +54,7 @@ export function Popup({
 
   if (!open) return null
   return (
-    <div className="modal-overlay" onClick={dismissOnBackdrop ? onClose : undefined}>
+    <div className="modal-overlay" onClick={onClose}>
       <div
         ref={panelRef}
         className="modal"

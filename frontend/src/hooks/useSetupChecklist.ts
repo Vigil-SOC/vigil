@@ -72,8 +72,8 @@ const useSetupChecklist = (): SetupChecklist => {
     ...step,
     ready: step.selectReady(state),
   }))
-  const requiredReady = steps.every((s) => !s.required || s.ready)
-  const incompleteCount = steps.filter((s) => !s.required && !s.ready).length
+  const requiredReady = steps.every((s) => s.tier !== 'required' || s.ready)
+  const incompleteCount = steps.filter((s) => s.tier !== 'required' && !s.ready).length
 
   return { steps, requiredReady, incompleteCount, loading, refetch }
 }

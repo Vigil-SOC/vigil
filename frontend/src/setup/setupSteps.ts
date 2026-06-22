@@ -73,6 +73,13 @@ export type SetupStepId =
   | 'cost-guardrails'
   | 'autonomy'
 
+// Onboarding gating tier:
+//  - 'required'    → hard gate; blocks entry to the app (today: only the LLM provider)
+//  - 'recommended' → strongly nudged but skippable (data source — a SOC needs telemetry,
+//                    but it can also arrive via DeepTempo's pipeline / demo / upload)
+//  - 'optional'    → pure nice-to-have
+export type SetupTier = 'required' | 'recommended' | 'optional'
+
 // The Settings section a step's "Configure →" action opens. Both shells use the
 // same section vocabulary — today's MUI app (TAB_DEFS → /settings?tab=<key>) and
 // the redesign (SettingsScreen SECTIONS → setActive(<key>)) — so we store the
@@ -84,7 +91,7 @@ export interface SetupStep {
   id: SetupStepId
   label: string
   description: string
-  required: boolean // required steps drive the hard gate (today: only the LLM)
+  tier: SetupTier // gating tier; only 'required' steps drive the hard gate
   settingsSection: SettingsSection // which Settings section "Configure →" opens
   selectReady: (s: SetupState) => boolean
 }
@@ -93,8 +100,8 @@ export const SETUP_STEPS: SetupStep[] = [
   {
     id: 'llm-provider',
     label: 'Connect an AI provider',
-    description: 'Required — triage, investigation, and chat all run on it.',
-    required: true,
+    description: 'Triage, investigation, and chat all run on it.',
+    tier: 'required',
     settingsSection: 'ai-config',
     // Mirrors useSetupStatus.isProviderReady (kept in sync intentionally):
     // active + default, no key required (local/keyless providers are valid).
@@ -104,7 +111,7 @@ export const SETUP_STEPS: SetupStep[] = [
     id: 'data-source',
     label: 'Connect a data source',
     description: 'A SIEM or EDR so Vigil has alerts to triage.',
-    required: false,
+    tier: 'recommended',
     settingsSection: 'integrations',
     selectReady: (s) =>
       s.connections.some((c) => c.connected && DATA_SOURCE_SERVER_IDS.has(c.name)),
@@ -112,24 +119,24 @@ export const SETUP_STEPS: SetupStep[] = [
   {
     id: 'model-assignment',
     label: 'Assign models to agents',
-    description: 'Optional — pick fast vs. strong models per task (defaults work).',
-    required: false,
+    description: 'Pick fast vs. strong models per task — defaults work.',
+    tier: 'optional',
     settingsSection: 'ai-config',
     selectReady: (s) => Object.keys(s.assignments ?? {}).length > 0,
   },
   {
     id: 'cost-guardrails',
     label: 'Set cost guardrails',
-    description: 'Optional — a Bifrost virtual key + spend cap.',
-    required: false,
+    description: 'A Bifrost virtual key + spend cap.',
+    tier: 'optional',
     settingsSection: 'ai-config',
     selectReady: (s) => !!s.budget?.default_vk?.trim(),
   },
   {
     id: 'autonomy',
     label: 'Enable autonomous mode',
-    description: '24/7 triage — on by default with safe cost caps.',
-    required: false,
+    description: 'Let Vigil triage and investigate 24/7, within your cost caps.',
+    tier: 'optional',
     settingsSection: 'autoinvestigate',
     selectReady: (s) => s.orchestratorEnabled,
   },

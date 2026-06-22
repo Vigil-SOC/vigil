@@ -1,11 +1,12 @@
 // frontend/src/redesign/screens/setup/ModelAssignmentDialog.tsx
 //
-// Onboarding step dialog — assigns the default chat model (chat_default), which
+// Onboarding step panel — assigns the default chat model (chat_default), which
 // every unset component inherits. Satisfies the "model assignment" checklist
-// step (ready === at least one assignment). Per-agent tuning stays in Settings →
-// AI Config. Direct aiConfigApi calls; no redesign settings-section dependency.
+// step (ready === at least one assignment). Renders inline on the setup screen
+// (no modal). Per-agent tuning stays in Settings → AI Config. Direct aiConfigApi
+// calls; no redesign settings-section dependency.
 import { useEffect, useState } from 'react'
-import { Field, Popup, Select } from '../../shared/ui'
+import { Field, Select } from '../../shared/ui'
 import { aiConfigApi, type AIModelInfo } from '../../../services/api'
 
 interface Props {
@@ -61,40 +62,32 @@ const ModelAssignmentDialog = ({ onClose, onSaved, onError }: Props) => {
   }))
 
   return (
-    <Popup
-      open
-      onClose={onClose}
-      title="Assign models to agents"
-      width={480}
-      dismissOnBackdrop={false}
-    >
-      <div className="flex flex-col gap-3.5">
-        <p className="text-sm text-tx-2">
-          Pick the default model for chat and any agent without its own assignment. You can set
-          per-agent models — cheap for triage, strong for investigation — later in Settings → AI
-          Config.
-        </p>
-        <Field
-          label="Default model"
-          hint={loading ? 'Loading available models…' : `${models.length} model(s) available.`}
-        >
-          <Select
-            value={selected}
-            placeholder={loading ? 'Loading…' : 'Select a model'}
-            options={options}
-            onSelect={setSelected}
-          />
-        </Field>
-        <div className="flex justify-end gap-2.5 mt-2">
-          <button className="btn ghost" onClick={onClose} disabled={saving}>
-            Cancel
-          </button>
-          <button className="btn primary" onClick={save} disabled={saving || !selected}>
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
+    <div className="flex flex-col gap-3.5">
+      <p className="text-sm text-tx-2">
+        Pick the default model for chat and any agent without its own assignment. You can set
+        per-agent models — cheap for triage, strong for investigation — later in Settings → AI
+        Config.
+      </p>
+      <Field
+        label="Default model"
+        hint={loading ? 'Loading available models…' : `${models.length} model(s) available.`}
+      >
+        <Select
+          value={selected}
+          placeholder={loading ? 'Loading…' : 'Select a model'}
+          options={options}
+          onSelect={setSelected}
+        />
+      </Field>
+      <div className="flex justify-end gap-2.5 mt-2">
+        <button className="btn ghost" onClick={onClose} disabled={saving}>
+          Cancel
+        </button>
+        <button className="btn primary" onClick={save} disabled={saving || !selected}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
       </div>
-    </Popup>
+    </div>
   )
 }
 

@@ -11,15 +11,17 @@ vi.mock('../../../../services/api', () => ({
   configApi: { getOrchestrator: vi.fn() },
 }))
 vi.mock('../../../../contexts/AuthContext', () => ({ useAuth: vi.fn() }))
-// Stub the provider dialog — its internals are tested elsewhere; here we only
-// care that the provider step opens it.
-vi.mock('../../settings/LlmProviderDialog', () => ({
-  default: ({ onSaved }: { onSaved: () => void }) => (
+// Stub the provider wizard — its internals are tested elsewhere; here we only
+// care that the provider step expands it inline. SetupScreen renders the named
+// LlmProviderWizard; Settings uses the default modal wrapper. Mock both.
+vi.mock('../../settings/LlmProviderDialog', () => {
+  const Mock = ({ onSaved }: { onSaved: () => void }) => (
     <div data-testid="provider-dialog">
       <button onClick={onSaved}>mock-save</button>
     </div>
-  ),
-}))
+  )
+  return { default: Mock, LlmProviderWizard: Mock }
+})
 
 import SetupScreen from '../SetupScreen'
 import { llmProviderApi, mcpApi, aiConfigApi, budgetsApi, configApi } from '../../../../services/api'
