@@ -17,6 +17,7 @@ from secrets_manager import get_secret, set_secret, delete_secret, get_secrets_m
 # Import database config service
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from database.config_service import get_config_service
+from services.defaults import DEFAULT_MODEL
 from services.integration_secrets import redact_secrets, split_secrets
 
 router = APIRouter()
@@ -263,7 +264,7 @@ async def set_claude_config(config: ClaudeConfig):
                         provider_type="anthropic",
                         name="Anthropic (default)",
                         api_key_ref="CLAUDE_API_KEY",
-                        default_model="claude-sonnet-4-5-20250929",
+                        default_model=DEFAULT_MODEL,
                         is_active=True,
                         is_default=True,
                         config={},
@@ -1211,8 +1212,8 @@ class OrchestratorSettingsConfig(BaseModel):
     stale_threshold: int = 300
     dedup_window_minutes: int = 30
     context_max_chars: int = 10000
-    plan_model: str = "claude-sonnet-4-5-20250929"
-    review_model: str = "claude-sonnet-4-5-20250929"
+    plan_model: str = DEFAULT_MODEL
+    review_model: str = DEFAULT_MODEL
     workdir_base: str = "data/investigations"
 
 

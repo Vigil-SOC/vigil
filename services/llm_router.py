@@ -503,6 +503,12 @@ class LLMRouter:
                     yield {"type": "text", "content": content}
         except Exception as exc:
             await _wrap_budget_errors(_raise_async(exc))
+        finally:
+            # AsyncOpenAI holds an httpx connection pool; close it on normal
+            # completion, error, AND consumer disconnect (GeneratorExit, e.g.
+            # the SSE client goes away mid-stream) so file descriptors /
+            # connections don't accumulate under load.
+            await client.close()
 
     async def _dispatch_anthropic(
         self,
@@ -633,6 +639,56 @@ def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
         if row is None:
             return None
         return provider_spec_from_row(row)
+    finally:
+        session.close()
+
+
+def get_default_provider_spec() -> Optional[ProviderSpec]:
+    """Load the default active provider of any type.
+
+    Preference order:
+    1. Any provider with ``is_default=True`` and ``is_active=True``
+    2. Any provider with ``is_active=True`` (first row, arbitrary order)
+
+    Returns None when no provider is configured or the DB is unavailable.
+    Used by the chat endpoint to route non-Anthropic providers through the
+    OpenAI-format Bifrost surface rather than requiring an Anthropic key.
+    """
+    try:
+        from database.connection import get_db_session
+        from database.models import LLMProviderConfig
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("default provider spec DB lookup skipped: %s", exc)
+        return None
+
+    session = get_db_session()
+    try:
+        # Single-default is enforced per provider_type, so multiple rows can
+        # carry is_default=True across types (e.g. an Anthropic default AND an
+        # Ollama default). Order by created_at so the pick is stable across
+        # runs/DBs instead of relying on undefined SQL row order.
+        row = (
+            session.query(LLMProviderConfig)
+            .filter(
+                LLMProviderConfig.is_active.is_(True),
+                LLMProviderConfig.is_default.is_(True),
+            )
+            .order_by(LLMProviderConfig.created_at)
+            .first()
+        )
+        if row is None:
+            row = (
+                session.query(LLMProviderConfig)
+                .filter(LLMProviderConfig.is_active.is_(True))
+                .order_by(LLMProviderConfig.created_at)
+                .first()
+            )
+        if row is None:
+            return None
+        return provider_spec_from_row(row)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("default provider spec lookup failed: %s", exc)
+        return None
     finally:
         session.close()
 

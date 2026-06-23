@@ -5,6 +5,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from services.defaults import DEFAULT_MODEL
+
 logger = logging.getLogger(__name__)
 
 
@@ -92,8 +94,8 @@ class OrchestratorConfig:
     dedup_window_minutes: int = 30
     agent_loop_delay: int = 2
     context_max_chars: int = 10000
-    plan_model: str = "claude-sonnet-4-5-20250929"
-    review_model: str = "claude-sonnet-4-5-20250929"
+    plan_model: str = DEFAULT_MODEL
+    review_model: str = DEFAULT_MODEL
 
 
 @dataclass
