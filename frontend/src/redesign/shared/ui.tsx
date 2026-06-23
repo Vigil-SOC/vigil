@@ -11,10 +11,22 @@ import {
   useRef,
   useState,
   type InputHTMLAttributes,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from './icons'
+
+/** Enter/Space → activate. For non-button elements given `role="button"` or
+ *  `role="switch"` so they stay keyboard-operable (REDESIGN_GAPS.md §10). */
+export function activateOnKey(fn: () => void) {
+  return (e: ReactKeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      fn()
+    }
+  }
+}
 
 /* ---------------- Popup (modal dialog) ---------------- */
 export function Popup({

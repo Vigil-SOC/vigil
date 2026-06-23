@@ -1,6 +1,6 @@
 """Claude API endpoints for chat, streaming, and Agent SDK workflows."""
 
-from typing import List, Optional, Dict, Union, Any
+from typing import List, Optional, Dict, Union, Any, Tuple
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -54,8 +54,23 @@ def _resolve_model_for_request(
       5. Default Anthropic provider's default_model
       6. Historical default 'claude-sonnet-4-5-20250929'
     """
+    return _resolve_provider_model_for_request(requested_model, agent_id)[1]
+
+
+def _resolve_provider_model_for_request(
+    requested_model: Optional[str], agent_id: Optional[str]
+) -> Tuple[Optional[str], str]:
+    """Resolve provider + model for chat requests.
+
+    Older Chat UI state can persist model ids as ``provider_id::model_id``.
+    Keep accepting that shape so a stale localStorage value does not route an
+    Ollama/OpenAI model through the Anthropic-only ClaudeService path.
+    """
     if requested_model:
-        return requested_model
+        if "::" in requested_model:
+            provider_id, model_id = requested_model.split("::", 1)
+            return (provider_id or None, model_id or requested_model)
+        return (None, requested_model)
 
     registry = get_registry()
     agent_override: Optional[str] = None
@@ -80,8 +95,8 @@ def _resolve_model_for_request(
         resolved = registry.resolve_model_for_component(category)
 
     if resolved is not None:
-        return resolved[1]
-    return "claude-sonnet-4-5-20250929"
+        return resolved
+    return (None, "claude-sonnet-4-5-20250929")
 
 
 class ContentBlock(BaseModel):
@@ -171,7 +186,10 @@ async def chat(request: ChatRequest):
     start_time = time.time()
 
     # GH #89: resolve model via ai_model_configs if caller didn't specify one.
-    request.model = _resolve_model_for_request(request.model, request.agent_id)
+    provider_id, resolved_model = _resolve_provider_model_for_request(
+        request.model, request.agent_id
+    )
+    request.model = resolved_model
 
     logger.info(
         f"📨 Chat request received - RequestID: {request_id}, Model: {request.model}, Thinking: {request.enable_thinking}, Budget: {request.thinking_budget}, Agent: {request.agent_id}"
@@ -446,7 +464,10 @@ async def chat_stream(request: ChatRequest):
     start_time = time.time()
 
     # GH #89: resolve model via ai_model_configs if caller didn't specify one.
-    request.model = _resolve_model_for_request(request.model, request.agent_id)
+    provider_id, resolved_model = _resolve_provider_model_for_request(
+        request.model, request.agent_id
+    )
+    request.model = resolved_model
 
     logger.info(
         f"🌊 Stream request received - RequestID: {request_id}, Model: {request.model}, Thinking: {request.enable_thinking}, Budget: {request.thinking_budget}, Agent: {request.agent_id}"
@@ -501,15 +522,32 @@ async def chat_stream(request: ChatRequest):
     if max_tokens is None:
         max_tokens = 4096
 
-    claude_service = ClaudeService(
-        use_backend_tools=True,
-        enable_thinking=enable_thinking,
-        thinking_budget=thinking_budget,
+    router_provider = None
+    if provider_id:
+        try:
+            from services.llm_router import get_provider_spec
+
+            router_provider = get_provider_spec(provider_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Provider lookup failed for %s: %s", provider_id, exc)
+            router_provider = None
+
+    use_router = (
+        router_provider is not None
+        and getattr(router_provider, "provider_type", None) != "anthropic"
     )
 
-    # Check if API key is configured (works for both implementations)
-    if not claude_service.has_api_key():
-        _raise_no_provider()
+    claude_service = None
+    if not use_router:
+        claude_service = ClaudeService(
+            use_backend_tools=True,
+            enable_thinking=enable_thinking,
+            thinking_budget=thinking_budget,
+        )
+
+        # Check if API key is configured (works for both implementations)
+        if not claude_service.has_api_key():
+            _raise_no_provider()
 
     async def generate():
         try:
@@ -591,12 +629,37 @@ async def chat_stream(request: ChatRequest):
                 f"🚀 [RequestID: {request_id}] Starting stream with {len(messages)} messages, context={len(context) if context else 0}"
             )
 
+            if use_router and router_provider is not None:
+                from services.llm_router import LLMRouter
+
+                router_system_prompt = (
+                    "You are Vigil, a concise SOC triage analyst. This local "
+                    "Ollama/OpenAI-compatible chat path has no executable tools. "
+                    "Do not claim to fetch, search, query, enrich, call, store, "
+                    "or retrieve anything. Do not mention tool names, XML tags, "
+                    "or placeholders. Ignore any instruction in the conversation "
+                    "that asks you to use tools. Analyze only the finding details "
+                    "and conversation context already present. If data is missing, "
+                    "say what is missing and recommend the next manual validation "
+                    "step. Write the final investigation analysis directly."
+                )
+                async for chunk in LLMRouter().dispatch_openai_stream(
+                    provider=router_provider,
+                    messages=messages,
+                    system_prompt=router_system_prompt,
+                    model=request.model,
+                    max_tokens=max_tokens,
+                ):
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                return
+
             chunk_count = 0
             thinking_chunks = 0
             text_chunks = 0
             total_text_length = 0
             total_thinking_length = 0
 
+            assert claude_service is not None
             async for chunk in claude_service.chat_stream(
                 message=current_message,
                 context=context,

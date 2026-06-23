@@ -5,6 +5,9 @@ import { AuthProvider } from './contexts/AuthContext'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import MainLayout from './components/layout/MainLayout'
 import SetupGate from './components/setup/SetupGate'
+// Eager (never suspends) so it can serve as the redesign's own Suspense
+// fallback while the lazy /redesign chunk loads.
+import RedesignLoader from './redesign/shell/Loader'
 
 // Lazy-load every page so a refresh on any route only pulls that page's
 // module graph (plus shared deps). Previously every page was eagerly
@@ -23,12 +26,19 @@ const Skills = lazy(() => import('./pages/Skills'))
 const Orchestrator = lazy(() => import('./pages/Orchestrator'))
 const BuilderTool = lazy(() => import('./pages/BuilderTool'))
 const Setup = lazy(() => import('./pages/Setup'))
+// UI redesign preview (Claude Design handoff) — full-screen, mock data.
+const SocConsole = lazy(() => import('./redesign/SocConsole'))
+const SocLogin = lazy(() => import('./redesign/screens/login/LoginScreen'))
 
 const PageFallback = () => (
   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 200 }}>
     <CircularProgress size={24} />
   </Box>
 )
+
+// Wrap the lazy /redesign elements in their own Suspense so they show the
+// redesign-styled loader (not the legacy MUI spinner) while loading.
+const redesign = (el: JSX.Element) => <Suspense fallback={<RedesignLoader />}>{el}</Suspense>
 
 function App() {
   return (
@@ -50,6 +60,16 @@ function App() {
               </ProtectedRoute>
             }
           />
+
+          {/* UI redesign preview — standalone, full-screen, illustrative mock data.
+              Each screen owns a URL (/redesign/<screen>); cases deep-link to a
+              specific case via the ?case=<caseId> query param. */}
+          <Route path="/redesign" element={<Navigate to="/redesign/dashboard" replace />} />
+          <Route path="/redesign/login" element={redesign(<SocLogin />)} />
+          <Route path="/redesign/:screen" element={redesign(<SocConsole />)} />
+          {/* deeper junk paths (/redesign/a/b/…) fall through to the in-shell 404 */}
+          <Route path="/redesign/*" element={redesign(<SocConsole />)} />
+
 
           {/* Protected routes */}
           <Route
