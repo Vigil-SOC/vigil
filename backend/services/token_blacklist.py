@@ -13,10 +13,9 @@ Two revocation strategies, used together:
    one write invalidates every token the user holds, without having to
    enumerate them.
 
-Verify-path failures (Redis unreachable during `is_token_revoked`) are
-**fail-open** with a WARNING: the system should not take authentication
-offline because the cache is down. Write-path failures (blacklist on logout)
-are logged and re-raised so the caller can decide whether to hard-fail.
+Verify-path failures (Redis unreachable during `is_token_revoked`) default to
+**fail-closed** (reject the request). Set `REVOCATION_FAIL_OPEN=true` only if
+you deliberately prefer availability over security during Redis outages.
 """
 
 import logging
@@ -32,6 +31,12 @@ DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 _JTI_PREFIX = "blacklist:jti:"
 _USER_CUTOFF_PREFIX = "user_revoked_before:"
 
+# If True, Redis failures during verification allow the request through.
+# Default: False (fail-closed). Set REVOCATION_FAIL_OPEN=true for fail-open.
+_FAIL_OPEN = os.getenv("REVOCATION_FAIL_OPEN", "false").lower() in (
+    "1", "true", "yes"
+)
+
 
 _client = None
 
@@ -44,7 +49,9 @@ def _get_client():
     try:
         from redis import asyncio as redis_asyncio  # type: ignore
     except Exception as exc:
-        logger.warning("redis.asyncio unavailable: %s — token revocation disabled", exc)
+        logger.warning(
+            "redis.asyncio unavailable: %s — token revocation disabled", exc
+        )
         return None
     url = os.getenv("REDIS_URL", DEFAULT_REDIS_URL)
     _client = redis_asyncio.from_url(url, decode_responses=True)
@@ -59,11 +66,7 @@ async def blacklist_jti(jti: str, expires_at: Optional[datetime]) -> None:
     """
     Mark a specific token as revoked. Called on /logout.
 
-    The key expires when the token would have expired anyway, so an
-    attacker who replays the token after its exp is irrelevant (JWT
-    signature check already rejects it). Raises on Redis failure so the
-    /logout handler can surface the error — we prefer a noisy logout
-    failure over a silent revocation miss.
+    Raises on Redis failure so the /logout handler can surface the error.
     """
     client = _get_client()
     if client is None:
@@ -74,10 +77,10 @@ async def blacklist_jti(jti: str, expires_at: Optional[datetime]) -> None:
     if expires_at is not None:
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
-        ttl_seconds = int((expires_at - datetime.now(tz=timezone.utc)).total_seconds())
+        ttl_seconds = int(
+            (expires_at - datetime.now(tz=timezone.utc)).total_seconds()
+        )
     if ttl_seconds <= 0:
-        # Token has already expired — no point blacklisting, JWT layer
-        # will reject it on signature/exp.
         return
 
     await client.set(f"{_JTI_PREFIX}{jti}", "1", ex=ttl_seconds)
@@ -86,13 +89,13 @@ async def blacklist_jti(jti: str, expires_at: Optional[datetime]) -> None:
 async def revoke_all_for_user(user_id: str) -> None:
     """
     Invalidate every outstanding token for a user by moving the cutoff
-    timestamp forward. Called on password change, role change, or an
-    explicit "log out everywhere". Any token whose `iat` is earlier than
-    the stored value fails `is_token_revoked`.
+    timestamp forward.
     """
     client = _get_client()
     if client is None:
-        logger.warning("revoke_all_for_user: redis client unavailable; skipping")
+        logger.warning(
+            "revoke_all_for_user: redis client unavailable; skipping"
+        )
         return
     await client.set(f"{_USER_CUTOFF_PREFIX}{user_id}", str(_now_ts()))
 
@@ -101,14 +104,19 @@ async def is_token_revoked(payload: dict) -> bool:
     """
     Check whether a decoded JWT payload has been revoked.
 
-    Fail-open on Redis errors — the verify path must not take auth down
-    because the cache is unavailable. The tradeoff: a revocation might not
-    take effect for as long as Redis is down. That is acceptable; the
-    alternative is a cache outage logging everyone out.
+    Behaviour on Redis failure is controlled by REVOCATION_FAIL_OPEN env var:
+      - False (default): treat Redis failure as revoked → user must re-auth.
+      - True: allow through on Redis failure (availability over security).
     """
     client = _get_client()
     if client is None:
-        return False
+        if _FAIL_OPEN:
+            return False
+        logger.error(
+            "is_token_revoked: redis unavailable and REVOCATION_FAIL_OPEN=false"
+            " — rejecting token"
+        )
+        return True
 
     jti = payload.get("jti")
     user_id = payload.get("user_id")
@@ -120,26 +128,30 @@ async def is_token_revoked(payload: dict) -> bool:
                 return True
 
         if user_id:
-            cutoff_raw = await client.get(f"{_USER_CUTOFF_PREFIX}{user_id}")
+            cutoff_raw = await client.get(
+                f"{_USER_CUTOFF_PREFIX}{user_id}"
+            )
             if cutoff_raw is not None:
                 try:
                     cutoff = int(cutoff_raw)
                 except (TypeError, ValueError):
                     logger.warning(
-                        "Malformed user cutoff for %s: %r", user_id, cutoff_raw
+                        "Malformed user cutoff for %s: %r",
+                        user_id,
+                        cutoff_raw,
                     )
-                    return False
+                    return not _FAIL_OPEN
                 iat = payload.get("iat")
                 if iat is None:
-                    # Token predates the iat addition — treat as revoked so
-                    # old tokens force a re-login after a cutoff is set.
                     return True
                 if int(iat) < cutoff:
                     return True
     except Exception as exc:
         logger.warning(
-            "is_token_revoked: redis lookup failed (%s); failing open", exc
+            "is_token_revoked: redis lookup failed (%s); fail_%s",
+            exc,
+            "open" if _FAIL_OPEN else "closed",
         )
-        return False
+        return not _FAIL_OPEN
 
     return False

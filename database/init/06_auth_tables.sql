@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     is_verified BOOLEAN NOT NULL DEFAULT FALSE,
     mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     mfa_secret VARCHAR(255),
+    mfa_recovery_codes JSONB NOT NULL DEFAULT '[]',
     last_login TIMESTAMP,
     login_count INTEGER NOT NULL DEFAULT 0,
     failed_login_count INTEGER NOT NULL DEFAULT 0,

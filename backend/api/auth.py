@@ -190,8 +190,14 @@ async def login(
             )
 
     # Generate tokens
-    access_token = AuthService.generate_jwt_token(user, "access")
-    refresh_token = AuthService.generate_jwt_token(user, "refresh")
+    _ip = request.client.host if request.client else None
+    _ua = request.headers.get("user-agent")
+    access_token = AuthService.generate_jwt_token(
+        user, "access", request_ip=_ip, user_agent=_ua
+    )
+    refresh_token = AuthService.generate_jwt_token(
+        user, "refresh", request_ip=_ip, user_agent=_ua
+    )
 
     # Extract exp claims so the cookie Max-Age matches the JWT lifetime.
     access_payload = AuthService.verify_jwt_token(access_token) or {}
@@ -348,8 +354,14 @@ async def refresh_token(
         )
 
     # Generate new tokens
-    access_token = AuthService.generate_jwt_token(user, "access")
-    refresh_token = AuthService.generate_jwt_token(user, "refresh")
+    _ip = request.client.host if request.client else None
+    _ua = request.headers.get("user-agent")
+    access_token = AuthService.generate_jwt_token(
+        user, "access", request_ip=_ip, user_agent=_ua
+    )
+    refresh_token = AuthService.generate_jwt_token(
+        user, "refresh", request_ip=_ip, user_agent=_ua
+    )
 
     access_payload = AuthService.verify_jwt_token(access_token) or {}
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}

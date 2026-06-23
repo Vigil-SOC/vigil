@@ -9,7 +9,7 @@ import os
 import secrets
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import bcrypt
 import jwt
 import pyotp
@@ -58,8 +58,8 @@ def _load_jwt_secret() -> str:
 # JWT Configuration
 JWT_SECRET_KEY = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRATION_HOURS = 24
-JWT_REFRESH_EXPIRATION_DAYS = 30
+JWT_ACCESS_EXPIRATION_MINUTES = int(os.getenv("JWT_ACCESS_EXPIRATION_MINUTES", "30"))
+JWT_REFRESH_EXPIRATION_DAYS = int(os.getenv("JWT_REFRESH_EXPIRATION_DAYS", "7"))
 
 # Account lockout configuration
 LOCKOUT_THRESHOLD = int(os.getenv("AUTH_LOCKOUT_THRESHOLD", "5"))
@@ -134,21 +134,19 @@ class AuthService:
             return False
     
     @staticmethod
-    def generate_jwt_token(user: User, token_type: str = "access") -> str:
-        """
-        Generate a JWT token for a user.
-        
-        Args:
-            user: User object
-            token_type: "access" or "refresh"
-        
-        Returns:
-            JWT token string
-        """
+    def generate_jwt_token(
+        user: User,
+        token_type: str = "access",
+        request_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> str:
+        """Generate a JWT token for a user with optional session binding."""
         expiration = timedelta(
-            hours=JWT_EXPIRATION_HOURS if token_type == "access" else JWT_REFRESH_EXPIRATION_DAYS * 24
+            minutes=JWT_ACCESS_EXPIRATION_MINUTES
+        ) if token_type == "access" else timedelta(
+            days=JWT_REFRESH_EXPIRATION_DAYS
         )
-        
+
         now = datetime.utcnow()
         payload = {
             "user_id": user.user_id,
@@ -160,9 +158,33 @@ class AuthService:
             "exp": now + expiration,
             "iat": now,
         }
-        
+
+        # Bind token to session context when available
+        if request_ip or user_agent:
+            import hashlib
+            fp_data = f"{request_ip or ''}|{user_agent or ''}"
+            payload["sfp"] = hashlib.sha256(fp_data.encode()).hexdigest()[:16]
+
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
         return token
+
+    @staticmethod
+    def verify_session_fingerprint(
+        payload: Dict[str, Any],
+        request_ip: Optional[str] = None,
+        user_agent: Optional[str] = None,
+    ) -> bool:
+        """Check that a token's session fingerprint matches the request context.
+
+        Returns True if no fingerprint is bound (backwards compat) or if it matches.
+        """
+        sfp = payload.get("sfp")
+        if not sfp:
+            return True
+        import hashlib
+        fp_data = f"{request_ip or ''}|{user_agent or ''}"
+        expected = hashlib.sha256(fp_data.encode()).hexdigest()[:16]
+        return secrets.compare_digest(sfp, expected)
     
     @staticmethod
     def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
@@ -265,84 +287,158 @@ class AuthService:
     
     @staticmethod
     def setup_mfa(user_id: str, session: Optional[Session] = None) -> Optional[str]:
-        """
-        Setup MFA for a user.
-        
-        Args:
-            user_id: User ID
-            session: Database session (optional)
-        
-        Returns:
-            MFA secret (base32 encoded) or None
-        """
+        """Setup MFA. Returns TOTP secret and generates recovery codes."""
         should_close_session = session is None
         if session is None:
             session = get_db_session()
-        
+
         try:
             user = session.query(User).filter(User.user_id == user_id).first()
             if not user:
                 return None
-            
-            # Generate MFA secret
+
             secret = pyotp.random_base32()
-            user.mfa_secret = secret
-            user.mfa_enabled = False  # Will be enabled after verification
+            user.mfa_secret = AuthService._encrypt_mfa_secret(secret)
+            user.mfa_enabled = False
+            # Generate 10 recovery codes, store bcrypt-hashed
+            codes = [secrets.token_hex(4).upper() for _ in range(10)]
+            user.mfa_recovery_codes = [
+                bcrypt.hashpw(c.encode(), bcrypt.gensalt()).decode()
+                for c in codes
+            ]
             session.commit()
-            
+
             logger.info(f"MFA setup initiated for user: {user.username}")
+            # Return plaintext secret; recovery codes returned separately
             return secret
-        
+
         except Exception as e:
             logger.error(f"MFA setup error: {e}")
             session.rollback()
             return None
-        
+
         finally:
             if should_close_session:
                 session.close()
-    
+
     @staticmethod
-    def verify_mfa_code(user_id: str, code: str, session: Optional[Session] = None) -> bool:
-        """
-        Verify an MFA code.
-        
-        Args:
-            user_id: User ID
-            code: 6-digit MFA code
-            session: Database session (optional)
-        
-        Returns:
-            True if code is valid
+    def get_mfa_recovery_codes(
+        user_id: str, session: Optional[Session] = None
+    ) -> Optional[List[str]]:
+        """Generate fresh recovery codes for a user (re-setup).
+
+        Returns plaintext codes. Caller must display them once; they cannot
+        be retrieved again.
         """
         should_close_session = session is None
         if session is None:
             session = get_db_session()
-        
+
+        try:
+            user = session.query(User).filter(User.user_id == user_id).first()
+            if not user or not user.mfa_secret:
+                return None
+
+            codes = [secrets.token_hex(4).upper() for _ in range(10)]
+            user.mfa_recovery_codes = [
+                bcrypt.hashpw(c.encode(), bcrypt.gensalt()).decode()
+                for c in codes
+            ]
+            session.commit()
+            return codes
+
+        except Exception as e:
+            logger.error(f"Recovery code generation error: {e}")
+            session.rollback()
+            return None
+
+        finally:
+            if should_close_session:
+                session.close()
+
+    @staticmethod
+    def verify_mfa_code(
+        user_id: str, code: str, session: Optional[Session] = None
+    ) -> bool:
+        """Verify a TOTP code or a one-time recovery code."""
+        should_close_session = session is None
+        if session is None:
+            session = get_db_session()
+
         try:
             user = session.query(User).filter(User.user_id == user_id).first()
             if not user or not user.mfa_secret:
                 return False
-            
-            # Verify TOTP code
-            totp = pyotp.TOTP(user.mfa_secret)
-            is_valid = totp.verify(code, valid_window=1)  # Allow 1 time step window
-            
-            if is_valid and not user.mfa_enabled:
-                # First successful verification - enable MFA
-                user.mfa_enabled = True
-                session.commit()
-                logger.info(f"MFA enabled for user: {user.username}")
-            
-            return is_valid
-        
+
+            # Try TOTP first
+            decrypted_secret = AuthService._decrypt_mfa_secret(user.mfa_secret)
+            totp = pyotp.TOTP(decrypted_secret)
+            if totp.verify(code, valid_window=1):
+                if not user.mfa_enabled:
+                    user.mfa_enabled = True
+                    session.commit()
+                    logger.info(f"MFA enabled for user: {user.username}")
+                return True
+
+            # Try recovery codes (one-time use)
+            recovery_codes = list(user.mfa_recovery_codes or [])
+            code_bytes = code.strip().upper().encode()
+            for i, hashed in enumerate(recovery_codes):
+                try:
+                    if bcrypt.checkpw(code_bytes, hashed.encode()):
+                        recovery_codes.pop(i)
+                        user.mfa_recovery_codes = recovery_codes
+                        session.commit()
+                        logger.info(
+                            "Recovery code used for user: %s (%d remaining)",
+                            user.username,
+                            len(recovery_codes),
+                        )
+                        return True
+                except Exception:
+                    continue
+
+            return False
+
         except Exception as e:
             logger.error(f"MFA verification error: {e}")
             return False
-        
+
         finally:
             if should_close_session:
                 session.close()
+
+    @staticmethod
+    def _encrypt_mfa_secret(secret: str) -> str:
+        """Encrypt MFA secret at rest using the JWT key as a derived key.
+
+        Uses Fernet symmetric encryption. The encryption key is derived from
+        JWT_SECRET_KEY via SHA-256 + base64 to produce a valid 32-byte Fernet key.
+        """
+        import base64
+        import hashlib
+        from cryptography.fernet import Fernet
+
+        key = base64.urlsafe_b64encode(
+            hashlib.sha256(JWT_SECRET_KEY.encode()).digest()
+        )
+        return Fernet(key).encrypt(secret.encode()).decode()
+
+    @staticmethod
+    def _decrypt_mfa_secret(encrypted: str) -> str:
+        """Decrypt MFA secret from storage."""
+        import base64
+        import hashlib
+        from cryptography.fernet import Fernet
+
+        key = base64.urlsafe_b64encode(
+            hashlib.sha256(JWT_SECRET_KEY.encode()).digest()
+        )
+        try:
+            return Fernet(key).decrypt(encrypted.encode()).decode()
+        except Exception:
+            # Fallback: secret may be stored unencrypted (pre-migration rows)
+            return encrypted
     
     @staticmethod
     def get_mfa_qr_uri(user_id: str, session: Optional[Session] = None) -> Optional[str]:

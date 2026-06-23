@@ -1850,6 +1850,7 @@ class User(Base):
     # MFA
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     mfa_secret: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    mfa_recovery_codes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
 
     # Session tracking
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

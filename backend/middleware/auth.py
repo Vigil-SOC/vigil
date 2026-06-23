@@ -131,11 +131,22 @@ async def get_current_user(
         )
 
     # Reject revoked tokens (logout / password change / role change).
-    # Fail-open if Redis is down — see token_blacklist.is_token_revoked.
     if await is_token_revoked(payload):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has been revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Validate session fingerprint (IP + UA binding).
+    if not AuthService.verify_session_fingerprint(
+        payload,
+        request_ip=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session fingerprint mismatch",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
