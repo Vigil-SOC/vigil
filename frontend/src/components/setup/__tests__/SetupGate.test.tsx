@@ -43,7 +43,9 @@ const renderGate = () =>
   )
 
 describe('SetupGate readiness gating', () => {
-  beforeEach(() => vi.clearAllMocks())
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('admits the user when an active default provider exists', async () => {
     (llmProviderApi.list as any).mockResolvedValue({ data: [provider()] })
