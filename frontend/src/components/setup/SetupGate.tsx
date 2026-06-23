@@ -1,7 +1,7 @@
 import { ReactNode } from 'react'
 import { Navigate } from 'react-router-dom'
-import { Box, CircularProgress, Typography } from '@mui/material'
 import useSetupStatus from '../../hooks/useSetupStatus'
+import RedesignLoader from '../../redesign/shell/Loader'
 
 interface Props {
   children: ReactNode
@@ -15,23 +15,7 @@ const SetupGate = ({ children }: Props) => {
   const { configured, loading } = useSetupStatus()
 
   if (loading) {
-    return (
-      <Box
-        sx={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: '100vh',
-          gap: 2,
-        }}
-      >
-        <CircularProgress size={48} />
-        <Typography variant="body1" color="text.secondary">
-          Loading...
-        </Typography>
-      </Box>
-    )
+    return <RedesignLoader label="Checking setup…" />
   }
 
   if (!configured) {

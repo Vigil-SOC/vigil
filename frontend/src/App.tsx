@@ -25,10 +25,12 @@ const Analytics = lazy(() => import('./pages/Analytics'))
 const Skills = lazy(() => import('./pages/Skills'))
 const Orchestrator = lazy(() => import('./pages/Orchestrator'))
 const BuilderTool = lazy(() => import('./pages/BuilderTool'))
-const Setup = lazy(() => import('./pages/Setup'))
 // UI redesign preview (Claude Design handoff) — full-screen, mock data.
 const SocConsole = lazy(() => import('./redesign/SocConsole'))
 const SocLogin = lazy(() => import('./redesign/screens/login/LoginScreen'))
+// First-run setup gate — the redesign-styled SetupScreen, rendered standalone
+// (no console shell) at /setup.
+const SetupScreen = lazy(() => import('./redesign/screens/setup/SetupScreen'))
 
 const PageFallback = () => (
   <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 1, minHeight: 200 }}>
@@ -54,11 +56,7 @@ function App() {
               unconfigured — otherwise the gate would redirect to itself. */}
           <Route
             path="/setup"
-            element={
-              <ProtectedRoute>
-                <Setup />
-              </ProtectedRoute>
-            }
+            element={<ProtectedRoute>{redesign(<SetupScreen />)}</ProtectedRoute>}
           />
 
           {/* UI redesign preview — standalone, full-screen, illustrative mock data.
