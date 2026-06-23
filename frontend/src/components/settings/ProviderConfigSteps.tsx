@@ -27,8 +27,14 @@ import { llmProviderApi, LLMProvider, LLMProviderCreate } from '../../services/a
 export type ProviderType = 'anthropic' | 'openai' | 'ollama'
 
 // Layout-agnostic core of the LLM provider setup flow (Provider → Connection →
-// Test & Save). Both the Settings dialog (LLMProviderDialog) and the first-run
-// onboarding wizard (pages/Setup) render this so the two never drift.
+// Test & Save). Rendered by the MUI Settings dialog (LLMProviderDialog → the
+// Settings LLM tab).
+// NOTE: the redesign onboarding wizard (/setup) does NOT share this. It has a
+// separate Tailwind implementation — redesign/screens/settings/LlmProviderDialog
+// (LlmProviderWizard) — which has diverged during the MUI→Tailwind migration:
+// step-1 model discovery + custom-model toggle here vs. test-then-list there;
+// `forceDefault` here vs. post-save promotion in SetupScreen. Reconcile when
+// #352 lands (see the llmproviderdialog-reconcile-after-352 memory note).
 interface Props {
   existing: LLMProvider | null
   onSaved: () => void

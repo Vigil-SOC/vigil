@@ -7,7 +7,7 @@
 // The provider step reuses the redesign's LlmProviderWizard body (the same flow
 // Settings shows in a modal), rendered inline here.
 import { Fragment, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Navigate, useNavigate } from 'react-router-dom'
 import '../../styles.css'
 import { Icon } from '../../shared/icons'
 import { SettingsCard } from '../../shared/ui'
@@ -20,6 +20,26 @@ import useSetupChecklist, { type ChecklistStep } from '../../../hooks/useSetupCh
 import type { SetupStepId } from '../../../setup/setupSteps'
 import { useAuth } from '../../../contexts/AuthContext'
 import { llmProviderApi } from '../../../services/api'
+
+// /setup is revisitable while setup is unfinished, but steps aside once the
+// user is done. "Dismissed" is a per-browser localStorage flag set when they
+// leave via "Go to dashboard" (guarded — storage can throw in private mode).
+// Readiness stays live-derived; this is only the UI "I'm finished here" signal.
+const SETUP_DISMISSED_KEY = 'vigil.setupDismissed'
+const readSetupDismissed = (): boolean => {
+  try {
+    return localStorage.getItem(SETUP_DISMISSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+const markSetupDismissed = (): void => {
+  try {
+    localStorage.setItem(SETUP_DISMISSED_KEY, '1')
+  } catch {
+    /* storage unavailable — skip persistence */
+  }
+}
 
 // Top-anchored (not vertically centered): the checklist card grows as steps
 // expand, so centering would drift the header upward on every open/close. A
@@ -155,6 +175,15 @@ const SetupScreen = () => {
       ? 'All set — every step configured'
       : `Ready · ${optionalDone} of ${optionalSteps.length} optional done`
 
+  // Once setup is finished — every step ready, or dismissed by leaving via
+  // "Go to dashboard" — /setup steps aside. Guarded by llmReady so that if the
+  // provider is later lost (SetupGate routes back here) the user lands on the
+  // wizard to fix it rather than bouncing in a redirect loop.
+  const allReady = steps.length > 0 && steps.every((s) => s.ready)
+  if (!loading && llmReady && (allReady || readSetupDismissed())) {
+    return <Navigate to="/" replace />
+  }
+
   const closeStep = () => setActiveStep(null)
   const handleSaved = () => {
     setActiveStep(null)
@@ -276,7 +305,10 @@ const SetupScreen = () => {
         <button
           className="btn primary disabled:opacity-50 disabled:cursor-not-allowed"
           disabled={!llmReady}
-          onClick={() => navigate('/', { replace: true })}
+          onClick={() => {
+            markSetupDismissed()
+            navigate('/', { replace: true })
+          }}
         >
           Go to dashboard
           <Icon name="arrowR" size={15} />

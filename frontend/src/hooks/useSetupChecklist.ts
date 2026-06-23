@@ -2,8 +2,12 @@
 //
 // Soft-checklist state: fetches every domain the setup steps care about and
 // runs each step's readiness predicate. Purely additive — the hard gate still
-// lives in useSetupStatus / SetupGate; this only drives the (dismissible,
-// non-blocking) checklist + nudge.
+// lives in useSetupStatus / SetupGate; this only drives the (non-blocking)
+// setup checklist.
+//
+// SetupScreen consumes `steps`/`loading`/`refetch`. `requiredReady` and
+// `incompleteCount` are scaffolding for a planned dashboard "finish setup"
+// nudge that isn't built yet — currently exercised only by tests.
 import { useCallback, useEffect, useState } from 'react'
 import { llmProviderApi, mcpApi, aiConfigApi, budgetsApi, configApi } from '../services/api'
 import {

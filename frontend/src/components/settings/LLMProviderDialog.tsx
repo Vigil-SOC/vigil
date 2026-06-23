@@ -9,8 +9,11 @@ interface Props {
   onError: (msg: string) => void
 }
 
-// Modal shell around the shared ProviderConfigSteps core. The full-page
-// onboarding wizard (pages/Setup) renders the same core without this frame.
+// MUI modal shell around the ProviderConfigSteps core, used by the Settings LLM
+// tab (LLMProvidersTab).
+// NOTE: the redesign onboarding wizard (/setup) does NOT reuse this core — it
+// has its own Tailwind implementation (redesign/screens/settings/
+// LlmProviderDialog) that has diverged; reconcile after #352.
 const LLMProviderDialog = ({ existing, onClose, onSaved, onError }: Props) => {
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
