@@ -12,6 +12,7 @@ import type { IntegrationMetadata } from '../../../components/settings/Integrati
 import { getAllIntegrations } from '../../../config/integrations'
 import { DATA_SOURCE_CATEGORIES } from '../../../setup/setupSteps'
 import { configApi, mcpApi } from '../../../services/api'
+import { TextInput } from '../../shared/ui'
 
 interface Props {
   onSaved: () => void
@@ -32,6 +33,7 @@ interface IntegrationsConfig {
 
 const DataSourceDialog = ({ onSaved }: Props) => {
   const [selected, setSelected] = useState<IntegrationMetadata | null>(null)
+  const [query, setQuery] = useState('')
   // Loaded once so the merge keeps other integrations' config intact and the
   // wizard can pre-fill an already-configured source.
   const cfg = useRef<IntegrationsConfig>({ enabled_integrations: [], integrations: {} })
@@ -57,6 +59,17 @@ const DataSourceDialog = ({ onSaved }: Props) => {
     () => getAllIntegrations().filter((i) => DATA_SOURCE_CATEGORIES.has(i.category)),
     [],
   )
+
+  // The catalog is long (40+ sources across SIEM/EDR/cloud/network), so the
+  // picker filters by name or category — keeps the panel a sane height instead
+  // of a giant scroll of cards.
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return dataSources
+    return dataSources.filter(
+      (i) => i.name.toLowerCase().includes(q) || i.category.toLowerCase().includes(q),
+    )
+  }, [dataSources, query])
 
   // Persist credentials, then connect the MCP server. Throwing surfaces the
   // message in the wizard's own error banner; resolving lets it close and we
@@ -89,18 +102,36 @@ const DataSourceDialog = ({ onSaved }: Props) => {
   }
 
   return (
-    <div className="flex flex-col gap-3.5">
+    <div className="flex flex-col gap-3">
       <p className="text-sm text-tx-2">
-        Connect a SIEM, EDR, or other telemetry source so Vigil has alerts to triage. Pick one
-        to configure — you can add more anytime in Settings → Integrations.
+        Connect a SIEM, EDR, or other telemetry source so Vigil has alerts to triage. Search and
+        pick one — you can add more anytime in Settings → Integrations.
       </p>
-      <div className="grid grid-cols-2 gap-2">
-        {dataSources.map((i) => (
-          <button key={i.id} className="card card-sq text-left p-3" onClick={() => setSelected(i)}>
-            <div className="text-[13px] font-semibold text-tx">{i.name}</div>
-            <div className="text-xs text-tx-3 mt-0.5">{i.category}</div>
-          </button>
-        ))}
+      <TextInput
+        value={query}
+        placeholder="Search data sources (Splunk, CrowdStrike, Wiz…)"
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {/* Fixed height (not max-h): a stable results window you scroll within, so
+          filtering doesn't snap the panel smaller on each keystroke. ~3 rows tall. */}
+      <div className="h-56 overflow-y-auto pr-1 -mr-1">
+        <div className="grid grid-cols-2 gap-2">
+          {filtered.map((i) => (
+            <button
+              key={i.id}
+              className="card card-sq text-left p-3"
+              onClick={() => setSelected(i)}
+            >
+              <div className="text-[13px] font-semibold text-tx">{i.name}</div>
+              <div className="text-xs text-tx-3 mt-0.5">{i.category}</div>
+            </button>
+          ))}
+          {filtered.length === 0 && (
+            <div className="col-span-2 py-6 text-center text-sm text-tx-3">
+              No data sources match “{query.trim()}”.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

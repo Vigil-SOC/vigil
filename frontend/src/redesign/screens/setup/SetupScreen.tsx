@@ -6,7 +6,7 @@
 // step configures inline — each expands its form in place (accordion), no modal.
 // The provider step reuses the redesign's LlmProviderWizard body (the same flow
 // Settings shows in a modal), rendered inline here.
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import '../../styles.css'
 import { Icon } from '../../shared/icons'
@@ -21,10 +21,14 @@ import type { SetupStepId } from '../../../setup/setupSteps'
 import { useAuth } from '../../../contexts/AuthContext'
 import { llmProviderApi } from '../../../services/api'
 
+// Top-anchored (not vertically centered): the checklist card grows as steps
+// expand, so centering would drift the header upward on every open/close. A
+// fixed 10vh top offset keeps the header and the row you clicked put, and still
+// reads as a centered-ish welcome on tall monitors.
 const Shell = ({ children }: { children: React.ReactNode }) => (
   <div className="soc-console">
     <div className="absolute inset-0 overflow-auto">
-      <div className="min-h-full flex items-center justify-center p-6">
+      <div className="min-h-full flex items-start justify-center px-6 pb-6 pt-[10vh]">
         <div className="w-full max-w-xl">{children}</div>
       </div>
     </div>
@@ -38,8 +42,7 @@ const Header = () => (
     </span>
     <h1 className="text-tx text-xl font-semibold">Welcome to Vigil</h1>
     <p className="text-tx-3 text-sm mt-1">
-      Connect an AI provider to begin — triage, investigation, and chat all run on it.
-      The rest is optional and can wait.
+      Connect an AI provider to begin. The rest is optional and can wait.
     </p>
   </header>
 )
@@ -59,16 +62,23 @@ const StepRow = ({
   const required = step.tier === 'required'
   return (
     <div className="flex items-center gap-3 py-3">
+      {/* Marker semantics: ✓ = done (positive feedback, any tier); accent ring =
+          the required gate, still to do; dashed + = an optional step you can add
+          anytime (an opt-in slot, not an unchecked-and-overdue box). */}
       <span
         className={`grid place-items-center w-6 h-6 shrink-0 rounded-full border ${
           step.ready
             ? 'bg-ok-dim border-ok text-ok'
             : required
               ? 'border-accent-line text-accent-2'
-              : 'border-line text-tx-faint'
+              : 'border-dashed border-[#39404d] text-tx-faint'
         }`}
       >
-        {step.ready && <Icon name="check2" size={13} />}
+        {step.ready ? (
+          <Icon name="check2" size={13} />
+        ) : (
+          !required && <Icon name="plus" size={12} />
+        )}
       </span>
       <div className="flex-1 min-w-0">
         <div className="text-tx text-sm font-medium">{step.label}</div>
@@ -77,7 +87,11 @@ const StepRow = ({
       {!step.ready && (
         <button className={`btn shrink-0 ${required ? 'primary' : 'ghost'}`} onClick={onAction}>
           {expanded ? 'Close' : required ? 'Connect' : 'Configure'}
-          <Icon name="chevD" size={14} className={expanded ? 'rotate-180' : ''} />
+          <Icon
+            name="chevD"
+            size={14}
+            className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          />
         </button>
       )}
     </div>
@@ -85,9 +99,40 @@ const StepRow = ({
 }
 
 // Section lead-in shown above the first step of the 'recommended' / 'optional' tiers.
-const TIER_LEAD_IN: Record<string, { label: string; hint: string }> = {
-  recommended: { label: 'Recommended', hint: 'a SOC needs telemetry to triage' },
-  optional: { label: 'Optional', hint: 'do more with Vigil, anytime' },
+const TIER_LEAD_IN: Record<string, string> = {
+  recommended: 'Recommended',
+  optional: 'Optional',
+}
+
+// Smoothly animates an inline step panel open/closed. The grid 0fr→1fr trick
+// transitions to the content's natural height (no fixed max-height guess); the
+// child is clipped via overflow during the slide. Content mounts only while
+// open and lingers through the close transition before unmounting — so each
+// step's panel still fetches lazily (on open), never on setup load.
+const Collapse = ({ open, children }: { open: boolean; children: React.ReactNode }) => {
+  const [mounted, setMounted] = useState(open)
+  useEffect(() => {
+    if (open) setMounted(true)
+  }, [open])
+  return (
+    <div
+      className="grid transition-[grid-template-rows] duration-[220ms] ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none"
+      style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
+      onTransitionEnd={(e) => {
+        if (!open && e.propertyName === 'grid-template-rows' && e.target === e.currentTarget) {
+          setMounted(false)
+        }
+      }}
+    >
+      <div
+        className={`overflow-hidden min-h-0 transition-opacity duration-[180ms] ${
+          open ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        {open || mounted ? children : null}
+      </div>
+    </div>
+  )
 }
 
 const SetupScreen = () => {
@@ -98,7 +143,17 @@ const SetupScreen = () => {
   const [error, setError] = useState<string | null>(null)
 
   const llmReady = steps.find((s) => s.id === 'llm-provider')?.ready ?? false
-  const readyCount = steps.filter((s) => s.ready).length
+  // Counter copy: before the required step is met, state the composition
+  // ("N required · M optional" — only one thing is mandatory), then switch to
+  // optional progress. Avoids the "0 of 5" framing that read as a 5-item quota.
+  const optionalSteps = steps.filter((s) => s.tier !== 'required')
+  const requiredCount = steps.length - optionalSteps.length
+  const optionalDone = optionalSteps.filter((s) => s.ready).length
+  const checklistSummary = !llmReady
+    ? `${requiredCount} required · ${optionalSteps.length} optional`
+    : optionalDone === optionalSteps.length
+      ? 'All set — every step configured'
+      : `Ready · ${optionalDone} of ${optionalSteps.length} optional done`
 
   const closeStep = () => setActiveStep(null)
   const handleSaved = () => {
@@ -184,7 +239,7 @@ const SetupScreen = () => {
           {error}
         </div>
       )}
-      <SettingsCard title="Setup checklist" desc={`${readyCount} of ${steps.length} configured`}>
+      <SettingsCard title="Setup checklist" desc={checklistSummary}>
         {loading ? (
           <div className="py-8 text-center text-tx-3 text-sm">Checking setup…</div>
         ) : (
@@ -197,11 +252,8 @@ const SetupScreen = () => {
               return (
                 <Fragment key={step.id}>
                   {leadIn && (
-                    <div className="flex items-baseline gap-2 border-t border-line-soft pt-3 pb-1.5">
-                      <span className="text-tx-2 text-xs font-medium">
-                        {TIER_LEAD_IN[step.tier].label}
-                      </span>
-                      <span className="text-tx-faint text-[11px]">{TIER_LEAD_IN[step.tier].hint}</span>
+                    <div className="border-t border-line-soft pt-3 pb-1.5">
+                      <span className="text-tx-2 text-xs font-medium">{TIER_LEAD_IN[step.tier]}</span>
                     </div>
                   )}
                   <div
@@ -210,9 +262,9 @@ const SetupScreen = () => {
                     }`}
                   >
                     <StepRow step={step} expanded={expanded} onAction={() => handleAction(step)} />
-                    {expanded && (
+                    <Collapse open={expanded}>
                       <div className="pt-1 pb-4 pl-9 pr-2">{renderStepPanel(step.id)}</div>
-                    )}
+                    </Collapse>
                   </div>
                 </Fragment>
               )

@@ -127,7 +127,7 @@ export const SETUP_STEPS: SetupStep[] = [
   {
     id: 'cost-guardrails',
     label: 'Set cost guardrails',
-    description: 'A Bifrost virtual key + spend cap.',
+    description: 'Cap how much Vigil spends each month.',
     tier: 'optional',
     settingsSection: 'ai-config',
     selectReady: (s) => !!s.budget?.default_vk?.trim(),
