@@ -85,7 +85,7 @@ export default function UserMenu() {
           <div className="user-pop-role">Role: {role}</div>
         </div>
         <div className="user-pop-sep" />
-        <button role="menuitem" onClick={() => { setOpen(false); navigate('/redesign/settings') }}>
+        <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings') }}>
           <Icon name="gear" size={15} /> Settings
         </button>
         {user.mfa_enabled && (

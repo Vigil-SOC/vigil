@@ -1,5 +1,5 @@
 /* ============================================================
-   404 — shown inside the SOC console shell when a /redesign/<screen>
+   404 — shown inside the SOC console shell when a /<screen>
    path doesn't match a known screen. The nav rail stays available so
    the user can jump elsewhere; this also offers a direct route home.
    ============================================================ */
@@ -13,7 +13,7 @@ export default function NotFoundScreen({ path, onHome }: { path?: string; onHome
       <p className="nf-sub">
         {path ? (
           <>
-            There’s nothing at <span className="mono nf-path">/redesign/{path}</span>.
+            There’s nothing at <span className="mono nf-path">/{path}</span>.
           </>
         ) : (
           'That page doesn’t exist.'

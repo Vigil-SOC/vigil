@@ -65,12 +65,12 @@ export default function SocConsole() {
 }
 
 function SocConsoleInner() {
-  // the active screen comes from the URL (/redesign/<screen>); the cases
-  // screen additionally carries its open case in a ?case=<id> query param.
+  // the active screen comes from the URL (/<screen>); the cases screen
+  // additionally carries its open case in a ?case=<id> query param.
   const navigate = useNavigate()
   const { hasPermission } = useAuth()
   const { screen } = useParams<{ screen?: string }>()
-  // an unknown segment (e.g. /redesign/foo) renders the 404 screen; `current`
+  // an unknown segment (e.g. /foo) renders the 404 screen; `current`
   // falls back to dashboard only so the chrome has a valid key to render.
   const valid = isScreenKey(screen)
   const current: ScreenKey = valid ? screen : 'dashboard'
@@ -122,7 +122,7 @@ function SocConsoleInner() {
   const go = useCallback(
     (next: ScreenKey) => {
       if (valid && next === current) return
-      navigate(`/redesign/${next}`)
+      navigate(`/${next}`)
     },
     [valid, current, navigate],
   )

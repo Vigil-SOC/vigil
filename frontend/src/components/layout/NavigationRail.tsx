@@ -39,17 +39,18 @@ interface NavItem {
   path: string
 }
 
+// The legacy UI is archived under /old/*, so every nav target carries that prefix.
 const navItems: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon />, path: '/' },
-  { id: 'cases', label: 'Cases', icon: <FolderIcon />, path: '/cases' },
-  { id: 'case-metrics', label: 'Case Metrics', icon: <MetricsIcon />, path: '/case-metrics' },
-  { id: 'analytics', label: 'Analytics', icon: <AnalyticsIcon />, path: '/analytics' },
-  { id: 'ai-decisions', label: 'AI Decisions', icon: <AIIcon />, path: '/ai-decisions' },
-  { id: 'skills', label: 'Skills', icon: <SkillsIcon />, path: '/skills' },
-  { id: 'builder', label: 'Builder Tool', icon: <BuilderIcon />, path: '/builder' },
-  { id: 'orchestrator', label: 'Auto Ops', icon: <OrchestratorIcon />, path: '/orchestrator' },
-  { id: 'timesketch', label: 'Timesketch', icon: <TimelineIcon />, path: '/timesketch' },
-  { id: 'settings', label: 'Settings', icon: <SettingsIcon />, path: '/settings' },
+  { id: 'dashboard', label: 'Dashboard', icon: <DashboardIcon />, path: '/old' },
+  { id: 'cases', label: 'Cases', icon: <FolderIcon />, path: '/old/cases' },
+  { id: 'case-metrics', label: 'Case Metrics', icon: <MetricsIcon />, path: '/old/case-metrics' },
+  { id: 'analytics', label: 'Analytics', icon: <AnalyticsIcon />, path: '/old/analytics' },
+  { id: 'ai-decisions', label: 'AI Decisions', icon: <AIIcon />, path: '/old/ai-decisions' },
+  { id: 'skills', label: 'Skills', icon: <SkillsIcon />, path: '/old/skills' },
+  { id: 'builder', label: 'Builder Tool', icon: <BuilderIcon />, path: '/old/builder' },
+  { id: 'orchestrator', label: 'Auto Ops', icon: <OrchestratorIcon />, path: '/old/orchestrator' },
+  { id: 'timesketch', label: 'Timesketch', icon: <TimelineIcon />, path: '/old/timesketch' },
+  { id: 'settings', label: 'Settings', icon: <SettingsIcon />, path: '/old/settings' },
 ]
 
 interface NavigationRailProps {
