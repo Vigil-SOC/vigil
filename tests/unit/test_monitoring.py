@@ -130,9 +130,6 @@ class TestInitSentry(unittest.TestCase):
 class TestBeforeSendFilter(unittest.TestCase):
     def test_allows_normal_events(self):
         event = {"request": {"url": "http://localhost/api/findings"}}
-        # before_send_filter suppresses ALL events when TESTING=true, which the
-        # test harness sets globally. Clear it so the normal-passthrough branch
-        # is exercised rather than the test-suppression branch.
         with patch.dict(os.environ, {"TESTING": "false"}):
             result = monitoring.before_send_filter(event, {})
         self.assertIsNotNone(result)

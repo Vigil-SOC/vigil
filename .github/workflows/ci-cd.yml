@@ -116,10 +116,6 @@ jobs:
           pytest tests/unit/ -m "not external_service" -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term
         env:
           TESTING: "true"
-          # No DB config on purpose: this job runs without a database.
-          # DatabaseManager reads POSTGRES_* (not DATABASE_URL) and defaults to
-          # an unreachable localhost; DB-backed tests are excluded above via
-          # -m "not external_service" and run in the test-unit-backend-db job.
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
           ANTHROPIC_API_KEY: ${{ secrets.CLAUDEAPI }}
       
@@ -212,19 +208,11 @@ jobs:
   # ============================================================================
   # DB-backed Unit Tests (require PostgreSQL)
   # ============================================================================
-  # These are the tests deselected from the no-service unit job via
-  # `-m "not external_service"`. They exercise real persistence (approval
-  # queue, workflow_runs) against Postgres, so they run here against a
-  # service container and GATE (no `|| true`). Without this job they would
-  # run in no CI job at all — deselected from the unit job and not collected
-  # by the integration job (which only runs tests/integration/).
   test-unit-backend-db:
     name: Unit Tests - Backend (DB-backed)
     runs-on: ubuntu-latest
     services:
       postgres:
-        # pgvector image (not plain alpine): the schema needs the `vector`
-        # and `pg_trgm` extensions to build.
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: deeptempo_test
@@ -238,8 +226,6 @@ jobs:
         ports:
           - 5432:5432
     env:
-      # DatabaseManager reads POSTGRES_* (it ignores DATABASE_URL), so these
-      # must match the service container above.
       TESTING: "true"
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"

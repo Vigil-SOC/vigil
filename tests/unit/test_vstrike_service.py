@@ -229,8 +229,6 @@ def test_get_vstrike_service_falls_back_to_integration_config(isolate_secrets):
     isolate_secrets.delenv("VSTRIKE_BASE_URL", raising=False)
     isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
     isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
-    # A leaked VSTRIKE_VERIFY_SSL from another test would override the value
-    # this test asserts comes from the integration config — clear it too.
     isolate_secrets.delenv("VSTRIKE_VERIFY_SSL", raising=False)
     with patch(
         "core.config.get_integration_config",
