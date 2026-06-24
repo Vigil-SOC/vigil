@@ -1358,16 +1358,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
     def _build_summary_prompt(self, conversation_text: str) -> str:
         return ContextManager.build_summary_prompt(conversation_text)
 
-    def _summarize_messages_sync(
-        self, messages: List[Dict], model: Optional[str] = None
-    ) -> Optional[str]:
-        return self._context_mgr._summarize_messages_sync(messages, model)
-
-    async def _summarize_messages_async(
-        self, messages: List[Dict], model: Optional[str] = None
-    ) -> Optional[str]:
-        return await self._context_mgr._summarize_messages_async(messages, model)
-
     def _prepare_context_sync(
         self,
         messages: List[Dict],
@@ -3506,10 +3496,10 @@ Provide only the JSON, no additional text."""
 
             # Update session if tracking
             if session_id:
-                self.sessions[session_id] = context + [
+                self._session_mgr.sessions[session_id] = context + [
                     {"role": "user", "content": prompt}
                 ]
-                self._persist_session_async(session_id)
+                self._session_mgr.persist_async(session_id)
 
         except Exception as e:
             logger.error(f"Agent query error: {e}")
@@ -3661,92 +3651,19 @@ Provide only the JSON, no additional text."""
 
         return results
 
-    def _get_mempalace_sessions_dir(self) -> Optional[Path]:
-        """Return path to the sessions persistence directory inside the MemPalace data dir.
-
-        We write session JSON files directly to the palace data directory because the
-        MemPalace Python package exposes a Searcher/KnowledgeGraph API for reads, but
-        does not expose a general-purpose write API — that is handled by the MCP server
-        tools used by agents. Session persistence is a service-level concern, so we
-        manage it ourselves with simple JSON files.
-        """
-        if self._mempalace is None:
-            try:
-                # Route through the single helper (#129) so this, the
-                # daemon, and the MCP server all resolve the same path.
-                from services.mempalace_paths import get_palace_path
-
-                sessions_dir = get_palace_path() / "sessions"
-                sessions_dir.mkdir(parents=True, exist_ok=True)
-                self._mempalace = sessions_dir
-            except Exception as e:
-                logger.debug(f"MemPalace sessions dir init failed: {e}")
-                self._mempalace = False
-        return self._mempalace if self._mempalace else None
-
-    def _persist_session_async(self, session_id: str) -> None:
-        """Fire-and-forget persistence of session to MemPalace data directory."""
-        messages = list(self.sessions.get(session_id, []))
-
-        def _write():
-            sessions_dir = self._get_mempalace_sessions_dir()
-            if not sessions_dir:
-                return
-            try:
-                import os
-
-                safe_id = session_id.replace("/", "_").replace("\\", "_")
-                tmp = sessions_dir / f"{safe_id}.json.tmp"
-                dest = sessions_dir / f"{safe_id}.json"
-                tmp.write_text(
-                    json.dumps({"messages": messages, "message_count": len(messages)})
-                )
-                os.replace(tmp, dest)
-            except Exception as e:
-                logger.debug(f"MemPalace session persist failed: {e}")
-
-        threading.Thread(target=_write, daemon=True).start()
-
     def create_session(
         self, session_id: str, initial_context: Optional[List[Dict]] = None
     ) -> str:
-        """Create or reset a conversation session."""
-        self.sessions[session_id] = initial_context or []
-        self._persist_session_async(session_id)
-        return session_id
+        """Create or reset a conversation session (delegates to SessionManager)."""
+        return self._session_mgr.create(session_id, initial_context)
 
     def get_session(self, session_id: str) -> Optional[List[Dict]]:
         """Get session history, restoring from MemPalace on L1 cache miss."""
-        if session_id in self.sessions:
-            return self.sessions[session_id]
-
-        # L2: attempt to restore from MemPalace sessions directory
-        sessions_dir = self._get_mempalace_sessions_dir()
-        if sessions_dir:
-            try:
-                safe_id = session_id.replace("/", "_").replace("\\", "_")
-                session_file = sessions_dir / f"{safe_id}.json"
-                if session_file.exists():
-                    data = json.loads(session_file.read_text())
-                    messages = data.get("messages", [])
-                    if messages:
-                        self.sessions[session_id] = messages
-                        logger.info(
-                            f"Restored session {session_id} from MemPalace "
-                            f"({len(messages)} messages)"
-                        )
-                        return self.sessions[session_id]
-            except Exception as e:
-                logger.debug(f"MemPalace session restore failed: {e}")
-
-        return None
+        return self._session_mgr.get(session_id)
 
     def clear_session(self, session_id: str) -> bool:
-        """Clear a session."""
-        if session_id in self.sessions:
-            del self.sessions[session_id]
-            return True
-        return False
+        """Clear a session (delegates to SessionManager)."""
+        return self._session_mgr.clear(session_id)
 
     @staticmethod
     def is_agent_sdk_available() -> bool:

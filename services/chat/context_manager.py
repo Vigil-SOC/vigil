@@ -393,7 +393,15 @@ class ContextManager:
             overflow = []
             windowed = list(messages)
 
-        prepared = _prepend_summary_block(summary, windowed)
+        # Fold the overflow into the summary *for this request* rather than only
+        # persisting it for a future one. Each per-request ClaudeService starts
+        # with an empty in-memory summary (nothing hydrates it from disk), so if
+        # we prepended only ``summary`` here the aged-out messages would be
+        # silently dropped instead of compressed. ``fold_overflow`` is a pure,
+        # bounded function, so re-folding from the original ``summary`` each pass
+        # of the trim loop stays correct (no double-counting) and cheap.
+        folded = self.fold_overflow(overflow, summary) if overflow else summary
+        prepared = _prepend_summary_block(folded, windowed)
 
         # Safety: if still over budget (e.g. very large tool outputs), hard-trim
         # from the front of the window without blocking.
@@ -403,7 +411,8 @@ class ContextManager:
         while needs and len(windowed) > 2:
             overflow.append(windowed[0])
             windowed = windowed[1:]
-            prepared = _prepend_summary_block(summary, windowed)
+            folded = self.fold_overflow(overflow, summary)
+            prepared = _prepend_summary_block(folded, windowed)
             needs, _, _ = self.needs_context_reduction(
                 prepared, system_prompt, backend_tools, mcp_tools, max_context_tokens
             )

@@ -186,3 +186,36 @@ def test_prepare_context_windows_and_preserves_alternation(monkeypatch):
     assert overflow, "expected aged-out messages with a 2-turn window"
     assert prepared[0]["role"] == "user"  # summary block leads
     _assert_alternates(prepared)
+
+
+def test_prepare_context_folds_overflow_into_summary_in_request(monkeypatch):
+    """Aged-out messages must be folded into the prepended summary *this*
+    request — not silently dropped — even when the incoming summary is empty.
+
+    Regression for the PR #341 review: a per-request ClaudeService never
+    hydrates its summary from disk, so ``summary`` is always "" here. The old
+    code prepended only that empty summary, so the entities in aged-out turns
+    vanished. They must now be folded synchronously and prepended.
+    """
+    import services.runtime_config as rc
+
+    # window=2 -> keep the last 4 messages; everything older overflows.
+    monkeypatch.setattr(rc, "get_ai_operations_setting", lambda key, default=None: 2)
+
+    convo = [
+        {"role": "user", "content": "investigate f-12345678-9abcdef0 please"},
+        {"role": "assistant", "content": "tracing host 10.0.0.5"},
+    ]
+    for i in range(6):  # recent padding so the entity turns age out
+        role = "user" if i % 2 == 0 else "assistant"
+        convo.append({"role": role, "content": f"recent turn {i}"})
+
+    cm = ContextManager()
+    prepared, overflow = cm.prepare_context(convo, summary="")
+
+    assert overflow, "expected aged-out messages with a 2-turn window"
+    summary_block = prepared[0]["content"]
+    assert "INVESTIGATION CONTEXT" in summary_block
+    # SOC entities from the aged-out turns survive in the folded summary.
+    assert "f-12345678-9abcdef0" in summary_block
+    assert "10.0.0.5" in summary_block

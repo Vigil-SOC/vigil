@@ -796,9 +796,9 @@ async def chat_stream(request: ChatRequest):
                         logger.info(
                             f"🔄 [RequestID: {request_id}] Stream event: {chunk_type}"
                         )
-                    elif chunk_type == "context_summarized":
+                    elif chunk_type == "context_windowed":
                         logger.info(
-                            f"📝 [RequestID: {request_id}] Context auto-summarized: {chunk.get('summarized_messages', 0)} messages condensed"
+                            f"📝 [RequestID: {request_id}] Context compressed: {chunk.get('windowed_messages', 0)} older messages condensed"
                         )
 
                     yield f"data: {json.dumps(chunk)}\n\n"

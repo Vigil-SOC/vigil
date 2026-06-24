@@ -410,32 +410,38 @@ class LLMRouter:
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
 
-        resp = await client.chat.completions.create(**kwargs)
-        choice = resp.choices[0].message
-        usage = getattr(resp, "usage", None)
-        # OpenAI exposes prompt-cache hits via usage.prompt_tokens_details.cached_tokens.
-        # OpenAI bills cached tokens at a discounted rate but doesn't bill a
-        # separate "cache creation" tier the way Anthropic does — so we
-        # populate cache_read_tokens and leave cache_creation_tokens at 0.
-        # Without this extraction the cost-per-call math under-credits OpenAI
-        # cache hits (full input rate instead of the discounted cache rate),
-        # which is the asymmetry #184 acceptance #2 calls out.
-        cache_read = 0
-        if usage is not None:
-            details = getattr(usage, "prompt_tokens_details", None)
-            if details is not None:
-                cache_read = getattr(details, "cached_tokens", 0) or 0
-        return {
-            "content": choice.content or "",
-            "tool_calls": getattr(choice, "tool_calls", None),
-            "model": resp.model,
-            "input_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
-            "output_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
-            "cache_read_tokens": cache_read,
-            "cache_creation_tokens": 0,
-            "provider": provider.provider_type,
-            "path": "bifrost",
-        }
+        try:
+            resp = await client.chat.completions.create(**kwargs)
+            choice = resp.choices[0].message
+            usage = getattr(resp, "usage", None)
+            # OpenAI exposes prompt-cache hits via usage.prompt_tokens_details.cached_tokens.
+            # OpenAI bills cached tokens at a discounted rate but doesn't bill a
+            # separate "cache creation" tier the way Anthropic does — so we
+            # populate cache_read_tokens and leave cache_creation_tokens at 0.
+            # Without this extraction the cost-per-call math under-credits OpenAI
+            # cache hits (full input rate instead of the discounted cache rate),
+            # which is the asymmetry #184 acceptance #2 calls out.
+            cache_read = 0
+            if usage is not None:
+                details = getattr(usage, "prompt_tokens_details", None)
+                if details is not None:
+                    cache_read = getattr(details, "cached_tokens", 0) or 0
+            return {
+                "content": choice.content or "",
+                "tool_calls": getattr(choice, "tool_calls", None),
+                "model": resp.model,
+                "input_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
+                "output_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
+                "cache_read_tokens": cache_read,
+                "cache_creation_tokens": 0,
+                "provider": provider.provider_type,
+                "path": "bifrost",
+            }
+        finally:
+            # AsyncOpenAI holds an httpx connection pool; close it so file
+            # descriptors / connections don't leak per call (chat()'s
+            # non-streaming path routes through here).
+            await client.close()
 
     async def dispatch_openai_stream(
         self,
@@ -554,43 +560,48 @@ class LLMRouter:
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
 
-        resp = await client.messages.create(**kwargs)
-        # Anthropic returns a list of content blocks (text, thinking, tool_use).
-        text_parts: List[str] = []
-        thinking_parts: List[str] = []
-        tool_uses: List[Dict[str, Any]] = []
-        for block in resp.content:
-            btype = getattr(block, "type", None)
-            if btype == "text":
-                text_parts.append(getattr(block, "text", ""))
-            elif btype == "thinking":
-                thinking_parts.append(getattr(block, "thinking", ""))
-            elif btype == "tool_use":
-                tool_uses.append(
-                    {
-                        "id": getattr(block, "id", None),
-                        "name": getattr(block, "name", None),
-                        "input": getattr(block, "input", None),
-                    }
-                )
+        try:
+            resp = await client.messages.create(**kwargs)
+            # Anthropic returns a list of content blocks (text, thinking, tool_use).
+            text_parts: List[str] = []
+            thinking_parts: List[str] = []
+            tool_uses: List[Dict[str, Any]] = []
+            for block in resp.content:
+                btype = getattr(block, "type", None)
+                if btype == "text":
+                    text_parts.append(getattr(block, "text", ""))
+                elif btype == "thinking":
+                    thinking_parts.append(getattr(block, "thinking", ""))
+                elif btype == "tool_use":
+                    tool_uses.append(
+                        {
+                            "id": getattr(block, "id", None),
+                            "name": getattr(block, "name", None),
+                            "input": getattr(block, "input", None),
+                        }
+                    )
 
-        usage = getattr(resp, "usage", None)
-        return {
-            "content": "".join(text_parts),
-            "thinking": "".join(thinking_parts) or None,
-            "tool_calls": tool_uses or None,
-            "model": resp.model,
-            "input_tokens": getattr(usage, "input_tokens", 0) if usage else 0,
-            "output_tokens": getattr(usage, "output_tokens", 0) if usage else 0,
-            "cache_read_tokens": (
-                getattr(usage, "cache_read_input_tokens", 0) if usage else 0
-            ),
-            "cache_creation_tokens": (
-                getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
-            ),
-            "provider": provider.provider_type,
-            "path": "bifrost",
-        }
+            usage = getattr(resp, "usage", None)
+            return {
+                "content": "".join(text_parts),
+                "thinking": "".join(thinking_parts) or None,
+                "tool_calls": tool_uses or None,
+                "model": resp.model,
+                "input_tokens": getattr(usage, "input_tokens", 0) if usage else 0,
+                "output_tokens": getattr(usage, "output_tokens", 0) if usage else 0,
+                "cache_read_tokens": (
+                    getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+                ),
+                "cache_creation_tokens": (
+                    getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
+                ),
+                "provider": provider.provider_type,
+                "path": "bifrost",
+            }
+        finally:
+            # The async Anthropic client also holds an httpx connection pool;
+            # close it so connections don't leak per non-streaming call.
+            await client.close()
 
 
 # ---------------------------------------------------------------------------
