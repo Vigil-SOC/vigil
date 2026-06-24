@@ -457,6 +457,21 @@ async def startup_event():
     logger.info("Starting Vigil SOC Backend")
     logger.info("=" * 60)
 
+    # Under TESTING (unit/integration CI, TestClient boots) skip the external
+    # startup connections — MCP persistent connections spawn subprocesses,
+    # Bifrost/LLM-gateway reach out over the network/Redis. These hang or
+    # error the in-process test client. DB schema init still runs so tests
+    # exercise the real schema. Mirrors the is_demo_mode() startup branching
+    # below and the DEV_MODE auth bypass in backend/middleware/auth.py.
+    import os
+
+    _testing = os.getenv("TESTING", "false").lower() in ("true", "1", "yes")
+    if _testing:
+        logger.info(
+            "TESTING=true — skipping external startup connections "
+            "(MCP, Bifrost provider sync, LLM gateway)"
+        )
+
     # Initialize Sentry error tracking (was never called before — bug fix)
     try:
         from backend.monitoring import init_sentry
@@ -527,7 +542,8 @@ async def startup_event():
     try:
         from services.bifrost_admin import sync_all_provider_keys
 
-        sync_all_provider_keys()
+        if not _testing:
+            sync_all_provider_keys()
     except Exception as e:
         logger.warning(f"Bifrost provider sync skipped: {e}")
 
@@ -558,7 +574,8 @@ async def startup_event():
                     break
                 await asyncio.sleep(refresh_interval_s)
 
-        asyncio.create_task(_model_catalog_refresher())
+        if not _testing:
+            asyncio.create_task(_model_catalog_refresher())
     except Exception as e:
         logger.warning(f"Model catalog refresher skipped: {e}")
 
@@ -671,8 +688,9 @@ async def startup_event():
     try:
         from services.llm_gateway import get_llm_gateway
 
-        await get_llm_gateway()
-        logger.info("✓ LLM Gateway connected to Redis")
+        if not _testing:
+            await get_llm_gateway()
+            logger.info("✓ LLM Gateway connected to Redis")
     except Exception as e:
         logger.warning(f"⚠ LLM Gateway not available: {e}")
         logger.warning(
@@ -685,8 +703,10 @@ async def startup_event():
         from services.mcp_service import MCPService
         import asyncio
 
-        # Get MCP client and service
-        mcp_client = get_mcp_client()
+        # Get MCP client and service. Under TESTING, leave it None so the
+        # connect/list_tools path below is skipped entirely — tests that need
+        # MCP behavior mock mcp_service/mcp_client directly.
+        mcp_client = None if _testing else get_mcp_client()
 
         if mcp_client:
             # Get list of all servers
@@ -770,6 +790,8 @@ async def startup_event():
             logger.info(
                 f"Persistent connections: {sum(1 for connected in status.values() if connected)}/{len(status)}"
             )
+        elif _testing:
+            logger.info("TESTING=true — MCP persistent connections skipped")
         else:
             logger.warning("MCP client not available - MCP SDK may not be installed")
     except Exception as e:
