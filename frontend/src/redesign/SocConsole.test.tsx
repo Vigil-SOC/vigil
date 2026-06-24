@@ -21,17 +21,17 @@ vi.mock('../contexts/AuthContext', () => ({
   }),
 }))
 
-// SocConsole is URL-driven (each screen owns /redesign/<screen>, cases deep-link
-// to /redesign/cases?case=<caseId>), so mount it inside a router with that route.
+// SocConsole is URL-driven (each screen owns /<screen>, cases deep-link to
+// /cases?case=<caseId>), so mount it inside a router with that route.
 // SocConsole's theme provider bridges the app-wide ThemeContext (mode is
 // backend-persisted), so it must mount inside a real ThemeProvider — same as
 // production (main.tsx wraps the whole app).
-function renderConsole(path = '/redesign/dashboard') {
+function renderConsole(path = '/dashboard') {
   return render(
     <ThemeProvider>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
-          <Route path="/redesign/:screen" element={<SocConsole />} />
+          <Route path="/:screen" element={<SocConsole />} />
         </Routes>
       </MemoryRouter>
     </ThemeProvider>,
@@ -208,7 +208,7 @@ describe('SocConsole redesign', () => {
   })
 
   it('renders the 404 screen for an unknown path and routes home', () => {
-    renderConsole('/redesign/does-not-exist')
+    renderConsole('/does-not-exist')
     expect(title()).toBe('Page not found')
     expect(screen.getByText('404')).toBeInTheDocument()
     // the in-shell "Back to dashboard" action returns to a real screen
@@ -288,7 +288,7 @@ describe('SocConsole redesign', () => {
   })
 
   it('applies an accent + light mode from the Appearance settings page', () => {
-    renderConsole('/redesign/settings')
+    renderConsole('/settings')
     // Settings opens on the Appearance section (first nav item)
     fireEvent.click(screen.getByRole('button', { name: 'Appearance' }))
     // pick the cyan accent preset

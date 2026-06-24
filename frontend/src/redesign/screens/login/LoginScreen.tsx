@@ -50,8 +50,8 @@ function LoginInner() {
     setLoading(true)
     try {
       await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
-      // land in the redesign console (this is the redesign's sign-in surface)
-      navigate('/redesign/dashboard')
+      // land in the SOC console (the primary surface)
+      navigate('/dashboard')
     } catch (err: any) {
       if (err?.message === 'MFA_REQUIRED') {
         setShowMfa(true)

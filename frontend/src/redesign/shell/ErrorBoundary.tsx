@@ -1,8 +1,8 @@
 /* ============================================================
-   Scoped error boundary for the redesign preview. A render throw
-   in any screen would otherwise blank the whole /redesign route;
-   this catches it and shows a recoverable fallback. React error
-   boundaries must be class components.
+   Scoped error boundary for the SOC console. A render throw in any
+   screen would otherwise blank the whole console; this catches it
+   and shows a recoverable fallback. React error boundaries must be
+   class components.
    ============================================================ */
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 
