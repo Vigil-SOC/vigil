@@ -245,6 +245,19 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
               const isChatDefault = c === CHAT_DEFAULT_KEY
               const dropdownValue = encode(row.providerId, row.modelId)
 
+              // A pinned model can drop out of /ai/models (its provider was
+              // disabled, or an Ollama model was removed locally). Without a
+              // matching <MenuItem> the <Select> renders blank and MUI warns
+              // about an out-of-range value, so the row looks unassigned even
+              // though the DB still pins it. Detect that and render a disabled
+              // fallback item below so the stale assignment stays visible.
+              const isPinned = Boolean(row.providerId && row.modelId)
+              const pinnedUnavailable =
+                isPinned &&
+                !(modelsByProvider[row.providerId] || []).some(
+                  (m) => m.model_id === row.modelId,
+                )
+
               // Resolve selected model for capabilities display.
               // When inheriting, show the chat_default model's capabilities.
               const resolvedModel: AIModelInfo | null = (() => {
@@ -291,6 +304,17 @@ export default function ModelAssignmentTab({ setMessage }: Props) {
                       {/* Hidden sentinel so MUI doesn't warn when chat_default has no assignment */}
                       {isChatDefault && (
                         <MenuItem value={INHERIT_VALUE} sx={{ display: 'none' }} />
+                      )}
+
+                      {/* Stale pin: model is no longer offered by its provider.
+                          Disabled so it can't be re-picked, but keeps the value
+                          matched so the assignment stays visible. */}
+                      {pinnedUnavailable && (
+                        <MenuItem value={dropdownValue} disabled>
+                          <Typography variant="body2" color="warning.main">
+                            Pinned: {row.modelId} (unavailable)
+                          </Typography>
+                        </MenuItem>
                       )}
 
                       {/* Models grouped by provider */}
