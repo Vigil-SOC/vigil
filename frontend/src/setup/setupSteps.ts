@@ -91,6 +91,9 @@ export interface SetupStep {
   id: SetupStepId
   label: string
   description: string
+  // Status word shown as a tag once the step is satisfied — it replaces the
+  // step's action button in the checklist row (e.g. "Connected").
+  doneLabel: string
   tier: SetupTier // gating tier; only 'required' steps drive the hard gate
   settingsSection: SettingsSection // which Settings section "Configure →" opens
   selectReady: (s: SetupState) => boolean
@@ -101,6 +104,7 @@ export const SETUP_STEPS: SetupStep[] = [
     id: 'llm-provider',
     label: 'Connect an AI provider',
     description: 'Triage, investigation, and chat all run on it.',
+    doneLabel: 'Connected',
     tier: 'required',
     settingsSection: 'ai-config',
     // Mirrors useSetupStatus.isProviderReady (kept in sync intentionally):
@@ -111,6 +115,7 @@ export const SETUP_STEPS: SetupStep[] = [
     id: 'data-source',
     label: 'Connect a data source',
     description: 'A SIEM or EDR so Vigil has alerts to triage.',
+    doneLabel: 'Connected',
     tier: 'recommended',
     settingsSection: 'integrations',
     selectReady: (s) =>
@@ -120,6 +125,7 @@ export const SETUP_STEPS: SetupStep[] = [
     id: 'model-assignment',
     label: 'Assign models to agents',
     description: 'Pick fast vs. strong models per task — defaults work.',
+    doneLabel: 'Configured',
     tier: 'optional',
     settingsSection: 'ai-config',
     selectReady: (s) => Object.keys(s.assignments ?? {}).length > 0,
@@ -128,6 +134,7 @@ export const SETUP_STEPS: SetupStep[] = [
     id: 'cost-guardrails',
     label: 'Set cost guardrails',
     description: 'Cap how much Vigil spends each month.',
+    doneLabel: 'Configured',
     tier: 'optional',
     settingsSection: 'ai-config',
     selectReady: (s) => !!s.budget?.default_vk?.trim(),
@@ -136,6 +143,7 @@ export const SETUP_STEPS: SetupStep[] = [
     id: 'autonomy',
     label: 'Enable autonomous mode',
     description: 'Let Vigil triage and investigate 24/7, within your cost caps.',
+    doneLabel: 'Enabled',
     tier: 'optional',
     settingsSection: 'autoinvestigate',
     selectReady: (s) => s.orchestratorEnabled,

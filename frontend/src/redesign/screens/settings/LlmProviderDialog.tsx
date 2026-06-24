@@ -1,10 +1,11 @@
 /* ============================================================
    LLM provider add/edit wizard (redesign port of LLMProviderDialog).
-   3 steps: pick type → connection → test, then pick a model from the
-   verified list & save. (Model selection lives on step 2 only — picking
-   before the connection is tested was flaky, so it was removed.)
-   Draft-upsert so /test and /models can run before the final save;
-   retries update the draft row rather than re-POSTing (avoids 409).
+   2 steps: pick type → connection. The connection test runs inline on
+   the connection step (feedback shows under the fields, so a bad URL/key
+   is fixed in place); on success the verified model list + Save appear
+   there too — no separate test/save step. Draft-upsert so /test and
+   /models can run before the final save; retries update the draft row
+   rather than re-POSTing (avoids 409).
    ============================================================ */
 import { useState } from 'react'
 import { Icon } from '../../shared/icons'
@@ -17,7 +18,7 @@ import {
 
 type ProviderType = 'anthropic' | 'openai' | 'ollama'
 
-const STEPS = ['Provider', 'Connection', 'Test & Save']
+const STEPS = ['Provider', 'Connection', 'Model & Save']
 
 const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
   anthropic: '',
@@ -39,7 +40,6 @@ interface Props {
   existing: LLMProvider | null
   onClose: () => void
   onSaved: () => void
-  onError: (msg: string) => void
   // Hide the footer Cancel button. The inline setup screen sets this false — its
   // accordion row already has a Close toggle, so an in-panel Cancel is redundant.
   showCancel?: boolean
@@ -52,7 +52,6 @@ export function LlmProviderWizard({
   existing,
   onClose,
   onSaved,
-  onError,
   showCancel = true,
 }: Props) {
   const editing = !!existing
@@ -76,6 +75,17 @@ export function LlmProviderWizard({
   const [testError, setTestError] = useState<string | null>(null)
   const [tested, setTested] = useState(false)
   const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  // A connection-affecting edit (or a provider-type switch) invalidates a prior
+  // successful test, so the model picker / Save hide and a re-test is required.
+  const invalidateTest = () => {
+    if (tested || testError || availableModels.length) {
+      setTested(false)
+      setTestError(null)
+      setAvailableModels([])
+    }
+  }
 
   const selectProviderType = (t: ProviderType) => {
     if (t === providerType) return
@@ -87,6 +97,7 @@ export function LlmProviderWizard({
     setDefaultModel(DEFAULT_MODEL[t])
     setApiKey('')
     setOrganization('')
+    invalidateTest()
   }
 
   const saveDraftAndTest = async (): Promise<void> => {
@@ -137,6 +148,7 @@ export function LlmProviderWizard({
   }
 
   const finalSave = async () => {
+    setSaveError(null)
     try {
       const providerId = draftProviderId ?? existing?.provider_id
       if (!providerId) throw new Error('No provider id')
@@ -149,7 +161,7 @@ export function LlmProviderWizard({
       onSaved()
     } catch (e) {
       const err = e as { response?: { data?: { detail?: string } } }
-      onError(err?.response?.data?.detail || 'Save failed')
+      setSaveError(err?.response?.data?.detail || 'Save failed')
     }
   }
 
@@ -209,7 +221,10 @@ export function LlmProviderWizard({
               <TextInput
                 value={baseUrl}
                 placeholder={DEFAULT_BASE_URLS[providerType]}
-                onChange={(e) => setBaseUrl(e.target.value)}
+                onChange={(e) => {
+                  setBaseUrl(e.target.value)
+                  invalidateTest()
+                }}
               />
             </Field>
           )}
@@ -218,23 +233,28 @@ export function LlmProviderWizard({
               <PasswordInput
                 value={apiKey}
                 placeholder={editing ? 'Leave blank to keep existing key' : ''}
-                onChange={(e) => setApiKey(e.target.value)}
+                onChange={(e) => {
+                  setApiKey(e.target.value)
+                  invalidateTest()
+                }}
               />
             </Field>
           )}
           {providerType === 'openai' && (
             <Field label="Organization (optional)">
-              <TextInput value={organization} onChange={(e) => setOrganization(e.target.value)} />
+              <TextInput
+                value={organization}
+                onChange={(e) => {
+                  setOrganization(e.target.value)
+                  invalidateTest()
+                }}
+              />
             </Field>
           )}
-          <p className="text-tx-3 text-xs">
-            You&apos;ll choose the model on the next step, once the connection is verified.
-          </p>
-        </div>
-      )}
 
-      {step === 2 && (
-        <div className="flex flex-col gap-3">
+          {/* Connection test runs here, inline — feedback shows under the fields
+              so a bad URL/key is fixed in place. On success you advance to the
+              Model & Save step, which uses the verified model list. */}
           {testing && (
             <div className="flex items-center gap-2 text-sm text-tx-2">
               <Icon name="refresh" size={15} /> Testing connection…
@@ -245,40 +265,53 @@ export function LlmProviderWizard({
               <Icon name="alert" size={14} /> {testError}
             </div>
           )}
-          {tested && (
-            <>
-              <div className="settings-banner ok">
-                <Icon name="check2" size={14} /> Connection OK
-              </div>
-              <Field
-                label="Model"
-                hint={
-                  availableModels.length
-                    ? `${availableModels.length} model(s) available from this provider.`
-                    : 'Enter the model ID to use.'
-                }
-              >
-                {availableModels.length > 0 ? (
-                  <Select
-                    value={defaultModel}
-                    placeholder="Select a model"
-                    options={availableModels.map((m) => ({ value: m, label: m }))}
-                    onSelect={setDefaultModel}
-                  />
-                ) : (
-                  <TextInput
-                    value={defaultModel}
-                    placeholder={DEFAULT_MODEL[providerType]}
-                    onChange={(e) => setDefaultModel(e.target.value)}
-                  />
-                )}
-              </Field>
-              <label className="flex items-center gap-2.5 text-sm text-tx-2 mt-1">
-                <Toggle checked={isDefault} onChange={setIsDefault} />
-                Set as default for this provider type
-              </label>
-            </>
+          {!testing && !tested && !testError && (
+            <p className="text-tx-3 text-xs">
+              Test the connection to verify it works and load this provider&apos;s models.
+            </p>
           )}
+          {tested && (
+            <div className="settings-banner ok">
+              <Icon name="check2" size={14} /> Connection OK — continue to pick a model.
+            </div>
+          )}
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="flex flex-col gap-3">
+          {saveError && (
+            <div className="settings-banner err">
+              <Icon name="alert" size={14} /> {saveError}
+            </div>
+          )}
+          <Field
+            label="Model"
+            hint={
+              availableModels.length
+                ? `${availableModels.length} model(s) available from this provider.`
+                : 'Enter the model ID to use.'
+            }
+          >
+            {availableModels.length > 0 ? (
+              <Select
+                value={defaultModel}
+                placeholder="Select a model"
+                options={availableModels.map((m) => ({ value: m, label: m }))}
+                onSelect={setDefaultModel}
+              />
+            ) : (
+              <TextInput
+                value={defaultModel}
+                placeholder={DEFAULT_MODEL[providerType]}
+                onChange={(e) => setDefaultModel(e.target.value)}
+              />
+            )}
+          </Field>
+          <label className="flex items-center gap-2.5 text-sm text-tx-2 mt-1">
+            <Toggle checked={isDefault} onChange={setIsDefault} />
+            Set as default for this provider type
+          </label>
         </div>
       )}
 
@@ -295,19 +328,18 @@ export function LlmProviderWizard({
         {step === 0 && (
           <button className="btn primary" onClick={() => setStep(1)}>Next</button>
         )}
-        {step === 1 && (
-          <button
-            className="btn primary"
-            onClick={async () => {
-              setStep(2)
-              await saveDraftAndTest()
-            }}
-          >
-            Test &amp; continue
+        {step === 1 && !tested && (
+          <button className="btn primary" disabled={testing} onClick={saveDraftAndTest}>
+            {testing ? 'Testing…' : 'Test connection'}
+          </button>
+        )}
+        {step === 1 && tested && (
+          <button className="btn primary" onClick={() => setStep(2)}>
+            Continue
           </button>
         )}
         {step === 2 && (
-          <button className="btn primary" disabled={!tested} onClick={finalSave}>
+          <button className="btn primary" onClick={finalSave}>
             Save
           </button>
         )}

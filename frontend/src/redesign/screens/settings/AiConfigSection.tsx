@@ -187,7 +187,6 @@ function ProvidersPanel({ notify }: SectionProps) {
           existing={editing}
           onClose={() => { setDialogOpen(false); setEditing(null) }}
           onSaved={() => { setDialogOpen(false); setEditing(null); notify('ok', 'Provider saved.'); reload() }}
-          onError={(msg) => notify('err', msg)}
         />
       )}
       <ConfirmDialog

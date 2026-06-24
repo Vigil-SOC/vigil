@@ -61,8 +61,11 @@ const useSetupChecklist = (): SetupChecklist => {
   const [state, setState] = useState<SetupState>(emptySetupState)
   const [loading, setLoading] = useState(true)
 
+  // `loading` gates the one-time "Checking setup…" placeholder, so flip it only
+  // on the initial load — not on refetches. A refetch (e.g. after saving a
+  // provider) updates the steps in place; blanking the whole list to the loader
+  // mid-render made the accordion + Connect button flash/jitter on save.
   const refetch = useCallback(() => {
-    setLoading(true)
     fetchSetupState()
       .then(setState)
       .finally(() => setLoading(false))

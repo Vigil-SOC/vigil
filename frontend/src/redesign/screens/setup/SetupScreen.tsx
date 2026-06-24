@@ -10,6 +10,7 @@ import { Fragment, useEffect, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import '../../styles.css'
 import { Icon } from '../../shared/icons'
+import { VigilMark } from '../../shared/VigilLogo'
 import { SettingsCard } from '../../shared/ui'
 import { LlmProviderWizard } from '../settings/LlmProviderDialog'
 import AutonomyDialog from './AutonomyDialog'
@@ -41,15 +42,18 @@ const markSetupDismissed = (): void => {
   }
 }
 
-// Top-anchored (not vertically centered): the checklist card grows as steps
-// expand, so centering would drift the header upward on every open/close. A
-// fixed 10vh top offset keeps the header and the row you clicked put, and still
-// reads as a centered-ish welcome on tall monitors.
+// Vertically + horizontally centered, so it reads as centered across monitor
+// sizes. `my-auto` (not `items-center`) does the vertical centering to stay
+// overflow-safe: when an expanded step makes the card taller than the viewport,
+// auto margins collapse and the scroll container keeps the top reachable
+// (plain align-items:center would clip it). Trade-off: the card re-centers as
+// steps expand/collapse, so the layout shifts a bit on open — accepted here in
+// favor of a consistently centered position.
 const Shell = ({ children }: { children: React.ReactNode }) => (
   <div className="soc-console">
     <div className="absolute inset-0 overflow-auto">
-      <div className="min-h-full flex items-start justify-center px-6 pb-6 pt-[10vh]">
-        <div className="w-full max-w-xl">{children}</div>
+      <div className="min-h-full flex justify-center px-6 py-6">
+        <div className="w-full max-w-xl my-auto">{children}</div>
       </div>
     </div>
   </div>
@@ -58,11 +62,12 @@ const Shell = ({ children }: { children: React.ReactNode }) => (
 const Header = () => (
   <header className="text-center mb-6">
     <span className="inline-grid place-items-center w-12 h-12 rounded-lg bg-accent-dim text-accent-2 mb-3">
-      <Icon name="shield" size={24} />
+      <VigilMark className="w-6 h-6" />
     </span>
     <h1 className="text-tx text-xl font-semibold">Welcome to Vigil</h1>
     <p className="text-tx-3 text-sm mt-1">
-      Connect an AI provider to begin. The rest is optional and can wait.
+      Just one thing to start: connect an AI provider. Everything else is
+      optional and can wait.
     </p>
   </header>
 )
@@ -86,7 +91,7 @@ const StepRow = ({
           the required gate, still to do; dashed + = an optional step you can add
           anytime (an opt-in slot, not an unchecked-and-overdue box). */}
       <span
-        className={`grid place-items-center w-6 h-6 shrink-0 rounded-full border ${
+        className={`grid place-items-center w-6 h-6 shrink-0 rounded-full border transition-colors duration-200 motion-reduce:transition-none ${
           step.ready
             ? 'bg-ok-dim border-ok text-ok'
             : required
@@ -104,16 +109,39 @@ const StepRow = ({
         <div className="text-tx text-sm font-medium">{step.label}</div>
         <div className="text-tx-3 text-xs mt-0.5">{step.description}</div>
       </div>
-      {!step.ready && (
-        <button className={`btn shrink-0 ${required ? 'primary' : 'ghost'}`} onClick={onAction}>
-          {expanded ? 'Close' : required ? 'Connect' : 'Configure'}
-          <Icon
-            name="chevD"
-            size={14}
-            className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-          />
-        </button>
-      )}
+      {/* Right slot: the action button crossfades into a "done" status tag in the
+          same spot (tag absolutely overlaid), so finishing a step resolves the
+          button into a status instead of vanishing into empty space. Once ready
+          the button is inert and hidden from assistive tech. */}
+      <div className="shrink-0 relative">
+        <div
+          className={`transition-opacity duration-200 motion-reduce:transition-none ${
+            step.ready ? 'opacity-0 pointer-events-none' : 'opacity-100'
+          }`}
+          aria-hidden={step.ready}
+        >
+          <button
+            className={`btn ${required ? 'primary' : 'ghost'}`}
+            onClick={onAction}
+            tabIndex={step.ready ? -1 : undefined}
+          >
+            {expanded ? 'Close' : required ? 'Connect' : 'Configure'}
+            <Icon
+              name="chevD"
+              size={14}
+              className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+            />
+          </button>
+        </div>
+        <span
+          className={`absolute inset-0 flex items-center justify-end whitespace-nowrap pointer-events-none text-ok text-xs font-medium transition-opacity duration-200 motion-reduce:transition-none ${
+            step.ready ? 'opacity-100' : 'opacity-0'
+          }`}
+          aria-hidden={!step.ready}
+        >
+          {step.doneLabel}
+        </span>
+      </div>
     </div>
   )
 }
@@ -169,11 +197,12 @@ const SetupScreen = () => {
   const optionalSteps = steps.filter((s) => s.tier !== 'required')
   const requiredCount = steps.length - optionalSteps.length
   const optionalDone = optionalSteps.filter((s) => s.ready).length
+  // Once llmReady && every optional step is done, `allReady` is true and the
+  // screen redirects (below) before this renders — so there's no "all set"
+  // branch here; while this is on screen at least one optional step is open.
   const checklistSummary = !llmReady
     ? `${requiredCount} required · ${optionalSteps.length} optional`
-    : optionalDone === optionalSteps.length
-      ? 'All set — every step configured'
-      : `Ready · ${optionalDone} of ${optionalSteps.length} optional done`
+    : `Ready · ${optionalDone} of ${optionalSteps.length} optional done`
 
   // Once setup is finished — every step ready, or dismissed by leaving via
   // "Go to dashboard" — /setup steps aside. Guarded by llmReady so that if the
@@ -222,7 +251,6 @@ const SetupScreen = () => {
             existing={null}
             onClose={closeStep}
             onSaved={handleProviderSaved}
-            onError={setError}
             showCancel={false}
           />
         )
