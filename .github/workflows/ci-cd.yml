@@ -111,11 +111,11 @@ jobs:
       
       - name: Run unit tests
         run: |
-          pytest tests/unit/ -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term || true
-          echo "Unit tests completed (0 tests expected until new tests are written)"
+          # Exclude tests needing external services (e.g. PostgreSQL) — the unit
+          # job runs without them. Such tests are marked @pytest.mark.external_service.
+          pytest tests/unit/ -m "not external_service" -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term
         env:
           TESTING: "true"
-          DATABASE_URL: "sqlite:///:memory:"
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
           ANTHROPIC_API_KEY: ${{ secrets.CLAUDEAPI }}
       
@@ -206,6 +206,64 @@ jobs:
         continue-on-error: true
 
   # ============================================================================
+  # DB-backed Unit Tests (require PostgreSQL)
+  # ============================================================================
+  test-unit-backend-db:
+    name: Unit Tests - Backend (DB-backed)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: deeptempo_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      TESTING: "true"
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: deeptempo_test
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Enable Postgres extensions
+        run: |
+          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Initialize schema
+        run: |
+          python -c "from database.connection import get_db_manager as g; m = g(); m.initialize(); m.create_tables()"
+
+      - name: Run DB-backed unit tests
+        run: |
+          # Complement of the no-service unit job: only @pytest.mark.external_service
+          # tests, which require a real PostgreSQL.
+          pytest tests/unit/ -m external_service -v --no-cov
+
+  # ============================================================================
   # Security Scanning
   # ============================================================================
   security-scan-python:
@@ -256,7 +314,7 @@ jobs:
   build-images:
     name: Build Docker Images
     runs-on: ubuntu-latest
-    needs: [lint-backend, test-unit-backend, test-integration]
+    needs: [lint-backend, test-unit-backend, test-unit-backend-db, test-integration]
     if: false  # Disabled - enable if you need Docker images
     permissions:
       contents: read
@@ -390,7 +448,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [lint-backend, lint-frontend, test-unit-backend, test-integration, security-scan-python]
+    needs: [lint-backend, lint-frontend, test-unit-backend, test-unit-backend-db, test-integration, security-scan-python]
     if: always()
     steps:
       - name: Check results
@@ -399,6 +457,7 @@ jobs:
           echo "Lint Backend: ${{ needs.lint-backend.result }}"
           echo "Lint Frontend: ${{ needs.lint-frontend.result }}"
           echo "Unit Tests: ${{ needs.test-unit-backend.result }}"
+          echo "Unit Tests (DB-backed): ${{ needs.test-unit-backend-db.result }}"
           echo "Integration Tests: ${{ needs.test-integration.result }}"
           echo "Security Scan: ${{ needs.security-scan-python.result }}"
           echo ""
