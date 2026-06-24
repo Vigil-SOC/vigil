@@ -111,8 +111,7 @@ jobs:
       
       - name: Run unit tests
         run: |
-          pytest tests/unit/ -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term || true
-          echo "Unit tests completed (0 tests expected until new tests are written)"
+          pytest tests/unit/ -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term
         env:
           TESTING: "true"
           DATABASE_URL: "sqlite:///:memory:"

@@ -130,7 +130,11 @@ class TestInitSentry(unittest.TestCase):
 class TestBeforeSendFilter(unittest.TestCase):
     def test_allows_normal_events(self):
         event = {"request": {"url": "http://localhost/api/findings"}}
-        result = monitoring.before_send_filter(event, {})
+        # before_send_filter suppresses ALL events when TESTING=true, which the
+        # test harness sets globally. Clear it so the normal-passthrough branch
+        # is exercised rather than the test-suppression branch.
+        with patch.dict(os.environ, {"TESTING": "false"}):
+            result = monitoring.before_send_filter(event, {})
         self.assertIsNotNone(result)
 
     def test_drops_health_check(self):
@@ -206,7 +210,7 @@ class TestPrometheusMiddlewareSkipsMetricsEndpoint(unittest.TestCase):
             url = FakeURL()
             method = "GET"
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             middleware.dispatch(FakeRequest(), fake_call_next)
         )
         # Should return the response unchanged without touching metrics
