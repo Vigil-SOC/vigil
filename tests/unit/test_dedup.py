@@ -139,12 +139,14 @@ class TestRedisDedupWithFakeRedis:
         def fake_from_url(url, decode_responses=True):
             return StubRedis(store)
 
-        fake_aioredis = type(
-            "FakeAioredisModule", (), {"from_url": staticmethod(fake_from_url)}
-        )
-        import sys
+        # daemon.dedup does `import redis.asyncio as aioredis; aioredis.from_url(...)`.
+        # `import a.b as c` binds c via getattr(a, "b"), so swapping
+        # sys.modules["redis.asyncio"] is bypassed and the real server is hit
+        # (present locally, absent in CI). Patch from_url on the real submodule
+        # so the in-process stub is used regardless of a running Redis.
+        import redis.asyncio as _aioredis
 
-        monkeypatch.setitem(sys.modules, "redis.asyncio", fake_aioredis)
+        monkeypatch.setattr(_aioredis, "from_url", fake_from_url)
 
         async def go():
             d1 = RedisDedupSet("unit-shared")

@@ -111,7 +111,9 @@ jobs:
       
       - name: Run unit tests
         run: |
-          pytest tests/unit/ -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term
+          # Exclude tests needing external services (e.g. PostgreSQL) — the unit
+          # job runs without them. Such tests are marked @pytest.mark.external_service.
+          pytest tests/unit/ -m "not external_service" -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term
         env:
           TESTING: "true"
           DATABASE_URL: "sqlite:///:memory:"
