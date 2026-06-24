@@ -1,15 +1,12 @@
 /* ============================================================
-   LLM provider add/edit wizard (redesign port of LLMProviderDialog).
-   2 steps: pick type → connection. The connection test runs inline on
-   the connection step (feedback shows under the fields, so a bad URL/key
-   is fixed in place); on success the verified model list + Save appear
-   there too — no separate test/save step. Draft-upsert so /test and
-   /models can run before the final save; retries update the draft row
-   rather than re-POSTing (avoids 409).
+   LLM provider add/edit wizard. Steps: pick type → connection (test runs inline
+   here) → model & save. Draft-upsert so /test and /models can run before the
+   final save; retries update the draft row rather than re-POSTing (avoids 409).
    ============================================================ */
 import { useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { Field, Popup, PasswordInput, Select, TextInput, Toggle } from '../../shared/ui'
+import { Banner, extractApiError } from '../../shared/formKit'
 import {
   llmProviderApi,
   type LLMProvider,
@@ -45,9 +42,7 @@ interface Props {
   showCancel?: boolean
 }
 
-// The wizard body, with no modal chrome. Rendered inline by the first-access
-// setup screen; wrapped in a Popup by the default export below (Settings uses
-// the modal form).
+// Body without modal chrome; the default export below wraps it in a Popup for Settings.
 export function LlmProviderWizard({
   existing,
   onClose,
@@ -140,8 +135,7 @@ export function LlmProviderWizard({
       setAvailableModels(modelsResp.data.models || [])
       setTested(true)
     } catch (e) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string }
-      setTestError(err?.response?.data?.detail || err?.message || 'Test failed')
+      setTestError(extractApiError(e, 'Test failed'))
     } finally {
       setTesting(false)
     }
@@ -160,8 +154,7 @@ export function LlmProviderWizard({
       }
       onSaved()
     } catch (e) {
-      const err = e as { response?: { data?: { detail?: string } } }
-      setSaveError(err?.response?.data?.detail || 'Save failed')
+      setSaveError(extractApiError(e, 'Save failed'))
     }
   }
 
@@ -252,39 +245,24 @@ export function LlmProviderWizard({
             </Field>
           )}
 
-          {/* Connection test runs here, inline — feedback shows under the fields
-              so a bad URL/key is fixed in place. On success you advance to the
-              Model & Save step, which uses the verified model list. */}
           {testing && (
             <div className="flex items-center gap-2 text-sm text-tx-2">
               <Icon name="refresh" size={15} /> Testing connection…
             </div>
           )}
-          {testError && (
-            <div className="settings-banner err">
-              <Icon name="alert" size={14} /> {testError}
-            </div>
-          )}
+          {testError && <Banner kind="err">{testError}</Banner>}
           {!testing && !tested && !testError && (
             <p className="text-tx-3 text-xs">
               Test the connection to verify it works and load this provider&apos;s models.
             </p>
           )}
-          {tested && (
-            <div className="settings-banner ok">
-              <Icon name="check2" size={14} /> Connection OK — continue to pick a model.
-            </div>
-          )}
+          {tested && <Banner kind="ok">Connection OK — continue to pick a model.</Banner>}
         </div>
       )}
 
       {step === 2 && (
         <div className="flex flex-col gap-3">
-          {saveError && (
-            <div className="settings-banner err">
-              <Icon name="alert" size={14} /> {saveError}
-            </div>
-          )}
+          {saveError && <Banner kind="err">{saveError}</Banner>}
           <Field
             label="Model"
             hint={

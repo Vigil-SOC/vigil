@@ -1,12 +1,7 @@
 // frontend/src/redesign/screens/setup/DataSourceDialog.tsx
 //
-// Onboarding step panel — pick a telemetry source and connect it (credentials +
-// MCP enable) without leaving setup. The picker lists only sources that have a
-// real MCP server behind them (catalog ∩ live mcpApi.listServers()), so it never
-// offers a dead-end — the same server-first sourcing Settings uses. Picking one
-// opens the redesign IntegrationWizard for the per-integration credential form.
-// Save mirrors Settings: configApi.setIntegrations keyed by catalog id, then
-// mcpApi.setServerEnabled by server name to actually connect.
+// Setup step panel — pick a telemetry source, enter credentials, connect. Picking
+// one opens IntegrationWizard; save persists creds then enables the MCP server.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import IntegrationWizard from '../settings/IntegrationWizard'
 import type { IntegrationMetadata } from '../../../components/settings/IntegrationWizard'
@@ -19,10 +14,9 @@ interface Props {
   onSaved: () => void
 }
 
-// Catalog id → MCP server name, for the data-source ids that differ from their
-// server (the drift documented in setupSteps' MCP_ONLY_DATA_SOURCE_IDS). Used
-// both to filter the picker to connectable sources and to connect on save, so
-// the two can't drift apart again.
+// Catalog id → MCP server name for the data-source ids that differ from their
+// server (the drift in setupSteps' MCP_ONLY_DATA_SOURCE_IDS). Shared by the
+// picker filter and the connect-on-save so the two can't diverge.
 const CATALOG_TO_SERVER: Record<string, string> = {
   'aws-security-hub': 'aws-security',
   'gcp-security': 'gcp-scc',
@@ -38,11 +32,9 @@ interface IntegrationsConfig {
 const DataSourceDialog = ({ onSaved }: Props) => {
   const [selected, setSelected] = useState<IntegrationMetadata | null>(null)
   const [query, setQuery] = useState('')
-  // Real MCP servers (mcpApi.listServers) — the picker shows only catalog
-  // sources that map to one of these. null = still loading.
   const [availableServers, setAvailableServers] = useState<Set<string> | null>(null)
-  // Loaded once so the merge keeps other integrations' config intact and the
-  // wizard can pre-fill an already-configured source.
+  // Full current config, loaded once, so the save merges instead of clobbering
+  // other integrations (and the wizard can pre-fill an already-configured source).
   const cfg = useRef<IntegrationsConfig>({ enabled_integrations: [], integrations: {} })
 
   useEffect(() => {
@@ -72,10 +64,8 @@ const DataSourceDialog = ({ onSaved }: Props) => {
     }
   }, [])
 
-  // Only offer sources with a real MCP backend: the catalog lists ~48 data
-  // sources but only ~14 have a server, so picking the rest would be a dead-end
-  // (mirrors Settings, which sources its list from the live servers). null
-  // servers = still loading → empty until known.
+  // Only offer sources with a live MCP server behind them — otherwise picking one
+  // would be a dead-end (mirrors Settings' server-first sourcing).
   const dataSources = useMemo(() => {
     if (!availableServers) return []
     return getAllIntegrations().filter(
@@ -83,9 +73,6 @@ const DataSourceDialog = ({ onSaved }: Props) => {
     )
   }, [availableServers])
 
-  // The catalog is long (40+ sources across SIEM/EDR/cloud/network), so the
-  // picker filters by name or category — keeps the panel a sane height instead
-  // of a giant scroll of cards.
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return dataSources
@@ -94,9 +81,7 @@ const DataSourceDialog = ({ onSaved }: Props) => {
     )
   }, [dataSources, query])
 
-  // Persist credentials, then connect the MCP server. Throwing surfaces the
-  // message in the wizard's own error banner; resolving lets it close and we
-  // finish the step (onSaved → collapse + refetch).
+  // Persist creds, then connect. Throwing surfaces in the wizard's error banner.
   const handleSave = async (id: string, config: Record<string, unknown>) => {
     const cur = cfg.current
     const integrations = { ...cur.integrations, [id]: config }
@@ -106,9 +91,21 @@ const DataSourceDialog = ({ onSaved }: Props) => {
     await configApi.setIntegrations({ enabled_integrations: enabled, integrations })
 
     const serverName = serverFor(id)
-    const res = await mcpApi.setServerEnabled(serverName, true)
-    if (res?.data && res.data.success === false) {
-      throw new Error(res.data.error || `Could not connect ${serverName}`)
+    const { data } = await mcpApi.setServerEnabled(serverName, true)
+    // The endpoint always returns success:true (it only persisted the enabled
+    // bit) — the real connect result is `connected`. false = it didn't come
+    // online; revert (like the Settings toggles) and surface why. null = MCP
+    // subsystem down, not a cred failure — let it through.
+    if (data?.connected === false) {
+      mcpApi.setServerEnabled(serverName, false).catch(() => {})
+      const missing = data.missing_credentials?.length
+        ? `Missing required credentials: ${data.missing_credentials.join(', ')}.`
+        : null
+      throw new Error(
+        data.error ||
+          missing ||
+          `Couldn't connect to ${selected?.name ?? serverName}. Check the credentials and try again.`,
+      )
     }
     onSaved()
   }
@@ -135,8 +132,7 @@ const DataSourceDialog = ({ onSaved }: Props) => {
         placeholder="Search data sources (Splunk, CrowdStrike, Elastic…)"
         onChange={(e) => setQuery(e.target.value)}
       />
-      {/* Fixed height (not max-h): a stable results window you scroll within, so
-          filtering doesn't snap the panel smaller on each keystroke. ~3 rows tall. */}
+      {/* Fixed height (not max-h) so filtering doesn't resize the panel per keystroke. */}
       <div className="h-56 overflow-y-auto pr-1 -mr-1">
         {availableServers === null ? (
           <div className="py-6 text-center text-sm text-tx-3">Loading available sources…</div>

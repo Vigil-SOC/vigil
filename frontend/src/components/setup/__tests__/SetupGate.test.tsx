@@ -3,9 +3,8 @@ import { render, screen } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 vi.mock('../../../services/api', () => ({ llmProviderApi: { list: vi.fn() } }))
-// SetupGate's loading state renders the redesign RedesignLoader, which pulls in
-// the theme/config stack (useTheme → configApi). This suite exercises gating
-// logic, not the loader, so stub it to keep the gate isolated.
+// Stub RedesignLoader: SetupGate's loading state renders it, and it pulls in the
+// theme/config stack (useTheme → configApi) this suite doesn't mock.
 vi.mock('../../../redesign/shell/Loader', () => ({ default: () => null }))
 
 import SetupGate from '../SetupGate'

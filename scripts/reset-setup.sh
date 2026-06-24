@@ -115,17 +115,20 @@ fi
 echo
 
 # --- reset actions --------------------------------------------------------
-if [ "$do_providers" = true ]; then
-  ids=$(get /llm/providers/ | python3 -c "import sys,json;[print(p['provider_id']) for p in json.load(sys.stdin)]")
-  if [ -z "$ids" ]; then echo "  providers: already empty"; else
-    while read -r id; do [ -n "$id" ] && { del "/llm/providers/$id" >/dev/null; echo -e "  ${GREEN}deleted provider${NC} $id"; }; done <<< "$ids"
-  fi
-fi
-
+# Clear assignments BEFORE deleting providers: ai_model_configs.provider_id is a
+# FK to llm_provider_configs with ON DELETE RESTRICT (database/init/10_ai_model_configs.sql),
+# so deleting a provider an assignment still points at 500s. Order matters here.
 if [ "$do_assignments" = true ]; then
   comps=$(get /ai/config | python3 -c "import sys,json;[print(k) for k in json.load(sys.stdin).get('assignments',{})]")
   if [ -z "$comps" ]; then echo "  assignments: already empty"; else
     while read -r c; do [ -n "$c" ] && { del "/ai/config/$c" >/dev/null; echo -e "  ${GREEN}cleared assignment${NC} $c"; }; done <<< "$comps"
+  fi
+fi
+
+if [ "$do_providers" = true ]; then
+  ids=$(get /llm/providers/ | python3 -c "import sys,json;[print(p['provider_id']) for p in json.load(sys.stdin)]")
+  if [ -z "$ids" ]; then echo "  providers: already empty"; else
+    while read -r id; do [ -n "$id" ] && { del "/llm/providers/$id" >/dev/null; echo -e "  ${GREEN}deleted provider${NC} $id"; }; done <<< "$ids"
   fi
 fi
 

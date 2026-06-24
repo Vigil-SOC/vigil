@@ -1,17 +1,14 @@
 // frontend/src/setup/setupSteps.ts
 //
 // The setup-checklist registry: pure data + readiness predicates, no JSX.
-// This is the design-agnostic core — it survives the coming UI overhaul.
-// `useSetupChecklist` feeds these predicates live backend state; the markup
-// just renders the results.
+// useSetupChecklist feeds these predicates live backend state.
 import { INTEGRATIONS } from '../config/integrations'
 import type { LLMProvider, AIConfigResponse, BudgetSettings } from '../services/api'
 
 // --- Data-source identification -------------------------------------------
 
-// Categories whose connected integrations mean "Vigil is actually being fed
-// telemetry to triage." Enrichment (Threat Intelligence), output (Slack/Jira/
-// PagerDuty), identity, sandbox, and forensics are deliberately excluded.
+// Categories whose connected integrations mean Vigil is actually being fed
+// telemetry. Enrichment / output / identity / sandbox / forensics are excluded.
 export const DATA_SOURCE_CATEGORIES = new Set<string>([
   'SIEM',
   'EDR/XDR',
@@ -20,13 +17,9 @@ export const DATA_SOURCE_CATEGORIES = new Set<string>([
   'Data Pipeline',
 ])
 
-// The catalog (config/integrations.ts) is the source of truth for an
-// integration's *category*. But MCP *connection* names are mcp-config.json
-// keys, which drift from catalog ids for a handful of real data-source
-// servers — they connect under a name the catalog never lists, so deriving
-// from the catalog alone would silently miss them (false negative). Keep this
-// in sync whenever mcp-config.json gains a data-source server whose key differs
-// from its catalog id. (Verified against mcp-config.json on 2026-06-18.)
+// MCP connection names are mcp-config.json keys, which drift from catalog ids
+// for a few real data-source servers. Keep in sync when mcp-config.json gains a
+// data-source server whose key differs from its catalog id. (Verified 2026-06-18.)
 export const MCP_ONLY_DATA_SOURCE_IDS = [
   'elastic', // catalog id: elastic-siem (SIEM)
   'splunk-selfhosted', // SIEM, no catalog entry
@@ -46,8 +39,7 @@ export interface McpConnection {
   connected: boolean
 }
 
-// One snapshot of everything the checklist derives from. useSetupChecklist
-// builds this from the live APIs (each source fail-open to an empty default).
+// One snapshot of everything the checklist derives from (each source fail-open).
 export interface SetupState {
   providers: LLMProvider[]
   connections: McpConnection[]
@@ -73,29 +65,21 @@ export type SetupStepId =
   | 'cost-guardrails'
   | 'autonomy'
 
-// Onboarding gating tier:
-//  - 'required'    → hard gate; blocks entry to the app (today: only the LLM provider)
-//  - 'recommended' → strongly nudged but skippable (data source — a SOC needs telemetry,
-//                    but it can also arrive via DeepTempo's pipeline / demo / upload)
-//  - 'optional'    → pure nice-to-have
+// Gating tier: 'required' drives the hard gate (today: only the LLM provider);
+// 'recommended' is strongly nudged but skippable; 'optional' is nice-to-have.
 export type SetupTier = 'required' | 'recommended' | 'optional'
 
-// The Settings section a step's "Configure →" action opens. Both shells use the
-// same section vocabulary — today's MUI app (TAB_DEFS → /settings?tab=<key>) and
-// the redesign (SettingsScreen SECTIONS → setActive(<key>)) — so we store the
-// shell-agnostic key here and let each shell build its own navigation. Keeps this
-// registry portable when the redesign takes over the protected routes.
+// Shell-agnostic Settings section key — each shell builds its own navigation to it.
 export type SettingsSection = 'ai-config' | 'integrations' | 'autoinvestigate'
 
 export interface SetupStep {
   id: SetupStepId
   label: string
   description: string
-  // Status word shown as a tag once the step is satisfied — it replaces the
-  // step's action button in the checklist row (e.g. "Connected").
+  // Status word shown as a tag once the step is satisfied (replaces the button).
   doneLabel: string
-  tier: SetupTier // gating tier; only 'required' steps drive the hard gate
-  settingsSection: SettingsSection // which Settings section "Configure →" opens
+  tier: SetupTier
+  settingsSection: SettingsSection
   selectReady: (s: SetupState) => boolean
 }
 
@@ -107,8 +91,8 @@ export const SETUP_STEPS: SetupStep[] = [
     doneLabel: 'Connected',
     tier: 'required',
     settingsSection: 'ai-config',
-    // Mirrors useSetupStatus.isProviderReady (kept in sync intentionally):
-    // active + default, no key required (local/keyless providers are valid).
+    // Mirrors useSetupStatus.isProviderReady (kept in sync): active + default,
+    // no key required (local/keyless providers are valid).
     selectReady: (s) => s.providers.some((p) => p.is_active && p.is_default),
   },
   {

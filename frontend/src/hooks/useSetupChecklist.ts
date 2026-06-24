@@ -1,13 +1,9 @@
 // frontend/src/hooks/useSetupChecklist.ts
 //
-// Soft-checklist state: fetches every domain the setup steps care about and
-// runs each step's readiness predicate. Purely additive — the hard gate still
-// lives in useSetupStatus / SetupGate; this only drives the (non-blocking)
-// setup checklist.
-//
-// SetupScreen consumes `steps`/`loading`/`refetch`. `requiredReady` and
-// `incompleteCount` are scaffolding for a planned dashboard "finish setup"
-// nudge that isn't built yet — currently exercised only by tests.
+// Soft-checklist state: fetches every domain the setup steps read and runs each
+// readiness predicate. Purely additive — the hard gate lives in useSetupStatus /
+// SetupGate. `requiredReady` / `incompleteCount` are scaffolding for a planned
+// dashboard nudge, currently exercised only by tests.
 import { useCallback, useEffect, useState } from 'react'
 import { llmProviderApi, mcpApi, aiConfigApi, budgetsApi, configApi } from '../services/api'
 import {
@@ -24,15 +20,14 @@ export interface ChecklistStep extends SetupStep {
 
 export interface SetupChecklist {
   steps: ChecklistStep[]
-  requiredReady: boolean // all required steps satisfied (today: just the LLM)
-  incompleteCount: number // optional steps still not ready — drives the nudge
+  requiredReady: boolean
+  incompleteCount: number
   loading: boolean
   refetch: () => void
 }
 
-// Pull the live state behind the checklist. Every call fail-opens to its empty
-// default (Promise.allSettled), so one flaky endpoint can't crash the page or
-// hide the rest. This is advisory — not a security control.
+// Every source fail-opens to its empty default (Promise.allSettled), so one
+// flaky endpoint can't crash the page. Advisory — not a security control.
 const fetchSetupState = async (): Promise<SetupState> => {
   const base = emptySetupState()
   const [providers, connections, aiConfig, budget, orchestrator] = await Promise.allSettled([
@@ -61,10 +56,8 @@ const useSetupChecklist = (): SetupChecklist => {
   const [state, setState] = useState<SetupState>(emptySetupState)
   const [loading, setLoading] = useState(true)
 
-  // `loading` gates the one-time "Checking setup…" placeholder, so flip it only
-  // on the initial load — not on refetches. A refetch (e.g. after saving a
-  // provider) updates the steps in place; blanking the whole list to the loader
-  // mid-render made the accordion + Connect button flash/jitter on save.
+  // Flip `loading` only on the initial load, not refetches: a refetch updates the
+  // steps in place, and blanking the list to the loader mid-save made it flash.
   const refetch = useCallback(() => {
     fetchSetupState()
       .then(setState)

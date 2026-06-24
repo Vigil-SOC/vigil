@@ -1,17 +1,15 @@
 // frontend/src/redesign/screens/setup/BudgetDialog.tsx
 //
-// Onboarding step panel — sets the Bifrost virtual key + spend cap that the
-// "cost guardrails" checklist step keys off (ready === non-empty default_vk).
-// Renders inline on the setup screen (no modal). Direct budgetsApi calls; no
-// redesign settings-section dependency.
+// Setup step panel — sets the Bifrost virtual key + spend cap. The cost-guardrails
+// step reads ready once default_vk is non-empty.
 import { useEffect, useState } from 'react'
 import { Field, NumberInput, Select, TextInput } from '../../shared/ui'
+import { Banner, StepFooter, useSaveAction } from '../../shared/formKit'
 import { budgetsApi, type BudgetSettings } from '../../../services/api'
 
 interface Props {
   onClose: () => void
   onSaved: () => void
-  onError: (msg: string) => void
 }
 
 const ENFORCEMENT_OPTIONS = [
@@ -19,11 +17,12 @@ const ENFORCEMENT_OPTIONS = [
   { value: 'hard_stop', label: 'Hard stop — block calls once the cap is hit' },
 ]
 
-const BudgetDialog = ({ onClose, onSaved, onError }: Props) => {
+const BudgetDialog = ({ onClose, onSaved }: Props) => {
   const [vk, setVk] = useState('')
   const [limit, setLimit] = useState('')
   const [enforcement, setEnforcement] = useState<BudgetSettings['enforcement_mode']>('warning')
-  const [saving, setSaving] = useState(false)
+  const [vkError, setVkError] = useState<string | null>(null)
+  const { saving, error, run } = useSaveAction({ onSaved })
 
   useEffect(() => {
     let alive = true
@@ -41,24 +40,25 @@ const BudgetDialog = ({ onClose, onSaved, onError }: Props) => {
     }
   }, [])
 
-  const save = async () => {
-    setSaving(true)
-    try {
+  const save = () => {
+    // vk is the one required field (the cap is enforced through it). Validate on
+    // click instead of disabling Save with no explanation.
+    if (!vk.trim()) {
+      setVkError('Add a Bifrost virtual key — Vigil enforces the spend cap through it.')
+      return
+    }
+    run(async () => {
       await budgetsApi.set({
         default_vk: vk.trim(),
         budget_limit_usd: Number(limit) || 0,
         enforcement_mode: enforcement,
       })
-      onSaved()
-    } catch (e) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string }
-      onError(err?.response?.data?.detail || err?.message || 'Failed to save budget')
-      setSaving(false)
-    }
+    }, 'Failed to save budget')
   }
 
   return (
     <div className="flex flex-col gap-3.5">
+      {error && <Banner kind="err">{error}</Banner>}
       <p className="text-sm text-tx-2">
         Cap spend through a Bifrost virtual key. Vigil reads the key&apos;s live usage and
         enforces the limit on every model call.
@@ -66,8 +66,16 @@ const BudgetDialog = ({ onClose, onSaved, onError }: Props) => {
       <Field
         label="Bifrost virtual key"
         hint="The virtual key Vigil bills against — copy it from your Bifrost dashboard."
+        error={vkError}
       >
-        <TextInput value={vk} placeholder="vk-…" onChange={(e) => setVk(e.target.value)} />
+        <TextInput
+          value={vk}
+          placeholder="vk-…"
+          onChange={(e) => {
+            setVk(e.target.value)
+            if (vkError) setVkError(null)
+          }}
+        />
       </Field>
       <Field label="Monthly spend cap (USD)">
         <NumberInput
@@ -84,14 +92,13 @@ const BudgetDialog = ({ onClose, onSaved, onError }: Props) => {
           onSelect={(v) => setEnforcement(v as BudgetSettings['enforcement_mode'])}
         />
       </Field>
-      <div className="flex justify-end gap-2.5 mt-2">
-        <button className="btn ghost" onClick={onClose} disabled={saving}>
-          Cancel
-        </button>
-        <button className="btn primary" onClick={save} disabled={saving || !vk.trim()}>
-          {saving ? 'Saving…' : 'Save'}
-        </button>
-      </div>
+      <StepFooter
+        onCancel={onClose}
+        saving={saving}
+        onPrimary={save}
+        primaryLabel="Save"
+        busyLabel="Saving…"
+      />
     </div>
   )
 }

@@ -1,11 +1,7 @@
 // frontend/src/redesign/screens/setup/SetupScreen.tsx
 //
-// Redesign-styled first-access setup screen, rendered on the real /setup route.
-// Logic is design-agnostic (useSetupChecklist + setupSteps); presentation uses
-// the redesign primitives (shared/ui, shared/icons, styles.css tokens). Every
-// step configures inline — each expands its form in place (accordion), no modal.
-// The provider step reuses the redesign's LlmProviderWizard body (the same flow
-// Settings shows in a modal), rendered inline here.
+// Standalone /setup screen. Step logic is design-agnostic (setupSteps +
+// useSetupChecklist); this file is the presentation + the inline step panels.
 import { Fragment, useEffect, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import '../../styles.css'
@@ -22,10 +18,8 @@ import type { SetupStepId } from '../../../setup/setupSteps'
 import { useAuth } from '../../../contexts/AuthContext'
 import { llmProviderApi } from '../../../services/api'
 
-// /setup is revisitable while setup is unfinished, but steps aside once the
-// user is done. "Dismissed" is a per-browser localStorage flag set when they
-// leave via "Go to dashboard" (guarded — storage can throw in private mode).
-// Readiness stays live-derived; this is only the UI "I'm finished here" signal.
+// Per-browser "I'm done here" flag, set on "Go to dashboard". Readiness stays
+// live-derived; this only lets a finished user leave /setup without it nagging.
 const SETUP_DISMISSED_KEY = 'vigil.setupDismissed'
 const readSetupDismissed = (): boolean => {
   try {
@@ -38,17 +32,12 @@ const markSetupDismissed = (): void => {
   try {
     localStorage.setItem(SETUP_DISMISSED_KEY, '1')
   } catch {
-    /* storage unavailable — skip persistence */
+    /* storage unavailable */
   }
 }
 
-// Vertically + horizontally centered, so it reads as centered across monitor
-// sizes. `my-auto` (not `items-center`) does the vertical centering to stay
-// overflow-safe: when an expanded step makes the card taller than the viewport,
-// auto margins collapse and the scroll container keeps the top reachable
-// (plain align-items:center would clip it). Trade-off: the card re-centers as
-// steps expand/collapse, so the layout shifts a bit on open — accepted here in
-// favor of a consistently centered position.
+// `my-auto` (not items-center) centers vertically while staying overflow-safe:
+// when an expanded step overflows the viewport, items-center would clip the top.
 const Shell = ({ children }: { children: React.ReactNode }) => (
   <div className="soc-console">
     <div className="absolute inset-0 overflow-auto">
@@ -72,9 +61,6 @@ const Header = () => (
   </header>
 )
 
-// One checklist row. Ready steps show a ✓ and no action. Not-ready steps toggle
-// their inline config panel ("Configure"/"Connect" ⇄ "Close"). The required
-// provider step is emphasized: accent status dot + primary button.
 const StepRow = ({
   step,
   expanded,
@@ -87,9 +73,7 @@ const StepRow = ({
   const required = step.tier === 'required'
   return (
     <div className="flex items-center gap-3 py-3">
-      {/* Marker semantics: ✓ = done (positive feedback, any tier); accent ring =
-          the required gate, still to do; dashed + = an optional step you can add
-          anytime (an opt-in slot, not an unchecked-and-overdue box). */}
+      {/* ✓ = done · accent ring = required, still to do · dashed + = optional */}
       <span
         className={`grid place-items-center w-6 h-6 shrink-0 rounded-full border transition-colors duration-200 motion-reduce:transition-none ${
           step.ready
@@ -109,10 +93,8 @@ const StepRow = ({
         <div className="text-tx text-sm font-medium">{step.label}</div>
         <div className="text-tx-3 text-xs mt-0.5">{step.description}</div>
       </div>
-      {/* Right slot: the action button crossfades into a "done" status tag in the
-          same spot (tag absolutely overlaid), so finishing a step resolves the
-          button into a status instead of vanishing into empty space. Once ready
-          the button is inert and hidden from assistive tech. */}
+      {/* Button and the "done" tag share this slot (tag overlaid) and crossfade —
+          no layout shift. When ready the button is inert + hidden from a11y. */}
       <div className="shrink-0 relative">
         <div
           className={`transition-opacity duration-200 motion-reduce:transition-none ${
@@ -146,17 +128,13 @@ const StepRow = ({
   )
 }
 
-// Section lead-in shown above the first step of the 'recommended' / 'optional' tiers.
 const TIER_LEAD_IN: Record<string, string> = {
   recommended: 'Recommended',
   optional: 'Optional',
 }
 
-// Smoothly animates an inline step panel open/closed. The grid 0fr→1fr trick
-// transitions to the content's natural height (no fixed max-height guess); the
-// child is clipped via overflow during the slide. Content mounts only while
-// open and lingers through the close transition before unmounting — so each
-// step's panel still fetches lazily (on open), never on setup load.
+// grid 0fr→1fr animates to the content's natural height. Children mount only
+// while open (lingering through the close), so each panel fetches lazily on open.
 const Collapse = ({ open, children }: { open: boolean; children: React.ReactNode }) => {
   const [mounted, setMounted] = useState(open)
   useEffect(() => {
@@ -188,26 +166,17 @@ const SetupScreen = () => {
   const { hasPermission } = useAuth()
   const { steps, loading, refetch } = useSetupChecklist()
   const [activeStep, setActiveStep] = useState<SetupStepId | null>(null)
-  const [error, setError] = useState<string | null>(null)
 
   const llmReady = steps.find((s) => s.id === 'llm-provider')?.ready ?? false
-  // Counter copy: before the required step is met, state the composition
-  // ("N required · M optional" — only one thing is mandatory), then switch to
-  // optional progress. Avoids the "0 of 5" framing that read as a 5-item quota.
   const optionalSteps = steps.filter((s) => s.tier !== 'required')
   const requiredCount = steps.length - optionalSteps.length
   const optionalDone = optionalSteps.filter((s) => s.ready).length
-  // Once llmReady && every optional step is done, `allReady` is true and the
-  // screen redirects (below) before this renders — so there's no "all set"
-  // branch here; while this is on screen at least one optional step is open.
   const checklistSummary = !llmReady
     ? `${requiredCount} required · ${optionalSteps.length} optional`
     : `Ready · ${optionalDone} of ${optionalSteps.length} optional done`
 
-  // Once setup is finished — every step ready, or dismissed by leaving via
-  // "Go to dashboard" — /setup steps aside. Guarded by llmReady so that if the
-  // provider is later lost (SetupGate routes back here) the user lands on the
-  // wizard to fix it rather than bouncing in a redirect loop.
+  // Finished (all ready) or dismissed → leave /setup. The llmReady guard avoids a
+  // loop: if the provider is later lost, SetupGate sends us back and we show the wizard.
   const allReady = steps.length > 0 && steps.every((s) => s.ready)
   if (!loading && llmReady && (allReady || readSetupDismissed())) {
     return <Navigate to="/" replace />
@@ -219,9 +188,8 @@ const SetupScreen = () => {
     refetch()
   }
 
-  // The redesign's LlmProviderDialog creates with is_default:false. For
-  // first-access we must guarantee a default exists, or the required step never
-  // flips ready. Idempotent: only promotes when nothing is default yet.
+  // The wizard creates with is_default:false; promote one here or the required
+  // step never flips ready. Idempotent — only when nothing is default yet.
   const handleProviderSaved = async () => {
     setActiveStep(null)
     try {
@@ -232,17 +200,14 @@ const SetupScreen = () => {
         await llmProviderApi.setDefault(target.provider_id)
       }
     } catch {
-      // fail-open — refetch reflects whatever the backend actually has
+      // fail-open — refetch reflects the real backend state
     }
     refetch()
   }
 
-  // Each step's action toggles its inline panel open/closed.
   const handleAction = (step: ChecklistStep) =>
     setActiveStep((cur) => (cur === step.id ? null : step.id))
 
-  // The inline body for a step. The provider step uses handleProviderSaved (to
-  // promote a default); the rest collapse + refetch on save.
   const renderStepPanel = (id: SetupStepId) => {
     switch (id) {
       case 'llm-provider':
@@ -257,15 +222,14 @@ const SetupScreen = () => {
       case 'data-source':
         return <DataSourceDialog onSaved={handleSaved} />
       case 'model-assignment':
-        return <ModelAssignmentDialog onClose={closeStep} onSaved={handleSaved} onError={setError} />
+        return <ModelAssignmentDialog onClose={closeStep} onSaved={handleSaved} />
       case 'cost-guardrails':
-        return <BudgetDialog onClose={closeStep} onSaved={handleSaved} onError={setError} />
+        return <BudgetDialog onClose={closeStep} onSaved={handleSaved} />
       case 'autonomy':
         return (
           <AutonomyDialog
             onClose={closeStep}
             onSaved={handleSaved}
-            onError={setError}
             onConfigureBudget={() => setActiveStep('cost-guardrails')}
           />
         )
@@ -291,11 +255,6 @@ const SetupScreen = () => {
   return (
     <Shell>
       <Header />
-      {error && (
-        <div className="mb-4 px-3 py-2 rounded border border-crit bg-crit-dim text-crit text-sm">
-          {error}
-        </div>
-      )}
       <SettingsCard title="Setup checklist" desc={checklistSummary}>
         {loading ? (
           <div className="py-8 text-center text-tx-3 text-sm">Checking setup…</div>

@@ -28,8 +28,7 @@ const BuilderTool = lazy(() => import('./pages/BuilderTool'))
 // UI redesign preview (Claude Design handoff) — full-screen, mock data.
 const SocConsole = lazy(() => import('./redesign/SocConsole'))
 const SocLogin = lazy(() => import('./redesign/screens/login/LoginScreen'))
-// First-run setup gate — the redesign-styled SetupScreen, rendered standalone
-// (no console shell) at /setup.
+// Standalone /setup screen (no console shell).
 const SetupScreen = lazy(() => import('./redesign/screens/setup/SetupScreen'))
 
 const PageFallback = () => (
@@ -51,9 +50,7 @@ function App() {
           {/* Public routes */}
           <Route path="/login" element={<Login />} />
 
-          {/* First-run setup wizard. Protected (the readiness check requires
-              auth), but OUTSIDE SetupGate so it stays reachable while
-              unconfigured — otherwise the gate would redirect to itself. */}
+          {/* OUTSIDE SetupGate so it stays reachable while unconfigured (no redirect loop). */}
           <Route
             path="/setup"
             element={<ProtectedRoute>{redesign(<SetupScreen />)}</ProtectedRoute>}

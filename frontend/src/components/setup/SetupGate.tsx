@@ -7,10 +7,9 @@ interface Props {
   children: ReactNode
 }
 
-// First-access gate: blocks the app until a working LLM provider exists.
-// Rendered inside ProtectedRoute (the user is already authenticated) and around
-// MainLayout. The /setup route lives OUTSIDE this gate so it stays reachable
-// when unconfigured (no redirect loop).
+// First-access gate: blocks the app until a working LLM provider exists. The
+// /setup route lives OUTSIDE this gate so it stays reachable when unconfigured
+// (no redirect loop).
 const SetupGate = ({ children }: Props) => {
   const { configured, loading } = useSetupStatus()
 

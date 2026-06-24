@@ -8,6 +8,7 @@
 import { useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { Field, NumberInput, PasswordInput, Popup, Select, TextInput, ToggleRow } from '../../shared/ui'
+import { Banner, extractApiError } from '../../shared/formKit'
 import {
   PROXY_FIELDS,
   SECTION_LABELS,
@@ -95,7 +96,7 @@ export default function IntegrationWizard({ integration, existingConfig = {}, on
       await onSave(integration.id, config)
       onClose()
     } catch (e) {
-      setError((e as { message?: string })?.message || 'Failed to save configuration')
+      setError(extractApiError(e, 'Failed to save configuration'))
     } finally {
       setSaving(false)
     }
@@ -110,9 +111,7 @@ export default function IntegrationWizard({ integration, existingConfig = {}, on
             <Icon name="link" size={12} /> Documentation
           </a>
         )}
-        {error && (
-          <div className="settings-banner err"><Icon name="alert" size={14} /> {error}</div>
-        )}
+        {error && <Banner kind="err">{error}</Banner>}
 
         {mainFields.map(renderField)}
 

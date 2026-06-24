@@ -1,12 +1,10 @@
 // frontend/src/redesign/screens/setup/AutonomyDialog.tsx
 //
-// Onboarding step panel — enables the autonomous orchestrator inline on the
-// setup screen (no modal). Talks straight to configApi (no dependency on the
-// redesign settings sections). The orchestrator POST takes the *full* config,
-// so we GET the current one, flip `enabled`, and round-trip it back to preserve
-// the caps.
+// Setup step panel — enables the autonomous orchestrator. The orchestrator POST
+// takes the full config, so we GET it, flip `enabled`, and round-trip to keep the caps.
 import { useEffect, useState } from 'react'
 import { Icon } from '../../shared/icons'
+import { Banner, useSaveAction } from '../../shared/formKit'
 import { budgetsApi, configApi } from '../../../services/api'
 
 type OrchestratorConfig = Parameters<typeof configApi.setOrchestrator>[0]
@@ -14,17 +12,16 @@ type OrchestratorConfig = Parameters<typeof configApi.setOrchestrator>[0]
 interface Props {
   onClose: () => void
   onSaved: () => void
-  onError: (msg: string) => void
   // Jump to the cost-guardrails step. Autonomy runs investigations around the
   // clock, so we require an account-level spend cap before switching it on.
   onConfigureBudget: () => void
 }
 
-const AutonomyDialog = ({ onClose, onSaved, onError, onConfigureBudget }: Props) => {
+const AutonomyDialog = ({ onClose, onSaved, onConfigureBudget }: Props) => {
   const [config, setConfig] = useState<OrchestratorConfig | null>(null)
   // null = still loading; gate the enable button until we know.
   const [hasCap, setHasCap] = useState<boolean | null>(null)
-  const [saving, setSaving] = useState(false)
+  const { saving, error, run } = useSaveAction({ onSaved })
 
   useEffect(() => {
     let alive = true
@@ -41,18 +38,11 @@ const AutonomyDialog = ({ onClose, onSaved, onError, onConfigureBudget }: Props)
     }
   }, [])
 
-  const enable = async () => {
-    setSaving(true)
-    try {
+  const enable = () =>
+    run(async () => {
       const base = config ?? (await configApi.getOrchestrator()).data
       await configApi.setOrchestrator({ ...base, enabled: true })
-      onSaved()
-    } catch (e) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string }
-      onError(err?.response?.data?.detail || err?.message || 'Failed to enable autonomous mode')
-      setSaving(false)
-    }
-  }
+    }, 'Failed to enable autonomous mode')
 
   const caps: [string, number | undefined][] = [
     ['Per investigation', config?.max_cost_per_investigation],
@@ -62,6 +52,7 @@ const AutonomyDialog = ({ onClose, onSaved, onError, onConfigureBudget }: Props)
 
   return (
     <div className="flex flex-col gap-4">
+      {error && <Banner kind="err">{error}</Banner>}
       <p className="text-sm text-tx-2">
         Autonomous mode runs triage and investigation around the clock as new alerts
         arrive — no one has to be watching. It stops at the cost caps below, which you
