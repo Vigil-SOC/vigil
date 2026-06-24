@@ -43,12 +43,12 @@ interface Props {
 }
 
 // Body without modal chrome; the default export below wraps it in a Popup for Settings.
-export function LlmProviderWizard({
+export const LlmProviderWizard = ({
   existing,
   onClose,
   onSaved,
   showCancel = true,
-}: Props) {
+}: Props) => {
   const editing = !!existing
   const [step, setStep] = useState(editing ? 1 : 0)
 
@@ -328,7 +328,7 @@ export function LlmProviderWizard({
 
 // Modal form used by Settings (Add/Edit provider). The setup screen renders
 // <LlmProviderWizard> directly, inline, instead of this wrapper.
-export default function LlmProviderDialog(props: Props) {
+const LlmProviderDialog = (props: Props) => {
   return (
     <Popup
       open
@@ -340,3 +340,5 @@ export default function LlmProviderDialog(props: Props) {
     </Popup>
   )
 }
+
+export default LlmProviderDialog

@@ -2,7 +2,7 @@
 //
 // Setup step panel — pick a telemetry source, enter credentials, connect. Picking
 // one opens IntegrationWizard; save persists creds then enables the MCP server.
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import IntegrationWizard from '../settings/IntegrationWizard'
 import type { IntegrationMetadata } from '../../../components/settings/IntegrationWizard'
 import { getAllIntegrations } from '../../../config/integrations'
@@ -33,9 +33,22 @@ const DataSourceDialog = ({ onSaved }: Props) => {
   const [selected, setSelected] = useState<IntegrationMetadata | null>(null)
   const [query, setQuery] = useState('')
   const [availableServers, setAvailableServers] = useState<Set<string> | null>(null)
+  const [serversError, setServersError] = useState(false)
   // Full current config, loaded once, so the save merges instead of clobbering
   // other integrations (and the wizard can pre-fill an already-configured source).
   const cfg = useRef<IntegrationsConfig>({ enabled_integrations: [], integrations: {} })
+
+  // The server list drives which sources are offered. A fetch failure is kept
+  // distinct from "no servers" (it gets a retry) so it can't masquerade as an
+  // empty picker. Extracted from the effect so the retry button can re-run it.
+  const loadServers = useCallback(() => {
+    setServersError(false)
+    setAvailableServers(null)
+    mcpApi
+      .listServers()
+      .then(({ data }) => setAvailableServers(new Set(data?.servers ?? [])))
+      .catch(() => setServersError(true))
+  }, [])
 
   useEffect(() => {
     let alive = true
@@ -49,20 +62,14 @@ const DataSourceDialog = ({ onSaved }: Props) => {
         }
       })
       .catch(() => {})
-
-    mcpApi
-      .listServers()
-      .then(({ data }) => {
-        if (alive) setAvailableServers(new Set(data?.servers ?? []))
-      })
-      .catch(() => {
-        if (alive) setAvailableServers(new Set())
-      })
-
     return () => {
       alive = false
     }
   }, [])
+
+  useEffect(() => {
+    loadServers()
+  }, [loadServers])
 
   // Only offer sources with a live MCP server behind them — otherwise picking one
   // would be a dead-end (mirrors Settings' server-first sourcing).
@@ -134,7 +141,14 @@ const DataSourceDialog = ({ onSaved }: Props) => {
       />
       {/* Fixed height (not max-h) so filtering doesn't resize the panel per keystroke. */}
       <div className="h-56 overflow-y-auto pr-1 -mr-1">
-        {availableServers === null ? (
+        {serversError ? (
+          <div className="py-6 text-center text-sm text-tx-3">
+            Couldn&apos;t load available sources.{' '}
+            <button className="text-accent-2 hover:underline" onClick={loadServers}>
+              Retry
+            </button>
+          </div>
+        ) : availableServers === null ? (
           <div className="py-6 text-center text-sm text-tx-3">Loading available sources…</div>
         ) : (
           <div className="grid grid-cols-2 gap-2">
