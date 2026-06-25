@@ -4,6 +4,8 @@ Authentication Service - User authentication and authorization.
 Handles password hashing, JWT generation/validation, MFA, and session management.
 """
 
+import base64
+import hashlib
 import logging
 import os
 import secrets
@@ -13,6 +15,7 @@ from typing import Optional, Dict, Any, List
 import bcrypt
 import jwt
 import pyotp
+from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
 from database.models import User, Role
@@ -35,6 +38,7 @@ def _load_jwt_secret() -> str:
     """
     try:
         from backend.secrets_manager import get_secret
+
         value = get_secret("JWT_SECRET_KEY")
     except Exception:
         value = os.environ.get("JWT_SECRET_KEY")
@@ -99,40 +103,50 @@ def password_matches_any(plaintext: str, hashes) -> bool:
 
 class AuthService:
     """Service for user authentication and authorization."""
-    
+
     @staticmethod
     def hash_password(password: str) -> str:
         """
         Hash a password using bcrypt.
-        
+
         Args:
             password: Plain text password
-        
+
         Returns:
             Hashed password
         """
         salt = bcrypt.gensalt()
-        hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
-        return hashed.decode('utf-8')
-    
+        hashed = bcrypt.hashpw(password.encode("utf-8"), salt)
+        return hashed.decode("utf-8")
+
     @staticmethod
     def verify_password(password: str, password_hash: str) -> bool:
         """
         Verify a password against its hash.
-        
+
         Args:
             password: Plain text password
             password_hash: Hashed password
-        
+
         Returns:
             True if password matches
         """
         try:
-            return bcrypt.checkpw(password.encode('utf-8'), password_hash.encode('utf-8'))
+            return bcrypt.checkpw(
+                password.encode("utf-8"), password_hash.encode("utf-8")
+            )
         except Exception as e:
             logger.error(f"Password verification error: {e}")
             return False
-    
+
+    @staticmethod
+    def _session_fingerprint(
+        request_ip: Optional[str], user_agent: Optional[str]
+    ) -> str:
+        """Short SHA-256 fingerprint binding a token to its IP + user-agent."""
+        fp = f"{request_ip or ''}|{user_agent or ''}"
+        return hashlib.sha256(fp.encode()).hexdigest()[:16]
+
     @staticmethod
     def generate_jwt_token(
         user: User,
@@ -141,10 +155,10 @@ class AuthService:
         user_agent: Optional[str] = None,
     ) -> str:
         """Generate a JWT token for a user with optional session binding."""
-        expiration = timedelta(
-            minutes=JWT_ACCESS_EXPIRATION_MINUTES
-        ) if token_type == "access" else timedelta(
-            days=JWT_REFRESH_EXPIRATION_DAYS
+        expiration = (
+            timedelta(minutes=JWT_ACCESS_EXPIRATION_MINUTES)
+            if token_type == "access"
+            else timedelta(days=JWT_REFRESH_EXPIRATION_DAYS)
         )
 
         now = datetime.utcnow()
@@ -161,9 +175,7 @@ class AuthService:
 
         # Bind token to session context when available
         if request_ip or user_agent:
-            import hashlib
-            fp_data = f"{request_ip or ''}|{user_agent or ''}"
-            payload["sfp"] = hashlib.sha256(fp_data.encode()).hexdigest()[:16]
+            payload["sfp"] = AuthService._session_fingerprint(request_ip, user_agent)
 
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
         return token
@@ -181,19 +193,17 @@ class AuthService:
         sfp = payload.get("sfp")
         if not sfp:
             return True
-        import hashlib
-        fp_data = f"{request_ip or ''}|{user_agent or ''}"
-        expected = hashlib.sha256(fp_data.encode()).hexdigest()[:16]
+        expected = AuthService._session_fingerprint(request_ip, user_agent)
         return secrets.compare_digest(sfp, expected)
-    
+
     @staticmethod
     def verify_jwt_token(token: str) -> Optional[Dict[str, Any]]:
         """
         Verify and decode a JWT token.
-        
+
         Args:
             token: JWT token string
-        
+
         Returns:
             Decoded payload or None if invalid
         """
@@ -206,29 +216,35 @@ class AuthService:
         except jwt.InvalidTokenError as e:
             logger.warning(f"Invalid JWT token: {e}")
             return None
-    
+
     @staticmethod
-    def authenticate_user(username_or_email: str, password: str, session: Optional[Session] = None) -> Optional[User]:
+    def authenticate_user(
+        username_or_email: str, password: str, session: Optional[Session] = None
+    ) -> Optional[User]:
         """
         Authenticate a user with username/email and password.
-        
+
         Args:
             username_or_email: Username or email
             password: Plain text password
             session: Database session (optional)
-        
+
         Returns:
             User object if authentication successful, None otherwise
         """
         should_close_session = session is None
-        if session is None:
-            session = get_db_session()
-        
+        session = session or get_db_session()
+
         try:
             # Try to find user by username or email
-            user = session.query(User).filter(
-                (User.username == username_or_email) | (User.email == username_or_email)
-            ).first()
+            user = (
+                session.query(User)
+                .filter(
+                    (User.username == username_or_email)
+                    | (User.email == username_or_email)
+                )
+                .first()
+            )
 
             if not user:
                 logger.warning("Login attempt for unknown identifier")
@@ -254,7 +270,9 @@ class AuthService:
             if not AuthService.verify_password(password, user.password_hash):
                 user.failed_login_count = (user.failed_login_count or 0) + 1
                 if user.failed_login_count >= LOCKOUT_THRESHOLD:
-                    user.locked_until = now + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+                    user.locked_until = now + timedelta(
+                        minutes=LOCKOUT_DURATION_MINUTES
+                    )
                     logger.warning(
                         "Account locked after %d failed attempts: %s",
                         user.failed_login_count,
@@ -284,13 +302,12 @@ class AuthService:
         finally:
             if should_close_session:
                 session.close()
-    
+
     @staticmethod
     def setup_mfa(user_id: str, session: Optional[Session] = None) -> Optional[str]:
         """Setup MFA. Returns TOTP secret and generates recovery codes."""
         should_close_session = session is None
-        if session is None:
-            session = get_db_session()
+        session = session or get_db_session()
 
         try:
             user = session.query(User).filter(User.user_id == user_id).first()
@@ -300,12 +317,9 @@ class AuthService:
             secret = pyotp.random_base32()
             user.mfa_secret = AuthService._encrypt_mfa_secret(secret)
             user.mfa_enabled = False
-            # Generate 10 recovery codes, store bcrypt-hashed
-            codes = [secrets.token_hex(4).upper() for _ in range(10)]
-            user.mfa_recovery_codes = [
-                bcrypt.hashpw(c.encode(), bcrypt.gensalt()).decode()
-                for c in codes
-            ]
+            # Generate 10 recovery codes, store bcrypt-hashed (plaintext
+            # is surfaced via get_mfa_recovery_codes, not here)
+            _, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
             session.commit()
 
             logger.info(f"MFA setup initiated for user: {user.username}")
@@ -331,19 +345,14 @@ class AuthService:
         be retrieved again.
         """
         should_close_session = session is None
-        if session is None:
-            session = get_db_session()
+        session = session or get_db_session()
 
         try:
             user = session.query(User).filter(User.user_id == user_id).first()
             if not user or not user.mfa_secret:
                 return None
 
-            codes = [secrets.token_hex(4).upper() for _ in range(10)]
-            user.mfa_recovery_codes = [
-                bcrypt.hashpw(c.encode(), bcrypt.gensalt()).decode()
-                for c in codes
-            ]
+            codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
             session.commit()
             return codes
 
@@ -362,8 +371,7 @@ class AuthService:
     ) -> bool:
         """Verify a TOTP code or a one-time recovery code."""
         should_close_session = session is None
-        if session is None:
-            session = get_db_session()
+        session = session or get_db_session()
 
         try:
             user = session.query(User).filter(User.user_id == user_id).first()
@@ -409,162 +417,159 @@ class AuthService:
                 session.close()
 
     @staticmethod
+    def _generate_recovery_codes() -> tuple[list[str], list[str]]:
+        """Return (plaintext, bcrypt-hashed) lists of 10 one-time recovery codes."""
+        codes = [secrets.token_hex(4).upper() for _ in range(10)]
+        hashed = [bcrypt.hashpw(c.encode(), bcrypt.gensalt()).decode() for c in codes]
+        return codes, hashed
+
+    @staticmethod
+    def _fernet() -> Fernet:
+        """Fernet cipher keyed off JWT_SECRET_KEY (SHA-256 -> base64 32-byte key)."""
+        key = base64.urlsafe_b64encode(hashlib.sha256(JWT_SECRET_KEY.encode()).digest())
+        return Fernet(key)
+
+    @staticmethod
     def _encrypt_mfa_secret(secret: str) -> str:
-        """Encrypt MFA secret at rest using the JWT key as a derived key.
-
-        Uses Fernet symmetric encryption. The encryption key is derived from
-        JWT_SECRET_KEY via SHA-256 + base64 to produce a valid 32-byte Fernet key.
-        """
-        import base64
-        import hashlib
-        from cryptography.fernet import Fernet
-
-        key = base64.urlsafe_b64encode(
-            hashlib.sha256(JWT_SECRET_KEY.encode()).digest()
-        )
-        return Fernet(key).encrypt(secret.encode()).decode()
+        """Encrypt an MFA secret at rest with Fernet (JWT-key-derived)."""
+        return AuthService._fernet().encrypt(secret.encode()).decode()
 
     @staticmethod
     def _decrypt_mfa_secret(encrypted: str) -> str:
-        """Decrypt MFA secret from storage."""
-        import base64
-        import hashlib
-        from cryptography.fernet import Fernet
-
-        key = base64.urlsafe_b64encode(
-            hashlib.sha256(JWT_SECRET_KEY.encode()).digest()
-        )
+        """Decrypt an MFA secret; fall back to plaintext for pre-migration rows."""
         try:
-            return Fernet(key).decrypt(encrypted.encode()).decode()
+            return AuthService._fernet().decrypt(encrypted.encode()).decode()
         except Exception:
             # Fallback: secret may be stored unencrypted (pre-migration rows)
             return encrypted
-    
+
     @staticmethod
-    def get_mfa_qr_uri(user_id: str, session: Optional[Session] = None) -> Optional[str]:
+    def get_mfa_qr_uri(
+        user_id: str, session: Optional[Session] = None
+    ) -> Optional[str]:
         """
         Get MFA QR code URI for a user.
-        
+
         Args:
             user_id: User ID
             session: Database session (optional)
-        
+
         Returns:
             QR code URI or None
         """
         should_close_session = session is None
-        if session is None:
-            session = get_db_session()
-        
+        session = session or get_db_session()
+
         try:
             user = session.query(User).filter(User.user_id == user_id).first()
             if not user or not user.mfa_secret:
                 return None
-            
+
             totp = pyotp.TOTP(user.mfa_secret)
-            uri = totp.provisioning_uri(
-                name=user.email,
-                issuer_name="Vigil SOC"
-            )
+            uri = totp.provisioning_uri(name=user.email, issuer_name="Vigil SOC")
             return uri
-        
+
         finally:
             if should_close_session:
                 session.close()
-    
+
     @staticmethod
-    def check_permission(user_id: str, permission: str, session: Optional[Session] = None) -> bool:
+    def check_permission(
+        user_id: str, permission: str, session: Optional[Session] = None
+    ) -> bool:
         """
         Check if a user has a specific permission.
-        
+
         Args:
             user_id: User ID
             permission: Permission string (e.g., "cases.write")
             session: Database session (optional)
-        
+
         Returns:
             True if user has permission
         """
         # DEV MODE: Grant all permissions
         import os
+
         DEV_MODE = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
         if DEV_MODE:
             return True
-        
+
         should_close_session = session is None
-        if session is None:
-            session = get_db_session()
-        
+        session = session or get_db_session()
+
         try:
             user = session.query(User).filter(User.user_id == user_id).first()
             if not user or not user.is_active:
                 return False
-            
+
             role = session.query(Role).filter(Role.role_id == user.role_id).first()
             if not role:
                 return False
-            
+
             # Check permission in role's permissions JSONB
             return role.permissions.get(permission, False)
-        
+
         finally:
             if should_close_session:
                 session.close()
-    
+
     @staticmethod
-    def get_user_permissions(user_id: str, session: Optional[Session] = None) -> Dict[str, bool]:
+    def get_user_permissions(
+        user_id: str, session: Optional[Session] = None
+    ) -> Dict[str, bool]:
         """
         Get all permissions for a user.
-        
+
         Args:
             user_id: User ID
             session: Database session (optional)
-        
+
         Returns:
             Dictionary of permissions
         """
         # DEV MODE: Return all permissions
         import os
+
         DEV_MODE = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
         if DEV_MODE:
             return {
-                'findings.read': True,
-                'findings.write': True,
-                'findings.delete': True,
-                'cases.read': True,
-                'cases.write': True,
-                'cases.delete': True,
-                'cases.assign': True,
-                'integrations.read': True,
-                'integrations.write': True,
-                'users.read': True,
-                'users.write': True,
-                'users.delete': True,
-                'settings.read': True,
-                'settings.write': True,
-                'ai_chat.use': True,
-                'ai_decisions.approve': True,
+                "findings.read": True,
+                "findings.write": True,
+                "findings.delete": True,
+                "cases.read": True,
+                "cases.write": True,
+                "cases.delete": True,
+                "cases.assign": True,
+                "integrations.read": True,
+                "integrations.write": True,
+                "users.read": True,
+                "users.write": True,
+                "users.delete": True,
+                "settings.read": True,
+                "settings.write": True,
+                "ai_chat.use": True,
+                "ai_decisions.approve": True,
             }
-        
+
         should_close_session = session is None
-        if session is None:
-            session = get_db_session()
-        
+        session = session or get_db_session()
+
         try:
             user = session.query(User).filter(User.user_id == user_id).first()
             if not user:
                 return {}
-            
+
             role = session.query(Role).filter(Role.role_id == user.role_id).first()
             if not role:
                 return {}
-            
+
             return role.permissions
-        
+
         finally:
             if should_close_session:
                 session.close()
-    
+
     @staticmethod
     def create_user(
         username: str,
@@ -572,11 +577,11 @@ class AuthService:
         password: str,
         full_name: str,
         role_id: str,
-        session: Optional[Session] = None
+        session: Optional[Session] = None,
     ) -> Optional[User]:
         """
         Create a new user.
-        
+
         Args:
             username: Username
             email: Email address
@@ -584,26 +589,27 @@ class AuthService:
             full_name: Full name
             role_id: Role ID
             session: Database session (optional)
-        
+
         Returns:
             Created User object or None
         """
         should_close_session = session is None
-        if session is None:
-            session = get_db_session()
-        
+        session = session or get_db_session()
+
         try:
             import uuid
-            
+
             # Check if username or email already exists
-            existing = session.query(User).filter(
-                (User.username == username) | (User.email == email)
-            ).first()
-            
+            existing = (
+                session.query(User)
+                .filter((User.username == username) | (User.email == email))
+                .first()
+            )
+
             if existing:
                 logger.warning(f"User already exists: {username} or {email}")
                 return None
-            
+
             # Create user
             user = User(
                 user_id=f"user-{uuid.uuid4().hex[:12]}",
@@ -615,22 +621,21 @@ class AuthService:
                 is_active=True,
                 is_verified=False,
                 mfa_enabled=False,
-                login_count=0
+                login_count=0,
             )
-            
+
             session.add(user)
             session.commit()
             session.refresh(user)
-            
+
             logger.info(f"User created: {username}")
             return user
-        
+
         except Exception as e:
             logger.error(f"User creation error: {e}")
             session.rollback()
             return None
-        
+
         finally:
             if should_close_session:
                 session.close()
-

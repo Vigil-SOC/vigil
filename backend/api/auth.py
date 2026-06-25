@@ -38,10 +38,10 @@ from backend.services.token_blacklist import (
     is_token_revoked,
     revoke_all_for_user,
 )
-from backend.middleware.auth import get_current_user, get_current_active_user
+from backend.middleware.auth import get_current_active_user
 from backend.middleware.rate_limit import limiter
 from database.models import User
-from database.connection import get_db, get_db_session
+from database.connection import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,7 @@ router = APIRouter()
 # Request/Response Models
 class LoginRequest(BaseModel):
     """Login request."""
+
     username_or_email: str
     password: str
     mfa_code: Optional[str] = None
@@ -58,6 +59,7 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     """Login response."""
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
@@ -66,6 +68,7 @@ class LoginResponse(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     """Change password request."""
+
     current_password: str
     new_password: str
 
@@ -77,27 +80,32 @@ class RefreshTokenRequest(BaseModel):
     HttpOnly refresh_token cookie. The body field stays for API/CLI
     clients that haven't migrated to the cookie flow.
     """
+
     refresh_token: Optional[str] = None
 
 
 class MFASetupResponse(BaseModel):
     """MFA setup response."""
+
     secret: str
     qr_uri: str
 
 
 class MFAVerifyRequest(BaseModel):
     """MFA verification request."""
+
     code: str
 
 
 class PasswordResetRequest(BaseModel):
     """Password reset initiation."""
+
     email: EmailStr
 
 
 class PasswordResetConfirm(BaseModel):
     """Password reset completion."""
+
     token: str
     new_password: str
 
@@ -106,7 +114,8 @@ def _apply_new_password(user: User, plaintext: str) -> None:
     """Enforce history, hash, set, update history + changed_at in one place.
     Caller is responsible for session.commit()."""
     if password_matches_any(plaintext, user.password_history or []) or (
-        user.password_hash and AuthService.verify_password(plaintext, user.password_hash)
+        user.password_hash
+        and AuthService.verify_password(plaintext, user.password_hash)
     ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -132,7 +141,7 @@ async def login(
     request: Request,
     response: Response,
     payload: LoginRequest,
-    session: Session = Depends(get_db)
+    session: Session = Depends(get_db),
 ):
     """
     Authenticate user and issue tokens.
@@ -155,12 +164,12 @@ async def login(
     # Authenticate user
     try:
         user = AuthService.authenticate_user(
-            payload.username_or_email,
-            payload.password,
-            session
+            payload.username_or_email, payload.password, session
         )
     except AccountLockedError as exc:
-        retry_after = max(1, int((exc.locked_until - datetime.utcnow()).total_seconds()))
+        retry_after = max(
+            1, int((exc.locked_until - datetime.utcnow()).total_seconds())
+        )
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
             detail="Account locked due to repeated failed login attempts",
@@ -213,9 +222,7 @@ async def login(
     logger.info(f"User logged in: {user.username}")
 
     return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=user.to_dict()
+        access_token=access_token, refresh_token=refresh_token, user=user.to_dict()
     )
 
 
@@ -253,9 +260,7 @@ async def logout(
         if payload:
             jti = payload.get("jti")
             exp_ts = payload.get("exp")
-            exp_dt = (
-                datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
-            )
+            exp_dt = datetime.utcfromtimestamp(exp_ts) if exp_ts is not None else None
             if jti:
                 try:
                     await blacklist_jti(jti, exp_dt)
@@ -304,7 +309,7 @@ async def refresh_token(
     request: Request,
     response: Response,
     body: Optional[RefreshTokenRequest] = None,
-    session: Session = Depends(get_db)
+    session: Session = Depends(get_db),
 ):
     """
     Refresh access token using refresh token.
@@ -374,9 +379,7 @@ async def refresh_token(
     )
 
     return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        user=user.to_dict()
+        access_token=access_token, refresh_token=refresh_token, user=user.to_dict()
     )
 
 
@@ -406,17 +409,17 @@ async def update_current_user(
     full_name: Optional[str] = None,
     email: Optional[EmailStr] = None,
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db)
+    session: Session = Depends(get_db),
 ):
     """
     Update current user profile.
-    
+
     Args:
         full_name: New full name
         email: New email
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         Updated user information
     """
@@ -427,15 +430,16 @@ async def update_current_user(
 
         if email:
             # Check if email is already taken
-            existing = session.query(User).filter(
-                User.email == email,
-                User.user_id != current_user.user_id
-            ).first()
+            existing = (
+                session.query(User)
+                .filter(User.email == email, User.user_id != current_user.user_id)
+                .first()
+            )
 
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already in use"
+                    detail="Email already in use",
                 )
 
             current_user.email = email
@@ -465,7 +469,7 @@ async def update_current_user(
         session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update profile"
+            detail="Failed to update profile",
         )
 
 
@@ -476,7 +480,7 @@ async def change_password(
     response: Response,
     body: ChangePasswordRequest,
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db)
+    session: Session = Depends(get_db),
 ):
     """
     Change user password.
@@ -491,10 +495,12 @@ async def change_password(
         Success message
     """
     # Verify current password
-    if not AuthService.verify_password(body.current_password, current_user.password_hash):
+    if not AuthService.verify_password(
+        body.current_password, current_user.password_hash
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Current password is incorrect"
+            detail="Current password is incorrect",
         )
 
     # Validate new password against the strength policy
@@ -526,28 +532,28 @@ async def change_password(
         clear_auth_cookies(response)
         logger.info(f"Password changed for user: {current_user.username}")
         return {"message": "Password changed successfully. Please log in again."}
-    
+
     except Exception as e:
         logger.error(f"Password change error: {e}")
         session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to change password"
+            detail="Failed to change password",
         )
 
 
 @router.post("/mfa/setup", response_model=MFASetupResponse)
 async def setup_mfa(
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db)
+    session: Session = Depends(get_db),
 ):
     """
     Setup MFA for current user.
-    
+
     Args:
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         MFA secret and QR code URI
     """
@@ -555,16 +561,16 @@ async def setup_mfa(
     if not secret:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to setup MFA"
+            detail="Failed to setup MFA",
         )
-    
+
     qr_uri = AuthService.get_mfa_qr_uri(current_user.user_id, session)
     if not qr_uri:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate QR code"
+            detail="Failed to generate QR code",
         )
-    
+
     return MFASetupResponse(secret=secret, qr_uri=qr_uri)
 
 
@@ -572,42 +578,41 @@ async def setup_mfa(
 async def verify_mfa(
     request: MFAVerifyRequest,
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db)
+    session: Session = Depends(get_db),
 ):
     """
     Verify MFA code and enable MFA.
-    
+
     Args:
         request: MFA code
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         Success message
     """
     is_valid = AuthService.verify_mfa_code(current_user.user_id, request.code, session)
-    
+
     if not is_valid:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid MFA code"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code"
         )
-    
+
     return {"message": "MFA enabled successfully"}
 
 
 @router.delete("/mfa")
 async def disable_mfa(
     current_user: User = Depends(get_current_active_user),
-    session: Session = Depends(get_db)
+    session: Session = Depends(get_db),
 ):
     """
     Disable MFA for current user.
-    
+
     Args:
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         Success message
     """
@@ -615,16 +620,16 @@ async def disable_mfa(
         current_user.mfa_enabled = False
         current_user.mfa_secret = None
         session.commit()
-        
+
         logger.info(f"MFA disabled for user: {current_user.username}")
         return {"message": "MFA disabled successfully"}
-    
+
     except Exception as e:
         logger.error(f"MFA disable error: {e}")
         session.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to disable MFA"
+            detail="Failed to disable MFA",
         )
 
 
@@ -747,5 +752,3 @@ async def password_reset_confirm(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to reset password",
         )
-
-

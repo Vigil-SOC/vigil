@@ -33,9 +33,7 @@ _USER_CUTOFF_PREFIX = "user_revoked_before:"
 
 # If True, Redis failures during verification allow the request through.
 # Default: False (fail-closed). Set REVOCATION_FAIL_OPEN=true for fail-open.
-_FAIL_OPEN = os.getenv("REVOCATION_FAIL_OPEN", "false").lower() in (
-    "1", "true", "yes"
-)
+_FAIL_OPEN = os.getenv("REVOCATION_FAIL_OPEN", "false").lower() in ("1", "true", "yes")
 
 
 _client = None
@@ -49,9 +47,7 @@ def _get_client():
     try:
         from redis import asyncio as redis_asyncio  # type: ignore
     except Exception as exc:
-        logger.warning(
-            "redis.asyncio unavailable: %s — token revocation disabled", exc
-        )
+        logger.warning("redis.asyncio unavailable: %s — token revocation disabled", exc)
         return None
     url = os.getenv("REDIS_URL", DEFAULT_REDIS_URL)
     _client = redis_asyncio.from_url(url, decode_responses=True)
@@ -77,9 +73,7 @@ async def blacklist_jti(jti: str, expires_at: Optional[datetime]) -> None:
     if expires_at is not None:
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
-        ttl_seconds = int(
-            (expires_at - datetime.now(tz=timezone.utc)).total_seconds()
-        )
+        ttl_seconds = int((expires_at - datetime.now(tz=timezone.utc)).total_seconds())
     if ttl_seconds <= 0:
         return
 
@@ -93,9 +87,7 @@ async def revoke_all_for_user(user_id: str) -> None:
     """
     client = _get_client()
     if client is None:
-        logger.warning(
-            "revoke_all_for_user: redis client unavailable; skipping"
-        )
+        logger.warning("revoke_all_for_user: redis client unavailable; skipping")
         return
     await client.set(f"{_USER_CUTOFF_PREFIX}{user_id}", str(_now_ts()))
 
@@ -128,9 +120,7 @@ async def is_token_revoked(payload: dict) -> bool:
                 return True
 
         if user_id:
-            cutoff_raw = await client.get(
-                f"{_USER_CUTOFF_PREFIX}{user_id}"
-            )
+            cutoff_raw = await client.get(f"{_USER_CUTOFF_PREFIX}{user_id}")
             if cutoff_raw is not None:
                 try:
                     cutoff = int(cutoff_raw)
