@@ -39,11 +39,6 @@ def client():
 @pytest.mark.integration
 class TestRemovedEndpoints:
     def test_register_returns_404(self, client):
-        """Public self-registration was removed in PR 1. The route no longer
-        exists; the SPA catch-all matches the path for GET only, so a POST
-        resolves to 405 (method not allowed). Either 404 or 405 confirms there
-        is no usable register endpoint — same convention as the removed MCP
-        start/stop routes."""
         resp = client.post(
             "/api/auth/register",
             json={

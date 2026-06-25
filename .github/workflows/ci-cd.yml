@@ -157,8 +157,6 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # pgvector image (not plain alpine): app startup runs create_tables(),
-        # and the schema needs the `vector` and `pg_trgm` extensions to build.
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: deeptempo_test
@@ -171,10 +169,6 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-    # DatabaseManager reads POSTGRES_* (it ignores DATABASE_URL), so these must
-    # match the service container above. TESTING=true makes app startup skip the
-    # external connections (MCP subprocesses, Bifrost, LLM gateway) that would
-    # otherwise hang the TestClient — see backend/main.py startup_event.
     env:
       TESTING: "true"
       DEV_MODE: "true"
@@ -212,9 +206,6 @@ jobs:
 
       - name: Run integration tests
         run: |
-          # Gates on failure — pytest's exit code is no longer swallowed. The
-          # TestClient boots the real app against the service-container DB;
-          # tests are API-contract checks that mock their external services.
           pytest tests/integration/ -v --cov=backend --cov-report=xml
         env:
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}

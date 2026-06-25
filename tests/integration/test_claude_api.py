@@ -196,9 +196,6 @@ class TestAgentTaskEndpoint:
     def test_agent_task_success(self, test_client, mock_claude_service):
         """Test successful agent task request."""
         mock_claude_service.use_agent_sdk = True
-        # The endpoint is /agent/task (not /agent-task); it instantiates
-        # ClaudeService() and awaits run_agent_task(), consuming the result via
-        # .get(). Mock that method (not the nonexistent agent_query).
         mock_claude_service.run_agent_task = AsyncMock(
             return_value=MOCK_AGENT_RESPONSE
         )
@@ -260,9 +257,6 @@ class TestInvestigationEndpoints:
             }
         )
 
-        # /investigate isn't a registered route; the SPA catch-all matches the
-        # path for GET only, so a POST resolves to 405. Treat 404/405 as "no
-        # such endpoint" (same convention as the removed start/stop routes).
         assert response.status_code in [200, 404, 405]
 
 

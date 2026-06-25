@@ -37,16 +37,9 @@ def client():
 @pytest.fixture
 def fake_server_known():
     """Patch mcp_service so ``deeptempo-findings`` is a known, settable server."""
-    # backend/main.py puts backend/ on sys.path, so the live route module is
-    # ``api.mcp`` — NOT ``backend.api.mcp`` (a separate module object with its
-    # own _ServiceProxy instance). Patch the one the running app actually uses.
     from api import mcp as mcp_api
 
     # Make set_server_enabled succeed (server exists); status is the stdio
-    # sentinel so the legacy stop_server branch doesn't fire. list_servers
-    # must include the names under test because the route runs
-    # _validate_known_server() first (404s on unknown names) — and that goes
-    # through the _ServiceProxy/_service() indirection, not the patched attrs.
     with patch.object(
         mcp_api.mcp_service, "set_server_enabled", return_value=True
     ), patch.object(
