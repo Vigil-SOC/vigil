@@ -20,15 +20,18 @@ from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from secrets_manager import delete_secret, get_secret, set_secret
+from secrets_manager import delete_secret, get_secret, set_secret  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from backend.middleware.auth import get_current_active_user
-from backend.services.auth_service import AuthService
-from database.connection import get_db, get_db_session
-from database.models import LLMProviderConfig, User
-from services.bifrost_admin import push_provider_key
-from services.url_safety import UrlSafetyError, validate_provider_url
+from backend.middleware.auth import get_current_active_user  # noqa: E402
+from backend.services.auth_service import AuthService  # noqa: E402
+from database.connection import get_db  # noqa: E402
+from database.models import LLMProviderConfig, User  # noqa: E402
+from services.bifrost_admin import push_provider_key  # noqa: E402
+from services.url_safety import (  # noqa: E402
+    UrlSafetyError,
+    validate_provider_url,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,7 +43,7 @@ _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 # ``services.provider_model_discovery``; the fallback tuple here is the
 # cold-boot list used only when the live call fails (e.g. no API key
 # was provided at /discover-models time).
-from services.model_registry import _FALLBACK_MODELS_BY_PROVIDER
+from services.model_registry import _FALLBACK_MODELS_BY_PROVIDER  # noqa: E402
 
 ANTHROPIC_FALLBACK_MODELS = list(_FALLBACK_MODELS_BY_PROVIDER["anthropic"])
 
@@ -170,6 +173,42 @@ def _clear_other_defaults(db: Session, provider_type: str, keep_id: str) -> None
     )
 
 
+def _reconcile_bifrost_key_for_type(
+    db: Session, provider_type: str, exclude_provider_id: str
+) -> None:
+    """Reconcile Bifrost's shared per-type key after a provider loses its key.
+
+    Bifrost stores a single key per ``provider_type`` (see
+    ``bifrost_admin.push_provider_key`` — keyed by type, not by row), so
+    blindly blanking that key whenever one provider of the type is deleted
+    or cleared would knock out every same-type sibling that still relies on
+    it (``_schedule_catalog_resync`` only re-syncs the model allow-list, not
+    the keys, so the type would stay keyless until a restart).
+
+    So: only blank Bifrost's key when this was the last provider of its type
+    with a key; otherwise re-push a surviving sibling's key.
+    ``exclude_provider_id`` is the row being deleted/cleared, so it never
+    counts as a survivor.
+    """
+    survivors = [
+        r
+        for r in db.query(LLMProviderConfig).all()
+        if r.provider_type == provider_type
+        and r.provider_id != exclude_provider_id
+        and r.api_key_ref
+    ]
+    # Prefer the default provider, then any active one, for a stable choice.
+    survivors.sort(key=lambda r: (not r.is_default, not r.is_active))
+    for survivor in survivors:
+        value = get_secret(survivor.api_key_ref)
+        if value:
+            push_provider_key(provider_type, value)
+            return
+    # No surviving provider of this type has a usable key — it was the last
+    # one, so clear the stale credential on Bifrost.
+    push_provider_key(provider_type, "")
+
+
 def _schedule_catalog_resync(reason: str) -> None:
     """Invalidate the model-list cache and fire a background sync.
 
@@ -280,9 +319,10 @@ async def update_provider(
         if payload.api_key == "":
             delete_secret(ref)
             row.api_key_ref = None
-            # Clearing the key: push an empty value to Bifrost so it stops
-            # trying to authenticate with a stale credential.
-            push_provider_key(row.provider_type, "")
+            # Bifrost's key is shared per provider_type, so only blank it if
+            # no same-type sibling still has a key — otherwise re-push the
+            # survivor's so the type keeps a working credential.
+            _reconcile_bifrost_key_for_type(db, row.provider_type, provider_id)
         else:
             if not set_secret(ref, payload.api_key):
                 raise HTTPException(status_code=500, detail="Failed to persist API key")
@@ -317,8 +357,11 @@ async def delete_provider(
             delete_secret(row.api_key_ref)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to delete secret %s: %s", row.api_key_ref, exc)
-        # Wipe the corresponding value on Bifrost too.
-        push_provider_key(row.provider_type, "")
+        # Bifrost's key is shared per provider_type. Only wipe it if this was
+        # the last keyed provider of its type; otherwise re-push a surviving
+        # sibling's key so the type isn't left without a working credential.
+        # (``row`` is still in the session here — exclude it explicitly.)
+        _reconcile_bifrost_key_for_type(db, row.provider_type, provider_id)
 
     db.delete(row)
     db.commit()
