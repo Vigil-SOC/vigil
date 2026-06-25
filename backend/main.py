@@ -451,22 +451,9 @@ app.include_router(
 
 
 async def _connect_external_services():
-    """Connect the startup integrations that reach over the network or spawn
-    subprocesses: Bifrost provider-key sync, the model-catalog refresher loop,
-    the LLM gateway (Redis), and persistent MCP connections.
-
-    These are the calls that hang or error the in-process TestClient, so the
-    whole function is skipped under TESTING via the single guard in
-    startup_event(). Keeping every external connection here — and nothing else
-    — means a new integration added to startup is gated by construction, not by
-    remembering to add an ``if not _testing`` check at a new call site.
-    """
+    """Connect external startup integrations (skipped under TESTING)."""
     import asyncio
 
-    # Push LLM provider keys from the secrets manager to Bifrost so its
-    # configured keys reflect what's in the secret store, regardless of how the
-    # container was started or which shell env was loaded at the time.
-    # Best-effort — Bifrost may not be up yet in all environments.
     try:
         from services.bifrost_admin import sync_all_provider_keys
 
@@ -474,12 +461,6 @@ async def _connect_external_services():
     except Exception as e:
         logger.warning(f"Bifrost provider sync skipped: {e}")
 
-    # Discover live model catalogs upstream (Anthropic /v1/models, OpenAI
-    # /v1/models, Ollama /api/tags) and push the union per provider-type to
-    # Bifrost's allow-list. Single source of truth — one call populates both the
-    # UI dropdown cache and Bifrost's allow-list, so they can't drift. Scheduler
-    # loop refreshes every MODEL_CATALOG_REFRESH_INTERVAL_S (default 300s). Runs
-    # as a background task so startup isn't blocked on upstream reachability.
     try:
         from services.bifrost_admin import sync_all_provider_models
 
@@ -502,7 +483,6 @@ async def _connect_external_services():
     except Exception as e:
         logger.warning(f"Model catalog refresher skipped: {e}")
 
-    # Initialize LLM Gateway (connects to Redis for ARQ job queue)
     logger.info("Initializing LLM Gateway (ARQ / Redis)...")
     try:
         from services.llm_gateway import get_llm_gateway
@@ -522,15 +502,12 @@ async def _connect_external_services():
         mcp_client = get_mcp_client()
 
         if mcp_client:
-            # Get list of all servers
             mcp_service = mcp_client.mcp_service
             servers = mcp_service.list_servers()
 
-            # Connect to each server with persistent connections
             connected_count = 0
             for server_name in servers:
                 try:
-                    # persistent=True establishes a long-lived connection
                     success = await mcp_client.connect_to_server(
                         server_name, persistent=True
                     )
@@ -540,11 +517,6 @@ async def _connect_external_services():
                             f"✓ Persistent connection established: {server_name}"
                         )
                     else:
-                        # Dormant-by-design when the user hasn't supplied
-                        # credentials yet — log at info and name the vars
-                        # so ops has a single line to act on. Other failure
-                        # modes (bad binary, unreachable remote MCP) still
-                        # warn at warning-level because they're real.
                         missing = mcp_client.get_missing_credentials(server_name)
                         if missing:
                             logger.info(
@@ -563,12 +535,10 @@ async def _connect_external_services():
                 f"MCP initialization complete: {connected_count}/{len(servers)} persistent connections"
             )
 
-            # Log available tools
             tools = await mcp_client.list_tools()
             total_tools = sum(len(t) for t in tools.values())
             logger.info(f"Loaded {total_tools} MCP tools from {len(tools)} servers")
 
-            # Persist tools to JSON cache file for access in async contexts
             try:
                 cache_dir = Path(__file__).parent.parent / "data"
                 cache_dir.mkdir(parents=True, exist_ok=True)
@@ -598,7 +568,6 @@ async def _connect_external_services():
             except Exception as e:
                 logger.warning(f"⚠ Could not save MCP tools cache: {e}")
 
-            # Log connection status
             status = mcp_client.get_connection_status()
             logger.info(
                 f"Persistent connections: {sum(1 for connected in status.values() if connected)}/{len(status)}"
@@ -787,9 +756,6 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Error checking compatibility: {e}")
 
-    # External integrations that reach over the network or spawn subprocesses.
-    # Skipped wholesale under TESTING so the in-process TestClient doesn't hang
-    # — see _connect_external_services().
     if _testing:
         logger.info(
             "TESTING=true — skipping external startup connections "
