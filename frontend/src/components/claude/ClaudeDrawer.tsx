@@ -600,9 +600,9 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                   
                   if (event.error) {
                     throw new Error(event.error)
-                  } else if (event.type === 'context_summarized') {
-                    logger.info(`Context auto-summarized: ${event.summarized_messages} older messages condensed, ${event.remaining_messages} recent messages kept`)
-                    currentText += `[Context auto-summarized: ${event.summarized_messages} older messages were condensed to preserve context within the model's limits. Recent messages and all key details are preserved.]\n\n`
+                  } else if (event.type === 'context_windowed') {
+                    logger.info(`Context compressed: ${event.windowed_messages} older messages condensed, ${event.remaining_messages} recent messages kept`)
+                    currentText += `[Context compressed: ${event.windowed_messages} older messages were condensed to preserve context within the model's limits. Recent messages and all key details are preserved.]\n\n`
                     setStreamingText(currentText)
                   } else if (event.type === 'thinking_start') {
                     setIsThinking(true)

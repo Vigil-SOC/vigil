@@ -473,7 +473,7 @@ export default function Chat({
               type?: string
               content?: string
               error?: string
-              summarized_messages?: number
+              windowed_messages?: number
               remaining_messages?: number
             }
             try {
@@ -495,9 +495,9 @@ export default function Chat({
               // separate any tool output from the prose preceding it
               setIsProcessingTools(true)
               if (curText && !curText.endsWith('\n\n')) curText += '\n\n'
-            } else if (ev.type === 'context_summarized') {
+            } else if (ev.type === 'context_windowed') {
               curText +=
-                `_[Context auto-summarized: ${ev.summarized_messages ?? 0} older ` +
+                `_[Context compressed: ${ev.windowed_messages ?? 0} older ` +
                 `messages condensed to stay within the model's limits; recent ` +
                 `messages and key details are preserved.]_\n\n`
               setStreamText(curText)
