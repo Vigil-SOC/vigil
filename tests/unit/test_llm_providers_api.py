@@ -7,6 +7,7 @@ are exercised.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import Dict, Optional
@@ -16,13 +17,17 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-REPO = Path(__file__).resolve().parent.parent
+# Importing the router pulls in auth_service, which raises at import time if
+# DEV_MODE is false and JWT_SECRET_KEY is unset. Default to dev for tests.
+os.environ.setdefault("DEV_MODE", "true")
+
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "backend"))
 
 from backend.api.llm_providers import router as llm_providers_router
 from backend.middleware.auth import get_current_active_user
-from database.connection import get_db_session
+from database.connection import get_db
 from database.models import LLMProviderConfig, User
 
 
@@ -110,7 +115,7 @@ def client(session):
     def _get_session():
         return session
 
-    app.dependency_overrides[get_db_session] = _get_session
+    app.dependency_overrides[get_db] = _get_session
     # Bypass cookie/JWT auth for unit tests — the security-coverage tests
     # in tests/security/ exercise the real path.
     app.dependency_overrides[get_current_active_user] = _fake_admin_user
@@ -138,9 +143,9 @@ def secrets_store():
         store.pop(key, None)
         return True
 
-    with patch("backend.api.llm_providers.set_secret", side_effect=fake_set), \
-         patch("backend.api.llm_providers.get_secret", side_effect=fake_get), \
-         patch("backend.api.llm_providers.delete_secret", side_effect=fake_delete):
+    with patch("backend.api.llm_providers.set_secret", side_effect=fake_set), patch(
+        "backend.api.llm_providers.get_secret", side_effect=fake_get
+    ), patch("backend.api.llm_providers.delete_secret", side_effect=fake_delete):
         yield store
 
 
@@ -252,6 +257,132 @@ def test_delete_removes_secret(client, secrets_store):
     r = client.delete("/api/llm/providers/openai-prod")
     assert r.status_code == 200
     assert "llm_provider_openai-prod_api_key" not in secrets_store
+
+
+@pytest.fixture()
+def bifrost_pushes():
+    """Capture every push_provider_key(provider_type, value) call."""
+    calls = []
+
+    def fake_push(provider_type: str, value: str) -> bool:
+        calls.append((provider_type, value))
+        return True
+
+    with patch("backend.api.llm_providers.push_provider_key", side_effect=fake_push):
+        yield calls
+
+
+def test_delete_last_of_type_clears_bifrost_key(client, secrets_store, bifrost_pushes):
+    """Deleting the only provider of a type blanks the shared Bifrost key."""
+    client.post(
+        "/api/llm/providers/",
+        json={
+            "provider_id": "openai-prod",
+            "provider_type": "openai",
+            "name": "OpenAI",
+            "default_model": "gpt-4o",
+            "api_key": "sk-only",
+        },
+    )
+    bifrost_pushes.clear()  # drop the create-time push
+
+    r = client.delete("/api/llm/providers/openai-prod")
+    assert r.status_code == 200
+    # Last provider of its type → clear the credential.
+    assert ("openai", "") in bifrost_pushes
+    assert ("openai", "sk-only") not in bifrost_pushes
+
+
+def test_delete_with_sibling_repushes_sibling_key(
+    client, secrets_store, bifrost_pushes
+):
+    """Deleting one provider re-pushes a same-type sibling's key, never blank."""
+    client.post(
+        "/api/llm/providers/",
+        json={
+            "provider_id": "openai-a",
+            "provider_type": "openai",
+            "name": "A",
+            "default_model": "gpt-4o",
+            "api_key": "sk-aaa",
+        },
+    )
+    client.post(
+        "/api/llm/providers/",
+        json={
+            "provider_id": "openai-b",
+            "provider_type": "openai",
+            "name": "B",
+            "default_model": "gpt-4o",
+            "api_key": "sk-bbb",
+        },
+    )
+    bifrost_pushes.clear()
+
+    r = client.delete("/api/llm/providers/openai-a")
+    assert r.status_code == 200
+    # Sibling b survives with its key → re-push it, do NOT blank the type.
+    assert ("openai", "sk-bbb") in bifrost_pushes
+    assert ("openai", "") not in bifrost_pushes
+    # The deleted provider's own secret is still removed.
+    assert "llm_provider_openai-a_api_key" not in secrets_store
+
+
+def test_update_clear_with_sibling_repushes_sibling_key(
+    client, secrets_store, bifrost_pushes
+):
+    """Clearing one provider's key re-pushes a same-type sibling's key."""
+    client.post(
+        "/api/llm/providers/",
+        json={
+            "provider_id": "openai-a",
+            "provider_type": "openai",
+            "name": "A",
+            "default_model": "gpt-4o",
+            "api_key": "sk-aaa",
+        },
+    )
+    client.post(
+        "/api/llm/providers/",
+        json={
+            "provider_id": "openai-b",
+            "provider_type": "openai",
+            "name": "B",
+            "default_model": "gpt-4o",
+            "api_key": "sk-bbb",
+        },
+    )
+    bifrost_pushes.clear()
+
+    r = client.put("/api/llm/providers/openai-a", json={"api_key": ""})
+    assert r.status_code == 200
+    assert r.json()["has_api_key"] is False
+    # openai-a's own secret is gone, but the shared Bifrost key falls back
+    # to sibling b's rather than being blanked.
+    assert "llm_provider_openai-a_api_key" not in secrets_store
+    assert ("openai", "sk-bbb") in bifrost_pushes
+    assert ("openai", "") not in bifrost_pushes
+
+
+def test_update_clear_last_of_type_blanks_bifrost_key(
+    client, secrets_store, bifrost_pushes
+):
+    """Clearing the only provider's key blanks the shared Bifrost key."""
+    client.post(
+        "/api/llm/providers/",
+        json={
+            "provider_id": "openai-solo",
+            "provider_type": "openai",
+            "name": "Solo",
+            "default_model": "gpt-4o",
+            "api_key": "sk-solo",
+        },
+    )
+    bifrost_pushes.clear()
+
+    r = client.put("/api/llm/providers/openai-solo", json={"api_key": ""})
+    assert r.status_code == 200
+    assert ("openai", "") in bifrost_pushes
 
 
 def test_set_default_enforces_single_default(client, secrets_store, session):
