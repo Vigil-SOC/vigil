@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 # DEV_MODE so importing the endpoint module (via services.claude_service) does
 # not trip the production JWT-secret guard.
 os.environ.setdefault("DEV_MODE", "true")

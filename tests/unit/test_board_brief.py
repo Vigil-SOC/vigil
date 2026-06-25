@@ -296,7 +296,9 @@ class TestAgentRouting:
 class TestBoardBriefTemplate:
     """Verify the board brief template exists and has required sections."""
 
-    TEMPLATE_PATH = Path(__file__).parent.parent / "docs" / "templates" / "board-brief.md"
+    TEMPLATE_PATH = (
+        Path(__file__).parent.parent.parent / "docs" / "templates" / "board-brief.md"
+    )
 
     def test_template_file_exists(self):
         """Board brief template must exist at docs/templates/board-brief.md."""
