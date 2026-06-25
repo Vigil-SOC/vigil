@@ -70,6 +70,18 @@ spec:
             {{- end }}
           # Probes target /health on port 9091. /metrics on 9090 only serves
           # when VIGIL_OTEL_ENABLED=true, so it's unsafe for readiness.
+          # Gate liveness/readiness on a slow first boot (orchestrator + agent
+          # warmup, MCP connection retries) so a slow start can't trip the
+          # liveness kill-restart loop before the daemon serves /health. While
+          # this probe runs, liveness AND readiness are suppressed; it allows up
+          # to failureThreshold * periodSeconds = 300s for first serve.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /health
