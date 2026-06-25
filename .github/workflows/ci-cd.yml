@@ -21,12 +21,12 @@ jobs:
     name: Lint Backend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
       
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
@@ -56,10 +56,10 @@ jobs:
     name: Lint Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -78,7 +78,7 @@ jobs:
     name: Lint Dockerfiles
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Run hadolint
         uses: hadolint/hadolint-action@v3.1.0
@@ -94,12 +94,12 @@ jobs:
     name: Unit Tests - Backend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
       
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
@@ -111,16 +111,16 @@ jobs:
       
       - name: Run unit tests
         run: |
-          pytest tests/unit/ -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term || true
-          echo "Unit tests completed (0 tests expected until new tests are written)"
+          # Exclude tests needing external services (e.g. PostgreSQL) — the unit
+          # job runs without them. Such tests are marked @pytest.mark.external_service.
+          pytest tests/unit/ -m "not external_service" -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term
         env:
           TESTING: "true"
-          DATABASE_URL: "sqlite:///:memory:"
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
           ANTHROPIC_API_KEY: ${{ secrets.CLAUDEAPI }}
       
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
           flags: unittests
@@ -131,10 +131,10 @@ jobs:
     name: Unit Tests - Frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -157,7 +157,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: deeptempo_test
           POSTGRES_USER: test
@@ -169,41 +169,113 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-    
+    env:
+      TESTING: "true"
+      DEV_MODE: "true"
+      SECRET_KEY: "test-secret-key"
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: deeptempo_test
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
-      
+
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-      
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      
+
+      - name: Enable Postgres extensions
+        run: |
+          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Initialize schema
+        run: |
+          python -c "from database.connection import init_database; init_database()"
+
       - name: Run integration tests
         run: |
-          pytest tests/integration/ -v --cov=backend --cov-report=xml || true
-          echo "Integration tests completed (0 tests expected until new tests are written)"
+          pytest tests/integration/ -v --cov=backend --cov-report=xml
         env:
-          TESTING: "true"
-          DATABASE_URL: "postgresql://test:test@localhost:5432/deeptempo_test"
-          SECRET_KEY: "test-secret-key"
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
           ANTHROPIC_API_KEY: ${{ secrets.CLAUDEAPI }}
-      
+
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
           flags: integration
           name: backend-integration
         continue-on-error: true
+
+  # ============================================================================
+  # DB-backed Unit Tests (require PostgreSQL)
+  # ============================================================================
+  test-unit-backend-db:
+    name: Unit Tests - Backend (DB-backed)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: deeptempo_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      TESTING: "true"
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: deeptempo_test
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Enable Postgres extensions
+        run: |
+          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Initialize schema
+        run: |
+          python -c "from database.connection import init_database; init_database()"
+
+      - name: Run DB-backed unit tests
+        run: |
+          # Complement of the no-service unit job: only @pytest.mark.external_service
+          # tests, which require a real PostgreSQL.
+          pytest tests/unit/ -m external_service -v --no-cov
 
   # ============================================================================
   # Security Scanning
@@ -212,12 +284,12 @@ jobs:
     name: Security Scan - Python
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
       
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       
@@ -228,7 +300,7 @@ jobs:
         run: bandit -r backend/ services/ daemon/ -f json -o bandit-report.json || true
       
       - name: Upload Bandit results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: bandit-report
           path: bandit-report.json
@@ -238,10 +310,10 @@ jobs:
     name: Security Scan - NPM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
       
@@ -256,14 +328,14 @@ jobs:
   build-images:
     name: Build Docker Images
     runs-on: ubuntu-latest
-    needs: [lint-backend, test-unit-backend, test-integration]
+    needs: [lint-backend, test-unit-backend, test-unit-backend-db, test-integration]
     if: false  # Disabled - enable if you need Docker images
     permissions:
       contents: read
       packages: write
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           submodules: true
       
@@ -326,10 +398,10 @@ jobs:
     needs: [lint-frontend]
     if: github.event_name == 'push'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
@@ -344,7 +416,7 @@ jobs:
         run: npm run build
       
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: frontend-build
           path: frontend/build/
@@ -383,25 +455,4 @@ jobs:
   #   needs: [build-images, build-frontend, scan-images]
   #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
   #   ... (deployment steps removed for now)
-
-  # ============================================================================
-  # Summary
-  # ============================================================================
-  summary:
-    name: CI Summary
-    runs-on: ubuntu-latest
-    needs: [lint-backend, lint-frontend, test-unit-backend, test-integration, security-scan-python]
-    if: always()
-    steps:
-      - name: Check results
-        run: |
-          echo "✓ CI Pipeline Complete"
-          echo "Lint Backend: ${{ needs.lint-backend.result }}"
-          echo "Lint Frontend: ${{ needs.lint-frontend.result }}"
-          echo "Unit Tests: ${{ needs.test-unit-backend.result }}"
-          echo "Integration Tests: ${{ needs.test-integration.result }}"
-          echo "Security Scan: ${{ needs.security-scan-python.result }}"
-          echo ""
-          echo "Docker images built and pushed to GitHub Container Registry"
-          echo "Pull images: docker pull ghcr.io/${{ github.repository }}-backend:${{ github.ref_name }}"
 

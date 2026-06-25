@@ -32,9 +32,16 @@ def _db_available() -> bool:
         return False
 
 
-pytestmark = pytest.mark.skipif(
-    not _db_available(), reason="Postgres not reachable; skipping DB-backed tests"
-)
+pytestmark = [
+    # Categorize as service-dependent so the no-service unit job deselects
+    # these (`-m "not external_service"`) and the DB-backed CI job selects
+    # them (`-m external_service`).
+    pytest.mark.external_service,
+    # Still skip cleanly on a local run with no DB reachable.
+    pytest.mark.skipif(
+        not _db_available(), reason="Postgres not reachable; skipping DB-backed tests"
+    ),
+]
 
 
 @pytest.fixture

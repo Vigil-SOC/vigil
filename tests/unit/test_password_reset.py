@@ -68,9 +68,11 @@ class TestPasswordReset:
         assert user_id == "user-abc"
 
     def test_expired_token_is_rejected(self, monkeypatch):
-        # Force TTL to 0 so the token is considered expired the moment
-        # itsdangerous parses it.
-        monkeypatch.setattr(password_reset, "_ttl_seconds", lambda: 0)
+        # Force an already-elapsed TTL. itsdangerous raises SignatureExpired
+        # only when age > max_age, so a TTL of 0 leaves a freshly-minted token
+        # valid for its first second (age 0 is not > 0). A negative TTL makes
+        # any token deterministically expired regardless of timing.
+        monkeypatch.setattr(password_reset, "_ttl_seconds", lambda: -1)
         token = password_reset.generate_reset_token("user-abc")
         user_id = asyncio.run(password_reset.verify_reset_token(token))
         assert user_id is None

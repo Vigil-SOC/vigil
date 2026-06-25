@@ -32,10 +32,10 @@ jobs:
           - 5432:5432
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
@@ -53,7 +53,7 @@ jobs:
           DATABASE_URL: postgresql://test:test@localhost:5432/deeptempo_test
       
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
           flags: nightly
@@ -66,10 +66,10 @@ jobs:
     name: Performance Regression Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
@@ -85,7 +85,7 @@ jobs:
           pytest tests/ -m performance --benchmark-only --benchmark-json=benchmark.json || true
       
       - name: Store benchmark results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: benchmark-results
           path: benchmark.json
@@ -97,7 +97,7 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Run pip-audit
         run: |
@@ -105,7 +105,7 @@ jobs:
           pip-audit -r requirements.txt --format json --output pip-audit.json || true
       
       - name: Upload audit results
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: security-audit
           path: pip-audit.json
@@ -135,10 +135,10 @@ jobs:
           - 5432:5432
     
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       

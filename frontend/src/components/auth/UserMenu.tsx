@@ -41,12 +41,12 @@ export default function UserMenu() {
   const handleProfile = () => {
     handleClose();
     // Navigate to profile page (to be implemented)
-    navigate('/profile');
+    navigate('/old/profile');
   };
 
   const handleSettings = () => {
     handleClose();
-    navigate('/settings');
+    navigate('/old/settings');
   };
 
   const handleLogout = async () => {

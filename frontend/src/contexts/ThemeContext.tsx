@@ -6,6 +6,7 @@ import { configApi } from '../services/api'
 interface ThemeContextType {
   mode: 'light' | 'dark'
   toggleTheme: () => void
+  setMode: (mode: 'light' | 'dark') => void
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
@@ -17,24 +18,25 @@ export const useTheme = () => {
 }
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [mode, setMode] = useState<'light' | 'dark'>('dark')
+  const [mode, setModeState] = useState<'light' | 'dark'>('dark')
 
   useEffect(() => {
     configApi.getTheme()
-      .then(res => res.data.theme && setMode(res.data.theme))
+      .then(res => res.data.theme && setModeState(res.data.theme))
       .catch(() => {})
   }, [])
 
-  const toggleTheme = () => {
-    const newMode = mode === 'light' ? 'dark' : 'light'
-    setMode(newMode)
+  const setMode = (newMode: 'light' | 'dark') => {
+    setModeState(newMode)
     configApi.setTheme(newMode).catch(() => {})
   }
+
+  const toggleTheme = () => setMode(mode === 'light' ? 'dark' : 'light')
 
   const theme = useMemo(() => createM3Theme(mode), [mode])
 
   return (
-    <ThemeContext.Provider value={{ mode, toggleTheme }}>
+    <ThemeContext.Provider value={{ mode, toggleTheme, setMode }}>
       <MuiThemeProvider theme={theme}>
         <CssBaseline />
         {children}

@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime
 
+from services.defaults import DEFAULT_MODEL
+
 logger = logging.getLogger(__name__)
 
 
@@ -638,7 +640,7 @@ For each phase:
 
             _est = await estimate_cost(
                 provider_type="anthropic",
-                model_id="claude-sonnet-4-5-20250929",
+                model_id=DEFAULT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 system_prompt=system_prompt,
                 max_tokens=8192,
@@ -667,7 +669,7 @@ For each phase:
                 claude_service.chat,
                 message=prompt,
                 system_prompt=system_prompt,
-                model="claude-sonnet-4-5-20250929",
+                model=DEFAULT_MODEL,
                 max_tokens=8192,
                 recommended_tools=all_tools if all_tools else None,
             )
@@ -874,7 +876,7 @@ For each phase:
 
                 _phase_est = await estimate_cost(
                     provider_type="anthropic",
-                    model_id="claude-sonnet-4-5-20250929",
+                    model_id=DEFAULT_MODEL,
                     messages=[{"role": "user", "content": phase_prompt}],
                     system_prompt=system_prompt,
                     max_tokens=8192,
@@ -904,7 +906,7 @@ For each phase:
                     claude_service.chat,
                     message=phase_prompt,
                     system_prompt=system_prompt,
-                    model="claude-sonnet-4-5-20250929",
+                    model=DEFAULT_MODEL,
                     max_tokens=8192,
                     recommended_tools=phase_tools or None,
                 )

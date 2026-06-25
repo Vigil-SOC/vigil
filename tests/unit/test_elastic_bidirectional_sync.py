@@ -26,7 +26,7 @@ class TestBaseClassContract:
 
         with pytest.raises(NotImplementedError, match="Stub"):
             import asyncio
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 svc.update_upstream_alert_status("a1", "closed")
             )
 

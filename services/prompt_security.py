@@ -179,15 +179,53 @@ def wrap_tool_result(
     (the router applies it defensively to historical messages, and the
     construction sites in claude_service.py also wrap fresh results — both
     paths must be safe).
+
+    Injection patterns in the content are logged here (and blocked when
+    ``PROMPT_INJECTION_BLOCK=true``) so tool-output attacks are caught at
+    the same chokepoint as user-supplied content.
     """
+    import os
+
     if not isinstance(content, str):
         content = str(content)
     if content.startswith("<vigil:tool_result"):
         return content
+
+    result = scan_for_injection(content)
+    if result:
+        logger.warning(
+            "prompt_injection in tool result",
+            extra={
+                "event": "prompt_injection.tool_result",
+                "tool": tool,
+                "source": source,
+                "patterns": result.patterns,
+            },
+        )
+        if os.getenv("PROMPT_INJECTION_BLOCK", "false").lower() in ("true", "1", "yes"):
+            raise PromptInjectionBlocked(result.patterns)
+
     src = _slug(source, "unknown")
     tl = _slug(tool, "unknown")
     open_tag = _TOOL_RESULT_OPEN.format(source=src, tool=tl)
     return f"{open_tag}\n{_escape_for_wrapper(content)}\n{_TOOL_RESULT_CLOSE}"
+
+
+def scan_tool_schema(tool: dict) -> ScanResult:
+    """Scan an MCP tool's description and parameter descriptions for injection.
+
+    Call this at tool-load time (before the schema is passed to the LLM) to
+    catch poisoned tool descriptions from compromised or misconfigured MCP
+    servers.
+    """
+    combined = []
+    if desc := tool.get("description"):
+        combined.append(str(desc))
+    schema = tool.get("input_schema") or tool.get("inputSchema") or {}
+    for prop in (schema.get("properties") or {}).values():
+        if prop_desc := prop.get("description"):
+            combined.append(str(prop_desc))
+    return scan_for_injection("\n".join(combined))
 
 
 # ---------------------------------------------------------------------------

@@ -48,7 +48,11 @@ services:
       dockerfile: docker/Dockerfile.backend
     container_name: deeptempo-backend
     environment:
-      - DATABASE_URL=postgresql://deeptempo:${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}@postgres:5432/deeptempo_soc
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=deeptempo_soc
+      - POSTGRES_USER=deeptempo
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
@@ -76,7 +80,11 @@ services:
     container_name: deeptempo-daemon
     environment:
       # Database
-      - DATABASE_URL=postgresql://deeptempo:${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}@postgres:5432/deeptempo_soc
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=deeptempo_soc
+      - POSTGRES_USER=deeptempo
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       # AI
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -161,7 +169,11 @@ services:
     container_name: deeptempo-llm-worker
     command: ["python", "-m", "services.run_llm_worker"]
     environment:
-      - DATABASE_URL=postgresql://deeptempo:${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}@postgres:5432/deeptempo_soc
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=deeptempo_soc
+      - POSTGRES_USER=deeptempo
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}

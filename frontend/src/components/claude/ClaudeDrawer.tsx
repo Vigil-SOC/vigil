@@ -58,6 +58,7 @@ import {
 } from '../../services/api'
 import { notificationService } from '../../services/notifications'
 import { createLogger } from '../../services/logger'
+import { MarkdownMessage } from './MarkdownMessage'
 import { basePath } from '../../config/basePath'
 
 const logger = createLogger('ClaudeDrawer')
@@ -181,6 +182,11 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
   const [streamingThinking, setStreamingThinking] = useState<string>('')
   const [isThinking, setIsThinking] = useState(false)
   const [streamingText, setStreamingText] = useState<string>('')
+  const [isProcessingTools, setIsProcessingTools] = useState(false)
+  // The tab id that owns the in-progress stream. Streaming UI renders only
+  // in this tab and the completed message is routed back to it, so switching
+  // tabs mid-stream doesn't leak tokens into the wrong session.
+  const [streamingTabId, setStreamingTabId] = useState<string | null>(null)
   const [summarizing, setSummarizing] = useState(false)
   // GH #79 — Reasoning trace state
   const [sessionSummary, setSessionSummary] = useState<{
@@ -195,10 +201,26 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
   const [traceLoading, setTraceLoading] = useState(false)
   const [collapsedThinking, setCollapsedThinking] = useState<Record<string, boolean>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  // Stick the view to the bottom as new content streams in, but back off the
+  // moment the user scrolls up (so they can read history mid-stream). Resumes
+  // automatically once they scroll back near the bottom. Kept in a ref so the
+  // scroll listener doesn't trigger re-renders or read stale state.
+  const stickToBottomRef = useRef(true)
 
-  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  const scrollToBottom = (smooth = false) => {
+    if (!stickToBottomRef.current) return
+    messagesEndRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'auto' })
+  }
 
-  useEffect(() => { scrollToBottom() }, [tabs, currentTab])
+  const handleMessagesScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget
+    // within ~80px of the bottom counts as "at bottom"
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  }
+
+  useEffect(() => { scrollToBottom(true) }, [tabs, currentTab])
+  // Follow streaming content live (instant, not smooth, to keep up with chunks)
+  useEffect(() => { scrollToBottom() }, [streamingText, streamingThinking, isProcessingTools])
   useEffect(() => { try { localStorage.setItem('claudeDrawerTabs', JSON.stringify(tabs)) } catch { /* ignore */ } }, [tabs])
   
   // Debug logging for messages (only in development)
@@ -310,6 +332,8 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       setStreamingThinking('')
       setStreamingText('')
       setIsThinking(false)
+      setIsProcessingTools(false)
+      setStreamingTabId(newTab.id)
       setTimeout(async () => {
         try {
           logger.investigate('Starting auto-investigation (streaming)', {
@@ -325,7 +349,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
             },
             body: JSON.stringify({
               messages: initialMessages,
-              model: model || 'claude-sonnet-4-6',
+              model: undefined,
               max_tokens: maxTokens,
               enable_thinking: enableThinking,
               thinking_budget: enableThinking ? thinkingBudget : undefined,
@@ -344,7 +368,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
 
           if (reader) {
             try {
-              while (true) {
+              for (;;) {
                 const { done, value } = await reader.read()
                 if (done) break
                 const chunk = decoder.decode(value)
@@ -365,7 +389,11 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                   } else if (event.type === 'thinking_end') {
                     setIsThinking(false)
                     if (currentThinking) thinkingContent.push({ type: 'thinking', text: currentThinking })
+                  } else if (event.type === 'tool_processing') {
+                    setIsProcessingTools(true)
+                    if (currentText && !currentText.endsWith('\n\n')) currentText += '\n\n'
                   } else if (event.type === 'text') {
+                    setIsProcessingTools(false)
                     currentText += event.content
                     setStreamingText(currentText)
                   }
@@ -376,6 +404,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
             }
           }
 
+          setIsProcessingTools(false)
           if (currentText) textContent.push({ type: 'text', text: currentText })
           const responseContent: ContentBlock[] = [...thinkingContent, ...textContent]
 
@@ -398,7 +427,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
           setStreamingThinking('')
           setStreamingText('')
           setIsThinking(false)
-        } finally { setLoading(false) }
+        } finally { setLoading(false); setIsProcessingTools(false); setStreamingTabId(null) }
       }, 300)
     }
   }, [open, initialMessages, initialAgentId, initialTitle, lastInvestigationId])
@@ -490,10 +519,13 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       ...newTabs[currentTab],
       messages: [...newTabs[currentTab].messages, userMsg]
     }
-    
+    // Pin this stream to the tab that initiated it, so the reply is routed
+    // back here even if the user switches tabs while it streams.
+    const originTabId = newTabs[currentTab].id
+
     // Strip thinking blocks from history before sending - backend/agent controls thinking
     const toSend = stripThinkingBlocks(newTabs[currentTab].messages)
-    
+
     setTabs(newTabs)
     setInput('')
     setAttachedFiles([])
@@ -501,7 +533,10 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
     setStreamingThinking('')
     setStreamingText('')
     setIsThinking(false)
-    
+    setIsProcessingTools(false)
+    setStreamingTabId(originTabId)
+    stickToBottomRef.current = true  // re-engage auto-scroll for the new reply
+
     try {
       logger.request('📤 === API REQUEST ===', {
         sessionId,
@@ -544,7 +579,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       
       if (reader) {
         try {
-          while (true) {
+          for (;;) {
             const { done, value } = await reader.read()
             if (done) break
             
@@ -565,9 +600,9 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                   
                   if (event.error) {
                     throw new Error(event.error)
-                  } else if (event.type === 'context_summarized') {
-                    logger.info(`Context auto-summarized: ${event.summarized_messages} older messages condensed, ${event.remaining_messages} recent messages kept`)
-                    currentText += `[Context auto-summarized: ${event.summarized_messages} older messages were condensed to preserve context within the model's limits. Recent messages and all key details are preserved.]\n\n`
+                  } else if (event.type === 'context_windowed') {
+                    logger.info(`Context compressed: ${event.windowed_messages} older messages condensed, ${event.remaining_messages} recent messages kept`)
+                    currentText += `[Context compressed: ${event.windowed_messages} older messages were condensed to preserve context within the model's limits. Recent messages and all key details are preserved.]\n\n`
                     setStreamingText(currentText)
                   } else if (event.type === 'thinking_start') {
                     setIsThinking(true)
@@ -582,7 +617,12 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
                       thinkingContent.push({ type: 'thinking', text: currentThinking })
                     }
                     logger.receive('💭 Thinking ended', { totalLength: currentThinking.length })
+                  } else if (event.type === 'tool_processing') {
+                    setIsProcessingTools(true)
+                    if (currentText && !currentText.endsWith('\n\n')) currentText += '\n\n'
+                    logger.receive('🛠️ Processing tools')
                   } else if (event.type === 'text') {
+                    setIsProcessingTools(false)
                     currentText += event.content
                     setStreamingText(currentText)
                   }
@@ -608,21 +648,18 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
         timestamp: new Date().toISOString()
       })
       
-      setTabs(prevTabs => {
-        const updatedTabs = [...prevTabs]
-        updatedTabs[currentTab] = {
-          ...updatedTabs[currentTab],
-          messages: [...updatedTabs[currentTab].messages, { role: 'assistant', content: responseContent }]
-        }
-        return updatedTabs
-      })
-      
+      setTabs(prevTabs => prevTabs.map(t =>
+        t.id === originTabId
+          ? { ...t, messages: [...t.messages, { role: 'assistant' as const, content: responseContent }] }
+          : t
+      ))
+
       setStreamingThinking('')
       setStreamingText('')
       setIsThinking(false)
 
       // GH #79 — refresh reasoning-trace summary for this session
-      const sid = tabs[currentTab]?.id
+      const sid = originTabId
       if (sid) {
         reasoningApi.getSessionSummary(sid)
           .then(s => setSessionSummary({
@@ -675,15 +712,12 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       } else {
         userMessage = `Error: ${typeof detail === 'string' ? detail : detail?.message || e?.message || 'Failed'}`
       }
-      setTabs(prevTabs => {
-        const updatedTabs = [...prevTabs]
-        updatedTabs[currentTab] = {
-          ...updatedTabs[currentTab],
-          messages: [...updatedTabs[currentTab].messages, { role: 'assistant', content: userMessage }]
-        }
-        return updatedTabs
-      })
-    } finally { setLoading(false) }
+      setTabs(prevTabs => prevTabs.map(t =>
+        t.id === originTabId
+          ? { ...t, messages: [...t.messages, { role: 'assistant' as const, content: userMessage }] }
+          : t
+      ))
+    } finally { setLoading(false); setIsProcessingTools(false); setStreamingTabId(null) }
   }
 
   const handleKeyPress = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }
@@ -778,7 +812,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
   const renderContent = (content: string | ContentBlock[], messageIndex?: number) => {
     if (typeof content === 'string') {
       logger.render(`Rendering string content: ${content.length} chars`, { preview: content.substring(0, 100) })
-      return <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{content}</Typography>
+      return <MarkdownMessage>{content}</MarkdownMessage>
     }
 
     if (!Array.isArray(content)) {
@@ -796,7 +830,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       const collapsed = collapsedThinking[thinkingKey] ?? false
       return (
         <Box key={i} sx={{ mb: 1 }}>
-          {b.type === 'text' && b.text && <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{b.text}</Typography>}
+          {b.type === 'text' && b.text && <MarkdownMessage>{b.text}</MarkdownMessage>}
           {b.type === 'image' && b.source && <img src={`data:${b.source.media_type};base64,${b.source.data}`} alt="" style={{ maxWidth: '100%', borderRadius: 8, marginTop: 8 }} />}
           {b.type === 'thinking' && b.text && (
             <Box sx={{
@@ -838,6 +872,9 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
       )
     })}</>
   }
+
+  // Streaming UI only belongs in the tab that owns the active stream.
+  const streamHere = streamingTabId !== null && streamingTabId === tabs[currentTab]?.id
 
   return (
     <Drawer anchor="right" open={open} onClose={onClose} sx={{ '& .MuiDrawer-paper': { width: { xs: '100%', sm: 420, md: 480 }, bgcolor: 'background.default' } }}>
@@ -1074,7 +1111,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
           </Tooltip>
         </Box>
 
-        <Box sx={{ flex: 1, overflow: 'auto', p: 2 }}>
+        <Box sx={{ flex: 1, overflow: 'auto', p: 2 }} onScroll={handleMessagesScroll}>
           {/* Context window warning banner */}
           {estimatedTokens > 100000 && tabs[currentTab]?.messages.length > 0 && (
             <Box sx={{
@@ -1141,7 +1178,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
             ))}
           
           {/* Show streaming thinking in real-time */}
-          {isThinking && streamingThinking && (
+          {streamHere && isThinking && streamingThinking && (
             <Box sx={{
               p: 1.5, mb: 1.5, borderRadius: 2,
               bgcolor: 'background.paper',
@@ -1183,7 +1220,7 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
           )}
           
           {/* Show streaming text in real-time */}
-          {loading && streamingText && (
+          {streamHere && streamingText && (
             <Box sx={{
               p: 1.5, mb: 1.5, borderRadius: 2,
               bgcolor: 'background.paper',
@@ -1193,11 +1230,26 @@ export default function ClaudeDrawer({ open, onClose, initialMessages, initialAg
               <Typography variant="caption" sx={{ fontWeight: 600, color: 'text.secondary', mb: 0.5, display: 'block' }}>
                 Vigil
               </Typography>
-              <Typography variant="body2" sx={{ whiteSpace: 'pre-wrap' }}>{streamingText}</Typography>
+              <MarkdownMessage>{streamingText}</MarkdownMessage>
             </Box>
           )}
-          
-          {loading && !streamingText && !isThinking && <Box display="flex" justifyContent="center" my={2}><CircularProgress size={20} /></Box>}
+
+          {/* Tool-processing indicator (replaces the old inline "[Processing tools...]" text) */}
+          {streamHere && isProcessingTools && (
+            <Box sx={{
+              display: 'inline-flex', alignItems: 'center', gap: 1,
+              mb: 1.5, px: 1.5, py: 0.75, borderRadius: 2,
+              bgcolor: alpha(theme.palette.primary.main, 0.06),
+              border: 1, borderColor: alpha(theme.palette.primary.main, 0.25),
+            }}>
+              <CircularProgress size={12} thickness={5} />
+              <Typography variant="caption" sx={{ fontWeight: 600, color: 'primary.main' }}>
+                Running tools…
+              </Typography>
+            </Box>
+          )}
+
+          {streamHere && !streamingText && !isThinking && !isProcessingTools && <Box display="flex" justifyContent="center" my={2}><CircularProgress size={20} /></Box>}
           <div ref={messagesEndRef} />
         </Box>
 
