@@ -208,7 +208,7 @@ jobs:
 
       - name: Initialize schema
         run: |
-          python -c "from database.connection import get_db_manager as g; m = g(); m.initialize(); m.create_tables()"
+          python -c "from database.connection import init_database; init_database()"
 
       - name: Run integration tests
         run: |
@@ -278,7 +278,7 @@ jobs:
 
       - name: Initialize schema
         run: |
-          python -c "from database.connection import get_db_manager as g; m = g(); m.initialize(); m.create_tables()"
+          python -c "from database.connection import init_database; init_database()"
 
       - name: Run DB-backed unit tests
         run: |
@@ -464,26 +464,4 @@ jobs:
   #   needs: [build-images, build-frontend, scan-images]
   #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
   #   ... (deployment steps removed for now)
-
-  # ============================================================================
-  # Summary
-  # ============================================================================
-  summary:
-    name: CI Summary
-    runs-on: ubuntu-latest
-    needs: [lint-backend, lint-frontend, test-unit-backend, test-unit-backend-db, test-integration, security-scan-python]
-    if: always()
-    steps:
-      - name: Check results
-        run: |
-          echo "✓ CI Pipeline Complete"
-          echo "Lint Backend: ${{ needs.lint-backend.result }}"
-          echo "Lint Frontend: ${{ needs.lint-frontend.result }}"
-          echo "Unit Tests: ${{ needs.test-unit-backend.result }}"
-          echo "Unit Tests (DB-backed): ${{ needs.test-unit-backend-db.result }}"
-          echo "Integration Tests: ${{ needs.test-integration.result }}"
-          echo "Security Scan: ${{ needs.security-scan-python.result }}"
-          echo ""
-          echo "Docker images built and pushed to GitHub Container Registry"
-          echo "Pull images: docker pull ghcr.io/${{ github.repository }}-backend:${{ github.ref_name }}"
 
