@@ -108,3 +108,6 @@ opentelemetry-instrumentation-redis>=0.46b0
 opentelemetry-instrumentation-logging>=0.46b0
 opentelemetry-semantic-conventions-ai>=0.4.0
 
+# Password strength
+zxcvbn-python>=4.4.24
+
