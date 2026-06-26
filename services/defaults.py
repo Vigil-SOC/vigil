@@ -11,4 +11,4 @@ import os
 # (e.g. fresh install, DB unavailable, no ai_model_configs row).
 # Operators on Ollama-only deployments should set this to their local model
 # (e.g. "llama3.2:1b") so the failsafe never tries to call an Anthropic model.
-DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "claude-sonnet-4-6")
+DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "gpt-4o")

@@ -61,12 +61,19 @@ class MCPServer:
         env: Dict[str, str],
         server_type: str = "unknown",
         required_env_vars: Optional[List[str]] = None,
+        raw_env: Optional[Dict[str, str]] = None,
     ):
         self.name = name
         self.command = command
         self.args = args
         self.cwd = cwd
         self.env = env
+        # Raw (unsubstituted) env templates from mcp-config.json, e.g.
+        # {"PURPLEMCP_CONSOLE_BASE_URL": "${SENTINELONE_CONSOLE_URL}"}.
+        # Used by mcp_client to re-substitute at connection time so
+        # credentials set via the UI after startup are picked up without
+        # a backend restart.
+        self.raw_env: Dict[str, str] = raw_env or {}
         self.process: Optional[subprocess.Popen] = None
         self.status = "stopped"
         self.start_time: Optional[datetime] = None
@@ -302,8 +309,18 @@ class MCPService:
             var_name = match.group(1)
             default = match.group(2)
             env_val = os.environ.get(var_name)
-            if env_val is not None:
+            if env_val:
                 return env_val
+            # Check the secrets store — covers credentials saved via the
+            # Settings UI that land in the encrypted store but are not yet
+            # in os.environ (e.g. on first connect after a backend restart).
+            try:
+                from secrets_manager import get_secret as _gs  # type: ignore
+                secret_val = _gs(var_name)
+                if secret_val:
+                    return secret_val
+            except Exception:
+                pass
             if default is not None:
                 return self._substitute_env_vars(default)
             return ''
@@ -409,6 +426,7 @@ class MCPService:
                         "args": args,
                         "cwd": cwd,
                         "env": env,
+                        "raw_env": raw_env_strs,
                         "server_type": self._detect_server_type(args),
                         "required_env_vars": required_env_vars,
                     })

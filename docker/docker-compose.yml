@@ -63,6 +63,11 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-secret-key-123456789}
       - VIGIL_COOKIE_SECURE=${VIGIL_COOKIE_SECURE:-false}
       - VIGIL_COOKIE_SAMESITE=${VIGIL_COOKIE_SAMESITE:-lax}
+      - SENTINELONE_API_TOKEN=${SENTINELONE_API_TOKEN:-}
+      - SENTINELONE_CONSOLE_URL=${SENTINELONE_CONSOLE_URL:-}
+      - UV_CACHE_DIR=/tmp/uv-cache
+      - UV_TOOL_DIR=/tmp/uv-tools
+      - HOME=/tmp
     ports:
       - "6987:6987"
     depends_on:
@@ -78,6 +83,8 @@ services:
     volumes:
       - ../logs:/app/logs
       - ../.deeptempo:/app/.deeptempo
+      - ../.vigil:/tmp/.vigil
+      - ../mcp-config.json:/app/mcp-config.json:ro
 
   # SOC Daemon - Autonomous monitoring and response
   soc-daemon:
@@ -197,8 +204,18 @@ services:
       bifrost:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -d /proc/1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     networks:
       - deeptempo-network
+    volumes:
+      - ../logs:/app/logs
+      - ../.deeptempo:/app/.deeptempo
+      - ../.vigil:/tmp/.vigil
+      - ../mcp-config.json:/app/mcp-config.json:ro
 
   # ─── Multi-provider LLM gateway ───────────────────────────────────────────
   # Bifrost is the single path for all LLM traffic (GH #84 PR-B). Anthropic

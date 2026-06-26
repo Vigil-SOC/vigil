@@ -221,15 +221,16 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     id: 'sentinelone',
     name: 'SentinelOne',
     category: 'EDR/XDR',
-    description: 'Integrate with SentinelOne for autonomous endpoint protection with AI-powered threat detection.',
+    description: 'Integrate with SentinelOne for autonomous endpoint protection with AI-powered threat detection via Purple AI MCP.',
     functionality_type: 'Detection & Response',
     fields: [
       {
-        name: 'api_url',
-        label: 'API URL',
+        name: 'console_url',
+        label: 'Console URL',
         type: 'url',
         required: true,
-        placeholder: 'https://your-instance.sentinelone.net',
+        placeholder: 'https://your-mgmt.sentinelone.net',
+        helpText: 'Your SentinelOne management console URL (e.g. https://usea1-002-mssp.sentinelone.net).',
       },
       {
         name: 'api_token',
@@ -237,6 +238,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
         type: 'password',
         required: true,
         placeholder: 'Your SentinelOne API token',
+        helpText: 'Generate a service-user token in SentinelOne → Settings → Users → Service Users.',
       },
     ],
     docs_url: 'https://usea1-partners.sentinelone.net/docs/en/using-api-tokens.html',

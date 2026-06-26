@@ -188,6 +188,100 @@ ROUTER_NO_TOOLS_SYSTEM_PROMPT = (
     "step. Write the final investigation analysis directly."
 )
 
+ROUTER_WITH_TOOLS_SYSTEM_PROMPT = (
+    "You are Vigil, an AI-native SOC analyst with access to live security tools. "
+    "Use them proactively: query SentinelOne for alerts, search logs, enrich IOCs, "
+    "run threat intel lookups, and investigate incidents. When the user asks about "
+    "alerts, threats, or security events, call the appropriate tool rather than "
+    "speculating. Present findings clearly and concisely."
+)
+
+
+def _get_openai_mcp_tools():
+    """Return (openai_tools, tool_server_map) from the active MCP client cache.
+
+    openai_tools: list of dicts in OpenAI function-calling format.
+    tool_server_map: mapping of openai_tool_name -> (server_name, raw_tool_name).
+    """
+    try:
+        from services.mcp_client import get_mcp_client
+        mcp_client = get_mcp_client()
+        if not mcp_client or not mcp_client.tools_cache:
+            return [], {}
+    except Exception:
+        return [], {}
+
+    openai_tools = []
+    tool_server_map = {}
+    for server_name, server_tools in mcp_client.tools_cache.items():
+        for tool in server_tools:
+            raw_name = tool["name"]
+            full_name = f"{server_name}_{raw_name}"[:64]
+            openai_tools.append({
+                "type": "function",
+                "function": {
+                    "name": full_name,
+                    "description": f"[{server_name}] {tool.get('description', '')}",
+                    "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
+                },
+            })
+            tool_server_map[full_name] = (server_name, raw_name)
+    return openai_tools, tool_server_map
+
+
+def _mcp_tool_result_text(result: Any) -> str:
+    """Extract plain text from an MCP call_tool() result."""
+    if isinstance(result, str):
+        return result
+    if not isinstance(result, dict):
+        return str(result)
+    content = result.get("content", [])
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                text = item.get("text") or item.get("content", "")
+                if text:
+                    parts.append(str(text))
+            elif isinstance(item, str):
+                parts.append(item)
+        return "\n".join(parts) if parts else str(result)
+    return str(result)
+
+
+def _filter_openai_tools(
+    openai_tools: List[Dict],
+    tool_server_map: Dict,
+    allowed_tools: Optional[List[str]],
+) -> tuple:
+    """Filter OpenAI-format MCP tools by an agent's allowed_tools list.
+
+    Built-in agents specify internal Vigil tool names (list_findings, etc.)
+    which don't match MCP tool names. When none match we fall back to passing
+    all MCP tools so built-in agents still have live integration access.
+    Custom agents that explicitly list MCP tool names get a filtered set.
+    """
+    if not allowed_tools or not openai_tools:
+        return openai_tools, tool_server_map
+
+    wanted = set(allowed_tools)
+    filtered = []
+    for t in openai_tools:
+        fn_name = t["function"]["name"]
+        # Exact match or suffix-after-first-underscore match (mirrors ClaudeService logic)
+        if fn_name in wanted or ("_" in fn_name and fn_name.split("_", 1)[1] in wanted):
+            filtered.append(t)
+
+    if not filtered:
+        # None of the agent's allowed_tools matched any MCP tool name — the
+        # agent was defined before MCP existed. Pass all MCP tools through.
+        return openai_tools, tool_server_map
+
+    filtered_map = {t["function"]["name"]: tool_server_map[t["function"]["name"]] for t in filtered}
+    return filtered, filtered_map
+
 
 def _select_active_provider(provider_id: Optional[str]):
     """Pick the provider a chat request should route through.
@@ -462,25 +556,81 @@ async def chat(request: ChatRequest):
         current_message = messages[-1]["content"]
         context = messages[:-1] if len(messages) > 1 else None
 
-        # Non-Anthropic path: dispatch directly through LLMRouter (bypass ARQ).
-        # The router path has no tools, so send the no-tools guardrail prompt
-        # rather than the agentic system prompt.
+        # Non-Anthropic path: dispatch through LLMRouter with MCP tool support.
+        # If MCP servers are connected, inject their tools and run an agentic
+        # loop that executes tool calls and feeds results back until a text
+        # response lands.
         if use_router:
             from services.llm_router import LLMRouter
+            from services.mcp_client import get_mcp_client as _get_mcp
 
             logger.info(
                 f"💬 [RequestID: {request_id}] Starting router chat ({active_provider.provider_type}) "
                 f"with {len(messages)} messages"
             )
-            result = await LLMRouter().dispatch(
-                provider=active_provider,
-                messages=messages,
-                system_prompt=ROUTER_NO_TOOLS_SYSTEM_PROMPT,
-                model=request.model,
-                max_tokens=max_tokens,
-                interaction_id=request_id,
+            _oai_tools, _tool_server_map = _get_openai_mcp_tools()
+            _oai_tools, _tool_server_map = _filter_openai_tools(
+                _oai_tools, _tool_server_map, allowed_tools
             )
-            response = result.get("content", "")
+            _effective_sys = (
+                system_prompt
+                if system_prompt
+                else (ROUTER_WITH_TOOLS_SYSTEM_PROMPT if _oai_tools else ROUTER_NO_TOOLS_SYSTEM_PROMPT)
+            )
+            _mcp = _get_mcp() if _tool_server_map else None
+            _loop_msgs = list(messages)
+            response = ""
+            _result: Dict[str, Any] = {}
+            for _turn in range(6):
+                _result = await LLMRouter().dispatch(
+                    provider=active_provider,
+                    messages=_loop_msgs,
+                    system_prompt=_effective_sys,
+                    model=request.model,
+                    max_tokens=max_tokens,
+                    tools=_oai_tools or None,
+                    interaction_id=request_id,
+                )
+                _tcs = _result.get("tool_calls") or []
+                if not _tcs:
+                    response = _result.get("content", "")
+                    break
+                # Append assistant message with tool calls
+                _loop_msgs.append({
+                    "role": "assistant",
+                    "content": _result.get("content") or None,
+                    "tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                        }
+                        for tc in _tcs
+                    ],
+                })
+                # Execute each tool call and append tool results
+                for tc in _tcs:
+                    _fn = tc.function.name
+                    try:
+                        _args = json.loads(tc.function.arguments or "{}")
+                    except Exception:
+                        _args = {}
+                    if _fn in _tool_server_map and _mcp:
+                        _srv, _raw = _tool_server_map[_fn]
+                        logger.info(
+                            f"🔧 [RequestID: {request_id}] Tool call: {_raw} on {_srv}"
+                        )
+                        _tr = await _mcp.call_tool(_srv, _raw, _args, timeout=60.0)
+                        _tc_text = _mcp_tool_result_text(_tr)
+                    else:
+                        _tc_text = f"Tool '{_fn}' not available."
+                    _loop_msgs.append({
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "content": _tc_text,
+                    })
+            else:
+                response = _result.get("content", "")
         elif request.use_agent_sdk and claude_service.use_agent_sdk:
             # Extract text from current message for agent query
             if isinstance(current_message, list):
@@ -672,6 +822,7 @@ async def chat_stream(
     enable_thinking = request.enable_thinking
     max_tokens = request.max_tokens
     thinking_budget = request.thinking_budget
+    allowed_tools = None
 
     if request.agent_id:
         from services.soc_agents import AgentManager
@@ -680,6 +831,7 @@ async def chat_stream(
         agent = agent_manager.agents.get(request.agent_id)
         if agent:
             system_prompt = agent.system_prompt
+            allowed_tools = agent.recommended_tools
             # Per GH #79: request wins verbatim (no downgrade/upgrade from agent default)
             if max_tokens is None:
                 max_tokens = agent.max_tokens
@@ -806,35 +958,111 @@ async def chat_stream(
             # Use all previous messages as context (if any)
             context = messages[:-1] if len(messages) > 1 else None
 
-            # Non-Anthropic path — stream via LLMRouter / Bifrost's OpenAI
-            # surface. No tools here, so use the no-tools guardrail prompt.
+            # Non-Anthropic path — run MCP agentic loop then stream result.
+            # When MCP tools are connected the loop executes tool calls before
+            # streaming the final text. With no tools it falls through to a
+            # direct single-turn stream for lowest latency.
             if use_router and active_provider is not None:
                 from services.llm_router import LLMRouter
+                from services.mcp_client import get_mcp_client as _get_mcp
 
-                text_chunks = 0
-                total_text_length = 0
+                _oai_tools, _tool_server_map = _get_openai_mcp_tools()
+                _oai_tools, _tool_server_map = _filter_openai_tools(
+                    _oai_tools, _tool_server_map, allowed_tools
+                )
+                _effective_sys = (
+                    system_prompt
+                    if system_prompt
+                    else (ROUTER_WITH_TOOLS_SYSTEM_PROMPT if _oai_tools else ROUTER_NO_TOOLS_SYSTEM_PROMPT)
+                )
                 logger.info(
                     f"🚀 [RequestID: {request_id}] Starting router stream ({active_provider.provider_type}) "
-                    f"with {len(messages)} messages"
+                    f"with {len(messages)} messages, tools={len(_oai_tools)}"
                 )
-                async for chunk in LLMRouter().dispatch_openai_stream(
-                    provider=active_provider,
-                    messages=messages,
-                    system_prompt=ROUTER_NO_TOOLS_SYSTEM_PROMPT,
-                    model=request.model,
-                    max_tokens=max_tokens,
-                    interaction_id=request_id,
-                ):
-                    text_chunks += 1
-                    total_text_length += len(chunk.get("content", ""))
-                    history_assistant_parts.append(chunk.get("content", ""))
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                history_reached_end = True
-                elapsed_time = time.time() - start_time
-                logger.info(
-                    f"✅ [RequestID: {request_id}] Router stream complete in {elapsed_time:.2f}s — "
-                    f"{text_chunks} chunks ({total_text_length} chars)"
-                )
+
+                if _oai_tools:
+                    # Agentic loop (non-streaming) — tool calls resolved before text is emitted
+                    _mcp = _get_mcp()
+                    _loop_msgs = list(messages)
+                    _final_text = ""
+                    _result: Dict[str, Any] = {}
+                    for _turn in range(6):
+                        _result = await LLMRouter().dispatch(
+                            provider=active_provider,
+                            messages=_loop_msgs,
+                            system_prompt=_effective_sys,
+                            model=request.model,
+                            max_tokens=max_tokens,
+                            tools=_oai_tools,
+                            interaction_id=request_id,
+                        )
+                        _tcs = _result.get("tool_calls") or []
+                        if not _tcs:
+                            _final_text = _result.get("content", "")
+                            break
+                        _loop_msgs.append({
+                            "role": "assistant",
+                            "content": _result.get("content") or None,
+                            "tool_calls": [
+                                {
+                                    "id": tc.id,
+                                    "type": "function",
+                                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                                }
+                                for tc in _tcs
+                            ],
+                        })
+                        for tc in _tcs:
+                            _fn = tc.function.name
+                            try:
+                                _args = json.loads(tc.function.arguments or "{}")
+                            except Exception:
+                                _args = {}
+                            if _fn in _tool_server_map and _mcp:
+                                _srv, _raw = _tool_server_map[_fn]
+                                logger.info(
+                                    f"🔧 [RequestID: {request_id}] Tool call: {_raw} on {_srv}"
+                                )
+                                _tr = await _mcp.call_tool(_srv, _raw, _args, timeout=60.0)
+                                _tc_text = _mcp_tool_result_text(_tr)
+                            else:
+                                _tc_text = f"Tool '{_fn}' not available."
+                            _loop_msgs.append({
+                                "role": "tool",
+                                "tool_call_id": tc.id,
+                                "content": _tc_text,
+                            })
+                    else:
+                        _final_text = _result.get("content", "")
+                    elapsed_time = time.time() - start_time
+                    logger.info(
+                        f"✅ [RequestID: {request_id}] Router agentic loop complete in {elapsed_time:.2f}s"
+                    )
+                    history_assistant_parts.append(_final_text)
+                    history_reached_end = True
+                    yield f"data: {json.dumps({'type': 'text', 'content': _final_text})}\n\n"
+                else:
+                    # No tools — stream directly for lowest latency
+                    text_chunks = 0
+                    total_text_length = 0
+                    async for chunk in LLMRouter().dispatch_openai_stream(
+                        provider=active_provider,
+                        messages=messages,
+                        system_prompt=_effective_sys,
+                        model=request.model,
+                        max_tokens=max_tokens,
+                        interaction_id=request_id,
+                    ):
+                        text_chunks += 1
+                        total_text_length += len(chunk.get("content", ""))
+                        history_assistant_parts.append(chunk.get("content", ""))
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                    history_reached_end = True
+                    elapsed_time = time.time() - start_time
+                    logger.info(
+                        f"✅ [RequestID: {request_id}] Router stream complete in {elapsed_time:.2f}s — "
+                        f"{text_chunks} chunks ({total_text_length} chars)"
+                    )
                 return
 
             logger.info(

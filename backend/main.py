@@ -502,6 +502,20 @@ async def _connect_external_services():
             "  LLM calls will fail until Redis is running and ARQ worker is started"
         )
 
+    # Restore integration secrets (SentinelOne, CrowdStrike, etc.) from the
+    # encrypted store into os.environ so MCP server child processes inherit them.
+    try:
+        from services.integration_secrets import restore_all_integration_secrets
+
+        _counts = restore_all_integration_secrets()
+        logger.info(
+            "Integration secrets restored: %d/%d loaded into env",
+            _counts["loaded"],
+            _counts["total"],
+        )
+    except Exception as e:
+        logger.warning("Could not restore integration secrets: %s", e)
+
     logger.info("Initializing MCP client with persistent connections...")
     try:
         from services.mcp_client import get_mcp_client

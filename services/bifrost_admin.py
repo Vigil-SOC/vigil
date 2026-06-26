@@ -53,54 +53,69 @@ def _get_provider(name: str, client: httpx.Client) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _get_provider_keys(provider_name: str, client: httpx.Client) -> list:
+    """Fetch the keys list for a provider via /api/providers/{name}/keys."""
+    try:
+        r = client.get(
+            f"{_bifrost_base_url()}/api/providers/{provider_name}/keys",
+            timeout=_DEFAULT_TIMEOUT,
+        )
+        if r.status_code == 404:
+            return []
+        r.raise_for_status()
+        data = r.json()
+        return data.get("keys") or []
+    except Exception as e:
+        logger.warning("Bifrost: could not fetch keys for provider %s: %s", provider_name, e)
+        return []
+
+
 def push_provider_key(provider_name: str, key_value: str) -> bool:
     """Update the first configured key on ``provider_name`` with ``key_value``.
 
-    We take the current provider document, replace the key value with a
-    literal (``from_env: false``), and PUT it back. This is idempotent —
-    pushing the same value twice is a no-op from Anthropic's perspective.
-
-    Returns True on success. Any failure is logged and returns False so
-    the caller's CRUD flow never breaks on a Bifrost hiccup.
+    Uses /api/providers/{name}/keys to list keys, then PATCH/PUT the first
+    key's value. Returns True on success; failures are logged and return False
+    so the caller's CRUD flow never breaks on a Bifrost hiccup.
     """
     if not provider_name:
         return False
     with httpx.Client() as client:
-        prov = _get_provider(provider_name, client)
-        if prov is None:
-            return False
-        keys = prov.get("keys") or []
+        keys = _get_provider_keys(provider_name, client)
         if not keys:
             logger.warning(
                 "Bifrost: provider %s has no keys slot to update", provider_name
             )
             return False
-        # Update the first key. Bifrost's current config seeds exactly one
-        # key per provider; multi-key rotation is a separate feature.
-        keys[0]["value"] = {
+        key_id = keys[0].get("id")
+        if not key_id:
+            logger.warning("Bifrost: key entry for %s has no id", provider_name)
+            return False
+        updated_key = dict(keys[0])
+        updated_key["value"] = {
             "value": key_value,
-            "env_var": "",
-            "from_env": False,
+            "ref": "",
+            "type": "value",
         }
         try:
             r = client.put(
-                f"{_bifrost_base_url()}/api/providers/{provider_name}",
-                json=prov,
+                f"{_bifrost_base_url()}/api/providers/{provider_name}/keys/{key_id}",
+                json=updated_key,
                 timeout=_DEFAULT_TIMEOUT,
             )
             if r.status_code >= 400:
                 logger.warning(
-                    "Bifrost: PUT /api/providers/%s returned %s: %s",
+                    "Bifrost: PUT /api/providers/%s/keys/%s returned %s: %s",
                     provider_name,
+                    key_id,
                     r.status_code,
                     r.text[:200],
                 )
                 return False
-            logger.info("Bifrost: pushed updated key for provider %s", provider_name)
+            logger.info("Bifrost: pushed updated key for provider %s (key %s)", provider_name, key_id)
             return True
         except Exception as e:
             logger.warning(
-                "Bifrost: PUT /api/providers/%s failed: %s", provider_name, e
+                "Bifrost: PUT /api/providers/%s/keys/%s failed: %s", provider_name, key_id, e
             )
             return False
 

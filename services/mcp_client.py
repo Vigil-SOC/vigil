@@ -34,132 +34,123 @@ logger = logging.getLogger(__name__)
 
 
 class PersistentServerSession:
-    """Manages a persistent connection to an MCP server."""
-    
+    """Manages a persistent connection to an MCP server.
+
+    The stdio_client and ClientSession context managers use anyio cancel
+    scopes internally. Entering them in a FastAPI request handler and leaving
+    them open causes ``RuntimeError: Attempted to exit a cancel scope that
+    isn't the current tasks's current cancel scope`` because starlette's
+    BaseHTTPMiddleware also uses anyio task groups — the scopes end up nested
+    across different tasks.
+
+    Fix: run the ENTIRE lifecycle of stdio_client inside a single dedicated
+    asyncio background task (_bg_task). That task owns all the anyio cancel
+    scopes. The request handler only signals (via asyncio.Event) and reads
+    shared state (self.session), avoiding cross-task cancel-scope conflicts.
+    """
+
     def __init__(self, server_name: str, server_params):
         self.server_name = server_name
         self.server_params = server_params
         self.session: Optional[ClientSession] = None
-        self.read_stream = None
-        self.write_stream = None
-        self.stdio_context = None
-        self.session_context = None
         self.is_connected = False
-        self.lock = asyncio.Lock()
-    
-    async def connect(self) -> bool:
-        """Establish persistent connection to the server."""
-        async with self.lock:
-            if self.is_connected and self.session:
-                return True
-            
-            try:
-                # Create stdio client connection
-                self.stdio_context = stdio_client(self.server_params)
-                self.read_stream, self.write_stream = await self.stdio_context.__aenter__()
-                
-                # Create session
-                self.session_context = ClientSession(self.read_stream, self.write_stream)
-                self.session = await self.session_context.__aenter__()
-                
-                # Initialize session
-                await self.session.initialize()
-                
-                self.is_connected = True
-                logger.info(f"✓ Established persistent connection to {self.server_name}")
-                return True
-                
-            except Exception as e:
-                logger.error(f"Failed to connect to {self.server_name}: {e}")
-                await self._cleanup()
-                return False
-    
-    async def disconnect(self):
-        """Disconnect from the server."""
-        async with self.lock:
-            await self._cleanup()
-    
-    async def _cleanup(self):
-        """Internal cleanup method (must be called with lock held)."""
+        self._bg_task: Optional[asyncio.Task] = None
+        self._connected_event: Optional[asyncio.Event] = None
+        self._connect_error: Optional[str] = None
+
+    async def _run_session(self) -> None:
+        """Background task: owns the stdio_client/ClientSession lifecycle."""
         try:
-            if self.session_context:
-                try:
-                    await self.session_context.__aexit__(None, None, None)
-                except Exception:
-                    pass
-            
-            if self.stdio_context:
-                try:
-                    await self.stdio_context.__aexit__(None, None, None)
-                except Exception:
-                    pass
-            
-            self.session = None
-            self.session_context = None
-            self.stdio_context = None
-            self.read_stream = None
-            self.write_stream = None
+            async with stdio_client(self.server_params) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    self.session = session
+                    self.is_connected = True
+                    if self._connected_event:
+                        self._connected_event.set()
+                    logger.info("✓ Persistent connection established to %s", self.server_name)
+                    # Hold the context open until this task is cancelled.
+                    await asyncio.get_event_loop().create_future()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            self._connect_error = str(exc)
+            logger.error("Persistent session for %s failed: %s", self.server_name, exc)
+        finally:
             self.is_connected = False
-            
-        except Exception as e:
-            logger.debug(f"Error during cleanup of {self.server_name}: {e}")
-    
+            self.session = None
+            if self._connected_event and not self._connected_event.is_set():
+                self._connected_event.set()
+
+    async def connect(self) -> bool:
+        """Start the background task and wait up to 60 s for the connection."""
+        if self.is_connected and self.session:
+            return True
+
+        # Cancel any dead previous task before starting fresh.
+        if self._bg_task and not self._bg_task.done():
+            self._bg_task.cancel()
+            try:
+                await self._bg_task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        self._connected_event = asyncio.Event()
+        self._connect_error = None
+        loop = asyncio.get_event_loop()
+        self._bg_task = loop.create_task(self._run_session())
+
+        try:
+            await asyncio.wait_for(asyncio.shield(self._connected_event.wait()), timeout=60.0)
+        except asyncio.TimeoutError:
+            logger.error("Timeout waiting for %s to connect", self.server_name)
+            self._bg_task.cancel()
+            return False
+
+        if not self.is_connected:
+            logger.error("Connection to %s failed: %s", self.server_name, self._connect_error)
+            return False
+        return True
+
+    async def disconnect(self) -> None:
+        """Cancel the background task, which exits the anyio context managers cleanly."""
+        if self._bg_task and not self._bg_task.done():
+            self._bg_task.cancel()
+            try:
+                await self._bg_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self.is_connected = False
+        self.session = None
+
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """Call a tool using the persistent session."""
-        async with self.lock:
-            if not self.is_connected or not self.session:
-                # Try to reconnect
-                logger.warning(f"Session not connected for {self.server_name}, attempting to reconnect...")
-                if not await self._reconnect_internal():
-                    raise RuntimeError(f"Failed to connect to {self.server_name}")
-            
-            try:
-                result = await self.session.call_tool(tool_name, arguments)
-                
-                # Convert result to dictionary
-                content_list = []
-                for content_item in result.content:
-                    if hasattr(content_item, 'text'):
-                        content_list.append({"type": "text", "text": content_item.text})
-                    elif hasattr(content_item, 'type'):
-                        content_list.append({"type": str(content_item.type), "text": str(content_item)})
-                    else:
-                        content_list.append({"type": "text", "text": str(content_item)})
-                
-                return {
-                    "error": result.isError if hasattr(result, 'isError') else False,
-                    "content": content_list
-                }
-                
-            except Exception as e:
-                logger.error(f"Tool call failed for {self.server_name}.{tool_name}: {e}")
-                # Mark as disconnected and try to reconnect on next call
-                self.is_connected = False
-                raise
-    
-    async def _reconnect_internal(self) -> bool:
-        """Internal reconnect (must be called with lock held)."""
-        await self._cleanup()
-        return await self._connect_internal()
-    
-    async def _connect_internal(self) -> bool:
-        """Internal connect (must be called with lock held)."""
+        if not self.is_connected or not self.session:
+            logger.warning("Session not connected for %s, attempting to reconnect...", self.server_name)
+            if not await self.connect():
+                raise RuntimeError(f"Failed to connect to {self.server_name}")
+
         try:
-            self.stdio_context = stdio_client(self.server_params)
-            self.read_stream, self.write_stream = await self.stdio_context.__aenter__()
-            
-            self.session_context = ClientSession(self.read_stream, self.write_stream)
-            self.session = await self.session_context.__aenter__()
-            
-            await self.session.initialize()
-            
-            self.is_connected = True
-            return True
-            
-        except Exception as e:
-            logger.error(f"Reconnect failed for {self.server_name}: {e}")
-            await self._cleanup()
-            return False
+            result = await self.session.call_tool(tool_name, arguments)
+
+            content_list = []
+            for content_item in result.content:
+                if hasattr(content_item, "text"):
+                    content_list.append({"type": "text", "text": content_item.text})
+                elif hasattr(content_item, "type"):
+                    content_list.append({"type": str(content_item.type), "text": str(content_item)})
+                else:
+                    content_list.append({"type": "text", "text": str(content_item)})
+
+            return {
+                "error": result.isError if hasattr(result, "isError") else False,
+                "content": content_list,
+            }
+
+        except Exception as exc:
+            logger.error("Tool call failed for %s.%s: %s", self.server_name, tool_name, exc)
+            self.is_connected = False
+            raise
 
 
 class MCPClient:
@@ -250,11 +241,27 @@ class MCPClient:
             return False
 
         try:
+            # Re-substitute env var templates using current os.environ so
+            # credentials set via the UI after startup (which land in
+            # os.environ via secrets_manager.set) are picked up without
+            # requiring a backend restart.
+            raw_env = getattr(server, "raw_env", None)
+            if raw_env:
+                live_env = os.environ.copy()
+                live_env.update(
+                    {k: self.mcp_service._substitute_env_vars(v) for k, v in raw_env.items()}
+                )
+                pythonpath = server.env.get("PYTHONPATH", "")
+                if pythonpath:
+                    live_env["PYTHONPATH"] = pythonpath
+            else:
+                live_env = server.env
+
             # Create stdio server parameters
             server_params = StdioServerParameters(
                 command=server.command,
                 args=server.args,
-                env=server.env
+                env=live_env
             )
             
             if persistent:
@@ -302,6 +309,20 @@ class MCPClient:
                 })
             
             logger.info(f"Connected to {server_name}, found {len(self.tools_cache[server_name])} tools")
+
+            # Register tools in the global MCP registry so the agent builder
+            # UI and ClaudeService can discover them without a chat session first.
+            try:
+                from services.mcp_registry import get_mcp_registry
+                registry = get_mcp_registry()
+                server = self.mcp_service.servers.get(server_name)
+                config = {}
+                if server:
+                    config = {"command": server.command, "args": server.args, "env": server.env}
+                registry.register_server(server_name, config, self.tools_cache[server_name])
+            except Exception as _reg_err:
+                logger.debug("Could not register %s tools in registry: %s", server_name, _reg_err)
+
             return True
         
         except Exception as e:

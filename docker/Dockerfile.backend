@@ -62,7 +62,11 @@ LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libpq5 \
       curl \
+      git \
     && rm -rf /var/lib/apt/lists/*
+
+# uv/uvx — needed to spawn purple-mcp (SentinelOne MCP server) and other uvx-based servers
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # Non-root user
 RUN groupadd -r vigil && useradd -r -g vigil -d /app -s /sbin/nologin vigil
@@ -95,7 +99,8 @@ COPY --from=frontend-builder --chown=vigil:vigil /build/frontend/build ./fronten
 RUN mkdir -p /app/data/investigations \
              /app/data/mempalace \
              /app/logs \
-    && chown -R vigil:vigil /app/data /app/logs
+             /app/.vigil \
+    && chown -R vigil:vigil /app/data /app/logs /app/.vigil
 
 # Bake version into the image so `backend.__version__` resolves at import time
 # (backend/__init__.py reads VERSION from disk)

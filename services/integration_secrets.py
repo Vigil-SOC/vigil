@@ -95,7 +95,7 @@ _SECRET_FIELDS: Mapping[str, tuple[str, ...]] = {
     "url-analysis": ("api_key",),
     "ip-geolocation": ("api_key",),
     "crowdstrike": ("client_secret",),
-    "sentinelone": ("api_token",),
+    "sentinelone": ("console_url", "api_token"),
     "carbon-black": ("api_key",),
     "microsoft-defender": ("client_secret",),
     "cortex-xdr": ("api_key",),
@@ -306,3 +306,37 @@ def redact_secrets(integration_id: str, config: Dict[str, object]) -> Dict[str, 
 def secret_field_names(integration_id: str) -> Iterable[str]:
     """Iterable over the form-field names that are secrets for an integration."""
     return secret_fields_for(integration_id).keys()
+
+
+def restore_all_integration_secrets() -> Dict[str, int]:
+    """Re-inject all integration secrets from the secrets store into os.environ.
+
+    os.environ is not persisted across process restarts, but the encrypted
+    secrets store is. Call this once at startup before MCP servers connect so
+    their child processes inherit the correct credentials.
+
+    Returns a dict with ``loaded`` and ``total`` counts.
+    """
+    import os
+
+    try:
+        from backend.secrets_manager import get_secret
+    except ImportError:
+        try:
+            from secrets_manager import get_secret  # type: ignore
+        except ImportError:
+            return {"loaded": 0, "total": 0}
+
+    loaded = 0
+    total = 0
+    for _integration_id, field_map in INTEGRATION_SECRET_FIELDS.items():
+        for _field_name, env_var in field_map.items():
+            total += 1
+            try:
+                val = get_secret(env_var)
+                if val:
+                    os.environ[env_var] = val
+                    loaded += 1
+            except Exception:
+                pass
+    return {"loaded": loaded, "total": total}
