@@ -13,7 +13,9 @@
 #   ./scripts/reset-setup.sh --all -y        # everything, no confirmation prompt
 #
 # Options:
-#   --providers          Delete every LLM provider (the hard gate — this alone re-shows the wizard)
+#   --providers          Clear every LLM provider — deletes what it can, deactivates the
+#                        last active default per type (the single-default guard 409s on it).
+#                        This alone re-shows the wizard.
 #   --assignments        Clear all per-agent model assignments
 #   --budget             Clear the Bifrost virtual key + spend cap
 #   --autonomy           Disable the autonomous orchestrator (preserves its cost caps)
@@ -47,6 +49,10 @@ command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; 
 
 get()  { curl -fsS "${AUTH[@]}" "$B$1"; }
 del()  { curl -fsS "${AUTH[@]}" -X DELETE "$B$1"; }
+# DELETE that prints the HTTP status instead of aborting on 4xx. The provider
+# delete endpoint legitimately 409s on the last active default of a type (the
+# single-default guard added in #336) — we detect that and deactivate instead.
+del_code() { curl -s -o /dev/null -w '%{http_code}' "${AUTH[@]}" -X DELETE "$B$1"; }
 put()  { curl -fsS "${AUTH[@]}" -X PUT  -H 'Content-Type: application/json' -d "$2" "$B$1"; }
 post() { curl -fsS "${AUTH[@]}" -X POST -H 'Content-Type: application/json' -d "$2" "$B$1"; }
 
@@ -98,7 +104,7 @@ if [ "$status_only" = true ]; then exit 0; fi
 
 # --- confirm --------------------------------------------------------------
 planned=()
-[ "$do_providers"   = true ] && planned+=("delete all LLM providers (re-fires the hard gate)")
+[ "$do_providers"   = true ] && planned+=("delete LLM providers, deactivating the last default per type (re-fires the hard gate)")
 [ "$do_assignments" = true ] && planned+=("clear all model assignments")
 [ "$do_budget"      = true ] && planned+=("clear the budget / virtual key")
 [ "$do_autonomy"    = true ] && planned+=("disable the orchestrator")
@@ -126,9 +132,23 @@ if [ "$do_assignments" = true ]; then
 fi
 
 if [ "$do_providers" = true ]; then
-  ids=$(get /llm/providers/ | python3 -c "import sys,json;[print(p['provider_id']) for p in json.load(sys.stdin)]")
+  # Delete non-defaults first (sort by is_default asc) so each type drains down
+  # to its single default last. The backend refuses (409) to delete the only
+  # active default of a type — that's the single-default guard (#336). When we
+  # hit it, deactivate instead: the wizard gate is `is_active && is_default`
+  # (frontend/src/setup/setupSteps.ts), so an inactive provider re-fires it.
+  ids=$(get /llm/providers/ | python3 -c "import sys,json;rows=json.load(sys.stdin);[print(p['provider_id']) for p in sorted(rows,key=lambda p:bool(p.get('is_default')))]")
   if [ -z "$ids" ]; then echo "  providers: already empty"; else
-    while read -r id; do [ -n "$id" ] && { del "/llm/providers/$id" >/dev/null; echo -e "  ${GREEN}deleted provider${NC} $id"; }; done <<< "$ids"
+    while read -r id; do
+      [ -n "$id" ] || continue
+      code=$(del_code "/llm/providers/$id")
+      case "$code" in
+        200|204) echo -e "  ${GREEN}deleted provider${NC} $id" ;;
+        409)     put "/llm/providers/$id" '{"is_active":false}' >/dev/null
+                 echo -e "  ${YELLOW}deactivated provider${NC} $id ${DIM}(only active default of its type — can't delete; gate still re-fires)${NC}" ;;
+        *)       echo -e "  ${RED}unexpected HTTP $code deleting $id${NC}" >&2; exit 1 ;;
+      esac
+    done <<< "$ids"
   fi
 fi
 
