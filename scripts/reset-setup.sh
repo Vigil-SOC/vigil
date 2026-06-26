@@ -13,9 +13,11 @@
 #   ./scripts/reset-setup.sh --all -y        # everything, no confirmation prompt
 #
 # Options:
-#   --providers          Clear every LLM provider — deletes what it can, deactivates the
-#                        last active default per type (the single-default guard 409s on it).
-#                        This alone re-shows the wizard.
+#   --providers          Clear every LLM provider. Deletes each one; for the last active
+#                        default of a type — which the API can neither delete nor unset
+#                        (the single-default guard 409s) — it clears the default flag
+#                        directly in Postgres, then deletes. Falls back to deactivating
+#                        that row if the DB isn't reachable. Either way the wizard re-shows.
 #   --assignments        Clear all per-agent model assignments
 #   --budget             Clear the Bifrost virtual key + spend cap
 #   --autonomy           Disable the autonomous orchestrator (preserves its cost caps)
@@ -31,12 +33,25 @@
 #
 # Auth: assumes DEV_MODE=true (auth bypassed). Set VIGIL_TOKEN to send a
 # Bearer token if you run against an authenticated backend.
+#
+# DB step: --providers may need to clear a stale default flag directly in
+# Postgres (the API can't unset or delete the last default of a type). This
+# reuses the app's own DB connection, so it runs best from the repo root with
+# the project venv (SQLAlchemy + the same POSTGRES_* / .env config the backend
+# uses). If the DB isn't reachable it falls back to deactivating that provider.
 
 # No `set -u`: macOS ships bash 3.2, where expanding an empty array (AUTH,
 # data_sources) under `-u` is a fatal "unbound variable".
 set -eo pipefail
 
 B="${VIGIL_API:-http://localhost:6987/api}"
+
+# Repo root (this script lives in scripts/) and a Python that has the project's
+# deps — used only by the DB fallback in the --providers reset. Prefer the venv
+# so the step works without `source venv/bin/activate`; degrade to python3.
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PYTHON="python3"
+[ -x "$REPO_ROOT/venv/bin/python" ] && PYTHON="$REPO_ROOT/venv/bin/python"
 
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; DIM='\033[2m'; NC='\033[0m'
 
@@ -55,6 +70,46 @@ del()  { curl -fsS "${AUTH[@]}" -X DELETE "$B$1"; }
 del_code() { curl -s -o /dev/null -w '%{http_code}' "${AUTH[@]}" -X DELETE "$B$1"; }
 put()  { curl -fsS "${AUTH[@]}" -X PUT  -H 'Content-Type: application/json' -d "$2" "$B$1"; }
 post() { curl -fsS "${AUTH[@]}" -X POST -H 'Content-Type: application/json' -d "$2" "$B$1"; }
+
+# Clear a provider's is_default flag straight in Postgres. The API deliberately
+# can't: the single-default guard (#336) 409s on unsetting the only default of a
+# type, and the delete guard 409s on deleting it — so a reset can never drain the
+# last default via HTTP alone. Best-effort: reuses the app's own DB connection
+# (same POSTGRES_* / .env the backend reads) and returns non-zero, changing
+# nothing, if the DB or deps aren't reachable from this shell.
+clear_provider_default() {
+  RESET_PROVIDER_ID="$1" REPO_ROOT="$REPO_ROOT" "$PYTHON" - <<'PY'
+import os, sys
+
+root = os.environ["REPO_ROOT"]
+sys.path.insert(0, root)
+try:
+    from dotenv import load_dotenv  # mirror start.sh's `set -a; source .env`
+
+    load_dotenv(os.path.join(root, ".env"))  # no-op if absent; never overrides
+except Exception:
+    pass
+try:
+    from sqlalchemy import text
+
+    from database.connection import get_db_manager
+
+    m = get_db_manager()
+    if m._engine is None:
+        m.initialize()
+    with m.session_scope() as s:
+        s.execute(
+            text(
+                "UPDATE llm_provider_configs SET is_default = FALSE "
+                "WHERE provider_id = :pid"
+            ),
+            {"pid": os.environ["RESET_PROVIDER_ID"]},
+        )
+except Exception as exc:  # DB unreachable / deps missing → caller falls back
+    print(f"db-clear failed: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+}
 
 # --- argument parsing -----------------------------------------------------
 do_providers=false; do_assignments=false; do_budget=false; do_autonomy=false
@@ -104,7 +159,7 @@ if [ "$status_only" = true ]; then exit 0; fi
 
 # --- confirm --------------------------------------------------------------
 planned=()
-[ "$do_providers"   = true ] && planned+=("delete LLM providers, deactivating the last default per type (re-fires the hard gate)")
+[ "$do_providers"   = true ] && planned+=("delete all LLM providers (clears the last default's flag in Postgres so it can be removed; re-fires the hard gate)")
 [ "$do_assignments" = true ] && planned+=("clear all model assignments")
 [ "$do_budget"      = true ] && planned+=("clear the budget / virtual key")
 [ "$do_autonomy"    = true ] && planned+=("disable the orchestrator")
@@ -134,9 +189,12 @@ fi
 if [ "$do_providers" = true ]; then
   # Delete non-defaults first (sort by is_default asc) so each type drains down
   # to its single default last. The backend refuses (409) to delete the only
-  # active default of a type — that's the single-default guard (#336). When we
-  # hit it, deactivate instead: the wizard gate is `is_active && is_default`
-  # (frontend/src/setup/setupSteps.ts), so an inactive provider re-fires it.
+  # active default of a type — that's the single-default guard (#336) — and also
+  # refuses to unset it. For that last row we clear is_default straight in
+  # Postgres, then re-issue the delete (which now passes the guard and still runs
+  # the FK cascade + Bifrost key reconcile). If the DB can't be reached we fall
+  # back to deactivating it: the wizard gate is `is_active && is_default`
+  # (frontend/src/setup/setupSteps.ts), so an inactive provider re-fires it too.
   ids=$(get /llm/providers/ | python3 -c "import sys,json;rows=json.load(sys.stdin);[print(p['provider_id']) for p in sorted(rows,key=lambda p:bool(p.get('is_default')))]")
   if [ -z "$ids" ]; then echo "  providers: already empty"; else
     while read -r id; do
@@ -144,8 +202,17 @@ if [ "$do_providers" = true ]; then
       code=$(del_code "/llm/providers/$id")
       case "$code" in
         200|204) echo -e "  ${GREEN}deleted provider${NC} $id" ;;
-        409)     put "/llm/providers/$id" '{"is_active":false}' >/dev/null
-                 echo -e "  ${YELLOW}deactivated provider${NC} $id ${DIM}(only active default of its type — can't delete; gate still re-fires)${NC}" ;;
+        409)     if clear_provider_default "$id"; then
+                   code2=$(del_code "/llm/providers/$id")
+                   case "$code2" in
+                     200|204) echo -e "  ${GREEN}deleted provider${NC} $id ${DIM}(cleared stale default flag first)${NC}" ;;
+                     *)       put "/llm/providers/$id" '{"is_active":false}' >/dev/null
+                              echo -e "  ${YELLOW}deactivated provider${NC} $id ${DIM}(cleared stale default; delete returned HTTP $code2)${NC}" ;;
+                   esac
+                 else
+                   put "/llm/providers/$id" '{"is_active":false}' >/dev/null
+                   echo -e "  ${YELLOW}deactivated provider${NC} $id ${DIM}(only active default of its type; DB unreachable to clear stale default — gate still re-fires)${NC}"
+                 fi ;;
         *)       echo -e "  ${RED}unexpected HTTP $code deleting $id${NC}" >&2; exit 1 ;;
       esac
     done <<< "$ids"
