@@ -18,7 +18,7 @@ from services.kafka_consumer_service import KafkaConsumerService
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def _make_service(monkeypatch, topics=None):

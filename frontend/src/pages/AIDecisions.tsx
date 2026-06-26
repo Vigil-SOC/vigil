@@ -441,7 +441,7 @@ export default function AIDecisionsPage() {
                                 component="button"
                                 variant="body2"
                                 sx={{ fontFamily: 'monospace', fontSize: '0.7rem', cursor: 'pointer' }}
-                                onClick={() => navigate(`/orchestrator?highlight=${invId}`)}
+                                onClick={() => navigate(`/old/orchestrator?highlight=${invId}`)}
                               >
                                 {invId.slice(0, 12)}...
                               </Link>
@@ -549,7 +549,7 @@ export default function AIDecisionsPage() {
                                 }}
                                 onClick={() =>
                                   navigate(
-                                    `/workflows?run_id=${action.workflow_run_id}`,
+                                    `/old/workflows?run_id=${action.workflow_run_id}`,
                                   )
                                 }
                               >

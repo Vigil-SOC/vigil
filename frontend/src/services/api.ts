@@ -72,6 +72,32 @@ api.interceptors.response.use(
   }
 )
 
+// Streaming POST helper for SSE endpoints (the chat stream). Axios buffers
+// the whole response body, so streaming has to use fetch — but we still want
+// the same auth machinery the axios instance applies: cookie credentials, the
+// X-CSRF-Token double-submit header, and a one-shot 401 → /auth/refresh → retry.
+// `path` is relative to the API base (e.g. '/claude/chat/stream').
+export async function streamFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const url = `${basePath}/api${path}`
+  const build = (): RequestInit => {
+    const headers = new Headers(init.headers || {})
+    const csrf = readCookie('csrf_token')
+    if (csrf) headers.set('X-CSRF-Token', csrf)
+    return { ...init, headers, credentials: 'include' }
+  }
+  let res = await fetch(url, build())
+  if (res.status === 401) {
+    try {
+      await api.post('/auth/refresh')
+      // New cookies are set by the server; retry the original stream once.
+      res = await fetch(url, build())
+    } catch {
+      // Refresh failed — return the original 401 so the caller surfaces it.
+    }
+  }
+  return res
+}
+
 // AI Decisions API
 export const aiDecisionsApi = {
   create: (data: {
@@ -219,7 +245,7 @@ export const casesApi = {
   
   // Comments
   getComments: (id: string) => api.get(`/cases/${id}/comments`),
-  addComment: (id: string, data: { content: string; author: string; parent_comment_id?: string }) =>
+  addComment: (id: string, data: { content: string; author: string; parent_comment_id?: number | string }) =>
     api.post(`/cases/${id}/comments`, data),
   
   // Watchers
@@ -1022,6 +1048,19 @@ export const llmProviderApi = {
   test: (providerId: string) =>
     api.post<{ success: boolean; provider_id: string; error: string | null }>(
       `/llm/providers/${providerId}/test`,
+    ),
+  // Stateless connection test against unsaved credentials — no provider row
+  // required, so the Add Provider wizard can verify before anything persists.
+  testConnection: (data: {
+    provider_type: string
+    base_url?: string
+    api_key?: string
+    default_model?: string
+    organization?: string
+  }) =>
+    api.post<{ success: boolean; error: string | null }>(
+      '/llm/providers/test-connection',
+      data,
     ),
   listModels: (providerId: string) =>
     api.get<{ models: string[] }>(`/llm/providers/${providerId}/models`),

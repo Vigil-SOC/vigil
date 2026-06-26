@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import logging
 
+from services.defaults import DEFAULT_MODEL
 from services.soc_agents import SOCAgentLibrary, AgentManager, CUSTOM_AGENT_ID_PREFIX
 
 router = APIRouter()
@@ -292,7 +293,7 @@ Use the get_case tool first to retrieve full details, then investigate all assoc
                 "system_prompt": agent.system_prompt,
                 "allowed_tools": allowed_tools if allowed_tools else None,
                 "max_turns": 15,
-                "model": "claude-sonnet-4-5-20250929"
+                "model": DEFAULT_MODEL
             }
         )
         

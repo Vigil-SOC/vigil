@@ -179,14 +179,14 @@ export default function Dashboard() {
   const handleTimelineEventClick = (event: any) => {
     if (event.metadata?.finding_id) {
       // Navigate to investigation with this finding
-      navigate(`/investigation?finding_ids=${event.metadata.finding_id}`)
+      navigate(`/old/investigation?finding_ids=${event.metadata.finding_id}`)
     }
   }
 
   const handleGraphNodeClick = (node: any) => {
     // Navigate to investigation with this entity's findings
     if (node.metadata?.findings && node.metadata.findings.length > 0) {
-      navigate(`/investigation?finding_ids=${node.metadata.findings.join(',')}`)
+      navigate(`/old/investigation?finding_ids=${node.metadata.findings.join(',')}`)
     } else {
       // Show a snackbar for entities without linked findings
       setSnackbar({ open: true, message: `Entity: ${node.label} (${node.type})`, severity: 'success' })
@@ -269,7 +269,7 @@ export default function Dashboard() {
             subtitle={`${stats?.cases?.by_status?.open || 0} open`}
             icon={<FolderIcon />}
             color={theme.palette.primary.main}
-            onClick={() => navigate('/cases')}
+            onClick={() => navigate('/old/cases')}
           />
         </Grid>
         <Grid item xs={12} sm={6} md={3}>

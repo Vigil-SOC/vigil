@@ -450,12 +450,144 @@ app.include_router(
 )
 
 
+async def _connect_external_services():
+    """Connect external startup integrations (skipped under TESTING)."""
+    import asyncio
+
+    try:
+        from services.bifrost_admin import sync_all_provider_keys
+
+        sync_all_provider_keys()
+    except Exception as e:
+        logger.warning(f"Bifrost provider sync skipped: {e}")
+
+    try:
+        from services.bifrost_admin import sync_all_provider_models
+
+        refresh_interval_s = int(os.getenv("MODEL_CATALOG_REFRESH_INTERVAL_S", "300"))
+
+        async def _model_catalog_refresher():
+            while True:
+                try:
+                    await sync_all_provider_models()
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Model catalog refresh iteration failed: %s",
+                        exc,
+                    )
+                if refresh_interval_s <= 0:
+                    break
+                await asyncio.sleep(refresh_interval_s)
+
+        asyncio.create_task(_model_catalog_refresher())
+    except Exception as e:
+        logger.warning(f"Model catalog refresher skipped: {e}")
+
+    logger.info("Initializing LLM Gateway (ARQ / Redis)...")
+    try:
+        from services.llm_gateway import get_llm_gateway
+
+        await get_llm_gateway()
+        logger.info("✓ LLM Gateway connected to Redis")
+    except Exception as e:
+        logger.warning(f"⚠ LLM Gateway not available: {e}")
+        logger.warning(
+            "  LLM calls will fail until Redis is running and ARQ worker is started"
+        )
+
+    logger.info("Initializing MCP client with persistent connections...")
+    try:
+        from services.mcp_client import get_mcp_client
+
+        mcp_client = get_mcp_client()
+
+        if mcp_client:
+            mcp_service = mcp_client.mcp_service
+            servers = mcp_service.list_servers()
+
+            connected_count = 0
+            for server_name in servers:
+                try:
+                    success = await mcp_client.connect_to_server(
+                        server_name, persistent=True
+                    )
+                    if success:
+                        connected_count += 1
+                        logger.info(
+                            f"✓ Persistent connection established: {server_name}"
+                        )
+                    else:
+                        missing = mcp_client.get_missing_credentials(server_name)
+                        if missing:
+                            logger.info(
+                                "MCP server %s dormant — awaiting env vars: %s",
+                                server_name,
+                                ", ".join(missing),
+                            )
+                        else:
+                            logger.warning(
+                                f"Failed to connect to MCP server: {server_name}"
+                            )
+                except Exception as e:
+                    logger.error(f"Error connecting to {server_name}: {e}")
+
+            logger.info(
+                f"MCP initialization complete: {connected_count}/{len(servers)} persistent connections"
+            )
+
+            tools = await mcp_client.list_tools()
+            total_tools = sum(len(t) for t in tools.values())
+            logger.info(f"Loaded {total_tools} MCP tools from {len(tools)} servers")
+
+            try:
+                cache_dir = Path(__file__).parent.parent / "data"
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                cache_file = cache_dir / "mcp_tools_cache.json"
+
+                cache_data = {}
+                for server_name, server_tools in tools.items():
+                    cache_data[server_name] = []
+                    for tool in server_tools:
+                        input_schema = tool.get("inputSchema", {})
+                        if hasattr(input_schema, "model_dump"):
+                            input_schema = input_schema.model_dump()
+                        elif not isinstance(input_schema, dict):
+                            input_schema = dict(input_schema) if input_schema else {}
+                        cache_data[server_name].append(
+                            {
+                                "name": tool.get("name"),
+                                "description": tool.get("description", ""),
+                                "inputSchema": input_schema,
+                            }
+                        )
+
+                with open(cache_file, "w") as f:
+                    json.dump(cache_data, f, indent=2)
+
+                logger.info(f"✓ Saved MCP tools cache to {cache_file}")
+            except Exception as e:
+                logger.warning(f"⚠ Could not save MCP tools cache: {e}")
+
+            status = mcp_client.get_connection_status()
+            logger.info(
+                f"Persistent connections: {sum(1 for connected in status.values() if connected)}/{len(status)}"
+            )
+        else:
+            logger.warning("MCP client not available - MCP SDK may not be installed")
+    except Exception as e:
+        logger.error(f"Error during MCP initialization: {e}")
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize database, MCP tools and check integration compatibility on startup."""
     logger.info("=" * 60)
     logger.info("Starting Vigil SOC Backend")
     logger.info("=" * 60)
+
+    import os
+
+    _testing = os.getenv("TESTING", "false").lower() in ("true", "1", "yes")
 
     # Initialize Sentry error tracking (was never called before — bug fix)
     try:
@@ -519,48 +651,6 @@ async def startup_event():
 
     except Exception as e:
         logger.warning(f"Error loading secrets for MCP servers: {e}")
-
-    # Push LLM provider keys from the secrets manager to Bifrost so its
-    # configured keys reflect what's in the secret store, regardless of
-    # how the container was started or which shell env was loaded at the
-    # time. Best-effort — Bifrost may not be up yet in all environments.
-    try:
-        from services.bifrost_admin import sync_all_provider_keys
-
-        sync_all_provider_keys()
-    except Exception as e:
-        logger.warning(f"Bifrost provider sync skipped: {e}")
-
-    # Discover live model catalogs upstream (Anthropic /v1/models, OpenAI
-    # /v1/models, Ollama /api/tags) and push the union per provider-type
-    # to Bifrost's allow-list. Single source of truth — one call populates
-    # both the UI dropdown cache and Bifrost's allow-list, so they can't
-    # drift. Scheduler loop refreshes every
-    # MODEL_CATALOG_REFRESH_INTERVAL_S (default 300s). Runs as a
-    # background task so startup isn't blocked on upstream reachability.
-    try:
-        import asyncio
-
-        from services.bifrost_admin import sync_all_provider_models
-
-        refresh_interval_s = int(os.getenv("MODEL_CATALOG_REFRESH_INTERVAL_S", "300"))
-
-        async def _model_catalog_refresher():
-            while True:
-                try:
-                    await sync_all_provider_models()
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Model catalog refresh iteration failed: %s",
-                        exc,
-                    )
-                if refresh_interval_s <= 0:
-                    break
-                await asyncio.sleep(refresh_interval_s)
-
-        asyncio.create_task(_model_catalog_refresher())
-    except Exception as e:
-        logger.warning(f"Model catalog refresher skipped: {e}")
 
     # Initialize data storage backend
     logger.info("Initializing data storage...")
@@ -666,114 +756,13 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Error checking compatibility: {e}")
 
-    # Initialize LLM Gateway (connects to Redis for ARQ job queue)
-    logger.info("Initializing LLM Gateway (ARQ / Redis)...")
-    try:
-        from services.llm_gateway import get_llm_gateway
-
-        await get_llm_gateway()
-        logger.info("✓ LLM Gateway connected to Redis")
-    except Exception as e:
-        logger.warning(f"⚠ LLM Gateway not available: {e}")
-        logger.warning(
-            "  LLM calls will fail until Redis is running and ARQ worker is started"
+    if _testing:
+        logger.info(
+            "TESTING=true — skipping external startup connections "
+            "(Bifrost sync, model catalog, LLM gateway, MCP)"
         )
-
-    logger.info("Initializing MCP client with persistent connections...")
-    try:
-        from services.mcp_client import get_mcp_client
-        from services.mcp_service import MCPService
-        import asyncio
-
-        # Get MCP client and service
-        mcp_client = get_mcp_client()
-
-        if mcp_client:
-            # Get list of all servers
-            mcp_service = mcp_client.mcp_service
-            servers = mcp_service.list_servers()
-
-            # Connect to each server with persistent connections
-            connected_count = 0
-            for server_name in servers:
-                try:
-                    # persistent=True establishes a long-lived connection
-                    success = await mcp_client.connect_to_server(
-                        server_name, persistent=True
-                    )
-                    if success:
-                        connected_count += 1
-                        logger.info(
-                            f"✓ Persistent connection established: {server_name}"
-                        )
-                    else:
-                        # Dormant-by-design when the user hasn't supplied
-                        # credentials yet — log at info and name the vars
-                        # so ops has a single line to act on. Other failure
-                        # modes (bad binary, unreachable remote MCP) still
-                        # warn at warning-level because they're real.
-                        missing = mcp_client.get_missing_credentials(server_name)
-                        if missing:
-                            logger.info(
-                                "MCP server %s dormant — awaiting env vars: %s",
-                                server_name,
-                                ", ".join(missing),
-                            )
-                        else:
-                            logger.warning(
-                                f"Failed to connect to MCP server: {server_name}"
-                            )
-                except Exception as e:
-                    logger.error(f"Error connecting to {server_name}: {e}")
-
-            logger.info(
-                f"MCP initialization complete: {connected_count}/{len(servers)} persistent connections"
-            )
-
-            # Log available tools
-            tools = await mcp_client.list_tools()
-            total_tools = sum(len(t) for t in tools.values())
-            logger.info(f"Loaded {total_tools} MCP tools from {len(tools)} servers")
-
-            # Persist tools to JSON cache file for access in async contexts
-            try:
-                cache_dir = Path(__file__).parent.parent / "data"
-                cache_dir.mkdir(parents=True, exist_ok=True)
-                cache_file = cache_dir / "mcp_tools_cache.json"
-
-                cache_data = {}
-                for server_name, server_tools in tools.items():
-                    cache_data[server_name] = []
-                    for tool in server_tools:
-                        input_schema = tool.get("inputSchema", {})
-                        if hasattr(input_schema, "model_dump"):
-                            input_schema = input_schema.model_dump()
-                        elif not isinstance(input_schema, dict):
-                            input_schema = dict(input_schema) if input_schema else {}
-                        cache_data[server_name].append(
-                            {
-                                "name": tool.get("name"),
-                                "description": tool.get("description", ""),
-                                "inputSchema": input_schema,
-                            }
-                        )
-
-                with open(cache_file, "w") as f:
-                    json.dump(cache_data, f, indent=2)
-
-                logger.info(f"✓ Saved MCP tools cache to {cache_file}")
-            except Exception as e:
-                logger.warning(f"⚠ Could not save MCP tools cache: {e}")
-
-            # Log connection status
-            status = mcp_client.get_connection_status()
-            logger.info(
-                f"Persistent connections: {sum(1 for connected in status.values() if connected)}/{len(status)}"
-            )
-        else:
-            logger.warning("MCP client not available - MCP SDK may not be installed")
-    except Exception as e:
-        logger.error(f"Error during MCP initialization: {e}")
+    else:
+        await _connect_external_services()
 
     # Load custom agents from DB into the AgentManager so built-in + custom
     # agents are visible in one merged list. Lookup misses for "custom-*" IDs

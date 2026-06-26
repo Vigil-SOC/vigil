@@ -114,6 +114,10 @@ async def _wrap_budget_errors(coro):
         ) from e
 
 
+async def _raise_async(exc: Exception):
+    raise exc
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     """Minimal view of a row from llm_provider_configs.
@@ -406,32 +410,111 @@ class LLMRouter:
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
 
-        resp = await client.chat.completions.create(**kwargs)
-        choice = resp.choices[0].message
-        usage = getattr(resp, "usage", None)
-        # OpenAI exposes prompt-cache hits via usage.prompt_tokens_details.cached_tokens.
-        # OpenAI bills cached tokens at a discounted rate but doesn't bill a
-        # separate "cache creation" tier the way Anthropic does — so we
-        # populate cache_read_tokens and leave cache_creation_tokens at 0.
-        # Without this extraction the cost-per-call math under-credits OpenAI
-        # cache hits (full input rate instead of the discounted cache rate),
-        # which is the asymmetry #184 acceptance #2 calls out.
-        cache_read = 0
-        if usage is not None:
-            details = getattr(usage, "prompt_tokens_details", None)
-            if details is not None:
-                cache_read = getattr(details, "cached_tokens", 0) or 0
-        return {
-            "content": choice.content or "",
-            "tool_calls": getattr(choice, "tool_calls", None),
-            "model": resp.model,
-            "input_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
-            "output_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
-            "cache_read_tokens": cache_read,
-            "cache_creation_tokens": 0,
-            "provider": provider.provider_type,
-            "path": "bifrost",
+        try:
+            resp = await client.chat.completions.create(**kwargs)
+            choice = resp.choices[0].message
+            usage = getattr(resp, "usage", None)
+            # OpenAI exposes prompt-cache hits via usage.prompt_tokens_details.cached_tokens.
+            # OpenAI bills cached tokens at a discounted rate but doesn't bill a
+            # separate "cache creation" tier the way Anthropic does — so we
+            # populate cache_read_tokens and leave cache_creation_tokens at 0.
+            # Without this extraction the cost-per-call math under-credits OpenAI
+            # cache hits (full input rate instead of the discounted cache rate),
+            # which is the asymmetry #184 acceptance #2 calls out.
+            cache_read = 0
+            if usage is not None:
+                details = getattr(usage, "prompt_tokens_details", None)
+                if details is not None:
+                    cache_read = getattr(details, "cached_tokens", 0) or 0
+            return {
+                "content": choice.content or "",
+                "tool_calls": getattr(choice, "tool_calls", None),
+                "model": resp.model,
+                "input_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
+                "output_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
+                "cache_read_tokens": cache_read,
+                "cache_creation_tokens": 0,
+                "provider": provider.provider_type,
+                "path": "bifrost",
+            }
+        finally:
+            # AsyncOpenAI holds an httpx connection pool; close it so file
+            # descriptors / connections don't leak per call (chat()'s
+            # non-streaming path routes through here).
+            await client.close()
+
+    async def dispatch_openai_stream(
+        self,
+        *,
+        provider: ProviderSpec,
+        messages: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: Optional[float] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        interaction_id: Optional[str] = None,
+    ):
+        """Yield OpenAI-format text chunks for non-Anthropic Bifrost providers."""
+        from openai import AsyncOpenAI
+
+        messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
+        model = model or provider.default_model
+
+        extra_headers: Dict[str, str] = {}
+        if interaction_id:
+            extra_headers["x-bf-lh-vigil-interaction-id"] = interaction_id
+        try:
+            from services.budget_service import get_active_vk, should_enforce
+
+            if should_enforce():
+                vk = get_active_vk()
+                if vk:
+                    extra_headers["x-bf-vk"] = vk
+        except Exception as _be:
+            logger.debug(
+                "budget_service unavailable (%s); proceeding without x-bf-vk", _be
+            )
+
+        oai_messages: List[Dict[str, Any]] = []
+        if system_prompt:
+            oai_messages.append({"role": "system", "content": system_prompt})
+        oai_messages.extend(messages)
+
+        client = AsyncOpenAI(
+            base_url=f"{self.bifrost_url}/v1",
+            api_key="bifrost",
+        )
+        kwargs: Dict[str, Any] = {
+            "model": f"{provider.provider_type}/{model}",
+            "messages": oai_messages,
+            "max_tokens": max_tokens,
+            "stream": True,
         }
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if tools:
+            kwargs["tools"] = tools
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
+
+        try:
+            stream = await client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None)
+                if content:
+                    yield {"type": "text", "content": content}
+        except Exception as exc:
+            await _wrap_budget_errors(_raise_async(exc))
+        finally:
+            # AsyncOpenAI holds an httpx connection pool; close it on normal
+            # completion, error, AND consumer disconnect (GeneratorExit, e.g.
+            # the SSE client goes away mid-stream) so file descriptors /
+            # connections don't accumulate under load.
+            await client.close()
 
     async def _dispatch_anthropic(
         self,
@@ -477,43 +560,48 @@ class LLMRouter:
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
 
-        resp = await client.messages.create(**kwargs)
-        # Anthropic returns a list of content blocks (text, thinking, tool_use).
-        text_parts: List[str] = []
-        thinking_parts: List[str] = []
-        tool_uses: List[Dict[str, Any]] = []
-        for block in resp.content:
-            btype = getattr(block, "type", None)
-            if btype == "text":
-                text_parts.append(getattr(block, "text", ""))
-            elif btype == "thinking":
-                thinking_parts.append(getattr(block, "thinking", ""))
-            elif btype == "tool_use":
-                tool_uses.append(
-                    {
-                        "id": getattr(block, "id", None),
-                        "name": getattr(block, "name", None),
-                        "input": getattr(block, "input", None),
-                    }
-                )
+        try:
+            resp = await client.messages.create(**kwargs)
+            # Anthropic returns a list of content blocks (text, thinking, tool_use).
+            text_parts: List[str] = []
+            thinking_parts: List[str] = []
+            tool_uses: List[Dict[str, Any]] = []
+            for block in resp.content:
+                btype = getattr(block, "type", None)
+                if btype == "text":
+                    text_parts.append(getattr(block, "text", ""))
+                elif btype == "thinking":
+                    thinking_parts.append(getattr(block, "thinking", ""))
+                elif btype == "tool_use":
+                    tool_uses.append(
+                        {
+                            "id": getattr(block, "id", None),
+                            "name": getattr(block, "name", None),
+                            "input": getattr(block, "input", None),
+                        }
+                    )
 
-        usage = getattr(resp, "usage", None)
-        return {
-            "content": "".join(text_parts),
-            "thinking": "".join(thinking_parts) or None,
-            "tool_calls": tool_uses or None,
-            "model": resp.model,
-            "input_tokens": getattr(usage, "input_tokens", 0) if usage else 0,
-            "output_tokens": getattr(usage, "output_tokens", 0) if usage else 0,
-            "cache_read_tokens": (
-                getattr(usage, "cache_read_input_tokens", 0) if usage else 0
-            ),
-            "cache_creation_tokens": (
-                getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
-            ),
-            "provider": provider.provider_type,
-            "path": "bifrost",
-        }
+            usage = getattr(resp, "usage", None)
+            return {
+                "content": "".join(text_parts),
+                "thinking": "".join(thinking_parts) or None,
+                "tool_calls": tool_uses or None,
+                "model": resp.model,
+                "input_tokens": getattr(usage, "input_tokens", 0) if usage else 0,
+                "output_tokens": getattr(usage, "output_tokens", 0) if usage else 0,
+                "cache_read_tokens": (
+                    getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+                ),
+                "cache_creation_tokens": (
+                    getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
+                ),
+                "provider": provider.provider_type,
+                "path": "bifrost",
+            }
+        finally:
+            # The async Anthropic client also holds an httpx connection pool;
+            # close it so connections don't leak per non-streaming call.
+            await client.close()
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +650,56 @@ def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
         if row is None:
             return None
         return provider_spec_from_row(row)
+    finally:
+        session.close()
+
+
+def get_default_provider_spec() -> Optional[ProviderSpec]:
+    """Load the default active provider of any type.
+
+    Preference order:
+    1. Any provider with ``is_default=True`` and ``is_active=True``
+    2. Any provider with ``is_active=True`` (first row, arbitrary order)
+
+    Returns None when no provider is configured or the DB is unavailable.
+    Used by the chat endpoint to route non-Anthropic providers through the
+    OpenAI-format Bifrost surface rather than requiring an Anthropic key.
+    """
+    try:
+        from database.connection import get_db_session
+        from database.models import LLMProviderConfig
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("default provider spec DB lookup skipped: %s", exc)
+        return None
+
+    session = get_db_session()
+    try:
+        # Single-default is enforced per provider_type, so multiple rows can
+        # carry is_default=True across types (e.g. an Anthropic default AND an
+        # Ollama default). Order by created_at so the pick is stable across
+        # runs/DBs instead of relying on undefined SQL row order.
+        row = (
+            session.query(LLMProviderConfig)
+            .filter(
+                LLMProviderConfig.is_active.is_(True),
+                LLMProviderConfig.is_default.is_(True),
+            )
+            .order_by(LLMProviderConfig.created_at)
+            .first()
+        )
+        if row is None:
+            row = (
+                session.query(LLMProviderConfig)
+                .filter(LLMProviderConfig.is_active.is_(True))
+                .order_by(LLMProviderConfig.created_at)
+                .first()
+            )
+        if row is None:
+            return None
+        return provider_spec_from_row(row)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("default provider spec lookup failed: %s", exc)
+        return None
     finally:
         session.close()
 

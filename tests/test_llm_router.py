@@ -106,6 +106,9 @@ async def test_dispatch_bifrost_for_ollama():
         usage=SimpleNamespace(prompt_tokens=5, completion_tokens=7),
     )
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client) as oai_ctor:
@@ -128,6 +131,8 @@ async def test_dispatch_bifrost_for_ollama():
     assert out["content"] == "hello"
     assert out["input_tokens"] == 5
     assert out["output_tokens"] == 7
+    # The OpenAI-format dispatcher must close its client (no httpx pool leak).
+    mock_client.close.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +162,9 @@ async def test_dispatch_anthropic_with_thinking_routes_through_bifrost():
         ),
     )
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.messages.create = AsyncMock(return_value=fake_resp)
 
     # Router builds its Anthropic client via services.llm_clients.create_async_anthropic_client,
@@ -189,6 +197,8 @@ async def test_dispatch_anthropic_with_thinking_routes_through_bifrost():
     assert out["output_tokens"] == 34
     assert out["cache_read_tokens"] == 0
     assert out["cache_creation_tokens"] == 0
+    # The Anthropic dispatcher must close its client (no httpx pool leak).
+    mock_client.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -212,6 +222,9 @@ async def test_dispatch_bifrost_openai_extracts_cache_read_tokens():
         ),
     )
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
@@ -240,6 +253,9 @@ async def test_dispatch_bifrost_openai_no_cache_details_safe():
         # no prompt_tokens_details attribute
     )
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
@@ -267,6 +283,9 @@ async def test_dispatch_propagates_interaction_id_as_bifrost_log_header_openai()
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
     )
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
     interaction_id = "uuid-aaaa-1111"
@@ -295,6 +314,9 @@ async def test_dispatch_omits_extra_headers_when_no_interaction_id():
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
     )
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
@@ -322,6 +344,9 @@ async def test_dispatch_propagates_interaction_id_anthropic():
         ),
     )
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.messages.create = AsyncMock(return_value=fake_resp)
 
     interaction_id = "uuid-bbbb-2222"
@@ -353,6 +378,9 @@ async def test_dispatch_attaches_vk_header_when_budget_enforce_active():
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
     )
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
@@ -381,6 +409,9 @@ async def test_dispatch_omits_vk_header_when_enforcement_off():
         usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
     )
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
@@ -410,6 +441,9 @@ async def test_dispatch_translates_402_into_budget_exceeded():
     raise_err.message = "$5 of $5 spent"  # type: ignore[attr-defined]
 
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(side_effect=raise_err)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
@@ -423,6 +457,8 @@ async def test_dispatch_translates_402_into_budget_exceeded():
 
     assert excinfo.value.status_code == 402
     assert excinfo.value.tier == "virtual_key"
+    # Even on the error path the client must be closed (finally block).
+    mock_client.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -434,6 +470,9 @@ async def test_dispatch_translates_429_into_budget_exceeded_rate_tier():
     raise_err.status_code = 429  # type: ignore[attr-defined]
 
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(side_effect=raise_err)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
@@ -457,6 +496,9 @@ async def test_dispatch_does_not_swallow_non_budget_errors():
     raise_err.status_code = 500  # type: ignore[attr-defined]
 
     mock_client = MagicMock()
+    # Dispatchers close the client in a finally block to avoid leaking the
+    # httpx pool; make .close() awaitable so the real cleanup path runs.
+    mock_client.close = AsyncMock()
     mock_client.chat.completions.create = AsyncMock(side_effect=raise_err)
 
     with patch("openai.AsyncOpenAI", return_value=mock_client):
