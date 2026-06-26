@@ -35,6 +35,13 @@ const markSetupDismissed = (): void => {
     /* storage unavailable */
   }
 }
+const clearSetupDismissed = (): void => {
+  try {
+    localStorage.removeItem(SETUP_DISMISSED_KEY)
+  } catch {
+    /* storage unavailable */
+  }
+}
 
 // `my-auto` (not items-center) centers vertically while staying overflow-safe:
 // when an expanded step overflows the viewport, items-center would clip the top.
@@ -168,6 +175,16 @@ const SetupScreen = () => {
   const [activeStep, setActiveStep] = useState<SetupStepId | null>(null)
 
   const llmReady = steps.find((s) => s.id === 'llm-provider')?.ready ?? false
+
+  // The dismissed flag means "user already left setup". If we're on /setup with
+  // the required provider NOT ready — a fresh install, or after a reset/loss that
+  // routed us here via SetupGate — that prior dismissal is stale. Clear it so
+  // completing the provider doesn't instantly bounce the user out before they can
+  // run the optional steps; they re-arm it by clicking "Go to dashboard".
+  useEffect(() => {
+    if (!loading && !llmReady) clearSetupDismissed()
+  }, [loading, llmReady])
+
   const optionalSteps = steps.filter((s) => s.tier !== 'required')
   const requiredCount = steps.length - optionalSteps.length
   const optionalDone = optionalSteps.filter((s) => s.ready).length

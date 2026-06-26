@@ -66,6 +66,17 @@ class _FakeSession:
         self._added = []
         self.commits = 0
 
+    @property
+    def no_autoflush(self):
+        # Real Session.no_autoflush is a context manager; the in-memory fake
+        # has no autoflush to suppress, so a no-op context is faithful enough.
+        from contextlib import nullcontext
+
+        return nullcontext()
+
+    def flush(self):
+        return None
+
     def query(self, _model):
         return _FakeQuery(self._store.values())
 

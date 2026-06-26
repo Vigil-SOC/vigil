@@ -1049,6 +1049,19 @@ export const llmProviderApi = {
     api.post<{ success: boolean; provider_id: string; error: string | null }>(
       `/llm/providers/${providerId}/test`,
     ),
+  // Stateless connection test against unsaved credentials — no provider row
+  // required, so the Add Provider wizard can verify before anything persists.
+  testConnection: (data: {
+    provider_type: string
+    base_url?: string
+    api_key?: string
+    default_model?: string
+    organization?: string
+  }) =>
+    api.post<{ success: boolean; error: string | null }>(
+      '/llm/providers/test-connection',
+      data,
+    ),
   listModels: (providerId: string) =>
     api.get<{ models: string[] }>(`/llm/providers/${providerId}/models`),
   setDefault: (providerId: string) =>
