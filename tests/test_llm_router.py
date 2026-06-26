@@ -795,3 +795,104 @@ def test_discover_anthropic_api_key_returns_none_when_db_unavailable():
 
     with patch.object(builtins, "__import__", side_effect=boom_import):
         assert llm_router.discover_anthropic_api_key() is None
+
+
+# ---------------------------------------------------------------------------
+# Bifrost provider-lifecycle / config error mapping (chat drawer fix)
+# ---------------------------------------------------------------------------
+
+
+def test_friendly_gateway_error_missing_base_url():
+    from services.llm_router import _friendly_gateway_error
+
+    exc = Exception(
+        "Error code: 400 - {'error': {'message': 'failed to create provider "
+        "for the given key: base_url is required for ollama provider'}}"
+    )
+    msg = _friendly_gateway_error(exc, _ollama_spec())
+    assert msg is not None
+    assert "Base URL" in msg
+    assert "Settings" in msg
+
+
+def test_friendly_gateway_error_shutting_down():
+    from services.llm_router import _friendly_gateway_error
+
+    exc = Exception("Error code: 400 - {'message': 'provider is shutting down'}")
+    msg = _friendly_gateway_error(exc, _ollama_spec())
+    assert msg is not None
+    assert "temporarily unavailable" in msg
+
+
+def test_friendly_gateway_error_returns_none_for_unrelated():
+    from services.llm_router import _friendly_gateway_error
+
+    msg = _friendly_gateway_error(Exception("some other failure"), _ollama_spec())
+    assert msg is None
+
+
+def test_dispatch_openai_stream_maps_base_url_error():
+    """A Bifrost 'base_url is required' error must surface as the actionable
+    RuntimeError, not the raw opaque text."""
+    import asyncio
+
+    from services.llm_router import LLMRouter
+
+    boom = Exception("400 - {'message': 'base_url is required for ollama provider'}")
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = AsyncMock(side_effect=boom)
+    fake_client.close = AsyncMock()
+
+    async def _run():
+        with patch("openai.AsyncOpenAI", return_value=fake_client):
+            gen = LLMRouter().dispatch_openai_stream(
+                provider=_ollama_spec(),
+                messages=[{"role": "user", "content": "hi"}],
+                model="gemma4:31b",
+            )
+            with pytest.raises(RuntimeError, match="Base URL"):
+                async for _ in gen:
+                    pass
+
+    asyncio.run(_run())
+
+
+def test_dispatch_openai_stream_retries_once_on_shutting_down():
+    """A transient 'provider is shutting down' is retried once before the
+    stream is opened successfully."""
+    import asyncio
+
+    from services.llm_router import LLMRouter
+
+    async def _empty_stream():
+        if False:
+            yield {}
+
+    calls = {"n": 0}
+
+    async def flaky_create(**_kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise Exception("400 - {'message': 'provider is shutting down'}")
+        return _empty_stream()
+
+    fake_client = MagicMock()
+    fake_client.chat.completions.create = flaky_create
+    fake_client.close = AsyncMock()
+
+    async def _run():
+        with patch("openai.AsyncOpenAI", return_value=fake_client), patch(
+            "asyncio.sleep", new=AsyncMock()
+        ):
+            gen = LLMRouter().dispatch_openai_stream(
+                provider=_ollama_spec(),
+                messages=[{"role": "user", "content": "hi"}],
+                model="gemma4:31b",
+            )
+            chunks = [c async for c in gen]
+        return chunks
+
+    chunks = asyncio.run(_run())
+    assert calls["n"] == 2  # retried exactly once
+    assert chunks == []
