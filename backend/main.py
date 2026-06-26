@@ -45,6 +45,7 @@ from api import (
     workflows_router,
     approvals_router,
     reasoning_router,
+    conversations_router,
     skills_router,
     llm_providers_router,
     ai_config_router,
@@ -279,6 +280,12 @@ app.include_router(
     reasoning_router,
     prefix=f"{_CONTEXT_PATH}/api/reasoning",
     tags=["reasoning"],
+    dependencies=AUTH_DEPENDENCY,
+)
+app.include_router(
+    conversations_router,
+    prefix=f"{_CONTEXT_PATH}/api/conversations",
+    tags=["conversations"],
     dependencies=AUTH_DEPENDENCY,
 )
 app.include_router(

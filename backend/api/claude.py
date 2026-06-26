@@ -3,6 +3,7 @@
 from typing import List, Optional, Dict, Union, Any, Tuple
 from fastapi import (
     APIRouter,
+    Depends,
     HTTPException,
     WebSocket,
     WebSocketDisconnect,
@@ -11,16 +12,83 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
+import asyncio
 import json
 import logging
 import base64
 
+from backend.middleware.auth import get_current_user
 from backend.schemas.system_prompt import validate_system_prompt
+from database.models import User
 from services.claude_service import ClaudeService
 from services.defaults import DEFAULT_MODEL
 from services.model_registry import get_registry
 
 router = APIRouter()
+
+
+def _user_text_from_content(content) -> str:
+    """Best-effort plain text from a chat message's content (str or blocks)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text") or "")
+        return "".join(parts)
+    return ""
+
+
+def _persist_chat_turn(
+    *,
+    session_id: str,
+    user_id: Optional[str],
+    agent_id: Optional[str],
+    model: Optional[str],
+    user_text: str,
+    assistant_text: str,
+    assistant_thinking: Optional[str],
+    tool_calls: list,
+    complete: bool,
+) -> None:
+    """Fail-open write-through of one chat turn to the conversation store.
+
+    Sync — invoked via ``asyncio.to_thread`` from the SSE generator. Persists
+    the user turn (always complete) and the assistant turn (``complete=False``
+    on abort/error). Each ``conversation_service`` call is itself fail-open;
+    this wrapper adds a final guard so nothing here can surface into the
+    request path. The authoritative per-iteration record (including full tool
+    calls / results) remains in ``llm_interaction_logs`` keyed by the same
+    ``session_id``.
+    """
+    try:
+        from services import conversation_service
+
+        conversation_service.ensure_conversation(
+            session_id=session_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            model=model,
+            first_user_text=user_text,
+        )
+        conversation_service.append_message(
+            session_id=session_id,
+            role="user",
+            content=user_text,
+            complete=True,
+        )
+        conversation_service.append_message(
+            session_id=session_id,
+            role="assistant",
+            content=assistant_text,
+            thinking=assistant_thinking,
+            tool_calls=tool_calls,
+            complete=complete,
+            model=model,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open, never break the chat
+        logger.warning("chat history write-through failed (non-fatal): %s", exc)
 logger = logging.getLogger(__name__)
 
 
@@ -548,7 +616,10 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     Send a chat message to Claude and stream the response.
 
@@ -564,6 +635,11 @@ async def chat_stream(request: ChatRequest):
     # Generate unique request ID for tracking
     request_id = str(uuid.uuid4())[:8]
     start_time = time.time()
+
+    # Owner for chat-history write-through (step 4). Captured as a plain string
+    # so the SSE generator's closure never touches the request-scoped DB
+    # session after it closes.
+    history_user_id = getattr(current_user, "user_id", None)
 
     # GH #89: resolve model via ai_model_configs if caller didn't specify one.
     provider_id, resolved_model = _resolve_provider_model_for_request(
@@ -646,6 +722,12 @@ async def chat_stream(request: ChatRequest):
         request.model = _router_model(active_provider, request.model)
 
     async def generate():
+        # --- chat-history write-through accumulation (step 4) ---
+        history_user_text = ""
+        history_assistant_parts: List[str] = []
+        history_thinking_parts: List[str] = []
+        history_reached_end = False
+        history_did_stream = False
         try:
             # Convert messages to format expected by Claude
             messages = []
@@ -717,6 +799,9 @@ async def chat_stream(request: ChatRequest):
 
             # Get the last message as the current message
             current_message = messages[-1]["content"]
+            # Capture the user turn for history; from here a stream WILL run.
+            history_user_text = _user_text_from_content(current_message)
+            history_did_stream = True
 
             # Use all previous messages as context (if any)
             context = messages[:-1] if len(messages) > 1 else None
@@ -742,7 +827,9 @@ async def chat_stream(request: ChatRequest):
                 ):
                     text_chunks += 1
                     total_text_length += len(chunk.get("content", ""))
+                    history_assistant_parts.append(chunk.get("content", ""))
                     yield f"data: {json.dumps(chunk)}\n\n"
+                history_reached_end = True
                 elapsed_time = time.time() - start_time
                 logger.info(
                     f"✅ [RequestID: {request_id}] Router stream complete in {elapsed_time:.2f}s — "
@@ -781,6 +868,7 @@ async def chat_stream(request: ChatRequest):
                     if chunk_type == "thinking":
                         thinking_chunks += 1
                         total_thinking_length += len(chunk_content)
+                        history_thinking_parts.append(chunk_content)
                         if thinking_chunks <= 3:  # Log first few
                             logger.debug(
                                 f"💭 [RequestID: {request_id}] Thinking chunk {thinking_chunks}: {chunk_content[:50]}..."
@@ -788,6 +876,7 @@ async def chat_stream(request: ChatRequest):
                     elif chunk_type == "text":
                         text_chunks += 1
                         total_text_length += len(chunk_content)
+                        history_assistant_parts.append(chunk_content)
                         if text_chunks <= 3:  # Log first few
                             logger.debug(
                                 f"📝 [RequestID: {request_id}] Text chunk {text_chunks}: {chunk_content[:50]}..."
@@ -806,12 +895,14 @@ async def chat_stream(request: ChatRequest):
                     # Old format - plain text string
                     text_chunks += 1
                     total_text_length += len(chunk)
+                    history_assistant_parts.append(chunk)
                     if text_chunks <= 3:
                         logger.debug(
                             f"📝 [RequestID: {request_id}] Text chunk (legacy) {text_chunks}: {chunk[:50]}..."
                         )
                     yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
 
+            history_reached_end = True
             elapsed_time = time.time() - start_time
             logger.info(
                 f"✅ [RequestID: {request_id}] Stream complete in {elapsed_time:.2f}s"
@@ -827,6 +918,30 @@ async def chat_stream(request: ChatRequest):
                 exc_info=True,
             )
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            # Write-through to the conversation store (step 4). Runs on normal
+            # completion, client abort (GeneratorExit flows through finally),
+            # and error. Fail-open — history must never break the chat. Skipped
+            # when no stream started (early validation returns) or there's no
+            # session id to key the conversation on.
+            if history_did_stream and request.session_id:
+                try:
+                    await asyncio.to_thread(
+                        _persist_chat_turn,
+                        session_id=request.session_id,
+                        user_id=history_user_id,
+                        agent_id=request.agent_id,
+                        model=request.model,
+                        user_text=history_user_text,
+                        assistant_text="".join(history_assistant_parts),
+                        assistant_thinking="".join(history_thinking_parts) or None,
+                        tool_calls=[],
+                        complete=history_reached_end,
+                    )
+                except Exception as exc:  # noqa: BLE001 — fail-open
+                    logger.warning(
+                        "chat history persist failed (non-fatal): %s", exc
+                    )
 
     return StreamingResponse(
         generate(),

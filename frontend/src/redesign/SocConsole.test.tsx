@@ -173,6 +173,13 @@ vi.mock('../services/api', () => ({
     listInteractions: () => Promise.resolve({ interactions: [] }),
     getInteraction: () => Promise.resolve({}),
   },
+  conversationsApi: {
+    list: () => Promise.resolve({ data: { conversations: [] } }),
+    get: () => Promise.resolve({ data: { messages: [] } }),
+    update: () => Promise.resolve({ data: {} }),
+    delete: () => Promise.resolve({ data: {} }),
+    importHistory: () => Promise.resolve({ data: { imported: 0, skipped: 0 } }),
+  },
 }))
 
 // Skills tab fetches via the dedicated skills client (not the shared api).

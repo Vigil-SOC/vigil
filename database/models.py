@@ -20,6 +20,7 @@ from sqlalchemy import (
     Boolean,
     ARRAY,
     Numeric,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -2890,4 +2891,155 @@ class ThreatIndicator(Base):
             "valid_until": self.valid_until.isoformat() if self.valid_until else None,
             "first_seen": self.first_seen.isoformat() if self.first_seen else None,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
+        }
+
+
+class Conversation(Base):
+    """Cross-device, per-analyst persistent chat conversation.
+
+    The Claude.ai-style history store for the redesign chat console: a
+    listable, reopenable conversation owned by an analyst. The primary key
+    IS the frontend ``session_id`` so reopening a conversation lets the
+    in-process ``SessionManager`` (and its MemPalace files) restore live
+    context and continue the same session.
+
+    This is distinct from ``llm_interaction_logs``, which remains the
+    per-API-call compliance audit log (system-of-record). Deleting a
+    conversation here never touches that audit trail.
+    """
+
+    __tablename__ = "conversations"
+
+    # = the frontend session_id (see Chat.tsx newSessionId()).
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    # Owner. No hard FK: DEV_MODE's mock fallback user is not persisted, so
+    # a FK would reject those rows. user-admin-default is the seeded dev id.
+    user_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    title: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    model: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    archived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # Denormalized for the list view (avoids COUNT per row).
+    message_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        server_default="now()",
+    )
+    # Sort key for the history list; null until the first message lands.
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+
+    messages: Mapped[List["ChatMessage"]] = relationship(
+        "ChatMessage",
+        back_populates="conversation",
+        order_by="ChatMessage.seq",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    __table_args__ = (
+        Index("idx_conversations_user_last_msg", "user_id", "last_message_at"),
+        Index("idx_conversations_user_archived", "user_id", "archived"),
+    )
+
+    def to_summary_dict(self) -> dict:
+        """Lightweight dict for the conversation list (no messages)."""
+        return {
+            "id": self.id,
+            "user_id": self.user_id,
+            "title": self.title,
+            "agent_id": self.agent_id,
+            "model": self.model,
+            "archived": self.archived,
+            "message_count": self.message_count,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "last_message_at": (
+                self.last_message_at.isoformat() if self.last_message_at else None
+            ),
+        }
+
+    def to_dict(self) -> dict:
+        """Full dict including ordered messages for the detail endpoint."""
+        return {
+            **self.to_summary_dict(),
+            "messages": [m.to_dict() for m in self.messages],
+        }
+
+
+class ChatMessage(Base):
+    """A single message within a :class:`Conversation`.
+
+    Full-fidelity copy of what the analyst saw live: visible text, extended
+    thinking, and the tool-call chain captured from the stream. ``complete``
+    is False for assistant turns that were aborted or errored mid-stream, so
+    a reopened chat renders exactly what was on screen.
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    conversation_id: Mapped[str] = mapped_column(
+        String(120),
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Order within the conversation (0-based, dense). Unique per conversation.
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    thinking: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tool_calls: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    model: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
+    input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    cost_usd: Mapped[float] = mapped_column(
+        Numeric(10, 6), nullable=False, default=0, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
+    )
+
+    conversation: Mapped["Conversation"] = relationship(
+        "Conversation", back_populates="messages"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "seq", name="uq_chat_messages_conv_seq"),
+        Index("idx_chat_messages_conversation", "conversation_id"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "conversation_id": self.conversation_id,
+            "seq": self.seq,
+            "role": self.role,
+            "content": self.content,
+            "thinking": self.thinking,
+            "tool_calls": self.tool_calls or [],
+            "complete": self.complete,
+            "model": self.model,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cost_usd": float(self.cost_usd) if self.cost_usd is not None else 0.0,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
         }

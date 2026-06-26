@@ -1554,6 +1554,73 @@ export const reasoningApi = {
       .then(r => r.data),
 }
 
+// Persistent chat history (cross-device, per-analyst). Mirrors the backend
+// /api/conversations store. Returns raw axios responses (read `res.data`),
+// matching casesApi.
+export interface ConversationSummary {
+  id: string
+  user_id: string | null
+  title: string | null
+  agent_id: string | null
+  model: string | null
+  archived: boolean
+  message_count: number
+  created_at: string | null
+  updated_at: string | null
+  last_message_at: string | null
+}
+
+export interface ConversationMessage {
+  id: number
+  conversation_id: string
+  seq: number
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  thinking: string | null
+  tool_calls: unknown[]
+  complete: boolean
+  model: string | null
+  input_tokens: number
+  output_tokens: number
+  cost_usd: number
+  created_at: string | null
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[]
+}
+
+export interface ImportConversationInput {
+  id: string
+  title?: string | null
+  agent_id?: string | null
+  model?: string | null
+  messages: Array<{
+    role: string
+    content: string
+    thinking?: string | null
+    tool_calls?: unknown[]
+    complete?: boolean
+    model?: string | null
+  }>
+}
+
+export const conversationsApi = {
+  // Trailing slash matches the backend root route (avoids a 307 redirect).
+  list: (params?: { archived?: boolean; limit?: number; offset?: number }) =>
+    api.get('/conversations/', { params }),
+
+  get: (id: string) => api.get(`/conversations/${encodeURIComponent(id)}`),
+
+  update: (id: string, data: { title?: string; archived?: boolean }) =>
+    api.patch(`/conversations/${encodeURIComponent(id)}`, data),
+
+  delete: (id: string) => api.delete(`/conversations/${encodeURIComponent(id)}`),
+
+  importHistory: (conversations: ImportConversationInput[]) =>
+    api.post('/conversations/import', { conversations }),
+}
+
 // Kafka ingestion API
 export const kafkaApi = {
   getConfig: () => api.get('/kafka/config'),
