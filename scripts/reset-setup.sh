@@ -130,7 +130,7 @@ while [ $# -gt 0 ]; do
     --all)         do_providers=true; do_assignments=true; do_budget=true; do_autonomy=true ;;
     --status)      status_only=true ;;
     -y|--yes)      assume_yes=true ;;
-    -h|--help)     sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help)     sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *)             echo "Unknown option: $1" >&2; exit 1 ;;
   esac
   shift
