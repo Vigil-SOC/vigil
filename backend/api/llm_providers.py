@@ -159,18 +159,28 @@ def _validate_type(provider_type: str) -> None:
 def _clear_other_defaults(db: Session, provider_type: str, keep_id: str) -> None:
     """Enforce the 'one default per provider_type' invariant at the app layer.
 
-    The DB has a partial unique index too, but clearing first avoids the
+    The DB has a partial unique index (``llm_provider_default_per_type``,
+    ``WHERE is_default = TRUE``) too, but clearing first avoids the
     index-conflict round-trip on UPDATE.
+
+    The ``no_autoflush`` guard is load-bearing: callers set ``keep_id``'s
+    ``is_default = True`` (or stage an INSERT with it) *before* calling here,
+    so the Core UPDATE below would otherwise trigger an autoflush that writes
+    the new default while the old one is still TRUE — two defaults at once,
+    which the partial unique index rejects with an IntegrityError (500).
+    Suppressing autoflush lets the UPDATE clear the old default first; the
+    pending ``keep_id`` change then flushes safely at commit.
     """
-    db.execute(
-        update(LLMProviderConfig)
-        .where(
-            LLMProviderConfig.provider_type == provider_type,
-            LLMProviderConfig.provider_id != keep_id,
-            LLMProviderConfig.is_default.is_(True),
+    with db.no_autoflush:
+        db.execute(
+            update(LLMProviderConfig)
+            .where(
+                LLMProviderConfig.provider_type == provider_type,
+                LLMProviderConfig.provider_id != keep_id,
+                LLMProviderConfig.is_default.is_(True),
+            )
+            .values(is_default=False)
         )
-        .values(is_default=False)
-    )
 
 
 def _reconcile_bifrost_key_for_type(
