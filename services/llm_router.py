@@ -24,6 +24,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -116,6 +117,60 @@ async def _wrap_budget_errors(coro):
 
 async def _raise_async(exc: Exception):
     raise exc
+
+
+# ---------------------------------------------------------------------------
+# Bifrost provider-lifecycle / misconfiguration errors
+# ---------------------------------------------------------------------------
+
+# Bifrost emits these when a provider can't be instantiated (a self-hosted
+# provider missing its base_url) or is mid-teardown after a config change.
+# The raw text ("provider is shutting down") is opaque to an operator who
+# just wants to chat, so we map it to an actionable message. The shutting-down
+# state is also briefly transient during a config reload, so the caller
+# retries it once before giving up.
+_GATEWAY_SHUTTING_DOWN = "provider is shutting down"
+_GATEWAY_MISSING_BASE_URL = "base_url is required"
+
+
+def _gateway_error_text(exc: Exception) -> str:
+    """Best-effort lower-cased text of a gateway error for pattern matching.
+
+    SDKs vary in where they stash the upstream body, so check the common
+    attributes plus the stringified exception.
+    """
+    parts: List[str] = []
+    for attr in ("message", "body"):
+        v = getattr(exc, attr, None)
+        if v:
+            parts.append(str(v))
+    resp = getattr(exc, "response", None)
+    if resp is not None:
+        parts.append(getattr(resp, "text", "") or "")
+    parts.append(str(exc))
+    return " ".join(parts).lower()
+
+
+def _friendly_gateway_error(exc: Exception, provider: "ProviderSpec") -> Optional[str]:
+    """Map a Bifrost lifecycle/config error to an actionable message.
+
+    Returns None when the error isn't a recognised gateway-config issue, so
+    the caller falls through to its normal (budget / generic) handling.
+    """
+    text = _gateway_error_text(exc)
+    if _GATEWAY_MISSING_BASE_URL in text:
+        return (
+            f"The {provider.provider_type} provider is not reachable through "
+            "the gateway because its Base URL is not configured. Check the "
+            "provider's Base URL in Settings → LLM Providers."
+        )
+    if _GATEWAY_SHUTTING_DOWN in text:
+        return (
+            f"The {provider.provider_type} provider is temporarily unavailable "
+            "through the gateway (it may be reloading its configuration). "
+            "Please retry in a moment."
+        )
+    return None
 
 
 @dataclass(frozen=True)
@@ -437,6 +492,15 @@ class LLMRouter:
                 "provider": provider.provider_type,
                 "path": "bifrost",
             }
+        except Exception as exc:
+            # Surface Bifrost provider-config errors (e.g. a self-hosted
+            # provider missing its base_url) as an actionable message rather
+            # than the opaque raw text. Budget errors (402/429) don't match
+            # these patterns, so they still flow to ``_wrap_budget_errors``.
+            friendly = _friendly_gateway_error(exc, provider)
+            if friendly is not None:
+                raise RuntimeError(friendly) from exc
+            raise
         finally:
             # AsyncOpenAI holds an httpx connection pool; close it so file
             # descriptors / connections don't leak per call (chat()'s
@@ -499,7 +563,28 @@ class LLMRouter:
             kwargs["extra_headers"] = extra_headers
 
         try:
-            stream = await client.chat.completions.create(**kwargs)
+            # Provider creation can momentarily fail with "provider is
+            # shutting down" while Bifrost reloads a provider's config; retry
+            # the open once before surfacing it. Safe to retry here because no
+            # chunks have been yielded yet.
+            stream = None
+            for attempt in range(2):
+                try:
+                    stream = await client.chat.completions.create(**kwargs)
+                    break
+                except Exception as exc:
+                    if (
+                        attempt == 0
+                        and _GATEWAY_SHUTTING_DOWN in _gateway_error_text(exc)
+                    ):
+                        logger.warning(
+                            "Bifrost: %s for provider %s — retrying once",
+                            _GATEWAY_SHUTTING_DOWN,
+                            provider.provider_type,
+                        )
+                        await asyncio.sleep(0.75)
+                        continue
+                    raise
             async for chunk in stream:
                 if not chunk.choices:
                     continue
@@ -508,6 +593,9 @@ class LLMRouter:
                 if content:
                     yield {"type": "text", "content": content}
         except Exception as exc:
+            friendly = _friendly_gateway_error(exc, provider)
+            if friendly is not None:
+                raise RuntimeError(friendly) from exc
             await _wrap_budget_errors(_raise_async(exc))
         finally:
             # AsyncOpenAI holds an httpx connection pool; close it on normal

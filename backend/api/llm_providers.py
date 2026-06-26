@@ -27,7 +27,11 @@ from backend.middleware.auth import get_current_active_user  # noqa: E402
 from backend.services.auth_service import AuthService  # noqa: E402
 from database.connection import get_db  # noqa: E402
 from database.models import AIModelConfig, LLMProviderConfig, User  # noqa: E402
-from services.bifrost_admin import push_provider_key  # noqa: E402
+from services.bifrost_admin import (  # noqa: E402
+    _PROVIDER_TYPES_REQUIRING_BASE_URL,
+    push_provider_base_url,
+    push_provider_key,
+)
 from services.url_safety import (  # noqa: E402
     UrlSafetyError,
     validate_provider_url,
@@ -277,6 +281,15 @@ async def create_provider(
         # without waiting for a container restart.
         push_provider_key(payload.provider_type, payload.api_key)
 
+    # Keyless self-hosted providers (Ollama/SGL) need their base_url pushed
+    # to Bifrost instead of an API key, or Bifrost can't instantiate them
+    # and routed chat fails with "provider is shutting down".
+    if (
+        payload.provider_type in _PROVIDER_TYPES_REQUIRING_BASE_URL
+        and payload.base_url
+    ):
+        push_provider_base_url(payload.provider_type, payload.base_url)
+
     row = LLMProviderConfig(
         provider_id=provider_id,
         provider_type=payload.provider_type,
@@ -338,6 +351,16 @@ async def update_provider(
                 raise HTTPException(status_code=500, detail="Failed to persist API key")
             row.api_key_ref = ref
             push_provider_key(row.provider_type, payload.api_key)
+
+    # Re-push the base_url for keyless self-hosted providers (Ollama/SGL) so
+    # a base_url edit takes effect in Bifrost immediately, not just on the
+    # next background model resync.
+    if (
+        payload.base_url is not None
+        and row.provider_type in _PROVIDER_TYPES_REQUIRING_BASE_URL
+        and row.base_url
+    ):
+        push_provider_base_url(row.provider_type, row.base_url)
 
     if payload.is_default is True:
         row.is_default = True

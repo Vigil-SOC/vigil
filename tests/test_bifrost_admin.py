@@ -226,7 +226,7 @@ def test_sync_all_populates_dropdown_cache_and_bifrost_allowlist(monkeypatch):
     # Capture Bifrost PUTs.
     pushed = {}
 
-    def fake_push(provider_type, model_ids):
+    def fake_push(provider_type, model_ids, base_url=None):
         pushed[provider_type] = list(model_ids)
         return True
 
@@ -283,7 +283,7 @@ def test_sync_all_unions_across_same_type_providers(monkeypatch):
 
     pushed = {}
 
-    def fake_push(provider_type, model_ids):
+    def fake_push(provider_type, model_ids, base_url=None):
         pushed[provider_type] = list(model_ids)
         return True
 
@@ -330,7 +330,7 @@ def test_sync_all_falls_back_when_all_fetches_fail(monkeypatch):
 
     pushed = {}
 
-    def fake_push(provider_type, model_ids):
+    def fake_push(provider_type, model_ids, base_url=None):
         pushed[provider_type] = list(model_ids)
         return True
 
@@ -460,3 +460,130 @@ def test_fetch_meta_for_row_ollama_bypasses_ssrf_ip_gate():
         "base_url": "http://10.64.201.1:11434",
         "allow_loopback": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# Ollama base_url propagation (keyless self-hosted providers)
+# ---------------------------------------------------------------------------
+
+
+def test_push_provider_base_url_sets_network_config():
+    """Ollama's base_url goes in provider-level network_config.base_url —
+    verified against maximhq/bifrost (keys[0].value / ollama_key_config are
+    ignored by the admin update path)."""
+    provider_doc = {
+        "keys": [{"name": "default-ollama-url", "value": {"value": ""}}],
+        "network_config": {"default_request_timeout_in_seconds": 1800},
+    }
+    rec = _RecordingClient(get_payload=provider_doc)
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        ok = bifrost_admin.push_provider_base_url(
+            "ollama", "http://10.64.201.1:11434/"
+        )
+    assert ok is True
+    put = [c for c in rec.calls if c["method"] == "PUT"][0]
+    net = put["kwargs"]["json"]["network_config"]
+    assert net["base_url"] == "http://10.64.201.1:11434/"
+    assert net["allow_private_network"] is True
+    # Bifrost rejects concurrency 0 — must be floored to a working default.
+    assert put["kwargs"]["json"]["concurrency_and_buffer_size"]["concurrency"] > 0
+
+
+def test_push_provider_base_url_noops_without_url():
+    rec = _RecordingClient(get_payload={"keys": [{}]})
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        assert bifrost_admin.push_provider_base_url("ollama", "") is False
+    # Never hit the admin API.
+    assert not rec.calls
+
+
+def test_sync_provider_models_reasserts_ollama_base_url():
+    """The model-sync round-trip must re-assert the base_url for ollama, or
+    it silently re-breaks a working provider every refresh."""
+    provider_doc = {
+        "keys": [{"value": {"value": ""}, "models": ["old"]}],
+        "network_config": {},
+    }
+    rec = _RecordingClient(get_payload=provider_doc)
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        ok = bifrost_admin.sync_provider_models(
+            "ollama", ["gemma4:31b"], base_url="http://10.64.201.1:11434/"
+        )
+    assert ok is True
+    body = [c for c in rec.calls if c["method"] == "PUT"][0]["kwargs"]["json"]
+    assert body["keys"][0]["models"] == ["gemma4:31b"]
+    assert body["network_config"]["base_url"] == "http://10.64.201.1:11434/"
+
+
+def test_sync_provider_models_ignores_base_url_for_keyed_provider():
+    """A base_url passed for a non-self-hosted type must not touch
+    network_config (anthropic/openai have no base_url requirement)."""
+    provider_doc = {"keys": [{"models": []}], "network_config": {}}
+    rec = _RecordingClient(get_payload=provider_doc)
+    with patch.object(bifrost_admin.httpx, "Client", lambda: rec):
+        bifrost_admin.sync_provider_models(
+            "anthropic", ["claude-opus-4-7"], base_url="http://evil/"
+        )
+    body = [c for c in rec.calls if c["method"] == "PUT"][0]["kwargs"]["json"]
+    assert "base_url" not in body["network_config"]
+
+
+def test_sync_all_passes_ollama_base_url_through(monkeypatch):
+    """_do_sync_all_provider_models must forward the ollama row's base_url to
+    sync_provider_models so the round-trip re-asserts it."""
+    from services import bifrost_admin as ba
+
+    _reset_registry()
+
+    row = _FakeProviderRow("gh201", "ollama")
+    row.base_url = "http://10.64.201.1:11434/"
+    _patch_db(monkeypatch, [row])
+
+    async def fake_fetch_row(row_dict, discovery):
+        return [_M("gemma4:31b")]
+
+    monkeypatch.setattr(ba, "_fetch_meta_for_row", fake_fetch_row)
+
+    captured = {}
+
+    def fake_push(provider_type, model_ids, base_url=None):
+        captured["provider_type"] = provider_type
+        captured["base_url"] = base_url
+        return True
+
+    monkeypatch.setattr(ba, "sync_provider_models", fake_push)
+
+    import asyncio
+
+    asyncio.run(ba.sync_all_provider_models())
+
+    assert captured["provider_type"] == "ollama"
+    assert captured["base_url"] == "http://10.64.201.1:11434/"
+    _reset_registry()
+
+
+def test_sync_all_provider_keys_pushes_ollama_base_url(monkeypatch):
+    """Startup key-sync must push the ollama base_url instead of skipping the
+    row for having no api_key_ref."""
+    from services import bifrost_admin as ba
+
+    row = _FakeProviderRow("gh201", "ollama")
+    row.base_url = "http://10.64.201.1:11434/"
+    _patch_db(monkeypatch, [row])
+
+    pushed = {}
+
+    def fake_push_base_url(ptype, url):
+        pushed[ptype] = url
+        return True
+
+    monkeypatch.setattr(ba, "push_provider_base_url", fake_push_base_url)
+    # Make the secret import resolve without a real backend.
+    monkeypatch.setattr(
+        "backend.secrets_manager.get_secret", lambda ref: None, raising=False
+    )
+
+    results = ba.sync_all_provider_keys()
+
+    assert pushed == {"ollama": "http://10.64.201.1:11434/"}
+    assert results["gh201"] is True

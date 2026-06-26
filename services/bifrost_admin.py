@@ -105,6 +105,80 @@ def push_provider_key(provider_name: str, key_value: str) -> bool:
             return False
 
 
+# Self-hosted providers carry no API key — Bifrost instead needs an explicit
+# base_url to instantiate them, or it fails every call with
+# ``base_url is required for <provider> provider`` (which a routed chat
+# request surfaces as the opaque "provider is shutting down"). The URL lives
+# in the provider-level ``network_config.base_url`` — NOT on the key:
+# verified against maximhq/bifrost that ``keys[0].ollama_key_config`` and
+# ``keys[0].value`` are both ignored by the admin update path.
+_PROVIDER_TYPES_REQUIRING_BASE_URL = {"ollama", "sgl"}
+
+
+def _apply_base_url(prov: Dict[str, Any], base_url: str) -> None:
+    """Set a self-hosted provider's base_url config in-place on a Bifrost doc.
+
+    Self-hosted Ollama/SGL on a loopback/RFC1918 address is the expected
+    deployment, so ``allow_private_network`` is set too — the same trust
+    anchor the discovery path uses (see ``_fetch_meta_for_row`` /
+    ``allow_loopback``). Bifrost also rejects a self-hosted provider whose
+    ``concurrency`` is 0 (the state a previously-errored provider can be left
+    in), so floor it to a working default while we're here.
+    """
+    net = dict(prov.get("network_config") or {})
+    net["base_url"] = base_url
+    net["allow_private_network"] = True
+    prov["network_config"] = net
+    cbs = dict(prov.get("concurrency_and_buffer_size") or {})
+    if not cbs.get("concurrency"):
+        cbs["concurrency"] = 1000
+    if not cbs.get("buffer_size"):
+        cbs["buffer_size"] = 5000
+    prov["concurrency_and_buffer_size"] = cbs
+
+
+def push_provider_base_url(provider_type: str, base_url: str) -> bool:
+    """Push a self-hosted provider's base_url into Bifrost.
+
+    The base_url analogue of ``push_provider_key`` for keyless providers
+    (Ollama/SGL). GET the provider doc, set ``network_config.base_url``, PUT
+    it back. Best-effort — failures are logged and return False so the
+    caller's CRUD flow never breaks on a Bifrost hiccup.
+    """
+    if not provider_type or not base_url:
+        return False
+    with httpx.Client() as client:
+        prov = _get_provider(provider_type, client)
+        if prov is None:
+            return False
+        _apply_base_url(prov, base_url)
+        try:
+            r = client.put(
+                f"{_bifrost_base_url()}/api/providers/{provider_type}",
+                json=prov,
+                timeout=_DEFAULT_TIMEOUT,
+            )
+            if r.status_code >= 400:
+                logger.warning(
+                    "Bifrost: PUT /api/providers/%s (base_url) returned %s: %s",
+                    provider_type,
+                    r.status_code,
+                    r.text[:200],
+                )
+                return False
+            logger.info(
+                "Bifrost: pushed base_url for provider %s", provider_type
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                "Bifrost: PUT /api/providers/%s (base_url) failed: %s",
+                provider_type,
+                e,
+            )
+            return False
+
+
 def sync_all_provider_keys() -> Dict[str, bool]:
     """Push every DB-configured provider's current secret value to Bifrost.
 
@@ -131,6 +205,21 @@ def sync_all_provider_keys() -> Dict[str, bool]:
             .all()
         )
         for row in rows:
+            # Keyless self-hosted providers (Ollama/SGL) need their base_url
+            # pushed instead of an API key, or Bifrost can't instantiate them.
+            if row.provider_type in _PROVIDER_TYPES_REQUIRING_BASE_URL:
+                if row.base_url:
+                    results[row.provider_id] = push_provider_base_url(
+                        row.provider_type, row.base_url
+                    )
+                else:
+                    logger.warning(
+                        "Bifrost sync: %s provider %s has no base_url",
+                        row.provider_type,
+                        row.provider_id,
+                    )
+                    results[row.provider_id] = False
+                continue
             if not row.api_key_ref:
                 continue
             value = get_secret(row.api_key_ref)
@@ -149,7 +238,11 @@ def sync_all_provider_keys() -> Dict[str, bool]:
     return results
 
 
-def sync_provider_models(provider_type: str, model_ids: list[str]) -> bool:
+def sync_provider_models(
+    provider_type: str,
+    model_ids: list[str],
+    base_url: Optional[str] = None,
+) -> bool:
     """Update Bifrost's allow-list of routable models for ``provider_type``.
 
     GETs the provider document, replaces ``keys[0].models`` with
@@ -157,6 +250,12 @@ def sync_provider_models(provider_type: str, model_ids: list[str]) -> bool:
     wiping the allow-list to ``[]`` would cause Bifrost to reject every
     subsequent LLM call for that provider, which we never want just
     because an upstream API had a momentary hiccup.
+
+    For keyless self-hosted providers (Ollama/SGL), ``base_url`` is
+    re-asserted into ``network_config`` in the same PUT. This GET→PUT
+    round-trip otherwise normalizes the key and drops the base_url, leaving
+    Bifrost unable to instantiate the provider — so every scheduled model
+    sync would silently re-break a working Ollama provider without it.
     """
     if not provider_type:
         return False
@@ -188,6 +287,8 @@ def sync_provider_models(provider_type: str, model_ids: list[str]) -> bool:
             )
             return False
         keys[0]["models"] = normalized
+        if base_url and provider_type in _PROVIDER_TYPES_REQUIRING_BASE_URL:
+            _apply_base_url(prov, base_url)
         try:
             r = client.put(
                 f"{_bifrost_base_url()}/api/providers/{provider_type}",
@@ -379,7 +480,18 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             bifrost_results[provider_type] = False
             continue
 
-        bifrost_results[provider_type] = sync_provider_models(provider_type, type_union)
+        # Re-assert the base_url for keyless self-hosted providers so the
+        # model-sync round-trip doesn't drop it and re-break the provider.
+        base_url: Optional[str] = None
+        if provider_type in _PROVIDER_TYPES_REQUIRING_BASE_URL:
+            base_url = next(
+                (r["base_url"] for r in provider_rows if r.get("base_url")),
+                None,
+            )
+
+        bifrost_results[provider_type] = sync_provider_models(
+            provider_type, type_union, base_url=base_url
+        )
 
     if bifrost_results:
         ok = sum(1 for v in bifrost_results.values() if v)
