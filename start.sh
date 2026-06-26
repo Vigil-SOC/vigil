@@ -289,15 +289,31 @@ fi
 echo ""
 echo "Checking frontend dependencies..."
 if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend" ] && [ -f "frontend/package.json" ]; then
-    if [ ! -d "frontend/node_modules" ]; then
+    # Reinstall when node_modules is absent OR stale. npm writes
+    # frontend/node_modules/.package-lock.json after a successful install;
+    # if package.json or package-lock.json is newer than that marker, the
+    # installed tree predates a dependency change — e.g. pulling a commit
+    # that added tailwindcss/autoprefixer. A missing-only check would say
+    # "deps OK" and Vite then crashes at startup with
+    # "Loading PostCSS Plugin failed: Cannot find module 'tailwindcss'".
+    _fe_marker="frontend/node_modules/.package-lock.json"
+    _fe_need_install=0
+    if [ ! -d "frontend/node_modules" ] || [ ! -f "$_fe_marker" ]; then
+        _fe_need_install=1
+    elif [ "frontend/package.json" -nt "$_fe_marker" ]; then
+        _fe_need_install=1
+    elif [ -f "frontend/package-lock.json" ] && [ "frontend/package-lock.json" -nt "$_fe_marker" ]; then
+        _fe_need_install=1
+    fi
+
+    if [ "$_fe_need_install" -eq 1 ]; then
         echo "Installing frontend dependencies (may take a few minutes)..."
-        cd frontend
-        npm install
-        cd ..
+        npm --prefix frontend install
         echo "✓ Frontend dependencies installed"
     else
         echo "✓ Frontend dependencies OK"
     fi
+    unset _fe_marker _fe_need_install
 fi
 
 # ---------------------------------------------------------------------------
@@ -354,7 +370,7 @@ if [ "$DAEMON_MODE" -eq 0 ]; then
 
         pkill -f "uvicorn backend.main:app" 2>/dev/null
         pkill -f "arq services.llm_worker" 2>/dev/null
-        pkill -f "vite.*opensoc" 2>/dev/null
+        pkill -f "vite" 2>/dev/null
 
         echo "✓ Servers stopped"
         echo ""
@@ -387,10 +403,8 @@ if [ "$DAEMON_MODE" -eq 0 ]; then
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
         wait_for_backend || true
         echo "Starting frontend dev server..."
-        cd frontend
-        npm run dev &
+        npm --prefix frontend run dev &
         FRONTEND_PID=$!
-        cd ..
     elif [ "$SKIP_FRONTEND" -ne 0 ]; then
         echo "ℹ️  Skipping frontend startup (Node.js prerequisite unmet)."
         FRONTEND_PID=""
@@ -468,10 +482,8 @@ else
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
         wait_for_backend || true
         echo "Starting frontend server..."
-        cd frontend
-        nohup npm run dev > ../logs/frontend-app.log 2>&1 &
+        nohup npm --prefix frontend run dev > logs/frontend-app.log 2>&1 &
         FRONTEND_PID=$!
-        cd ..
         echo $FRONTEND_PID > logs/frontend.pid
         sleep 2
         if ps -p $FRONTEND_PID > /dev/null; then
