@@ -83,7 +83,7 @@ services:
     volumes:
       - ../logs:/app/logs
       - ../.deeptempo:/app/.deeptempo
-      - ../.vigil:/tmp/.vigil
+      - vigil_secrets:/tmp/.vigil
       - ../mcp-config.json:/app/mcp-config.json:ro
 
   # SOC Daemon - Autonomous monitoring and response
@@ -214,7 +214,7 @@ services:
     volumes:
       - ../logs:/app/logs
       - ../.deeptempo:/app/.deeptempo
-      - ../.vigil:/tmp/.vigil
+      - vigil_secrets:/tmp/.vigil
       - ../mcp-config.json:/app/mcp-config.json:ro
 
   # ─── Multi-provider LLM gateway ───────────────────────────────────────────
@@ -404,6 +404,8 @@ services:
       - kafka
 
 volumes:
+  vigil_secrets:
+    driver: local
   postgres_data:
     driver: local
   redis_data:
