@@ -1,5 +1,60 @@
--- Enhanced Case Management System - Initial Data
--- This script populates default SLA policies, case templates, and reference data
+-- Enhanced Case Management System
+-- Creates SLA policy and case template tables, then seeds default reference data.
+--
+-- NOTE: Core tables (cases, findings, case_slas, case_comments, etc.) are created
+-- by SQLAlchemy Base.metadata.create_all() at backend startup. Only the tables
+-- needed here for seed data must be defined below so the INSERTs can run during
+-- PostgreSQL container initialization (before the backend starts).
+
+-- =============================================================================
+-- SLA Policies Table
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS sla_policies (
+    policy_id       VARCHAR(50) PRIMARY KEY,
+    name            VARCHAR(100) NOT NULL,
+    description     TEXT,
+    priority_level  VARCHAR(20) NOT NULL,
+    response_time_hours    FLOAT NOT NULL,
+    resolution_time_hours  FLOAT NOT NULL,
+    business_hours_only    BOOLEAN NOT NULL DEFAULT TRUE,
+    escalation_rules       JSONB,
+    notification_thresholds INTEGER[],
+    is_active  BOOLEAN NOT NULL DEFAULT TRUE,
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_sla_policy_priority ON sla_policies(priority_level);
+CREATE INDEX IF NOT EXISTS idx_sla_policy_active   ON sla_policies(is_active);
+CREATE INDEX IF NOT EXISTS idx_sla_policy_default  ON sla_policies(is_default);
+
+-- =============================================================================
+-- Case Templates Table
+-- =============================================================================
+
+CREATE TABLE IF NOT EXISTS case_templates (
+    template_id          VARCHAR(50) PRIMARY KEY,
+    name                 VARCHAR(200) NOT NULL,
+    description          TEXT,
+    template_type        VARCHAR(50) NOT NULL,
+    default_priority     VARCHAR(20) NOT NULL DEFAULT 'medium',
+    default_status       VARCHAR(20) NOT NULL DEFAULT 'open',
+    default_sla_policy_id VARCHAR(50),
+    task_templates       JSONB NOT NULL DEFAULT '[]',
+    playbook_steps       JSONB,
+    applicable_mitre_techniques TEXT[],
+    tags                 TEXT[],
+    is_active            BOOLEAN NOT NULL DEFAULT TRUE,
+    usage_count          INTEGER NOT NULL DEFAULT 0,
+    created_at           TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_case_template_type        ON case_templates(template_type);
+CREATE INDEX IF NOT EXISTS idx_case_template_active      ON case_templates(is_active);
+CREATE INDEX IF NOT EXISTS idx_case_template_usage_count ON case_templates(usage_count);
 
 -- =============================================================================
 -- Default SLA Policies
@@ -16,9 +71,9 @@ INSERT INTO sla_policies (
     'Critical Priority SLA',
     'Standard SLA for critical priority cases requiring immediate attention',
     'critical',
-    1.0, -- 1 hour response
-    4.0, -- 4 hours resolution
-    false, -- 24/7 coverage
+    1.0,
+    4.0,
+    false,
     ARRAY[75, 90, 100],
     true,
     true
@@ -35,9 +90,9 @@ INSERT INTO sla_policies (
     'High Priority SLA',
     'Standard SLA for high priority cases',
     'high',
-    2.0, -- 2 hours response
-    8.0, -- 8 hours resolution
-    false, -- 24/7 coverage
+    2.0,
+    8.0,
+    false,
     ARRAY[75, 90, 100],
     true,
     true
@@ -54,9 +109,9 @@ INSERT INTO sla_policies (
     'Medium Priority SLA',
     'Standard SLA for medium priority cases',
     'medium',
-    4.0, -- 4 hours response
-    24.0, -- 24 hours resolution
-    true, -- Business hours only
+    4.0,
+    24.0,
+    true,
     ARRAY[75, 90, 100],
     true,
     true
@@ -73,9 +128,9 @@ INSERT INTO sla_policies (
     'Low Priority SLA',
     'Standard SLA for low priority cases',
     'low',
-    8.0, -- 8 hours response
-    72.0, -- 72 hours (3 days) resolution
-    true, -- Business hours only
+    8.0,
+    72.0,
+    true,
     ARRAY[75, 90, 100],
     true,
     true
@@ -90,7 +145,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active,usage_count
+    tags, is_active, usage_count
 ) VALUES (
     'template-malware-001',
     'Malware Investigation',
@@ -117,7 +172,7 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1059', 'T1055', 'T1486', 'T1566'],
     ARRAY['malware', 'incident-response'],
-    true,0
+    true, 0
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- Phishing Investigation Template
@@ -125,7 +180,7 @@ INSERT INTO case_templates (
     template_id, name, description, template_type,
     default_priority, default_status, default_sla_policy_id,
     task_templates, playbook_steps, applicable_mitre_techniques,
-    tags, is_active,usage_count
+    tags, is_active, usage_count
 ) VALUES (
     'template-phishing-001',
     'Phishing Investigation',
@@ -151,7 +206,7 @@ INSERT INTO case_templates (
     ]'::jsonb,
     ARRAY['T1566.001', 'T1566.002', 'T1204'],
     ARRAY['phishing', 'email-security'],
-    true,0
+    true, 0
 ) ON CONFLICT (template_id) DO NOTHING;
 
 -- Data Exfiltration Template
@@ -367,28 +422,7 @@ INSERT INTO case_templates (
     true, 0
 ) ON CONFLICT (template_id) DO NOTHING;
 
--- =============================================================================
--- Closure Categories Reference Data
--- =============================================================================
-
--- Note: Closure categories are stored as part of the CaseClosureInfo model
--- Common categories:
--- - resolved: Issue was successfully resolved
--- - false_positive: Alert was not a real security issue
--- - duplicate: Duplicate of another case
--- - unable_to_resolve: Could not be resolved
--- - mitigated: Risk mitigated but not fully resolved
--- - transferred: Transferred to another team
--- - auto_closed: Automatically closed by system
-
--- =============================================================================
--- Success Message
--- =============================================================================
-
 DO $$
 BEGIN
-    RAISE NOTICE 'Enhanced Case Management System initialized successfully';
-    RAISE NOTICE 'Created 4 default SLA policies';
-    RAISE NOTICE 'Created 8 case templates';
+    RAISE NOTICE 'Case management seed data applied: 4 SLA policies, 8 case templates';
 END $$;
-

@@ -694,6 +694,9 @@ async def startup_event():
 
                 init_database(echo=False, create_tables=True)
                 logger.info("✓ Database schema ensured (create_all)")
+
+                from database.connection import seed_default_data
+                seed_default_data()
             except Exception as schema_err:
                 logger.error(
                     "Fatal: could not initialize database schema: %s",

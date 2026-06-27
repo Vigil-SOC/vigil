@@ -429,3 +429,75 @@ def init_database(echo: bool = False, create_tables: bool = True):
 
     if create_tables:
         db_manager.create_tables()
+
+
+_DEFAULT_SLA_POLICIES = [
+    {
+        "policy_id": "sla-critical-default",
+        "name": "Critical Priority SLA",
+        "description": "Standard SLA for critical priority cases requiring immediate attention",
+        "priority_level": "critical",
+        "response_time_hours": 1.0,
+        "resolution_time_hours": 4.0,
+        "business_hours_only": False,
+        "notification_thresholds": [75, 90, 100],
+        "is_active": True,
+        "is_default": True,
+    },
+    {
+        "policy_id": "sla-high-default",
+        "name": "High Priority SLA",
+        "description": "Standard SLA for high priority cases",
+        "priority_level": "high",
+        "response_time_hours": 2.0,
+        "resolution_time_hours": 8.0,
+        "business_hours_only": False,
+        "notification_thresholds": [75, 90, 100],
+        "is_active": True,
+        "is_default": True,
+    },
+    {
+        "policy_id": "sla-medium-default",
+        "name": "Medium Priority SLA",
+        "description": "Standard SLA for medium priority cases",
+        "priority_level": "medium",
+        "response_time_hours": 4.0,
+        "resolution_time_hours": 24.0,
+        "business_hours_only": True,
+        "notification_thresholds": [75, 90, 100],
+        "is_active": True,
+        "is_default": True,
+    },
+    {
+        "policy_id": "sla-low-default",
+        "name": "Low Priority SLA",
+        "description": "Standard SLA for low priority cases",
+        "priority_level": "low",
+        "response_time_hours": 8.0,
+        "resolution_time_hours": 72.0,
+        "business_hours_only": True,
+        "notification_thresholds": [75, 90, 100],
+        "is_active": True,
+        "is_default": True,
+    },
+]
+
+
+def seed_default_data() -> None:
+    """Insert default SLA policies if the table is empty.
+
+    Called once at startup after create_all(). Idempotent — safe to run on
+    every boot; skips rows that already exist via ON CONFLICT DO NOTHING
+    behaviour (merge/upsert avoided so user edits are never overwritten).
+    """
+    try:
+        with get_db_session() as session:
+            existing = session.query(SLAPolicy).count()
+            if existing > 0:
+                return
+            for row in _DEFAULT_SLA_POLICIES:
+                session.merge(SLAPolicy(**row))
+            session.commit()
+            logger.info("Seeded %d default SLA policies", len(_DEFAULT_SLA_POLICIES))
+    except Exception as exc:
+        logger.warning("Could not seed default SLA policies: %s", exc)
