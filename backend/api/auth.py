@@ -485,13 +485,17 @@ async def change_password(
             detail="Current password is incorrect"
         )
 
-    # Validate new password against the strength policy
+    # Validate new password against the strength policy. Penalize passwords
+    # built from the account's own identifiers.
     try:
-        validate_password_strength(body.new_password)
+        validate_password_strength(
+            body.new_password,
+            user_inputs=[current_user.username, current_user.email],
+        )
     except PasswordPolicyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=exc.as_detail(),
         )
 
     try:
@@ -700,11 +704,14 @@ async def password_reset_confirm(
         )
 
     try:
-        validate_password_strength(body.new_password)
+        validate_password_strength(
+            body.new_password,
+            user_inputs=[user.username, user.email],
+        )
     except PasswordPolicyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=exc.as_detail(),
         )
 
     try:
