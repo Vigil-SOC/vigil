@@ -15,7 +15,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from services import provider_model_discovery as discovery  # noqa: E402
