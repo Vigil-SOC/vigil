@@ -140,18 +140,21 @@ class AuthService:
             return False
 
     @staticmethod
-    def _session_fingerprint(
-        request_ip: Optional[str], user_agent: Optional[str]
-    ) -> str:
-        """Short SHA-256 fingerprint binding a token to its IP + user-agent."""
-        fp = f"{request_ip or ''}|{user_agent or ''}"
-        return hashlib.sha256(fp.encode()).hexdigest()[:16]
+    def _session_fingerprint(user_agent: Optional[str]) -> str:
+        """Short SHA-256 fingerprint binding a token to its user-agent.
+
+        Deliberately excludes the client IP: NAT, VPNs and mobile roaming
+        change a client's IP within a token's lifetime (forcing spurious
+        re-logins), and behind a reverse proxy every client presents the
+        proxy's IP, so it adds no signal. The user-agent is a stable,
+        defense-in-depth check on top of the JWT signature.
+        """
+        return hashlib.sha256((user_agent or "").encode()).hexdigest()[:16]
 
     @staticmethod
     def generate_jwt_token(
         user: User,
         token_type: str = "access",
-        request_ip: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> str:
         """Generate a JWT token for a user with optional session binding."""
@@ -174,8 +177,8 @@ class AuthService:
         }
 
         # Bind token to session context when available
-        if request_ip or user_agent:
-            payload["sfp"] = AuthService._session_fingerprint(request_ip, user_agent)
+        if user_agent:
+            payload["sfp"] = AuthService._session_fingerprint(user_agent)
 
         token = jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
         return token
@@ -183,7 +186,6 @@ class AuthService:
     @staticmethod
     def verify_session_fingerprint(
         payload: Dict[str, Any],
-        request_ip: Optional[str] = None,
         user_agent: Optional[str] = None,
     ) -> bool:
         """Check that a token's session fingerprint matches the request context.
@@ -193,7 +195,7 @@ class AuthService:
         sfp = payload.get("sfp")
         if not sfp:
             return True
-        expected = AuthService._session_fingerprint(request_ip, user_agent)
+        expected = AuthService._session_fingerprint(user_agent)
         return secrets.compare_digest(sfp, expected)
 
     @staticmethod
@@ -221,17 +223,6 @@ class AuthService:
     def authenticate_user(
         username_or_email: str, password: str, session: Optional[Session] = None
     ) -> Optional[User]:
-        """
-        Authenticate a user with username/email and password.
-
-        Args:
-            username_or_email: Username or email
-            password: Plain text password
-            session: Database session (optional)
-
-        Returns:
-            User object if authentication successful, None otherwise
-        """
         should_close_session = session is None
         session = session or get_db_session()
 
@@ -305,7 +296,6 @@ class AuthService:
 
     @staticmethod
     def setup_mfa(user_id: str, session: Optional[Session] = None) -> Optional[str]:
-        """Setup MFA. Returns TOTP secret and generates recovery codes."""
         should_close_session = session is None
         session = session or get_db_session()
 
@@ -317,17 +307,61 @@ class AuthService:
             secret = pyotp.random_base32()
             user.mfa_secret = AuthService._encrypt_mfa_secret(secret)
             user.mfa_enabled = False
-            # Generate 10 recovery codes, store bcrypt-hashed (plaintext
-            # is surfaced via get_mfa_recovery_codes, not here)
-            _, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
+            # Clear any stale codes from a prior setup attempt; fresh codes
+            # are issued at enable time.
+            user.mfa_recovery_codes = []
             session.commit()
 
             logger.info(f"MFA setup initiated for user: {user.username}")
-            # Return plaintext secret; recovery codes returned separately
             return secret
 
         except Exception as e:
             logger.error(f"MFA setup error: {e}")
+            session.rollback()
+            return None
+
+        finally:
+            if should_close_session:
+                session.close()
+
+    @staticmethod
+    def enable_mfa(
+        user_id: str, code: str, session: Optional[Session] = None
+    ) -> Optional[List[str]]:
+        """Verify the first TOTP code and enable MFA.
+
+        On the enabling transition, generates one-time recovery codes and
+        returns the plaintext (shown once, cannot be retrieved again).
+
+        Returns:
+            - list of recovery codes on successful enable
+            - [] if the code is valid but MFA was already enabled (no reissue)
+            - None if there is no pending secret or the code is invalid
+        """
+        should_close_session = session is None
+        session = session or get_db_session()
+
+        try:
+            user = session.query(User).filter(User.user_id == user_id).first()
+            if not user or not user.mfa_secret:
+                return None
+
+            if not AuthService._verify_totp(user.mfa_secret, code):
+                return None
+
+            if user.mfa_enabled:
+                # Already enabled — codes were issued at enable time, don't
+                # silently reissue. Use the regenerate endpoint to rotate.
+                return []
+
+            user.mfa_enabled = True
+            codes, user.mfa_recovery_codes = AuthService._generate_recovery_codes()
+            session.commit()
+            logger.info(f"MFA enabled for user: {user.username}")
+            return codes
+
+        except Exception as e:
+            logger.error(f"MFA enable error: {e}")
             session.rollback()
             return None
 
@@ -369,7 +403,11 @@ class AuthService:
     def verify_mfa_code(
         user_id: str, code: str, session: Optional[Session] = None
     ) -> bool:
-        """Verify a TOTP code or a one-time recovery code."""
+        """Verify a TOTP code or a one-time recovery code (login path).
+
+        Enabling MFA is handled by enable_mfa(); this method assumes MFA is
+        already enabled and only validates the supplied code.
+        """
         should_close_session = session is None
         session = session or get_db_session()
 
@@ -379,13 +417,7 @@ class AuthService:
                 return False
 
             # Try TOTP first
-            decrypted_secret = AuthService._decrypt_mfa_secret(user.mfa_secret)
-            totp = pyotp.TOTP(decrypted_secret)
-            if totp.verify(code, valid_window=1):
-                if not user.mfa_enabled:
-                    user.mfa_enabled = True
-                    session.commit()
-                    logger.info(f"MFA enabled for user: {user.username}")
+            if AuthService._verify_totp(user.mfa_secret, code):
                 return True
 
             # Try recovery codes (one-time use)
@@ -444,6 +476,12 @@ class AuthService:
             return encrypted
 
     @staticmethod
+    def _verify_totp(encrypted_secret: str, code: str) -> bool:
+        """Verify a TOTP code against a stored (encrypted) MFA secret."""
+        decrypted = AuthService._decrypt_mfa_secret(encrypted_secret)
+        return pyotp.TOTP(decrypted).verify(code, valid_window=1)
+
+    @staticmethod
     def get_mfa_qr_uri(
         user_id: str, session: Optional[Session] = None
     ) -> Optional[str]:
@@ -465,7 +503,8 @@ class AuthService:
             if not user or not user.mfa_secret:
                 return None
 
-            totp = pyotp.TOTP(user.mfa_secret)
+            decrypted_secret = AuthService._decrypt_mfa_secret(user.mfa_secret)
+            totp = pyotp.TOTP(decrypted_secret)
             uri = totp.provisioning_uri(name=user.email, issuer_name="Vigil SOC")
             return uri
 

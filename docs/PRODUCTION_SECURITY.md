@@ -48,11 +48,16 @@ or file location so it can be audited mechanically.
 
 - MFA secrets are **encrypted at rest** using Fernet symmetric encryption
   derived from `JWT_SECRET_KEY`.
-- **Recovery codes**: 10 codes generated during MFA setup. Each is bcrypt-hashed
-  and stored. Single-use: consumed on verification and removed from the list.
+- **Recovery codes**: 10 codes generated when MFA is enabled (i.e. after the
+  first TOTP code is confirmed), not at setup. Each is bcrypt-hashed and stored;
+  the plaintext is returned exactly once and cannot be retrieved again.
+  Single-use: consumed on verification and removed from the list.
 - Legacy unencrypted secrets are handled gracefully (transparent fallback).
-- Endpoint: `POST /api/auth/mfa/setup` → returns QR URI + recovery codes.
-- Endpoint: `POST /api/auth/mfa/verify` → accepts TOTP code or recovery code.
+- Endpoint: `POST /api/auth/mfa/setup` → returns TOTP secret + QR URI.
+- Endpoint: `POST /api/auth/mfa/verify` → confirms the first TOTP code, enables
+  MFA, and returns the one-time recovery codes.
+- Endpoint: `POST /api/auth/mfa/recovery-codes` → regenerates a fresh set of
+  recovery codes, invalidating the previous set.
 
 ### Account Lockout
 

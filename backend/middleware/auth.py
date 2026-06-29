@@ -138,10 +138,9 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Validate session fingerprint (IP + UA binding).
+    # Validate session fingerprint (user-agent binding).
     if not AuthService.verify_session_fingerprint(
         payload,
-        request_ip=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     ):
         raise HTTPException(

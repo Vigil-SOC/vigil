@@ -7,7 +7,7 @@ Handles login, logout, token refresh, password management, and MFA.
 import logging
 import os
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Header, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
@@ -89,6 +89,13 @@ class MFASetupResponse(BaseModel):
 
     secret: str
     qr_uri: str
+
+
+class RecoveryCodesResponse(BaseModel):
+    """One-time MFA recovery codes (shown once, cannot be retrieved again)."""
+
+    recovery_codes: List[str]
+    message: Optional[str] = None
 
 
 class MFAVerifyRequest(BaseModel):
@@ -199,14 +206,9 @@ async def login(
             )
 
     # Generate tokens
-    _ip = request.client.host if request.client else None
     _ua = request.headers.get("user-agent")
-    access_token = AuthService.generate_jwt_token(
-        user, "access", request_ip=_ip, user_agent=_ua
-    )
-    refresh_token = AuthService.generate_jwt_token(
-        user, "refresh", request_ip=_ip, user_agent=_ua
-    )
+    access_token = AuthService.generate_jwt_token(user, "access", user_agent=_ua)
+    refresh_token = AuthService.generate_jwt_token(user, "refresh", user_agent=_ua)
 
     # Extract exp claims so the cookie Max-Age matches the JWT lifetime.
     access_payload = AuthService.verify_jwt_token(access_token) or {}
@@ -359,14 +361,9 @@ async def refresh_token(
         )
 
     # Generate new tokens
-    _ip = request.client.host if request.client else None
     _ua = request.headers.get("user-agent")
-    access_token = AuthService.generate_jwt_token(
-        user, "access", request_ip=_ip, user_agent=_ua
-    )
-    refresh_token = AuthService.generate_jwt_token(
-        user, "refresh", request_ip=_ip, user_agent=_ua
-    )
+    access_token = AuthService.generate_jwt_token(user, "access", user_agent=_ua)
+    refresh_token = AuthService.generate_jwt_token(user, "refresh", user_agent=_ua)
 
     access_payload = AuthService.verify_jwt_token(access_token) or {}
     refresh_payload = AuthService.verify_jwt_token(refresh_token) or {}
@@ -555,7 +552,9 @@ async def setup_mfa(
         session: Database session
 
     Returns:
-        MFA secret and QR code URI
+        MFA secret and QR code URI. Recovery codes are not issued here —
+        they are returned by POST /mfa/verify once the first TOTP code is
+        confirmed.
     """
     secret = AuthService.setup_mfa(current_user.user_id, session)
     if not secret:
@@ -574,14 +573,14 @@ async def setup_mfa(
     return MFASetupResponse(secret=secret, qr_uri=qr_uri)
 
 
-@router.post("/mfa/verify")
+@router.post("/mfa/verify", response_model=RecoveryCodesResponse)
 async def verify_mfa(
     request: MFAVerifyRequest,
     current_user: User = Depends(get_current_active_user),
     session: Session = Depends(get_db),
 ):
     """
-    Verify MFA code and enable MFA.
+    Verify the first TOTP code and enable MFA.
 
     Args:
         request: MFA code
@@ -589,16 +588,40 @@ async def verify_mfa(
         session: Database session
 
     Returns:
-        Success message
+        Success message and one-time recovery codes (shown only once).
     """
-    is_valid = AuthService.verify_mfa_code(current_user.user_id, request.code, session)
+    codes = AuthService.enable_mfa(current_user.user_id, request.code, session)
 
-    if not is_valid:
+    if codes is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid MFA code"
         )
 
-    return {"message": "MFA enabled successfully"}
+    return RecoveryCodesResponse(
+        recovery_codes=codes, message="MFA enabled successfully"
+    )
+
+
+@router.post("/mfa/recovery-codes", response_model=RecoveryCodesResponse)
+async def regenerate_recovery_codes(
+    current_user: User = Depends(get_current_active_user),
+    session: Session = Depends(get_db),
+):
+    """
+    Generate a fresh set of one-time MFA recovery codes, invalidating any
+    previous codes. Requires MFA to already be set up.
+
+    Returns:
+        The new plaintext recovery codes, shown only once.
+    """
+    codes = AuthService.get_mfa_recovery_codes(current_user.user_id, session)
+    if codes is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA is not set up for this user",
+        )
+
+    return RecoveryCodesResponse(recovery_codes=codes)
 
 
 @router.delete("/mfa")
