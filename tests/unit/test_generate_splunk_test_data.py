@@ -12,8 +12,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-# Make the scripts directory importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Make the scripts directory importable (the generator lives in scripts/).
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
 
 from generate_splunk_test_data import SplunkTestDataGenerator
 

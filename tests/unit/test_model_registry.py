@@ -13,7 +13,7 @@ from typing import Dict, Optional
 
 import pytest
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from services.model_registry import COMPONENTS  # noqa: E402

@@ -16,12 +16,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "backend"))
 
 from backend.api.ai_config import router as ai_config_router  # noqa: E402
-from database.connection import get_db_session  # noqa: E402
+from database.connection import get_db  # noqa: E402
 from database.models import AIModelConfig, LLMProviderConfig  # noqa: E402
 from services.model_registry import ModelInfo  # noqa: E402
 
@@ -108,7 +108,7 @@ def client(session):
     def _get_session():
         return session
 
-    app.dependency_overrides[get_db_session] = _get_session
+    app.dependency_overrides[get_db] = _get_session
     return TestClient(app)
 
 
