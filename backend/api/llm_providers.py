@@ -16,19 +16,22 @@ from typing import Any, Dict, List, Optional
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import update
+from sqlalchemy import delete as sa_delete, update
 from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from secrets_manager import delete_secret, get_secret, set_secret
+from secrets_manager import delete_secret, get_secret, set_secret  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from backend.middleware.auth import get_current_active_user
-from backend.services.auth_service import AuthService
-from database.connection import get_db, get_db_session
-from database.models import LLMProviderConfig, User
-from services.bifrost_admin import push_provider_key
-from services.url_safety import UrlSafetyError, validate_provider_url
+from backend.middleware.auth import get_current_active_user  # noqa: E402
+from backend.services.auth_service import AuthService  # noqa: E402
+from database.connection import get_db  # noqa: E402
+from database.models import AIModelConfig, LLMProviderConfig, User  # noqa: E402
+from services.bifrost_admin import push_provider_key  # noqa: E402
+from services.url_safety import (  # noqa: E402
+    UrlSafetyError,
+    validate_provider_url,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -40,7 +43,7 @@ _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 # ``services.provider_model_discovery``; the fallback tuple here is the
 # cold-boot list used only when the live call fails (e.g. no API key
 # was provided at /discover-models time).
-from services.model_registry import _FALLBACK_MODELS_BY_PROVIDER
+from services.model_registry import _FALLBACK_MODELS_BY_PROVIDER  # noqa: E402
 
 ANTHROPIC_FALLBACK_MODELS = list(_FALLBACK_MODELS_BY_PROVIDER["anthropic"])
 
@@ -156,18 +159,64 @@ def _validate_type(provider_type: str) -> None:
 def _clear_other_defaults(db: Session, provider_type: str, keep_id: str) -> None:
     """Enforce the 'one default per provider_type' invariant at the app layer.
 
-    The DB has a partial unique index too, but clearing first avoids the
+    The DB has a partial unique index (``llm_provider_default_per_type``,
+    ``WHERE is_default = TRUE``) too, but clearing first avoids the
     index-conflict round-trip on UPDATE.
+
+    The ``no_autoflush`` guard is load-bearing: callers set ``keep_id``'s
+    ``is_default = True`` (or stage an INSERT with it) *before* calling here,
+    so the Core UPDATE below would otherwise trigger an autoflush that writes
+    the new default while the old one is still TRUE — two defaults at once,
+    which the partial unique index rejects with an IntegrityError (500).
+    Suppressing autoflush lets the UPDATE clear the old default first; the
+    pending ``keep_id`` change then flushes safely at commit.
     """
-    db.execute(
-        update(LLMProviderConfig)
-        .where(
-            LLMProviderConfig.provider_type == provider_type,
-            LLMProviderConfig.provider_id != keep_id,
-            LLMProviderConfig.is_default.is_(True),
+    with db.no_autoflush:
+        db.execute(
+            update(LLMProviderConfig)
+            .where(
+                LLMProviderConfig.provider_type == provider_type,
+                LLMProviderConfig.provider_id != keep_id,
+                LLMProviderConfig.is_default.is_(True),
+            )
+            .values(is_default=False)
         )
-        .values(is_default=False)
-    )
+
+
+def _reconcile_bifrost_key_for_type(
+    db: Session, provider_type: str, exclude_provider_id: str
+) -> None:
+    """Reconcile Bifrost's shared per-type key after a provider loses its key.
+
+    Bifrost stores a single key per ``provider_type`` (see
+    ``bifrost_admin.push_provider_key`` — keyed by type, not by row), so
+    blindly blanking that key whenever one provider of the type is deleted
+    or cleared would knock out every same-type sibling that still relies on
+    it (``_schedule_catalog_resync`` only re-syncs the model allow-list, not
+    the keys, so the type would stay keyless until a restart).
+
+    So: only blank Bifrost's key when this was the last provider of its type
+    with a key; otherwise re-push a surviving sibling's key.
+    ``exclude_provider_id`` is the row being deleted/cleared, so it never
+    counts as a survivor.
+    """
+    survivors = [
+        r
+        for r in db.query(LLMProviderConfig).all()
+        if r.provider_type == provider_type
+        and r.provider_id != exclude_provider_id
+        and r.api_key_ref
+    ]
+    # Prefer the default provider, then any active one, for a stable choice.
+    survivors.sort(key=lambda r: (not r.is_default, not r.is_active))
+    for survivor in survivors:
+        value = get_secret(survivor.api_key_ref)
+        if value:
+            push_provider_key(provider_type, value)
+            return
+    # No surviving provider of this type has a usable key — it was the last
+    # one, so clear the stale credential on Bifrost.
+    push_provider_key(provider_type, "")
 
 
 def _schedule_catalog_resync(reason: str) -> None:
@@ -280,9 +329,10 @@ async def update_provider(
         if payload.api_key == "":
             delete_secret(ref)
             row.api_key_ref = None
-            # Clearing the key: push an empty value to Bifrost so it stops
-            # trying to authenticate with a stale credential.
-            push_provider_key(row.provider_type, "")
+            # Bifrost's key is shared per provider_type, so only blank it if
+            # no same-type sibling still has a key — otherwise re-push the
+            # survivor's so the type keeps a working credential.
+            _reconcile_bifrost_key_for_type(db, row.provider_type, provider_id)
         else:
             if not set_secret(ref, payload.api_key):
                 raise HTTPException(status_code=500, detail="Failed to persist API key")
@@ -293,6 +343,25 @@ async def update_provider(
         row.is_default = True
         _clear_other_defaults(db, row.provider_type, provider_id)
     elif payload.is_default is False:
+        if row.is_default:
+            # Guard: only enforce when transitioning True → False.
+            other_default = (
+                db.query(LLMProviderConfig)
+                .filter(
+                    LLMProviderConfig.provider_type == row.provider_type,
+                    LLMProviderConfig.provider_id != provider_id,
+                    LLMProviderConfig.is_default.is_(True),
+                )
+                .first()
+            )
+            if other_default is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "Cannot unset the only default provider. "
+                        "Set another provider as default first."
+                    ),
+                )
         row.is_default = False
 
     db.commit()
@@ -312,13 +381,46 @@ async def delete_provider(
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
 
+    # Guard: refuse to delete the only active default for this provider type.
+    if row.is_default:
+        other_active = (
+            db.query(LLMProviderConfig)
+            .filter(
+                LLMProviderConfig.provider_type == row.provider_type,
+                LLMProviderConfig.provider_id != provider_id,
+                LLMProviderConfig.is_active.is_(True),
+            )
+            .order_by(LLMProviderConfig.created_at)
+            .first()
+        )
+        if other_active is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Cannot delete the only active {row.provider_type} provider. "
+                    "Add or activate another provider of this type first."
+                ),
+            )
+        # Unset current default first, flush to satisfy the unique partial index,
+        # then promote the next active provider.
+        row.is_default = False
+        db.flush()
+        other_active.is_default = True
+
+    # Cascade: remove model-config rows that reference this provider before
+    # deleting — the FK is ON DELETE RESTRICT so this must happen first.
+    db.execute(sa_delete(AIModelConfig).where(AIModelConfig.provider_id == provider_id))
+
     if row.api_key_ref:
         try:
             delete_secret(row.api_key_ref)
         except Exception as exc:  # noqa: BLE001
             logger.warning("Failed to delete secret %s: %s", row.api_key_ref, exc)
-        # Wipe the corresponding value on Bifrost too.
-        push_provider_key(row.provider_type, "")
+        # Bifrost's key is shared per provider_type. Only wipe it if this was
+        # the last keyed provider of its type; otherwise re-push a surviving
+        # sibling's key so the type isn't left without a working credential.
+        # (``row`` is still in the session here — exclude it explicitly.)
+        _reconcile_bifrost_key_for_type(db, row.provider_type, provider_id)
 
     db.delete(row)
     db.commit()
@@ -349,25 +451,27 @@ async def _resolve_api_key(row: LLMProviderConfig) -> Optional[str]:
     return get_secret(row.api_key_ref)
 
 
-@router.post("/{provider_id}/test")
-async def test_provider(
-    provider_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_active_user),
-):
-    _require_settings_admin(current_user)
-    row = db.get(LLMProviderConfig, provider_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="provider not found")
+async def _probe_provider_connection(
+    *,
+    provider_type: str,
+    base_url: Optional[str],
+    api_key: Optional[str],
+    default_model: Optional[str] = None,
+    organization: Optional[str] = None,
+) -> tuple[bool, Optional[str]]:
+    """Run the per-type connection probe against raw params (no DB row).
 
-    from datetime import datetime
-
+    Returns ``(success, error)``. Shared by the persisted ``/{id}/test``
+    endpoint (which resolves the key from the secret store first) and the
+    stateless ``/test-connection`` endpoint (which takes the key in the body,
+    so a wizard can verify a provider before any row is created).
+    """
     success = False
     error: Optional[str] = None
 
     try:
-        if row.provider_type == "ollama":
-            raw_base = row.base_url or "http://localhost:11434"
+        if provider_type == "ollama":
+            raw_base = base_url or "http://localhost:11434"
             # Ollama is the legitimate self-hosted provider, so an admin
             # who has saved a loopback URL is allowed to test it. We
             # still parse and sanitize to drop query string / userinfo
@@ -381,7 +485,7 @@ async def test_provider(
                 raise RuntimeError(
                     "ollama base_url must not include userinfo or fragment"
                 )
-            base_url = urlunparse(
+            sanitized = urlunparse(
                 (
                     parsed.scheme,
                     parsed.netloc.split("@")[-1],
@@ -394,42 +498,39 @@ async def test_provider(
             async with httpx.AsyncClient(
                 timeout=10.0, follow_redirects=False
             ) as client:
-                resp = await client.get(f"{base_url.rstrip('/')}/api/tags")
+                resp = await client.get(f"{sanitized.rstrip('/')}/api/tags")
                 resp.raise_for_status()
                 success = True
-        elif row.provider_type == "openai":
+        elif provider_type == "openai":
             try:
                 safe = validate_provider_url(
-                    row.base_url or "https://api.openai.com/v1",
+                    base_url or "https://api.openai.com/v1",
                     allow_custom=True,
                 )
             except UrlSafetyError as exc:
                 raise RuntimeError(f"invalid base_url: {exc}") from exc
-            base_url = safe.sanitized
-            key = await _resolve_api_key(row)
-            if not key:
+            if not api_key:
                 raise RuntimeError("no api key configured")
             headers: Dict[str, str] = {}
             if safe.is_allowlisted_host:
-                headers["Authorization"] = f"Bearer {key}"
-                if row.config and row.config.get("organization"):
-                    headers["OpenAI-Organization"] = row.config["organization"]
+                headers["Authorization"] = f"Bearer {api_key}"
+                if organization:
+                    headers["OpenAI-Organization"] = organization
             async with httpx.AsyncClient(
                 timeout=15.0, follow_redirects=False
             ) as client:
                 resp = await client.get(
-                    f"{base_url.rstrip('/')}/models", headers=headers
+                    f"{safe.sanitized.rstrip('/')}/models", headers=headers
                 )
                 resp.raise_for_status()
                 success = True
-        elif row.provider_type == "anthropic":
-            if row.base_url:
+        elif provider_type == "anthropic":
+            if base_url:
                 try:
-                    validate_provider_url(row.base_url, allow_custom=True)
+                    validate_provider_url(base_url, allow_custom=True)
                 except UrlSafetyError as exc:
                     raise RuntimeError(f"invalid base_url: {exc}") from exc
-            key = await _resolve_api_key(row)
-            if not key:
+            if not api_key:
                 raise RuntimeError("no api key configured")
             try:
                 from anthropic import AsyncAnthropic
@@ -438,21 +539,45 @@ async def test_provider(
             # Must use AsyncAnthropic (not Anthropic) — this endpoint is
             # async and the sync client would block the FastAPI event loop
             # for up to the full timeout on an invalid key or slow network.
-            anthropic_kwargs: Dict[str, Any] = {"api_key": key, "timeout": 15.0}
-            if row.base_url:
-                anthropic_kwargs["base_url"] = row.base_url
+            anthropic_kwargs: Dict[str, Any] = {"api_key": api_key, "timeout": 15.0}
+            if base_url:
+                anthropic_kwargs["base_url"] = base_url
             client = AsyncAnthropic(**anthropic_kwargs)
             await client.messages.create(
-                model=row.default_model,
+                model=default_model or "",
                 max_tokens=1,
                 messages=[{"role": "user", "content": "ping"}],
             )
             success = True
         else:
-            raise RuntimeError(f"unsupported provider_type: {row.provider_type}")
+            raise RuntimeError(f"unsupported provider_type: {provider_type}")
     except Exception as exc:  # noqa: BLE001
         error = str(exc)
-        logger.info("Provider test failed for %s: %s", provider_id, error)
+        logger.info("Provider connection probe failed (%s): %s", provider_type, error)
+
+    return success, error
+
+
+@router.post("/{provider_id}/test")
+async def test_provider(
+    provider_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_active_user),
+):
+    _require_settings_admin(current_user)
+    row = db.get(LLMProviderConfig, provider_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="provider not found")
+
+    from datetime import datetime
+
+    success, error = await _probe_provider_connection(
+        provider_type=row.provider_type,
+        base_url=row.base_url,
+        api_key=await _resolve_api_key(row),
+        default_model=row.default_model,
+        organization=(row.config or {}).get("organization"),
+    )
 
     row.last_test_at = datetime.utcnow()
     row.last_test_success = success
@@ -470,6 +595,19 @@ class DiscoverModelsRequest(BaseModel):
     provider_type: str
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+    organization: Optional[str] = None
+
+
+class TestConnectionRequest(BaseModel):
+    """Stateless connection test: takes unsaved credentials and probes the
+    provider without persisting anything. Lets the Add LLM Provider wizard
+    verify a connection before any row exists, so a cancelled wizard never
+    strands a half-configured provider (and its claimed ``provider_id``)."""
+
+    provider_type: str
+    base_url: Optional[str] = None
+    api_key: Optional[str] = None
+    default_model: Optional[str] = None  # anthropic's ping needs a model id
     organization: Optional[str] = None
 
 
@@ -537,6 +675,31 @@ async def discover_models(
         raise HTTPException(status_code=502, detail=str(e))
 
     return {"models": [m.id for m in meta]}
+
+
+@router.post("/test-connection")
+async def test_connection(
+    req: TestConnectionRequest,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Stateless pre-save connection test for the Add Provider wizard.
+
+    Admin-only and persists nothing: it probes the provider against the
+    credentials in the body. Same trust model as ``/discover-models`` — the
+    raw key is accepted in the body, but only an authenticated admin can
+    reach it. A static single-segment path, so it never collides with
+    ``/{provider_id}/test``.
+    """
+    _require_settings_admin(current_user)
+    _validate_type(req.provider_type)
+    success, error = await _probe_provider_connection(
+        provider_type=req.provider_type,
+        base_url=req.base_url,
+        api_key=req.api_key,
+        default_model=req.default_model,
+        organization=req.organization,
+    )
+    return {"success": success, "error": error}
 
 
 @router.get("/{provider_id}/models")

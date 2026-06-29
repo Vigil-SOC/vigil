@@ -62,9 +62,6 @@ export const LlmProviderWizard = ({
     existing?.default_model ?? DEFAULT_MODEL[initialType],
   )
   const [isDefault, setIsDefault] = useState(existing?.is_default ?? false)
-  const [draftProviderId, setDraftProviderId] = useState<string | null>(
-    existing?.provider_id ?? null,
-  )
 
   const [testing, setTesting] = useState(false)
   const [testError, setTestError] = useState<string | null>(null)
@@ -95,43 +92,50 @@ export const LlmProviderWizard = ({
     invalidateTest()
   }
 
-  const saveDraftAndTest = async (): Promise<void> => {
+  const testAndLoadModels = async (): Promise<void> => {
     setTesting(true)
     setTestError(null)
     try {
-      let providerId = draftProviderId
-      const alreadyPersisted = editing || !!providerId
-      if (!alreadyPersisted) {
-        const payload: LLMProviderCreate = {
-          provider_type: providerType,
-          name: name || `${providerType} provider`,
-          base_url: baseUrl || undefined,
-          api_key: apiKey || undefined,
-          default_model: defaultModel || DEFAULT_MODEL[providerType],
-          is_active: true,
-          is_default: false,
-          config: organization ? { organization } : {},
-        }
-        const resp = await llmProviderApi.create(payload)
-        providerId = resp.data.provider_id
-        setDraftProviderId(providerId)
-      } else if (providerId) {
-        await llmProviderApi.update(providerId, {
+      if (editing && existing) {
+        // Edit: the row already exists, so persist the entered fields then
+        // test + list models against it — no new provider id is ever claimed.
+        await llmProviderApi.update(existing.provider_id, {
           name,
           base_url: baseUrl || undefined,
           api_key: apiKey || undefined,
           default_model: defaultModel,
           config: organization ? { organization } : {},
         })
+        const testResp = await llmProviderApi.test(existing.provider_id)
+        if (!testResp.data.success) {
+          setTestError(testResp.data.error || 'Connection test failed')
+          return
+        }
+        const modelsResp = await llmProviderApi.listModels(existing.provider_id)
+        setAvailableModels(modelsResp.data.models || [])
+        setTested(true)
+        return
       }
-      if (!providerId) throw new Error('Failed to create provider')
 
-      const testResp = await llmProviderApi.test(providerId)
+      // Create: test and discover models statelessly. Nothing is persisted
+      // until the final Save, so cancelling here never strands a provider id.
+      const testResp = await llmProviderApi.testConnection({
+        provider_type: providerType,
+        base_url: baseUrl || undefined,
+        api_key: apiKey || undefined,
+        default_model: defaultModel || DEFAULT_MODEL[providerType],
+        organization: organization || undefined,
+      })
       if (!testResp.data.success) {
         setTestError(testResp.data.error || 'Connection test failed')
         return
       }
-      const modelsResp = await llmProviderApi.listModels(providerId)
+      const modelsResp = await llmProviderApi.discoverModels({
+        provider_type: providerType,
+        base_url: baseUrl || undefined,
+        api_key: apiKey || undefined,
+        organization: organization || undefined,
+      })
       setAvailableModels(modelsResp.data.models || [])
       setTested(true)
     } catch (e) {
@@ -144,14 +148,30 @@ export const LlmProviderWizard = ({
   const finalSave = async () => {
     setSaveError(null)
     try {
-      const providerId = draftProviderId ?? existing?.provider_id
-      if (!providerId) throw new Error('No provider id')
-      if (isDefault || defaultModel !== existing?.default_model) {
-        await llmProviderApi.update(providerId, {
-          default_model: defaultModel,
-          is_default: isDefault || undefined,
-        })
+      if (editing && existing) {
+        // Edit: connection fields were already persisted at test time; only
+        // the model / default flag are still mutable here.
+        if (isDefault || defaultModel !== existing.default_model) {
+          await llmProviderApi.update(existing.provider_id, {
+            default_model: defaultModel,
+            is_default: isDefault || undefined,
+          })
+        }
+        onSaved()
+        return
       }
+      // Create: this is the single point where the provider is persisted.
+      const payload: LLMProviderCreate = {
+        provider_type: providerType,
+        name: name || `${providerType} provider`,
+        base_url: baseUrl || undefined,
+        api_key: apiKey || undefined,
+        default_model: defaultModel || DEFAULT_MODEL[providerType],
+        is_active: true,
+        is_default: isDefault || false,
+        config: organization ? { organization } : {},
+      }
+      await llmProviderApi.create(payload)
       onSaved()
     } catch (e) {
       setSaveError(extractApiError(e, 'Save failed'))
@@ -307,7 +327,7 @@ export const LlmProviderWizard = ({
           <button className="btn primary" onClick={() => setStep(1)}>Next</button>
         )}
         {step === 1 && !tested && (
-          <button className="btn primary" disabled={testing} onClick={saveDraftAndTest}>
+          <button className="btn primary" disabled={testing} onClick={testAndLoadModels}>
             {testing ? 'Testing…' : 'Test connection'}
           </button>
         )}

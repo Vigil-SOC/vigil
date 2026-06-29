@@ -54,6 +54,20 @@ spec:
             {{- with .Values.backend.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+          # Gate liveness/readiness on a slow first boot. Startup work (MCP
+          # server connection retries, model-registry warmup) can push the
+          # first successful /api/health past the liveness initialDelaySeconds
+          # and trip a kill-restart loop before the app ever serves. While this
+          # probe is in progress the kubelet suppresses liveness AND readiness;
+          # once it passes, they take over. Allows up to
+          # failureThreshold * periodSeconds = 300s for first serve.
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
           livenessProbe:
             httpGet:
               path: /api/health

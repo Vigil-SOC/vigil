@@ -235,11 +235,6 @@ function LoginInner() {
                 )}
               </button>
             </form>
-
-            <div className="auth-foot">
-              <Icon name="lock" />
-              Protected by multi-factor authentication
-            </div>
           </div>
         </section>
       </div>
