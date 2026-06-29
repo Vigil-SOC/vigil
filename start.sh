@@ -80,7 +80,7 @@ start_frontend() {
         local host="$BIND_HOST"; [ "$host" = "0.0.0.0" ] && host="127.0.0.1"
         wait_for_url "http://${host}:6987/api/health" 60 || true
         (cd frontend && npm run dev) &
-        echo $!
+        FRONTEND_PID=$!
     fi
 }
 
@@ -103,13 +103,13 @@ if [ "$DAEMON" -eq 0 ]; then
     python3 -m services.run_llm_worker &
     WORKER_PID=$!
 
-    FRONTEND_PID=$(start_frontend)
+    start_frontend
     print_ready
     echo "Press Ctrl+C to stop"
 
     # Open browser once frontend is ready
     if [ "$SKIP_FRONTEND" -eq 0 ]; then
-        (sleep 3 && open "http://localhost:6988/redesign" 2>/dev/null || xdg-open "http://localhost:6988/redesign" 2>/dev/null) &
+        (sleep 3 && open "http://localhost:6988/" 2>/dev/null || xdg-open "http://localhost:6988/" 2>/dev/null) &
     fi
 
     wait
@@ -123,14 +123,22 @@ else
     nohup uvicorn backend.main:app --host "$BIND_HOST" --port 6987 --reload \
         --reload-dir backend --reload-dir services --reload-dir database \
         > logs/backend.log 2>&1 &
-    echo $! > logs/backend.pid
+    BACKEND_PID=$!
+    echo $BACKEND_PID > logs/backend.pid
+
+    # Liveness check: bail if uvicorn died on startup or never serves health.
+    local_host="$BIND_HOST"; [ "$local_host" = "0.0.0.0" ] && local_host="127.0.0.1"
+    if ! wait_for_url "http://${local_host}:6987/api/health" 60 \
+        || ! kill -0 "$BACKEND_PID" 2>/dev/null; then
+        echo "Backend failed to start. See logs/backend.log:" >&2
+        tail -n 20 logs/backend.log >&2 2>/dev/null || true
+        exit 1
+    fi
 
     nohup "${PWD}/venv/bin/python" daemon/main.py > logs/daemon.log 2>&1 &
     echo $! > logs/daemon.pid
 
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
-        local_host="$BIND_HOST"; [ "$local_host" = "0.0.0.0" ] && local_host="127.0.0.1"
-        wait_for_url "http://${local_host}:6987/api/health" 60 || true
         (cd frontend && nohup npm run dev > ../logs/frontend.log 2>&1 &
          echo $! > ../logs/frontend.pid)
     fi

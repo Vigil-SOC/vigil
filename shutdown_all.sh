@@ -32,10 +32,14 @@ lsof -ti:6988 | xargs kill -9 2>/dev/null || true
 
 # Docker
 if [ "$DOCKER_STOP" -eq 1 ]; then
-    if [ "$FULL" -eq 1 ]; then
-        dc down -v
+    if command -v docker &>/dev/null; then
+        if [ "$FULL" -eq 1 ]; then
+            dc down -v || true
+        else
+            dc stop || true
+        fi
     else
-        dc stop
+        echo "Docker not found; skipping container shutdown."
     fi
 fi
 

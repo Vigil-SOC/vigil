@@ -619,7 +619,8 @@ async def startup_event():
                         logger.warning("  Using JSON file storage as fallback")
                         logger.warning("  To enable PostgreSQL:")
                         logger.warning(
-                            "    1. Start database: ./scripts/start_database.sh"
+                            "    1. Start database: "
+                            "cd docker && docker compose up -d postgres"
                         )
                         logger.warning("    2. Restart application: ./start.sh")
 

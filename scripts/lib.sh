@@ -5,7 +5,16 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # --- Docker Compose wrapper ---
-dc() { docker compose -f "$REPO_ROOT/docker/docker-compose.yml" "$@"; }
+# Prefer Compose v2 (`docker compose`); fall back to v1 (`docker-compose`)
+# for hosts that only ship the standalone binary.
+if docker compose version &>/dev/null; then
+    _DC_CMD=(docker compose)
+elif command -v docker-compose &>/dev/null; then
+    _DC_CMD=(docker-compose)
+else
+    _DC_CMD=(docker compose)  # last resort; surfaces a clear error on use
+fi
+dc() { "${_DC_CMD[@]}" -f "$REPO_ROOT/docker/docker-compose.yml" "$@"; }
 
 # --- Find Python 3.10+ ---
 # Vigil requires Python 3.13+ (claude-agent-sdk). Some integration packages
@@ -54,7 +63,11 @@ ensure_venv() {
     local py="${1:-$(find_python)}"
     if [ ! -d "$REPO_ROOT/venv" ]; then
         echo "Creating virtual environment..."
-        "$py" -m venv "$REPO_ROOT/venv"
+        if ! "$py" -m venv "$REPO_ROOT/venv"; then
+            echo "Failed to create virtualenv. The venv module may be missing." >&2
+            echo "On Debian/Ubuntu: sudo apt install python3-venv" >&2
+            return 1
+        fi
     fi
     source "$REPO_ROOT/venv/bin/activate"
 }
@@ -80,7 +93,9 @@ wait_for_url() {
 # --- Ensure a docker service is running ---
 ensure_container() {
     local name="$1" service="$2"
-    if docker ps --format '{{.Names}}' | grep -q "$name"; then
+    # Anchored exact-name match so e.g. deeptempo-postgres-test doesn't
+    # mask a missing deeptempo-postgres.
+    if [ -n "$(docker ps -q -f "name=^${name}$")" ]; then
         return 0
     fi
     dc up -d "$service"
