@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/Vigil-SOC/vigil/compare/v0.3.0...v0.4.0) (2026-06-30)
+
+
+### Features
+
+* **auth:** harden authentication for production readiness ([#361](https://github.com/Vigil-SOC/vigil/issues/361)) ([201173a](https://github.com/Vigil-SOC/vigil/commit/201173a90534ad4f2d237f24b178405866cbc372))
+
+
+### Bug Fixes
+
+* repair stale setup docs and dev-bootstrap provisioning ([#375](https://github.com/Vigil-SOC/vigil/issues/375)) ([0b3bb1c](https://github.com/Vigil-SOC/vigil/commit/0b3bb1caf2bc3b8f10c6d12851a8d23842ce1220))
+
 ## [0.3.0](https://github.com/Vigil-SOC/vigil/compare/v0.2.3...v0.3.0) (2026-06-26)
 
 
