@@ -188,6 +188,19 @@ ROUTER_NO_TOOLS_SYSTEM_PROMPT = (
     "step. Write the final investigation analysis directly."
 )
 
+# Counterpart prompt for the agentic router path: models that DO support tool
+# calling run the full OpenAIAgentService loop, so they are told to use tools.
+ROUTER_AGENT_TOOLS_SYSTEM_PROMPT = (
+    "You are Vigil, an AI-native SOC analyst. You have access to security "
+    "tools for investigating findings, searching detections, querying cases, "
+    "and integrating with external security platforms via MCP. Use tools when "
+    "the user asks you to look something up, enrich data, or take action. Be "
+    "concise and precise. IMPORTANT: Only state facts you can verify with "
+    "tools or the provided context. If you cannot answer from available "
+    "context or tool results, say so. Never fabricate data, code, or "
+    "detection content."
+)
+
 
 def _select_active_provider(provider_id: Optional[str]):
     """Pick the provider a chat request should route through.
@@ -672,6 +685,10 @@ async def chat_stream(
     enable_thinking = request.enable_thinking
     max_tokens = request.max_tokens
     thinking_budget = request.thinking_budget
+    # Per-agent tool subset, forwarded to the OpenAI-format agent loop on the
+    # non-Anthropic router path so Ollama/OpenAI agents get the same tool
+    # filtering ClaudeService applies.
+    recommended_tools = None
 
     if request.agent_id:
         from services.soc_agents import AgentManager
@@ -680,6 +697,7 @@ async def chat_stream(
         agent = agent_manager.agents.get(request.agent_id)
         if agent:
             system_prompt = agent.system_prompt
+            recommended_tools = agent.recommended_tools
             # Per GH #79: request wins verbatim (no downgrade/upgrade from agent default)
             if max_tokens is None:
                 max_tokens = agent.max_tokens
@@ -809,26 +827,84 @@ async def chat_stream(
             # Non-Anthropic path — stream via LLMRouter / Bifrost's OpenAI
             # surface. No tools here, so use the no-tools guardrail prompt.
             if use_router and active_provider is not None:
-                from services.llm_router import LLMRouter
+                # Non-Anthropic path. A model that supports tool calling runs the
+                # full agentic loop (OpenAIAgentService, multi-turn + tools);
+                # anything else falls back to a plain no-tools router stream.
+                # Both branches preserve history tracking below.
+                model_id = request.model or active_provider.default_model
+                enable_agent_tools = False
+                try:
+                    from services.model_registry import ModelRegistry
+
+                    model_info = ModelRegistry().get_model_info(
+                        active_provider.provider_id,
+                        active_provider.provider_type,
+                        model_id,
+                    )
+                    enable_agent_tools = bool(
+                        getattr(model_info, "supports_tools", False)
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug("model tool-support lookup failed: %s", exc)
+
+                agent = None
+                if enable_agent_tools:
+                    from services.openai_agent_service import OpenAIAgentService
+
+                    agent = OpenAIAgentService(recommended_tools=recommended_tools)
+                    # Claims tool support but nothing loadable — fall back to the
+                    # no-tools stream rather than send an empty tools=[] that some
+                    # providers reject.
+                    if not agent.tools_available():
+                        logger.info(
+                            "Model %s supports tools but none available; "
+                            "using no-tools router stream",
+                            model_id,
+                        )
+                        agent = None
+                        enable_agent_tools = False
 
                 text_chunks = 0
                 total_text_length = 0
                 logger.info(
-                    f"🚀 [RequestID: {request_id}] Starting router stream ({active_provider.provider_type}) "
+                    f"🚀 [RequestID: {request_id}] Starting router stream "
+                    f"({active_provider.provider_type}, tools={enable_agent_tools}) "
                     f"with {len(messages)} messages"
                 )
-                async for chunk in LLMRouter().dispatch_openai_stream(
-                    provider=active_provider,
-                    messages=messages,
-                    system_prompt=ROUTER_NO_TOOLS_SYSTEM_PROMPT,
-                    model=request.model,
-                    max_tokens=max_tokens,
-                    interaction_id=request_id,
-                ):
-                    text_chunks += 1
-                    total_text_length += len(chunk.get("content", ""))
-                    history_assistant_parts.append(chunk.get("content", ""))
-                    yield f"data: {json.dumps(chunk)}\n\n"
+
+                if enable_agent_tools and agent is not None:
+                    agent_system_prompt = (
+                        system_prompt or ROUTER_AGENT_TOOLS_SYSTEM_PROMPT
+                    )
+                    async for chunk in agent.stream(
+                        provider=active_provider,
+                        messages=messages,
+                        system_prompt=agent_system_prompt,
+                        model=model_id,
+                        max_tokens=max_tokens,
+                        enable_tools=True,
+                        session_id=request.session_id,
+                        agent_id=request.agent_id,
+                    ):
+                        text_chunks += 1
+                        total_text_length += len(chunk.get("content", ""))
+                        history_assistant_parts.append(chunk.get("content", ""))
+                        yield f"data: {json.dumps(chunk)}\n\n"
+                else:
+                    from services.llm_router import LLMRouter
+
+                    async for chunk in LLMRouter().dispatch_openai_stream(
+                        provider=active_provider,
+                        messages=messages,
+                        system_prompt=ROUTER_NO_TOOLS_SYSTEM_PROMPT,
+                        model=model_id,
+                        max_tokens=max_tokens,
+                        interaction_id=request_id,
+                    ):
+                        text_chunks += 1
+                        total_text_length += len(chunk.get("content", ""))
+                        history_assistant_parts.append(chunk.get("content", ""))
+                        yield f"data: {json.dumps(chunk)}\n\n"
                 history_reached_end = True
                 elapsed_time = time.time() - start_time
                 logger.info(
