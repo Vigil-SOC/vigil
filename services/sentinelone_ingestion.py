@@ -49,27 +49,28 @@ class SentinelOneIngestion(SIEMIngestionService):
     def __init__(self) -> None:
         super().__init__()
         self.siem_name = "SentinelOne"
+
+    def _credentials(self):
+        """Read credentials fresh each call so secrets restored after init work."""
         cfg = get_integration_config("sentinelone")
-        # console_url and api_token are secret fields — stripped from
-        # integrations_config.json and stored only in the encrypted secrets
-        # store (restored into os.environ at daemon startup). Fall back to
-        # os.environ so credentials set via the UI are always found.
-        self._url = (
+        url = (
             cfg.get("console_url")
             or cfg.get("url")
             or os.environ.get("SENTINELONE_CONSOLE_URL")
             or ""
         ).rstrip("/")
-        self._token = (
+        token = (
             cfg.get("api_token")
             or cfg.get("token")
             or os.environ.get("SENTINELONE_API_TOKEN")
             or ""
         )
+        return url, token
 
     def _headers(self) -> Dict[str, str]:
+        _, token = self._credentials()
         return {
-            "Authorization": f"ApiToken {self._token}",
+            "Authorization": f"ApiToken {token}",
             "Content-Type": "application/json",
         }
 
@@ -89,7 +90,8 @@ class SentinelOneIngestion(SIEMIngestionService):
         Returns:
             List of raw threat dicts as returned by the API.
         """
-        if not self._url or not self._token:
+        url, token = self._credentials()
+        if not url or not token:
             logger.warning(
                 "SentinelOne not configured (missing console_url or api_token)"
             )
@@ -110,7 +112,7 @@ class SentinelOneIngestion(SIEMIngestionService):
             )
 
         try:
-            url = f"{self._url}/web/api/v2.1/threats"
+            url = f"{url}/web/api/v2.1/threats"
             resp = await asyncio.to_thread(
                 requests.get,
                 url,
