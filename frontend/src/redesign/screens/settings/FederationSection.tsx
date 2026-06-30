@@ -23,6 +23,7 @@ const SOURCE_LABELS: Record<string, string> = {
   aws_security_hub: 'AWS Security Hub',
   microsoft_defender: 'Microsoft Defender',
   elastic: 'Elastic Security',
+  sentinelone: 'Sentinelone',
 }
 
 function formatRelative(iso: string | null): string {
