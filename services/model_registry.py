@@ -991,3 +991,15 @@ def invalidate_model_cache(provider_id: Optional[str] = None) -> None:
     except Exception:  # noqa: BLE001
         pass
     clear_live_meta()
+
+
+def find_provider_for_model(model_id: str) -> Optional[str]:
+    """Reverse-lookup: find which provider_id owns a model from the cache.
+
+    Returns the first provider_id whose cached model list contains model_id,
+    or None if not found.
+    """
+    for pid, models in _MODEL_LIST_CACHE._entries.items():
+        if model_id in models:
+            return pid
+    return None
