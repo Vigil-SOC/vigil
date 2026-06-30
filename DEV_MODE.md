@@ -51,7 +51,7 @@ cp .env.example .env
 
 That's it! **One file, one setting** - both backend and frontend will bypass authentication. 🚀
 
-### ✨ New in v2.0: Unified DEV_MODE Configuration
+### ✨ New: Unified DEV_MODE Configuration
 
 You now only need to set `DEV_MODE=true` in the **root `.env` file**!
 

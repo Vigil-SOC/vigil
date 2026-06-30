@@ -14,7 +14,7 @@ Simplified DEV_MODE configuration to use a **single environment variable** in th
 - Easy to forget to configure one or the other
 - Inconsistent dev mode state between backend and frontend
 
-### After (v2.0)
+### After
 - **One unified configuration:**
   - Set `DEV_MODE=true` in root `.env` file
   - Both backend AND frontend automatically use it
