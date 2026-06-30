@@ -873,8 +873,13 @@ async def chat_stream(
                 )
 
                 if enable_agent_tools and agent is not None:
+                    # Always include the tool-use guardrail. When an agent
+                    # supplies its own system prompt, prepend the guardrail so
+                    # the tool/anti-fabrication instructions are never dropped.
                     agent_system_prompt = (
-                        system_prompt or ROUTER_AGENT_TOOLS_SYSTEM_PROMPT
+                        f"{ROUTER_AGENT_TOOLS_SYSTEM_PROMPT}\n\n{system_prompt}"
+                        if system_prompt
+                        else ROUTER_AGENT_TOOLS_SYSTEM_PROMPT
                     )
                     async for chunk in agent.stream(
                         provider=active_provider,
