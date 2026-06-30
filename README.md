@@ -131,6 +131,13 @@ cd vigil
 
 Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full auth is WIP and while it will turn on it is untested. To activate auth set `DEV_MODE=false`.
 
+> **Stable build vs. development build:** The Quick Start above clones `main` —
+> the active development branch (latest, *unreleased* code). For a stable,
+> tested build, use a released version instead: pull a published image
+> (`docker pull ghcr.io/vigil-soc/vigil-backend:<version>`) or check out a
+> release tag before running (`git checkout v<version>`). Find the newest
+> version on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest).
+
 ### Prerequisites
 
 - **Python 3.10+**
