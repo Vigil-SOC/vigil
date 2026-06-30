@@ -48,7 +48,12 @@ fi
 # Security detection rules (optional, heavy: ~7,200 rules, ~4GB, 5-10 min).
 # Off by default to keep bootstrap fast; opt in with SETUP_DETECTION_REPOS=1.
 if [ "${SETUP_DETECTION_REPOS:-0}" = "1" ]; then
-    "$REPO_ROOT/scripts/setup_detection_repos.sh"
+    # Don't let this optional, network-heavy step abort the whole setup (set -e).
+    if ! "$REPO_ROOT/scripts/setup_detection_repos.sh"; then
+        echo ""
+        echo "Warning: detection rule setup failed (optional) — continuing."
+        echo "Re-run later with: ./scripts/setup_detection_repos.sh"
+    fi
 else
     echo ""
     echo "Detection rules not installed (optional, ~4GB) — coverage-analysis"
