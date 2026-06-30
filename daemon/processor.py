@@ -280,7 +280,7 @@ class FindingProcessor:
         try:
             finding_id = finding.get("finding_id")
             if finding_id and self._data_service:
-                self._data_service.update_finding(finding_id, finding)
+                self._data_service.update_finding(finding_id, **finding)
         except Exception as e:
             logger.error(f"Failed to update finding: {e}")
 
