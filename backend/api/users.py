@@ -198,13 +198,17 @@ async def create_user(
             detail="Permission denied: users.write required"
         )
     
-    # Validate password against the full strength policy
+    # Validate password against the full strength policy. Penalize passwords
+    # built from the new account's own identifiers.
     try:
-        validate_password_strength(request.password)
+        validate_password_strength(
+            request.password,
+            user_inputs=[request.username, request.email],
+        )
     except PasswordPolicyError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(exc),
+            detail=exc.as_detail(),
         )
 
     # Verify role exists

@@ -102,7 +102,7 @@ export default function DeveloperSection({ notify }: SectionProps) {
             <Icon name="info" size={14} />
             <span>
               Start PostgreSQL to enable database storage:{' '}
-              <code className="font-mono">./scripts/start_database.sh</code>
+              <code className="font-mono">cd docker && docker compose up -d postgres</code>
             </span>
           </div>
         )}

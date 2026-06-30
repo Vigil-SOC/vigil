@@ -120,11 +120,8 @@ npm test src/utils/api.test.ts
 ### Quick Test Script
 
 ```bash
-# Run the automated test script
-./scripts/run_tests.sh
-
-# Run with verbose output
-./scripts/run_tests.sh --verbose
+# Run the full suite (backend pytest + frontend vitest)
+./tests/run-tests.sh
 ```
 
 ---

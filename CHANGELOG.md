@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.3.0](https://github.com/Vigil-SOC/vigil/compare/v0.2.3...v0.3.0) (2026-06-26)
+
+
+### Features
+
+* **chat:** persistent cross-device conversation history ([#368](https://github.com/Vigil-SOC/vigil/issues/368)) ([ebd7498](https://github.com/Vigil-SOC/vigil/commit/ebd74988f2d8afbc491550e7b388bb734ed48f20))
+* **onboarding:** first-access setup gate + LLM provider wizard ([#350](https://github.com/Vigil-SOC/vigil/issues/350)) ([9127d9e](https://github.com/Vigil-SOC/vigil/commit/9127d9e06561ce2e0b2f67bd95b69009ec16adfd))
+* **redesign:** SOC console UI preview ([#352](https://github.com/Vigil-SOC/vigil/issues/352)) ([60d883c](https://github.com/Vigil-SOC/vigil/commit/60d883c4f3428d2aa7e378d284a4be89a44adadd))
+
+
+### Bug Fixes
+
+* char db connection string correct ([#321](https://github.com/Vigil-SOC/vigil/issues/321)) ([69ef3da](https://github.com/Vigil-SOC/vigil/commit/69ef3dadcad27e3ba01696f66b2b07fdf14cf0a7))
+* **chart:** add startupProbes for slow first boot ([#364](https://github.com/Vigil-SOC/vigil/issues/364)) ([3b76b87](https://github.com/Vigil-SOC/vigil/commit/3b76b87c7942609f6587ff288f299b170b76c8c4))
+* **chat:** render Markdown in chat drawer + UX polish ([#346](https://github.com/Vigil-SOC/vigil/issues/346)) ([0bdd0ca](https://github.com/Vigil-SOC/vigil/commit/0bdd0ca11058f25962bda3b913f1044f130bf6e2))
+* **chat:** scope streaming responses to the originating tab ([#347](https://github.com/Vigil-SOC/vigil/issues/347)) ([bc10be6](https://github.com/Vigil-SOC/vigil/commit/bc10be634d5bd8b2c49f1cfcde872c2494e7436a))
+* **ci:** make integration tests gate ([#358](https://github.com/Vigil-SOC/vigil/issues/358)) ([c66ab17](https://github.com/Vigil-SOC/vigil/commit/c66ab1712b04fc76a745fd0dd495bdae261dc9f3))
+* **ci:** make unit-test job gate again (drop `|| true`) ([#356](https://github.com/Vigil-SOC/vigil/issues/356)) ([6369e04](https://github.com/Vigil-SOC/vigil/commit/6369e04a8ce19e31bb13e7dd3584f0d61417a81c))
+* **db:** URL-encode Postgres credentials in connection string ([#343](https://github.com/Vigil-SOC/vigil/issues/343)) ([146d4a4](https://github.com/Vigil-SOC/vigil/commit/146d4a418dff40985833af31103423f657d72211))
+* **docker:** include daemon/ in backend image ([#354](https://github.com/Vigil-SOC/vigil/issues/354)) ([af6e197](https://github.com/Vigil-SOC/vigil/commit/af6e197f41f707fe49be9610f8d37aafe0d00a40))
+* **docker:** restore submodule install and correct path in release images ([#335](https://github.com/Vigil-SOC/vigil/issues/335)) ([53d0cfe](https://github.com/Vigil-SOC/vigil/commit/53d0cfe02bd324bcae155c446e299212e4b15974))
+* **frontend:** clear npm deprecation warnings and audit vulns ([#371](https://github.com/Vigil-SOC/vigil/issues/371)) ([89db6ca](https://github.com/Vigil-SOC/vigil/commit/89db6ca7aff440fb5b7f1aab045a1c3c1985ee8e))
+* **helm:** expose POSTGRES_* env vars to pods ([#338](https://github.com/Vigil-SOC/vigil/issues/338)) ([257aa1a](https://github.com/Vigil-SOC/vigil/commit/257aa1a5853f97237fae71607fec142ddffd79fd))
+* **llm-providers:** reconcile shared Bifrost key on provider delete/clear ([#360](https://github.com/Vigil-SOC/vigil/issues/360)) ([cffb4c6](https://github.com/Vigil-SOC/vigil/commit/cffb4c69cd8eae42b63e7c6b68c750347371a65e))
+* **llm:** route local Ollama providers through Bifrost ([#348](https://github.com/Vigil-SOC/vigil/issues/348)) ([360da29](https://github.com/Vigil-SOC/vigil/commit/360da29383e53704d75cbbc40fc3006f940b0cee))
+* **onboarding:** set-default 500, reset-setup full clear, stale dismissed redirect ([#367](https://github.com/Vigil-SOC/vigil/issues/367)) ([6732811](https://github.com/Vigil-SOC/vigil/commit/6732811b21ffe1a0286c13151288f4ed5778414f))
+* provider delete failures, single-default enforcement, cascade cleanup ([#336](https://github.com/Vigil-SOC/vigil/issues/336)) ([b7d1f3e](https://github.com/Vigil-SOC/vigil/commit/b7d1f3ea562bf2942074c091a290357d1c210801))
+* **settings:** recover redesign provider-delete UX and repair reset-setup ([#366](https://github.com/Vigil-SOC/vigil/issues/366)) ([0aec85a](https://github.com/Vigil-SOC/vigil/commit/0aec85adedabdd555be3dc40ca0b238ad55f5c91))
+
 ## [0.2.3](https://github.com/Vigil-SOC/vigil/compare/v0.2.2...v0.2.3) (2026-06-09)
 
 
