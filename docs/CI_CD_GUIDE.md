@@ -89,7 +89,7 @@ Vigil uses **GitHub Actions** for CI/CD with three main workflows:
 9. `build-images` - Build and push Docker images
 10. `build-frontend` - Build frontend static assets
 11. `scan-images` - Trivy vulnerability scanning
-12. `deploy-staging` - Deploy to staging (main branch only)
+12. `deploy-staging` - Deploy to staging (main branch only) — **currently commented out in `ci-cd.yml`; no staging deploy runs.**
 
 ### Release Workflow
 
@@ -99,11 +99,16 @@ Vigil uses **GitHub Actions** for CI/CD with three main workflows:
 - Tags matching `v*.*.*` (e.g., v1.0.0)
 
 **Jobs**:
-1. `create-release` - Create GitHub release with changelog
-2. `build-production-images` - Build production Docker images
-3. `scan-production-images` - Security scan production images
-4. `deploy-production` - Deploy to production with rollback capability
-5. `post-deployment-validation` - Smoke tests and health checks
+1. `version` - Resolve the `vX.Y.Z` version from the pushed tag
+2. `build-backend` - Build & push `ghcr.io/vigil-soc/vigil-backend` (also reused by the llm-worker)
+3. `build-daemon` - Build & push `ghcr.io/vigil-soc/vigil-daemon`
+4. `smoke-test` - Pull the published images and verify they start
+5. `update-release` - Append the image digests to the GitHub Release notes
+
+> **No deployment runs here.** `release.yml` publishes images only; it does
+> not SSH anywhere or deploy. The GitHub Release object itself is created by
+> `release-please.yml`, not this workflow. See Stage 7 for the (currently
+> disabled) manual deploy path.
 
 ### Nightly Tests
 
@@ -232,12 +237,20 @@ trivy image --severity CRITICAL,HIGH ghcr.io/user/image:tag
 
 ### Stage 7: Deployment
 
-**Staging** (automatic on main):
+> **Not currently enabled.** CI builds, scans, and publishes images, but
+> no automated deployment runs — neither staging nor production. The
+> `release.yml` workflow only builds and publishes images. The commands
+> below describe the *manual* deploy path via `scripts/deploy_to_vm.sh`
+> (and the intended automated wiring for when deployment is turned on,
+> post-1.0). The script's default `IMAGE_NAME` is stale — override it,
+> e.g. `IMAGE_NAME=vigil-soc/vigil`, so it pulls the published images.
+
+**Staging** (intended: automatic on main):
 ```bash
 ./scripts/deploy_to_vm.sh staging
 ```
 
-**Production** (manual on release tag):
+**Production** (manual, against release-tagged images):
 ```bash
 ./scripts/deploy_to_vm.sh production
 ```
@@ -256,6 +269,11 @@ trivy image --severity CRITICAL,HIGH ghcr.io/user/image:tag
 Configure in **Settings → Secrets → Actions**:
 
 #### SSH & VM Access
+
+> Only needed for the **manual** `scripts/deploy_to_vm.sh` path (see Stage 7).
+> No wired workflow consumes these today — leave them unset until automated
+> deployment is turned on.
+
 ```
 SSH_PRIVATE_KEY         # SSH key for VM access
 STAGING_VM_HOST         # Staging VM hostname/IP
@@ -326,30 +344,32 @@ docker-compose up -d
 
 ### Production Deployment
 
-**Triggered by version tag** (e.g., `v1.2.3`):
+> **Not automated.** Pushing a version tag runs `release.yml`, which **builds
+> and publishes images only** — it does not deploy. Deploying those images to a
+> VM is a separate, manual step (Stage 7 / `scripts/deploy_to_vm.sh`) that is
+> not currently wired into CI.
 
-1. Create GitHub release with changelog
-2. Build production images with version tags
-3. Security scan production images
-4. Backup current deployment
-5. Deploy to production VMs
-6. Run smoke tests
-7. Auto-rollback on failure
-8. Slack notification
+What a version tag (e.g. `v1.2.3`) actually triggers (`release.yml`):
 
-**Creating a Release**:
-```bash
-# Tag the release
-git tag -a v1.2.3 -m "Release version 1.2.3"
-git push origin v1.2.3
+1. Build & push `vigil-backend` and `vigil-daemon` images to GHCR
+2. Trivy-scan the published images
+3. Smoke-test that the images start
+4. Annotate the GitHub Release with the image digests
 
-# GitHub Actions will automatically:
-# 1. Build images
-# 2. Create release
-# 3. Deploy to production
-```
+**Creating a Release** — releases are driven by `release-please`, not by
+hand-pushing tags:
+
+1. Merge the open **release PR** that `release-please` maintains on `main`.
+2. On merge, `release-please` pushes the `vX.Y.Z` tag and creates the GitHub
+   Release; that tag push triggers `release.yml` (above).
+
+See `RELEASING.md` for the full process.
 
 ### Rollback Procedure
+
+> The automatic-rollback step below is **illustrative** — it belongs to the
+> not-yet-wired VM deploy path, not an active workflow. Manual rollback is the
+> real procedure today.
 
 **Automatic Rollback** (on health check failure):
 ```yaml
