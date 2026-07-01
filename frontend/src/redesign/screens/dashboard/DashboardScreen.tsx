@@ -7,13 +7,16 @@ import { Icon } from '../../shared/icons'
 import { Pie, Hbars } from '../../shared/charts'
 import { useFindings, useDashboardKpis } from './useFindings'
 import type { Finding } from '../../data/data'
+import { agentsApi, findingsApi } from '../../../services/api'
+import { notificationService } from '../../../services/notifications'
 import { useAttack } from './useAttack'
 import { useTimeline } from './useTimeline'
-import { FilterButton, FilterGroup } from '../../shared/ui'
+import { FilterButton, FilterGroup, Popup } from '../../shared/ui'
 import FindingPopup from './FindingPopup'
 import AttackTechniqueFindings from './AttackTechniqueFindings'
 import { SEV_COLOR, TL_MONTHS, type TimelineEvent } from './attackData'
 import type { ScreenProps } from '../../shared/types'
+import EntityGraph, { type GraphLink, type GraphNode } from '../../../components/graph/EntityGraph'
 
 type DashTab = 'findings' | 'attack' | 'timeline' | 'entity'
 
@@ -45,7 +48,7 @@ export default function DashboardScreen({ openChat }: ScreenProps) {
       {tab === 'findings' && <FindingsTab openChat={openChat} />}
       {tab === 'attack' && <AttackTab />}
       {tab === 'timeline' && <TimelineTab />}
-      {tab === 'entity' && <EntityStub />}
+      {tab === 'entity' && <EntityTab />}
     </>
   )
 }
@@ -104,9 +107,21 @@ function findingPrompt(f: Finding): string {
   return `Investigate finding ${f.id} — ${parts.join(', ')}. What happened and what should I do next?`
 }
 
-function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
+interface AgentOption {
+  id: string
+  name: string
+  specialization?: string
+  description?: string
+}
+
+function FindingsTab({ openChat }: { openChat: ScreenProps['openChat'] }) {
   const { rows, phase, error, reload } = useFindings()
   const { kpis, reload: reloadKpis } = useDashboardKpis()
+  const [agents, setAgents] = useState<AgentOption[]>([])
+  const [agentTarget, setAgentTarget] = useState<Finding | null>(null)
+  const [bulkAgentOpen, setBulkAgentOpen] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [agentBusy, setAgentBusy] = useState(false)
   const [query, setQuery] = useState('')
   const [sev, setSev] = useState('any')
   const [src, setSrc] = useState('any')
@@ -118,6 +133,16 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
     setSort((s) => (s.key === key
       ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' }
       : { key, dir: DEFAULT_DIR[key] }))
+
+  useEffect(() => {
+    agentsApi
+      .listAgents()
+      .then((res) => {
+        const list = (res.data?.agents || []) as AgentOption[]
+        setAgents(list)
+      })
+      .catch(() => setAgents([]))
+  }, [])
 
   // source options derive from the data
   const srcOptions = useMemo(() => {
@@ -164,9 +189,95 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
   const refresh = () => {
     reload()
     reloadKpis()
+    setSelectedIds(new Set())
   }
 
   const kpi = (n: number | undefined) => (kpis ? String(n ?? 0) : NDASH)
+  const visibleIds = paged.map((f) => f.id)
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id))
+  const selectedFindings = sorted.filter((f) => selectedIds.has(f.id))
+
+  const toggleSelected = (findingId: string) => {
+    setSelectedIds((cur) => {
+      const next = new Set(cur)
+      if (next.has(findingId)) next.delete(findingId)
+      else next.add(findingId)
+      return next
+    })
+  }
+
+  const toggleVisibleSelected = () => {
+    setSelectedIds((cur) => {
+      const next = new Set(cur)
+      if (allVisibleSelected) visibleIds.forEach((id) => next.delete(id))
+      else visibleIds.forEach((id) => next.add(id))
+      return next
+    })
+  }
+
+  const startFindingInvestigation = async (finding: Finding, agentId?: string) => {
+    const agent = agents.find((a) => a.id === agentId)
+    setAgentBusy(true)
+    try {
+      let prompt = findingPrompt(finding)
+      if (agentId) {
+        const res = await agentsApi.startInvestigation({
+          finding_id: finding.id,
+          agent_id: agentId,
+        })
+        prompt = res.data?.prompt || prompt
+      }
+      openChat(prompt, { agentId })
+      notificationService.notifyGeneric(
+        'Investigation started',
+        `${agent?.name || 'Vigil'} is investigating ${finding.id.substring(0, 12)}…`,
+        { severity: 'success' },
+      )
+    } catch (e) {
+      notificationService.notifyGeneric(
+        'Investigation failed',
+        (e as { message?: string })?.message || 'Could not start the agent.',
+        { severity: 'error' },
+      )
+    } finally {
+      setAgentBusy(false)
+      setAgentTarget(null)
+    }
+  }
+
+  const startBulkInvestigation = (agentId?: string) => {
+    if (selectedFindings.length === 0) return
+    const agent = agents.find((a) => a.id === agentId)
+    const prompt = [
+      `Investigate these ${selectedFindings.length} selected findings as a correlated incident.`,
+      'Focus on shared entities, timeline order, likely root cause, and next actions.',
+      '',
+      ...selectedFindings.slice(0, 25).map((f) => `- ${findingPrompt(f)}`),
+    ].join('\n')
+    openChat(prompt, { agentId })
+    notificationService.notifyGeneric(
+      'Bulk investigation started',
+      `${agent?.name || 'Vigil'} is correlating ${selectedFindings.length} findings.`,
+      { severity: 'success' },
+    )
+  }
+
+  const exportFindings = async () => {
+    try {
+      const res = await findingsApi.export('json')
+      notificationService.notifyGeneric(
+        'Findings exported',
+        res.data?.file_path || 'Export complete.',
+        { severity: 'success' },
+      )
+    } catch (e) {
+      notificationService.notifyGeneric(
+        'Export failed',
+        (e as { message?: string })?.message || 'Could not export findings.',
+        { severity: 'error' },
+      )
+    }
+  }
 
   return (
     <>
@@ -217,14 +328,32 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
           <FilterGroup label="Source" value={src} onSelect={setSrc} options={srcOptions} />
         </FilterButton>
         <div className="flex-1" />
+        {selectedIds.size > 0 && (
+          <>
+            <button className="btn ghost" onClick={() => setBulkAgentOpen(true)}>
+              <Icon name="brain" /> Investigate {selectedIds.size}
+            </button>
+            <button className="btn ghost" onClick={() => setSelectedIds(new Set())}>
+              Clear selection
+            </button>
+          </>
+        )}
         <button className="btn ghost icon" title="Refresh" onClick={refresh}><Icon name="refresh" /></button>
-        <button className="btn primary"><Icon name="download" /> Export</button>
+        <button className="btn primary" onClick={exportFindings}><Icon name="download" /> Export</button>
       </div>
 
       <div className="table-wrap list-scroll list-scroll-kpi">
         <table className="tbl findings-tbl">
           <thead>
             <tr>
+              <th>
+                <input
+                  type="checkbox"
+                  aria-label="Select visible findings"
+                  checked={allVisibleSelected}
+                  onChange={toggleVisibleSelected}
+                />
+              </th>
               <th>Finding ID</th>
               <SortHeader label="Severity" col="sev" sort={sort} onSort={toggleSort} />
               <th>MITRE Technique</th><th>Tactic</th>
@@ -237,10 +366,10 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
           </thead>
           <tbody>
             {phase === 'loading' && (
-              <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>Loading findings…</td></tr>
+              <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>Loading findings…</td></tr>
             )}
             {phase === 'error' && (
-              <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
+              <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
                   <span>Couldn’t load findings: {error}</span>
                   <button className="btn ghost" onClick={refresh}>Retry</button>
@@ -248,12 +377,21 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
               </td></tr>
             )}
             {phase === 'ready' && filtered.length === 0 && (
-              <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
+              <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
                 {rows.length === 0 ? 'No findings found.' : 'No findings match your filters.'}
               </td></tr>
             )}
             {phase === 'ready' && paged.map((f) => (
               <tr key={f.id} className="clickable" onClick={() => setDetailId(f.id)}>
+                <td>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${f.id}`}
+                    checked={selectedIds.has(f.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggleSelected(f.id)}
+                  />
+                </td>
                 <td><span className="id-cell">{f.id}</span></td>
                 <td><span className={`sev ${f.sev.toLowerCase()}`}><span className="dot" />{f.sev}</span></td>
                 <td><span className="tag">{f.tech}</span> <span className="muted">{f.conf}%</span></td>
@@ -272,7 +410,7 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
                 <td>
                   <span className="row-act">
                     <button title="View" onClick={(e) => { e.stopPropagation(); setDetailId(f.id) }}><Icon name="eye" /></button>
-                    <button title="Investigate with Vigil" onClick={(e) => { e.stopPropagation(); openChat(findingPrompt(f)) }}><Icon name="brain" /></button>
+                    <button title="Investigate with agent" onClick={(e) => { e.stopPropagation(); setAgentTarget(f) }}><Icon name="brain" /></button>
                   </span>
                 </td>
               </tr>
@@ -308,8 +446,71 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
           ><Icon name="chevR" size={14} /></button>
         </span>
       </div>
-      <FindingPopup id={detailId} onClose={() => setDetailId(null)} onChanged={() => { reload(); reloadKpis() }} />
+      <FindingPopup
+        id={detailId}
+        onClose={() => setDetailId(null)}
+        onChanged={() => { reload(); reloadKpis() }}
+        onInvestigate={(f) => {
+          setDetailId(null)
+          setAgentTarget(f)
+        }}
+      />
+      <AgentPicker
+        open={agentTarget !== null}
+        title={agentTarget ? `Investigate ${agentTarget.id}` : 'Investigate finding'}
+        agents={agents}
+        busy={agentBusy}
+        onClose={() => { if (!agentBusy) setAgentTarget(null) }}
+        onSelect={(agentId) => agentTarget && startFindingInvestigation(agentTarget, agentId)}
+      />
+      <AgentPicker
+        open={bulkAgentOpen}
+        title="Investigate selected findings"
+        agents={agents}
+        busy={false}
+        onClose={() => setBulkAgentOpen(false)}
+        onSelect={(agentId) => {
+          startBulkInvestigation(agentId)
+          setSelectedIds(new Set())
+          setBulkAgentOpen(false)
+        }}
+      />
     </>
+  )
+}
+
+function AgentPicker({
+  open,
+  title,
+  agents,
+  busy,
+  onClose,
+  onSelect,
+}: {
+  open: boolean
+  title: string
+  agents: AgentOption[]
+  busy: boolean
+  onClose: () => void
+  onSelect: (agentId?: string) => void
+}) {
+  return (
+    <Popup open={open} onClose={onClose} title={title} width={440}>
+      <div className="agent-pick-list">
+        <button className="agent-pick-row" disabled={busy} onClick={() => onSelect(undefined)}>
+          <span className="am-name">Default agent</span>
+          <span className="am-spec">Use Vigil’s default routing</span>
+        </button>
+        {agents.map((a) => (
+          <button className="agent-pick-row" key={a.id} disabled={busy} onClick={() => onSelect(a.id)}>
+            <span className="am-name">{a.name}</span>
+            {a.specialization && <span className="am-spec">{a.specialization}</span>}
+            {a.description && <span className="am-desc">{a.description}</span>}
+          </button>
+        ))}
+        {agents.length === 0 && <div className="muted">No agents available.</div>}
+      </div>
+    </Popup>
   )
 }
 
@@ -440,23 +641,123 @@ function AttackTab() {
   )
 }
 
-/* ---------------- Entity Graph (stub) ---------------- */
-function EntityStub() {
-  return (
-    <div className="entity-empty">
-      <div className="ee-graphic">
-        <svg viewBox="0 0 220 150" fill="none">
-          <line x1="110" y1="75" x2="40" y2="36" /><line x1="110" y1="75" x2="186" y2="42" />
-          <line x1="110" y1="75" x2="52" y2="120" /><line x1="110" y1="75" x2="172" y2="116" />
-          <line x1="40" y1="36" x2="186" y2="42" /><line x1="52" y1="120" x2="172" y2="116" />
-          <circle cx="110" cy="75" r="13" className="n-core" />
-          <circle cx="40" cy="36" r="8" /><circle cx="186" cy="42" r="8" />
-          <circle cx="52" cy="120" r="8" /><circle cx="172" cy="116" r="8" />
-        </svg>
+/* ---------------- Entity Graph ---------------- */
+function graphNodeId(type: GraphNode['type'], value: string) {
+  return `${type}:${value}`
+}
+
+function entityTypeLabel(type: GraphNode['type']) {
+  switch (type) {
+    case 'hostname': return 'Hosts'
+    case 'user': return 'Users'
+    case 'domain': return 'Sources'
+    default: return type
+  }
+}
+
+function EntityTab() {
+  const { rows, phase, error, reload } = useFindings()
+  const graph = useMemo(() => {
+    const nodes = new Map<string, GraphNode>()
+    const links = new Map<string, GraphLink>()
+
+    const addNode = (type: GraphNode['type'], value: string, finding: Finding) => {
+      if (!value || value === NDASH) return undefined
+      const id = graphNodeId(type, value)
+      const existing = nodes.get(id)
+      const severity = finding.sev.toLowerCase() as GraphNode['severity']
+      if (existing) {
+        existing.findingCount = (existing.findingCount || 0) + 1
+        if (!existing.severity || SEV_RANK[finding.sev] > SEV_RANK[(existing.severity[0].toUpperCase() + existing.severity.slice(1)) as Finding['sev']]) {
+          existing.severity = severity
+        }
+        return id
+      }
+      nodes.set(id, {
+        id,
+        label: value,
+        type,
+        severity,
+        findingCount: 1,
+        metadata: { firstFindingId: finding.id, source: finding.src },
+      })
+      return id
+    }
+
+    const addLink = (source: string | undefined, target: string | undefined, finding: Finding) => {
+      if (!source || !target || source === target) return
+      const [a, b] = source < target ? [source, target] : [target, source]
+      const key = `${a}->${b}`
+      const existing = links.get(key)
+      if (existing) {
+        existing.value = (existing.value || 1) + 1
+        existing.techniques = Array.from(new Set([...(existing.techniques || []), finding.tech]))
+        return
+      }
+      links.set(key, {
+        source: a,
+        target: b,
+        value: 1,
+        label: finding.id,
+        techniques: [finding.tech],
+      })
+    }
+
+    rows.forEach((finding) => {
+      const host = addNode('hostname', finding.host, finding)
+      const user = addNode('user', finding.user, finding)
+      const source = addNode('domain', finding.src, finding)
+      addLink(host, user, finding)
+      addLink(host, source, finding)
+      addLink(user, source, finding)
+    })
+
+    return { nodes: Array.from(nodes.values()), links: Array.from(links.values()) }
+  }, [rows])
+
+  const counts = useMemo(() => {
+    const byType = new Map<GraphNode['type'], number>()
+    graph.nodes.forEach((node) => byType.set(node.type, (byType.get(node.type) || 0) + 1))
+    return Array.from(byType.entries()).sort(([a], [b]) => a.localeCompare(b))
+  }, [graph.nodes])
+
+  if (phase === 'loading') {
+    return <div className="entity-empty"><h3>Loading entity graph…</h3></div>
+  }
+
+  if (phase === 'error') {
+    return (
+      <div className="entity-empty">
+        <h3>Entity graph unavailable</h3>
+        <p>{error || 'Could not load findings for graph analysis.'}</p>
+        <button className="btn ghost" onClick={reload}>Retry</button>
       </div>
-      <h3>Entity Graph</h3>
-      <p>Interactive host, user &amp; device relationship graph — pivot across shared entities to trace lateral movement. Coming soon.</p>
-      <button className="btn primary"><Icon name="graph" /> Preview the graph</button>
+    )
+  }
+
+  if (graph.nodes.length === 0) {
+    return (
+      <div className="entity-empty">
+        <h3>No entities found</h3>
+        <p>Load findings with host, user, or source fields to build the relationship graph.</p>
+      </div>
+    )
+  }
+
+  return (
+    <div className="entity-tab">
+      <div className="entity-summary">
+        <div>
+          <h3>Entity relationships</h3>
+          <span className="muted">{graph.nodes.length} entities · {graph.links.length} relationships · {rows.length} findings</span>
+        </div>
+        <div className="entity-counts">
+          {counts.map(([type, count]) => (
+            <span key={type}>{entityTypeLabel(type)} <b>{count}</b></span>
+          ))}
+        </div>
+      </div>
+      <EntityGraph nodes={graph.nodes} links={graph.links} height="calc(100vh - 255px)" maxNodes={500} />
     </div>
   )
 }

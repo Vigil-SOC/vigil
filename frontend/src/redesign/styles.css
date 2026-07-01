@@ -3109,6 +3109,54 @@
       white-space: normal;
    }
 
+   .agent-pick-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+   }
+
+   .agent-pick-row {
+      width: 100%;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 11px 12px;
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      background: var(--bg-2);
+      color: var(--tx-2);
+      cursor: pointer;
+   }
+
+   .agent-pick-row:hover:not(:disabled) {
+      border-color: var(--accent);
+      background: var(--hover);
+      color: var(--tx);
+   }
+
+   .agent-pick-row:disabled {
+      cursor: wait;
+      opacity: .65;
+   }
+
+   .agent-pick-row .am-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--tx);
+   }
+
+   .agent-pick-row .am-spec {
+      font-size: 11.5px;
+      color: var(--accent-2);
+   }
+
+   .agent-pick-row .am-desc {
+      font-size: 12px;
+      line-height: 1.4;
+      color: var(--tx-3);
+   }
+
    .agent-menu {
       max-width: 300px;
    }
@@ -4393,6 +4441,50 @@
       max-width: 440px;
       line-height: 1.55;
       margin: -4px 0 6px;
+   }
+
+   .entity-tab {
+      padding: 18px 22px 24px;
+      min-height: calc(100vh - 145px);
+      background: var(--bg);
+   }
+
+   .entity-summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 14px;
+   }
+
+   .entity-summary h3 {
+      font-size: 14.5px;
+      margin: 0 0 3px;
+   }
+
+   .entity-counts {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+   }
+
+   .entity-counts span {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border: 1px solid var(--line-soft);
+      border-radius: 8px;
+      background: var(--bg-2);
+      color: var(--tx-3);
+      font-size: 12px;
+   }
+
+   .entity-counts b {
+      color: var(--tx);
+      font-weight: 600;
    }
 
    /* ---------- Timeline tab ---------- */

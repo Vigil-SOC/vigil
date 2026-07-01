@@ -150,11 +150,13 @@ export default function FindingPopup({
   id,
   onClose,
   onChanged,
+  onInvestigate,
 }: {
   id: string | null
   onClose: () => void
   /** called after a status change / delete so the list can refetch */
   onChanged?: () => void
+  onInvestigate?: (finding: ReturnType<typeof mapApiFinding>) => void
 }) {
   const [raw, setRaw] = useState<RawFinding | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -355,6 +357,11 @@ export default function FindingPopup({
 
           {/* actions */}
           <div className="fp-actions">
+            {onInvestigate && (
+              <button className="btn primary" onClick={() => onInvestigate(f)} disabled={acting}>
+                <Icon name="brain" size={14} /> Investigate with agent
+              </button>
+            )}
             <button className="btn danger" onClick={() => setConfirmDel(true)} disabled={acting}>
               <Icon name="trash" size={14} /> Delete finding
             </button>
