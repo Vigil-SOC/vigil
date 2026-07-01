@@ -1,14 +1,3 @@
-"""
-AI-assisted custom SOC agent generator (issue #80, Phase 2).
-
-Takes a natural-language description of an agent's purpose — and optionally a
-current draft plus user feedback — and produces a draft agent configuration by
-prompting Claude with context about the platform's existing agents, available
-MCP tools, and the shape of the Vigil base prompt.
-
-Routes through ClaudeService, which flows through Bifrost per GH #84.
-"""
-
 import json
 import logging
 import re
@@ -268,10 +257,7 @@ class AgentAIGenerator:
             "{methodology}"
         )
 
-    # --- Response parsing --------------------------------------------------
-
     def _extract_json(self, text: str) -> Optional[Dict[str, Any]]:
-        """Extract the first valid JSON object from the response."""
         fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if fence:
             candidate = fence.group(1)
@@ -284,7 +270,6 @@ class AgentAIGenerator:
             return None
 
     def _normalize_draft(self, draft: Dict[str, Any]) -> Dict[str, Any]:
-        """Fill in defaults and sanitize values so the draft is safe to save."""
         name = (draft.get("name") or "").strip() or "Untitled Agent"
         icon_raw = (draft.get("icon") or "C").strip()
         icon = (icon_raw[:1] or "C").upper()

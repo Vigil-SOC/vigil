@@ -3,6 +3,9 @@
 # Usage: ./start.sh [-d|--daemon]
 source "$(dirname "$0")/scripts/lib.sh"
 
+# Version shown in the startup banner, read from the repo VERSION file.
+VERSION="$(cat "$(dirname "$0")/VERSION" 2>/dev/null || echo "dev")"
+
 DAEMON=0
 for arg in "$@"; do
     case "$arg" in
@@ -64,7 +67,7 @@ export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
 print_ready() {
     echo ""
     echo "=========================================="
-    echo "Vigil SOC - Ready"
+    echo "Vigil SOC v$VERSION - Ready"
     echo "=========================================="
     echo "Backend:  http://localhost:6987"
     echo "Frontend: http://localhost:6988"

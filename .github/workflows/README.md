@@ -33,10 +33,10 @@ The workflows are currently configured for **Continuous Integration** only - the
 - **Purpose**: Read Conventional Commits since the last tag; open or update a release PR that bumps `VERSION`, `helm/vigil/Chart.yaml` (both `appVersion` and `version`, in lockstep), `frontend/package.json`, and `frontend/package-lock.json`, and updates `CHANGELOG.md`. On merge, push the `vX.Y.Z` tag and create the GitHub Release. See `RELEASING.md`.
 - **Deployment**: None (tagging only — downstream `release.yml` handles deploys)
 
-### 3. `release.yml` - Tag-Triggered Production Pipeline
+### 3. `release.yml` - Tag-Triggered Image Build & Publish
 - **Triggers**: Version tags (`v*.*.*`)
-- **Purpose**: Build production images, Trivy scan, deploy to production VMs, post-deploy validation. The GitHub Release object is created by `release-please.yml`, not this workflow.
-- **Deployment**: Production (SSH to `PROD_VM_HOST` via `scripts/deploy_to_vm.sh production`, runs health checks, posts Slack notifications). Requires `SSH_PRIVATE_KEY`, `PROD_VM_HOST`, `PROD_VM_USER`, and `SLACK_WEBHOOK_URL` secrets.
+- **Purpose**: Build and push the `vigil-backend` and `vigil-daemon` images to GHCR, smoke-test that they start, and annotate the GitHub Release with the image digests. The GitHub Release object itself is created by `release-please.yml`, not this workflow.
+- **Deployment**: None — this workflow publishes images only, it does not deploy. (`scripts/deploy_to_vm.sh` is an unwired manual VM-deploy helper kept for the future; see `docs/DEPLOYMENT_GUIDE.md`.)
 
 ### 4. `nightly.yml` - Scheduled Testing
 - **Triggers**: Daily at 2 AM UTC

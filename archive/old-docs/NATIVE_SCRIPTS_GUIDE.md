@@ -2,7 +2,7 @@
 
 ## ✅ Scripts Retrieved & Updated
 
-Your original Linux-native startup scripts have been retrieved from GitHub and updated for AI SOC v2.0!
+Your original Linux-native startup scripts have been retrieved from GitHub and updated for AI SOC!
 
 ---
 
@@ -78,7 +78,7 @@ All scripts are now **executable** and ready to use! ✅
 **What you'll see:**
 ```
 ==========================================
-Vigil SOC v2.0 - Startup
+Vigil SOC - Startup
 ==========================================
 ✓ Loading environment variables from .env
 ✓ PostgreSQL is already running
@@ -88,7 +88,7 @@ Starting backend API server...
 Starting frontend dev server...
 
 ==========================================
-✅ Vigil SOC v2.0 - Ready!
+✅ Vigil SOC - Ready!
 ==========================================
 Backend API:   http://localhost:6987
 Frontend UI:   http://localhost:6988
