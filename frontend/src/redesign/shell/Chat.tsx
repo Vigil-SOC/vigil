@@ -21,6 +21,7 @@ import {
   type CostEstimate,
   type ConversationDetail,
   type ImportConversationInput,
+  type AIModelInfo,
 } from '../../services/api'
 import { notificationService } from '../../services/notifications'
 import { useConversations } from './useConversations'
@@ -72,9 +73,22 @@ interface TraceDetail {
 }
 
 const MODEL = 'claude-sonnet-4-6'
-const CONTEXT_WINDOW = 200000
-// shown only until the live model list arrives from GET /claude/models
-const MODEL_FALLBACK = [{ id: MODEL, name: 'Claude Sonnet 4.6' }]
+const DEFAULT_CONTEXT_WINDOW = 200000
+interface ChatModelOption {
+  id: string
+  name: string
+  modelId: string
+  providerId?: string
+  providerType: string
+  contextWindow: number
+}
+const MODEL_FALLBACK: ChatModelOption[] = [{
+  id: MODEL,
+  name: 'Claude Sonnet 4.6',
+  modelId: MODEL,
+  providerType: 'anthropic',
+  contextWindow: DEFAULT_CONTEXT_WINDOW,
+}]
 const newSessionId = () =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
@@ -221,12 +235,14 @@ export default function Chat({
   open,
   onClose,
   seed,
+  seedAgentId,
   onSeedConsumed,
 }: {
   open: boolean
   onClose: () => void
   /** when set, auto-send this prompt (e.g. "Investigate finding …") */
   seed?: string | null
+  seedAgentId?: string
   onSeedConsumed?: () => void
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
@@ -262,7 +278,7 @@ export default function Chat({
   const [enableThinking, setEnableThinking] = useState(savedSettings.enableThinking)
   const [thinkingBudget, setThinkingBudget] = useState(savedSettings.thinkingBudget)
   const [systemPrompt, setSystemPrompt] = useState(savedSettings.systemPrompt)
-  const [models, setModels] = useState<{ id: string; name: string }[]>([])
+  const [models, setModels] = useState<ChatModelOption[]>([])
   const [mcpStatus, setMcpStatus] = useState<{ available: number; total: number } | null>(null)
   // live pre-call estimate from the backend (exact count_tokens + USD band),
   // mirroring the classic drawer; null until the first debounced estimate lands
@@ -364,19 +380,38 @@ export default function Chat({
   useEffect(() => {
     if (!open || metaLoadedRef.current) return
     metaLoadedRef.current = true
-    claudeApi
-      .getModels()
-      .then((r) => setModels((r.data?.models || []) as { id: string; name: string }[]))
-      .catch(() => {})
-    aiConfigApi
-      .getConfig()
-      .then((r) => {
-        const configured = r.data?.assignments?.chat_default?.model_id
-        if (configured && !settingsExistedRef.current && !userPickedModelRef.current) {
-          setModel(configured)
-        }
-      })
-      .catch(() => {})
+    Promise.all([
+      aiConfigApi.listModels().catch(() => ({ data: { models: [] as AIModelInfo[] } })),
+      aiConfigApi.getConfig().catch(() => ({ data: null })),
+    ]).then(([modelsRes, configRes]) => {
+      const liveModels = (modelsRes.data?.models || []).map((m) => ({
+        id: m.provider_id ? `${m.provider_id}::${m.model_id}` : m.model_id,
+        name: `${m.display_name || m.model_id} · ${m.provider_type}`,
+        modelId: m.model_id,
+        providerId: m.provider_id,
+        providerType: m.provider_type,
+        contextWindow: m.context_window || DEFAULT_CONTEXT_WINDOW,
+      }))
+      if (liveModels.length > 0) setModels(liveModels)
+      const assignment = configRes.data?.assignments?.chat_default
+      if (assignment && !settingsExistedRef.current && !userPickedModelRef.current) {
+        setModel(`${assignment.provider_id}::${assignment.model_id}`)
+      }
+    }).catch(() => {
+      claudeApi
+        .getModels()
+        .then((r) => {
+          const fallback = ((r.data?.models || []) as { id: string; name: string }[]).map((m) => ({
+            id: m.id,
+            name: m.name,
+            modelId: m.id,
+            providerType: 'anthropic',
+            contextWindow: DEFAULT_CONTEXT_WINDOW,
+          }))
+          setModels(fallback)
+        })
+        .catch(() => {})
+    })
     mcpApi
       .getStatuses()
       .then((r) => {
@@ -421,6 +456,12 @@ export default function Chat({
   }, [menuOpen])
 
   const agentName = agents.find((a) => a.id === agentId)?.name || 'Default agent'
+  const activeModels = models.length ? models : MODEL_FALLBACK
+  const selectedModel =
+    activeModels.find((m) => m.id === model) ||
+    activeModels.find((m) => m.modelId === model) ||
+    MODEL_FALLBACK[0]
+  const contextWindow = selectedModel.contextWindow || DEFAULT_CONTEXT_WINDOW
 
   // Pre-call cost + exact-token estimate (debounced 400ms, abortable), mirroring
   // the classic drawer: the backend runs Anthropic count_tokens and prices the
@@ -444,8 +485,8 @@ export default function Chat({
       }
       analyticsApi
         .estimateCost({
-          provider_type: 'anthropic',
-          model_id: model,
+          provider_type: selectedModel.providerType,
+          model_id: selectedModel.modelId,
           messages: payloadMsgs,
           system_prompt: systemPrompt || undefined,
           max_tokens: maxTokens,
@@ -463,7 +504,7 @@ export default function Chat({
       clearTimeout(t)
       ctrl.abort()
     }
-  }, [open, messages, draft, systemPrompt, model, maxTokens])
+  }, [open, messages, draft, systemPrompt, model, maxTokens, selectedModel])
 
   // char heuristic (~chars/4), used only until the first server estimate lands
   const heuristicTokens = useMemo(() => {
@@ -473,8 +514,8 @@ export default function Chat({
     return Math.round(chars / 4)
   }, [messages, streamText, streamThinking, systemPrompt, draft])
   const estimatedTokens = exactTokens ?? heuristicTokens
-  const ctxPct = Math.min((estimatedTokens / CONTEXT_WINDOW) * 100, 100)
-  const ctxState = estimatedTokens > 150000 ? 'danger' : estimatedTokens > 100000 ? 'warn' : 'ok'
+  const ctxPct = Math.min((estimatedTokens / contextWindow) * 100, 100)
+  const ctxState = estimatedTokens > contextWindow * 0.75 ? 'danger' : estimatedTokens > contextWindow * 0.5 ? 'warn' : 'ok'
   const costTitle = costEstimate
     ? `${
         costEstimate.token_count_method === 'anthropic_count_tokens'
@@ -485,7 +526,7 @@ export default function Chat({
       } Pricing: ${costEstimate.pricing_source}.`
     : ''
 
-  const send = async (override?: string, opts?: { fresh?: boolean }) => {
+  const send = async (override?: string, opts?: { fresh?: boolean; agentId?: string }) => {
     const text = (override ?? draft).trim()
     if (!text || loading) return
     // `fresh` starts a clean thread (used when opening a new investigation) so
@@ -514,7 +555,7 @@ export default function Chat({
           enable_thinking: enableThinking,
           thinking_budget: enableThinking ? thinkingBudget : undefined,
           system_prompt: systemPrompt || undefined,
-          agent_id: agentId || undefined,
+          agent_id: (opts?.agentId ?? agentId) || undefined,
           session_id: sessionRef.current,
         }),
         signal: ac.signal,
@@ -690,22 +731,24 @@ export default function Chat({
   // (current or archived) if one exists, else archive the current and start a
   // fresh one. The seed prompt is deterministic per finding/case, so it doubles
   // as the dedup key (investigation-keyed, like the classic drawer's tabs).
-  const openInvestigation = async (prompt: string) => {
+  const openInvestigation = async (prompt: string, opts?: { agentId?: string }) => {
     if (loading) return
-    if (currentKeyRef.current === prompt && messages.length > 0) return // already here
-    const mapped = loadKeymap()[prompt]
+    const key = opts?.agentId ? `${prompt}\n\n[agent:${opts.agentId}]` : prompt
+    if (opts?.agentId) setAgentId(opts.agentId)
+    if (currentKeyRef.current === key && messages.length > 0) return // already here
+    const mapped = loadKeymap()[key]
     if (mapped) {
-      const opened = await openConversation(mapped, prompt)
+      const opened = await openConversation(mapped, key)
       if (opened) return // reopened the existing thread for this finding/case
     }
     archiveCurrent()
     sessionRef.current = newSessionId()
-    currentKeyRef.current = prompt
-    setKeymapEntry(prompt, sessionRef.current) // so re-opening this finding restores it
+    currentKeyRef.current = key
+    setKeymapEntry(key, sessionRef.current) // so re-opening this finding restores it
     setSessionSummary(null)
     setCostEstimate(null)
     setExactTokens(null)
-    send(prompt, { fresh: true })
+    send(prompt, { fresh: true, agentId: opts?.agentId })
   }
 
   // load the per-interaction reasoning trace for the current session
@@ -836,12 +879,12 @@ export default function Chat({
     // guard against StrictMode's double-invoke firing the same seed twice
     if (open && seed !== seedRef.current && !loading) {
       seedRef.current = seed
-      openInvestigation(seed)
+      openInvestigation(seed, seedAgentId ? { agentId: seedAgentId } : undefined)
       onSeedConsumed?.()
     }
     // send/loading intentionally omitted: we fire once per new seed
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, seed])
+  }, [open, seed, seedAgentId])
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -912,8 +955,8 @@ export default function Chat({
         <div className="chat-meta">
           <div className="cm-line">
             <span className={`cm-ctx ${ctxState}`} title="Estimated context usage for the next request">
-              {estimatedTokens.toLocaleString()} / {CONTEXT_WINDOW / 1000}k tokens
-              {estimatedTokens > 150000 && <span className="cm-warn"> · auto-summarizes on send</span>}
+              {estimatedTokens.toLocaleString()} / {Math.round(contextWindow / 1000)}k tokens
+              {estimatedTokens > contextWindow * 0.75 && <span className="cm-warn"> · auto-summarizes on send</span>}
             </span>
             {costEstimate && (
               <span className="cm-cost" title={costTitle}>
@@ -1101,8 +1144,8 @@ export default function Chat({
           </div>
           <div className="cs-ctx">
             <span className={`cs-ctx-label ${ctxState}`}>
-              Context {exactTokens != null ? '' : '~'}{estimatedTokens.toLocaleString()} / {CONTEXT_WINDOW.toLocaleString()} tokens
-              {estimatedTokens > 150000 && ' · auto-summarizes on next send'}
+              Context {exactTokens != null ? '' : '~'}{estimatedTokens.toLocaleString()} / {contextWindow.toLocaleString()} tokens
+              {estimatedTokens > contextWindow * 0.75 && ' · auto-summarizes on next send'}
             </span>
             <div className="cs-bar"><span className={`cs-bar-fill ${ctxState}`} style={{ width: `${ctxPct}%` }} /></div>
             <span className="cs-ctx-sub">Output max {maxTokens.toLocaleString()} tokens</span>
@@ -1126,7 +1169,7 @@ export default function Chat({
             <Select
               value={model}
               onSelect={(m) => { userPickedModelRef.current = true; setModel(m) }}
-              options={(models.length ? models : MODEL_FALLBACK).map((m) => ({ value: m.id, label: m.name }))}
+              options={activeModels.map((m) => ({ value: m.id, label: m.name }))}
             />
           </div>
           <div className="cs-field">

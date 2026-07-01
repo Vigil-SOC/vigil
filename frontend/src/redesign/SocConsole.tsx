@@ -81,6 +81,7 @@ function SocConsoleInner() {
   const { mode, accent } = useSocTheme()
   const [chatOpen, setChatOpen] = useState(false)
   const [chatSeed, setChatSeed] = useState<string | null>(null)
+  const [chatSeedAgentId, setChatSeedAgentId] = useState<string | undefined>()
   const [viewFull, setViewFull] = useState(false)
   // runtime-dynamic rail membership (mirrors production NavigationRail):
   // integrations are fetched once, orchestrator status is polled every 10s. No
@@ -113,9 +114,12 @@ function SocConsoleInner() {
     })
   }, [])
 
-  const openChat = useCallback((prompt?: string) => {
+  const openChat = useCallback<ScreenProps['openChat']>((prompt, options) => {
     setChatOpen(true)
-    if (prompt) setChatSeed(prompt)
+    if (prompt) {
+      setChatSeed(prompt)
+      setChatSeedAgentId(options?.agentId)
+    }
   }, [])
   const closeChat = useCallback(() => setChatOpen(false), [])
 
@@ -232,7 +236,16 @@ function SocConsoleInner() {
         </div>
 
         {/* Vigil chat dock */}
-        <Chat open={chatOpen} onClose={closeChat} seed={chatSeed} onSeedConsumed={() => setChatSeed(null)} />
+        <Chat
+          open={chatOpen}
+          onClose={closeChat}
+          seed={chatSeed}
+          seedAgentId={chatSeedAgentId}
+          onSeedConsumed={() => {
+            setChatSeed(null)
+            setChatSeedAgentId(undefined)
+          }}
+        />
       </div>
 
       {/* floating Vigil assistant button — hidden while the chat dock is open
