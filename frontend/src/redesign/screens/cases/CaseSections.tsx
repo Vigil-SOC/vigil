@@ -17,6 +17,7 @@ import {
 import { format } from 'date-fns'
 import { casesApi } from '../../../services/api'
 import { Icon } from '../../shared/icons'
+import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
 
 /** the old CaseComments default — the redesign has no auth context */
@@ -109,6 +110,10 @@ function Note({ children }: { children: ReactNode }) {
   return <div className="muted text-center py-6 text-[13px] px-[18px]">{children}</div>
 }
 
+function MiniEmpty({ title, body, icon = 'info' }: { title: string; body?: string; icon?: Parameters<typeof EmptyState>[0]['icon'] }) {
+  return <EmptyState compact icon={icon} title={title} body={body} />
+}
+
 function AddBtn({ on, onClick }: { on: boolean; onClick: () => void }) {
   return (
     <button className="btn ghost icon" title={on ? 'Cancel' : 'Add'} onClick={onClick}>
@@ -177,7 +182,7 @@ export function EvidenceCard({ caseId }: { caseId: string }) {
           <thead><tr><th>Type</th><th>Name</th><th>Description</th><th>Collected</th><th>By</th><th>Hash</th></tr></thead>
           <tbody>
             {phase === 'loading' && <tr><td colSpan={6}><Note>Loading…</Note></td></tr>}
-            {phase === 'ready' && items.length === 0 && <tr><td colSpan={6}><Note>No data here.</Note></td></tr>}
+            {phase === 'ready' && items.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="doc" title="No evidence attached" body="Add screenshots, URLs, logs, or files that support this case." /></td></tr>}
             {items.map((e) => (
               <tr key={e.id}>
                 <td><span className="tag">{e.evidence_type}</span></td>
@@ -207,7 +212,7 @@ export function ResolutionStepsCard({ steps }: { steps: ResolutionStep[] }) {
   return (
     <SectionCard title="Resolution steps" count={`${steps.length}`}>
       <div className="p-[18px] flex flex-col gap-3">
-        {steps.length === 0 && <Note>No data here.</Note>}
+        {steps.length === 0 && <MiniEmpty icon="check2" title="No resolution steps yet" body="Document actions taken and outcomes as this case moves toward closure." />}
         {steps.map((s, i) => (
           <div key={i} className="flex gap-2.5">
             <span className="text-ok mt-[1px]">✓</span>
@@ -298,7 +303,7 @@ export function TasksCard({ caseId }: { caseId: string }) {
       )}
       <div className="p-[18px] pt-3 flex flex-col gap-2.5">
         {phase === 'loading' && <Note>Loading…</Note>}
-        {phase === 'ready' && tasks.length === 0 && <Note>No data here.</Note>}
+        {phase === 'ready' && tasks.length === 0 && <MiniEmpty icon="note" title="No tasks yet" body="Add tasks to assign containment, validation, or follow-up work." />}
         {tasks.map((t) => {
           const overdue = t.due_date && t.status !== 'completed' && new Date(t.due_date).getTime() < Date.now()
           return (
@@ -388,7 +393,7 @@ export function SLACard({ caseId }: { caseId: string }) {
     <SectionCard title="SLA">
       <div className="p-[18px]">
         {phase === 'loading' && <Note>Loading…</Note>}
-        {phase === 'ready' && !data && <Note>No data here.</Note>}
+        {phase === 'ready' && !data && <MiniEmpty icon="clock" title="No SLA policy attached" body="Apply an SLA policy to track response and resolution timing." />}
         {data && (
           <>
             <div className="flex items-center gap-2 mb-3">
@@ -516,7 +521,7 @@ export function CommentsCard({ caseId }: { caseId: string }) {
     <SectionCard title="Comments" count={`${total}`} wide>
       <div className="p-[18px] flex flex-col gap-4">
         {phase === 'loading' && <Note>Loading…</Note>}
-        {phase === 'ready' && total === 0 && <Note>No data here.</Note>}
+        {phase === 'ready' && total === 0 && <MiniEmpty icon="note" title="No comments yet" body="Use comments to capture analyst notes, handoffs, and review decisions." />}
         {visible.map((c) => <CommentNode key={c.id} c={c} onReply={setReplyTo} />)}
         {tree.length > 1 && (
           <button
@@ -590,7 +595,7 @@ export function WatchersCard({ caseId }: { caseId: string }) {
       )}
       <div className="p-[18px] flex flex-col gap-2.5">
         {phase === 'loading' && <Note>Loading…</Note>}
-        {phase === 'ready' && watchers.length === 0 && <Note>No data here.</Note>}
+        {phase === 'ready' && watchers.length === 0 && <MiniEmpty icon="eye" title="No watchers yet" body="Add analysts who should receive updates for this case." />}
         {watchers.map((w) => (
           <div key={w.user_id} className="flex items-center gap-2.5">
             <span className="avatar">{initials(w.user_id)}</span>
@@ -666,7 +671,7 @@ export function IOCsCard({ caseId }: { caseId: string }) {
           <thead><tr><th>Type</th><th>Value</th><th>Description</th><th>Source</th><th>Threat</th><th>First seen</th></tr></thead>
           <tbody>
             {phase === 'loading' && <tr><td colSpan={6}><Note>Loading…</Note></td></tr>}
-            {phase === 'ready' && iocs.length === 0 && <tr><td colSpan={6}><Note>No data here.</Note></td></tr>}
+            {phase === 'ready' && iocs.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="alert" title="No IOCs recorded" body="Add IPs, domains, hashes, URLs, or emails observed during investigation." /></td></tr>}
             {iocs.map((i) => {
               const tl = threatLevel(i)
               return (
@@ -743,7 +748,7 @@ export function RelatedCasesCard({ caseId, rows, onSelect }: { caseId: string; r
       )}
       <div className="p-[18px] flex flex-col gap-2.5">
         {phase === 'loading' && <Note>Loading…</Note>}
-        {phase === 'ready' && linked.length === 0 && <Note>No data here.</Note>}
+        {phase === 'ready' && linked.length === 0 && <MiniEmpty icon="link" title="No related cases" body="Link duplicate, blocking, or related cases when investigations overlap." />}
         {linked.map((l) => (
           <div key={l.link_id} className="flex items-center gap-2.5 clickable" onClick={() => onSelect(l.related_case_id)}>
             <span className="tag">{REL_LABEL[l.relationship_type || ''] || l.relationship_type || '—'}</span>
@@ -784,7 +789,7 @@ export function AuditLogCard({ caseId }: { caseId: string }) {
     <SectionCard title="Audit log" count={`${entries.length}`} wide>
       <div className="p-[18px] flex flex-col gap-2.5">
         {phase === 'loading' && <Note>Loading…</Note>}
-        {phase === 'ready' && entries.length === 0 && <Note>No data here.</Note>}
+        {phase === 'ready' && entries.length === 0 && <MiniEmpty icon="clock" title="No audit entries yet" body="Status, assignment, and field changes will be recorded here." />}
         {entries.map((a) => (
           <div key={a.id} className="flex gap-2.5 text-[13px]">
             <span className="avatar">{initials(a.user)}</span>
@@ -817,7 +822,7 @@ export function ActivityCard({ activities }: { activities: Activity[] }) {
   return (
     <SectionCard title="Recent activity" count={`${activities.length}`}>
       <div className="p-[18px] flex flex-col gap-3">
-        {activities.length === 0 && <Note>No data here.</Note>}
+        {activities.length === 0 && <MiniEmpty icon="clock" title="No recent activity" body="Case updates, comments, workflow events, and finding changes will appear here." />}
         {activities.slice(0, 12).map((a, i) => (
           <div key={i} className="text-[13px]">
             <div className="text-tx-2">{a.description || '—'}</div>

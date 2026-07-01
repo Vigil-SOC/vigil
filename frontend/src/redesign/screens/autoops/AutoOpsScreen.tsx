@@ -9,7 +9,7 @@
    ============================================================ */
 import { useEffect, useState, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
-import { Toggle, NumberInput } from '../../shared/ui'
+import { EmptyState, Toggle, NumberInput } from '../../shared/ui'
 import type { ScreenProps } from '../../shared/types'
 import { useAutoOps, type Investigation, type OrchestratorStatus } from './useAutoOps'
 import { StatusBadge } from './statusBadge'
@@ -33,7 +33,7 @@ const KPIS: KpiDef[] = [
   { key: 'failed', label: 'Failed', statuses: ['failed'], value: (s) => s.failed, color: 'var(--crit)', note: 'errored out' },
 ]
 
-export default function AutoOpsScreen({ openChat, setViewFull }: ScreenProps) {
+export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }: ScreenProps) {
   const {
     status, investigations, phase, error, notice, busy,
     reload, clearError, clearNotice,
@@ -64,17 +64,10 @@ export default function AutoOpsScreen({ openChat, setViewFull }: ScreenProps) {
   }
 
   if (!status && phase === 'loading') {
-    return <div className="text-sm text-tx-3 py-20 text-center">Loading autonomous operations…</div>
+    return <EmptyState icon="bot" title="Loading autonomous operations…" />
   }
   if (!status && phase === 'error') {
-    return (
-      <div className="py-20 text-center">
-        <div className="flex flex-col items-center gap-2.5">
-          <span className="text-sm text-tx-3">Couldn’t load autonomous operations: {error}</span>
-          <button className="btn ghost" onClick={reload}>Retry</button>
-        </div>
-      </div>
-    )
+    return <EmptyState icon="alert" title="Couldn’t load autonomous operations" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
   }
   if (!status) return <></>
 
@@ -141,6 +134,18 @@ export default function AutoOpsScreen({ openChat, setViewFull }: ScreenProps) {
 
       {error && <Banner tone="error" onClose={clearError}>{error}</Banner>}
       {notice && <Banner tone="ok" onClose={clearNotice}>{notice}</Banner>}
+      {!status.enabled && (
+        <div className="px-[22px] pt-4">
+          <EmptyState
+            compact
+            icon="bot"
+            title="Auto Ops is disabled"
+            body="You can queue investigations from findings, but agents will not run until autonomous investigation is enabled."
+            primary={{ label: 'Open Auto Investigate settings', onClick: () => goSettings('autoinvestigate'), icon: 'gear' }}
+            secondary={{ label: 'Enable now', onClick: toggleEnabled, icon: 'bolt' }}
+          />
+        </div>
+      )}
 
       {/* ---------- KPI strip ---------- */}
       <div className="kpi-strip" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
@@ -195,8 +200,15 @@ export default function AutoOpsScreen({ openChat, setViewFull }: ScreenProps) {
               <tbody>
                 {filtered.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-                      {statusFilter ? 'No investigations match this filter.' : 'No investigations yet.'}
+                    <td colSpan={9}>
+                      <EmptyState
+                        table
+                        icon={statusFilter ? 'filter' : 'bot'}
+                        title={statusFilter ? 'No investigations match this filter' : 'No investigations queued'}
+                        body={statusFilter ? 'Clear the status filter to return to the full investigation queue.' : 'Scan existing findings to queue investigations, or open Findings to select a specific alert.'}
+                        primary={statusFilter ? { label: 'Clear filter', onClick: () => setStatusFilter(null), icon: 'close' } : { label: 'Scan findings', onClick: scanFindings, icon: 'search' }}
+                        secondary={statusFilter ? undefined : { label: 'Open Findings', onClick: () => go('dashboard'), icon: 'grid' }}
+                      />
                     </td>
                   </tr>
                 ) : (

@@ -6,7 +6,7 @@
    ============================================================ */
 import { Fragment, useEffect, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { Popup, activateOnKey } from '../../shared/ui'
+import { EmptyState, Popup, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { AGENT_META, prettyHandle, type Workflow, type AgentTemplate } from '../../data/appData'
 import { useWorkflows, useAgents, useSkills } from './useWorkflowsData'
@@ -18,7 +18,7 @@ import type { ScreenProps } from '../../shared/types'
 
 type WfTab = 'workflows' | 'agents' | 'skills'
 
-export default function WorkflowsScreen({ openChat }: ScreenProps) {
+export default function WorkflowsScreen({ openChat, goSettings }: ScreenProps) {
   const [tab, setTab] = useState<WfTab>('workflows')
   const tabs: [WfTab, string][] = [
     ['workflows', 'Workflows'],
@@ -42,7 +42,7 @@ export default function WorkflowsScreen({ openChat }: ScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && <WorkflowCatalog openChat={openChat} />}
+      {tab === 'workflows' && <WorkflowCatalog openChat={openChat} goSettings={goSettings} />}
       {tab === 'agents' && <AgentsTab />}
       {tab === 'skills' && <SkillsTab />}
     </>
@@ -52,7 +52,7 @@ export default function WorkflowsScreen({ openChat }: ScreenProps) {
 /* ---- shared empty/loading/error row ---- */
 function StateMsg({ children }: { children: React.ReactNode }) {
   return (
-    <div className="muted" style={{ padding: '40px 22px', textAlign: 'center' }}>
+    <div style={{ padding: '10px 22px 22px' }}>
       {children}
     </div>
   )
@@ -83,7 +83,7 @@ function AgentSequence({ agents }: { agents: string[] }) {
 /* ---------------- Workflows catalog ---------------- */
 type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete' | 'details'; wf: Workflow }
 
-function WorkflowCatalog({ openChat }: { openChat: (prompt?: string) => void }) {
+function WorkflowCatalog({ openChat, goSettings }: { openChat: (prompt?: string) => void; goSettings: ScreenProps['goSettings'] }) {
   const { rows, phase, error, reload } = useWorkflows()
   const [q, setQ] = useState('')
   const [modal, setModal] = useState<WfModal | null>(null)
@@ -104,10 +104,18 @@ function WorkflowCatalog({ openChat }: { openChat: (prompt?: string) => void }) 
         <button className="btn ghost" onClick={() => setCreating('ai')}><Icon name="sparkle" /> Generate with AI</button>
         <button className="btn primary" onClick={() => setCreating('blank')}><Icon name="plus" /> New workflow</button>
       </div>
-      {phase === 'loading' && <StateMsg>Loading workflows…</StateMsg>}
-      {phase === 'error' && <StateMsg>Couldn’t load workflows: {error}</StateMsg>}
+      {phase === 'loading' && <StateMsg><EmptyState compact icon="flow" title="Loading workflows…" /></StateMsg>}
+      {phase === 'error' && <StateMsg><EmptyState icon="alert" title="Couldn’t load workflows" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && list.length === 0 && (
-        <StateMsg>{q ? 'No workflows match your search.' : 'No workflows available.'}</StateMsg>
+        <StateMsg>
+          <EmptyState
+            icon={q ? 'filter' : 'flow'}
+            title={q ? 'No workflows match this search' : 'No workflows yet'}
+            body={q ? 'Clear the search to return to the workflow catalog.' : 'Create a workflow manually or generate one with AI from a plain-language investigation goal.'}
+            primary={q ? { label: 'Clear search', onClick: () => setQ(''), icon: 'close' } : { label: 'New workflow', onClick: () => setCreating('blank'), icon: 'plus' }}
+            secondary={q ? undefined : { label: 'Generate with AI', onClick: () => setCreating('ai'), icon: 'sparkle' }}
+          />
+        </StateMsg>
       )}
       {phase === 'ready' && list.length > 0 && (
         <div className="grid gap-4 px-[22px] py-5 [grid-template-columns:repeat(auto-fill,minmax(390px,1fr))]">
@@ -158,6 +166,11 @@ function WorkflowCatalog({ openChat }: { openChat: (prompt?: string) => void }) 
       {modal?.kind === 'edit' && <EditModal wf={modal.wf} onClose={close} onSaved={() => { close(); reload() }} />}
       {modal?.kind === 'delete' && <DeleteModal wf={modal.wf} onClose={close} onDeleted={() => { close(); reload() }} />}
       {creating && <WorkflowBuilder autoGenerate={creating === 'ai'} onClose={() => setCreating(null)} onSaved={() => { setCreating(null); reload() }} />}
+      {phase === 'ready' && rows.length === 0 && (
+        <div className="px-[22px] pb-5">
+          <button className="btn ghost" onClick={() => goSettings('ai-config')}><Icon name="gear" /> Configure AI models</button>
+        </div>
+      )}
     </>
   )
 }
@@ -442,9 +455,9 @@ function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
 
   return (
     <Popup open onClose={onClose} title={`History · ${wf.name}`} width={720}>
-      {phase === 'loading' && <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>Loading run history…</div>}
-      {phase === 'error' && <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>Couldn’t load history: {error}</div>}
-      {phase === 'ready' && runs.length === 0 && <div className="muted" style={{ padding: '24px 0', textAlign: 'center' }}>No runs yet for this workflow.</div>}
+      {phase === 'loading' && <EmptyState compact icon="clock" title="Loading run history…" />}
+      {phase === 'error' && <EmptyState compact icon="alert" title="Couldn’t load history" body={error} />}
+      {phase === 'ready' && runs.length === 0 && <EmptyState compact icon="clock" title="No runs yet" body="Run this workflow to capture execution history, duration, trigger, and cost." />}
       {phase === 'ready' && runs.length > 0 && (
         <div className="table-wrap">
           <table className="tbl">
@@ -670,9 +683,9 @@ function AgentsTab() {
         </div>
       </div>
 
-      {phase === 'loading' && <StateMsg>Loading agents…</StateMsg>}
-      {phase === 'error' && <StateMsg>Couldn’t load agents: {error}</StateMsg>}
-      {phase === 'ready' && rows.length === 0 && <StateMsg>No agents available.</StateMsg>}
+      {phase === 'loading' && <StateMsg><EmptyState compact icon="brain" title="Loading agents…" /></StateMsg>}
+      {phase === 'error' && <StateMsg><EmptyState icon="alert" title="Couldn’t load agents" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
+      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="brain" title="No agents yet" body="Create a custom SOC agent or refresh to load built-in templates." primary={{ label: 'New agent', onClick: () => setCreating(true), icon: 'plus' }} secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
 
       {phase === 'ready' && rows.length > 0 && (
         // Two-up (Custom | Built-in) when forked copies exist; otherwise the
@@ -1101,9 +1114,9 @@ function SkillsTab() {
         </div>
       </div>
       {importErr && <div className="px-[22px] text-[12.5px]" style={{ color: 'var(--crit)' }}>Import failed: {importErr}</div>}
-      {phase === 'loading' && <StateMsg>Loading skills…</StateMsg>}
-      {phase === 'error' && <StateMsg>Couldn’t load skills: {error}</StateMsg>}
-      {phase === 'ready' && rows.length === 0 && <StateMsg>No skills available.</StateMsg>}
+      {phase === 'loading' && <StateMsg><EmptyState compact icon="sparkle" title="Loading skills…" /></StateMsg>}
+      {phase === 'error' && <StateMsg><EmptyState icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
+      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills yet" body="Build or import reusable capabilities that agents and workflows can invoke." primary={{ label: 'Build skill', onClick: () => setBuilding(true), icon: 'sparkle' }} secondary={{ label: 'Import Zip', onClick: () => fileRef.current?.click(), icon: 'upload' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
         <div className="grid gap-4 px-[22px] pt-[14px] pb-6 [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))]">
           {rows.map((s) => (
