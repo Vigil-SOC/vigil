@@ -7,7 +7,11 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 from datetime import datetime
 
-from services.defaults import DEFAULT_MODEL
+from services.configured_llm import (
+    NoConfiguredLLMProvider,
+    estimate_configured_cost,
+    generate_configured_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -599,7 +603,6 @@ For each phase:
         """Legacy composite-prompt path for file-based workflows that
         don't have structured phases. No approval gating possible —
         there's no phase_id to attach an approval to."""
-        from services.claude_service import ClaudeService
         from services.soc_agents import SOCAgentLibrary
         from services.workflow_run_service import get_workflow_run_service
 
@@ -618,15 +621,6 @@ For each phase:
         all_tools, skill_tool_names = self._collect_tools(workflow, agent_profiles)
         system_prompt = self._build_system_prompt(workflow, skill_tool_names)
 
-        claude_service = ClaudeService(
-            use_backend_tools=True,
-            use_mcp_tools=True,
-            use_agent_sdk=False,
-            enable_thinking=True,
-        )
-        if not claude_service.has_api_key():
-            return {"success": False, "error": "Claude API not configured"}
-
         workflow_dict = workflow.to_dict(include_body=False)
 
         # #184 Phase 2: pre-call cost estimate for the run record. Workflows
@@ -635,23 +629,14 @@ For each phase:
         # gives operators an audit trail of expected vs. actual spend.
         # Best-effort — telemetry never blocks a workflow.
         trigger_context = dict(parameters or {})
-        try:
-            from services.cost_estimator import estimate_cost
-
-            _est = await estimate_cost(
-                provider_type="anthropic",
-                model_id=DEFAULT_MODEL,
-                messages=[{"role": "user", "content": prompt}],
-                system_prompt=system_prompt,
-                max_tokens=8192,
-            )
-            trigger_context["cost_estimate"] = _est.to_dict()
-        except Exception as _est_err:  # noqa: BLE001
-            logger.debug(
-                "Workflow %s pre-flight estimate failed (%s); proceeding",
-                workflow.id,
-                _est_err,
-            )
+        cost_estimate = await estimate_configured_cost(
+            component="orchestrator_plan",
+            message=prompt,
+            system_prompt=system_prompt,
+            max_tokens=8192,
+        )
+        if cost_estimate is not None:
+            trigger_context["cost_estimate"] = cost_estimate
 
         run_service = get_workflow_run_service()
         run_id = run_service.begin_run(
@@ -665,16 +650,23 @@ For each phase:
         )
 
         try:
-            response_text = await asyncio.to_thread(
-                claude_service.chat,
+            llm_result = await generate_configured_text(
                 message=prompt,
                 system_prompt=system_prompt,
-                model=DEFAULT_MODEL,
+                component="orchestrator_plan",
                 max_tokens=8192,
                 recommended_tools=all_tools if all_tools else None,
+                use_backend_tools=True,
+                use_mcp_tools=True,
+                enable_thinking=True,
             )
+            response_text = llm_result.content
             success = response_text is not None
             error = None if success else "Claude returned no response"
+        except NoConfiguredLLMProvider as exc:
+            response_text = ""
+            success = False
+            error = str(exc)
         except Exception as exc:  # noqa: BLE001
             response_text = ""
             success = False
@@ -710,13 +702,7 @@ For each phase:
         triggered_by: Optional[str],
     ) -> Dict[str, Any]:
         """Phase-by-phase execution path for custom workflows (#128)."""
-        from services.claude_service import ClaudeService
         from services.workflow_run_service import get_workflow_run_service
-
-        if not ClaudeService(
-            use_backend_tools=False, use_mcp_tools=False, use_agent_sdk=False
-        ).has_api_key():
-            return {"success": False, "error": "Claude API not configured"}
 
         _, skill_tool_names = self._collect_tools(workflow, {})
 
@@ -764,7 +750,6 @@ For each phase:
         """Shared phase-loop body used by both initial execute and
         resume. Walks phases from ``start_index``; pauses or completes
         the run as appropriate."""
-        from services.claude_service import ClaudeService
         from services.soc_agents import SOCAgentLibrary
         from services.approval_service import (
             ActionType,
@@ -778,13 +763,6 @@ For each phase:
         workflow_dict = workflow.to_dict(include_body=False)
 
         target_context = self._build_target_context(parameters)
-
-        claude_service = ClaudeService(
-            use_backend_tools=True,
-            use_mcp_tools=True,
-            use_agent_sdk=False,
-            enable_thinking=True,
-        )
 
         phase_outputs: List[Dict[str, Any]] = []
         last_response_text = ""
@@ -871,24 +849,14 @@ For each phase:
             # projected USD band. No gating — Bifrost VK is the budget
             # gate. Best-effort, never blocks the phase.
             phase_input_context: Dict[str, Any] = {"prior_outputs": accumulated}
-            try:
-                from services.cost_estimator import estimate_cost
-
-                _phase_est = await estimate_cost(
-                    provider_type="anthropic",
-                    model_id=DEFAULT_MODEL,
-                    messages=[{"role": "user", "content": phase_prompt}],
-                    system_prompt=system_prompt,
-                    max_tokens=8192,
-                )
-                phase_input_context["cost_estimate"] = _phase_est.to_dict()
-            except Exception as _phase_est_err:  # noqa: BLE001
-                logger.debug(
-                    "Workflow run %s phase %s estimate failed (%s); proceeding",
-                    run_id,
-                    phase_id,
-                    _phase_est_err,
-                )
+            cost_estimate = await estimate_configured_cost(
+                component="orchestrator_plan",
+                message=phase_prompt,
+                system_prompt=system_prompt,
+                max_tokens=8192,
+            )
+            if cost_estimate is not None:
+                phase_input_context["cost_estimate"] = cost_estimate
 
             # Run the phase.
             run_service.upsert_phase(
@@ -902,16 +870,23 @@ For each phase:
             )
 
             try:
-                response_text = await asyncio.to_thread(
-                    claude_service.chat,
+                llm_result = await generate_configured_text(
                     message=phase_prompt,
                     system_prompt=system_prompt,
-                    model=DEFAULT_MODEL,
+                    component="orchestrator_plan",
                     max_tokens=8192,
                     recommended_tools=phase_tools or None,
+                    use_backend_tools=True,
+                    use_mcp_tools=True,
+                    enable_thinking=True,
                 )
+                response_text = llm_result.content
                 phase_ok = response_text is not None
                 phase_error = None if phase_ok else "Claude returned no response"
+            except NoConfiguredLLMProvider as exc:
+                response_text = ""
+                phase_ok = False
+                phase_error = str(exc)
             except Exception as exc:  # noqa: BLE001
                 response_text = ""
                 phase_ok = False

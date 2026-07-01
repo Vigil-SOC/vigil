@@ -6,8 +6,6 @@ from pydantic import BaseModel
 import logging
 
 from services.database_data_service import DatabaseDataService
-from services.defaults import DEFAULT_MODEL
-
 router = APIRouter()
 logger = logging.getLogger(__name__)
 # Use DatabaseDataService which automatically uses PostgreSQL if available, falls back to JSON
@@ -332,7 +330,6 @@ async def get_or_generate_enrichment(finding_id: str, force_regenerate: bool = Q
             }
         }
     """
-    import asyncio
     from datetime import datetime
     
     # Get the finding
@@ -350,18 +347,8 @@ async def get_or_generate_enrichment(finding_id: str, force_regenerate: bool = Q
             "enrichment": existing_enrichment
         }
     
-    # Generate new enrichment using Claude
+    # Generate new enrichment using the configured LLM provider.
     try:
-        from services.claude_service import ClaudeService
-        
-        claude_service = ClaudeService(use_backend_tools=True, use_mcp_tools=False)
-        
-        # Check if API key is configured
-        if not claude_service.has_api_key():
-            from backend.api.claude import NO_PROVIDER_DETAIL
-
-            raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
-        
         # Extract finding details (use `or` to guard against keys present with None values)
         severity = finding.get('severity') or 'unknown'
         data_source = finding.get('data_source') or 'unknown'
@@ -475,15 +462,24 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
 
         # Generate enrichment
         logger.info(f"Generating AI enrichment for {finding_id}")
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: claude_service.chat(
-                message=prompt,
-                model=DEFAULT_MODEL,
-                max_tokens=4096
-            )
+        from services.configured_llm import (
+            NO_PROVIDER_CONFIGURED,
+            NoConfiguredLLMProvider,
+            generate_configured_text,
         )
+
+        try:
+            result = await generate_configured_text(
+                message=prompt,
+                component="reporting",
+                max_tokens=4096,
+                use_backend_tools=True,
+                use_mcp_tools=False,
+            )
+        except NoConfiguredLLMProvider:
+            raise HTTPException(status_code=503, detail=NO_PROVIDER_CONFIGURED)
+
+        response = result.content
         
         # Parse JSON response
         import json
@@ -526,7 +522,9 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
         
         # Add metadata
         enrichment['generated_at'] = datetime.utcnow().isoformat() + 'Z'
-        enrichment['model'] = DEFAULT_MODEL
+        enrichment['model'] = result.model
+        enrichment['provider_id'] = result.provider_id
+        enrichment['provider_type'] = result.provider_type
         
         # Save enrichment to database
         success = data_service.update_finding(finding_id, ai_enrichment=enrichment)
@@ -568,4 +566,3 @@ async def clear_all_findings():
     except Exception as e:
         logger.error(f"Error clearing findings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear findings: {str(e)}")
-

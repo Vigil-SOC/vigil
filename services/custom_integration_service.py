@@ -1,6 +1,5 @@
 """Service for generating custom integrations using Claude AI."""
 
-import asyncio
 import json
 import logging
 import os
@@ -9,7 +8,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-from services.defaults import DEFAULT_MODEL
+from services.configured_llm import NoConfiguredLLMProvider, generate_configured_text
 
 logger = logging.getLogger(__name__)
 
@@ -102,21 +101,12 @@ class CustomIntegrationService:
             Dictionary with integration metadata and server code
         """
         try:
-            # Import Claude service
-            from services.claude_service import ClaudeService
-
-            # Initialize Claude
-            claude = ClaudeService(use_mcp_tools=False)
-
-            # Check if Claude is configured
-            if not claude.api_key or not claude.client:
-                return {
-                    "success": False,
-                    "error": "Claude API is not configured. Please configure it in Settings.",
-                }
-
             # Create prompt for Claude to analyze the documentation
-            system_prompt = "You are an expert at analyzing API documentation and generating Python MCP (Model Context Protocol) server code for security integrations."
+            system_prompt = (
+                "You are an expert at analyzing API documentation and generating "
+                "Python MCP (Model Context Protocol) server code for security "
+                "integrations."
+            )
 
             if conversation_history:
                 # Interactive mode - continue the conversation
@@ -128,23 +118,29 @@ class CustomIntegrationService:
                     conversation_history[:-1] if len(conversation_history) > 1 else None
                 )
 
-                response = claude.chat(
+                llm_result = await generate_configured_text(
                     message=last_message,
                     context=context,
                     system_prompt=system_prompt,
-                    model=DEFAULT_MODEL,
+                    component="reporting",
+                    use_backend_tools=False,
+                    use_mcp_tools=False,
                 )
+                response = llm_result.content
             else:
                 # Initial generation - create the analysis prompt
                 prompt = self._create_analysis_prompt(
                     documentation, integration_name, category
                 )
 
-                response = claude.chat(
+                llm_result = await generate_configured_text(
                     message=prompt,
                     system_prompt=system_prompt,
-                    model=DEFAULT_MODEL,
+                    component="reporting",
+                    use_backend_tools=False,
+                    use_mcp_tools=False,
                 )
+                response = llm_result.content
 
             # Check if Claude is asking questions or ready to generate
             if self._is_asking_questions(response):
@@ -178,7 +174,10 @@ class CustomIntegrationService:
             if not integration_data:
                 return {
                     "success": False,
-                    "error": "Failed to parse Claude's response. The documentation may be unclear or incomplete.",
+                    "error": (
+                        "Failed to parse the LLM response. The documentation may "
+                        "be unclear or incomplete."
+                    ),
                 }
 
             # Generate integration ID
@@ -193,9 +192,17 @@ class CustomIntegrationService:
                 "integration_name": integration_data["name"],
                 "metadata": integration_data["metadata"],
                 "server_code": integration_data["server_code"],
-                "message": f"Successfully generated custom integration '{integration_data['name']}'",
+                "message": (
+                    "Successfully generated custom integration "
+                    f"'{integration_data['name']}'"
+                ),
             }
 
+        except NoConfiguredLLMProvider:
+            return {
+                "success": False,
+                "error": "No LLM provider is configured. Please configure one in Settings.",
+            }
         except Exception as e:
             logger.error(f"Error generating custom integration: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
