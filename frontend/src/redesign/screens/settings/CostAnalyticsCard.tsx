@@ -5,7 +5,7 @@
    ============================================================ */
 import { useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { SettingsCard } from '../../shared/ui'
+import { EmptyState, SettingsCard } from '../../shared/ui'
 import { useCostAnalytics, type CostModelRow, type CostTimeRange } from './useSettings'
 
 const RANGES: [CostTimeRange, string][] = [
@@ -48,13 +48,8 @@ export default function CostAnalyticsCard() {
         </>
       }
     >
-      {phase === 'loading' && <div className="text-sm text-tx-3 py-8 text-center">Loading cost analytics…</div>}
-      {phase === 'error' && (
-        <div className="py-8 text-center flex flex-col items-center gap-2.5">
-          <span className="text-sm text-tx-3">Couldn’t load cost analytics: {error}</span>
-          <button className="btn ghost" onClick={reload}>Retry</button>
-        </div>
-      )}
+      {phase === 'loading' && <EmptyState compact icon="bars" title="Loading cost analytics…" />}
+      {phase === 'error' && <EmptyState compact icon="alert" title="Couldn’t load cost analytics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
       {phase === 'ready' && data && (
         <>
           <div className="grid grid-cols-4 gap-3 mb-4">
@@ -74,7 +69,7 @@ export default function CostAnalyticsCard() {
               </thead>
               <tbody>
                 {data.by_model.length === 0 && (
-                  <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: '24px 0' }}>No usage in this window.</td></tr>
+                  <tr><td colSpan={8}><EmptyState table compact icon="bars" title="No usage in this window" body="LLM calls will appear here after chat, enrichment, workflows, or autonomous investigations use a configured provider." /></td></tr>
                 )}
                 {data.by_model.map((m) => {
                   const pricing = PRICING_LABEL[m.pricing_source] || PRICING_LABEL.unknown

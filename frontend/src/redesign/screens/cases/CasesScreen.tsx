@@ -14,7 +14,7 @@ import { mapApiCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
 import type { ScreenProps } from '../../shared/types'
 import { useCases, useCaseDetail, type Phase } from './useCases'
-import { FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
+import { EmptyState, FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
 import {
   inputCls,
   SectionCard,
@@ -126,10 +126,10 @@ function FindingsCard({ total, linked, phase }: { total: number; linked: DetailD
           <thead><tr><th>Finding ID</th><th>Severity</th><th>Technique</th><th>Time</th></tr></thead>
           <tbody>
             {phase === 'loading' && (
-              <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: '24px 0' }}>Loading findings…</td></tr>
+              <tr><td colSpan={4}><EmptyState table compact icon="search" title="Loading findings…" /></td></tr>
             )}
             {phase === 'ready' && linked.length === 0 && (
-              <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: '24px 0' }}>No data here.</td></tr>
+              <tr><td colSpan={4}><EmptyState table compact icon="shield" title="No findings linked" body="Attach findings to this case to keep investigation evidence in one place." /></td></tr>
             )}
             {linked.map((f) => (
               <tr key={f.id}>
@@ -179,9 +179,9 @@ function TimelineCard({ caseId }: { caseId: string }) {
   return (
     <SectionCard title="Timeline" count={phase === 'ready' ? `${events.length} events` : undefined}>
       <div className="p-[18px]">
-        {phase === 'loading' && <div className="muted">Loading timeline…</div>}
-        {phase === 'error' && <div className="muted">Couldn’t load the timeline.</div>}
-        {phase === 'ready' && events.length === 0 && <div className="muted">No timeline events.</div>}
+        {phase === 'loading' && <EmptyState compact icon="clock" title="Loading timeline…" />}
+        {phase === 'error' && <EmptyState compact icon="alert" title="Couldn’t load the timeline" />}
+        {phase === 'ready' && events.length === 0 && <EmptyState compact icon="clock" title="No timeline events" body="Case activity, findings, comments, and workflow events will appear here." />}
         {phase === 'ready' && events.length > 0 && (
           <div className="timeline">
             {events.map((e, i) => (
@@ -197,7 +197,7 @@ function TimelineCard({ caseId }: { caseId: string }) {
   )
 }
 
-export default function CasesScreen({ openChat, setViewFull }: ScreenProps) {
+export default function CasesScreen({ openChat, goSettings, setViewFull }: ScreenProps) {
   // the open case lives in a ?case=<id> query param so it's shareable /
   // deep-linkable; no ?case ⇒ show the full-width table.
   const [searchParams, setSearchParams] = useSearchParams()
@@ -221,6 +221,7 @@ export default function CasesScreen({ openChat, setViewFull }: ScreenProps) {
       onSelect={selectCase}
       onBack={backToList}
       openChat={openChat}
+      goSettings={goSettings}
       reloadList={reload}
     />
   ) : (
@@ -232,7 +233,7 @@ export default function CasesScreen({ openChat, setViewFull }: ScreenProps) {
 function StateRow({ children }: { children: ReactNode }) {
   return (
     <tr>
-      <td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
+      <td colSpan={11}>
         {children}
       </td>
     </tr>
@@ -389,22 +390,21 @@ function CasesTable({
             </tr>
           </thead>
           <tbody>
-            {phase === 'loading' && <StateRow>Loading cases…</StateRow>}
+            {phase === 'loading' && <StateRow><EmptyState table compact icon="folder" title="Loading cases…" /></StateRow>}
             {phase === 'error' && (
               <StateRow>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                  <span>Couldn’t load cases: {error}</span>
-                  <button className="btn ghost" onClick={reload}>Retry</button>
-                </div>
+                <EmptyState table icon="alert" title="Couldn’t load cases" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
               </StateRow>
             )}
             {phase === 'ready' && sorted.length === 0 && (
               <StateRow>
-                {results
-                  ? 'No cases match your search.'
-                  : rows.length === 0
-                    ? 'No cases found.'
-                    : 'No cases match your filters.'}
+                <EmptyState
+                  table
+                  icon={rows.length === 0 ? 'folder' : 'filter'}
+                  title={results ? 'No cases match this search' : rows.length === 0 ? 'No cases yet' : 'No cases match these filters'}
+                  body={results || rows.length > 0 ? 'Clear the search and filters to return to the full case queue.' : 'Create a case manually or link findings from the dashboard to start an investigation record.'}
+                  primary={results || rows.length > 0 ? { label: 'Clear filters', onClick: () => { setResults(null); setQuery(''); setStatusF('any'); setPrioF('any'); setAssigneeF('any') }, icon: 'close' } : { label: 'New case', onClick: () => setNewOpen(true), icon: 'plus' }}
+                />
               </StateRow>
             )}
             {phase === 'ready' &&
@@ -825,7 +825,7 @@ function MergeCaseDialog({ open, c, rows, onClose, onMerged }: { open: boolean; 
 /* ---------------- Export to Timesketch dialog ----------------
    POST /timesketch/export. Requires the Timesketch integration to be
    configured; surfaces the backend error otherwise. */
-function ExportTimesketchDialog({ open, c, onClose }: { open: boolean; c: CaseRow | null; onClose: () => void }) {
+function ExportTimesketchDialog({ open, c, onClose, onConfigure }: { open: boolean; c: CaseRow | null; onClose: () => void; onConfigure: () => void }) {
   const [timeline, setTimeline] = useState('')
   const [sketch, setSketch] = useState('')
   const [busy, setBusy] = useState(false)
@@ -878,7 +878,16 @@ function ExportTimesketchDialog({ open, c, onClose }: { open: boolean; c: CaseRo
             <span>Sketch name <span className="normal-case font-normal text-tx-faint">(new sketch if it doesn't exist)</span></span>
             <input className={inputCls} value={sketch} onChange={(e) => setSketch(e.target.value)} />
           </label>
-          {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
+          {err && (
+            <EmptyState
+              compact
+              icon="alert"
+              title="Timesketch export failed"
+              body={err}
+              primary={{ label: 'Configure integrations', onClick: onConfigure, icon: 'link' }}
+              secondary={{ label: 'Retry', onClick: submit, icon: 'refresh' }}
+            />
+          )}
           <div className="flex justify-end gap-2.5">
             <button className="btn ghost" onClick={onClose}>Cancel</button>
             <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Exporting…' : 'Export'}</button>
@@ -896,6 +905,7 @@ function CasesDetail({
   onSelect,
   onBack,
   openChat,
+  goSettings,
   reloadList,
 }: {
   id: string
@@ -903,6 +913,7 @@ function CasesDetail({
   onSelect: (id: string) => void
   onBack: () => void
   openChat: (prompt?: string) => void
+  goSettings: ScreenProps['goSettings']
   reloadList: () => void
 }) {
   const { row, created, linked, sev, activities, resolutionSteps, phase, error, reload: reloadDetail } =
@@ -1065,6 +1076,7 @@ function CasesDetail({
         open={action === 'export'}
         c={c}
         onClose={() => setAction(null)}
+        onConfigure={() => goSettings('integrations')}
       />
     </div>
   )

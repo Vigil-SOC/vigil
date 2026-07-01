@@ -23,7 +23,7 @@ import {
   type ApprovalAction,
 } from './useDecisions'
 import { aiDecisionsApi, approvalsApi } from '../../../services/api'
-import { Popup, Field, TextInput, Select, Rating, Slider, Dropdown, activateOnKey } from '../../shared/ui'
+import { EmptyState, Popup, Field, TextInput, Select, Rating, Slider, Dropdown, activateOnKey } from '../../shared/ui'
 
 type DecTab = 'pending' | 'all' | 'analytics' | 'approvals'
 type Assessment = 'agree' | 'partial' | 'disagree'
@@ -95,7 +95,7 @@ function outcomeChip(o: Outcome) {
 function StateRow({ cols, children }: { cols: number; children: ReactNode }) {
   return (
     <tr>
-      <td colSpan={cols} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
+      <td colSpan={cols}>
         {children}
       </td>
     </tr>
@@ -103,12 +103,7 @@ function StateRow({ cols, children }: { cols: number; children: ReactNode }) {
 }
 
 function RetryState({ msg, reload }: { msg: string | null; reload: () => void }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-      <span>{msg}</span>
-      <button className="btn ghost" onClick={reload}>Retry</button>
-    </div>
-  )
+  return <EmptyState table icon="alert" title="Couldn’t load data" body={msg} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
 }
 
 /* ---------------- KPI strip ---------------- */
@@ -179,9 +174,18 @@ function DecisionRows({
           </tr>
         </thead>
         <tbody>
-          {phase === 'loading' && <StateRow cols={9}>Loading decisions…</StateRow>}
+          {phase === 'loading' && <StateRow cols={9}><EmptyState table compact icon="brain" title="Loading decisions…" /></StateRow>}
           {phase === 'error' && <StateRow cols={9}><RetryState msg={error} reload={reload} /></StateRow>}
-          {phase === 'ready' && rows.length === 0 && <StateRow cols={9}>{empty}</StateRow>}
+          {phase === 'ready' && rows.length === 0 && (
+            <StateRow cols={9}>
+              <EmptyState
+                table
+                icon="brain"
+                title={empty.includes('filters') ? 'No decisions match these filters' : 'No AI decisions yet'}
+                body={empty.includes('filters') ? 'Clear the selected filters to return to the full decision history.' : 'Agent decisions will appear here after workflows or autonomous investigations run.'}
+              />
+            </StateRow>
+          )}
           {phase === 'ready' &&
             shown.map((d) => (
               <tr key={d.id} className="clickable decisions-tbl-row" onClick={() => onSelect(d.id)}>
@@ -220,15 +224,11 @@ function DecisionRows({
 
 /* ---------------- Analytics tab ---------------- */
 function AnalyticsTab({ s, phase, error, reload }: { s: DecisionStats | null; phase: Phase; error: string | null; reload: () => void }) {
-  if (phase === 'loading') return <div className="muted" style={{ padding: '40px 22px', textAlign: 'center' }}>Loading analytics…</div>
+  if (phase === 'loading') return <EmptyState icon="bars" title="Loading analytics…" />
   if (phase === 'error') {
-    return (
-      <div style={{ padding: '40px 22px', textAlign: 'center' }} className="muted">
-        <RetryState msg={`Couldn’t load analytics: ${error}`} reload={reload} />
-      </div>
-    )
+    return <EmptyState icon="alert" title="Couldn’t load analytics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
   }
-  if (!s) return <div className="muted" style={{ padding: '40px 22px', textAlign: 'center' }}>No analytics available.</div>
+  if (!s) return <EmptyState icon="bars" title="No decision analytics yet" body="Review AI decisions to populate accuracy, outcome, and time-saved analytics." />
 
   const total = s.total_with_feedback || 0
   const items: HbarItem[] = Object.entries(s.outcomes || {}).map(([k, v]) => ({
@@ -245,7 +245,7 @@ function AnalyticsTab({ s, phase, error, reload }: { s: DecisionStats | null; ph
     <div style={{ padding: 22 }} className="grid grid-cols-2 gap-4">
       <section className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden">
         <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">Outcome distribution</h3></div>
-        <div className="p-[18px]">{items.length > 0 ? <Hbars items={items} /> : <div className="muted">No outcome data yet.</div>}</div>
+        <div className="p-[18px]">{items.length > 0 ? <Hbars items={items} /> : <EmptyState compact icon="bars" title="No outcome data yet" body="Decision feedback outcomes will populate this chart." />}</div>
       </section>
       <section className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden">
         <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">Performance metrics</h3></div>
@@ -294,10 +294,17 @@ function ApprovalsTab({
             </tr>
           </thead>
           <tbody>
-            {phase === 'loading' && <StateRow cols={6}>Loading approvals…</StateRow>}
+            {phase === 'loading' && <StateRow cols={6}><EmptyState table compact icon="check2" title="Loading approvals…" /></StateRow>}
             {phase === 'error' && <StateRow cols={6}><RetryState msg={error} reload={reload} /></StateRow>}
             {phase === 'ready' && actions.length === 0 && (
-              <StateRow cols={6}>No pending approvals. Workflow phases that require approval will appear here.</StateRow>
+              <StateRow cols={6}>
+                <EmptyState
+                  table
+                  icon="check2"
+                  title="No pending approvals"
+                  body="Workflow phases that require human approval will appear here when agents submit actions for review."
+                />
+              </StateRow>
             )}
             {phase === 'ready' &&
               actions.map((a) => (

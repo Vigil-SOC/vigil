@@ -5,9 +5,10 @@
    tab set (AI Config / Integrations / Users / Auto Investigate /
    Federation / System / General / Developer).
    ============================================================ */
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon, type IconName } from '../../shared/icons'
-import type { ScreenProps } from '../../shared/types'
+import type { ScreenProps, SettingsSectionKey } from '../../shared/types'
 import { useToast } from '../../shell/toast'
 import AppearanceSection from './AppearanceSection'
 import GeneralSection from './GeneralSection'
@@ -23,20 +24,8 @@ import type { SectionProps } from './types'
 
 const IS_DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
 
-type SectionKey =
-  | 'appearance'
-  | 'ai-config'
-  | 'integrations'
-  | 'users'
-  | 'sla'
-  | 'autoinvestigate'
-  | 'federation'
-  | 'system'
-  | 'general'
-  | 'dev'
-
 interface SectionDef {
-  key: SectionKey
+  key: SettingsSectionKey
   label: string
   icon: IconName
   devOnly?: boolean
@@ -57,9 +46,17 @@ const SECTIONS: SectionDef[] = [
 ]
 
 export default function SettingsScreen({ setViewFull }: ScreenProps) {
-  const sections = SECTIONS.filter((s) => !s.devOnly || IS_DEV_MODE)
+  const sections = useMemo(() => SECTIONS.filter((s) => !s.devOnly || IS_DEV_MODE), [])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const sectionParam = searchParams.get('section')
+  const sectionKeys = useMemo(() => new Set(sections.map((s) => s.key)), [sections])
+  const getSection = useCallback(
+    (value: string | null): SettingsSectionKey =>
+      value && sectionKeys.has(value as SettingsSectionKey) ? (value as SettingsSectionKey) : 'appearance',
+    [sectionKeys],
+  )
   // open on the first section (Appearance)
-  const [active, setActive] = useState<SectionKey>('appearance')
+  const [active, setActive] = useState<SettingsSectionKey>(() => getSection(sectionParam))
   // section save/test results surface through the shell-wide toast (§10) rather
   // than a settings-local banner, so feedback is consistent across the console
   const { notify } = useToast()
@@ -68,6 +65,10 @@ export default function SettingsScreen({ setViewFull }: ScreenProps) {
     setViewFull(true)
     return () => setViewFull(false)
   }, [setViewFull])
+
+  useEffect(() => {
+    setActive(getSection(sectionParam))
+  }, [getSection, sectionParam])
 
   const current = sections.find((s) => s.key === active) ?? sections[0]
   const Section = current.Component
@@ -79,7 +80,7 @@ export default function SettingsScreen({ setViewFull }: ScreenProps) {
           <button
             key={s.key}
             className={`settings-nav-item${s.key === active ? ' active' : ''}`}
-            onClick={() => setActive(s.key)}
+            onClick={() => setSearchParams({ section: s.key })}
           >
             <Icon name={s.icon} size={16} />
             <span>{s.label}</span>

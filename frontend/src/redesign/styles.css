@@ -1240,6 +1240,76 @@
       color: var(--tx-3);
    }
 
+   .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      min-height: 190px;
+      padding: 28px 24px;
+      text-align: center;
+      color: var(--tx-2);
+   }
+
+   .empty-state.compact {
+      min-height: 96px;
+      padding: 18px 16px;
+      gap: 9px;
+   }
+
+   .empty-state-table {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 160px;
+   }
+
+   .empty-state-icon {
+      display: grid;
+      place-items: center;
+      width: 46px;
+      height: 46px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: var(--bg-2);
+      color: var(--accent-2);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
+   }
+
+   .empty-state.compact .empty-state-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+   }
+
+   .empty-state-copy {
+      max-width: 520px;
+   }
+
+   .empty-state-copy h3 {
+      margin: 0;
+      font-size: 14.5px;
+      font-weight: 650;
+      color: var(--tx);
+   }
+
+   .empty-state-copy p {
+      margin: 5px 0 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--tx-3);
+   }
+
+   .empty-state-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      flex-wrap: wrap;
+      margin-top: 2px;
+   }
+
    /* ---------- charts ---------- */
    .chart-grid {
       display: grid;
