@@ -28,7 +28,7 @@ class ProcessingConfig:
     auto_enrich_enabled: bool = True
     batch_size: int = 10
     max_concurrent_tasks: int = 5
-    triage_timeout: int = 60  # seconds
+    triage_timeout: int = 120  # seconds — increased to handle LLM queue backpressure under burst load
 
 
 @dataclass

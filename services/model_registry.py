@@ -248,6 +248,15 @@ _ANTHROPIC_TIERS: Tuple[_TierPattern, ...] = (
 )
 
 _OPENAI_TIERS: Tuple[_TierPattern, ...] = (
+    # gpt-5.x family — speculative pricing estimates as of 2026-07.
+    # More specific patterns first: small < base < large.
+    (r"gpt-5.*(?:mini|nano|codex-mini)", 0.30, 1.20),
+    (r"gpt-5.*(?:pro|codex-max)", 20.0, 60.0),
+    (r"gpt-5", 10.0, 30.0),
+    # Non-token-priced models (image, audio, realtime) — $0 per-token is correct;
+    # these are priced per-image, per-minute, etc., not by input/output tokens.
+    (r"gpt-(?:realtime|audio|image)|chatgpt-image|^chat-latest$", 0.0, 0.0),
+    # gpt-4.x family
     (r"gpt-4o-mini", 0.15, 0.60),
     (r"gpt-4o", 2.50, 10.0),
     (r"gpt-4\.1-mini", 0.40, 1.60),
