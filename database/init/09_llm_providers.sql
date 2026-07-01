@@ -52,9 +52,11 @@ COMMENT ON COLUMN llm_provider_configs.api_key_ref IS 'Secret name in secrets_ma
 COMMENT ON COLUMN llm_provider_configs.config IS 'Provider-specific extras (e.g., openai organization, ollama pull policy)';
 
 -- ============================================================================
--- Seed default provider rows
--- OpenAI is the default; Anthropic is seeded as inactive so it can be
--- activated via Settings → AI / LLM Providers without losing its row.
+-- Seed provider skeleton rows (both inactive, neither default).
+-- The operator activates and sets a default via Settings → AI / LLM Providers
+-- after supplying API keys. No provider is assumed here so fresh deployments
+-- with only an Anthropic key, only an OpenAI key, or an Ollama endpoint all
+-- start from the same neutral state.
 -- ============================================================================
 INSERT INTO llm_provider_configs (
     provider_id, provider_type, name, base_url, api_key_ref,
@@ -62,12 +64,12 @@ INSERT INTO llm_provider_configs (
 ) VALUES (
     'openai-default',
     'openai',
-    'OpenAI (default)',
+    'OpenAI',
     'https://api.openai.com/v1',
     'OPENAI_API_KEY',
     'gpt-4o',
-    TRUE,
-    TRUE,
+    FALSE,
+    FALSE,
     '{}'::jsonb
 ) ON CONFLICT (provider_id) DO NOTHING;
 
