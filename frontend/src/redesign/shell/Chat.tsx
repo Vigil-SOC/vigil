@@ -263,6 +263,11 @@ export default function Chat({
   const [thinkingBudget, setThinkingBudget] = useState(savedSettings.thinkingBudget)
   const [systemPrompt, setSystemPrompt] = useState(savedSettings.systemPrompt)
   const [models, setModels] = useState<{ id: string; name: string }[]>([])
+  // chat_default from AI Config + whether that fetch has settled — used by the
+  // stale-model self-heal below to prefer the configured default when the
+  // persisted selection is no longer offered.
+  const [configuredDefault, setConfiguredDefault] = useState<string | null>(null)
+  const [configSettled, setConfigSettled] = useState(false)
   const [mcpStatus, setMcpStatus] = useState<{ available: number; total: number } | null>(null)
   // live pre-call estimate from the backend (exact count_tokens + USD band),
   // mirroring the classic drawer; null until the first debounced estimate lands
@@ -372,11 +377,13 @@ export default function Chat({
       .getConfig()
       .then((r) => {
         const configured = r.data?.assignments?.chat_default?.model_id
+        if (configured) setConfiguredDefault(configured)
         if (configured && !settingsExistedRef.current && !userPickedModelRef.current) {
           setModel(configured)
         }
       })
       .catch(() => {})
+      .finally(() => setConfigSettled(true))
     mcpApi
       .getStatuses()
       .then((r) => {
@@ -386,6 +393,23 @@ export default function Chat({
       })
       .catch(() => {})
   }, [open])
+
+  // Self-heal a stale/removed model selection. Once the live model list and
+  // the chat_default config have both settled, if the persisted model is no
+  // longer offered (e.g. an Ollama provider that was later removed, or a
+  // renamed model), fall back to chat_default when it's available, otherwise
+  // the first available model. Without this a stale localStorage model 500s
+  // every send ("no keys found that support model: …") until the user
+  // manually re-picks. The persist effect below then writes the corrected id.
+  useEffect(() => {
+    if (!models.length || !configSettled) return
+    if (model && models.some((m) => m.id === model)) return
+    const fallback =
+      configuredDefault && models.some((m) => m.id === configuredDefault)
+        ? configuredDefault
+        : models[0].id
+    if (fallback && fallback !== model) setModel(fallback)
+  }, [models, configSettled, configuredDefault, model])
 
   // persist settings on change ("automatically saved", like the classic drawer)
   useEffect(() => {
