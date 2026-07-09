@@ -3,7 +3,7 @@
    with search, summary chips, status indicators, and enable/disable
    toggles (with revert-on-failed-connect), per-server credential
    wizard + "Not Configured" state, docs links, the custom-integration
-   builder, plus Data Ingestion and Detection Rules sub-tabs. Full
+   builder, plus Manual Upload and Detection Rules sub-tabs. Full
    parity with the legacy Integrations tab.
    ============================================================ */
 import { useMemo, useState } from 'react'
@@ -28,7 +28,7 @@ import type { SectionProps } from './types'
 type IntegrationsTab = 'servers' | 'ingestion' | 'detection'
 const TABS: [IntegrationsTab, string][] = [
   ['servers', 'MCP Servers'],
-  ['ingestion', 'Data Ingestion'],
+  ['ingestion', 'Manual Upload'],
   ['detection', 'Detection Rules'],
 ]
 

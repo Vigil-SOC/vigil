@@ -1,6 +1,6 @@
 /* ============================================================
-   Settings · Integrations · Data Ingestion — first-party ingest
-   sources: S3 (config + browse/ingest + local upload), Kafka
+   Settings · Integrations · Manual Upload — first-party ingest
+   sources: local upload, S3 (config + browse/ingest), Kafka
    (consumer config + live stats), Darktrace (webhook receiver).
    Mirrors the S3 dialog, KafkaTab, and Darktrace dialog from the
    legacy Integrations tab.
@@ -36,10 +36,57 @@ function formatFileSize(bytes: number): string {
 export default function DataIngestionPanel({ notify }: SectionProps) {
   return (
     <div className="flex flex-col gap-4" style={{ maxWidth: 920 }}>
+      <ManualUploadPanel notify={notify} />
       <S3Panel notify={notify} />
       <KafkaPanel notify={notify} />
       <DarktracePanel notify={notify} />
     </div>
+  )
+}
+
+/* ---------------- Manual upload ---------------- */
+function ManualUploadPanel({ notify }: SectionProps) {
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [upload, setUpload] = useState<File | null>(null)
+  const [uploading, setUploading] = useState(false)
+
+  const doUpload = async () => {
+    if (!upload) return
+    setUploading(true)
+    try {
+      const res = await ingestionApi.uploadFile(upload)
+      notify(res.data.success ? 'ok' : 'err', res.data.message || 'Upload complete.')
+      if (res.data.success) setUpload(null)
+    } catch (e) {
+      notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Upload failed.')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  return (
+    <SettingsCard
+      title="Manual Upload"
+      desc="Upload a local file directly into Vigil."
+    >
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".parquet,.csv,.json,.jsonl,.ndjson"
+          className="hidden"
+          onChange={(e) => setUpload(e.target.files?.[0] || null)}
+        />
+        <button className="btn ghost" onClick={() => fileRef.current?.click()}>
+          <Icon name="paperclip" /> {upload ? upload.name : 'Choose File'}
+        </button>
+        {upload && <span className="text-xs text-tx-3">{formatFileSize(upload.size)}</span>}
+        <button className="btn primary" disabled={!upload || uploading} onClick={doUpload}>
+          <Icon name="upload" /> {uploading ? 'Uploading...' : 'Upload'}
+        </button>
+      </div>
+      <p className="text-xs text-tx-3 mt-1.5">Allowed file types: .parquet, .csv, .json, .jsonl, .ndjson.</p>
+    </SettingsCard>
   )
 }
 
@@ -63,11 +110,6 @@ function S3Panel({ notify }: SectionProps) {
   const [ingesting, setIngesting] = useState(false)
   const [progress, setProgress] = useState({ done: 0, total: 0 })
   const [results, setResults] = useState<{ key: string; success: boolean; message: string }[]>([])
-
-  // upload
-  const fileRef = useRef<HTMLInputElement>(null)
-  const [upload, setUpload] = useState<File | null>(null)
-  const [uploading, setUploading] = useState(false)
 
   if (phase === 'loading') return <SettingsCard title="S3 Storage" desc=""><div className="text-sm text-tx-3 py-6 text-center">Loading…</div></SettingsCard>
   if (phase === 'error') {
@@ -145,24 +187,10 @@ function S3Panel({ notify }: SectionProps) {
     notify(ok === keys.length ? 'ok' : 'err', `Ingested ${ok}/${keys.length} file(s).`)
   }
 
-  const doUpload = async () => {
-    if (!upload) return
-    setUploading(true)
-    try {
-      const res = await ingestionApi.uploadFile(upload)
-      notify(res.data.success ? 'ok' : 'err', res.data.message || 'Upload complete.')
-      if (res.data.success) setUpload(null)
-    } catch (e) {
-      notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Upload failed.')
-    } finally {
-      setUploading(false)
-    }
-  }
-
   return (
     <SettingsCard
       title="S3 Storage"
-      desc="AWS S3 bucket for parquet ingest, browsing, and local file uploads."
+      desc="AWS S3 bucket for browsing and ingesting supported files."
       actions={
         <button className="btn primary" onClick={onSave} disabled={saving}>
           <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
@@ -275,28 +303,6 @@ function S3Panel({ notify }: SectionProps) {
             )}
           </div>
         )}
-      </div>
-
-      {/* Upload local file */}
-      <div className="mt-5 pt-5 border-t border-line-soft">
-        <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mb-2.5">Upload Local File</h4>
-        <div className="flex items-center gap-2.5 flex-wrap">
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,.parquet,.json,.jsonl"
-            className="hidden"
-            onChange={(e) => setUpload(e.target.files?.[0] || null)}
-          />
-          <button className="btn ghost" onClick={() => fileRef.current?.click()}>
-            <Icon name="paperclip" /> {upload ? upload.name : 'Choose File'}
-          </button>
-          {upload && <span className="text-xs text-tx-3">{formatFileSize(upload.size)}</span>}
-          <button className="btn primary" disabled={!upload || uploading} onClick={doUpload}>
-            <Icon name="upload" /> {uploading ? 'Uploading…' : 'Upload'}
-          </button>
-        </div>
-        <p className="text-xs text-tx-3 mt-1.5">Accepts CSV, Parquet, JSON, or JSONL finding exports.</p>
       </div>
 
       <ConfirmDialog
