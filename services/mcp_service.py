@@ -342,7 +342,18 @@ class MCPService:
         """
         python_exe_str = str(self.python_exe)
         project_path_str = str(self.project_root)
-        
+
+        # Derive <ID>_MCP_URL env vars from any enabled integration that
+        # supplies a connectorUrl, so static mcp-config.json entries such as
+        # ${LOGLM_MCP_URL} resolve from the integration config (single source
+        # of truth) instead of a separately-set env var. Best-effort.
+        try:
+            from services.integration_bridge_service import get_integration_bridge
+
+            get_integration_bridge().derive_remote_mcp_env()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug("remote MCP env derivation skipped: %s", e)
+
         # Load servers from mcp-config.json
         mcp_config_path = self.project_root / "mcp-config.json"
         server_configs = []

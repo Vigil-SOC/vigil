@@ -823,6 +823,16 @@ async def set_integrations_config(config: IntegrationsConfig):
         with open(config_file, "w") as f:
             json.dump(config_data, f, indent=2)
 
+        # Derive <ID>_MCP_URL env vars (e.g. LOGLM_MCP_URL) from any
+        # connectorUrl just saved, so static mcp-config.json remote-MCP
+        # entries resolve without a separately-set env var. Best-effort.
+        try:
+            from services.integration_bridge_service import get_integration_bridge
+
+            get_integration_bridge().derive_remote_mcp_env()
+        except Exception as e:
+            logger.warning(f"Could not derive remote MCP env vars: {e}")
+
         return {"success": True, "message": "Integrations configuration saved"}
     except Exception as e:
         logger.error(f"Error setting integrations config: {e}")

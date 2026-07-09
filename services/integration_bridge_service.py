@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -178,6 +179,42 @@ class IntegrationBridgeService:
             logger.info(f"Prepared server config for {server_name} ({integration_id})")
 
         return servers
+
+    def derive_remote_mcp_env(self) -> Dict[str, str]:
+        """Populate ``os.environ`` with remote-MCP URLs from integration configs.
+
+        Any enabled integration whose config carries a ``connectorUrl`` (i.e.
+        it supplies a page extension / remote connector) gets a
+        ``<UPPER_ID>_MCP_URL`` env var derived as ``connectorUrl + "/mcp"``.
+        This lets a static ``mcp-config.json`` catalog entry reference e.g.
+        ``${LOGLM_MCP_URL}`` and resolve from a single source of truth (the
+        integration's ``connectorUrl`` set in Settings) rather than a second,
+        manually-set env var. An explicit pre-existing env value wins.
+
+        Generic — no per-integration hardcoding. Returns the mapping applied
+        (for logging / tests).
+        """
+        config = self.load_integration_config()
+        enabled = config.get("enabled_integrations", [])
+        integrations = config.get("integrations", {})
+        applied: Dict[str, str] = {}
+        for integration_id in enabled:
+            cfg = integrations.get(integration_id) or {}
+            connector_url = cfg.get("connectorUrl")
+            if not connector_url:
+                continue
+            env_key = f"{integration_id.upper().replace('-', '_')}_MCP_URL"
+            if os.environ.get(env_key):
+                continue  # explicit env wins over the derived value
+            value = str(connector_url).rstrip("/") + "/mcp"
+            os.environ[env_key] = value
+            applied[env_key] = value
+        if applied:
+            logger.info(
+                "Derived remote MCP URLs from integration configs: %s",
+                list(applied),
+            )
+        return applied
 
     def _config_to_env_vars(self, integration_id: str, config: Dict) -> Dict[str, str]:
         """

@@ -63,6 +63,14 @@
       }
     },
 
+    "loglm": {
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "${LOGLM_MCP_URL}"],
+      "env": {
+        "LOGLM_MCP_URL": "${LOGLM_MCP_URL}"
+      }
+    },
+
     "_comment_tier1": "--- Tier 1: Official Vendor MCP Servers (replacing legacy tools/*) ---",
 
     "crowdstrike": {
