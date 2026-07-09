@@ -993,6 +993,16 @@ export interface MempalaceHealth {
   memories_count_source: 'chromadb' | 'unavailable'
 }
 
+// Page extensions — mint a short-lived, user-scoped session token from the
+// connector BFF (Vigil backend calls the BFF server-to-server; the shared
+// mint secret never reaches the browser). See backend/api/extensions.py.
+export const extensionsApi = {
+  getSessionToken: (integrationId: string) =>
+    api.get<{ token: string; expires_in: number; user: string }>(
+      `/integrations/${integrationId}/session-token`,
+    ),
+}
+
 // LLM Provider API (GH #88 — multi-provider LLM config)
 export interface LLMProvider {
   provider_id: string

@@ -12,6 +12,7 @@ import { useTimeline } from './useTimeline'
 import { FilterButton, FilterGroup } from '../../shared/ui'
 import FindingPopup from './FindingPopup'
 import AttackTechniqueFindings from './AttackTechniqueFindings'
+import SourceChip from '../../shared/SourceChip'
 import { SEV_COLOR, TL_MONTHS, type TimelineEvent } from './attackData'
 import type { ScreenProps } from '../../shared/types'
 
@@ -258,7 +259,7 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
                 <td><span className={`sev ${f.sev.toLowerCase()}`}><span className="dot" />{f.sev}</span></td>
                 <td><span className="tag">{f.tech}</span> <span className="muted">{f.conf}%</span></td>
                 <td>{f.tactic}</td>
-                <td className="muted">{f.src}</td>
+                <td><SourceChip source={f.src} /></td>
                 <td><span className="mono">{f.host}</span></td>
                 <td><span className="mono muted">{f.user}</span></td>
                 <td className="muted">{f.time}</td>

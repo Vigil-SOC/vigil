@@ -136,6 +136,18 @@ INSERT INTO roles (role_id, name, description, permissions, is_system_role) VALU
 }', true)
 ON CONFLICT (role_id) DO NOTHING;
 
+-- Grant the LogLM page-extension view permission to analyst-and-above roles.
+-- An idempotent jsonb merge so it applies to BOTH fresh installs (rows just
+-- inserted above) and existing deployments (where the INSERT is a no-op via
+-- ON CONFLICT). Extension manifests declare a `permission` (e.g. "loglm.view")
+-- that must exist on the user's role for the page to appear outside DEV_MODE
+-- (see frontend AuthContext.hasPermission + the ExtensionHost gate).
+UPDATE roles
+SET permissions = permissions || '{"loglm.view": true}'::jsonb,
+    updated_at = NOW()
+WHERE role_id IN ('role-analyst', 'role-senior-analyst', 'role-manager', 'role-admin')
+  AND COALESCE((permissions->>'loglm.view')::boolean, false) = false;
+
 -- Create default admin user (password: admin123 - CHANGE IN PRODUCTION!)
 -- Password hash for 'admin123' using bcrypt
 INSERT INTO users (user_id, username, email, password_hash, full_name, role_id, is_active, is_verified) VALUES

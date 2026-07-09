@@ -9,6 +9,7 @@ import { attackApi } from '../../../services/api'
 import { mapApiFinding, type ApiFinding } from '../../data/mappers'
 import type { Finding } from '../../data/data'
 import type { Phase } from '../cases/useCases'
+import SourceChip from '../../shared/SourceChip'
 
 export default function AttackTechniqueFindings({ techniqueId }: { techniqueId: string }) {
   const [rows, setRows] = useState<Finding[]>([])
@@ -50,7 +51,7 @@ export default function AttackTechniqueFindings({ techniqueId }: { techniqueId: 
             <tr key={f.id}>
               <td><span className="id-cell">{f.id}</span></td>
               <td><span className={`sev ${f.sev.toLowerCase()}`}><span className="dot" />{f.sev}</span></td>
-              <td className="muted">{f.src}</td>
+              <td><SourceChip source={f.src} /></td>
               <td><span className="mono">{f.host}</span></td>
               <td className="muted">{f.time}</td>
               <td className="mono">{f.score.toFixed(2)}</td>

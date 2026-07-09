@@ -87,6 +87,10 @@ def _default_env_var(integration_id: str, field_name: str) -> str:
 # plaintext to the DB / JSON file.
 _SECRET_FIELDS: Mapping[str, tuple[str, ...]] = {
     "github": ("token",),
+    # LogLM connector — HMAC secret Vigil uses to mint short-lived session
+    # tokens from the connector BFF (see backend/api/extensions.py). The
+    # connector's non-secret ``connectorUrl`` stays on the integration row.
+    "loglm": ("mint_secret",),
     "virustotal": ("api_key",),
     "alienvault-otx": ("api_key",),
     "shodan": ("api_key",),

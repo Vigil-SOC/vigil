@@ -56,6 +56,7 @@ from api.ingestion import router as ingestion_router
 from api.timeline import router as timeline_router
 from api.graph import router as graph_router
 from api.vstrike import router as vstrike_router
+from api.extensions import router as extensions_router
 from api.custom_agents import router as custom_agents_router
 
 # Enhanced case management routers
@@ -339,6 +340,14 @@ app.include_router(
 # VStrike /findings is public-but-bearer-authenticated inside the router.
 # All VStrike management/UI/proxy routes require an authenticated user session.
 app.include_router(vstrike_router, prefix=f"{_CONTEXT_PATH}/api/integrations/vstrike", tags=["vstrike"])
+# Page-extension host — mints connector session tokens. The
+# /{integration_id}/session-token route is generic; it sits alongside the
+# vstrike routes above without conflicting (distinct path suffix).
+app.include_router(
+    extensions_router,
+    prefix=f"{_CONTEXT_PATH}/api/integrations",
+    tags=["extensions"],
+)
 app.include_router(
     storage_status_router,
     prefix=f"{_CONTEXT_PATH}/api/storage",
