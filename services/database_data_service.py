@@ -264,7 +264,32 @@ class DatabaseDataService:
         """
         if self._demo_mode and self._demo_service:
             return self._demo_service.get_nearest_neighbors(finding_id, limit)
-        
+
+        # Prefer a DB-side ANN query (pgvector HNSW) when the DB is available.
+        # find_similar_findings returns None only when it can't run (e.g.
+        # pgvector unavailable), in which case we fall back to the in-memory
+        # scan below; an empty list is a valid "no neighbors" result.
+        if self._db_available:
+            try:
+                neighbors = self._db_service.find_similar_findings(
+                    finding_id, limit=limit
+                )
+            except Exception as e:
+                logger.error(f"Error in DB-side nearest_neighbors: {e}")
+                neighbors = None
+            if neighbors is not None:
+                return {"seed_finding": finding_id, "neighbors": neighbors}
+
+        # In-memory fallback (JSON backend, or pgvector unavailable).
+        return self._nearest_neighbors_in_memory(finding_id, limit)
+
+    def _nearest_neighbors_in_memory(self, finding_id: str, limit: int) -> Dict:
+        """Cosine-similarity nearest neighbors computed in Python.
+
+        Fallback for when the DB-side pgvector query can't run. Loads findings
+        (DB or JSON), then scores every other finding against the seed;
+        mismatched-length embeddings are skipped (dimension-safe).
+        """
         # Get all findings (from DB or JSON fallback)
         if self._db_available:
             try:
@@ -277,12 +302,12 @@ class DatabaseDataService:
             findings = self._load_findings_json()
         else:
             return {"error": "No data backend available"}
-        
+
         # Find the seed finding
         seed = next((f for f in findings if f.get('finding_id') == finding_id), None)
         if not seed or 'embedding' not in seed:
             return {"error": f"Finding {finding_id} not found or has no embedding"}
-        
+
         # Compute cosine similarity against all other findings with embeddings
         sims = []
         skipped = 0
@@ -302,7 +327,7 @@ class DatabaseDataService:
                 })
         if skipped:
             logger.warning(f"Skipped {skipped} findings with incompatible embedding dimensions")
-        
+
         sims.sort(key=lambda x: x['similarity'], reverse=True)
         return {"seed_finding": finding_id, "neighbors": sims[:limit]}
     

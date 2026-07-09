@@ -10,10 +10,36 @@ from datetime import datetime
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.orm import Session
 
-from database.models import Case, Finding, SketchMapping, AttackLayer, AIDecisionLog, case_findings
+from database.models import (
+    Case,
+    Finding,
+    SketchMapping,
+    AttackLayer,
+    AIDecisionLog,
+    case_findings,
+    EMBEDDING_DIM,
+)
 from database.connection import get_db_manager
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_embedding(embedding: Optional[List[float]]) -> List[float]:
+    """Pad/truncate an embedding to the fixed ``EMBEDDING_DIM`` width.
+
+    The findings vector column is fixed-width (pgvector ``Vector(EMBEDDING_DIM)``),
+    but sources emit varying dimensions (LogLM 512, deeptempo 768). Shorter
+    vectors are zero-padded and longer ones truncated so every row fits the
+    column; a missing/empty embedding becomes an all-zero vector.
+    """
+    if not embedding:
+        return [0.0] * EMBEDDING_DIM
+    vec = [float(x) for x in embedding]
+    if len(vec) < EMBEDDING_DIM:
+        return vec + [0.0] * (EMBEDDING_DIM - len(vec))
+    if len(vec) > EMBEDDING_DIM:
+        return vec[:EMBEDDING_DIM]
+    return vec
 
 
 class DatabaseService:
@@ -40,7 +66,7 @@ class DatabaseService:
         
         Args:
             finding_id: Unique finding ID
-            embedding: 768-dimensional embedding vector
+            embedding: embedding vector (padded/truncated to EMBEDDING_DIM)
             mitre_predictions: MITRE ATT&CK predictions
             anomaly_score: Anomaly score (0-1)
             timestamp: Finding timestamp
@@ -54,7 +80,7 @@ class DatabaseService:
             with self.db_manager.session_scope() as session:
                 finding = Finding(
                     finding_id=finding_id,
-                    embedding=embedding,
+                    embedding=_normalize_embedding(embedding),
                     mitre_predictions=mitre_predictions,
                     anomaly_score=anomaly_score,
                     timestamp=timestamp,
@@ -181,6 +207,63 @@ class DatabaseService:
             logger.error(f"Error getting findings: {e}")
             return []
     
+    def find_similar_findings(
+        self,
+        finding_id: str,
+        limit: int = 10,
+        same_source: bool = False,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Findings most similar to ``finding_id`` by embedding cosine distance.
+
+        Uses the pgvector ``<=>`` operator (backed by the HNSW index) for a
+        DB-side approximate-nearest-neighbor search rather than scanning every
+        row in Python. Returns neighbor dicts ordered by descending similarity,
+        or ``None`` when the query can't run (e.g. pgvector unavailable) so the
+        caller can fall back to an in-memory computation.
+
+        Args:
+            finding_id: seed finding to search around.
+            limit: max neighbors to return.
+            same_source: restrict to the seed's own data_source (mitigates
+                comparing across distinct embedding model spaces).
+        """
+        try:
+            with self.db_manager.session_scope() as session:
+                seed = session.get(Finding, finding_id)
+                if seed is None or seed.embedding is None:
+                    return []
+                distance = Finding.embedding.cosine_distance(seed.embedding)
+                query = select(Finding, distance.label("distance")).where(
+                    Finding.finding_id != finding_id
+                )
+                if same_source and seed.data_source:
+                    query = query.where(Finding.data_source == seed.data_source)
+                query = query.order_by(distance).limit(limit)
+
+                neighbors: List[Dict[str, Any]] = []
+                for finding, dist in session.execute(query).all():
+                    # pgvector cosine distance is in [0, 2]; similarity = 1 - d
+                    similarity = 1.0 - float(dist) if dist is not None else None
+                    neighbors.append(
+                        {
+                            "finding_id": finding.finding_id,
+                            "similarity": (
+                                round(similarity, 4) if similarity is not None else None
+                            ),
+                            "cluster_id": finding.cluster_id,
+                            "severity": finding.severity,
+                            "data_source": finding.data_source,
+                            "anomaly_score": float(finding.anomaly_score or 0),
+                        }
+                    )
+                return neighbors
+        except Exception as e:
+            logger.warning(
+                f"pgvector similarity query failed for {finding_id}, "
+                f"caller should fall back: {e}"
+            )
+            return None
+
     def count_findings(
         self,
         severity: Optional[str] = None,
