@@ -249,7 +249,9 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
             )}
             {phase === 'ready' && filtered.length === 0 && (
               <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-                {rows.length === 0 ? 'No findings found.' : 'No findings match your filters.'}
+                {rows.length === 0
+                  ? 'No findings yet. Use Settings > Integrations > Manual Upload or configure a source to populate this table.'
+                  : 'No findings match your filters.'}
               </td></tr>
             )}
             {phase === 'ready' && paged.map((f) => (
@@ -454,8 +456,8 @@ function EntityStub() {
           <circle cx="52" cy="120" r="8" /><circle cx="172" cy="116" r="8" />
         </svg>
       </div>
-      <h3>Entity Graph</h3>
-      <p>Interactive host, user &amp; device relationship graph — pivot across shared entities to trace lateral movement. Coming soon.</p>
+      <h3>No entities found</h3>
+      <p>Upload findings with host, user, or device fields to build the relationship graph.</p>
       <button className="btn primary"><Icon name="graph" /> Preview the graph</button>
     </div>
   )

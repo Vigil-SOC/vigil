@@ -77,6 +77,80 @@ async def get_cases(
     return {"cases": cases, "total": len(cases)}
 
 
+@router.delete("/all")
+async def clear_all_cases():
+    """Delete all cases and case-derived generated data."""
+    try:
+        from database.connection import get_session
+        from database.models import (
+            AIDecisionLog,
+            AttackLayer,
+            Case,
+            CaseAttachment,
+            CaseAuditLog,
+            CaseClosureInfo,
+            CaseComment,
+            CaseEscalation,
+            CaseEvidence,
+            CaseIOC,
+            CaseMetrics,
+            CaseNotification,
+            CaseRelationship,
+            CaseSLA,
+            CaseTask,
+            CaseWatcher,
+            Investigation,
+            SketchMapping,
+            case_findings,
+        )
+
+        with get_session() as session:
+            count = session.query(Case).count()
+
+            for model in (
+                CaseAttachment,
+                CaseClosureInfo,
+                CaseEscalation,
+                CaseEvidence,
+                CaseIOC,
+                CaseMetrics,
+                CaseNotification,
+                CaseRelationship,
+                CaseSLA,
+                CaseTask,
+                CaseWatcher,
+                CaseComment,
+            ):
+                session.query(model).delete(synchronize_session=False)
+
+            session.execute(case_findings.delete())
+            session.query(SketchMapping).filter(SketchMapping.case_id.isnot(None)).delete(
+                synchronize_session=False
+            )
+            session.query(AIDecisionLog).filter(AIDecisionLog.case_id.isnot(None)).delete(
+                synchronize_session=False
+            )
+            session.query(Investigation).filter(Investigation.case_id.isnot(None)).update(
+                {"case_id": None},
+                synchronize_session=False,
+            )
+            session.query(AttackLayer).filter(AttackLayer.case_id.isnot(None)).update(
+                {"case_id": None},
+                synchronize_session=False,
+            )
+            session.query(CaseAuditLog).delete(synchronize_session=False)
+            session.query(Case).delete(synchronize_session=False)
+            session.commit()
+
+        return {
+            "success": True,
+            "deleted": count,
+            "message": f"Deleted {count} cases and case-derived records",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear cases: {str(e)}")
+
+
 @router.get("/{case_id}")
 async def get_case(case_id: str):
     """
@@ -1150,4 +1224,3 @@ async def search_cases(data: SearchRequest):
         offset=data.offset
     )
     return results
-
