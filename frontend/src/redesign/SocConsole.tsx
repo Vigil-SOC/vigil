@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import './styles.css'
 import { useAuth } from '../contexts/AuthContext'
-import { configApi, orchestratorApi } from '../services/api'
+import { orchestratorApi } from '../services/api'
 import { Icon, type IconName } from './shared/icons'
 import { NAV, TITLES, type ScreenKey, type NavGate } from './data/data'
 import { ExtensionProvider, useExtensions } from './extensions/ExtensionProvider'
@@ -75,7 +75,7 @@ function SocConsoleInner() {
   const navigate = useNavigate()
   const { hasPermission } = useAuth()
   const { screen } = useParams<{ screen?: string }>()
-  const { mountPoints, loading: extLoading } = useExtensions()
+  const { mountPoints, enabledIntegrations, loading: extLoading } = useExtensions()
 
   // Merge built-in screens/nav/titles/perms with any registered page
   // extensions. Built-ins always win so an extension can't shadow a core
@@ -118,11 +118,10 @@ function SocConsoleInner() {
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
   // runtime-dynamic rail membership (mirrors production NavigationRail):
-  // integrations are fetched once, orchestrator status is polled every 10s. No
-  // rail item is gated today — Auto Ops is intentionally always-visible and
-  // Timesketch has no redesign screen yet — but the plumbing is live so adding
-  // a NavGate to data.ts is the only step needed to gate one (see data.ts).
-  const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([])
+  // enabled integrations come from ExtensionProvider (the single source, so a
+  // connector configured in Settings reflects in the rail without a page
+  // refresh); orchestrator status is polled every 10s. Adding a NavGate to
+  // data.ts is the only step needed to gate a rail item on either (see data.ts).
   const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
 
   // fire desktop notifications for newly-arrived findings (gated by the General
@@ -168,14 +167,9 @@ function SocConsoleInner() {
     setViewFull(false)
   }, [current])
 
-  // nav membership: integrations once, orchestrator status on a 10s poll
+  // nav membership: orchestrator status on a 10s poll (enabled integrations
+  // are read from ExtensionProvider above, not fetched here)
   useEffect(() => {
-    configApi
-      .getIntegrations()
-      .then((res) =>
-        setEnabledIntegrations((res.data as { enabled_integrations?: string[] })?.enabled_integrations || []),
-      )
-      .catch(() => setEnabledIntegrations([]))
     const pollStatus = () =>
       orchestratorApi
         .getStatus()

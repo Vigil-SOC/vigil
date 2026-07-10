@@ -10,6 +10,7 @@
    ============================================================ */
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -29,13 +30,21 @@ interface ExtensionsValue {
   extensions: RegisteredExtension[]
   /** flattened (extension, screen-mount-point) pairs, ready for the shell */
   mountPoints: ResolvedMountPoint[]
+  /** enabled integration ids (the single source the shell's nav gate reads) */
+  enabledIntegrations: string[]
   loading: boolean
+  /** re-read enabled integrations + connector manifests. Call after the
+   *  integrations config changes so a newly-configured connector's tab and
+   *  detection branding mount without a full page refresh. */
+  reload: () => void
 }
 
 const Ctx = createContext<ExtensionsValue>({
   extensions: [],
   mountPoints: [],
+  enabledIntegrations: [],
   loading: true,
+  reload: () => {},
 })
 
 export function useExtensions(): ExtensionsValue {
@@ -49,7 +58,10 @@ interface IntegrationsResponse {
 
 export function ExtensionProvider({ children }: { children: ReactNode }) {
   const [extensions, setExtensions] = useState<RegisteredExtension[]>([])
+  const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+  const [reloadKey, setReloadKey] = useState(0)
+  const reload = useCallback(() => setReloadKey((k) => k + 1), [])
 
   useEffect(() => {
     const ctrl = new AbortController()
@@ -60,6 +72,7 @@ export function ExtensionProvider({ children }: { children: ReactNode }) {
         const data = (res.data as IntegrationsResponse) || {}
         const enabled = data.enabled_integrations || []
         const configs = data.integrations || {}
+        if (!ctrl.signal.aborted) setEnabledIntegrations(enabled)
         const candidates = enabled
           .map((id) => ({ id, url: configs[id]?.connectorUrl }))
           .filter((c): c is { id: string; url: string } => !!c.url)
@@ -69,13 +82,16 @@ export function ExtensionProvider({ children }: { children: ReactNode }) {
         if (ctrl.signal.aborted) return
         setExtensions(results.filter((r): r is RegisteredExtension => r !== null))
       } catch {
-        if (!ctrl.signal.aborted) setExtensions([])
+        if (!ctrl.signal.aborted) {
+          setExtensions([])
+          setEnabledIntegrations([])
+        }
       } finally {
         if (!ctrl.signal.aborted) setLoading(false)
       }
     })()
     return () => ctrl.abort()
-  }, [])
+  }, [reloadKey])
 
   const mountPoints = useMemo<ResolvedMountPoint[]>(
     () =>
@@ -88,8 +104,8 @@ export function ExtensionProvider({ children }: { children: ReactNode }) {
   )
 
   const value = useMemo<ExtensionsValue>(
-    () => ({ extensions, mountPoints, loading }),
-    [extensions, mountPoints, loading],
+    () => ({ extensions, mountPoints, enabledIntegrations, loading, reload }),
+    [extensions, mountPoints, enabledIntegrations, loading, reload],
   )
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>

@@ -10,6 +10,7 @@ import { useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { TextInput } from '../../shared/ui'
 import { useMcpServers, useIntegrationsConfig } from './useSettings'
+import { useExtensions } from '../../extensions/ExtensionProvider'
 import {
   getIntegrationForServer,
   HIDDEN_MCP_SERVERS,
@@ -53,6 +54,9 @@ export default function IntegrationsSection({ notify }: SectionProps) {
 function ServersPanel({ notify }: SectionProps) {
   const { servers, statuses, enabled, phase, error, reload, setServerEnabled } = useMcpServers()
   const { config: intCfg, reload: reloadInt, saveIntegration } = useIntegrationsConfig()
+  // re-read the extension registry so a page-extension connector (e.g. LogLM)
+  // mounts its tab + detection branding right after it's configured
+  const { reload: reloadExtensions } = useExtensions()
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [builderOpen, setBuilderOpen] = useState(false)
@@ -141,9 +145,15 @@ function ServersPanel({ notify }: SectionProps) {
                   ? intCfg.enabled_integrations.includes(integration.id)
                   : false
                 const needsConfig = !!integration && !isConfigured
+                // Page-extension connectors (connectorUrl) mount via the connector, not a startable MCP server — show status, no toggle.
+                const isExtension = !!integration?.fields?.some((f) => f.name === 'connectorUrl')
                 // green = on · gray = needs config · red = off
-                const dotColor = isEnabled ? 'var(--ok)' : needsConfig ? 'var(--tx-faint)' : 'var(--crit)'
-                const label = isEnabled ? (isRunning ? 'Running' : 'Enabled') : needsConfig ? 'Not Configured' : 'Off'
+                const dotColor = isExtension
+                  ? isConfigured ? 'var(--ok)' : 'var(--tx-faint)'
+                  : isEnabled ? 'var(--ok)' : needsConfig ? 'var(--tx-faint)' : 'var(--crit)'
+                const label = isExtension
+                  ? isConfigured ? 'Configured' : 'Not Configured'
+                  : isEnabled ? (isRunning ? 'Running' : 'Enabled') : needsConfig ? 'Not Configured' : 'Off'
                 const canConfigure = !!integration?.fields?.length
                 return (
                   <div key={name} className="card card-sq p-3.5 flex flex-col gap-2">
@@ -154,17 +164,19 @@ function ServersPanel({ notify }: SectionProps) {
                       {WIP_SERVERS.has(name) && (
                         <span className="chip" style={{ color: 'var(--high)', fontSize: 10 }}>WIP</span>
                       )}
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={isEnabled}
-                        aria-label={`Toggle ${name}`}
-                        disabled={busy === name}
-                        className={`toggle${isEnabled ? ' on' : ''}`}
-                        onClick={() => onToggle(name, !isEnabled)}
-                      >
-                        <span className="toggle-knob" />
-                      </button>
+                      {!isExtension && (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={isEnabled}
+                          aria-label={`Toggle ${name}`}
+                          disabled={busy === name}
+                          className={`toggle${isEnabled ? ' on' : ''}`}
+                          onClick={() => onToggle(name, !isEnabled)}
+                        >
+                          <span className="toggle-knob" />
+                        </button>
+                      )}
                     </div>
                     <p className="text-xs text-tx-3 leading-snug line-clamp-2 min-h-[2rem]">
                       {SERVER_DESCRIPTIONS[name] || integration?.description || 'Custom MCP integration.'}
@@ -209,7 +221,16 @@ function ServersPanel({ notify }: SectionProps) {
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {
             await saveIntegration(id, cfg)
-            notify('ok', `${wizardFor.name} configured. Enable it with the toggle if it isn’t already.`)
+            // page-extension connectors mount from the extension registry, not a
+            // startable server — refresh it so the tab/detections appear at once
+            const isExtension = wizardFor.fields?.some((f) => f.name === 'connectorUrl')
+            if (isExtension) reloadExtensions()
+            notify(
+              'ok',
+              isExtension
+                ? `${wizardFor.name} connected. Its tab and detections are now available.`
+                : `${wizardFor.name} configured. Enable it with the toggle if it isn’t already.`,
+            )
           }}
         />
       )}
