@@ -16,6 +16,7 @@ delete the legacy loops in a follow-up.
 """
 
 import asyncio
+import hmac
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
@@ -479,6 +480,21 @@ class DataPoller:
         
         async def handle_webhook(request: web.Request) -> web.Response:
             """Handle incoming webhook data."""
+            # Fail closed: no token configured => ingestion is disabled, and every
+            # request must present a matching bearer (constant-time compare).
+            token = self.config.webhook_token
+            if not token:
+                logger.error(
+                    "Ingest webhook rejected: DAEMON_WEBHOOK_TOKEN is not set "
+                    "(fail-closed; ingestion disabled until configured)"
+                )
+                return web.json_response(
+                    {"error": "ingest disabled: server missing DAEMON_WEBHOOK_TOKEN"},
+                    status=503,
+                )
+            presented = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            if not hmac.compare_digest(presented, token):
+                return web.json_response({"error": "unauthorized"}, status=401)
             try:
                 data = await request.json()
                 

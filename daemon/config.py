@@ -18,6 +18,7 @@ class PollingConfig:
     generic_interval: int = 120  # 2 minutes for other sources
     webhook_enabled: bool = True
     webhook_port: int = 8081
+    webhook_token: str = ""  # required bearer for /ingest; empty = fail closed
 
 
 @dataclass
@@ -169,6 +170,7 @@ class DaemonConfig:
         config.polling.crowdstrike_interval = int(os.getenv("DAEMON_CROWDSTRIKE_POLL_INTERVAL", "60"))
         config.polling.webhook_enabled = os.getenv("DAEMON_WEBHOOK_ENABLED", "true").lower() == "true"
         config.polling.webhook_port = int(os.getenv("DAEMON_WEBHOOK_PORT", "8081"))
+        config.polling.webhook_token = os.getenv("DAEMON_WEBHOOK_TOKEN", "")
         
         # Processing
         config.processing.auto_triage_enabled = os.getenv("DAEMON_AUTO_TRIAGE", "true").lower() == "true"
