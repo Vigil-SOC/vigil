@@ -26,6 +26,40 @@ function resolveUrl(base: string, maybeRelative: string): string {
   }
 }
 
+/** Optional hard allowlist of permitted connector origins (comma-separated
+ *  ``VITE_EXTENSION_ORIGIN_ALLOWLIST``). Empty → only the scheme rule applies. */
+function extensionOriginAllowlist(): string[] {
+  const raw = (import.meta.env.VITE_EXTENSION_ORIGIN_ALLOWLIST as string | undefined) ?? ''
+  return raw.split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+/** Whether a connector base URL may be trusted to serve an extension bundle.
+ *  The bundle is imported as live code into Vigil's own origin, so an untrusted
+ *  origin is arbitrary code execution: require https (http only for loopback
+ *  dev) and, when an allowlist is configured, membership in it. */
+export function isTrustedConnectorUrl(raw: string): boolean {
+  let u: URL
+  try {
+    u = new URL(raw)
+  } catch {
+    return false
+  }
+  const loopback =
+    u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && loopback)) return false
+  const allow = extensionOriginAllowlist()
+  return allow.length === 0 || allow.includes(u.origin)
+}
+
+/** Same-origin check that fails closed on unparseable input. */
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin
+  } catch {
+    return false
+  }
+}
+
 /** Minimal structural validation so a malformed manifest is skipped rather
  *  than throwing deep inside the shell. Returns the manifest (unchanged) or
  *  null with a console warning. */
@@ -59,6 +93,12 @@ export async function fetchManifest(
   signal?: AbortSignal,
 ): Promise<RegisteredExtension | null> {
   const base = connectorUrl.replace(/\/+$/, '')
+  if (!isTrustedConnectorUrl(base)) {
+    console.warn(
+      `[extensions] refusing untrusted connector origin for "${integrationId}": ${base}`,
+    )
+    return null
+  }
   let raw: unknown
   try {
     const res = await fetch(`${base}/manifest.json`, { signal, credentials: 'omit' })
@@ -72,10 +112,15 @@ export async function fetchManifest(
   }
   const manifest = validateManifest(raw)
   if (!manifest) return null
-  // resolve a possibly-relative bundleUrl against the connector base
-  manifest.render = {
-    ...manifest.render,
-    bundleUrl: resolveUrl(base, manifest.render.bundleUrl),
+  // Resolve a possibly-relative bundleUrl, then hard-require it to share the
+  // connector's origin — a manifest must not redirect the import() elsewhere.
+  const bundleUrl = resolveUrl(base, manifest.render.bundleUrl)
+  if (!sameOrigin(bundleUrl, base)) {
+    console.warn(
+      `[extensions] skipping manifest "${manifest.id}": bundleUrl origin does not match connector origin`,
+    )
+    return null
   }
+  manifest.render = { ...manifest.render, bundleUrl }
   return { integrationId, connectorUrl: base, manifest }
 }

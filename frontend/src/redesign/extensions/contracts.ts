@@ -92,8 +92,9 @@ export interface RegisteredExtension {
 export interface HostContext {
   /** the subset of Vigil theme tokens the element needs to look native */
   themeTokens: { '--accent': string; mode: 'light' | 'dark' }
-  /** short-lived, user-scoped session token minted by the Vigil backend */
-  session: { token: string; user: string }
+  /** short-lived, user-scoped session token minted by the Vigil backend;
+   *  absent when the connector runs without auth (no mint secret configured) */
+  session?: { token: string; user: string }
   /** base URL the element calls directly (the connector BFF) */
   apiBase: string
 }

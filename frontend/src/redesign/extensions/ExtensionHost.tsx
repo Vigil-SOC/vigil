@@ -64,7 +64,9 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
     const { token, user } = res.data
     return {
       themeTokens: { '--accent': accent.a, mode },
-      session: { token, user },
+      // token is null when no mint secret is configured — mount session-less
+      // rather than failing (the connector is then expected to be open).
+      session: token ? { token, user } : undefined,
       apiBase: ext.connectorUrl,
     }
   }, [ext.integrationId, ext.connectorUrl, accent.a, mode])
@@ -83,6 +85,11 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
     setErrorMsg('')
     ;(async () => {
       try {
+        // Defense in depth: the registry already origin-locks bundleUrl to the
+        // connector, but this is the line that runs remote code in our origin.
+        if (new URL(bundleUrl).origin !== new URL(ext.connectorUrl).origin) {
+          throw new Error('bundle origin does not match connector origin')
+        }
         await import(/* @vite-ignore */ bundleUrl)
         // wait for the element to register (resolves immediately on revisit)
         await Promise.race([

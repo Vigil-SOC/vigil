@@ -15,7 +15,9 @@ secret never reaches the browser.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -27,6 +29,29 @@ logger = logging.getLogger(__name__)
 
 # how long to wait on the connector BFF before giving up
 _HTTP_TIMEOUT_SECONDS = 10.0
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _connector_allowlist() -> list[str]:
+    """Optional runtime allowlist of connector origins (comma-separated
+    ``EXTENSION_CONNECTOR_ALLOWLIST``). Empty → only the scheme rule applies."""
+    raw = os.getenv("EXTENSION_CONNECTOR_ALLOWLIST", "")
+    return [o.strip() for o in raw.split(",") if o.strip()]
+
+
+def _is_trusted_connector_url(url: str) -> bool:
+    """Backend twin of the frontend ``isTrustedConnectorUrl``. The backend calls
+    this admin-set URL server-side (``POST /session``), so an untrusted value is
+    an SSRF vector: require https (http only for loopback dev) and, when an
+    allowlist is configured, membership in it."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    loopback = host in _LOOPBACK_HOSTS
+    if parts.scheme != "https" and not (parts.scheme == "http" and loopback):
+        return False
+    allow = _connector_allowlist()
+    return not allow or f"{parts.scheme}://{parts.netloc}" in allow
 
 
 class ExtensionSessionError(Exception):
@@ -53,23 +78,26 @@ def _connector_url(integration_id: str) -> str:
             f"Integration '{integration_id}' has no connectorUrl configured",
             status_code=400,
         )
-    return str(url).rstrip("/")
+    url = str(url).rstrip("/")
+    if not _is_trusted_connector_url(url):
+        raise ExtensionSessionError(
+            f"Integration '{integration_id}' connectorUrl is not a trusted origin "
+            "(https required; must match EXTENSION_CONNECTOR_ALLOWLIST when set)",
+            status_code=400,
+        )
+    return url
 
 
-def _mint_secret(integration_id: str) -> str:
+def _mint_secret(integration_id: str) -> str | None:
     """Read the integration's session signing secret from the secrets store.
 
     Resolves the secrets-store key via the shared registry (loglm ->
-    ``LOGLM_MINT_SECRET``) rather than hardcoding it here.
+    ``LOGLM_MINT_SECRET``) rather than hardcoding it here. Returns ``None``
+    when none is configured; the caller degrades to a session-less context
+    instead of failing the panel (see ``mint_session_token``).
     """
     env_key = secret_fields_for(integration_id).get("mint_secret")
-    secret = get_secret(env_key) if env_key else None
-    if not secret:
-        raise ExtensionSessionError(
-            f"Integration '{integration_id}' has no session signing secret configured",
-            status_code=400,
-        )
-    return secret
+    return get_secret(env_key) if env_key else None
 
 
 async def mint_session_token(integration_id: str, username: str) -> Dict[str, Any]:
@@ -78,9 +106,21 @@ async def mint_session_token(integration_id: str, username: str) -> Dict[str, An
     Calls the connector BFF ``POST {connectorUrl}/session`` with the mint
     secret as a bearer and the Vigil user identity as the subject. Returns
     ``{token, expires_in, user}`` for the frontend to hand to the element.
+
+    When no mint secret is configured the connector's data endpoints are
+    taken to be open (dev / restricted-network), so a session-less context
+    (``token=None``) is returned rather than failing: the element still
+    mounts, and if the connector *does* require auth its own data call
+    surfaces a 401 locally instead of blanking the whole panel.
     """
     connector_url = _connector_url(integration_id)
     secret = _mint_secret(integration_id)
+    if not secret:
+        logger.info(
+            "no mint secret for '%s'; issuing a session-less extension context",
+            integration_id,
+        )
+        return {"token": None, "expires_in": None, "user": username}
 
     try:
         async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT_SECONDS) as client:

@@ -998,7 +998,7 @@ export interface MempalaceHealth {
 // mint secret never reaches the browser). See backend/api/extensions.py.
 export const extensionsApi = {
   getSessionToken: (integrationId: string) =>
-    api.get<{ token: string; expires_in: number; user: string }>(
+    api.get<{ token: string | null; expires_in: number | null; user: string }>(
       `/integrations/${integrationId}/session-token`,
     ),
 }
