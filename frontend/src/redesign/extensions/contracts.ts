@@ -54,11 +54,23 @@ export interface ExtensionMountPoint {
   gate?: ExtensionGate
 }
 
+/** How findings whose `data_source` equals this manifest's `id` render as a
+ *  source chip. Owned by the connector so no vendor colour/icon is hardcoded
+ *  host-side; all fields optional (host supplies neutral defaults). */
+export interface ExtensionBadge {
+  label?: string
+  /** hex colour, e.g. "#7d74f3" */
+  color?: string
+  /** host IconName; unknown names fall back to neutral */
+  icon?: string
+}
+
 export interface ExtensionManifest {
   id: string
   name: string
   version: string
   hostApiVersion: string
+  badge?: ExtensionBadge
   render: ExtensionRender
   mountPoints: ExtensionMountPoint[]
 }

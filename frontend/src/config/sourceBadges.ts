@@ -18,7 +18,9 @@ export interface SourceBadge {
 /** Keyed by lower-cased data_source. Add an entry to give a source its own
  *  color + icon; anything unmapped falls back to a neutral chip. */
 const SOURCE_BADGES: Record<string, SourceBadge> = {
-  loglm: { label: 'LogLM', color: '#7d74f3', icon: 'brain' },
+  // NOTE: loglm is intentionally absent — it's a UI-extension connector, so its
+  // chip (label/color/icon) comes from its manifest badge (see SourceChip),
+  // keeping vendor branding out of host code.
   splunk: { label: 'Splunk', color: '#65a637', icon: 'search' },
   crowdstrike: { label: 'CrowdStrike', color: '#e2705f', icon: 'shield' },
   'microsoft-defender': { label: 'Defender', color: '#2a7de1', icon: 'shield' },
