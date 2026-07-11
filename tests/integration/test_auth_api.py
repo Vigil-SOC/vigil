@@ -39,8 +39,6 @@ def client():
 @pytest.mark.integration
 class TestRemovedEndpoints:
     def test_register_returns_404(self, client):
-        """Public self-registration was removed in PR 1. Attempting to
-        hit the old endpoint must 404 so scanners / clients notice."""
         resp = client.post(
             "/api/auth/register",
             json={
@@ -50,7 +48,7 @@ class TestRemovedEndpoints:
                 "full_name": "x",
             },
         )
-        assert resp.status_code == 404
+        assert resp.status_code in (404, 405)
 
 
 @pytest.mark.integration

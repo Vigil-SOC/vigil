@@ -2406,6 +2406,70 @@
       color: var(--crit);
    }
 
+   .chist-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+   }
+
+   .chist-archtoggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--tx-3);
+      cursor: pointer;
+   }
+
+   .chist-row.archived {
+      opacity: 0.55;
+   }
+
+   .chist-actions {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: stretch;
+   }
+
+   .chist-act {
+      width: 32px;
+      border: none;
+      background: none;
+      color: var(--tx-faint);
+      display: grid;
+      place-items: center;
+   }
+
+   .chist-act:hover {
+      background: var(--hover);
+      color: var(--tx);
+   }
+
+   .chist-act.chist-del:hover {
+      color: var(--crit);
+   }
+
+   .chist-act:disabled {
+      opacity: 0.4;
+      cursor: default;
+   }
+
+   .chist-rename {
+      flex: 1;
+      min-width: 0;
+      margin: 6px;
+      padding: 7px 9px;
+      font-size: 13px;
+      color: var(--tx);
+      background: var(--bg-1, var(--bg-2));
+      border: 1px solid var(--accent-line, var(--line));
+      border-radius: 7px;
+      outline: none;
+   }
+
    /* chat settings */
    .chat-settings {
       display: flex;

@@ -14,12 +14,16 @@ import {
   aiConfigApi,
   analyticsApi,
   claudeApi,
+  conversationsApi,
   mcpApi,
   reasoningApi,
   streamFetch,
   type CostEstimate,
+  type ConversationDetail,
+  type ImportConversationInput,
 } from '../../services/api'
 import { notificationService } from '../../services/notifications'
+import { useConversations } from './useConversations'
 import { Popup, Select } from '../shared/ui'
 
 interface ChatAgent {
@@ -105,6 +109,59 @@ function saveHistory(list: Conversation[]) {
   }
 }
 
+/* Investigation dedup: key (seed prompt) → conversation/session id. The server
+   conversation store has no "key" column, so this small localStorage map
+   preserves the "reopen the same finding's thread" behavior. */
+const KEYMAP_KEY = 'soc.chat.keymap'
+function loadKeymap(): Record<string, string> {
+  try {
+    const m = JSON.parse(localStorage.getItem(KEYMAP_KEY) || '{}')
+    return m && typeof m === 'object' ? (m as Record<string, string>) : {}
+  } catch {
+    return {}
+  }
+}
+function setKeymapEntry(key: string, sid: string) {
+  try {
+    const m = loadKeymap()
+    m[key] = sid
+    localStorage.setItem(KEYMAP_KEY, JSON.stringify(m))
+  } catch {
+    /* ignore */
+  }
+}
+
+/* one-time migration marker: localStorage history → server store */
+const IMPORT_MARKER_KEY = 'soc.chat.imported'
+
+/* a unified row for the history drawer (server summary, or offline cache) */
+interface HistRow {
+  id: string
+  title: string
+  count: number
+  ts: number | null
+  archived?: boolean
+}
+function histTime(ts: number | null): string {
+  if (ts == null) return ''
+  const d = new Date(ts)
+  return isNaN(d.getTime()) ? '' : format(d, 'MMM d, HH:mm')
+}
+/* server ConversationMessage[] → the dock's ChatMsg[] (user + assistant only) */
+function toChatMsgs(msgs: ConversationDetail['messages']): ChatMsg[] {
+  return msgs
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) =>
+      m.role === 'user'
+        ? { role: 'user' as Role, text: m.content }
+        : {
+            role: 'vigil' as Role,
+            text: m.content || '_(no response)_',
+            thinking: m.thinking || undefined,
+          },
+    )
+}
+
 /* ---------- chat settings (persisted, mirrors the classic drawer) ---------- */
 interface ChatSettings {
   model: string
@@ -187,7 +244,17 @@ export default function Chat({
   const [agentsInfoOpen, setAgentsInfoOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Offline cache (localStorage) — server is the source of truth (useConversations
+  // below); this is the fallback shown when the server list can't be reached.
   const [history, setHistory] = useState<Conversation[]>(() => loadHistory())
+  const [showArchived, setShowArchived] = useState(false)
+  const {
+    items: serverConvos,
+    phase: histPhase,
+    reload: reloadHistory,
+  } = useConversations(showArchived)
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameDraft, setRenameDraft] = useState('')
   // chat settings — mirror the classic drawer; persisted across sessions
   const [savedSettings] = useState(loadSettings)
   const [model, setModel] = useState(savedSettings.model)
@@ -196,6 +263,11 @@ export default function Chat({
   const [thinkingBudget, setThinkingBudget] = useState(savedSettings.thinkingBudget)
   const [systemPrompt, setSystemPrompt] = useState(savedSettings.systemPrompt)
   const [models, setModels] = useState<{ id: string; name: string }[]>([])
+  // chat_default from AI Config + whether that fetch has settled — used by the
+  // stale-model self-heal below to prefer the configured default when the
+  // persisted selection is no longer offered.
+  const [configuredDefault, setConfiguredDefault] = useState<string | null>(null)
+  const [configSettled, setConfigSettled] = useState(false)
   const [mcpStatus, setMcpStatus] = useState<{ available: number; total: number } | null>(null)
   // live pre-call estimate from the backend (exact count_tokens + USD band),
   // mirroring the classic drawer; null until the first debounced estimate lands
@@ -305,11 +377,13 @@ export default function Chat({
       .getConfig()
       .then((r) => {
         const configured = r.data?.assignments?.chat_default?.model_id
+        if (configured) setConfiguredDefault(configured)
         if (configured && !settingsExistedRef.current && !userPickedModelRef.current) {
           setModel(configured)
         }
       })
       .catch(() => {})
+      .finally(() => setConfigSettled(true))
     mcpApi
       .getStatuses()
       .then((r) => {
@@ -319,6 +393,23 @@ export default function Chat({
       })
       .catch(() => {})
   }, [open])
+
+  // Self-heal a stale/removed model selection. Once the live model list and
+  // the chat_default config have both settled, if the persisted model is no
+  // longer offered (e.g. an Ollama provider that was later removed, or a
+  // renamed model), fall back to chat_default when it's available, otherwise
+  // the first available model. Without this a stale localStorage model 500s
+  // every send ("no keys found that support model: …") until the user
+  // manually re-picks. The persist effect below then writes the corrected id.
+  useEffect(() => {
+    if (!models.length || !configSettled) return
+    if (model && models.some((m) => m.id === model)) return
+    const fallback =
+      configuredDefault && models.some((m) => m.id === configuredDefault)
+        ? configuredDefault
+        : models[0].id
+    if (fallback && fallback !== model) setModel(fallback)
+  }, [models, configSettled, configuredDefault, model])
 
   // persist settings on change ("automatically saved", like the classic drawer)
   useEffect(() => {
@@ -473,7 +564,7 @@ export default function Chat({
               type?: string
               content?: string
               error?: string
-              summarized_messages?: number
+              windowed_messages?: number
               remaining_messages?: number
             }
             try {
@@ -495,9 +586,9 @@ export default function Chat({
               // separate any tool output from the prose preceding it
               setIsProcessingTools(true)
               if (curText && !curText.endsWith('\n\n')) curText += '\n\n'
-            } else if (ev.type === 'context_summarized') {
+            } else if (ev.type === 'context_windowed') {
               curText +=
-                `_[Context auto-summarized: ${ev.summarized_messages ?? 0} older ` +
+                `_[Context compressed: ${ev.windowed_messages ?? 0} older ` +
                 `messages condensed to stay within the model's limits; recent ` +
                 `messages and key details are preserved.]_\n\n`
               setStreamText(curText)
@@ -573,7 +664,9 @@ export default function Chat({
     })
   }
 
-  // clear chat — archives the current thread first, then starts a fresh session
+  // clear chat — caches the current thread, then starts a fresh session. The
+  // server already persisted every turn (write-through), so this just resets
+  // local state and refreshes the history list.
   const reset = () => {
     if (loading) return
     archiveCurrent()
@@ -583,33 +676,56 @@ export default function Chat({
     setSessionSummary(null)
     setCostEstimate(null)
     setExactTokens(null)
+    reloadHistory()
   }
 
-  const loadConversation = (c: Conversation) => {
-    if (loading) return
+  // Reopen a conversation from the server (continues the same session_id so new
+  // turns append to it). Falls back to the offline cache if the server can't be
+  // reached. Returns whether anything was loaded.
+  const openConversation = async (id: string, key?: string | null): Promise<boolean> => {
+    if (loading) return false
     archiveCurrent()
-    setMessages(c.messages)
-    sessionRef.current = c.id
-    currentKeyRef.current = c.key || null
-    setSessionSummary(null)
     setHistoryOpen(false)
+    try {
+      const res = await conversationsApi.get(id)
+      const detail = res.data as ConversationDetail
+      setMessages(toChatMsgs(detail.messages || []))
+      sessionRef.current = id
+      currentKeyRef.current = key ?? null
+      setSessionSummary(null)
+      setCostEstimate(null)
+      setExactTokens(null)
+      return true
+    } catch {
+      // offline fallback: the localStorage cache
+      const cached = loadHistory().find((c) => c.id === id)
+      if (cached) {
+        setMessages(cached.messages)
+        sessionRef.current = id
+        currentKeyRef.current = cached.key || key || null
+        setSessionSummary(null)
+        return true
+      }
+      return false
+    }
   }
 
   // open an investigation thread for a seed prompt: reuse the matching thread
   // (current or archived) if one exists, else archive the current and start a
   // fresh one. The seed prompt is deterministic per finding/case, so it doubles
   // as the dedup key (investigation-keyed, like the classic drawer's tabs).
-  const openInvestigation = (prompt: string) => {
+  const openInvestigation = async (prompt: string) => {
     if (loading) return
     if (currentKeyRef.current === prompt && messages.length > 0) return // already here
-    const existing = history.find((c) => c.key === prompt)
-    if (existing) {
-      loadConversation(existing)
-      return
+    const mapped = loadKeymap()[prompt]
+    if (mapped) {
+      const opened = await openConversation(mapped, prompt)
+      if (opened) return // reopened the existing thread for this finding/case
     }
     archiveCurrent()
     sessionRef.current = newSessionId()
     currentKeyRef.current = prompt
+    setKeymapEntry(prompt, sessionRef.current) // so re-opening this finding restores it
     setSessionSummary(null)
     setCostEstimate(null)
     setExactTokens(null)
@@ -651,13 +767,85 @@ export default function Chat({
       .catch(() => {})
   }
 
-  const deleteConversation = (id: string) => {
+  const deleteConversation = async (id: string) => {
+    try {
+      await conversationsApi.delete(id)
+      reloadHistory()
+    } catch {
+      /* best-effort — still drop it from the offline cache below */
+    }
     setHistory((h) => {
       const next = h.filter((c) => c.id !== id)
       saveHistory(next)
       return next
     })
   }
+
+  const archiveConversation = async (id: string, archived: boolean) => {
+    try {
+      await conversationsApi.update(id, { archived })
+      reloadHistory()
+    } catch {
+      /* ignore — server unreachable */
+    }
+  }
+
+  const commitRename = async (id: string) => {
+    const title = renameDraft.trim()
+    setRenamingId(null)
+    if (!title) return
+    try {
+      await conversationsApi.update(id, { title })
+      reloadHistory()
+    } catch {
+      /* ignore — server unreachable */
+    }
+  }
+
+  // One-time migration: import any localStorage chat history into the server
+  // store so existing local chats aren't orphaned. Best-effort; the marker is
+  // only set on success so a failed import retries on the next mount.
+  const migratedRef = useRef(false)
+  useEffect(() => {
+    if (migratedRef.current) return
+    migratedRef.current = true
+    try {
+      if (localStorage.getItem(IMPORT_MARKER_KEY)) return
+      const local = loadHistory()
+      if (local.length === 0) {
+        localStorage.setItem(IMPORT_MARKER_KEY, '1')
+        return
+      }
+      const payload: ImportConversationInput[] = local.map((c) => ({
+        id: c.id,
+        title: c.title,
+        messages: (c.messages || [])
+          .filter((m) => m.role !== 'error')
+          .map((m) => ({
+            role: m.role === 'vigil' ? 'assistant' : 'user',
+            content: m.text,
+            thinking: m.role === 'vigil' ? m.thinking || null : null,
+          })),
+      }))
+      // preserve investigation dedup keys across the migration
+      for (const c of local) if (c.key) setKeymapEntry(c.key, c.id)
+      conversationsApi
+        .importHistory(payload)
+        .then(() => {
+          try {
+            localStorage.setItem(IMPORT_MARKER_KEY, '1')
+          } catch {
+            /* ignore */
+          }
+          reloadHistory()
+        })
+        .catch(() => {
+          /* leave the marker unset so the import retries next mount */
+        })
+    } catch {
+      /* localStorage unavailable — nothing to migrate */
+    }
+  }, [reloadHistory])
 
   // auto-send a seeded prompt (e.g. "Investigate finding …") when the dock is
   // opened from an "Investigate with Vigil" affordance
@@ -699,7 +887,7 @@ export default function Chat({
         <span className="ch-ico"><Icon name="brain" /></span>
         <h3 className="ch-title">Vigil Assistant</h3>
         <div className="hbtns">
-          <button title="History" onClick={() => setHistoryOpen(true)}><Icon name="clock" /></button>
+          <button title="History" onClick={() => { setHistoryOpen(true); reloadHistory() }}><Icon name="clock" /></button>
           <button title="Reasoning trace" onClick={openReasoningTrace}><Icon name="reason" /></button>
           <button title="SOC Agents" onClick={() => setAgentsInfoOpen(true)}><Icon name="note" /></button>
           <button title="Chat settings" onClick={() => setSettingsOpen(true)}><Icon name="gear" /></button>
@@ -806,23 +994,117 @@ export default function Chat({
       </div>
     </aside>
 
-    {/* Conversation history — cleared/loaded threads live here (localStorage) */}
+    {/* Conversation history — server-backed (cross-device); falls back to the
+        localStorage cache when the server can't be reached. */}
     <Popup open={historyOpen} onClose={() => setHistoryOpen(false)} title="Conversation history" width={460}>
-      {history.length === 0 ? (
-        <div className="muted">No past conversations yet. When you clear the chat, the thread is saved here so you can reopen it.</div>
-      ) : (
-        <div className="chat-history">
-          {history.map((c) => (
-            <div key={c.id} className={`chist-row${c.id === sessionRef.current ? ' current' : ''}`}>
-              <button className="chist-main" onClick={() => loadConversation(c)}>
-                <span className="chist-title">{c.title}</span>
-                <span className="chist-meta">{c.messages.length} message{c.messages.length === 1 ? '' : 's'} · {format(c.ts, 'MMM d, HH:mm')}</span>
-              </button>
-              <button className="chist-del" title="Delete" onClick={() => deleteConversation(c.id)}><Icon name="trash" size={14} /></button>
+      {(() => {
+        const offline = histPhase === 'error'
+        const rows: HistRow[] = offline
+          ? history.map((c) => ({
+              id: c.id,
+              title: c.title || 'Untitled conversation',
+              count: c.messages?.length || 0,
+              ts: c.ts || null,
+            }))
+          : serverConvos.map((c) => ({
+              id: c.id,
+              title: c.title || 'Untitled conversation',
+              count: c.message_count,
+              ts: c.last_message_at
+                ? Date.parse(c.last_message_at)
+                : c.updated_at
+                  ? Date.parse(c.updated_at)
+                  : null,
+              archived: c.archived,
+            }))
+        return (
+          <>
+            <div className="chist-toolbar">
+              {offline && <span className="muted">Offline — showing cached conversations.</span>}
+              <label className="chist-archtoggle">
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => setShowArchived(e.target.checked)}
+                  disabled={offline}
+                />
+                Show archived
+              </label>
             </div>
-          ))}
-        </div>
-      )}
+            {histPhase === 'loading' ? (
+              <div className="muted">Loading…</div>
+            ) : rows.length === 0 ? (
+              <div className="muted">
+                No past conversations yet. Your chats are saved automatically so you can
+                reopen them on any device.
+              </div>
+            ) : (
+              <div className="chat-history">
+                {rows.map((c) => (
+                  <div
+                    key={c.id}
+                    className={`chist-row${c.id === sessionRef.current ? ' current' : ''}${c.archived ? ' archived' : ''}`}
+                  >
+                    {renamingId === c.id ? (
+                      <input
+                        className="chist-rename"
+                        autoFocus
+                        value={renameDraft}
+                        onChange={(e) => setRenameDraft(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            commitRename(c.id)
+                          } else if (e.key === 'Escape') {
+                            setRenamingId(null)
+                          }
+                        }}
+                        onBlur={() => commitRename(c.id)}
+                      />
+                    ) : (
+                      <button className="chist-main" onClick={() => openConversation(c.id)}>
+                        <span className="chist-title">{c.title}</span>
+                        <span className="chist-meta">
+                          {c.count} message{c.count === 1 ? '' : 's'}
+                          {c.ts != null && histTime(c.ts) ? ` · ${histTime(c.ts)}` : ''}
+                        </span>
+                      </button>
+                    )}
+                    <div className="chist-actions">
+                      <button
+                        className="chist-act"
+                        title="Rename"
+                        disabled={offline}
+                        onClick={() => {
+                          setRenamingId(c.id)
+                          setRenameDraft(c.title)
+                        }}
+                      >
+                        <Icon name="edit" size={14} />
+                      </button>
+                      <button
+                        className="chist-act"
+                        title={c.archived ? 'Unarchive' : 'Archive'}
+                        disabled={offline}
+                        onClick={() => archiveConversation(c.id, !c.archived)}
+                      >
+                        <Icon name="folder" size={14} />
+                      </button>
+                      <button
+                        className="chist-act chist-del"
+                        title="Delete"
+                        onClick={() => deleteConversation(c.id)}
+                      >
+                        <Icon name="trash" size={14} />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )
+      })()}
     </Popup>
 
     {/* Chat settings — Status / Model settings / Advanced (mirrors the classic drawer) */}

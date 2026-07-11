@@ -15,6 +15,11 @@ jobs:
   # ============================================================================
   full-test-suite:
     name: Full Test Suite
+    # Canonical repo only. Scheduled workflows run on the default branch of any
+    # fork with Actions enabled, but forks lack the private submodules + secrets
+    # this suite needs, so a nightly run just emails the fork owner a failure.
+    # Skipping (not failing) keeps forks quiet.
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -64,6 +69,7 @@ jobs:
   # ============================================================================
   performance-tests:
     name: Performance Regression Tests
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -95,6 +101,7 @@ jobs:
   # ============================================================================
   security-audit:
     name: Security Audit
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -123,6 +130,7 @@ jobs:
   # ============================================================================
   migration-tests:
     name: Database Migration Tests
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -166,7 +174,7 @@ jobs:
     name: Notify Results
     runs-on: ubuntu-latest
     needs: [full-test-suite, performance-tests, security-audit]
-    if: failure()
+    if: failure() && github.repository == 'Vigil-SOC/vigil'
     steps:
       - name: Notify Slack
         uses: slackapi/slack-github-action@v1

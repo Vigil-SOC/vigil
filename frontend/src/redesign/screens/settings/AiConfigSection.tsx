@@ -94,7 +94,7 @@ function ProvidersPanel({ notify }: SectionProps) {
     setDeleting(true)
     try {
       await remove(confirmDel.provider_id)
-      notify('ok', `Deleted ${confirmDel.provider_id}.`)
+      notify('ok', `Deleted ${confirmDel.name}.`)
       setConfirmDel(null)
     } catch (e) {
       notify('err', (e as { message?: string })?.message || 'Delete failed.')
@@ -102,6 +102,34 @@ function ProvidersPanel({ notify }: SectionProps) {
       setDeleting(false)
     }
   }
+
+  const hasOtherActiveOfType = (p: LLMProvider) =>
+    providers.some(
+      (q) => q.provider_id !== p.provider_id && q.provider_type === p.provider_type && q.is_active,
+    )
+
+  const requestDelete = (p: LLMProvider) => {
+    // The API blocks deleting the only active provider of a type (it has no
+    // sibling to promote to default), so surface that up front instead of a
+    // confirm dialog that implies an auto-promotion that won't happen.
+    if (p.is_default && !hasOtherActiveOfType(p)) {
+      notify(
+        'err',
+        `"${p.name}" is the only active ${p.provider_type} provider and can't be deleted. ` +
+          `Add or activate another ${p.provider_type} provider first.`,
+      )
+      return
+    }
+    setConfirmDel(p)
+  }
+
+  // Mirror the warning to what deletion actually does: default providers
+  // trigger a promotion; either way the provider's model assignments and
+  // stored API key are removed.
+  const deleteBody = (p: LLMProvider) =>
+    p.is_default
+      ? `"${p.name}" is the primary ${p.provider_type} provider. Deleting it promotes the next active ${p.provider_type} provider to primary. Its model assignments and stored API key are also removed.`
+      : `Delete "${p.name}"? Its model assignments and stored API key are also removed.`
 
   const statusChip = (p: LLMProvider) => {
     if (!p.is_active) return <span className="chip">Inactive</span>
@@ -170,7 +198,7 @@ function ProvidersPanel({ notify }: SectionProps) {
                       <button className="btn ghost icon" title="Edit" onClick={() => { setEditing(p); setDialogOpen(true) }}>
                         <Icon name="edit" size={15} />
                       </button>
-                      <button className="btn ghost icon" title="Delete" onClick={() => setConfirmDel(p)}>
+                      <button className="btn ghost icon" title="Delete" onClick={() => requestDelete(p)}>
                         <Icon name="trash" size={15} />
                       </button>
                     </div>
@@ -187,13 +215,12 @@ function ProvidersPanel({ notify }: SectionProps) {
           existing={editing}
           onClose={() => { setDialogOpen(false); setEditing(null) }}
           onSaved={() => { setDialogOpen(false); setEditing(null); notify('ok', 'Provider saved.'); reload() }}
-          onError={(msg) => notify('err', msg)}
         />
       )}
       <ConfirmDialog
         open={!!confirmDel}
         title="Delete provider?"
-        body={`Delete "${confirmDel?.provider_id}"? This also removes its stored API key.`}
+        body={confirmDel ? deleteBody(confirmDel) : ''}
         confirmLabel="Delete"
         busy={deleting}
         onConfirm={handleDelete}

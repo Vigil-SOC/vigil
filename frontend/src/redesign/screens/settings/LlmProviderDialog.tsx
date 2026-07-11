@@ -1,12 +1,12 @@
 /* ============================================================
-   LLM provider add/edit wizard (redesign port of LLMProviderDialog).
-   3 steps: pick type → connection + model discovery → test & save.
-   Draft-upsert so /test and /models can run before the final save;
-   retries update the draft row rather than re-POSTing (avoids 409).
+   LLM provider add/edit wizard. Steps: pick type → connection (test runs inline
+   here) → model & save. Draft-upsert so /test and /models can run before the
+   final save; retries update the draft row rather than re-POSTing (avoids 409).
    ============================================================ */
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { Field, Popup, PasswordInput, Select, TextInput, Toggle } from '../../shared/ui'
+import { Banner, extractApiError } from '../../shared/formKit'
 import {
   llmProviderApi,
   type LLMProvider,
@@ -15,7 +15,7 @@ import {
 
 type ProviderType = 'anthropic' | 'openai' | 'ollama'
 
-const STEPS = ['Provider', 'Connection', 'Test & Save']
+const STEPS = ['Provider', 'Connection', 'Model & Save']
 
 const DEFAULT_BASE_URLS: Record<ProviderType, string> = {
   anthropic: '',
@@ -37,148 +37,149 @@ interface Props {
   existing: LLMProvider | null
   onClose: () => void
   onSaved: () => void
-  onError: (msg: string) => void
+  // Hide the footer Cancel button. The inline setup screen sets this false — its
+  // accordion row already has a Close toggle, so an in-panel Cancel is redundant.
+  showCancel?: boolean
 }
 
-export default function LlmProviderDialog({ existing, onClose, onSaved, onError }: Props) {
+// Body without modal chrome; the default export below wraps it in a Popup for Settings.
+export const LlmProviderWizard = ({
+  existing,
+  onClose,
+  onSaved,
+  showCancel = true,
+}: Props) => {
   const editing = !!existing
   const [step, setStep] = useState(editing ? 1 : 0)
 
-  const [providerType, setProviderType] = useState<ProviderType>(
-    (existing?.provider_type as ProviderType) ?? 'ollama',
-  )
+  const initialType = (existing?.provider_type as ProviderType) ?? 'ollama'
+  const [providerType, setProviderType] = useState<ProviderType>(initialType)
   const [name, setName] = useState(existing?.name ?? '')
-  const [baseUrl, setBaseUrl] = useState(existing?.base_url ?? '')
+  const [baseUrl, setBaseUrl] = useState(existing?.base_url ?? DEFAULT_BASE_URLS[initialType])
   const [apiKey, setApiKey] = useState('')
   const [organization, setOrganization] = useState<string>(existing?.config?.organization ?? '')
-  const [defaultModel, setDefaultModel] = useState(existing?.default_model ?? '')
-  const [isDefault, setIsDefault] = useState(existing?.is_default ?? false)
-  const [draftProviderId, setDraftProviderId] = useState<string | null>(
-    existing?.provider_id ?? null,
+  const [defaultModel, setDefaultModel] = useState(
+    existing?.default_model ?? DEFAULT_MODEL[initialType],
   )
+  const [isDefault, setIsDefault] = useState(existing?.is_default ?? false)
 
   const [testing, setTesting] = useState(false)
   const [testError, setTestError] = useState<string | null>(null)
   const [tested, setTested] = useState(false)
   const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [saveError, setSaveError] = useState<string | null>(null)
 
-  const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
-  const [discovering, setDiscovering] = useState(false)
-  const [discoverError, setDiscoverError] = useState<string | null>(null)
-  const [useCustomModel, setUseCustomModel] = useState(false)
-  const discoverDebounce = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  const runDiscovery = async () => {
-    setDiscovering(true)
-    setDiscoverError(null)
-    try {
-      const res = await llmProviderApi.discoverModels({
-        provider_type: providerType,
-        base_url: baseUrl || undefined,
-        api_key: apiKey || undefined,
-        organization: organization || undefined,
-      })
-      const ids = res.data.models || []
-      setDiscoveredModels(ids)
-      if (!defaultModel && ids.length > 0) setDefaultModel(ids[0])
-      if (defaultModel && ids.length > 0 && !ids.includes(defaultModel)) setUseCustomModel(true)
-    } catch (e) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string }
-      setDiscoverError(err?.response?.data?.detail || err?.message || 'Failed to list models')
-      setDiscoveredModels([])
-    } finally {
-      setDiscovering(false)
+  // A connection-affecting edit (or a provider-type switch) invalidates a prior
+  // successful test, so the model picker / Save hide and a re-test is required.
+  const invalidateTest = () => {
+    if (tested || testError || availableModels.length) {
+      setTested(false)
+      setTestError(null)
+      setAvailableModels([])
     }
   }
-
-  // Auto-discover on step 1 once we have enough info (debounced).
-  useEffect(() => {
-    if (step !== 1) return
-    const needsKey = providerType === 'openai' || providerType === 'anthropic'
-    if (needsKey && !apiKey && !editing) return
-    if (providerType === 'ollama' && !baseUrl) return
-    if (discoverDebounce.current) clearTimeout(discoverDebounce.current)
-    discoverDebounce.current = setTimeout(runDiscovery, 500)
-    return () => {
-      if (discoverDebounce.current) clearTimeout(discoverDebounce.current)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, providerType, baseUrl, apiKey, organization])
 
   const selectProviderType = (t: ProviderType) => {
+    if (t === providerType) return
+    // Connection fields are type-specific (an OpenAI URL/key is meaningless for
+    // Ollama), so switching type resets them to the new type's defaults rather
+    // than carrying the previous provider's values over.
     setProviderType(t)
-    if (!baseUrl) setBaseUrl(DEFAULT_BASE_URLS[t])
-    if (!defaultModel) setDefaultModel(DEFAULT_MODEL[t])
+    setBaseUrl(DEFAULT_BASE_URLS[t])
+    setDefaultModel(DEFAULT_MODEL[t])
+    setApiKey('')
+    setOrganization('')
+    invalidateTest()
   }
 
-  const saveDraftAndTest = async (): Promise<void> => {
+  const testAndLoadModels = async (): Promise<void> => {
     setTesting(true)
     setTestError(null)
     try {
-      let providerId = draftProviderId
-      const alreadyPersisted = editing || !!providerId
-      if (!alreadyPersisted) {
-        const payload: LLMProviderCreate = {
-          provider_type: providerType,
-          name: name || `${providerType} provider`,
-          base_url: baseUrl || undefined,
-          api_key: apiKey || undefined,
-          default_model: defaultModel || DEFAULT_MODEL[providerType],
-          is_active: true,
-          is_default: false,
-          config: organization ? { organization } : {},
-        }
-        const resp = await llmProviderApi.create(payload)
-        providerId = resp.data.provider_id
-        setDraftProviderId(providerId)
-      } else if (providerId) {
-        await llmProviderApi.update(providerId, {
+      if (editing && existing) {
+        // Edit: the row already exists, so persist the entered fields then
+        // test + list models against it — no new provider id is ever claimed.
+        await llmProviderApi.update(existing.provider_id, {
           name,
           base_url: baseUrl || undefined,
           api_key: apiKey || undefined,
           default_model: defaultModel,
           config: organization ? { organization } : {},
         })
+        const testResp = await llmProviderApi.test(existing.provider_id)
+        if (!testResp.data.success) {
+          setTestError(testResp.data.error || 'Connection test failed')
+          return
+        }
+        const modelsResp = await llmProviderApi.listModels(existing.provider_id)
+        setAvailableModels(modelsResp.data.models || [])
+        setTested(true)
+        return
       }
-      if (!providerId) throw new Error('Failed to create provider')
 
-      const testResp = await llmProviderApi.test(providerId)
+      // Create: test and discover models statelessly. Nothing is persisted
+      // until the final Save, so cancelling here never strands a provider id.
+      const testResp = await llmProviderApi.testConnection({
+        provider_type: providerType,
+        base_url: baseUrl || undefined,
+        api_key: apiKey || undefined,
+        default_model: defaultModel || DEFAULT_MODEL[providerType],
+        organization: organization || undefined,
+      })
       if (!testResp.data.success) {
         setTestError(testResp.data.error || 'Connection test failed')
         return
       }
-      const modelsResp = await llmProviderApi.listModels(providerId)
+      const modelsResp = await llmProviderApi.discoverModels({
+        provider_type: providerType,
+        base_url: baseUrl || undefined,
+        api_key: apiKey || undefined,
+        organization: organization || undefined,
+      })
       setAvailableModels(modelsResp.data.models || [])
       setTested(true)
     } catch (e) {
-      const err = e as { response?: { data?: { detail?: string } }; message?: string }
-      setTestError(err?.response?.data?.detail || err?.message || 'Test failed')
+      setTestError(extractApiError(e, 'Test failed'))
     } finally {
       setTesting(false)
     }
   }
 
   const finalSave = async () => {
+    setSaveError(null)
     try {
-      const providerId = draftProviderId ?? existing?.provider_id
-      if (!providerId) throw new Error('No provider id')
-      if (isDefault || defaultModel !== existing?.default_model) {
-        await llmProviderApi.update(providerId, {
-          default_model: defaultModel,
-          is_default: isDefault || undefined,
-        })
+      if (editing && existing) {
+        // Edit: connection fields were already persisted at test time; only
+        // the model / default flag are still mutable here.
+        if (isDefault || defaultModel !== existing.default_model) {
+          await llmProviderApi.update(existing.provider_id, {
+            default_model: defaultModel,
+            is_default: isDefault || undefined,
+          })
+        }
+        onSaved()
+        return
       }
+      // Create: this is the single point where the provider is persisted.
+      const payload: LLMProviderCreate = {
+        provider_type: providerType,
+        name: name || `${providerType} provider`,
+        base_url: baseUrl || undefined,
+        api_key: apiKey || undefined,
+        default_model: defaultModel || DEFAULT_MODEL[providerType],
+        is_active: true,
+        is_default: isDefault || false,
+        config: organization ? { organization } : {},
+      }
+      await llmProviderApi.create(payload)
       onSaved()
     } catch (e) {
-      const err = e as { response?: { data?: { detail?: string } } }
-      onError(err?.response?.data?.detail || 'Save failed')
+      setSaveError(extractApiError(e, 'Save failed'))
     }
   }
 
-  const modelOptions = discoveredModels.map((m) => ({ value: m, label: m }))
-
   return (
-    <Popup open onClose={onClose} title={editing ? 'Edit provider' : 'Add LLM provider'} width={520}>
+    <>
       {/* step indicator */}
       <div className="flex items-center gap-2 mb-5">
         {STEPS.map((s, i) => (
@@ -233,7 +234,10 @@ export default function LlmProviderDialog({ existing, onClose, onSaved, onError 
               <TextInput
                 value={baseUrl}
                 placeholder={DEFAULT_BASE_URLS[providerType]}
-                onChange={(e) => setBaseUrl(e.target.value)}
+                onChange={(e) => {
+                  setBaseUrl(e.target.value)
+                  invalidateTest()
+                }}
               />
             </Field>
           )}
@@ -242,123 +246,119 @@ export default function LlmProviderDialog({ existing, onClose, onSaved, onError 
               <PasswordInput
                 value={apiKey}
                 placeholder={editing ? 'Leave blank to keep existing key' : ''}
-                onChange={(e) => setApiKey(e.target.value)}
+                onChange={(e) => {
+                  setApiKey(e.target.value)
+                  invalidateTest()
+                }}
               />
             </Field>
           )}
           {providerType === 'openai' && (
             <Field label="Organization (optional)">
-              <TextInput value={organization} onChange={(e) => setOrganization(e.target.value)} />
+              <TextInput
+                value={organization}
+                onChange={(e) => {
+                  setOrganization(e.target.value)
+                  invalidateTest()
+                }}
+              />
             </Field>
           )}
 
-          <Field
-            label="Default model"
-            error={discoverError ? `Model discovery failed — enter a model ID manually. (${discoverError})` : undefined}
-            hint={
-              discovering
-                ? 'Fetching available models…'
-                : discoveredModels.length && !useCustomModel
-                  ? `${discoveredModels.length} model(s) available from this provider.`
-                  : 'Enter the model ID, or click refresh to fetch a list from the provider.'
-            }
-          >
-            <div className="flex items-start gap-2">
-              <div className="flex-1">
-                {discoveredModels.length > 0 && !useCustomModel ? (
-                  <Select
-                    value={discoveredModels.includes(defaultModel) ? defaultModel : ''}
-                    placeholder="Select a model"
-                    options={[...modelOptions, { value: '__custom__', label: 'Custom model ID…' }]}
-                    onSelect={(v) => (v === '__custom__' ? setUseCustomModel(true) : setDefaultModel(v))}
-                  />
-                ) : (
-                  <TextInput
-                    value={defaultModel}
-                    placeholder={DEFAULT_MODEL[providerType]}
-                    onChange={(e) => setDefaultModel(e.target.value)}
-                  />
-                )}
-              </div>
-              <button
-                className="btn ghost icon"
-                title="Fetch model list from provider"
-                onClick={runDiscovery}
-                disabled={discovering}
-              >
-                <Icon name="refresh" size={15} />
-              </button>
-            </div>
-          </Field>
-          {useCustomModel && discoveredModels.length > 0 && (
-            <button className="btn ghost self-start" onClick={() => setUseCustomModel(false)}>
-              Back to model list
-            </button>
-          )}
-        </div>
-      )}
-
-      {step === 2 && (
-        <div className="flex flex-col gap-3">
           {testing && (
             <div className="flex items-center gap-2 text-sm text-tx-2">
               <Icon name="refresh" size={15} /> Testing connection…
             </div>
           )}
-          {testError && (
-            <div className="settings-banner err">
-              <Icon name="alert" size={14} /> {testError}
-            </div>
+          {testError && <Banner kind="err">{testError}</Banner>}
+          {!testing && !tested && !testError && (
+            <p className="text-tx-3 text-xs">
+              Test the connection to verify it works and load this provider&apos;s models.
+            </p>
           )}
-          {tested && (
-            <>
-              <div className="settings-banner ok">
-                <Icon name="check2" size={14} /> Connection OK
-              </div>
-              {availableModels.length > 0 && (
-                <Field label="Model">
-                  <Select
-                    value={defaultModel}
-                    options={availableModels.map((m) => ({ value: m, label: m }))}
-                    onSelect={setDefaultModel}
-                  />
-                </Field>
-              )}
-              <label className="flex items-center gap-2.5 text-sm text-tx-2 mt-1">
-                <Toggle checked={isDefault} onChange={setIsDefault} />
-                Set as default for this provider type
-              </label>
-            </>
-          )}
+          {tested && <Banner kind="ok">Connection OK — continue to pick a model.</Banner>}
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="flex flex-col gap-3">
+          {saveError && <Banner kind="err">{saveError}</Banner>}
+          <Field
+            label="Model"
+            hint={
+              availableModels.length
+                ? `${availableModels.length} model(s) available from this provider.`
+                : 'Enter the model ID to use.'
+            }
+          >
+            {availableModels.length > 0 ? (
+              <Select
+                value={defaultModel}
+                placeholder="Select a model"
+                options={availableModels.map((m) => ({ value: m, label: m }))}
+                onSelect={setDefaultModel}
+              />
+            ) : (
+              <TextInput
+                value={defaultModel}
+                placeholder={DEFAULT_MODEL[providerType]}
+                onChange={(e) => setDefaultModel(e.target.value)}
+              />
+            )}
+          </Field>
+          <label className="flex items-center gap-2.5 text-sm text-tx-2 mt-1">
+            <Toggle checked={isDefault} onChange={setIsDefault} />
+            Set as default for this provider type
+          </label>
         </div>
       )}
 
       {/* footer */}
       <div className="flex justify-end gap-2.5 mt-6">
-        <button className="btn ghost" onClick={onClose}>Cancel</button>
+        {showCancel && (
+          <button className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+        )}
         {step > 0 && !testing && (
           <button className="btn ghost" onClick={() => setStep(step - 1)}>Back</button>
         )}
         {step === 0 && (
           <button className="btn primary" onClick={() => setStep(1)}>Next</button>
         )}
-        {step === 1 && (
-          <button
-            className="btn primary"
-            onClick={async () => {
-              setStep(2)
-              await saveDraftAndTest()
-            }}
-          >
-            Test &amp; continue
+        {step === 1 && !tested && (
+          <button className="btn primary" disabled={testing} onClick={testAndLoadModels}>
+            {testing ? 'Testing…' : 'Test connection'}
+          </button>
+        )}
+        {step === 1 && tested && (
+          <button className="btn primary" onClick={() => setStep(2)}>
+            Continue
           </button>
         )}
         {step === 2 && (
-          <button className="btn primary" disabled={!tested} onClick={finalSave}>
+          <button className="btn primary" onClick={finalSave}>
             Save
           </button>
         )}
       </div>
+    </>
+  )
+}
+
+// Modal form used by Settings (Add/Edit provider). The setup screen renders
+// <LlmProviderWizard> directly, inline, instead of this wrapper.
+const LlmProviderDialog = (props: Props) => {
+  return (
+    <Popup
+      open
+      onClose={props.onClose}
+      title={props.existing ? 'Edit provider' : 'Add LLM provider'}
+      width={520}
+    >
+      <LlmProviderWizard {...props} />
     </Popup>
   )
 }
+
+export default LlmProviderDialog

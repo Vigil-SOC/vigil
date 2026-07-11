@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     is_verified BOOLEAN NOT NULL DEFAULT FALSE,
     mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     mfa_secret VARCHAR(255),
+    mfa_recovery_codes JSONB NOT NULL DEFAULT '[]',
     last_login TIMESTAMP,
     login_count INTEGER NOT NULL DEFAULT 0,
     failed_login_count INTEGER NOT NULL DEFAULT 0,
@@ -36,11 +37,18 @@ CREATE TABLE IF NOT EXISTS users (
     updated_at TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
--- Additive migration for existing deployments (safe to rerun)
+-- Additive migration for existing deployments (safe to rerun).
+-- These columns live in the CREATE TABLE above, but that is guarded by
+-- IF NOT EXISTS, so pre-existing `users` tables never receive them. The
+-- ORM maps every column, so a DB missing any of these throws UndefinedColumn
+-- on the first User query after upgrade — keep this list in sync.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_history JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMP;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_secret VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mfa_recovery_codes JSONB NOT NULL DEFAULT '[]';
 
 CREATE INDEX IF NOT EXISTS idx_user_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_user_email ON users(email);

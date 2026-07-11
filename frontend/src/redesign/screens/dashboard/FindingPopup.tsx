@@ -7,7 +7,7 @@
    Ports the production FindingDetailDialog's enrichment surface
    (REDESIGN_GAPS.md §8); the embedded VStrike NetworkContextPanel
    is intentionally not ported — it depends on the VStrike provider
-   that isn't mounted under the standalone /redesign shell.
+   that isn't mounted under the SOC console shell.
    ============================================================ */
 import { useEffect, useState } from 'react'
 import { findingsApi } from '../../../services/api'

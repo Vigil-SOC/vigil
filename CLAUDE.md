@@ -334,7 +334,7 @@ GitHub Actions workflows in `.github/workflows/`:
 |----------|---------|------|
 | `ci-cd.yml` | Push/PR to main, develop | Lint → Unit Tests → Integration Tests → Security Scan → Docker Build |
 | `release-please.yml` | Push to `main`, manual | Read Conventional Commits since last tag → open/update a release PR with bumped `VERSION` / `Chart.yaml` (`appVersion` + `version`, lockstep) / `frontend/package.json` / `frontend/package-lock.json` + `CHANGELOG.md`. On merge, push `vX.Y.Z` tag and create the GitHub Release. See `RELEASING.md`. |
-| `release.yml` | Version tags (`v*.*.*`) | Build production images → Trivy scan → deploy to production VM → post-deploy validation. Does **not** create the GitHub Release (release-please owns it). |
+| `release.yml` | Version tags (`v*.*.*`) | Build & push `vigil-backend` + `vigil-daemon` images to GHCR → Trivy scan → smoke-test that they start → annotate the GitHub Release with image digests. **Publishes images only — it does not deploy.** Does **not** create the GitHub Release object either (release-please owns that). |
 | `nightly.yml` | Daily 2 AM UTC | Comprehensive security & performance audits |
 
 CI runs:

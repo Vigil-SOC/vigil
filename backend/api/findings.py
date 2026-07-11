@@ -6,6 +6,7 @@ from pydantic import BaseModel
 import logging
 
 from services.database_data_service import DatabaseDataService
+from services.defaults import DEFAULT_MODEL
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -479,7 +480,7 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
             None,
             lambda: claude_service.chat(
                 message=prompt,
-                model="claude-sonnet-4-6",
+                model=DEFAULT_MODEL,
                 max_tokens=4096
             )
         )
@@ -525,7 +526,7 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
         
         # Add metadata
         enrichment['generated_at'] = datetime.utcnow().isoformat() + 'Z'
-        enrichment['model'] = 'claude-sonnet-4-6'
+        enrichment['model'] = DEFAULT_MODEL
         
         # Save enrichment to database
         success = data_service.update_finding(finding_id, ai_enrichment=enrichment)

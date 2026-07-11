@@ -33,7 +33,7 @@ vi.mock('react-router-dom', async () => {
 function renderLogin() {
   return render(
     <ThemeProvider>
-      <MemoryRouter initialEntries={['/redesign/login']}>
+      <MemoryRouter initialEntries={['/login']}>
         <LoginScreen />
       </MemoryRouter>
     </ThemeProvider>,
@@ -60,7 +60,7 @@ describe('LoginScreen', () => {
     fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'admin123' } })
     fireEvent.click(screen.getByRole('button', { name: /^sign in$/i }))
     await waitFor(() => expect(login).toHaveBeenCalledWith('admin', 'admin123', undefined))
-    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/redesign/dashboard'))
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/dashboard'))
   })
 
   it('reveals the MFA step when the backend requires it', async () => {

@@ -22,7 +22,7 @@ pytestmark = pytest.mark.unit
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 def test_openai_estimator_uses_registry_rates():

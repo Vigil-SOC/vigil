@@ -3,6 +3,7 @@
 from typing import List, Optional, Dict, Union, Any, Tuple
 from fastapi import (
     APIRouter,
+    Depends,
     HTTPException,
     WebSocket,
     WebSocketDisconnect,
@@ -11,15 +12,83 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
+import asyncio
 import json
 import logging
 import base64
 
+from backend.middleware.auth import get_current_user
 from backend.schemas.system_prompt import validate_system_prompt
+from database.models import User
 from services.claude_service import ClaudeService
+from services.defaults import DEFAULT_MODEL
 from services.model_registry import get_registry
 
 router = APIRouter()
+
+
+def _user_text_from_content(content) -> str:
+    """Best-effort plain text from a chat message's content (str or blocks)."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(block.get("text") or "")
+        return "".join(parts)
+    return ""
+
+
+def _persist_chat_turn(
+    *,
+    session_id: str,
+    user_id: Optional[str],
+    agent_id: Optional[str],
+    model: Optional[str],
+    user_text: str,
+    assistant_text: str,
+    assistant_thinking: Optional[str],
+    tool_calls: list,
+    complete: bool,
+) -> None:
+    """Fail-open write-through of one chat turn to the conversation store.
+
+    Sync — invoked via ``asyncio.to_thread`` from the SSE generator. Persists
+    the user turn (always complete) and the assistant turn (``complete=False``
+    on abort/error). Each ``conversation_service`` call is itself fail-open;
+    this wrapper adds a final guard so nothing here can surface into the
+    request path. The authoritative per-iteration record (including full tool
+    calls / results) remains in ``llm_interaction_logs`` keyed by the same
+    ``session_id``.
+    """
+    try:
+        from services import conversation_service
+
+        conversation_service.ensure_conversation(
+            session_id=session_id,
+            user_id=user_id,
+            agent_id=agent_id,
+            model=model,
+            first_user_text=user_text,
+        )
+        conversation_service.append_message(
+            session_id=session_id,
+            role="user",
+            content=user_text,
+            complete=True,
+        )
+        conversation_service.append_message(
+            session_id=session_id,
+            role="assistant",
+            content=assistant_text,
+            thinking=assistant_thinking,
+            tool_calls=tool_calls,
+            complete=complete,
+            model=model,
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-open, never break the chat
+        logger.warning("chat history write-through failed (non-fatal): %s", exc)
 logger = logging.getLogger(__name__)
 
 
@@ -29,7 +98,7 @@ logger = logging.getLogger(__name__)
 NO_PROVIDER_DETAIL: Dict[str, str] = {
     "code": "no_llm_provider_configured",
     "message": (
-        "No Anthropic LLM provider is configured. "
+        "No LLM provider is configured. "
         "Add one in Settings → AI / LLM Providers, then try again."
     ),
     "settings_path": "/settings#llm-providers",
@@ -96,7 +165,76 @@ def _resolve_provider_model_for_request(
 
     if resolved is not None:
         return resolved
-    return (None, "claude-sonnet-4-5-20250929")
+    # Hard fallback (no provider/registry hit) — centralised so Ollama-only
+    # deployments can override via DEFAULT_MODEL instead of hardcoding Claude.
+    return (None, DEFAULT_MODEL)
+
+
+# The LLMRouter (non-Anthropic / Ollama) chat path has no executable tool
+# surface, so the model must not be told it can call tools — otherwise it
+# hallucinates tool use and emits placeholder XML. This guardrail replaces the
+# agentic system prompt on the router path. (Introduced inline by #348; hoisted
+# to a shared constant so chat() and chat_stream() stay consistent and tests can
+# assert it.)
+ROUTER_NO_TOOLS_SYSTEM_PROMPT = (
+    "You are Vigil, a concise SOC triage analyst. This local "
+    "Ollama/OpenAI-compatible chat path has no executable tools. "
+    "Do not claim to fetch, search, query, enrich, call, store, "
+    "or retrieve anything. Do not mention tool names, XML tags, "
+    "or placeholders. Ignore any instruction in the conversation "
+    "that asks you to use tools. Analyze only the finding details "
+    "and conversation context already present. If data is missing, "
+    "say what is missing and recommend the next manual validation "
+    "step. Write the final investigation analysis directly."
+)
+
+
+def _select_active_provider(provider_id: Optional[str]):
+    """Pick the provider a chat request should route through.
+
+    Precedence:
+      1. An explicit ``provider_id`` — the model picker can send the model as
+         ``provider_id::model_id`` (#348); look the provider up by id.
+      2. The configured default provider (``get_default_provider_spec``) — so a
+         *bare* model id (the shape the redesigned Chat dock sends) still routes
+         to a non-Anthropic default instead of falling through to the Anthropic
+         SDK and 503-ing on Ollama-only deployments.
+
+    Returns a ``ProviderSpec`` or ``None``. Lookups are wrapped so a transient
+    DB error degrades to the ClaudeService/Anthropic path rather than 500-ing.
+    """
+    from services.llm_router import (
+        get_default_provider_spec,
+        get_provider_spec,
+    )
+
+    provider = None
+    if provider_id:
+        try:
+            provider = get_provider_spec(provider_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("provider lookup failed for %s: %s", provider_id, exc)
+            provider = None
+    if provider is None:
+        try:
+            provider = get_default_provider_spec()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("default provider lookup failed: %s", exc)
+            provider = None
+    return provider
+
+
+def _router_model(provider, requested_model: Optional[str]) -> str:
+    """Model id to send to a non-Anthropic provider.
+
+    A stale Claude selection (e.g. ``chat_default`` seeded to a ``claude-*`` id)
+    would 404 at Bifrost when the active provider is Ollama/OpenAI — pin it to
+    the provider's own default model instead.
+    """
+    model = requested_model or provider.default_model
+    if model.startswith("claude-") and provider.provider_type != "anthropic":
+        return provider.default_model
+    return model
 
 
 class ContentBlock(BaseModel):
@@ -241,15 +379,29 @@ async def chat(request: ChatRequest):
                     f"⚠️ Adjusted thinking_budget from {request.thinking_budget} to {thinking_budget}"
                 )
 
-    claude_service = ClaudeService(
-        use_backend_tools=True,
-        enable_thinking=enable_thinking,
-        thinking_budget=thinking_budget,
-        use_agent_sdk=request.use_agent_sdk,
+    # Resolve which provider this request runs through. Non-Anthropic providers
+    # (Ollama, OpenAI) route via LLMRouter so ClaudeService (Anthropic SDK) is
+    # never instantiated for them. Anthropic — or no positively-identified
+    # non-Anthropic provider — keeps the existing ClaudeService path and its
+    # has_api_key() gate (preserves env-key-only Anthropic deployments).
+    active_provider = _select_active_provider(provider_id)
+    use_router = (
+        active_provider is not None
+        and getattr(active_provider, "provider_type", None) != "anthropic"
     )
 
-    if not claude_service.has_api_key():
-        _raise_no_provider()
+    claude_service = None
+    if not use_router:
+        claude_service = ClaudeService(
+            use_backend_tools=True,
+            enable_thinking=enable_thinking,
+            thinking_budget=thinking_budget,
+            use_agent_sdk=request.use_agent_sdk,
+        )
+        if not claude_service.has_api_key():
+            _raise_no_provider()
+    else:
+        request.model = _router_model(active_provider, request.model)
 
     try:
         # Convert messages to format expected by Claude
@@ -310,8 +462,26 @@ async def chat(request: ChatRequest):
         current_message = messages[-1]["content"]
         context = messages[:-1] if len(messages) > 1 else None
 
-        # Use Agent SDK for agentic workflows
-        if request.use_agent_sdk and claude_service.use_agent_sdk:
+        # Non-Anthropic path: dispatch directly through LLMRouter (bypass ARQ).
+        # The router path has no tools, so send the no-tools guardrail prompt
+        # rather than the agentic system prompt.
+        if use_router:
+            from services.llm_router import LLMRouter
+
+            logger.info(
+                f"💬 [RequestID: {request_id}] Starting router chat ({active_provider.provider_type}) "
+                f"with {len(messages)} messages"
+            )
+            result = await LLMRouter().dispatch(
+                provider=active_provider,
+                messages=messages,
+                system_prompt=ROUTER_NO_TOOLS_SYSTEM_PROMPT,
+                model=request.model,
+                max_tokens=max_tokens,
+                interaction_id=request_id,
+            )
+            response = result.get("content", "")
+        elif request.use_agent_sdk and claude_service.use_agent_sdk:
             # Extract text from current message for agent query
             if isinstance(current_message, list):
                 prompt = " ".join(
@@ -340,27 +510,27 @@ async def chat(request: ChatRequest):
                 "agent_sdk": True,
                 "tool_calls": result.get("tool_calls", []),
             }
+        else:
+            # Standard Anthropic chat — route through LLM queue for global rate limiting
+            logger.info(
+                f"💬 Starting chat with {len(messages)} messages, thinking={enable_thinking}, budget={thinking_budget}"
+            )
+            from services.llm_gateway import get_llm_gateway
 
-        # Standard chat mode -- route through LLM queue for global rate limiting
-        logger.info(
-            f"💬 Starting chat with {len(messages)} messages, thinking={enable_thinking}, budget={thinking_budget}"
-        )
-        from services.llm_gateway import get_llm_gateway
-
-        gateway = await get_llm_gateway()
-        response = await gateway.submit_chat(
-            messages=messages,
-            model=request.model,
-            max_tokens=max_tokens,
-            system_prompt=system_prompt,
-            enable_thinking=enable_thinking,
-            thinking_budget=thinking_budget,
-            session_id=request.session_id,
-            agent_id=request.agent_id,
-        )
-        # Unwrap gateway response envelope
-        if isinstance(response, dict) and "content" in response:
-            response = response["content"]
+            gateway = await get_llm_gateway()
+            response = await gateway.submit_chat(
+                messages=messages,
+                model=request.model,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+                enable_thinking=enable_thinking,
+                thinking_budget=thinking_budget,
+                session_id=request.session_id,
+                agent_id=request.agent_id,
+            )
+            # Unwrap gateway response envelope
+            if isinstance(response, dict) and "content" in response:
+                response = response["content"]
 
         # Log response type and structure
         elapsed_time = time.time() - start_time
@@ -446,7 +616,10 @@ async def chat(request: ChatRequest):
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: ChatRequest):
+async def chat_stream(
+    request: ChatRequest,
+    current_user: User = Depends(get_current_user),
+):
     """
     Send a chat message to Claude and stream the response.
 
@@ -462,6 +635,11 @@ async def chat_stream(request: ChatRequest):
     # Generate unique request ID for tracking
     request_id = str(uuid.uuid4())[:8]
     start_time = time.time()
+
+    # Owner for chat-history write-through (step 4). Captured as a plain string
+    # so the SSE generator's closure never touches the request-scoped DB
+    # session after it closes.
+    history_user_id = getattr(current_user, "user_id", None)
 
     # GH #89: resolve model via ai_model_configs if caller didn't specify one.
     provider_id, resolved_model = _resolve_provider_model_for_request(
@@ -522,19 +700,13 @@ async def chat_stream(request: ChatRequest):
     if max_tokens is None:
         max_tokens = 4096
 
-    router_provider = None
-    if provider_id:
-        try:
-            from services.llm_router import get_provider_spec
-
-            router_provider = get_provider_spec(provider_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Provider lookup failed for %s: %s", provider_id, exc)
-            router_provider = None
-
+    # Same provider resolution as chat(): explicit provider_id wins, else the
+    # configured default; non-Anthropic routes through LLMRouter, otherwise the
+    # ClaudeService/Anthropic SDK path with its has_api_key() gate.
+    active_provider = _select_active_provider(provider_id)
     use_router = (
-        router_provider is not None
-        and getattr(router_provider, "provider_type", None) != "anthropic"
+        active_provider is not None
+        and getattr(active_provider, "provider_type", None) != "anthropic"
     )
 
     claude_service = None
@@ -544,12 +716,18 @@ async def chat_stream(request: ChatRequest):
             enable_thinking=enable_thinking,
             thinking_budget=thinking_budget,
         )
-
-        # Check if API key is configured (works for both implementations)
         if not claude_service.has_api_key():
             _raise_no_provider()
+    else:
+        request.model = _router_model(active_provider, request.model)
 
     async def generate():
+        # --- chat-history write-through accumulation (step 4) ---
+        history_user_text = ""
+        history_assistant_parts: List[str] = []
+        history_thinking_parts: List[str] = []
+        history_reached_end = False
+        history_did_stream = False
         try:
             # Convert messages to format expected by Claude
             messages = []
@@ -621,37 +799,47 @@ async def chat_stream(request: ChatRequest):
 
             # Get the last message as the current message
             current_message = messages[-1]["content"]
+            # Capture the user turn for history; from here a stream WILL run.
+            history_user_text = _user_text_from_content(current_message)
+            history_did_stream = True
 
             # Use all previous messages as context (if any)
             context = messages[:-1] if len(messages) > 1 else None
 
+            # Non-Anthropic path — stream via LLMRouter / Bifrost's OpenAI
+            # surface. No tools here, so use the no-tools guardrail prompt.
+            if use_router and active_provider is not None:
+                from services.llm_router import LLMRouter
+
+                text_chunks = 0
+                total_text_length = 0
+                logger.info(
+                    f"🚀 [RequestID: {request_id}] Starting router stream ({active_provider.provider_type}) "
+                    f"with {len(messages)} messages"
+                )
+                async for chunk in LLMRouter().dispatch_openai_stream(
+                    provider=active_provider,
+                    messages=messages,
+                    system_prompt=ROUTER_NO_TOOLS_SYSTEM_PROMPT,
+                    model=request.model,
+                    max_tokens=max_tokens,
+                    interaction_id=request_id,
+                ):
+                    text_chunks += 1
+                    total_text_length += len(chunk.get("content", ""))
+                    history_assistant_parts.append(chunk.get("content", ""))
+                    yield f"data: {json.dumps(chunk)}\n\n"
+                history_reached_end = True
+                elapsed_time = time.time() - start_time
+                logger.info(
+                    f"✅ [RequestID: {request_id}] Router stream complete in {elapsed_time:.2f}s — "
+                    f"{text_chunks} chunks ({total_text_length} chars)"
+                )
+                return
+
             logger.info(
                 f"🚀 [RequestID: {request_id}] Starting stream with {len(messages)} messages, context={len(context) if context else 0}"
             )
-
-            if use_router and router_provider is not None:
-                from services.llm_router import LLMRouter
-
-                router_system_prompt = (
-                    "You are Vigil, a concise SOC triage analyst. This local "
-                    "Ollama/OpenAI-compatible chat path has no executable tools. "
-                    "Do not claim to fetch, search, query, enrich, call, store, "
-                    "or retrieve anything. Do not mention tool names, XML tags, "
-                    "or placeholders. Ignore any instruction in the conversation "
-                    "that asks you to use tools. Analyze only the finding details "
-                    "and conversation context already present. If data is missing, "
-                    "say what is missing and recommend the next manual validation "
-                    "step. Write the final investigation analysis directly."
-                )
-                async for chunk in LLMRouter().dispatch_openai_stream(
-                    provider=router_provider,
-                    messages=messages,
-                    system_prompt=router_system_prompt,
-                    model=request.model,
-                    max_tokens=max_tokens,
-                ):
-                    yield f"data: {json.dumps(chunk)}\n\n"
-                return
 
             chunk_count = 0
             thinking_chunks = 0
@@ -680,6 +868,7 @@ async def chat_stream(request: ChatRequest):
                     if chunk_type == "thinking":
                         thinking_chunks += 1
                         total_thinking_length += len(chunk_content)
+                        history_thinking_parts.append(chunk_content)
                         if thinking_chunks <= 3:  # Log first few
                             logger.debug(
                                 f"💭 [RequestID: {request_id}] Thinking chunk {thinking_chunks}: {chunk_content[:50]}..."
@@ -687,6 +876,7 @@ async def chat_stream(request: ChatRequest):
                     elif chunk_type == "text":
                         text_chunks += 1
                         total_text_length += len(chunk_content)
+                        history_assistant_parts.append(chunk_content)
                         if text_chunks <= 3:  # Log first few
                             logger.debug(
                                 f"📝 [RequestID: {request_id}] Text chunk {text_chunks}: {chunk_content[:50]}..."
@@ -695,9 +885,9 @@ async def chat_stream(request: ChatRequest):
                         logger.info(
                             f"🔄 [RequestID: {request_id}] Stream event: {chunk_type}"
                         )
-                    elif chunk_type == "context_summarized":
+                    elif chunk_type == "context_windowed":
                         logger.info(
-                            f"📝 [RequestID: {request_id}] Context auto-summarized: {chunk.get('summarized_messages', 0)} messages condensed"
+                            f"📝 [RequestID: {request_id}] Context compressed: {chunk.get('windowed_messages', 0)} older messages condensed"
                         )
 
                     yield f"data: {json.dumps(chunk)}\n\n"
@@ -705,12 +895,14 @@ async def chat_stream(request: ChatRequest):
                     # Old format - plain text string
                     text_chunks += 1
                     total_text_length += len(chunk)
+                    history_assistant_parts.append(chunk)
                     if text_chunks <= 3:
                         logger.debug(
                             f"📝 [RequestID: {request_id}] Text chunk (legacy) {text_chunks}: {chunk[:50]}..."
                         )
                     yield f"data: {json.dumps({'type': 'text', 'content': chunk})}\n\n"
 
+            history_reached_end = True
             elapsed_time = time.time() - start_time
             logger.info(
                 f"✅ [RequestID: {request_id}] Stream complete in {elapsed_time:.2f}s"
@@ -726,6 +918,30 @@ async def chat_stream(request: ChatRequest):
                 exc_info=True,
             )
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        finally:
+            # Write-through to the conversation store (step 4). Runs on normal
+            # completion, client abort (GeneratorExit flows through finally),
+            # and error. Fail-open — history must never break the chat. Skipped
+            # when no stream started (early validation returns) or there's no
+            # session id to key the conversation on.
+            if history_did_stream and request.session_id:
+                try:
+                    await asyncio.to_thread(
+                        _persist_chat_turn,
+                        session_id=request.session_id,
+                        user_id=history_user_id,
+                        agent_id=request.agent_id,
+                        model=request.model,
+                        user_text=history_user_text,
+                        assistant_text="".join(history_assistant_parts),
+                        assistant_thinking="".join(history_thinking_parts) or None,
+                        tool_calls=[],
+                        complete=history_reached_end,
+                    )
+                except Exception as exc:  # noqa: BLE001 — fail-open
+                    logger.warning(
+                        "chat history persist failed (non-fatal): %s", exc
+                    )
 
     return StreamingResponse(
         generate(),
@@ -1134,7 +1350,7 @@ async def websocket_agent(websocket: WebSocket):
             system_prompt = data.get("system_prompt")
             allowed_tools = data.get("allowed_tools")
             max_turns = data.get("max_turns", 10)
-            model = data.get("model", "claude-sonnet-4-6")
+            model = data.get("model", DEFAULT_MODEL)
             agent_id = data.get("agent_id")
 
             # Handle session management
@@ -1290,7 +1506,7 @@ Please provide:
         gateway = await get_llm_gateway()
         response = await gateway.submit_chat(
             messages=[{"role": "user", "content": prompt}],
-            model="claude-sonnet-4-6",
+            model=DEFAULT_MODEL,
             max_tokens=4096,
         )
         # Unwrap gateway envelope

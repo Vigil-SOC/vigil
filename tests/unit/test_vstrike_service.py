@@ -229,6 +229,7 @@ def test_get_vstrike_service_falls_back_to_integration_config(isolate_secrets):
     isolate_secrets.delenv("VSTRIKE_BASE_URL", raising=False)
     isolate_secrets.delenv("VSTRIKE_USERNAME", raising=False)
     isolate_secrets.delenv("VSTRIKE_PASSWORD", raising=False)
+    isolate_secrets.delenv("VSTRIKE_VERIFY_SSL", raising=False)
     with patch(
         "core.config.get_integration_config",
         return_value={

@@ -54,6 +54,8 @@ from database.models import (
     CustomWorkflow,
     Skill,
     LLMProviderConfig,
+    Conversation,
+    ChatMessage,
 )
 
 logger = logging.getLogger(__name__)

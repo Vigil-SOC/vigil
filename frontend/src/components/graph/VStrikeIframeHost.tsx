@@ -347,10 +347,10 @@ export default function VStrikeIframeHost() {
           {ctx.error.missingCredentials ? (
             <Button
               variant="outlined"
-              href="/settings"
+              href="/old/settings"
               onClick={(e) => {
                 e.preventDefault()
-                window.location.assign('/settings')
+                window.location.assign('/old/settings')
               }}
             >
               Open Settings

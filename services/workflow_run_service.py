@@ -1,18 +1,3 @@
-"""CRUD + lifecycle service for workflow run history (#127).
-
-Before this service, workflows executed and vanished — there was no
-way to answer "what was the last run of incident-response on case X?"
-or "why did this workflow fail yesterday?". This module owns the
-`workflow_runs` table lifecycle: insert a row at execute-start with
-``status='running'``, update at execute-end with the final status,
-result summary, error, and duration. Runs are surfaced through the
-API by ``backend/api/workflows.py``.
-
-Per-phase rows (``workflow_run_phases``) are reserved for phase-by-
-phase execution (#128) and aren't written yet — the parent row alone
-carries the run's audit story for the current "composite prompt" path.
-"""
-
 from __future__ import annotations
 
 import logging

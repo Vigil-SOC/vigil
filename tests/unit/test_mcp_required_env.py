@@ -200,6 +200,9 @@ class TestSubstituteEnvVars:
 
         service = MCPService()
         monkeypatch.setenv("HOME", "/Users/test")
+        # Ensure the default branch is taken — a leaked MEMPALACE_PALACE_PATH
+        # from another test would short-circuit the ${VAR:-default} expansion.
+        monkeypatch.delenv("MEMPALACE_PALACE_PATH", raising=False)
         result = service._substitute_env_vars(
             "${MEMPALACE_PALACE_PATH:-${HOME}/.vigil/mempalace/palace}"
         )

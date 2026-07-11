@@ -86,7 +86,7 @@ export default function InvestigationDetail({ id, onBack, openChat, busy, wake, 
           </button>
         )}
         <button className="btn ghost" onClick={handleExport}><Icon name="download" /> Export</button>
-        <button className="btn ghost" title="View AI decisions" onClick={() => navigate('/redesign/decisions')}>
+        <button className="btn ghost" title="View AI decisions" onClick={() => navigate('/decisions')}>
           <Icon name="brain" /> AI Decisions
         </button>
         <button
