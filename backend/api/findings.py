@@ -596,6 +596,11 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
                 "analysis_notes": response[:1000],  # Store first 1000 chars as notes
                 "raw_response": response  # Store full response
             }
+
+        # Keep the provider's original response even when it parsed cleanly.
+        # Analysts can compare the rendered fields against the local model's
+        # exact output without having to regenerate the enrichment.
+        enrichment["raw_response"] = response
         
         # Add metadata
         enrichment['generated_at'] = datetime.utcnow().isoformat() + 'Z'

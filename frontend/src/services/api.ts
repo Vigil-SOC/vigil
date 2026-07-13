@@ -191,7 +191,13 @@ export const findingsApi = {
   delete: (id: string) => api.delete(`/findings/${id}`),
   
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
-    api.post(`/findings/${id}/enrich`, null, { params: { force_regenerate } }),
+    // Enrichment may need to restart a local Bifrost gateway and then wait for
+    // a local model response. Keep the ordinary API timeout short, but do not
+    // abandon this recoverable request while that work is still in progress.
+    api.post(`/findings/${id}/enrich`, null, {
+      params: { force_regenerate },
+      timeout: 180_000,
+    }),
 
   deleteAll: () => api.delete('/findings/all'),
 }

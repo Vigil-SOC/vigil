@@ -47,9 +47,9 @@ interface Enrichment {
 const ENRICHMENT_PROGRESS = [
   'Preparing a local AI analysis…',
   'Reviewing the finding with your local model…',
-  'Still working — detailed local analysis can take a little while.',
-  'Checking the local AI gateway and automatically retrying if needed…',
-  'Keeping the analysis running while the local AI service reconnects…',
+  'Still analysing — local models often take a minute or two.',
+  'Checking the local AI gateway and automatically retrying if needed. Please keep this window open…',
+  'Local gateway recovery can take up to a minute. The analysis is still running…',
 ]
 
 const RISK_COLOR: Record<string, string> = {
@@ -231,7 +231,7 @@ export default function FindingPopup({
       return
     }
 
-    const timers = [4_000, 15_000, 35_000, 60_000].map((delay, index) =>
+    const timers = [4_000, 15_000, 45_000, 75_000].map((delay, index) =>
       window.setTimeout(() => setEnrichmentProgressIndex(index + 1), delay),
     )
     return () => timers.forEach(window.clearTimeout)
