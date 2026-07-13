@@ -3,6 +3,9 @@
 # Usage: ./start.sh [-d|--daemon]
 source "$(dirname "$0")/scripts/lib.sh"
 
+# Version shown in the startup banner, read from the repo VERSION file.
+VERSION="$(cat "$(dirname "$0")/VERSION" 2>/dev/null || echo "dev")"
+
 DAEMON=0
 for arg in "$@"; do
     case "$arg" in
@@ -64,7 +67,7 @@ export PYTHONPATH="${PWD}:${PYTHONPATH:-}"
 print_ready() {
     echo ""
     echo "=========================================="
-    echo "Vigil SOC - Ready"
+    echo "Vigil SOC v$VERSION - Ready"
     echo "=========================================="
     echo "Backend:  http://localhost:6987"
     echo "Frontend: http://localhost:6988"
@@ -139,8 +142,13 @@ else
     echo $! > logs/daemon.pid
 
     if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
-        (cd frontend && nohup npm run dev > ../logs/frontend.log 2>&1 &
-         echo $! > ../logs/frontend.pid)
+        # Absolute log dir: the `cd frontend` only applies inside the
+        # backgrounded (&) job, not the subsequent `echo`, which still runs
+        # from the repo root — so a relative ../logs there pointed above the
+        # repo and failed. Anchor both writes to the repo-root logs dir.
+        logs_dir="${PWD}/logs"
+        (cd frontend && nohup npm run dev > "${logs_dir}/frontend.log" 2>&1 &
+         echo $! > "${logs_dir}/frontend.pid")
     fi
 
     print_ready
