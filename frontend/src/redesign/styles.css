@@ -5426,6 +5426,20 @@
       animation: soc-spin .7s linear infinite;
    }
 
+   .fp-raw-ai-output {
+      max-height: 280px;
+      margin: 0;
+      padding: 12px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg-2);
+      color: var(--tx-2);
+      font: 12px/1.5 var(--font-mono);
+      white-space: pre-wrap;
+      word-break: break-word;
+   }
+
    .fp-actions {
       margin-top: 20px;
       padding-top: 14px;

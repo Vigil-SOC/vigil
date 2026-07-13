@@ -7,6 +7,10 @@ import { basePath } from '../config/basePath'
 const api = axios.create({
   baseURL: `${basePath}/api`,
   withCredentials: true,
+  // A dead local backend can leave Vite's proxy connection open indefinitely.
+  // Bound every request so the UI can show a recoverable error instead of a
+  // permanent loading state.
+  timeout: 15_000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -1653,4 +1657,3 @@ export const kafkaApi = {
 }
 
 export default api
-

@@ -457,6 +457,18 @@ app.include_router(
 )
 
 
+def _mcp_auto_connect_enabled() -> bool:
+    """Keep optional MCP processes from blocking a local backend startup."""
+    dev_mode = os.getenv("DEV_MODE", "false").lower() in {"1", "true", "yes"}
+    default = "false" if dev_mode else "true"
+    return os.getenv("MCP_AUTO_CONNECT_ON_STARTUP", default).lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 async def _connect_external_services():
     """Connect external startup integrations (skipped under TESTING)."""
     import asyncio
@@ -501,6 +513,17 @@ async def _connect_external_services():
         logger.warning(
             "  LLM calls will fail until Redis is running and ARQ worker is started"
         )
+
+    # MCP tools connect lazily when an agent actually needs them. Starting
+    # every configured stdio server during local development makes the entire
+    # API unavailable if an optional integration has a stale executable or
+    # missing runtime. Preserve eager connection outside DEV_MODE unless an
+    # operator explicitly overrides it.
+    if not _mcp_auto_connect_enabled():
+        logger.info(
+            "MCP auto-connect disabled; optional MCP servers will connect on demand"
+        )
+        return
 
     logger.info("Initializing MCP client with persistent connections...")
     try:

@@ -20,7 +20,7 @@ import type { Phase } from '../cases/useCases'
 interface RawFinding extends ApiFinding {
   description?: string
   cluster_id?: string | null
-  ai_enrichment?: { model?: string } | null
+  ai_enrichment?: Enrichment | null
 }
 
 interface RelatedTechnique {
@@ -41,6 +41,7 @@ interface Enrichment {
   business_context?: string
   indicators?: { malicious_ips?: string[]; suspicious_domains?: string[] }
   analysis_notes?: string
+  raw_response?: string
 }
 
 const ENRICHMENT_PROGRESS = [
@@ -150,6 +151,13 @@ function EnrichmentView({ e }: { e: Enrichment }) {
           <p className="muted" style={{ fontSize: 12.5, margin: 0 }}><strong>Analyst notes:</strong> {e.analysis_notes}</p>
         </div>
       )}
+
+      {e.raw_response && (
+        <div className="modal-section">
+          <h4>Raw model output</h4>
+          <pre className="fp-raw-ai-output">{e.raw_response}</pre>
+        </div>
+      )}
     </>
   )
 }
@@ -167,6 +175,7 @@ export default function FindingPopup({
   const [raw, setRaw] = useState<RawFinding | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
+  const [loadAttempt, setLoadAttempt] = useState(0)
 
   // AI enrichment — on-demand (a getEnrichment call may invoke an LLM, so we
   // don't fire it automatically on open). 'idle' until the user asks for it.
@@ -195,17 +204,26 @@ export default function FindingPopup({
         const data = res.data as RawFinding
         setRaw(data)
         setStatus((data as { status?: string }).status || '')
+        if (data.ai_enrichment) {
+          setEnrichment(data.ai_enrichment)
+          setEnrichPhase('ready')
+        }
         setPhase('ready')
       })
       .catch((e) => {
         if (cancelled) return
-        setError((e as { message?: string })?.message || 'Failed to load finding')
+        const code = (e as { code?: string })?.code
+        setError(
+          code === 'ECONNABORTED'
+            ? 'The local Vigil API did not respond. It may be restarting.'
+            : (e as { message?: string })?.message || 'Failed to load finding',
+        )
         setPhase('error')
       })
     return () => {
       cancelled = true
     }
-  }, [id])
+  }, [id, loadAttempt])
 
   useEffect(() => {
     if (enrichPhase !== 'loading') {
@@ -277,8 +295,20 @@ export default function FindingPopup({
 
   return (
     <Popup open={id !== null} onClose={onClose} title={title} width={640}>
-      {phase === 'loading' && <div className="muted">Loading finding…</div>}
-      {phase === 'error' && <div className="muted">Couldn’t load finding: {error}</div>}
+      {phase === 'loading' && (
+        <div className="fp-ai-progress muted flex items-center gap-2" aria-live="polite">
+          <span className="spin" aria-hidden="true" />
+          <span>Loading finding details…</span>
+        </div>
+      )}
+      {phase === 'error' && (
+        <div className="muted">
+          Couldn’t load finding: {error}{' '}
+          <button className="btn ghost" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>
+            Retry
+          </button>
+        </div>
+      )}
       {phase === 'ready' && f && raw && (
         <>
           {/* hero — top technique + tactic on the left, key metrics on the right */}
