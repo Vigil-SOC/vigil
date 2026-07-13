@@ -183,21 +183,28 @@ async def generate_configured_text(
     claude_service = ClaudeService(
         use_backend_tools=use_backend_tools,
         use_mcp_tools=use_mcp_tools,
+        use_agent_sdk=False,
         enable_thinking=enable_thinking,
         thinking_budget=thinking_budget,
     )
     if not claude_service.has_api_key():
         raise NoConfiguredLLMProvider()
 
-    response = await asyncio.to_thread(
-        claude_service.chat,
-        message=message,
-        context=context,
-        system_prompt=system_prompt,
-        model=selection.model,
-        max_tokens=max_tokens,
-        recommended_tools=recommended_tools,
-    )
+    chat_kwargs: Dict[str, Any] = {
+        "message": message,
+        "system_prompt": system_prompt,
+        "model": selection.model,
+        "max_tokens": max_tokens,
+        "recommended_tools": recommended_tools,
+    }
+    # Preserve the established ClaudeService call shape for callers that do
+    # not supply conversation history.  Passing ``context=None`` is redundant
+    # and breaks compatible test doubles and adapters with the older keyword
+    # signature.  Real context is still forwarded unchanged when present.
+    if context is not None:
+        chat_kwargs["context"] = context
+
+    response = await asyncio.to_thread(claude_service.chat, **chat_kwargs)
     return ConfiguredTextResult(
         content=response or "",
         provider_id=selection.provider_id,

@@ -10,6 +10,7 @@ if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
 from services.configured_llm import (  # noqa: E402
+    ConfiguredLLMSelection,
     NoConfiguredLLMProvider,
     generate_configured_text,
     resolve_configured_llm,
@@ -69,6 +70,19 @@ def test_resolve_non_anthropic_rewrites_stale_claude_model(monkeypatch):
     assert selection.provider_id == "ollama-local"
     assert selection.provider_type == "ollama"
     assert selection.model == "qwen3.5:latest"
+
+
+def test_resolve_registry_failure_does_not_fall_back_to_anthropic(monkeypatch):
+    import services.model_registry as model_registry
+
+    class _BrokenRegistry:
+        def resolve_model_for_component(self, component):
+            raise RuntimeError("provider registry unavailable")
+
+    monkeypatch.setattr(model_registry, "get_registry", lambda: _BrokenRegistry())
+
+    with pytest.raises(RuntimeError, match="provider registry unavailable"):
+        resolve_configured_llm("reporting")
 
 
 @pytest.mark.asyncio
@@ -152,9 +166,51 @@ async def test_generate_anthropic_uses_claude_service(monkeypatch):
     assert result.path == "claude_service"
     assert calls["init"]["use_backend_tools"] is True
     assert calls["init"]["use_mcp_tools"] is True
+    assert calls["init"]["use_agent_sdk"] is False
     assert calls["init"]["enable_thinking"] is True
+    assert calls["chat"]["context"] == [
+        {"role": "user", "content": "previous"}
+    ]
     assert calls["chat"]["model"] == "claude-sonnet-test"
     assert calls["chat"]["recommended_tools"] == [{"name": "get_finding"}]
+
+
+@pytest.mark.asyncio
+async def test_generate_anthropic_omits_empty_context_for_legacy_adapter(monkeypatch):
+    import services.claude_service as claude_service
+    import services.configured_llm as configured_llm
+
+    selection = ConfiguredLLMSelection(
+        provider_id="anthropic-default",
+        provider_type="anthropic",
+        model="claude-sonnet-test",
+        provider=_anthropic_spec(),
+    )
+    monkeypatch.setattr(
+        configured_llm, "resolve_configured_llm", lambda component: selection
+    )
+
+    class _ClaudeService:
+        def __init__(self, **kwargs):
+            pass
+
+        def has_api_key(self):
+            return True
+
+        def chat(
+            self, *, message, system_prompt, model, max_tokens, recommended_tools=None
+        ):
+            return "legacy-compatible"
+
+    monkeypatch.setattr(claude_service, "ClaudeService", _ClaudeService)
+
+    result = await generate_configured_text(
+        message="hello",
+        component="reporting",
+        context=None,
+    )
+
+    assert result.content == "legacy-compatible"
 
 
 @pytest.mark.asyncio

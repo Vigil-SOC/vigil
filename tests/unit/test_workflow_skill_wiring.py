@@ -20,6 +20,36 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from services.workflows_service import WorkflowDefinition, WorkflowsService
 
 
+@pytest.fixture(autouse=True)
+def _select_anthropic_for_claude_contract_tests(monkeypatch):
+    """Keep these database-free tests focused on the Anthropic adapter path."""
+    import services.configured_llm as configured_llm
+    import services.workflow_run_service as workflow_run_service
+
+    selection = configured_llm.ConfiguredLLMSelection(
+        provider_id="anthropic-test",
+        provider_type="anthropic",
+        model="claude-sonnet-test",
+        provider=None,
+    )
+    monkeypatch.setattr(
+        configured_llm, "resolve_configured_llm", lambda component: selection
+    )
+
+    class _RunService:
+        def begin_run(self, **kwargs):
+            return "workflow-unit-test-run"
+
+        def finalize_run(self, *args, **kwargs):
+            return None
+
+    monkeypatch.setattr(
+        workflow_run_service,
+        "get_workflow_run_service",
+        lambda: _RunService(),
+    )
+
+
 def _make_workflow(agents=("investigator",), tools=("list_findings",)):
     return WorkflowDefinition(
         workflow_id="wf-test",
