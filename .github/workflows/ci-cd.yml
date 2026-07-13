@@ -19,6 +19,11 @@ jobs:
   # ============================================================================
   lint-backend:
     name: Lint Backend
+    # Canonical repo only. Forks can't run this pipeline (private submodules +
+    # missing secrets) so pushes to a fork's main/develop just email the owner
+    # a failure. For pull_request events github.repository is the BASE repo, so
+    # contributor PRs against Vigil-SOC/vigil still run CI as normal.
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -54,6 +59,7 @@ jobs:
 
   lint-frontend:
     name: Lint Frontend
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -76,6 +82,7 @@ jobs:
 
   lint-docker:
     name: Lint Dockerfiles
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -92,6 +99,7 @@ jobs:
   # ============================================================================
   test-unit-backend:
     name: Unit Tests - Backend
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -129,6 +137,7 @@ jobs:
 
   test-unit-frontend:
     name: Unit Tests - Frontend
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -154,6 +163,7 @@ jobs:
   # ============================================================================
   test-integration:
     name: Integration Tests
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -224,6 +234,7 @@ jobs:
   # ============================================================================
   test-unit-backend-db:
     name: Unit Tests - Backend (DB-backed)
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -282,6 +293,7 @@ jobs:
   # ============================================================================
   security-scan-python:
     name: Security Scan - Python
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -308,6 +320,7 @@ jobs:
 
   security-scan-npm:
     name: Security Scan - NPM
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -396,7 +409,7 @@ jobs:
     name: Build Frontend
     runs-on: ubuntu-latest
     needs: [lint-frontend]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.repository == 'Vigil-SOC/vigil'
     steps:
       - uses: actions/checkout@v5
       
