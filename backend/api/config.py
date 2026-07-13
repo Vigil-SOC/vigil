@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pathlib import Path
 import json
 import logging
@@ -1140,6 +1140,9 @@ class AIOperationsSettingsConfig(BaseModel):
     history_window: int = 20
     tool_response_budget_default: int = 8000
     thinking_budget: int = 10000
+    local_ollama_recovery_enabled: bool = True
+    local_ollama_recovery_retry_limit: int = Field(default=1, ge=0, le=3)
+    local_ollama_recovery_restart_gateway: bool = True
 
 
 AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()

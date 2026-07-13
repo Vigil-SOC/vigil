@@ -116,6 +116,18 @@ class TestTypeCoercion:
                 == 10000
             )
 
+    def test_local_recovery_uses_its_own_env_fallback(self, monkeypatch):
+        from services import runtime_config
+
+        monkeypatch.setenv("LOCAL_OLLAMA_RECOVERY_RETRY_LIMIT", "2")
+        with patch.object(runtime_config, "_fetch_db_config", return_value={}):
+            assert (
+                runtime_config.get_ai_operations_setting(
+                    "local_ollama_recovery_retry_limit", 1
+                )
+                == 2
+            )
+
 
 class TestCacheBehavior:
     def test_cache_avoids_repeated_db_fetch(self):
