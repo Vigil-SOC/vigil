@@ -5412,6 +5412,20 @@
       line-height: 1.45;
    }
 
+   .fp-ai-progress {
+      min-height: 20px;
+   }
+
+   .fp-ai-progress .spin {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      border: 2px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: soc-spin .7s linear infinite;
+   }
+
    .fp-actions {
       margin-top: 20px;
       padding-top: 14px;

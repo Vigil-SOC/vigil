@@ -43,6 +43,14 @@ interface Enrichment {
   analysis_notes?: string
 }
 
+const ENRICHMENT_PROGRESS = [
+  'Preparing a local AI analysis…',
+  'Reviewing the finding with your local model…',
+  'Still working — detailed local analysis can take a little while.',
+  'Checking the local AI gateway and automatically retrying if needed…',
+  'Keeping the analysis running while the local AI service reconnects…',
+]
+
 const RISK_COLOR: Record<string, string> = {
   critical: 'var(--crit)',
   high: 'var(--crit)',
@@ -165,6 +173,7 @@ export default function FindingPopup({
   const [enrichment, setEnrichment] = useState<Enrichment | null>(null)
   const [enrichPhase, setEnrichPhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [enrichError, setEnrichError] = useState<'not_configured' | 'failed' | null>(null)
+  const [enrichmentProgressIndex, setEnrichmentProgressIndex] = useState(0)
 
   const [status, setStatus] = useState('')
   const [acting, setActing] = useState(false)
@@ -198,10 +207,23 @@ export default function FindingPopup({
     }
   }, [id])
 
+  useEffect(() => {
+    if (enrichPhase !== 'loading') {
+      setEnrichmentProgressIndex(0)
+      return
+    }
+
+    const timers = [4_000, 15_000, 35_000, 60_000].map((delay, index) =>
+      window.setTimeout(() => setEnrichmentProgressIndex(index + 1), delay),
+    )
+    return () => timers.forEach(window.clearTimeout)
+  }, [enrichPhase])
+
   const loadEnrichment = (force = false) => {
     if (!id) return
     setEnrichPhase('loading')
     setEnrichError(null)
+    setEnrichmentProgressIndex(0)
     findingsApi
       .getEnrichment(id, force)
       .then((res) => {
@@ -338,12 +360,17 @@ export default function FindingPopup({
                 <Icon name="sparkle" size={15} /> Generate AI analysis
               </button>
             )}
-            {enrichPhase === 'loading' && <div className="muted" style={{ marginTop: 10 }}>Generating AI analysis…</div>}
+            {enrichPhase === 'loading' && (
+              <div className="fp-ai-progress muted flex items-center gap-2" style={{ marginTop: 10 }} aria-live="polite">
+                <span className="spin" aria-hidden="true" />
+                <span>{ENRICHMENT_PROGRESS[enrichmentProgressIndex]}</span>
+              </div>
+            )}
             {enrichPhase === 'error' && (
               <div className="muted" style={{ marginTop: 10 }}>
                 {enrichError === 'not_configured'
-                  ? 'AI enrichment is not configured — add a Claude API key in Settings → AI.'
-                  : 'AI enrichment failed. '}
+                  ? 'AI enrichment is not configured — choose an AI provider in Settings → AI.'
+                  : 'Vigil could not restore the local AI service. '}
                 {enrichError !== 'not_configured' && (
                   <button className="btn ghost" onClick={() => loadEnrichment(false)}>Retry</button>
                 )}
