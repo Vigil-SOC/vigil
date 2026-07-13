@@ -81,14 +81,20 @@ export default function GeneralSection({ notify }: SectionProps) {
         const count = (res.data as { deleted?: number })?.deleted
         notify('ok', count != null ? `Cleared ${count} cases and case metrics.` : 'Cases and metrics cleared.')
       } else {
-        const [findingsRes, investigationsRes, casesRes] = await Promise.allSettled([
-          findingsApi.deleteAll(),
-          orchestratorApi.purgeAll(),
-          casesApi.deleteAll(),
-        ])
-        const failed = [findingsRes, investigationsRes, casesRes].filter((r) => r.status === 'rejected').length
-        if (failed) {
-          notify('err', `Workspace cleanup completed with ${failed} failed step${failed === 1 ? '' : 's'}.`)
+        const failed: string[] = []
+        for (const [label, clear] of [
+          ['investigations', () => orchestratorApi.purgeAll()],
+          ['cases', () => casesApi.deleteAll()],
+          ['findings', () => findingsApi.deleteAll()],
+        ] as const) {
+          try {
+            await clear()
+          } catch {
+            failed.push(label)
+          }
+        }
+        if (failed.length) {
+          notify('err', `Workspace cleanup completed, but failed to clear ${failed.join(', ')}.`)
         } else {
           notify('ok', 'Workspace data cleared.')
         }
