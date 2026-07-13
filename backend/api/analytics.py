@@ -274,7 +274,11 @@ async def calculate_metrics(
         .scalar()
     )
 
-    prev_avg_response_time = round(prev_avg_response_time_result or 0, 1)
+    # float() to match avg_response_time above — SQL AVG() returns Decimal, and
+    # subtracting a float from a Decimal (when the previous period has data but
+    # the current one doesn't) raises TypeError. This is why 7d 500s while 30d,
+    # whose previous window is usually empty, short-circuits the subtraction.
+    prev_avg_response_time = float(round(prev_avg_response_time_result or 0, 1))
 
     prev_total_closed = (
         db.query(func.count(Case.case_id))

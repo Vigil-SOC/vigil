@@ -19,6 +19,11 @@ jobs:
   # ============================================================================
   lint-backend:
     name: Lint Backend
+    # Canonical repo only. Forks can't run this pipeline (private submodules +
+    # missing secrets) so pushes to a fork's main/develop just email the owner
+    # a failure. For pull_request events github.repository is the BASE repo, so
+    # contributor PRs against Vigil-SOC/vigil still run CI as normal.
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -54,6 +59,7 @@ jobs:
 
   lint-frontend:
     name: Lint Frontend
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -76,6 +82,7 @@ jobs:
 
   lint-docker:
     name: Lint Dockerfiles
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -92,6 +99,7 @@ jobs:
   # ============================================================================
   test-unit-backend:
     name: Unit Tests - Backend
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -111,11 +119,11 @@ jobs:
       
       - name: Run unit tests
         run: |
-          pytest tests/unit/ -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term || true
-          echo "Unit tests completed (0 tests expected until new tests are written)"
+          # Exclude tests needing external services (e.g. PostgreSQL) — the unit
+          # job runs without them. Such tests are marked @pytest.mark.external_service.
+          pytest tests/unit/ -m "not external_service" -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term
         env:
           TESTING: "true"
-          DATABASE_URL: "sqlite:///:memory:"
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
           ANTHROPIC_API_KEY: ${{ secrets.CLAUDEAPI }}
       
@@ -129,6 +137,7 @@ jobs:
 
   test-unit-frontend:
     name: Unit Tests - Frontend
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -154,10 +163,11 @@ jobs:
   # ============================================================================
   test-integration:
     name: Integration Tests
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_DB: deeptempo_test
           POSTGRES_USER: test
@@ -169,34 +179,48 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
-    
+    env:
+      TESTING: "true"
+      DEV_MODE: "true"
+      SECRET_KEY: "test-secret-key"
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: deeptempo_test
+
     steps:
       - uses: actions/checkout@v5
         with:
           submodules: true
-      
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
-      
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      
+
+      - name: Enable Postgres extensions
+        run: |
+          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Initialize schema
+        run: |
+          python -c "from database.connection import init_database; init_database()"
+
       - name: Run integration tests
         run: |
-          pytest tests/integration/ -v --cov=backend --cov-report=xml || true
-          echo "Integration tests completed (0 tests expected until new tests are written)"
+          pytest tests/integration/ -v --cov=backend --cov-report=xml
         env:
-          TESTING: "true"
-          DATABASE_URL: "postgresql://test:test@localhost:5432/deeptempo_test"
-          SECRET_KEY: "test-secret-key"
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
           ANTHROPIC_API_KEY: ${{ secrets.CLAUDEAPI }}
-      
+
       - name: Upload coverage
         uses: codecov/codecov-action@v5
         with:
@@ -206,10 +230,70 @@ jobs:
         continue-on-error: true
 
   # ============================================================================
+  # DB-backed Unit Tests (require PostgreSQL)
+  # ============================================================================
+  test-unit-backend-db:
+    name: Unit Tests - Backend (DB-backed)
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: deeptempo_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      TESTING: "true"
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: test
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: deeptempo_test
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Enable Postgres extensions
+        run: |
+          PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
+            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Initialize schema
+        run: |
+          python -c "from database.connection import init_database; init_database()"
+
+      - name: Run DB-backed unit tests
+        run: |
+          # Complement of the no-service unit job: only @pytest.mark.external_service
+          # tests, which require a real PostgreSQL.
+          pytest tests/unit/ -m external_service -v --no-cov
+
+  # ============================================================================
   # Security Scanning
   # ============================================================================
   security-scan-python:
     name: Security Scan - Python
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -236,6 +320,7 @@ jobs:
 
   security-scan-npm:
     name: Security Scan - NPM
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -256,7 +341,7 @@ jobs:
   build-images:
     name: Build Docker Images
     runs-on: ubuntu-latest
-    needs: [lint-backend, test-unit-backend, test-integration]
+    needs: [lint-backend, test-unit-backend, test-unit-backend-db, test-integration]
     if: false  # Disabled - enable if you need Docker images
     permissions:
       contents: read
@@ -324,7 +409,7 @@ jobs:
     name: Build Frontend
     runs-on: ubuntu-latest
     needs: [lint-frontend]
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.repository == 'Vigil-SOC/vigil'
     steps:
       - uses: actions/checkout@v5
       
@@ -383,25 +468,4 @@ jobs:
   #   needs: [build-images, build-frontend, scan-images]
   #   if: github.ref == 'refs/heads/main' && github.event_name == 'push'
   #   ... (deployment steps removed for now)
-
-  # ============================================================================
-  # Summary
-  # ============================================================================
-  summary:
-    name: CI Summary
-    runs-on: ubuntu-latest
-    needs: [lint-backend, lint-frontend, test-unit-backend, test-integration, security-scan-python]
-    if: always()
-    steps:
-      - name: Check results
-        run: |
-          echo "✓ CI Pipeline Complete"
-          echo "Lint Backend: ${{ needs.lint-backend.result }}"
-          echo "Lint Frontend: ${{ needs.lint-frontend.result }}"
-          echo "Unit Tests: ${{ needs.test-unit-backend.result }}"
-          echo "Integration Tests: ${{ needs.test-integration.result }}"
-          echo "Security Scan: ${{ needs.security-scan-python.result }}"
-          echo ""
-          echo "Docker images built and pushed to GitHub Container Registry"
-          echo "Pull images: docker pull ghcr.io/${{ github.repository }}-backend:${{ github.ref_name }}"
 

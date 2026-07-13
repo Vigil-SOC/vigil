@@ -19,6 +19,8 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from arq.jobs import DeserializationError
 
+from services.defaults import DEFAULT_MODEL
+
 logger = logging.getLogger(__name__)
 
 QUEUE_NAME = "arq:llm"
@@ -91,7 +93,7 @@ class LLMRequest:
     """Describes a single LLM call to be queued."""
 
     messages: List[Dict]
-    model: str = "claude-sonnet-4-5-20250929"
+    model: str = DEFAULT_MODEL
     max_tokens: int = 4096
     system_prompt: Optional[str] = None
     session_id: Optional[str] = None
@@ -158,7 +160,7 @@ class LLMGateway:
         self,
         prompt: str,
         *,
-        model: str = "claude-sonnet-4-5-20250929",
+        model: str = DEFAULT_MODEL,
         max_tokens: int = 2048,
         timeout: int = 90,
         provider_id: Optional[str] = None,
@@ -194,7 +196,7 @@ class LLMGateway:
         inv_id: str,
         prompt: str,
         *,
-        model: str = "claude-sonnet-4-5-20250929",
+        model: str = DEFAULT_MODEL,
         max_tokens: int = 4096,
         enable_thinking: bool = True,
         thinking_budget: int = 8000,
@@ -235,7 +237,7 @@ class LLMGateway:
         inv_id: str,
         messages: List[Dict],
         *,
-        model: str = "claude-sonnet-4-5-20250929",
+        model: str = DEFAULT_MODEL,
         max_tokens: int = 16000,
         enable_thinking: bool = True,
         thinking_budget: int = 8000,
@@ -284,7 +286,7 @@ class LLMGateway:
         messages: List[Dict],
         *,
         session_id: Optional[str] = None,
-        model: str = "claude-sonnet-4-6",
+        model: str = DEFAULT_MODEL,
         max_tokens: int = 4096,
         system_prompt: Optional[str] = None,
         enable_thinking: bool = False,
@@ -322,7 +324,7 @@ class LLMGateway:
         self,
         prompt: str,
         *,
-        model: str = "claude-sonnet-4-6",
+        model: str = DEFAULT_MODEL,
         max_tokens: int = 2000,
         temperature: float = 0.3,
         timeout: int = 90,

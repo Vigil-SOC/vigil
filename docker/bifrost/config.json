@@ -46,6 +46,25 @@
           ]
         }
       ]
+    },
+    "ollama": {
+      "network_config": {
+        "default_request_timeout_in_seconds": 1800
+      },
+      "keys": [
+        {
+          "name": "default-ollama-url",
+          "weight": 1,
+          "ollama_key_config": {
+            "url": "env.OLLAMA_URL"
+          },
+          "models": [
+            "qwen3.5:latest",
+            "qwen3-coder:latest",
+            "glm-4.7-flash:latest"
+          ]
+        }
+      ]
     }
   }
 }

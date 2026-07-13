@@ -280,7 +280,7 @@ export default function Orchestrator() {
 
   const handleCardClick = (label: string) => {
     if (label === 'Total Cost') {
-      navigate('/analytics/cost')
+      navigate('/old/analytics/cost')
       return
     }
     const filters = CARD_FILTERS[label]
@@ -666,7 +666,7 @@ export default function Orchestrator() {
                 size="small"
                 variant="outlined"
                 startIcon={<DecisionsIcon />}
-                onClick={() => navigate(`/ai-decisions?agent_id=orchestrator&investigation_id=${selectedInv}`)}
+                onClick={() => navigate(`/old/ai-decisions?agent_id=orchestrator&investigation_id=${selectedInv}`)}
               >
                 AI Decisions
               </Button>

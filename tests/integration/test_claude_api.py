@@ -57,17 +57,6 @@ def test_client(mock_llm_gateway):
 
 
 @pytest.fixture
-
-def mock_llm_gateway():
-    """Mock the LLM gateway to avoid Redis connection attempts."""
-    with patch('services.llm_gateway.get_llm_gateway') as mock_gateway_fn:
-        mock_gateway = AsyncMock()
-        mock_gateway_fn.return_value = mock_gateway
-        mock_gateway.submit_chat = AsyncMock(return_value="Mocked gateway response")
-        yield mock_gateway
-
-
-@pytest.fixture
 def mock_claude_service(mock_llm_gateway):
     """Mock the ClaudeService to avoid actual API calls."""
     # backend/main.py adds backend_dir to sys.path, so the module is registered
@@ -77,7 +66,6 @@ def mock_claude_service(mock_llm_gateway):
         mock_service = Mock()
         mock_service_class.return_value = mock_service
         mock_service.has_api_key.return_value = True
-        mock_gw_fn.return_value = mock_gateway
         yield mock_service
 
 
@@ -208,10 +196,12 @@ class TestAgentTaskEndpoint:
     def test_agent_task_success(self, test_client, mock_claude_service):
         """Test successful agent task request."""
         mock_claude_service.use_agent_sdk = True
-        mock_claude_service.agent_query = AsyncMock(return_value=MOCK_AGENT_RESPONSE)
+        mock_claude_service.run_agent_task = AsyncMock(
+            return_value=MOCK_AGENT_RESPONSE
+        )
 
         response = test_client.post(
-            "/api/claude/agent-task",
+            "/api/claude/agent/task",
             json={
                 "task": "Investigate finding f-20260109-test123 and create a case",
                 "system_prompt": "You are a security analyst",
@@ -219,20 +209,19 @@ class TestAgentTaskEndpoint:
             }
         )
 
-        # May not have agent-task endpoint, check for 404 or 200
-        assert response.status_code in [200, 404]
+        assert response.status_code == 200
 
     def test_agent_task_missing_task(self, test_client, mock_claude_service):
         """Test agent task request with missing task."""
         response = test_client.post(
-            "/api/claude/agent-task",
+            "/api/claude/agent/task",
             json={
                 "max_turns": 10
             }
         )
 
-        # Validation error or not found
-        assert response.status_code in [404, 422]
+        # Missing required 'task' field -> request validation error.
+        assert response.status_code == 422
 
 
 class TestStreamingEndpoint:
@@ -268,8 +257,7 @@ class TestInvestigationEndpoints:
             }
         )
 
-        # May or may not exist
-        assert response.status_code in [200, 404]
+        assert response.status_code in [200, 404, 405]
 
 
 class TestErrorHandling:
@@ -307,10 +295,6 @@ class TestErrorHandling:
         # Should accept any string (validated by Claude API)
         assert response.status_code in [200, 400, 503]
 
-    @pytest.mark.xfail(
-        reason="Empty message content validation is not yet implemented in the endpoint",
-        strict=False,
-    )
     def test_empty_message_content(self, test_client, mock_claude_service):
         """Test handling of empty message content."""
         response = test_client.post(

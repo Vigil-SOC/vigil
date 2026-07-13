@@ -37,16 +37,19 @@ def client():
 @pytest.fixture
 def fake_server_known():
     """Patch mcp_service so ``deeptempo-findings`` is a known, settable server."""
-    from backend.api import mcp as mcp_api
+    from api import mcp as mcp_api
 
     # Make set_server_enabled succeed (server exists); status is the stdio
-    # sentinel so the legacy stop_server branch doesn't fire.
     with patch.object(
         mcp_api.mcp_service, "set_server_enabled", return_value=True
     ), patch.object(
         mcp_api.mcp_service,
         "get_server_status",
         return_value="stdio (MCP integration)",
+    ), patch.object(
+        mcp_api.mcp_service,
+        "list_servers",
+        return_value=["deeptempo-findings", "virustotal"],
     ):
         yield
 

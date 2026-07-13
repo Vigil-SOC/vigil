@@ -28,7 +28,7 @@ def _make() -> RedisDedupSet:
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    return asyncio.run(coro)
 
 
 class TestRedisDedupFallback:
@@ -139,12 +139,9 @@ class TestRedisDedupWithFakeRedis:
         def fake_from_url(url, decode_responses=True):
             return StubRedis(store)
 
-        fake_aioredis = type(
-            "FakeAioredisModule", (), {"from_url": staticmethod(fake_from_url)}
-        )
-        import sys
+        import redis.asyncio as _aioredis
 
-        monkeypatch.setitem(sys.modules, "redis.asyncio", fake_aioredis)
+        monkeypatch.setattr(_aioredis, "from_url", fake_from_url)
 
         async def go():
             d1 = RedisDedupSet("unit-shared")

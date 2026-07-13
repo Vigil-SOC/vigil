@@ -214,6 +214,7 @@ class TestActionExecution:
             assert "Host not found" in result["error"]
 
 
+@pytest.mark.external_service  # ApprovalService persists to PostgreSQL; no DB in the unit job
 class TestApprovalQueue:
     """Test approval queue management."""
     
@@ -317,6 +318,7 @@ class TestAuditTrail:
         assert log_entry["action_id"] == "action-123"
         assert log_entry["status"] == "success"
     
+    @pytest.mark.external_service  # reads the audit trail from PostgreSQL
     def test_get_audit_trail(self):
         """Test retrieving audit trail."""
         service = ApprovalService()
@@ -441,6 +443,7 @@ class TestDryRunMode:
 
 
 @pytest.mark.unit
+@pytest.mark.external_service  # full workflow persists to PostgreSQL
 class TestApprovalWorkflowIntegration:
     """Integration tests for approval workflow."""
     
