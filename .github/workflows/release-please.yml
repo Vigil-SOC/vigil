@@ -15,6 +15,10 @@ concurrency:
 
 jobs:
   release-please:
+    # Only run on the canonical repo. Forks lack the release-please GitHub
+    # App vars/secrets below, so this job would fail on every push to their
+    # main and email the fork owner. Skipping (not failing) keeps forks quiet.
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

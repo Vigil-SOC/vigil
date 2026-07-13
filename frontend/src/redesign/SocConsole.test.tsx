@@ -21,6 +21,13 @@ vi.mock('../contexts/AuthContext', () => ({
   }),
 }))
 
+// force-graph requires a real canvas context, which jsdom does not provide.
+// Keep this shell smoke test focused on the dashboard wiring and render a
+// deterministic graph stand-in; EntityGraph has its own focused tests.
+vi.mock('../components/graph/EntityGraph', () => ({
+  default: () => <div data-testid="entity-graph">Entity graph canvas</div>,
+}))
+
 // SocConsole is URL-driven (each screen owns /<screen>, cases deep-link to
 // /cases?case=<caseId>), so mount it inside a router with that route.
 // SocConsole's theme provider bridges the app-wide ThemeContext (mode is
@@ -92,6 +99,17 @@ vi.mock('../services/api', () => ({
   },
   // chat resolves its default model from the chat_default component assignment
   aiConfigApi: {
+    listModels: () => Promise.resolve({
+      data: {
+        models: [{
+          provider_id: 'anthropic-default',
+          provider_type: 'anthropic',
+          model_id: 'claude-sonnet-4-6',
+          display_name: 'Claude Sonnet 4.6',
+          context_window: 200000,
+        }],
+      },
+    }),
     getConfig: () => Promise.resolve({ data: { components: [], assignments: {} } }),
   },
   // chat streaming helper — a vi.fn so the SSE test can supply a streaming body
@@ -247,9 +265,9 @@ describe('SocConsole redesign', () => {
     // Timeline (exercises ResizeObserver + layout math); count resolves async
     fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
     expect(await screen.findByText(/events$/)).toBeInTheDocument()
-    // Entity Graph stub
+    // Entity Graph is built from the mocked finding source field.
     fireEvent.click(screen.getByRole('tab', { name: 'Entity Graph' }))
-    expect(screen.getByText('Coming soon.', { exact: false })).toBeInTheDocument()
+    expect(await screen.findByText('Entity relationships')).toBeInTheDocument()
   })
 
   it('opens the Cases master-detail and returns to the table', async () => {
