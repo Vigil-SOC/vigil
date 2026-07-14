@@ -65,7 +65,7 @@
 
     "loglm": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "${LOGLM_MCP_URL}", "--header", "Authorization: Bearer ${LOGLM_MCP_TOKEN:-}"],
+      "args": ["-y", "mcp-remote", "${LOGLM_MCP_URL}", "--header", "Authorization: Bearer ${LOGLM_MCP_TOKEN}"],
       "env": {
         "LOGLM_MCP_URL": "${LOGLM_MCP_URL}"
       }

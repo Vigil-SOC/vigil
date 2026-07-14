@@ -659,11 +659,20 @@ async def startup_event():
             os.environ["POSTGRESQL_CONNECTION_STRING"] = default_conn
             logger.debug("Using default PostgreSQL connection string")
 
-        # Load GitHub token for MCP github server
-        github_token = get_secret("GITHUB_TOKEN")
-        if github_token:
-            os.environ["GITHUB_TOKEN"] = github_token
-            logger.debug("Loaded GitHub token from secrets")
+        # Rehydrate every registered integration credential from the encrypted
+        # store into os.environ so MCP servers gated on ${<ID>_<FIELD>} (github,
+        # loglm, ...) come back live after a restart — set_secret only writes
+        # os.environ in the saving process, so without this they'd go dormant.
+        from services.integration_secrets import INTEGRATION_SECRET_FIELDS
+
+        rehydrated = 0
+        for field_map in INTEGRATION_SECRET_FIELDS.values():
+            for env_key in field_map.values():
+                value = get_secret(env_key)
+                if value:
+                    os.environ[env_key] = value
+                    rehydrated += 1
+        logger.debug("Rehydrated %d integration secret(s) into env", rehydrated)
 
     except Exception as e:
         logger.warning(f"Error loading secrets for MCP servers: {e}")
