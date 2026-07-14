@@ -16,6 +16,7 @@ import {
   HIDDEN_MCP_SERVERS,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
+  SERVER_DISPLAY_NAMES,
   WIP_SERVERS,
   prettyServerName,
 } from './integrationsData'
@@ -145,38 +146,36 @@ function ServersPanel({ notify }: SectionProps) {
                   ? intCfg.enabled_integrations.includes(integration.id)
                   : false
                 const needsConfig = !!integration && !isConfigured
-                // Page-extension connectors (connectorUrl) mount via the connector, not a startable MCP server — show status, no toggle.
-                const isExtension = !!integration?.fields?.some((f) => f.name === 'connectorUrl')
-                // green = on · gray = needs config · red = off
-                const dotColor = isExtension
-                  ? isConfigured ? 'var(--ok)' : 'var(--tx-faint)'
-                  : isEnabled ? 'var(--ok)' : needsConfig ? 'var(--tx-faint)' : 'var(--crit)'
-                const label = isExtension
-                  ? isConfigured ? 'Configured' : 'Not Configured'
-                  : isEnabled ? (isRunning ? 'Running' : 'Enabled') : needsConfig ? 'Not Configured' : 'Off'
+                // Every card in this grid is a startable MCP server (loglm reaches
+                // its connector via mcp-remote), so all get the enable/disable
+                // toggle. Configuring a connectorUrl integration still mounts its
+                // page extension separately (see the wizard onSave below).
+                // green = running/enabled · gray = needs config · red = configured but off
+                const dotColor = isEnabled ? 'var(--ok)' : needsConfig ? 'var(--tx-faint)' : 'var(--crit)'
+                const label = isEnabled
+                  ? isRunning ? 'Running' : 'Enabled'
+                  : needsConfig ? 'Not Configured' : 'Off'
                 const canConfigure = !!integration?.fields?.length
                 return (
                   <div key={name} className="card card-sq p-3.5 flex flex-col gap-2">
                     <div className="flex items-center gap-2">
                       <span className="text-[13px] font-semibold text-tx truncate flex-1">
-                        {prettyServerName(name)}
+                        {SERVER_DISPLAY_NAMES[name] || prettyServerName(name)}
                       </span>
                       {WIP_SERVERS.has(name) && (
                         <span className="chip" style={{ color: 'var(--high)', fontSize: 10 }}>WIP</span>
                       )}
-                      {!isExtension && (
-                        <button
-                          type="button"
-                          role="switch"
-                          aria-checked={isEnabled}
-                          aria-label={`Toggle ${name}`}
-                          disabled={busy === name}
-                          className={`toggle${isEnabled ? ' on' : ''}`}
-                          onClick={() => onToggle(name, !isEnabled)}
-                        >
-                          <span className="toggle-knob" />
-                        </button>
-                      )}
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={isEnabled}
+                        aria-label={`Toggle ${name}`}
+                        disabled={busy === name}
+                        className={`toggle${isEnabled ? ' on' : ''}`}
+                        onClick={() => onToggle(name, !isEnabled)}
+                      >
+                        <span className="toggle-knob" />
+                      </button>
                     </div>
                     <p className="text-xs text-tx-3 leading-snug line-clamp-2 min-h-[2rem]">
                       {SERVER_DESCRIPTIONS[name] || integration?.description || 'Custom MCP integration.'}
