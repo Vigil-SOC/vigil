@@ -2598,7 +2598,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             content_blocks = []
             # Add images first
             content_blocks.extend(images)
-            # Add text message
             content_blocks.append({"type": "text", "text": message})
             return content_blocks
 

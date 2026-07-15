@@ -940,7 +940,7 @@ def test_list_networks_parses_sse_with_structured_content():
     assert networks[1]["label"] == "DeepTempo AI SoC Demo"
 
 
-def test_call_mcp_tool_raises_on_tool_isError():
+def test_call_mcp_tool_raises_on_tool_is_error():
     """A tool result with isError=true is surfaced as a RuntimeError."""
     svc = _ui_service()
     _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from daemon.federation.adapters._siem_base import SIEMIngestionAdapter
-from daemon.federation.registry import FederationAdapter, register_adapter
+from daemon.federation.contract import FederationAdapter, register_adapter
 
 
 def _factory() -> FederationAdapter:

@@ -15,6 +15,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Tool safety tiers live in services.tool_manager so every agent loop (daemon,
+# interactive OpenAI agent, workflows) shares one policy. Aliased to the
+# historical name so call sites — and the test that patches
+# ``daemon.agent_runner._get_tool_tier`` — stay unchanged.
+from services.tool_manager import get_tool_tier as _get_tool_tier
+
 
 def _default_thinking_budget() -> int:
     """Default extended-thinking budget for the autonomous runner (GH #84 PR-D).
@@ -31,14 +37,15 @@ def _default_thinking_budget() -> int:
 
 
 from daemon.config import OrchestratorConfig
-from daemon.plan_generator import WORKFLOW_STEP_MAP, DEFAULT_STEPS
+from daemon.plan_generator import DEFAULT_STEPS, WORKFLOW_STEP_MAP
 from daemon.workdir import WorkdirManager
 
 logger = logging.getLogger(__name__)
 
 try:
-    from core.telemetry import get_tracer, extract_traceparent
     from opentelemetry.trace import SpanKind
+
+    from core.telemetry import extract_traceparent, get_tracer
 
     _tracer = get_tracer("vigil.daemon.agent_runner")
 except Exception:
@@ -102,80 +109,6 @@ def compute_call_cost(
         + cache_read_tokens * cache_read_rate
         + cache_creation_tokens * cache_creation_rate
     )
-
-
-TOOL_TIERS = {
-    "safe": [
-        "list_findings",
-        "get_finding",
-        "search_findings",
-        "nearest_neighbors",
-        "get_findings_stats",
-        "semantic_search_findings",
-        "technique_rollup",
-        "list_cases",
-        "get_case",
-        "get_case_comments",
-        "get_case_iocs",
-        "get_case_tasks",
-        "search_detections",
-        "get_coverage_stats",
-        "get_detection_count",
-        "analyze_coverage",
-        "identify_gaps",
-        "create_attack_layer",
-        "get_attack_layer",
-    ],
-    "managed": [
-        "create_case",
-        "update_case",
-        "add_finding_to_case",
-        "bulk_add_findings_to_case",
-        "remove_finding_from_case",
-        "add_case_activity",
-        "add_case_timeline_entry",
-        "add_case_mitre_techniques",
-        "add_resolution_step",
-        "add_case_comment",
-        "add_case_evidence",
-        "add_case_ioc",
-        "bulk_add_iocs",
-        "add_case_task",
-        "update_case_task",
-        "link_related_cases",
-        "escalate_case",
-        "create_approval_action",
-    ],
-    "requires_approval": [
-        "isolate_host",
-        "block_ip",
-        "disable_user",
-        "quarantine_file",
-        "close_case",
-    ],
-    "forbidden": [
-        "delete_case",
-        "delete_finding",
-        "approve_action",
-        "reject_action",
-    ],
-}
-
-_TOOL_TIER_LOOKUP: Dict[str, str] = {}
-for _tier, _tools in TOOL_TIERS.items():
-    for _t in _tools:
-        _TOOL_TIER_LOOKUP[_t] = _tier
-
-
-def _get_tool_tier(tool_name: str) -> str:
-    """Get the safety tier for a tool. Strips MCP server prefixes."""
-    if tool_name in _TOOL_TIER_LOOKUP:
-        return _TOOL_TIER_LOOKUP[tool_name]
-    short = tool_name.split("_", 1)[-1] if "_" in tool_name else tool_name
-    for tier, tools in TOOL_TIERS.items():
-        if short in tools:
-            return tier
-    return "unknown"
 
 
 WORKDIR_TOOLS = [
@@ -326,8 +259,9 @@ class AgentRunner:
         # kills as 'failed' (issue #147 follow-up).
         if not self._db_smoke_checked:
             try:
-                from database.connection import get_db_manager
                 from sqlalchemy import text
+
+                from database.connection import get_db_manager
 
                 with get_db_manager().session_scope() as session:
                     session.execute(text("SELECT 1"))
@@ -339,6 +273,34 @@ class AgentRunner:
                     f"fail and investigations may be stale-killed: {e}",
                     exc_info=True,
                 )
+
+    def _plan_provider_is_anthropic(self) -> bool:
+        """True when the configured plan provider is Anthropic (or unset).
+
+        Non-Anthropic providers (Ollama/OpenAI/Groq) don't support extended
+        thinking, so the daemon disables it for them. Resolved once and cached;
+        an unresolvable provider_id defaults to Anthropic to preserve the
+        historical assumption. ``provider_id is None`` also means the default
+        Anthropic provider.
+        """
+        cached = getattr(self, "_plan_is_anthropic_cache", "unset")
+        if cached != "unset":
+            return cached
+        provider_id = self.config.plan_provider_id
+        result = True
+        if provider_id:
+            try:
+                from services.llm_router import get_provider_spec
+
+                spec = get_provider_spec(provider_id)
+                if spec is not None:
+                    result = spec.provider_type == "anthropic"
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "plan provider lookup failed (%s); assuming anthropic", exc
+                )
+        self._plan_is_anthropic_cache = result
+        return result
 
     async def _ensure_gateway(self):
         """Lazily initialise the LLM gateway."""
@@ -429,7 +391,11 @@ class AgentRunner:
         except Exception:
             pass
 
-        self._log_investigation_event(inv_id, "agent_started", {"workflow_id": investigation.get("workflow_id", "")})
+        self._log_investigation_event(
+            inv_id,
+            "agent_started",
+            {"workflow_id": investigation.get("workflow_id", "")},
+        )
 
         try:
             while not shutdown_event.is_set():
@@ -660,7 +626,9 @@ class AgentRunner:
             state["status"] = "sleeping"
             self.workdir.write_state(inv_id, state)
             self._log_investigation_event(
-                inv_id, "status_change", {"status": "sleeping", "reason": "agent_cancelled"}
+                inv_id,
+                "status_change",
+                {"status": "sleeping", "reason": "agent_cancelled"},
             )
         except Exception as e:
             logger.error(f"{inv_id}: Unexpected agent error: {e}", exc_info=True)
@@ -726,14 +694,17 @@ class AgentRunner:
         try:
             from services.cost_estimator import estimate_cost
         except Exception as e:
-            logger.debug("%s: estimate_cost import failed (%s); skipping gate", inv_id, e)
+            logger.debug(
+                "%s: estimate_cost import failed (%s); skipping gate", inv_id, e
+            )
             return False
 
         # Match the max_token sizing _call_claude uses so the high_usd
         # bound reflects the actual ceiling we'd request.
         thinking_enabled = (
             getattr(self._claude_service, "enable_thinking", False)
-            if self._claude_service else True
+            if self._claude_service
+            else True
         )
         thinking_budget = (
             getattr(
@@ -741,7 +712,8 @@ class AgentRunner:
                 "thinking_budget",
                 _default_thinking_budget(),
             )
-            if self._claude_service else _default_thinking_budget()
+            if self._claude_service
+            else _default_thinking_budget()
         )
         max_tok = max(16000, thinking_budget + 4096) if thinking_enabled else 4096
 
@@ -953,6 +925,11 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             if self._claude_service
             else True
         )
+        # Extended thinking is Anthropic-only; a non-Anthropic plan provider
+        # routes through Bifrost's OpenAI surface where the flag is ignored, so
+        # disable it here to keep max_tokens sized for the actual response.
+        if not self._plan_provider_is_anthropic():
+            thinking_enabled = False
         _fallback = _default_thinking_budget()
         thinking_budget = (
             getattr(self._claude_service, "thinking_budget", _fallback)
@@ -989,6 +966,10 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                     thinking_budget=thinking_budget,
                     tools=all_tools if all_tools else None,
                     timeout=180,
+                    # Route through the model's actual provider. When this is a
+                    # non-Anthropic provider the worker dispatches via Bifrost's
+                    # OpenAI surface; None keeps the default-Anthropic path.
+                    provider_id=self.config.plan_provider_id,
                 )
             except Exception as e:
                 try:
@@ -1361,7 +1342,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
     ) -> str:
         """Create an approval request and put the agent into waiting_approval state."""
         try:
-            from services.approval_service import get_approval_service, ActionType
+            from services.approval_service import ActionType, get_approval_service
 
             service = get_approval_service()
 
@@ -1445,7 +1426,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             return None
 
         try:
-            from services.approval_service import get_approval_service, ActionStatus
+            from services.approval_service import ActionStatus, get_approval_service
 
             service = get_approval_service()
             action = service.get_action(action_id)
@@ -1567,9 +1548,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         state["failed_at"] = datetime.utcnow().isoformat()
         self.workdir.write_state(inv_id, state)
         self.workdir.append_log(inv_id, {"event": "failed", "reason": reason})
-        self._log_investigation_event(
-            inv_id, "failed", {"reason": reason}
-        )
+        self._log_investigation_event(inv_id, "failed", {"reason": reason})
         self._update_db_record(
             inv_id,
             {
