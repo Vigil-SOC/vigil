@@ -1,22 +1,45 @@
 #!/bin/bash
 # Start Vigil SOC
-# Usage: ./start.sh [-d|--daemon]
+# Usage: ./start.sh [-d|--daemon] [--with <profile>] [--all]
 source "$(dirname "$0")/scripts/lib.sh"
 
 # Version shown in the startup banner, read from the repo VERSION file.
 VERSION="$(cat "$(dirname "$0")/VERSION" 2>/dev/null || echo "dev")"
 
+usage() {
+    cat <<EOF
+Usage: $0 [--daemon|-d] [--with <profile>] [--all]
+
+  -d, --daemon      Run in the background (logs/ + pidfiles)
+      --with NAME   Also start a profiled service (splunk, kafka, pgadmin,
+                    jaeger, prometheus, grafana, otel-collector). Repeatable.
+      --all         Also start every profiled service
+
+Core services come from .vigil-autostart (or \$AUTOSTART_SERVICES, else
+postgres redis bifrost ollama). --with/--all are additive to that list.
+EOF
+}
+
 DAEMON=0
-for arg in "$@"; do
-    case "$arg" in
+EXTRA_SERVICES=""
+ALL_PROFILES=0
+while [ $# -gt 0 ]; do
+    case "$1" in
         -d|--daemon) DAEMON=1 ;;
-        *) echo "Usage: $0 [--daemon|-d]"; exit 1 ;;
+        --all) ALL_PROFILES=1 ;;
+        --with)
+            [ -n "${2:-}" ] || { echo "--with requires a service name" >&2; exit 1; }
+            EXTRA_SERVICES="$EXTRA_SERVICES $2"; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; exit 1 ;;
     esac
+    shift
 done
+[ "$ALL_PROFILES" -eq 1 ] && EXTRA_SERVICES="$EXTRA_SERVICES pgadmin splunk kafka jaeger prometheus grafana otel-collector"
 
 # --- Prerequisites ---
 PYTHON=$(find_python)
-command -v docker &>/dev/null || { echo "Docker required."; exit 1; }
+ensure_docker || exit 1
 
 SKIP_FRONTEND=0
 if ! command -v node &>/dev/null; then
@@ -42,15 +65,18 @@ load_env
 [ -n "$_CALLER_BIND_HOST" ] && BIND_HOST="$_CALLER_BIND_HOST"
 export BIND_HOST="${BIND_HOST:-127.0.0.1}"
 
-# --- Docker services ---
-ensure_container deeptempo-postgres postgres
-wait_for_postgres || true
-ensure_container deeptempo-redis redis
-ensure_container deeptempo-bifrost bifrost
-
+# `bifrost` only resolves inside the compose network. Rewrite before starting
+# services: bringing Ollama up syncs its catalog into Bifrost, and that runs
+# here on the host.
 if [ -z "${BIFROST_URL+x}" ] || [ "${BIFROST_URL}" = "http://bifrost:8080" ]; then
     export BIFROST_URL="http://localhost:8080"
 fi
+
+# --- Services (autostart list + any --with/--all extras) ---
+start_autostart_services
+for svc in $EXTRA_SERVICES; do
+    ensure_container "$(service_container "$svc")" "$svc" "$(service_profile "$svc")"
+done
 
 # --- Database init ---
 python3 scripts/init_schema.py || { echo "Schema init failed."; exit 1; }

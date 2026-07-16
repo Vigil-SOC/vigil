@@ -605,9 +605,7 @@ config:
   # per-row in llm_provider_configs after first boot).
   BIFROST_ENABLED: "false"
   BIFROST_URL: "http://bifrost:8080"
-  OLLAMA_ENABLED: "false"
   OLLAMA_URL: "http://ollama:11434"
-  OLLAMA_DEFAULT_MODEL: "llama3.1:70b"
   OPENAI_ENABLED: "false"
   OPENAI_BASE_URL: "https://api.openai.com/v1"
   OPENAI_ORGANIZATION: ""

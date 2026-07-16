@@ -47,9 +47,8 @@ async def test_bifrost_health_endpoint():
 async def test_bifrost_chat_completion_via_ollama():
     """A chat completion routed to Ollama through Bifrost should return content.
 
-    Requires a running Ollama with the model named in OLLAMA_DEFAULT_MODEL
-    (defaults to llama3.1:8b for the smoke test — smaller than the
-    env.example production default).
+    Requires a running Ollama with the model named in OLLAMA_SMOKE_MODEL
+    (defaults to llama3.1:8b — kept small so the smoke test stays quick).
     """
     from services.llm_router import LLMRouter, ProviderSpec
 

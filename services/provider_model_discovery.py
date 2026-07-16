@@ -411,3 +411,22 @@ async def fetch_ollama_models(
 
     _META_CACHE.set(cache_key, list(models))
     return list(models)
+
+
+def ollama_ping(base_url: Optional[str] = None, timeout: float = 2.0) -> bool:
+    """Cheap liveness probe: is an Ollama serving ``/api/tags`` at ``base_url``?
+
+    Deliberately sync and uncached — it is polled every ~250ms while waiting
+    for a spawned ``ollama serve`` to come up, which rules out
+    :func:`fetch_ollama_models` (async, plus an ``/api/show`` per model).
+    """
+    base = (
+        (base_url or os.getenv("OLLAMA_URL") or "http://localhost:11434")
+        .strip()
+        .rstrip("/")
+    )
+    try:
+        with httpx.Client(timeout=timeout, follow_redirects=False) as client:
+            return client.get(f"{base}/api/tags").status_code == 200
+    except Exception:  # noqa: BLE001 — any failure means "not serving"
+        return False

@@ -19,7 +19,10 @@ for pidfile in logs/backend.pid logs/daemon.pid logs/frontend.pid logs/llm_worke
     [ -f "$pidfile" ] && kill "$(cat "$pidfile")" 2>/dev/null && rm -f "$pidfile"
 done
 
-# Kill by process pattern
+# Kill by process pattern.
+# Deliberately no `pkill -f ollama`: the running Ollama is often the user's own
+# (brew services / Ollama.app), so killing it destroys unrelated state and
+# launchd just restarts it. Vigil starts Ollama but never stops it.
 pkill -f "uvicorn backend.main:app" 2>/dev/null || true
 pkill -f "daemon/main.py" 2>/dev/null || true
 pkill -f "daemon.main" 2>/dev/null || true

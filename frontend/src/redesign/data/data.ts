@@ -57,6 +57,11 @@ export interface Finding {
   ts?: number
   score: number
   status: 'open' | 'investigating' | 'closed'
+  /** entity_context keys the fixed fields above don't cover. Sources disagree
+   *  about these — CrowdStrike sends device_id and no dest_ips, Splunk the
+   *  reverse — so they're carried through rather than dropped, and rendered as
+   *  optional columns derived from whatever the loaded rows actually contain. */
+  extra?: Record<string, string>
 }
 
 export interface CaseRow {
