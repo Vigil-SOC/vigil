@@ -1,5 +1,5 @@
 """
-Unit tests for dotenv loading in tools/_legacy/splunk.py.
+Unit tests for dotenv loading in tools/splunk.py.
 Verifies that credentials in a .env file are loaded into os.environ
 at module startup, and that the module starts without error when
 python-dotenv is not installed.
@@ -90,16 +90,10 @@ def test_missing_dotenv_does_not_raise():
     assert result.stdout.strip() == "ok"
 
 
-def test_symlink_exists_and_points_to_legacy():
-    """tools/splunk.py must be a symlink that resolves to tools/_legacy/splunk.py."""
+def test_tool_exists_at_the_path_mcp_config_runs():
+    """mcp-config.json launches "tools/splunk.py", so that path must resolve."""
     repo_root = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..")
     )
-    symlink_path = os.path.join(repo_root, "tools", "splunk.py")
-    assert os.path.islink(symlink_path), (
-        f"{symlink_path} is not a symlink"
-    )
-    real_path = os.path.realpath(symlink_path)
-    assert real_path.endswith(os.path.join("_legacy", "splunk.py")), (
-        f"symlink resolves to {real_path}, expected to end with _legacy/splunk.py"
-    )
+    tool_path = os.path.join(repo_root, "tools", "splunk.py")
+    assert os.path.isfile(tool_path), f"{tool_path} is missing"
