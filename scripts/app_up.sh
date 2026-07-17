@@ -19,6 +19,12 @@ export BIND_HOST="${BIND_HOST:-127.0.0.1}"
 if [ -z "${BIFROST_URL+x}" ] || [ "${BIFROST_URL}" = "http://bifrost:8080" ]; then
     export BIFROST_URL="http://localhost:8080"
 fi
+# The desktop app is a real-auth surface: its login and first-run bootstrap are
+# the whole point. Force auth on regardless of the repo's .env (which defaults
+# DEV_MODE=true for terminal dev) — for the backend, and baked into the SPA
+# build below via VITE_DEV_MODE. Terminal start.sh keeps the .env value.
+export DEV_MODE=false
+export VITE_DEV_MODE=false
 step env ok
 
 step docker start
@@ -41,12 +47,22 @@ VENV_UVICORN="$REPO_ROOT/venv/bin/uvicorn"
 # the last pull) is shown in the window even though the source moved on.
 step frontend start
 REBUILT_FRONTEND=0
+# Marker recording that build/ was produced in real-auth mode. Rebuild when it's
+# missing so a bundle baked with DEV_MODE=true (which mocks a signed-in user and
+# skips the login/bootstrap the desktop app exists to show) is replaced even
+# when it is newer than src and the mtime check alone would pass it.
+AUTH_MARKER="$REPO_ROOT/frontend/build/.vigil-real-auth"
 if [ -d "$REPO_ROOT/frontend" ]; then
     if [ ! -f "$REPO_ROOT/frontend/build/index.html" ] || \
+       [ ! -f "$AUTH_MARKER" ] || \
        [ -n "$(find "$REPO_ROOT/frontend/src" -type f -newer "$REPO_ROOT/frontend/build/index.html" -print -quit 2>/dev/null)" ]; then
         echo "SPA build is stale; rebuilding…" >&2
         ensure_npm_on_path || { step frontend fail; exit 1; }
+        # Clean first so a prior build's orphaned chunks (e.g. a DEV_MODE=true
+        # bundle) can't linger beside the fresh output.
+        rm -rf "$REPO_ROOT/frontend/build"
         (cd "$REPO_ROOT/frontend" && npm run build) >&2 || { step frontend fail; exit 1; }
+        touch "$AUTH_MARKER"
         REBUILT_FRONTEND=1
     fi
 fi
