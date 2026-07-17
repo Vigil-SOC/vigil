@@ -25,6 +25,20 @@ fi
 # build below via VITE_DEV_MODE. Terminal start.sh keeps the .env value.
 export DEV_MODE=false
 export VITE_DEV_MODE=false
+
+# DEV_MODE=false makes the backend fail closed without a JWT secret. Mint one
+# once and persist it beside the encrypted secret store (regenerating would
+# invalidate live sessions); respect one the caller — the desktop app — already
+# set. umask keeps the file private.
+if [ -z "${JWT_SECRET_KEY:-}" ]; then
+    JWT_FILE="$HOME/.vigil/jwt_secret"
+    if [ ! -s "$JWT_FILE" ]; then
+        mkdir -p "$HOME/.vigil" && chmod 700 "$HOME/.vigil" 2>/dev/null || true
+        (umask 177; { openssl rand -base64 48 2>/dev/null || head -c 48 /dev/urandom | base64; } \
+            | tr -d '\n' > "$JWT_FILE")
+    fi
+    export JWT_SECRET_KEY="$(cat "$JWT_FILE")"
+fi
 step env ok
 
 step docker start
