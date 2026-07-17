@@ -1663,5 +1663,24 @@ export const kafkaApi = {
   getStatus: () => api.get('/kafka/status'),
 }
 
+export interface BootstrapStatus {
+  required: boolean
+}
+
+export interface BootstrapPayload {
+  username: string
+  email: string
+  password: string
+  full_name?: string
+}
+
+// First-account creation, for an instance with an empty user table (no signup
+// otherwise, and creating a user needs an existing admin). Self-closes once any
+// user exists.
+export const bootstrapApi = {
+  status: () => api.get<BootstrapStatus>('/auth/bootstrap'),
+  create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),
+}
+
 export default api
 
