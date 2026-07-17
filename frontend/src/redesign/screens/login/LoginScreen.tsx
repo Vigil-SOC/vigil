@@ -245,7 +245,7 @@ function LoginInner() {
                   <div className="field">
                     <label htmlFor="auth-user">Username or email</label>
                     <div className="ctrl">
-                      <Icon name="name" className="lead" />
+                      <Icon name="user" className="lead" />
                       <input
                         id="auth-user"
                         name="username"
