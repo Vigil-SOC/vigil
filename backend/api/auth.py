@@ -168,6 +168,15 @@ def _has_any_user(session: Session) -> bool:
     return session.query(User.user_id).first() is not None
 
 
+def _user_payload(user: User, session: Session) -> dict:
+    """User dict plus resolved permissions — the shape the SPA gates on.
+    Login/refresh must include it, not just /me: the client stores the user
+    from the login response and checks permissions before any /me refresh."""
+    payload = user.to_dict()
+    payload["permissions"] = AuthService.get_user_permissions(user.user_id, session)
+    return payload
+
+
 @router.get("/bootstrap", response_model=BootstrapStatusResponse)
 async def bootstrap_status(session: Session = Depends(get_db)):
     """Report whether this instance has no account yet.
@@ -316,7 +325,9 @@ async def login(
     logger.info(f"User logged in: {user.username}")
 
     return LoginResponse(
-        access_token=access_token, refresh_token=refresh_token, user=user.to_dict()
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=_user_payload(user, session),
     )
 
 
@@ -468,7 +479,9 @@ async def refresh_token(
     )
 
     return LoginResponse(
-        access_token=access_token, refresh_token=refresh_token, user=user.to_dict()
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=_user_payload(user, session),
     )
 
 
@@ -487,10 +500,7 @@ async def get_current_user_info(
     Returns:
         User information with permissions
     """
-    user_dict = current_user.to_dict()
-    permissions = AuthService.get_user_permissions(current_user.user_id, session)
-    user_dict["permissions"] = permissions
-    return user_dict
+    return _user_payload(current_user, session)
 
 
 @router.put("/me")
