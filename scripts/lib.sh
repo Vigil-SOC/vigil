@@ -109,6 +109,23 @@ find_python() {
     return 1
 }
 
+# Ensure npm (and the node beside it) is on PATH. The desktop app spawns these
+# scripts with a minimal GUI PATH, so a bare `npm` can miss installs the login
+# shell would see — Homebrew, Anaconda, an unactivated conda base, or nvm. A
+# no-op when npm already resolves.
+ensure_npm_on_path() {
+    command -v npm &>/dev/null && return 0
+    local d
+    for d in /opt/homebrew/bin /usr/local/bin /opt/anaconda3/bin "$HOME/.local/bin"; do
+        [ -x "$d/npm" ] && { export PATH="$d:$PATH"; return 0; }
+    done
+    local nvm_bin
+    nvm_bin=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1)
+    [ -n "$nvm_bin" ] && [ -x "$nvm_bin/npm" ] && { export PATH="$nvm_bin:$PATH"; return 0; }
+    echo "npm not found — Node.js is required to build the UI." >&2
+    return 1
+}
+
 # --- Build filtered requirements (skip uninitialized submodule editable installs) ---
 filtered_reqs() {
     local tmp; tmp=$(mktemp)

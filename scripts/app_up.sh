@@ -45,6 +45,7 @@ if [ -d "$REPO_ROOT/frontend" ]; then
     if [ ! -f "$REPO_ROOT/frontend/build/index.html" ] || \
        [ -n "$(find "$REPO_ROOT/frontend/src" -type f -newer "$REPO_ROOT/frontend/build/index.html" -print -quit 2>/dev/null)" ]; then
         echo "SPA build is stale; rebuilding…" >&2
+        ensure_npm_on_path || { step frontend fail; exit 1; }
         (cd "$REPO_ROOT/frontend" && npm run build) >&2 || { step frontend fail; exit 1; }
         REBUILT_FRONTEND=1
     fi
