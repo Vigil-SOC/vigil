@@ -55,7 +55,9 @@ step frontend ok
 step schema start
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 "$VENV_PY" "$REPO_ROOT/scripts/init_schema.py" >&2 || { step schema fail; exit 1; }
-"$VENV_PY" "$REPO_ROOT/scripts/init_default_user.py" >&2 || true
+# No default admin is seeded: the instance starts with an empty user table so
+# the first-run bootstrap screen (POST /api/auth/bootstrap) fires, same as the
+# packaged app. Keeps the two paths identical and out of default credentials.
 step schema ok
 
 step backend start
