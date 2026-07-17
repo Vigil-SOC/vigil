@@ -242,9 +242,11 @@ async def fetch_anthropic_models(
 
 
 async def fetch_openai_models(
-    api_key: str,
+    api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     organization: Optional[str] = None,
+    *,
+    allow_loopback: bool = False,
 ) -> List[ModelMeta]:
     """Fetch the live OpenAI (or OpenAI-compatible) model catalog.
 
@@ -259,18 +261,22 @@ async def fetch_openai_models(
     non-allowlisted hosts so user-supplied custom URLs can't exfiltrate
     the configured key (see 2026-05 SSRF disclosure).
     """
-    if not api_key:
-        raise RuntimeError("fetch_openai_models: api_key required")
-
     try:
         safe = validate_provider_url(
-            base_url or "https://api.openai.com/v1", allow_custom=True
+            base_url or "https://api.openai.com/v1",
+            allow_custom=True,
+            allow_loopback=allow_loopback,
         )
     except UrlSafetyError as exc:
         raise RuntimeError(str(exc)) from exc
 
+    # A key is required only for the real OpenAI cloud; self-hosted
+    # OpenAI-compatible servers are keyless and never receive the bearer.
+    if safe.is_allowlisted_host and not api_key:
+        raise RuntimeError("fetch_openai_models: api_key required")
+
     base = safe.sanitized.rstrip("/")
-    cache_key = _cache_key("openai", base, api_key + "|" + (organization or ""))
+    cache_key = _cache_key("openai", base, (api_key or "") + "|" + (organization or ""))
     cached = _META_CACHE.get(cache_key)
     if cached is not None:
         return cached

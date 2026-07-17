@@ -106,6 +106,7 @@ def validate_provider_url(
     url: str,
     *,
     allow_custom: bool = True,
+    allow_loopback: bool = False,
     allowed_hosts: Iterable[str] = DEFAULT_ALLOWED_PROVIDER_HOSTS,
     allowed_schemes: Iterable[str] = ("http", "https"),
 ) -> SafeUrl:
@@ -119,6 +120,10 @@ def validate_provider_url(
     fragment removed. Callers should append fixed provider paths
     (``/models``, ``/api/tags``, ...) onto ``sanitized`` rather than
     onto the original input.
+
+    ``allow_loopback=True`` permits a self-hosted provider on a
+    loopback/private/link-local address (the cloud-metadata IP stays
+    blocked). Pass it only for an admin-gated, provider-type-scoped call.
     """
     if not url or not isinstance(url, str):
         raise UrlSafetyError("url is required")
@@ -151,6 +156,12 @@ def validate_provider_url(
 
         for addr in _resolve_host(host):
             blocked, reason = _is_blocked_ip(addr)
+            # allow_loopback opts a self-hosted provider (Ollama, vLLM,
+            # LM Studio on localhost / the LAN) past the loopback/private/
+            # link-local block, but the cloud-metadata address — the actual
+            # SSRF target — stays blocked regardless.
+            if blocked and allow_loopback and reason != "cloud metadata address":
+                continue
             if blocked:
                 raise UrlSafetyError(f"resolved address {addr} is disallowed: {reason}")
 
