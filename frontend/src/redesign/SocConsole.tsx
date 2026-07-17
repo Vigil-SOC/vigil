@@ -240,7 +240,12 @@ function SocConsoleInner() {
           while a full-bleed detail view is open (e.g. a case detail, which has
           its own "Open in Vigil" action — two Vigil buttons would be redundant) */}
       {!chatOpen && !viewFull && (
-        <button className="chat-fab" title="Ask Vigil — AI assistant" onClick={() => openChat()}>
+        <button
+          className="chat-fab"
+          title="Ask Vigil - AI assistant"
+          aria-label="Ask Vigil chat assistant"
+          onClick={() => openChat()}
+        >
           <Icon name="brain" />
           <span>Ask Vigil</span>
         </button>
