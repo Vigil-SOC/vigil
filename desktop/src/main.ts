@@ -440,17 +440,40 @@ function backendImagePresent(): Promise<boolean> {
   });
 }
 
+// Optional offline image, staged into resources at build time. When present the
+// backend image is loaded from it instead of pulled, so a build handed to a
+// machine with no registry access (or no network) still runs.
+const bundledImageTar = () => path.join(standaloneDir(), "backend-image.tar.gz");
+
+function loadBundledImage(): Promise<number> {
+  return new Promise((resolve) => {
+    const proc = spawn("docker", ["load", "-i", bundledImageTar()], { env: augmentedEnv() });
+    readline.createInterface({ input: proc.stdout! }).on("line", (l) => sendSplash("log", l));
+    readline.createInterface({ input: proc.stderr! }).on("line", (l) => sendSplash("log", l));
+    proc.on("close", (code) => resolve(code ?? 1));
+    proc.on("error", () => resolve(1));
+  });
+}
+
 async function bringUpStandalone(): Promise<boolean> {
   const phase = (p: string, status: string) => sendSplash("step", { phase: p, status });
 
-  // Pulled separately from `up` so first run reports the multi-GB download as
-  // its own step instead of looking hung. Skipped once the image is local, so a
-  // normal launch neither stalls nor needs the network.
+  // Reported as its own step so first run doesn't look hung. Skipped once the
+  // image is local, so a normal launch neither stalls nor needs the network. A
+  // bundled tarball is preferred over a registry pull — it is what makes an
+  // offline / no-registry-access install work.
   if (!(await backendImagePresent())) {
     phase("images", "start");
-    if ((await runCompose(composeArgs("pull"))) !== 0) {
+    const bundled = fs.existsSync(bundledImageTar());
+    const code = bundled ? await loadBundledImage() : await runCompose(composeArgs("pull"));
+    if (code !== 0) {
       phase("images", "fail");
-      sendSplash("error", "Could not download the Vigil images. Check your connection.");
+      sendSplash(
+        "error",
+        bundled
+          ? "Could not load the bundled Vigil image."
+          : "Could not download the Vigil image. Check your connection.",
+      );
       return false;
     }
     phase("images", "ok");

@@ -11,3 +11,6 @@ release/
 # them ARE source.
 standalone/db-init/
 standalone/bifrost-config.json
+# Optional offline image tarball (~600MB), produced by scripts/bundle-image.sh
+# for a no-registry-access build. Never committed.
+standalone/backend-image.tar.gz
