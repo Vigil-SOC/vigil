@@ -85,9 +85,12 @@ step frontend ok
 step schema start
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH:-}"
 "$VENV_PY" "$REPO_ROOT/scripts/init_schema.py" >&2 || { step schema fail; exit 1; }
-# No default admin is seeded: the instance starts with an empty user table so
-# the first-run bootstrap screen (POST /api/auth/bootstrap) fires, same as the
-# packaged app. Keeps the two paths identical and out of default credentials.
+# Seed reference data (roles, SLA policies, …) now that create_all built the
+# tables: the initdb-mounted SQL aborts before those files, so roles would be
+# missing and bootstrap could not assign role-admin. No default admin is seeded —
+# the user table stays empty so the first-run bootstrap screen fires, same as the
+# packaged app, and no default credentials ship.
+"$VENV_PY" "$REPO_ROOT/scripts/seed_reference_data.py" >&2 || true
 step schema ok
 
 step backend start
