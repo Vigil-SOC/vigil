@@ -1,26 +1,17 @@
-/* ============================================================
-   Data-source badge metadata — a generic `source → {label, color, icon}`
-   map with a default fallback for unmapped sources. Framework-agnostic
-   (plain data) so both the redesign SOC console and the legacy MUI
-   findings table can render a consistent source chip without importing
-   each other. `icon` is a redesign IconName string; the legacy table
-   ignores it and uses label + color only.
-   ============================================================ */
+// Generic `source → {label, color, icon}` map with a neutral fallback. Plain
+// data (no framework deps) so both the redesign console and the legacy MUI
+// findings table can render a consistent chip. `icon` is a redesign IconName.
 
 export interface SourceBadge {
   label: string
-  /** hex color (works for both inline styles and MUI alpha()) */
   color: string
-  /** redesign IconName; consumers that don't render icons ignore it */
   icon: string
 }
 
-/** Keyed by lower-cased data_source. Add an entry to give a source its own
- *  color + icon; anything unmapped falls back to a neutral chip. */
 const SOURCE_BADGES: Record<string, SourceBadge> = {
-  // NOTE: loglm is intentionally absent — it's a UI-extension connector, so its
-  // chip (label/color/icon) comes from its manifest badge (see SourceChip),
-  // keeping vendor branding out of host code.
+  // loglm is intentionally absent — as a UI-extension connector its chip comes
+  // from its manifest badge (see SourceChip), keeping vendor branding out of
+  // host code.
   splunk: { label: 'Splunk', color: '#65a637', icon: 'search' },
   crowdstrike: { label: 'CrowdStrike', color: '#e2705f', icon: 'shield' },
   'microsoft-defender': { label: 'Defender', color: '#2a7de1', icon: 'shield' },
@@ -31,11 +22,9 @@ const SOURCE_BADGES: Record<string, SourceBadge> = {
   webhook: { label: 'Webhook', color: '#8a90a6', icon: 'link' },
 }
 
-/** Neutral fallback for sources we don't have branding for. Keeps the label
- *  as the raw source string so nothing is hidden. */
+// Falls back to the raw source string as the label so nothing is hidden.
 const DEFAULT_BADGE: Omit<SourceBadge, 'label'> = { color: '#8a90a6', icon: 'link' }
 
-/** Resolve badge metadata for a (possibly unknown / empty) data_source. */
 export function sourceBadge(source?: string | null): SourceBadge {
   const key = (source || '').toLowerCase().trim()
   const mapped = SOURCE_BADGES[key]

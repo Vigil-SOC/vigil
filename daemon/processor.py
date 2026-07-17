@@ -2,12 +2,18 @@
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 
 from daemon.config import ProcessingConfig
 
 logger = logging.getLogger(__name__)
+
+# After this many consecutive failures (e.g. no provider key), pause enrichment
+# for the cooldown so a backfill can't stampede a dead gateway. Findings still ingest.
+_ENRICH_BREAKER_THRESHOLD = 8
+_ENRICH_BREAKER_COOLDOWN = 120  # seconds
 
 
 class FindingProcessor:
@@ -25,8 +31,11 @@ class FindingProcessor:
         self._enrichment_services = {}
         self._sandbox_submitter = None
 
-        # Processing semaphore
+        # Caps concurrent background AI enrichment (not the ingest/store path).
         self._semaphore = asyncio.Semaphore(config.max_concurrent_tasks)
+        self._enrich_tasks = set()
+        self._enrich_failures = 0
+        self._enrich_paused_until = 0.0
 
         # Stats
         self.stats = {
@@ -171,11 +180,11 @@ class FindingProcessor:
         # Wait for shutdown
         await shutdown_event.wait()
 
-        # Cancel workers
-        for worker in workers:
-            worker.cancel()
+        pending = list(self._enrich_tasks)
+        for task in [*workers, *pending]:
+            task.cancel()
 
-        await asyncio.gather(*workers, return_exceptions=True)
+        await asyncio.gather(*workers, *pending, return_exceptions=True)
         logger.info("Finding processor stopped")
 
     async def _process_worker(self, worker_id: int, shutdown_event: asyncio.Event):
@@ -190,8 +199,7 @@ class FindingProcessor:
                 except asyncio.TimeoutError:
                     continue
 
-                async with self._semaphore:
-                    await self._process_item(item)
+                await self._process_item(item)
 
             except asyncio.CancelledError:
                 break
@@ -211,7 +219,7 @@ class FindingProcessor:
     async def _process_finding(
         self, finding: Dict[str, Any], source: Optional[str] = None
     ):
-        """Process a finding through triage and enrichment."""
+        """Store a finding immediately; triage + enrich it in the background."""
         finding_id = finding.get("finding_id", "unknown")
         logger.debug(f"Processing finding {finding_id} from {source}")
 
@@ -237,50 +245,105 @@ class FindingProcessor:
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"Sanitization hook error (non-fatal): {e}")
 
-            # Store finding first
-            if self._data_service:
-                await self._store_finding(finding)
-
-            # AI Triage (routed through LLM queue)
-            if self.config.auto_triage_enabled:
-                finding = await self._triage_finding(finding)
-
-            # Enrichment
-            if self.config.auto_enrich_enabled:
-                finding = await self._enrich_finding(finding)
-
-            # Update stored finding with enrichments
-            if self._data_service:
-                await self._update_finding(finding)
-
-            # Check if response is needed
-            await self._evaluate_for_response(finding)
+            # A failed store must not be counted as ingested — bail so /health
+            # surfaces the drop instead of logging "Stored".
+            if self._data_service and not await self._store_finding(finding):
+                self.stats["errors"] += 1
+                logger.warning(
+                    "Dropped finding %s: database store failed (see 'Error "
+                    "creating finding' above)",
+                    finding_id,
+                )
+                return
 
             self.stats["processed"] += 1
             logger.info(
-                f"Processed finding {finding_id} (severity: {finding.get('severity')})"
+                f"Stored finding {finding_id} (severity: {finding.get('severity')})"
             )
+
+            # Triage/enrich in the background so this worker takes the next
+            # finding instead of blocking on the LLM.
+            task = asyncio.create_task(self._enrich_in_background(finding, source))
+            self._enrich_tasks.add(task)
+            task.add_done_callback(self._enrich_tasks.discard)
 
         except Exception as e:
             logger.error(f"Error processing finding {finding_id}: {e}")
             self.stats["errors"] += 1
 
-    async def _store_finding(self, finding: Dict[str, Any]):
-        """Store finding in database."""
+    async def _enrich_in_background(
+        self, finding: Dict[str, Any], source: Optional[str] = None
+    ):
+        """Triage + enrich, then response-evaluate, off the ingest path. LLM work
+        is capped by the semaphore and short-circuited by the breaker; response
+        evaluation always runs on whatever severity we have."""
+        finding_id = finding.get("finding_id", "unknown")
+
+        want_llm = self.config.auto_triage_enabled or self.config.auto_enrich_enabled
+        if want_llm and time.monotonic() >= self._enrich_paused_until:
+            async with self._semaphore:
+                try:
+                    triaged_ok = True
+                    if self.config.auto_triage_enabled:
+                        finding = await self._triage_finding(finding)
+                        # _triage_finding sets ai_triage only when the gateway answered.
+                        triaged_ok = bool(finding.get("ai_triage"))
+
+                    if self.config.auto_enrich_enabled:
+                        finding = await self._enrich_finding(finding)
+
+                    if self._data_service:
+                        await self._update_finding(finding)
+
+                    if triaged_ok:
+                        self._enrich_failures = 0
+                        self.stats["enriched"] += 1
+                    else:
+                        self._note_enrich_failure(finding_id)
+                except Exception as e:
+                    self._note_enrich_failure(finding_id)
+                    logger.error(f"Background enrichment failed for {finding_id}: {e}")
+                    self.stats["errors"] += 1
+
+        # Response evaluation always runs — even when enrichment is off or paused.
+        try:
+            await self._evaluate_for_response(finding)
+        except Exception as e:
+            logger.error(f"Response evaluation failed for {finding_id}: {e}")
+            self.stats["errors"] += 1
+
+    def _note_enrich_failure(self, finding_id: str) -> None:
+        """Trip the breaker after a run of enrichment failures."""
+        self._enrich_failures += 1
+        if self._enrich_failures >= _ENRICH_BREAKER_THRESHOLD:
+            self._enrich_paused_until = time.monotonic() + _ENRICH_BREAKER_COOLDOWN
+            self._enrich_failures = 0
+            logger.warning(
+                "Pausing AI enrichment %ss after repeated failures "
+                "(gateway/provider key?); findings still ingest, enrichment "
+                "backfills on recovery. Last: %s",
+                _ENRICH_BREAKER_COOLDOWN,
+                finding_id,
+            )
+
+    async def _store_finding(self, finding: Dict[str, Any]) -> bool:
+        """Return True if persisted (or already present), False if the write
+        failed — a failed store must never be counted as ingested."""
         try:
             from services.ingestion_service import IngestionService
 
             ingestion = IngestionService()
-            ingestion.ingest_finding(finding)
+            return bool(ingestion.ingest_finding(finding))
         except Exception as e:
             logger.error(f"Failed to store finding: {e}")
+            return False
 
     async def _update_finding(self, finding: Dict[str, Any]):
         """Update finding in database."""
         try:
             finding_id = finding.get("finding_id")
             if finding_id and self._data_service:
-                # update_finding takes fields as kwargs; drop finding_id (the positional arg)
+                # update_finding takes fields as kwargs, not finding_id
                 updates = {k: v for k, v in finding.items() if k != "finding_id"}
                 self._data_service.update_finding(finding_id, **updates)
         except Exception as e:

@@ -1,17 +1,6 @@
-/* ============================================================
-   ExtensionHost — the generic screen that delivers a page extension.
-
-   On mount it: dynamically imports the connector's ES-module bundle
-   (which defines the custom element), instantiates the element, seeds it
-   with host-context (theme tokens + a freshly-minted session token +
-   apiBase), and appends it. It relays the element's events onto Vigil's
-   own affordances (toast, router, full-view) and keeps the element's
-   theme/token in sync without remounting.
-
-   A load failure degrades to an inline "page unavailable" panel — the
-   rest of the console keeps working (the shell also wraps screens in an
-   ErrorBoundary as a backstop).
-   ============================================================ */
+// Generic host screen that mounts a connector's page extension: imports its
+// ES-module bundle, instantiates the custom element, seeds host-context, and
+// relays the element's events onto Vigil's toast/router/full-view.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { extensionsApi } from '../../services/api'
@@ -35,8 +24,7 @@ interface Props extends ScreenProps {
 
 type Status = 'loading' | 'ready' | 'error'
 
-/** how long to wait for the bundle to define its custom element before
- *  giving up (a bundle that loads but never defines the tag) */
+// guards a bundle that loads but never defines its custom element
 const DEFINE_TIMEOUT_MS = 10_000
 
 const SEVERITY_TO_TOAST: Record<string, ToastKind> = {
@@ -58,7 +46,6 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
 
   const { bundleUrl, elementTag } = ext.manifest.render
 
-  // mint a fresh session token + snapshot the current theme into a context
   const buildContext = useCallback(async (): Promise<HostContext> => {
     const res = await extensionsApi.getSessionToken(ext.integrationId)
     const { token, user } = res.data
@@ -71,12 +58,10 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
     }
   }, [ext.integrationId, ext.connectorUrl, accent.a, mode])
 
-  // push the current context ref onto the element (no remount)
   const applyContext = useCallback(() => {
     if (elRef.current && ctxRef.current) elRef.current.hostContext = { ...ctxRef.current }
   }, [])
 
-  // ---- load bundle + mount element (keyed on the bundle/tag only) --------
   useEffect(() => {
     let cancelled = false
     const container = containerRef.current
@@ -91,7 +76,6 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
           throw new Error('bundle origin does not match connector origin')
         }
         await import(/* @vite-ignore */ bundleUrl)
-        // wait for the element to register (resolves immediately on revisit)
         await Promise.race([
           customElements.whenDefined(elementTag),
           new Promise((_, reject) =>
@@ -134,14 +118,12 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bundleUrl, elementTag, ext.integrationId])
 
-  // ---- keep theme tokens in sync (no remount) ---------------------------
   useEffect(() => {
     if (!ctxRef.current) return
     ctxRef.current = { ...ctxRef.current, themeTokens: { '--accent': accent.a, mode } }
     applyContext()
   }, [accent.a, mode, applyContext])
 
-  // ---- relay element events onto Vigil affordances ----------------------
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -180,7 +162,7 @@ export default function ExtensionHost({ ext, mount, setViewFull }: Props) {
           setErrorMsg(String(detail.payload?.message ?? 'Extension reported an error'))
           break
         default:
-          break // unknown event types ignored → forward-compatible
+          break
       }
     }
     container.addEventListener(EXTENSION_EVENT, handler as EventListener)

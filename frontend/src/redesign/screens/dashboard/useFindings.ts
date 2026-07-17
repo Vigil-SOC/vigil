@@ -11,7 +11,7 @@ import type { Phase } from '../cases/useCases'
 
 export type { Phase } from '../cases/useCases'
 
-/** list of all findings */
+/** list of all findings; polls in the background so new findings appear live */
 export function useFindings() {
   const [rows, setRows] = useState<Finding[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
@@ -21,23 +21,34 @@ export function useFindings() {
 
   useEffect(() => {
     let cancelled = false
-    setPhase('loading')
-    setError(null)
-    findingsApi
-      .getAll()
-      .then((res) => {
-        if (cancelled) return
-        const list = (res.data?.findings || []) as ApiFinding[]
-        setRows(list.map(mapApiFinding))
-        setPhase('ready')
-      })
-      .catch((e) => {
-        if (cancelled) return
-        setError((e as { message?: string })?.message || 'Failed to load findings')
-        setPhase('error')
-      })
+
+    // silent = background poll: refresh rows without flashing the loading state
+    const fetchFindings = (silent: boolean) => {
+      if (!silent) {
+        setPhase('loading')
+        setError(null)
+      }
+      findingsApi
+        .getAll({ limit: 1000 })
+        .then((res) => {
+          if (cancelled) return
+          const list = (res.data?.findings || []) as ApiFinding[]
+          setRows(list.map(mapApiFinding))
+          setPhase('ready')
+        })
+        .catch((e) => {
+          if (cancelled) return
+          if (silent) return // a background blip shouldn't blank the table
+          setError((e as { message?: string })?.message || 'Failed to load findings')
+          setPhase('error')
+        })
+    }
+
+    fetchFindings(false)
+    const id = setInterval(() => fetchFindings(true), 10_000)
     return () => {
       cancelled = true
+      clearInterval(id)
     }
   }, [reloadKey])
 
@@ -45,24 +56,17 @@ export function useFindings() {
 }
 
 export interface DashKpis {
-  findingsTotal: number
-  findingsCritical: number
-  findingsHigh: number
   casesTotal: number
   casesOpen: number
   casesInvestigating: number
 }
 
-interface FindingsSummary {
-  total?: number
-  by_severity?: Record<string, number>
-}
 interface CasesSummary {
   total?: number
   by_status?: Record<string, number>
 }
 
-/** the four KPI cards: findings + cases summary counts */
+/** cases summary counts for the KPI cards (findings counts come from useFindings) */
 export function useDashboardKpis() {
   const [kpis, setKpis] = useState<DashKpis | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -72,15 +76,12 @@ export function useDashboardKpis() {
   useEffect(() => {
     let cancelled = false
     setPhase('loading')
-    Promise.all([findingsApi.getSummary(), casesApi.getSummary()])
-      .then(([fRes, cRes]) => {
+    casesApi
+      .getSummary()
+      .then((cRes) => {
         if (cancelled) return
-        const f = (fRes.data || {}) as FindingsSummary
         const c = (cRes.data || {}) as CasesSummary
         setKpis({
-          findingsTotal: f.total ?? 0,
-          findingsCritical: f.by_severity?.critical ?? 0,
-          findingsHigh: f.by_severity?.high ?? 0,
           casesTotal: c.total ?? 0,
           casesOpen: c.by_status?.open ?? 0,
           casesInvestigating: c.by_status?.investigating ?? 0,

@@ -1,36 +1,20 @@
-/* ============================================================
-   Vigil page-extension contracts (v1) — the OSS host owns these,
-   an add-on (e.g. the LogLM connector) conforms to them.
+// Vigil page-extension contracts (v1): the OSS host owns these types; a
+// connector (e.g. LogLM) conforms to them. Vigil core knows nothing about any
+// specific extension. Four contracts, versioned under `hostApiVersion`:
+// Manifest (connector → host), Config (stored on the integration), Host-context
+// (host → element via `hostContext`), and Extension events (element → host).
 
-   Four contracts, all versioned under `hostApiVersion`:
-     1. Manifest      — served by the connector, describes the page(s)
-     2. Config        — stored by Vigil on the integration (connectorUrl)
-     3. Host-context  — Vigil → element, set as the `hostContext` property
-     4. Extension events — element → Vigil, one composed CustomEvent
-
-   Vigil core carries only these types + the loading machinery; it knows
-   nothing about any specific extension. The registry is empty by default.
-   ============================================================ */
-
-/** Host API version this Vigil build implements. Extensions declare the
- *  version they were built against; we accept anything on the same major
- *  (see `isHostApiCompatible`). */
+/** We accept any extension whose declared major matches (see isHostApiCompatible). */
 export const HOST_API_VERSION = '1.x'
 export const HOST_API_MAJOR = 1
 
-/** name of the composed CustomEvent an element dispatches to talk to the host
- *  (bubbles + composed so it crosses the element's shadow boundary) */
+/** Composed so it crosses the element's shadow boundary. */
 export const EXTENSION_EVENT = 'vigil:extension'
 
-// ---- 1. Manifest -------------------------------------------------------
-
 export interface ExtensionRender {
-  /** only 'element' (a custom element from an ES-module bundle) today */
   mode: 'element'
-  /** URL of the ES-module bundle that defines the custom element. May be
-   *  relative to the connector base; the registry resolves it absolute. */
+  /** May be relative to the connector base; the registry resolves it absolute. */
   bundleUrl: string
-  /** custom-element tag to instantiate once the bundle has loaded */
   elementTag: string
 }
 
@@ -40,7 +24,6 @@ export interface ExtensionGate {
 }
 
 export interface ExtensionMountPoint {
-  /** only 'screen' (a top-level nav tab) today */
   type: 'screen'
   /** URL segment + registry key, e.g. "loglm" */
   key: string
@@ -54,12 +37,10 @@ export interface ExtensionMountPoint {
   gate?: ExtensionGate
 }
 
-/** How findings whose `data_source` equals this manifest's `id` render as a
- *  source chip. Owned by the connector so no vendor colour/icon is hardcoded
- *  host-side; all fields optional (host supplies neutral defaults). */
+/** Source-chip branding for findings whose `data_source` == this manifest's id.
+ *  Owned by the connector so no vendor colour/icon is hardcoded host-side. */
 export interface ExtensionBadge {
   label?: string
-  /** hex colour, e.g. "#7d74f3" */
   color?: string
   /** host IconName; unknown names fall back to neutral */
   icon?: string
@@ -75,10 +56,6 @@ export interface ExtensionManifest {
   mountPoints: ExtensionMountPoint[]
 }
 
-// ---- 2. Config (stored on the integration) -----------------------------
-// { id, enabled, connectorUrl } — `connectorUrl` lives on the integration
-// row; see frontend/src/config/integrations.ts (loglm entry).
-
 /** A manifest resolved against the integration that supplied it. */
 export interface RegisteredExtension {
   integrationId: string
@@ -87,24 +64,17 @@ export interface RegisteredExtension {
   manifest: ExtensionManifest
 }
 
-// ---- 3. Host-context (Vigil → element) ---------------------------------
-
 export interface HostContext {
-  /** the subset of Vigil theme tokens the element needs to look native */
   themeTokens: { '--accent': string; mode: 'light' | 'dark' }
-  /** short-lived, user-scoped session token minted by the Vigil backend;
-   *  absent when the connector runs without auth (no mint secret configured) */
+  /** absent when the connector runs without auth (no mint secret configured) */
   session?: { token: string; user: string }
   /** base URL the element calls directly (the connector BFF) */
   apiBase: string
 }
 
-/** An element accepts context via the `hostContext` JS property. */
 export interface HostContextElement extends HTMLElement {
   hostContext?: HostContext
 }
-
-// ---- 4. Extension events (element → Vigil) -----------------------------
 
 export type ExtensionEvent =
   | { type: 'ready' }

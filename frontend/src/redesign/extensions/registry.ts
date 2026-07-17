@@ -1,23 +1,19 @@
-/* ============================================================
-   Extension registry helpers — fetch + validate a connector's
-   manifest and resolve it into a RegisteredExtension. Pure
-   functions (no React) so they're unit-testable.
-   ============================================================ */
+// Fetch + validate a connector's manifest into a RegisteredExtension. Pure
+// functions (no React) so they're unit-testable.
 import {
   HOST_API_MAJOR,
   type ExtensionManifest,
   type RegisteredExtension,
 } from './contracts'
+import { extensionOriginAllowlist } from '../../config/extensionAllowlist'
 
-/** Accept a manifest whose declared host-API major matches ours (e.g. this
- *  "1.x" host accepts "1", "1.0", "1.2.0"). Anything else is rejected so a
- *  future breaking host can refuse an old bundle rather than mis-mount it. */
+/** Match on major only, so a future breaking host can refuse an old bundle
+ *  rather than mis-mount it (this "1.x" host accepts "1", "1.0", "1.2.0"). */
 export function isHostApiCompatible(declared: string): boolean {
   const major = parseInt(String(declared ?? '').split('.')[0], 10)
   return Number.isFinite(major) && major === HOST_API_MAJOR
 }
 
-/** Resolve a possibly-relative URL (e.g. "/assets/x.js") against the base. */
 function resolveUrl(base: string, maybeRelative: string): string {
   try {
     return new URL(maybeRelative, base.endsWith('/') ? base : base + '/').toString()
@@ -26,17 +22,10 @@ function resolveUrl(base: string, maybeRelative: string): string {
   }
 }
 
-/** Optional hard allowlist of permitted connector origins (comma-separated
- *  ``VITE_EXTENSION_ORIGIN_ALLOWLIST``). Empty → only the scheme rule applies. */
-function extensionOriginAllowlist(): string[] {
-  const raw = (import.meta.env.VITE_EXTENSION_ORIGIN_ALLOWLIST as string | undefined) ?? ''
-  return raw.split(',').map((s) => s.trim()).filter(Boolean)
-}
-
-/** Whether a connector base URL may be trusted to serve an extension bundle.
- *  The bundle is imported as live code into Vigil's own origin, so an untrusted
- *  origin is arbitrary code execution: require https (http only for loopback
- *  dev) and, when an allowlist is configured, membership in it. */
+/** The bundle is imported as live code into Vigil's own origin, so an untrusted
+ *  origin is arbitrary code execution: require https (http only for loopback)
+ *  and, when configured, allowlist membership. The allowlist is shared with the
+ *  backend CSP + SSRF guard (see config/extensionAllowlist.ts). */
 export function isTrustedConnectorUrl(raw: string): boolean {
   let u: URL
   try {
@@ -47,11 +36,11 @@ export function isTrustedConnectorUrl(raw: string): boolean {
   const loopback =
     u.hostname === 'localhost' || u.hostname === '127.0.0.1' || u.hostname === '[::1]'
   if (u.protocol !== 'https:' && !(u.protocol === 'http:' && loopback)) return false
-  const allow = extensionOriginAllowlist()
+  const allow = extensionOriginAllowlist
   return allow.length === 0 || allow.includes(u.origin)
 }
 
-/** Same-origin check that fails closed on unparseable input. */
+/** Fails closed on unparseable input. */
 function sameOrigin(a: string, b: string): boolean {
   try {
     return new URL(a).origin === new URL(b).origin
@@ -60,9 +49,7 @@ function sameOrigin(a: string, b: string): boolean {
   }
 }
 
-/** Minimal structural validation so a malformed manifest is skipped rather
- *  than throwing deep inside the shell. Returns the manifest (unchanged) or
- *  null with a console warning. */
+/** Skip a malformed manifest rather than throwing deep inside the shell. */
 export function validateManifest(raw: unknown): ExtensionManifest | null {
   const m = raw as Partial<ExtensionManifest> | null
   if (!m || typeof m !== 'object') return null
@@ -84,9 +71,8 @@ export function validateManifest(raw: unknown): ExtensionManifest | null {
   return m as ExtensionManifest
 }
 
-/** Fetch + validate the manifest an integration's connector serves. Returns
- *  null (never throws) on any network/parse/validation failure so one broken
- *  connector can't take down the nav. */
+/** Returns null (never throws) on any failure so one broken connector can't
+ *  take down the nav. */
 export async function fetchManifest(
   integrationId: string,
   connectorUrl: string,

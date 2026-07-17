@@ -64,9 +64,8 @@ export default function SocConsole() {
   )
 }
 
-/** [icon, label, screen-key | null, gate?] — same tuple as data.ts `NAV`,
- *  but the key is a plain string so registered extension screens (whose keys
- *  aren't in the built-in `ScreenKey` union) can join the rail. */
+/** Like data.ts `NAV`, but the key is a plain string so extension screens
+ *  (keys outside the built-in `ScreenKey` union) can join the rail. */
 type NavItem = [IconName, string, string | null, NavGate?]
 
 function SocConsoleInner() {
@@ -77,14 +76,14 @@ function SocConsoleInner() {
   const { screen } = useParams<{ screen?: string }>()
   const { mountPoints, enabledIntegrations, loading: extLoading } = useExtensions()
 
-  // Merge built-in screens/nav/titles/perms with any registered page
-  // extensions. Built-ins always win so an extension can't shadow a core
-  // screen. Recomputed only when the set of registered mount points changes.
+  // Merge built-in screens/nav/titles/perms with registered extensions;
+  // built-ins win so an extension can't shadow a core screen.
   const { screens, navItems, titles, screenPerms } = useMemo(() => {
     const screens: Record<string, (p: ScreenProps) => JSX.Element> = { ...SCREENS }
     const titles: Record<string, [string, string]> = { ...TITLES }
     const screenPerms: Record<string, string | undefined> = { ...SCREEN_PERMS }
     const navItems: NavItem[] = [...(NAV as NavItem[])]
+    const extNav: NavItem[] = []
     for (const { ext, mount } of mountPoints) {
       if (screens[mount.key]) continue
       screens[mount.key] = (p: ScreenProps) => (
@@ -92,20 +91,22 @@ function SocConsoleInner() {
       )
       titles[mount.key] = [mount.title, mount.subtitle ?? '']
       if (mount.permission) screenPerms[mount.key] = mount.permission
-      navItems.push([
+      extNav.push([
         (mount.icon || 'brain') as IconName,
         mount.navLabel,
         mount.key,
         mount.gate?.integration ? { integration: mount.gate.integration } : undefined,
       ])
     }
+    // Slot extension tabs just above the pinned Settings entry (append if absent).
+    const settingsIdx = navItems.findIndex(([, , key]) => key === 'settings')
+    navItems.splice(settingsIdx === -1 ? navItems.length : settingsIdx, 0, ...extNav)
     return { screens, navItems, titles, screenPerms }
   }, [mountPoints])
 
-  // an unknown segment renders the 404 screen; while extension manifests are
-  // still loading a deep-linked extension tab shows a brief loading state
-  // instead of flashing 404. `current` falls back to dashboard only so the
-  // chrome has a valid key to render.
+  // Unknown segment → 404, but while manifests load a deep-linked extension tab
+  // shows a loading state instead of flashing 404. `current` falls back to
+  // dashboard only so the chrome has a valid key to render.
   const valid = screen !== undefined && screen in screens
   const current: string = valid ? (screen as string) : 'dashboard'
   const resolvingExtension = !valid && screen !== undefined && extLoading
@@ -117,11 +118,8 @@ function SocConsoleInner() {
   const [chatOpen, setChatOpen] = useState(false)
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
-  // runtime-dynamic rail membership (mirrors production NavigationRail):
-  // enabled integrations come from ExtensionProvider (the single source, so a
-  // connector configured in Settings reflects in the rail without a page
-  // refresh); orchestrator status is polled every 10s. Adding a NavGate to
-  // data.ts is the only step needed to gate a rail item on either (see data.ts).
+  // enabled integrations come from ExtensionProvider (so a connector configured
+  // in Settings shows in the rail without a refresh); orchestrator polled 10s.
   const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
 
   // fire desktop notifications for newly-arrived findings (gated by the General
@@ -167,8 +165,8 @@ function SocConsoleInner() {
     setViewFull(false)
   }, [current])
 
-  // nav membership: orchestrator status on a 10s poll (enabled integrations
-  // are read from ExtensionProvider above, not fetched here)
+  // orchestrator status on a 10s poll (enabled integrations come from
+  // ExtensionProvider above, not fetched here)
   useEffect(() => {
     const pollStatus = () =>
       orchestratorApi

@@ -736,7 +736,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
       },
       {
         name: 'mint_secret',
-        label: 'Session Signing Secret',
+        label: 'Session Mint Secret',
         type: 'password',
         required: true,
         helpText:

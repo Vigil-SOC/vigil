@@ -6,7 +6,7 @@ and integration configurations with automatic audit logging.
 """
 
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 from datetime import datetime
 from contextlib import contextmanager
 
@@ -526,6 +526,18 @@ class ConfigService:
         except Exception as e:
             logger.error(f"Error getting enabled integrations: {e}")
             return []
+
+    def get_disabled_integration_ids(self) -> Set[str]:
+        """Registered-but-disabled integration IDs. Sources with no config row
+        (webhook, flow) are never disabled. On DB error return empty (fail open)
+        so a lookup blip can't silently drop ingestion."""
+        try:
+            with get_session() as session:
+                integrations = session.query(IntegrationConfig).filter_by(enabled=False).all()
+                return {i.integration_id for i in integrations}
+        except Exception as e:
+            logger.error(f"Error getting disabled integrations: {e}")
+            return set()
     
     # =========================================================================
     # Audit Methods

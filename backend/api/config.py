@@ -18,7 +18,7 @@ from secrets_manager import get_secret, set_secret, delete_secret, get_secrets_m
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from database.config_service import get_config_service
 from services.defaults import DEFAULT_MODEL
-from services.integration_secrets import redact_secrets, split_secrets
+from services.integration_secrets import redact_secrets, secret_fields_for, split_secrets
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -705,6 +705,17 @@ async def set_theme_config(config: ThemeConfig):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _secrets_set_map(integrations: dict) -> dict:
+    """Per-integration ``{secret_field: bool}`` — booleans only, never the
+    values, so the wizard can show "saved" without the browser seeing a secret."""
+    result: dict = {}
+    for iid in integrations:
+        fields = secret_fields_for(iid)
+        if fields:
+            result[iid] = {field: bool(get_secret(env)) for field, env in fields.items()}
+    return result
+
+
 @router.get("/integrations")
 async def get_integrations_config():
     """
@@ -735,6 +746,7 @@ async def get_integrations_config():
                 "configured": True,
                 "enabled_integrations": enabled_integrations,
                 "integrations": integrations,
+                "secrets_set": _secrets_set_map(integrations),
             }
 
         # Fallback to file-based config
@@ -750,6 +762,7 @@ async def get_integrations_config():
                     "configured": True,
                     "enabled_integrations": config.get("enabled_integrations", []),
                     "integrations": redacted,
+                    "secrets_set": _secrets_set_map(redacted),
                 }
 
         return {"configured": False, "enabled_integrations": [], "integrations": {}}

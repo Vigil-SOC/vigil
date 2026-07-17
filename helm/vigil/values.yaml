@@ -309,7 +309,7 @@ dbInit:
     - 14_threat_indicators.sql
     - 15_federation.sql
     - 16_llm_budgets.sql
-    - 17_pgvector_embeddings.sql
+    - 17_loglm_setup.sql
   resources:
     requests:
       cpu: 50m

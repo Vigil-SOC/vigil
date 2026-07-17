@@ -1,15 +1,10 @@
--- Migrate findings.embedding to a fixed-width pgvector column + HNSW index.
+-- LogLM feature setup: pgvector embedding column/index + the loglm.view grant.
 --
--- Fresh installs get the vector(768) column directly from the ORM's
--- create_all (see database/models.py) and the `vector` extension from
--- 01_init_schema.sql, so this file is a no-op there (the findings table
--- doesn't exist yet when init SQL runs). This migration exists for EXISTING
--- deployments whose findings.embedding is still float8[] (ARRAY(Float)):
--- it coerces every stored embedding to exactly 768 dims (pad/truncate),
--- converts the column to vector(768), and builds the HNSW cosine index.
---
--- Idempotent and self-guarding: safe to re-run and safe when the table is
--- absent or already migrated.
+-- This is a NEW migration file rather than edits to 01/06 on purpose: the
+-- dbInit path only runs a file whose name it hasn't applied before, so edits to
+-- already-shipped files never reach existing deployments — a new filename does.
+-- Idempotent and self-guarding: safe to re-run, and safe when the findings
+-- table is absent (fresh install) or already migrated.
 
 CREATE EXTENSION IF NOT EXISTS vector;
 
@@ -20,7 +15,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.tables WHERE table_name = 'findings'
     ) THEN
-        RAISE NOTICE '17_pgvector: findings table absent (fresh DB), skipping';
+        RAISE NOTICE '17_loglm_setup: findings table absent (fresh DB), skipping embedding migration';
         RETURN;
     END IF;
 
@@ -29,7 +24,7 @@ BEGIN
     WHERE table_name = 'findings' AND column_name = 'embedding';
 
     IF col_type = 'ARRAY' THEN
-        RAISE NOTICE '17_pgvector: coercing existing embeddings to 768 dims';
+        RAISE NOTICE '17_loglm_setup: coercing existing embeddings to 768 dims';
         -- A fixed-width vector(768) cast requires every row to be exactly
         -- 768-dimensional; pad short vectors with zeros, truncate long ones.
         UPDATE findings
@@ -46,13 +41,13 @@ BEGIN
         END
         WHERE array_length(embedding, 1) IS DISTINCT FROM 768;
 
-        RAISE NOTICE '17_pgvector: converting embedding column to vector(768)';
+        RAISE NOTICE '17_loglm_setup: converting embedding column to vector(768)';
         EXECUTE 'ALTER TABLE findings '
              || 'ALTER COLUMN embedding TYPE vector(768) '
              || 'USING embedding::vector(768)';
     ELSE
         RAISE NOTICE
-            '17_pgvector: embedding column type is %, assuming already migrated',
+            '17_loglm_setup: embedding column type is %, assuming already migrated',
             col_type;
     END IF;
 
@@ -60,3 +55,14 @@ BEGIN
     EXECUTE 'CREATE INDEX IF NOT EXISTS idx_finding_embedding_hnsw '
          || 'ON findings USING hnsw (embedding vector_cosine_ops)';
 END $$;
+
+-- Grant the LogLM page-extension view permission to analyst-and-above roles.
+-- Runs on both fresh and existing deployments (see the file header); the WHERE
+-- guard makes it idempotent. The extension manifest declares this permission;
+-- without it the LogLM tab is hidden outside DEV_MODE. `roles` always exists
+-- here — 06_auth_tables.sql runs before this file on every path.
+UPDATE roles
+SET permissions = permissions || '{"loglm.view": true}'::jsonb,
+    updated_at = NOW()
+WHERE role_id IN ('role-analyst', 'role-senior-analyst', 'role-manager', 'role-admin')
+  AND COALESCE((permissions->>'loglm.view')::boolean, false) = false;

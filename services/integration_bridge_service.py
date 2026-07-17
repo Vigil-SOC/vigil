@@ -181,32 +181,26 @@ class IntegrationBridgeService:
         return servers
 
     def derive_remote_mcp_env(self) -> Dict[str, str]:
-        """Populate ``os.environ`` with remote-MCP URLs from integration configs.
-
-        Any enabled integration whose config carries a ``connectorUrl`` (i.e.
-        it supplies a page extension / remote connector) gets a
-        ``<UPPER_ID>_MCP_URL`` env var derived as ``connectorUrl + "/mcp"``.
-        This lets a static ``mcp-config.json`` catalog entry reference e.g.
-        ``${LOGLM_MCP_URL}`` and resolve from a single source of truth (the
-        integration's ``connectorUrl`` set in Settings) rather than a second,
-        manually-set env var. An explicit pre-existing env value wins.
-
-        Generic — no per-integration hardcoding. Returns the mapping applied
-        (for logging / tests).
-        """
+        """Derive a ``<UPPER_ID>_MCP_URL`` env var from each configured
+        integration's ``connectorUrl`` so a static ``mcp-config.json`` entry
+        (e.g. ``${LOGLM_MCP_URL}``) resolves from one source of truth. An
+        explicit pre-existing env value wins. Returns the mapping applied."""
         config = self.load_integration_config()
-        enabled = config.get("enabled_integrations", [])
         integrations = config.get("integrations", {})
         applied: Dict[str, str] = {}
-        for integration_id in enabled:
-            cfg = integrations.get(integration_id) or {}
-            connector_url = cfg.get("connectorUrl")
+        # Any configured connector, not just enabled ones: the master toggle
+        # enables the MCP server before adding the integration to
+        # enabled_integrations, so gating on enablement raced to an empty URL.
+        for integration_id, cfg in integrations.items():
+            connector_url = (cfg or {}).get("connectorUrl")
             if not connector_url:
                 continue
             env_key = f"{integration_id.upper().replace('-', '_')}_MCP_URL"
             if os.environ.get(env_key):
-                continue  # explicit env wins over the derived value
-            value = str(connector_url).rstrip("/") + "/mcp"
+                continue  # explicit env wins
+            # Trailing slash: the connector mounts streamable-HTTP at /mcp/, and
+            # /mcp (no slash) 307-redirects — which mcp-remote won't follow.
+            value = str(connector_url).rstrip("/") + "/mcp/"
             os.environ[env_key] = value
             applied[env_key] = value
         if applied:

@@ -265,10 +265,8 @@ class DatabaseDataService:
         if self._demo_mode and self._demo_service:
             return self._demo_service.get_nearest_neighbors(finding_id, limit)
 
-        # Prefer a DB-side ANN query (pgvector HNSW) when the DB is available.
-        # find_similar_findings returns None only when it can't run (e.g.
-        # pgvector unavailable), in which case we fall back to the in-memory
-        # scan below; an empty list is a valid "no neighbors" result.
+        # Prefer the DB-side ANN query; find_similar_findings returns None only
+        # when it can't run (→ fall back), whereas [] is a valid "no neighbors".
         if self._db_available:
             try:
                 neighbors = self._db_service.find_similar_findings(
@@ -284,12 +282,8 @@ class DatabaseDataService:
         return self._nearest_neighbors_in_memory(finding_id, limit)
 
     def _nearest_neighbors_in_memory(self, finding_id: str, limit: int) -> Dict:
-        """Cosine-similarity nearest neighbors computed in Python.
-
-        Fallback for when the DB-side pgvector query can't run. Loads findings
-        (DB or JSON), then scores every other finding against the seed;
-        mismatched-length embeddings are skipped (dimension-safe).
-        """
+        """Python cosine-similarity fallback for when the DB-side query can't run.
+        Mismatched-length embeddings are skipped (dimension-safe)."""
         # Get all findings (from DB or JSON fallback)
         if self._db_available:
             try:

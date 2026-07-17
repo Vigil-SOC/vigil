@@ -8,11 +8,6 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- fails with: operator class "gin_trgm_ops" does not exist for access
 -- method "gin".
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
--- pgvector powers the findings.embedding vector(768) column + HNSW ANN index
--- (idx_finding_embedding_hnsw). Without it the ORM's create_all fails with:
--- type "vector" does not exist. Requires a pgvector-capable image
--- (pgvector/pgvector:pg16) — the stock postgres:16 image does NOT ship it.
-CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Create indexes for better performance (SQLAlchemy will create tables)
 -- These will be created if they don't already exist

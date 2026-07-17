@@ -340,9 +340,7 @@ app.include_router(
 # VStrike /findings is public-but-bearer-authenticated inside the router.
 # All VStrike management/UI/proxy routes require an authenticated user session.
 app.include_router(vstrike_router, prefix=f"{_CONTEXT_PATH}/api/integrations/vstrike", tags=["vstrike"])
-# Page-extension host — mints connector session tokens. The
-# /{integration_id}/session-token route is generic; it sits alongside the
-# vstrike routes above without conflicting (distinct path suffix).
+# Page-extension host — mints connector session tokens.
 app.include_router(
     extensions_router,
     prefix=f"{_CONTEXT_PATH}/api/integrations",
@@ -659,10 +657,9 @@ async def startup_event():
             os.environ["POSTGRESQL_CONNECTION_STRING"] = default_conn
             logger.debug("Using default PostgreSQL connection string")
 
-        # Rehydrate every registered integration credential from the encrypted
-        # store into os.environ so MCP servers gated on ${<ID>_<FIELD>} (github,
-        # loglm, ...) come back live after a restart — set_secret only writes
-        # os.environ in the saving process, so without this they'd go dormant.
+        # Rehydrate integration credentials into os.environ so MCP servers gated
+        # on ${<ID>_<FIELD>} survive a restart — set_secret only writes os.environ
+        # in the saving process, so without this they'd go dormant.
         from services.integration_secrets import INTEGRATION_SECRET_FIELDS
 
         rehydrated = 0
@@ -676,6 +673,32 @@ async def startup_event():
 
     except Exception as e:
         logger.warning(f"Error loading secrets for MCP servers: {e}")
+
+    # A configured connector with no allowlisted origin will be blocked by the
+    # default CSP — warn rather than fail silently. Best-effort.
+    try:
+        from services.extension_trust import connector_allowlist_origins
+
+        if not connector_allowlist_origins():
+            from services.integration_bridge_service import get_integration_bridge
+
+            cfg = get_integration_bridge().load_integration_config()
+            connectors = [
+                iid
+                for iid, c in (cfg.get("integrations") or {}).items()
+                if (c or {}).get("connectorUrl")
+            ]
+            if connectors:
+                logger.warning(
+                    "Page-extension connector(s) %s are configured but "
+                    "EXTENSION_CONNECTOR_ALLOWLIST is empty; their UI bundle "
+                    "import and BFF calls will be blocked by the "
+                    "Content-Security-Policy. Add each connector's origin to "
+                    "EXTENSION_CONNECTOR_ALLOWLIST.",
+                    connectors,
+                )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug("Connector allowlist check skipped: %s", e)
 
     # Initialize data storage backend
     logger.info("Initializing data storage...")
@@ -922,8 +945,23 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
         global _index_html_cache
         if _index_html_cache is None:
             raw = (frontend_build_dir / "index.html").read_text()
-            config_tag = f'<meta name="vigil-base-path" content="{_CONTEXT_PATH}">'
-            _index_html_cache = raw.replace("<head>", f"<head>\n    {config_tag}", 1)
+            tags = [f'<meta name="vigil-base-path" content="{_CONTEXT_PATH}">']
+            # Expose the connector allowlist to the SPA (same source as the CSP +
+            # SSRF guard). A <meta>, not an inline <script>, because CSP is
+            # script-src 'self'.
+            try:
+                from services.extension_trust import connector_allowlist_origins
+
+                origins = connector_allowlist_origins()
+                if origins:
+                    allow = ",".join(origins)
+                    tags.append(
+                        f'<meta name="vigil-extension-allowlist" content="{allow}">'
+                    )
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug("extension allowlist meta injection skipped: %s", e)
+            injected = "\n    ".join(tags)
+            _index_html_cache = raw.replace("<head>", f"<head>\n    {injected}", 1)
         return _index_html_cache
 
     # When served under a context path, redirect the bare path (no trailing

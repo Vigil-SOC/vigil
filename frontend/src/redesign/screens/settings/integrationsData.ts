@@ -31,10 +31,9 @@ export const WIP_SERVERS = new Set([
   'microsoft-defender', 'azure-ad', 'microsoft-teams',
 ])
 
-/** Human-facing card titles that override the id-derived `prettyServerName`.
-    Use this to fix casing or drop redundant branding without renaming the
-    server id — the id is load-bearing in mcp-config.json, the backend
-    registration, and the persisted enabled-state store. */
+/** Card-title overrides for `prettyServerName`. Fix casing/branding here rather
+ *  than renaming the server id, which is load-bearing (mcp-config.json, backend
+ *  registration, persisted enabled-state store). */
 export const SERVER_DISPLAY_NAMES: Record<string, string> = {
   loglm: 'LogLM',
   'deeptempo-findings': 'Findings & Cases',

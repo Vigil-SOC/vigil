@@ -332,6 +332,11 @@ class MCPService:
                 return "stdio"
         return "unknown"
     
+    def reload_server_configs(self) -> None:
+        """Rebuild server configs so a connectorUrl saved after startup is
+        re-substituted into the init-time-cached spawn args."""
+        self._initialize_servers()
+
     def _initialize_servers(self):
         """
         Initialize MCP server configurations from mcp-config.json.
@@ -343,10 +348,8 @@ class MCPService:
         python_exe_str = str(self.python_exe)
         project_path_str = str(self.project_root)
 
-        # Derive <ID>_MCP_URL env vars from any enabled integration that
-        # supplies a connectorUrl, so static mcp-config.json entries such as
-        # ${LOGLM_MCP_URL} resolve from the integration config (single source
-        # of truth) instead of a separately-set env var. Best-effort.
+        # Resolve ${<ID>_MCP_URL} placeholders from integration connectorUrls
+        # (see derive_remote_mcp_env). Best-effort.
         try:
             from services.integration_bridge_service import get_integration_bridge
 

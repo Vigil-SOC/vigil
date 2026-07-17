@@ -1,15 +1,8 @@
 """Page-extension host endpoints.
 
-Vigil's OSS page-extension mechanism (``frontend/src/redesign/extensions``)
-lets an opt-in connector contribute a UI page. The connector's web component
-calls its own BFF directly from the browser; this router mints the
-short-lived, user-scoped session token that BFF requires, so the shared
-signing secret stays server-side.
-
-Mounted at ``/api/integrations`` so the path is
-``/api/integrations/{integration_id}/session-token`` — the ``{integration_id}``
-route is generic (no LogLM specifics), matching the "Vigil knows nothing about
-the extension" principle.
+Mints the short-lived, user-scoped session token a connector's BFF requires, so
+the shared signing secret stays server-side. The ``{integration_id}`` route is
+generic — no per-connector specifics.
 """
 
 import logging

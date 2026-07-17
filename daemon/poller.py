@@ -19,7 +19,7 @@ import asyncio
 import hmac
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Set
 from dataclasses import dataclass
 
 from daemon.config import PollingConfig
@@ -27,6 +27,12 @@ from daemon.dedup import RedisDedupSet
 from daemon.federation.runner import FederationRunner
 
 logger = logging.getLogger(__name__)
+
+
+def _blocked_ingest_sources(findings: List[Dict[str, Any]], disabled_ids: Set[str]) -> Set[str]:
+    """``data_source`` values belonging to a disabled integration (empty ⇒ batch
+    may ingest). Sources with no integration row (webhook, flow) never appear."""
+    return {f.get("data_source") for f in findings if f.get("data_source") in disabled_ids}
 
 
 @dataclass
@@ -497,10 +503,23 @@ class DataPoller:
                 return web.json_response({"error": "unauthorized"}, status=401)
             try:
                 data = await request.json()
-                
+
                 # Support batch or single finding
                 findings = data if isinstance(data, list) else [data]
-                
+
+                # Block pushes for a disabled integration: 503 the whole batch so
+                # the connector holds its cursor and retries (nothing dropped; feed
+                # resumes on re-enable). Only registered-but-disabled sources are
+                # blocked, so generic 'webhook'/'flow' pushes are unaffected.
+                from database.config_service import get_config_service
+                disabled = get_config_service().get_disabled_integration_ids()
+                blocked = _blocked_ingest_sources(findings, disabled)
+                if blocked:
+                    return web.json_response(
+                        {"error": f"ingestion disabled for source(s): {sorted(blocked)}"},
+                        status=503,
+                    )
+
                 count = 0
                 for finding_data in findings:
                     finding_id = finding_data.get('finding_id')

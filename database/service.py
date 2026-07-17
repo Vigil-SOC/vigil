@@ -25,13 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 def _normalize_embedding(embedding: Optional[List[float]]) -> List[float]:
-    """Pad/truncate an embedding to the fixed ``EMBEDDING_DIM`` width.
-
-    The findings vector column is fixed-width (pgvector ``Vector(EMBEDDING_DIM)``),
-    but sources emit varying dimensions (LogLM 512, deeptempo 768). Shorter
-    vectors are zero-padded and longer ones truncated so every row fits the
-    column; a missing/empty embedding becomes an all-zero vector.
-    """
+    """Zero-pad/truncate an embedding to the fixed ``EMBEDDING_DIM`` width
+    (sources vary: LogLM 512, deeptempo 768); missing → all-zero vector."""
     if not embedding:
         return [0.0] * EMBEDDING_DIM
     vec = [float(x) for x in embedding]
@@ -213,20 +208,11 @@ class DatabaseService:
         limit: int = 10,
         same_source: bool = False,
     ) -> Optional[List[Dict[str, Any]]]:
-        """Findings most similar to ``finding_id`` by embedding cosine distance.
-
-        Uses the pgvector ``<=>`` operator (backed by the HNSW index) for a
-        DB-side approximate-nearest-neighbor search rather than scanning every
-        row in Python. Returns neighbor dicts ordered by descending similarity,
-        or ``None`` when the query can't run (e.g. pgvector unavailable) so the
-        caller can fall back to an in-memory computation.
-
-        Args:
-            finding_id: seed finding to search around.
-            limit: max neighbors to return.
-            same_source: restrict to the seed's own data_source (mitigates
-                comparing across distinct embedding model spaces).
-        """
+        """Findings most similar to ``finding_id`` by cosine distance, via the
+        pgvector ``<=>`` operator (HNSW-backed) instead of a Python scan. Returns
+        ``None`` when the query can't run (e.g. pgvector unavailable) so the caller
+        can fall back. ``same_source`` restricts to the seed's own data_source,
+        avoiding comparison across distinct embedding model spaces."""
         try:
             with self.db_manager.session_scope() as session:
                 seed = session.get(Finding, finding_id)

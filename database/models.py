@@ -28,10 +28,8 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from pgvector.sqlalchemy import Vector
 import uuid
 
-# Canonical embedding dimension for the findings vector column. LogLM emits
-# 512-dim vectors that are zero-padded to this width on ingest; deeptempo
-# embeddings are already 768. A fixed-width pgvector column requires one
-# dimension, so everything is normalized to EMBEDDING_DIM before storage.
+# Fixed width for the findings vector column; sources of other dimensions
+# (LogLM 512) are zero-padded/truncated to this before storage.
 EMBEDDING_DIM = 768
 
 
@@ -69,7 +67,6 @@ class Finding(Base):
     # Primary key
     finding_id: Mapped[str] = mapped_column(String(50), primary_key=True)
 
-    # Core finding data — fixed-width pgvector column (see EMBEDDING_DIM).
     embedding: Mapped[List[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
     mitre_predictions: Mapped[dict] = mapped_column(JSONB, nullable=False)
     anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
@@ -123,8 +120,7 @@ class Finding(Base):
         Index("idx_finding_data_source", "data_source"),
         Index("idx_finding_cluster_id", "cluster_id"),
         Index("idx_finding_anomaly_score", "anomaly_score"),
-        # HNSW ANN index for cosine similarity over the embedding vector
-        # (see database.service.DatabaseService.find_similar_findings).
+        # HNSW ANN index for embedding cosine similarity (see find_similar_findings).
         Index(
             "idx_finding_embedding_hnsw",
             "embedding",
@@ -150,9 +146,8 @@ class Finding(Base):
 
     def to_dict(self) -> dict:
         """Convert finding to dictionary."""
-        # pgvector returns the embedding as a numpy array; coerce to a plain
-        # list of floats so downstream JSON serialization works. Tolerates a
-        # plain list too (pre-migration rows / non-pgvector paths).
+        # pgvector returns a numpy array; coerce to a plain list for JSON
+        # (tolerates a plain list too, for non-pgvector paths).
         emb = self.embedding
         if emb is not None and hasattr(emb, "tolist"):
             emb = emb.tolist()

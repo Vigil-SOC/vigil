@@ -1,13 +1,7 @@
-/* ============================================================
-   ExtensionProvider — the runtime page-extension registry.
-
-   On mount it reads the enabled integrations; any integration whose
-   stored config carries a `connectorUrl` is treated as extension-capable
-   (Vigil stays ignorant of LogLM specifically). For each, it fetches and
-   validates the connector's manifest and exposes the resulting mount
-   points. The registry is empty by default — an OSS Vigil with no
-   connectors configured shows no extension tabs.
-   ============================================================ */
+// Runtime page-extension registry. Any enabled integration whose config carries
+// a `connectorUrl` is treated as extension-capable (Vigil stays ignorant of
+// LogLM specifically); its manifest is fetched, validated, and exposed as mount
+// points. Empty by default — no connectors configured means no extension tabs.
 import {
   createContext,
   useCallback,
@@ -28,14 +22,11 @@ export interface ResolvedMountPoint {
 
 interface ExtensionsValue {
   extensions: RegisteredExtension[]
-  /** flattened (extension, screen-mount-point) pairs, ready for the shell */
   mountPoints: ResolvedMountPoint[]
-  /** enabled integration ids (the single source the shell's nav gate reads) */
   enabledIntegrations: string[]
   loading: boolean
-  /** re-read enabled integrations + connector manifests. Call after the
-   *  integrations config changes so a newly-configured connector's tab and
-   *  detection branding mount without a full page refresh. */
+  /** Call after the integrations config changes so a newly-configured connector
+   *  mounts its tab + branding without a full page refresh. */
   reload: () => void
 }
 
