@@ -144,16 +144,12 @@ class Finding(Base):
         ),
     )
 
-    def to_dict(self) -> dict:
-        """Convert finding to dictionary."""
-        # pgvector returns a numpy array; coerce to a plain list for JSON
-        # (tolerates a plain list too, for non-pgvector paths).
-        emb = self.embedding
-        if emb is not None and hasattr(emb, "tolist"):
-            emb = emb.tolist()
-        return {
+    def to_dict(self, include_embedding: bool = True) -> dict:
+        """Convert finding to dictionary. ``include_embedding=False`` omits the
+        768-float vector — used by list/summary responses that never consume it,
+        so they don't ship megabytes of vectors the UI ignores."""
+        d = {
             "finding_id": self.finding_id,
-            "embedding": emb,
             "description": self.description,
             "mitre_predictions": self.mitre_predictions,
             "anomaly_score": self.anomaly_score,
@@ -169,6 +165,14 @@ class Finding(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+        if include_embedding:
+            # pgvector returns a numpy array; coerce to a plain list for JSON
+            # (tolerates a plain list too, for non-pgvector paths).
+            emb = self.embedding
+            if emb is not None and hasattr(emb, "tolist"):
+                emb = emb.tolist()
+            d["embedding"] = emb
+        return d
 
 
 class Case(Base):

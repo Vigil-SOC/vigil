@@ -512,7 +512,11 @@ class DataPoller:
                 # resumes on re-enable). Only registered-but-disabled sources are
                 # blocked, so generic 'webhook'/'flow' pushes are unaffected.
                 from database.config_service import get_config_service
-                disabled = get_config_service().get_disabled_integration_ids()
+                # Run the sync SQLAlchemy lookup off the event loop so a slow or
+                # locked DB can't freeze the whole daemon on the ingest hot path.
+                disabled = await asyncio.to_thread(
+                    lambda: get_config_service().get_disabled_integration_ids()
+                )
                 blocked = _blocked_ingest_sources(findings, disabled)
                 if blocked:
                     return web.json_response(

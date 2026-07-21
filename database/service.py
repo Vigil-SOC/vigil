@@ -6,7 +6,7 @@ Provides high-level database operations for cases, findings, and related entitie
 
 import logging
 from typing import Optional, List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.orm import Session
 
@@ -249,6 +249,25 @@ class DatabaseService:
                 f"caller should fall back: {e}"
             )
             return None
+
+    def get_findings_missing_enrichment(
+        self, limit: int = 100, max_age_hours: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Findings stored but never enriched (ai_enrichment IS NULL), oldest first.
+        Returns dicts (to_dict inside the session) so callers get detached-safe data.
+        ``max_age_hours`` bounds the working set so ancient, un-enrichable findings
+        aren't retried forever."""
+        try:
+            with self.db_manager.session_scope() as session:
+                query = select(Finding).where(Finding.ai_enrichment.is_(None))
+                if max_age_hours:
+                    cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+                    query = query.where(Finding.timestamp >= cutoff)
+                query = query.order_by(Finding.timestamp.asc()).limit(limit)
+                return [f.to_dict() for f in session.execute(query).scalars().all()]
+        except Exception as e:
+            logger.error(f"Error getting findings missing enrichment: {e}")
+            return []
 
     def count_findings(
         self,

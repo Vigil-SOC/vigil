@@ -56,17 +56,26 @@ export function useFindings() {
 }
 
 export interface DashKpis {
+  findingsTotal: number
+  findingsCritical: number
+  findingsHigh: number
   casesTotal: number
   casesOpen: number
   casesInvestigating: number
 }
 
+interface FindingsSummary {
+  total?: number
+  by_severity?: Record<string, number>
+}
 interface CasesSummary {
   total?: number
   by_status?: Record<string, number>
 }
 
-/** cases summary counts for the KPI cards (findings counts come from useFindings) */
+/** the KPI cards: aggregate findings + cases counts. Uses the summary endpoints
+ *  (true totals, not the capped findings-list fetch) and polls every 10s so the
+ *  numbers stay live alongside useFindings. */
 export function useDashboardKpis() {
   const [kpis, setKpis] = useState<DashKpis | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -75,25 +84,36 @@ export function useDashboardKpis() {
 
   useEffect(() => {
     let cancelled = false
-    setPhase('loading')
-    casesApi
-      .getSummary()
-      .then((cRes) => {
-        if (cancelled) return
-        const c = (cRes.data || {}) as CasesSummary
-        setKpis({
-          casesTotal: c.total ?? 0,
-          casesOpen: c.by_status?.open ?? 0,
-          casesInvestigating: c.by_status?.investigating ?? 0,
+
+    // silent = background poll: refresh counts without flashing loading
+    const fetchKpis = (silent: boolean) => {
+      if (!silent) setPhase('loading')
+      Promise.all([findingsApi.getSummary(), casesApi.getSummary()])
+        .then(([fRes, cRes]) => {
+          if (cancelled) return
+          const f = (fRes.data || {}) as FindingsSummary
+          const c = (cRes.data || {}) as CasesSummary
+          setKpis({
+            findingsTotal: f.total ?? 0,
+            findingsCritical: f.by_severity?.critical ?? 0,
+            findingsHigh: f.by_severity?.high ?? 0,
+            casesTotal: c.total ?? 0,
+            casesOpen: c.by_status?.open ?? 0,
+            casesInvestigating: c.by_status?.investigating ?? 0,
+          })
+          setPhase('ready')
         })
-        setPhase('ready')
-      })
-      .catch(() => {
-        if (cancelled) return
-        setPhase('error')
-      })
+        .catch(() => {
+          if (cancelled || silent) return
+          setPhase('error')
+        })
+    }
+
+    fetchKpis(false)
+    const id = setInterval(() => fetchKpis(true), 10_000)
     return () => {
       cancelled = true
+      clearInterval(id)
     }
   }, [reloadKey])
 

@@ -169,21 +169,13 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
 
   const kpi = (n: number | undefined) => (kpis ? String(n ?? 0) : NDASH)
 
-  // Findings KPIs mirror the displayed rows; re-derive on each 10s poll.
-  const findingKpis = useMemo(() => ({
-    total: rows.length,
-    critical: rows.filter((f) => f.sev.toLowerCase() === 'critical').length,
-    high: rows.filter((f) => f.sev.toLowerCase() === 'high').length,
-  }), [rows])
-  const fkpi = (n: number) => (phase === 'ready' ? String(n) : NDASH)
-
   return (
     <>
       <div className="grid grid-cols-4 border-b border-line">
         <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Total Findings</span>
-          <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{fkpi(findingKpis.total)}</span></div>
-          <span className="text-xs text-tx-faint">{phase === 'ready' ? `${findingKpis.critical} critical · ${findingKpis.high} high` : ' '}</span>
+          <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{kpi(kpis?.findingsTotal)}</span></div>
+          <span className="text-xs text-tx-faint">{kpis ? `${kpis.findingsCritical} critical · ${kpis.findingsHigh} high` : ' '}</span>
         </div>
         <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Active Cases</span>
@@ -192,12 +184,12 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
         </div>
         <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Critical Alerts</span>
-          <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-crit">{fkpi(findingKpis.critical)}</span></div>
+          <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-crit">{kpi(kpis?.findingsCritical)}</span></div>
           <span className="text-xs text-tx-faint">requires immediate attention</span>
         </div>
         <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">High Priority</span>
-          <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-high">{fkpi(findingKpis.high)}</span></div>
+          <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-high">{kpi(kpis?.findingsHigh)}</span></div>
           <span className="text-xs text-tx-faint">review within 24h</span>
         </div>
       </div>

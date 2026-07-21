@@ -29,6 +29,11 @@ class ProcessingConfig:
     batch_size: int = 10
     max_concurrent_tasks: int = 5
     triage_timeout: int = 60  # seconds
+    enrich_max_inflight: int = 50          # cap on pending background enrich tasks (backpressure)
+    enrich_backfill_enabled: bool = True   # sweep for stored-but-never-enriched findings
+    enrich_backfill_interval: int = 300    # seconds between sweeps
+    enrich_backfill_batch: int = 50        # findings re-queued per sweep
+    enrich_backfill_max_age_hours: int = 168  # only backfill findings newer than this (7d)
 
 
 @dataclass
@@ -176,6 +181,11 @@ class DaemonConfig:
         config.processing.auto_triage_enabled = os.getenv("DAEMON_AUTO_TRIAGE", "true").lower() == "true"
         config.processing.auto_enrich_enabled = os.getenv("DAEMON_AUTO_ENRICH", "true").lower() == "true"
         config.processing.batch_size = int(os.getenv("DAEMON_BATCH_SIZE", "10"))
+        config.processing.enrich_max_inflight = int(os.getenv("DAEMON_ENRICH_MAX_INFLIGHT", "50"))
+        config.processing.enrich_backfill_enabled = os.getenv("DAEMON_ENRICH_BACKFILL", "true").lower() == "true"
+        config.processing.enrich_backfill_interval = int(os.getenv("DAEMON_ENRICH_BACKFILL_INTERVAL", "300"))
+        config.processing.enrich_backfill_batch = int(os.getenv("DAEMON_ENRICH_BACKFILL_BATCH", "50"))
+        config.processing.enrich_backfill_max_age_hours = int(os.getenv("DAEMON_ENRICH_BACKFILL_MAX_AGE_HOURS", "168"))
         
         # Response
         config.response.auto_response_enabled = os.getenv("DAEMON_AUTO_RESPONSE", "true").lower() == "true"
