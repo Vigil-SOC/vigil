@@ -294,7 +294,8 @@ def start(name: str, *, wait: bool = False, timeout: int = 120) -> ActionResult:
         )
     if _container_state(spec.container)[0]:
         return ActionResult(True, f"{name} already running", already_running=True)
-    return _compose_action(spec, ["up", "-d", spec.compose_service], "start", timeout)
+    args = ["up", "-d"] + (["--wait"] if wait else []) + [spec.compose_service]
+    return _compose_action(spec, args, "start", timeout)
 
 
 def stop(name: str) -> ActionResult:
