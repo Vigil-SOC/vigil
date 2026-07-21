@@ -9,7 +9,7 @@ import { useFindings, useDashboardKpis } from './useFindings'
 import type { Finding } from '../../data/data'
 import { useAttack } from './useAttack'
 import { useTimeline } from './useTimeline'
-import { FilterButton, FilterGroup } from '../../shared/ui'
+import { EmptyState, FilterButton, FilterGroup } from '../../shared/ui'
 import FindingPopup from './FindingPopup'
 import AttackTechniqueFindings from './AttackTechniqueFindings'
 import { SEV_COLOR, TL_MONTHS, type TimelineEvent } from './attackData'
@@ -17,7 +17,7 @@ import type { ScreenProps } from '../../shared/types'
 
 type DashTab = 'findings' | 'attack' | 'timeline' | 'entity'
 
-export default function DashboardScreen({ openChat }: ScreenProps) {
+export default function DashboardScreen({ openChat, goSettings }: ScreenProps) {
   const [tab, setTab] = useState<DashTab>('findings')
   const tabs: [DashTab, string][] = [
     ['findings', 'Findings'],
@@ -42,7 +42,7 @@ export default function DashboardScreen({ openChat }: ScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'findings' && <FindingsTab openChat={openChat} />}
+      {tab === 'findings' && <FindingsTab openChat={openChat} goSettings={goSettings} />}
       {tab === 'attack' && <AttackTab />}
       {tab === 'timeline' && <TimelineTab />}
       {tab === 'entity' && <EntityStub />}
@@ -104,7 +104,7 @@ function findingPrompt(f: Finding): string {
   return `Investigate finding ${f.id} — ${parts.join(', ')}. What happened and what should I do next?`
 }
 
-function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
+function FindingsTab({ openChat, goSettings }: Pick<ScreenProps, 'openChat' | 'goSettings'>) {
   const { rows, phase, error, reload } = useFindings()
   const { kpis, reload: reloadKpis } = useDashboardKpis()
   const [query, setQuery] = useState('')
@@ -237,19 +237,20 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
           </thead>
           <tbody>
             {phase === 'loading' && (
-              <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>Loading findings…</td></tr>
+              <tr><td colSpan={11}><EmptyState loading table compact icon="search" title="Loading findings…" /></td></tr>
             )}
             {phase === 'error' && (
-              <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                  <span>Couldn’t load findings: {error}</span>
-                  <button className="btn ghost" onClick={refresh}>Retry</button>
-                </div>
-              </td></tr>
+              <tr><td colSpan={11}><EmptyState error table icon="alert" title="Couldn’t load findings" body={error} primary={{ label: 'Retry', onClick: refresh, icon: 'refresh' }} /></td></tr>
             )}
             {phase === 'ready' && filtered.length === 0 && (
-              <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-                {rows.length === 0 ? 'No findings found.' : 'No findings match your filters.'}
+              <tr><td colSpan={11}>
+                <EmptyState
+                  table
+                  icon={rows.length === 0 ? 'shield' : 'filter'}
+                  title={rows.length === 0 ? 'No findings yet' : 'No findings match this view'}
+                  body={rows.length === 0 ? 'Ingest alerts or run a workflow to populate the findings queue.' : 'Clear search and filters to return to the full findings queue.'}
+                  primary={rows.length === 0 ? { label: 'Configure integrations', onClick: () => goSettings('integrations'), icon: 'link' } : { label: 'Clear filters', onClick: () => { setQuery(''); setSev('any'); setSrc('any') }, icon: 'close' }}
+                />
               </td></tr>
             )}
             {phase === 'ready' && paged.map((f) => (
@@ -308,7 +309,7 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
           ><Icon name="chevR" size={14} /></button>
         </span>
       </div>
-      <FindingPopup id={detailId} onClose={() => setDetailId(null)} onChanged={() => { reload(); reloadKpis() }} />
+      <FindingPopup id={detailId} onClose={() => setDetailId(null)} onChanged={() => { reload(); reloadKpis() }} onConfigureAi={() => goSettings('ai-config')} />
     </>
   )
 }
@@ -397,18 +398,13 @@ function AttackTab() {
               </thead>
               <tbody>
                 {phase === 'loading' && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>Loading techniques…</td></tr>
+                  <tr><td colSpan={9}><EmptyState loading table compact icon="graph" title="Loading techniques…" /></td></tr>
                 )}
                 {phase === 'error' && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                      <span>Couldn’t load ATT&CK data: {error}</span>
-                      <button className="btn ghost" onClick={reload}>Retry</button>
-                    </div>
-                  </td></tr>
+                  <tr><td colSpan={9}><EmptyState error table icon="alert" title="Couldn’t load ATT&CK data" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></td></tr>
                 )}
                 {phase === 'ready' && techniques.length === 0 && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>No techniques at this confidence threshold.</td></tr>
+                  <tr><td colSpan={9}><EmptyState table icon="filter" title="No techniques at this confidence threshold" body="Lower the confidence threshold or load findings with ATT&CK mappings." /></td></tr>
                 )}
                 {phase === 'ready' && techniques.map((t) => (
                   <Fragment key={t.id}>
@@ -444,19 +440,11 @@ function AttackTab() {
 function EntityStub() {
   return (
     <div className="entity-empty">
-      <div className="ee-graphic">
-        <svg viewBox="0 0 220 150" fill="none">
-          <line x1="110" y1="75" x2="40" y2="36" /><line x1="110" y1="75" x2="186" y2="42" />
-          <line x1="110" y1="75" x2="52" y2="120" /><line x1="110" y1="75" x2="172" y2="116" />
-          <line x1="40" y1="36" x2="186" y2="42" /><line x1="52" y1="120" x2="172" y2="116" />
-          <circle cx="110" cy="75" r="13" className="n-core" />
-          <circle cx="40" cy="36" r="8" /><circle cx="186" cy="42" r="8" />
-          <circle cx="52" cy="120" r="8" /><circle cx="172" cy="116" r="8" />
-        </svg>
-      </div>
-      <h3>Entity Graph</h3>
-      <p>Interactive host, user &amp; device relationship graph — pivot across shared entities to trace lateral movement. Coming soon.</p>
-      <button className="btn primary"><Icon name="graph" /> Preview the graph</button>
+      <EmptyState
+        icon="graph"
+        title="No entity graph yet"
+        body="Host, user, and source relationships appear here once findings include entity fields."
+      />
     </div>
   )
 }
@@ -714,6 +702,14 @@ function TimelineTab() {
         <button className="tl-iconbtn" title="Export visible events (CSV)" onClick={exportCsv}><Icon name="download" /></button>
       </div>
       <div className="tl-hint">Drag anywhere to scrub · click a bar to investigate · scroll to pan</div>
+      {tlPhase === 'ready' && events.length === 0 && (
+        <EmptyState
+          icon="clock"
+          title={filter === 'finding' ? 'No finding events in this window' : 'No timeline events yet'}
+          body={filter === 'finding' ? 'Switch to All events or load findings with timestamps.' : 'Create cases or ingest findings to build an investigation timeline.'}
+          primary={filter === 'finding' ? { label: 'Show all events', onClick: () => changeFilter('all'), icon: 'filter' } : undefined}
+        />
+      )}
       <div className="tl-scroll" ref={scrollRef}>
         <div
           className="tl-inner"

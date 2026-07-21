@@ -8,7 +8,7 @@
    ============================================================ */
 import { useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { TextInput } from '../../shared/ui'
+import { EmptyState, TextInput } from '../../shared/ui'
 import { useMcpServers, useIntegrationsConfig } from './useSettings'
 import {
   getIntegrationForServer,
@@ -114,16 +114,17 @@ function ServersPanel({ notify }: SectionProps) {
       </div>
 
 
-      {phase === 'loading' && <div className="text-sm text-tx-3 py-16 text-center">Loading integrations…</div>}
-      {phase === 'error' && (
-        <div className="py-16 text-center flex flex-col items-center gap-2.5">
-          <span className="text-sm text-tx-3">Couldn’t load MCP servers: {error}</span>
-          <button className="btn ghost" onClick={reload}>Retry</button>
-        </div>
-      )}
+      {phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
+      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
 
       {phase === 'ready' && grouped.length === 0 && (
-        <div className="text-sm text-tx-3 py-10 text-center">No integrations match “{search}”.</div>
+        <EmptyState
+          compact
+          icon="filter"
+          title="No integrations match this search"
+          body={`No MCP servers match “${search}”.`}
+          primary={{ label: 'Clear search', onClick: () => setSearch(''), icon: 'close' }}
+        />
       )}
 
       {phase === 'ready' &&

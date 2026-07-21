@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react'
 import { findingsApi } from '../../../services/api'
 import { mapApiFinding, type ApiFinding } from '../../data/mappers'
 import { techniqueName } from '../../data/mitre'
-import { ConfirmDialog, Popup, Select } from '../../shared/ui'
+import { ConfirmDialog, EmptyState, Popup, Select } from '../../shared/ui'
 import { Icon } from '../../shared/icons'
 import type { Phase } from '../cases/useCases'
 
@@ -150,11 +150,13 @@ export default function FindingPopup({
   id,
   onClose,
   onChanged,
+  onConfigureAi,
 }: {
   id: string | null
   onClose: () => void
   /** called after a status change / delete so the list can refetch */
   onChanged?: () => void
+  onConfigureAi?: () => void
 }) {
   const [raw, setRaw] = useState<RawFinding | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -340,14 +342,24 @@ export default function FindingPopup({
             )}
             {enrichPhase === 'loading' && <div className="muted" style={{ marginTop: 10 }}>Generating AI analysis…</div>}
             {enrichPhase === 'error' && (
-              <div className="muted" style={{ marginTop: 10 }}>
-                {enrichError === 'not_configured'
-                  ? 'AI enrichment is not configured — add a Claude API key in Settings → AI.'
-                  : 'AI enrichment failed. '}
-                {enrichError !== 'not_configured' && (
-                  <button className="btn ghost" onClick={() => loadEnrichment(false)}>Retry</button>
-                )}
-              </div>
+              enrichError === 'not_configured' ? (
+                <EmptyState
+                  compact
+                  icon="sparkle"
+                  title="AI enrichment is not configured"
+                  body="Add an AI provider and assign a chat/enrichment model before generating finding analysis."
+                  primary={onConfigureAi ? { label: 'Open AI Config', onClick: onConfigureAi, icon: 'gear' } : undefined}
+                />
+              ) : (
+                <EmptyState
+                  error
+                  compact
+                  icon="alert"
+                  title="AI enrichment failed"
+                  body="The analysis request did not complete."
+                  primary={{ label: 'Retry', onClick: () => loadEnrichment(false), icon: 'refresh' }}
+                />
+              )
             )}
             {enrichPhase === 'ready' && enrichment && <div style={{ marginTop: 10 }}><EnrichmentView e={enrichment} /></div>}
             {enrichPhase === 'ready' && !enrichment && <div className="muted" style={{ marginTop: 10 }}>No enrichment returned for this finding.</div>}

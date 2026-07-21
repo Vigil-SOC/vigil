@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
   ConfirmDialog,
+  EmptyState,
   Field,
   NumberInput,
   Select,
@@ -149,13 +150,8 @@ function ProvidersPanel({ notify }: SectionProps) {
         </button>
       }
     >
-      {phase === 'loading' && <div className="text-sm text-tx-3 py-8 text-center">Loading providers…</div>}
-      {phase === 'error' && (
-        <div className="py-8 text-center flex flex-col items-center gap-2.5">
-          <span className="text-sm text-tx-3">Couldn’t load providers: {error}</span>
-          <button className="btn ghost" onClick={reload}>Retry</button>
-        </div>
-      )}
+      {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading providers…" />}
+      {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load providers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
       {phase === 'ready' && (
         <div className="table-wrap">
           <table className="tbl">
@@ -167,7 +163,7 @@ function ProvidersPanel({ notify }: SectionProps) {
             </thead>
             <tbody>
               {providers.length === 0 && (
-                <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: '24px 0' }}>No providers configured.</td></tr>
+                <tr><td colSpan={6}><EmptyState table compact icon="sparkle" title="No AI providers configured" body="Add Ollama, Anthropic, or OpenAI-compatible providers before using AI analysis, workflow generation, or agent chat." primary={{ label: 'Add provider', onClick: () => { setEditing(null); setDialogOpen(true) }, icon: 'plus' }} /></td></tr>
               )}
               {providers.map((p) => (
                 <tr key={p.provider_id}>
@@ -301,20 +297,12 @@ function ModelAssignmentPanel({ notify }: SectionProps) {
       title="Model Assignment"
       desc="Pick a provider + model for each system component. Unassigned rows fall back to the chat_default assignment. The model list is live-queried from each provider."
     >
-      {phase === 'loading' && <div className="text-sm text-tx-3 py-8 text-center">Loading AI config…</div>}
-      {phase === 'error' && (
-        <div className="py-8 text-center flex flex-col items-center gap-2.5">
-          <span className="text-sm text-tx-3">Couldn’t load AI config: {error}</span>
-          <button className="btn ghost" onClick={reload}>Retry</button>
-        </div>
-      )}
+      {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading AI config…" />}
+      {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load AI config" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
       {phase === 'ready' && (
         <>
           {providerIds.length === 0 && (
-            <div className="settings-banner info mb-3">
-              <Icon name="info" size={14} />
-              <span>No models discovered — add at least one active provider under Providers first.</span>
-            </div>
+            <EmptyState compact icon="sparkle" title="No assignable models discovered" body="Add and test at least one active provider before assigning models to Vigil components." />
           )}
           <div className="table-wrap">
             <table className="tbl">
