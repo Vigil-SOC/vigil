@@ -196,12 +196,16 @@ def _has_action_verb(tool_name: str) -> bool:
     return any(tok in _ACTION_VERB_TOKENS for tok in normalized.split("_"))
 
 
-# First-party tool namespaces whose destructive-looking verbs are benign
-# internal housekeeping, not security actions — exempt from the verb floor so
-# they don't stall investigations on human approval. mempalace_delete_drawer
-# (routine memory-entry cleanup, injected into every agent's memory protocol)
-# is the motivating case; a future mempalace_purge_*/reset_* would trip too.
-_VERB_FLOOR_EXEMPT_PREFIXES = ("mempalace_",)
+# First-party tool namespaces exempt from the destructive-verb floor, so a
+# verb in their name doesn't stall investigations on human approval:
+#   mempalace_  — internal memory housekeeping, not a security action
+#                 (mempalace_delete_drawer is routine memory-entry cleanup;
+#                  a future mempalace_purge_*/reset_* would trip too).
+#   skill_      — a DB-backed Skill only renders a prompt template and returns
+#                 text (no state change); its slug comes from a user-authored
+#                 name, so "Isolate Host Playbook" -> skill_isolate_host_playbook
+#                 would otherwise gate. Any real action stays separately gated.
+_VERB_FLOOR_EXEMPT_PREFIXES = ("mempalace_", "skill_")
 
 
 def get_tool_tier(tool_name: str) -> str:
