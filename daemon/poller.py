@@ -19,7 +19,7 @@ import asyncio
 import hmac
 import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, List, Any, Set
+from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 
 from daemon.config import PollingConfig
@@ -27,12 +27,6 @@ from daemon.dedup import RedisDedupSet
 from daemon.federation.runner import FederationRunner
 
 logger = logging.getLogger(__name__)
-
-
-def _blocked_ingest_sources(findings: List[Dict[str, Any]], disabled_ids: Set[str]) -> Set[str]:
-    """``data_source`` values belonging to a disabled integration (empty ⇒ batch
-    may ingest). Sources with no integration row (webhook, flow) never appear."""
-    return {f.get("data_source") for f in findings if f.get("data_source") in disabled_ids}
 
 
 @dataclass
@@ -517,7 +511,9 @@ class DataPoller:
                 disabled = await asyncio.to_thread(
                     lambda: get_config_service().get_disabled_integration_ids()
                 )
-                blocked = _blocked_ingest_sources(findings, disabled)
+                blocked = {
+                    s for f in findings if (s := f.get("data_source")) in disabled
+                }
                 if blocked:
                     return web.json_response(
                         {"error": f"ingestion disabled for source(s): {sorted(blocked)}"},
