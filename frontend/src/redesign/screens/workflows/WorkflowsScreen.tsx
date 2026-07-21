@@ -4,7 +4,7 @@
    via useWorkflows / useAgents / useSkills, with loading / empty /
    error states. See REDESIGN_GAPS.md §9.
    ============================================================ */
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Popup, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
@@ -104,8 +104,8 @@ function WorkflowCatalog({ openChat, goSettings }: { openChat: (prompt?: string)
         <button className="btn ghost" onClick={() => setCreating('ai')}><Icon name="sparkle" /> Generate with AI</button>
         <button className="btn primary" onClick={() => setCreating('blank')}><Icon name="plus" /> New workflow</button>
       </div>
-      {phase === 'loading' && <StateMsg><EmptyState compact icon="flow" title="Loading workflows…" /></StateMsg>}
-      {phase === 'error' && <StateMsg><EmptyState icon="alert" title="Couldn’t load workflows" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
+      {phase === 'loading' && <StateMsg><EmptyState loading compact icon="flow" title="Loading workflows…" /></StateMsg>}
+      {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load workflows" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && list.length === 0 && (
         <StateMsg>
           <EmptyState
@@ -436,8 +436,10 @@ function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false
+    setPhase('loading')
+    setError(null)
     workflowApi
       .listRuns(wf.id, { limit: 50 })
       .then((res) => {
@@ -453,10 +455,12 @@ function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
     return () => { cancelled = true }
   }, [wf.id])
 
+  useEffect(() => load(), [load])
+
   return (
     <Popup open onClose={onClose} title={`History · ${wf.name}`} width={720}>
-      {phase === 'loading' && <EmptyState compact icon="clock" title="Loading run history…" />}
-      {phase === 'error' && <EmptyState compact icon="alert" title="Couldn’t load history" body={error} />}
+      {phase === 'loading' && <EmptyState loading compact icon="clock" title="Loading run history…" />}
+      {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load history" body={error} primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />}
       {phase === 'ready' && runs.length === 0 && <EmptyState compact icon="clock" title="No runs yet" body="Run this workflow to capture execution history, duration, trigger, and cost." />}
       {phase === 'ready' && runs.length > 0 && (
         <div className="table-wrap">
@@ -683,8 +687,8 @@ function AgentsTab() {
         </div>
       </div>
 
-      {phase === 'loading' && <StateMsg><EmptyState compact icon="brain" title="Loading agents…" /></StateMsg>}
-      {phase === 'error' && <StateMsg><EmptyState icon="alert" title="Couldn’t load agents" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
+      {phase === 'loading' && <StateMsg><EmptyState loading compact icon="brain" title="Loading agents…" /></StateMsg>}
+      {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load agents" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="brain" title="No agents yet" body="Create a custom SOC agent or refresh to load built-in templates." primary={{ label: 'New agent', onClick: () => setCreating(true), icon: 'plus' }} secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
 
       {phase === 'ready' && rows.length > 0 && (
@@ -1114,8 +1118,8 @@ function SkillsTab() {
         </div>
       </div>
       {importErr && <div className="px-[22px] text-[12.5px]" style={{ color: 'var(--crit)' }}>Import failed: {importErr}</div>}
-      {phase === 'loading' && <StateMsg><EmptyState compact icon="sparkle" title="Loading skills…" /></StateMsg>}
-      {phase === 'error' && <StateMsg><EmptyState icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
+      {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
+      {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills yet" body="Build or import reusable capabilities that agents and workflows can invoke." primary={{ label: 'Build skill', onClick: () => setBuilding(true), icon: 'sparkle' }} secondary={{ label: 'Import Zip', onClick: () => fileRef.current?.click(), icon: 'upload' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
         <div className="grid gap-4 px-[22px] pt-[14px] pb-6 [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))]">

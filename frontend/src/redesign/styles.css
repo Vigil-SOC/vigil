@@ -1265,6 +1265,12 @@
       min-height: 160px;
    }
 
+   /* compact in-table rows (loading / linked-list empties) size to their
+      content instead of the full 160px block */
+   .empty-state-table.compact {
+      min-height: 0;
+   }
+
    .empty-state-icon {
       display: grid;
       place-items: center;
@@ -4420,49 +4426,14 @@
       gap: 18px;
    }
 
+   /* full-height wrapper so the Entity Graph tab centres its EmptyState;
+      the EmptyState primitive owns the icon/copy styling */
    .entity-empty {
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 16px;
-      text-align: center;
       min-height: calc(100vh - 180px);
       padding: 40px;
-   }
-
-   .entity-empty .ee-graphic svg {
-      width: 220px;
-      height: 150px;
-   }
-
-   .entity-empty .ee-graphic line {
-      stroke: var(--line);
-      stroke-width: 1.5;
-   }
-
-   .entity-empty .ee-graphic circle {
-      fill: var(--bg-2);
-      stroke: var(--tx-faint);
-      stroke-width: 1.5;
-   }
-
-   .entity-empty .ee-graphic circle.n-core {
-      fill: var(--accent-dim);
-      stroke: var(--accent);
-      stroke-width: 2;
-   }
-
-   .entity-empty h3 {
-      font-size: 19px;
-   }
-
-   .entity-empty p {
-      font-size: 13.5px;
-      color: var(--tx-3);
-      max-width: 440px;
-      line-height: 1.55;
-      margin: -4px 0 6px;
    }
 
    /* ---------- Timeline tab ---------- */

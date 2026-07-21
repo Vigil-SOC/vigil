@@ -237,10 +237,10 @@ function FindingsTab({ openChat, goSettings }: Pick<ScreenProps, 'openChat' | 'g
           </thead>
           <tbody>
             {phase === 'loading' && (
-              <tr><td colSpan={11}><EmptyState table compact icon="search" title="Loading findings…" /></td></tr>
+              <tr><td colSpan={11}><EmptyState loading table compact icon="search" title="Loading findings…" /></td></tr>
             )}
             {phase === 'error' && (
-              <tr><td colSpan={11}><EmptyState table icon="alert" title="Couldn’t load findings" body={error} primary={{ label: 'Retry', onClick: refresh, icon: 'refresh' }} /></td></tr>
+              <tr><td colSpan={11}><EmptyState error table icon="alert" title="Couldn’t load findings" body={error} primary={{ label: 'Retry', onClick: refresh, icon: 'refresh' }} /></td></tr>
             )}
             {phase === 'ready' && filtered.length === 0 && (
               <tr><td colSpan={11}>
@@ -398,10 +398,10 @@ function AttackTab() {
               </thead>
               <tbody>
                 {phase === 'loading' && (
-                  <tr><td colSpan={9}><EmptyState table compact icon="graph" title="Loading techniques…" /></td></tr>
+                  <tr><td colSpan={9}><EmptyState loading table compact icon="graph" title="Loading techniques…" /></td></tr>
                 )}
                 {phase === 'error' && (
-                  <tr><td colSpan={9}><EmptyState table icon="alert" title="Couldn’t load ATT&CK data" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></td></tr>
+                  <tr><td colSpan={9}><EmptyState error table icon="alert" title="Couldn’t load ATT&CK data" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></td></tr>
                 )}
                 {phase === 'ready' && techniques.length === 0 && (
                   <tr><td colSpan={9}><EmptyState table icon="filter" title="No techniques at this confidence threshold" body="Lower the confidence threshold or load findings with ATT&CK mappings." /></td></tr>

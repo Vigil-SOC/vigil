@@ -352,6 +352,7 @@ export default function FindingPopup({
                 />
               ) : (
                 <EmptyState
+                  error
                   compact
                   icon="alert"
                   title="AI enrichment failed"

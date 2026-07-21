@@ -348,7 +348,7 @@ function AnalyticsBody({ data }: { data: AnalyticsData }) {
 }
 
 function InsightsRail({ timeRange, onClose }: { timeRange: TimeRange; onClose: () => void }) {
-  const { insights, generatedAt, isStale, generating, phase } = useAnalyticsInsights(timeRange)
+  const { insights, generatedAt, isStale, generating, phase, reload } = useAnalyticsInsights(timeRange)
   return (
     <aside className="insights-rail">
       <div className="ir-head">
@@ -364,8 +364,8 @@ function InsightsRail({ timeRange, onClose }: { timeRange: TimeRange; onClose: (
         </button>
       </div>
       <div className="ir-body">
-        {phase === 'loading' && <EmptyState compact icon="brain" title="Loading insights…" />}
-        {phase === 'error' && <EmptyState compact icon="alert" title="Couldn’t load insights" />}
+        {phase === 'loading' && <EmptyState loading compact icon="brain" title="Loading insights…" />}
+        {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load insights" primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
         {phase === 'ready' && insights.length === 0 && (
           <EmptyState
             compact
@@ -440,8 +440,8 @@ export default function AnalyticsScreen() {
           </button>
         </div>
 
-        {phase === 'loading' && <EmptyState icon="chart" title="Loading analytics…" />}
-        {phase === 'error' && <EmptyState icon="alert" title="Couldn’t load analytics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+        {phase === 'loading' && <EmptyState loading icon="chart" title="Loading analytics…" />}
+        {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load analytics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
         {phase === 'ready' && data && (hasActivity ? (
           <AnalyticsBody data={data} />
         ) : (

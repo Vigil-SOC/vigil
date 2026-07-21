@@ -48,8 +48,8 @@ export default function CostAnalyticsCard() {
         </>
       }
     >
-      {phase === 'loading' && <EmptyState compact icon="bars" title="Loading cost analytics…" />}
-      {phase === 'error' && <EmptyState compact icon="alert" title="Couldn’t load cost analytics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {phase === 'loading' && <EmptyState loading compact icon="bars" title="Loading cost analytics…" />}
+      {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load cost analytics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
       {phase === 'ready' && data && (
         <>
           <div className="grid grid-cols-4 gap-3 mb-4">

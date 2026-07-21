@@ -50,9 +50,9 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   const [saving, setSaving] = useState(false)
   const [confirmDel, setConfirmDel] = useState<DetectionSource | null>(null)
 
-  if (phase === 'loading') return <EmptyState icon="shield" title="Loading detection rules…" />
+  if (phase === 'loading') return <EmptyState loading icon="shield" title="Loading detection rules…" />
   if (phase === 'error') {
-    return <EmptyState icon="alert" title="Couldn’t load detection rules" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
+    return <EmptyState error icon="alert" title="Couldn’t load detection rules" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
   }
 
   const onUpdateSource = async (id: string) => {

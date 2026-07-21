@@ -66,8 +66,8 @@ export default function MetricsScreen() {
         <button className="btn primary"><Icon name="download" /> Export report</button>
       </div>
 
-      {phase === 'loading' && <EmptyState icon="bars" title="Loading case metrics…" />}
-      {phase === 'error' && <EmptyState icon="alert" title="Couldn’t load case metrics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {phase === 'loading' && <EmptyState loading icon="bars" title="Loading case metrics…" />}
+      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load case metrics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
       {phase === 'ready' && data && (hasCases ? (
         <MetricsBody data={data} />
       ) : (

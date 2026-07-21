@@ -5,7 +5,7 @@
    tab set (AI Config / Integrations / Users / Auto Investigate /
    Federation / System / General / Developer).
    ============================================================ */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Icon, type IconName } from '../../shared/icons'
 import type { ScreenProps, SettingsSectionKey } from '../../shared/types'
@@ -50,13 +50,12 @@ export default function SettingsScreen({ setViewFull }: ScreenProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const sectionParam = searchParams.get('section')
   const sectionKeys = useMemo(() => new Set(sections.map((s) => s.key)), [sections])
-  const getSection = useCallback(
-    (value: string | null): SettingsSectionKey =>
-      value && sectionKeys.has(value as SettingsSectionKey) ? (value as SettingsSectionKey) : 'appearance',
-    [sectionKeys],
-  )
-  // open on the first section (Appearance)
-  const [active, setActive] = useState<SettingsSectionKey>(() => getSection(sectionParam))
+  // the active section is derived straight from the URL (?section=), falling
+  // back to Appearance for a missing / unknown / dev-gated key
+  const active: SettingsSectionKey =
+    sectionParam && sectionKeys.has(sectionParam as SettingsSectionKey)
+      ? (sectionParam as SettingsSectionKey)
+      : 'appearance'
   // section save/test results surface through the shell-wide toast (§10) rather
   // than a settings-local banner, so feedback is consistent across the console
   const { notify } = useToast()
@@ -65,10 +64,6 @@ export default function SettingsScreen({ setViewFull }: ScreenProps) {
     setViewFull(true)
     return () => setViewFull(false)
   }, [setViewFull])
-
-  useEffect(() => {
-    setActive(getSection(sectionParam))
-  }, [getSection, sectionParam])
 
   const current = sections.find((s) => s.key === active) ?? sections[0]
   const Section = current.Component
@@ -80,7 +75,7 @@ export default function SettingsScreen({ setViewFull }: ScreenProps) {
           <button
             key={s.key}
             className={`settings-nav-item${s.key === active ? ' active' : ''}`}
-            onClick={() => setSearchParams({ section: s.key })}
+            onClick={() => setSearchParams({ section: s.key }, { replace: true })}
           >
             <Icon name={s.icon} size={16} />
             <span>{s.label}</span>

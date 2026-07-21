@@ -103,7 +103,7 @@ function StateRow({ cols, children }: { cols: number; children: ReactNode }) {
 }
 
 function RetryState({ msg, reload }: { msg: string | null; reload: () => void }) {
-  return <EmptyState table icon="alert" title="Couldn’t load data" body={msg} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
+  return <EmptyState error table icon="alert" title="Couldn’t load data" body={msg} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
 }
 
 /* ---------------- KPI strip ---------------- */
@@ -174,7 +174,7 @@ function DecisionRows({
           </tr>
         </thead>
         <tbody>
-          {phase === 'loading' && <StateRow cols={9}><EmptyState table compact icon="brain" title="Loading decisions…" /></StateRow>}
+          {phase === 'loading' && <StateRow cols={9}><EmptyState loading table compact icon="brain" title="Loading decisions…" /></StateRow>}
           {phase === 'error' && <StateRow cols={9}><RetryState msg={error} reload={reload} /></StateRow>}
           {phase === 'ready' && rows.length === 0 && (
             <StateRow cols={9}>
@@ -224,9 +224,9 @@ function DecisionRows({
 
 /* ---------------- Analytics tab ---------------- */
 function AnalyticsTab({ s, phase, error, reload }: { s: DecisionStats | null; phase: Phase; error: string | null; reload: () => void }) {
-  if (phase === 'loading') return <EmptyState icon="bars" title="Loading analytics…" />
+  if (phase === 'loading') return <EmptyState loading icon="bars" title="Loading analytics…" />
   if (phase === 'error') {
-    return <EmptyState icon="alert" title="Couldn’t load analytics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
+    return <EmptyState error icon="alert" title="Couldn’t load analytics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
   }
   if (!s) return <EmptyState icon="bars" title="No decision analytics yet" body="Review AI decisions to populate accuracy, outcome, and time-saved analytics." />
 
@@ -294,7 +294,7 @@ function ApprovalsTab({
             </tr>
           </thead>
           <tbody>
-            {phase === 'loading' && <StateRow cols={6}><EmptyState table compact icon="check2" title="Loading approvals…" /></StateRow>}
+            {phase === 'loading' && <StateRow cols={6}><EmptyState loading table compact icon="check2" title="Loading approvals…" /></StateRow>}
             {phase === 'error' && <StateRow cols={6}><RetryState msg={error} reload={reload} /></StateRow>}
             {phase === 'ready' && actions.length === 0 && (
               <StateRow cols={6}>

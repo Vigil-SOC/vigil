@@ -36,6 +36,8 @@ export function EmptyState({
   secondary,
   compact = false,
   table = false,
+  loading = false,
+  error = false,
 }: {
   icon?: IconName
   title: ReactNode
@@ -44,9 +46,17 @@ export function EmptyState({
   secondary?: { label: ReactNode; onClick: () => void; icon?: IconName }
   compact?: boolean
   table?: boolean
+  /** announce as a live region so screen readers hear the transition
+   *  (REDESIGN_GAPS.md §10): `loading` → polite status, `error` → assertive alert */
+  loading?: boolean
+  error?: boolean
 }) {
   const content = (
-    <div className={`empty-state${compact ? ' compact' : ''}`}>
+    <div
+      className={`empty-state${compact ? ' compact' : ''}`}
+      role={loading ? 'status' : error ? 'alert' : undefined}
+      aria-live={loading ? 'polite' : error ? 'assertive' : undefined}
+    >
       <div className="empty-state-icon"><Icon name={icon} size={compact ? 18 : 24} /></div>
       <div className="empty-state-copy">
         <h3>{title}</h3>
@@ -56,19 +66,21 @@ export function EmptyState({
         <div className="empty-state-actions">
           {secondary && (
             <button className="btn ghost" onClick={secondary.onClick}>
-              {secondary.icon && <Icon name={secondary.icon} />} {secondary.label}
+              {secondary.icon && <Icon name={secondary.icon} />}
+              {secondary.label}
             </button>
           )}
           {primary && (
             <button className="btn primary" onClick={primary.onClick}>
-              {primary.icon && <Icon name={primary.icon} />} {primary.label}
+              {primary.icon && <Icon name={primary.icon} />}
+              {primary.label}
             </button>
           )}
         </div>
       )}
     </div>
   )
-  return table ? <div className="empty-state-table">{content}</div> : content
+  return table ? <div className={`empty-state-table${compact ? ' compact' : ''}`}>{content}</div> : content
 }
 
 /* ---------------- Popup (modal dialog) ---------------- */

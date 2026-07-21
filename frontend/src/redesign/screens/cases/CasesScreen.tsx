@@ -126,7 +126,7 @@ function FindingsCard({ total, linked, phase }: { total: number; linked: DetailD
           <thead><tr><th>Finding ID</th><th>Severity</th><th>Technique</th><th>Time</th></tr></thead>
           <tbody>
             {phase === 'loading' && (
-              <tr><td colSpan={4}><EmptyState table compact icon="search" title="Loading findings…" /></td></tr>
+              <tr><td colSpan={4}><EmptyState loading table compact icon="search" title="Loading findings…" /></td></tr>
             )}
             {phase === 'ready' && linked.length === 0 && (
               <tr><td colSpan={4}><EmptyState table compact icon="shield" title="No findings linked" body="Attach findings to this case to keep investigation evidence in one place." /></td></tr>
@@ -154,7 +154,7 @@ function TimelineCard({ caseId }: { caseId: string }) {
   const [events, setEvents] = useState<TlEvent[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false
     setPhase('loading')
     timelineApi
@@ -171,6 +171,8 @@ function TimelineCard({ caseId }: { caseId: string }) {
     }
   }, [caseId])
 
+  useEffect(() => load(), [load])
+
   const fmt = (s: string) => {
     const d = new Date(s)
     return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d · HH:mm')
@@ -179,8 +181,8 @@ function TimelineCard({ caseId }: { caseId: string }) {
   return (
     <SectionCard title="Timeline" count={phase === 'ready' ? `${events.length} events` : undefined}>
       <div className="p-[18px]">
-        {phase === 'loading' && <EmptyState compact icon="clock" title="Loading timeline…" />}
-        {phase === 'error' && <EmptyState compact icon="alert" title="Couldn’t load the timeline" />}
+        {phase === 'loading' && <EmptyState loading compact icon="clock" title="Loading timeline…" />}
+        {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load the timeline" primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />}
         {phase === 'ready' && events.length === 0 && <EmptyState compact icon="clock" title="No timeline events" body="Case activity, findings, comments, and workflow events will appear here." />}
         {phase === 'ready' && events.length > 0 && (
           <div className="timeline">
@@ -390,10 +392,10 @@ function CasesTable({
             </tr>
           </thead>
           <tbody>
-            {phase === 'loading' && <StateRow><EmptyState table compact icon="folder" title="Loading cases…" /></StateRow>}
+            {phase === 'loading' && <StateRow><EmptyState loading table compact icon="folder" title="Loading cases…" /></StateRow>}
             {phase === 'error' && (
               <StateRow>
-                <EmptyState table icon="alert" title="Couldn’t load cases" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
+                <EmptyState error table icon="alert" title="Couldn’t load cases" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
               </StateRow>
             )}
             {phase === 'ready' && sorted.length === 0 && (
@@ -880,6 +882,7 @@ function ExportTimesketchDialog({ open, c, onClose, onConfigure }: { open: boole
           </label>
           {err && (
             <EmptyState
+              error
               compact
               icon="alert"
               title="Timesketch export failed"

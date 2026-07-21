@@ -64,10 +64,10 @@ export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }:
   }
 
   if (!status && phase === 'loading') {
-    return <EmptyState icon="bot" title="Loading autonomous operations…" />
+    return <EmptyState loading icon="bot" title="Loading autonomous operations…" />
   }
   if (!status && phase === 'error') {
-    return <EmptyState icon="alert" title="Couldn’t load autonomous operations" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
+    return <EmptyState error icon="alert" title="Couldn’t load autonomous operations" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
   }
   if (!status) return <></>
 

@@ -150,8 +150,8 @@ function ProvidersPanel({ notify }: SectionProps) {
         </button>
       }
     >
-      {phase === 'loading' && <EmptyState compact icon="sparkle" title="Loading providers…" />}
-      {phase === 'error' && <EmptyState compact icon="alert" title="Couldn’t load providers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading providers…" />}
+      {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load providers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
       {phase === 'ready' && (
         <div className="table-wrap">
           <table className="tbl">
@@ -297,8 +297,8 @@ function ModelAssignmentPanel({ notify }: SectionProps) {
       title="Model Assignment"
       desc="Pick a provider + model for each system component. Unassigned rows fall back to the chat_default assignment. The model list is live-queried from each provider."
     >
-      {phase === 'loading' && <EmptyState compact icon="sparkle" title="Loading AI config…" />}
-      {phase === 'error' && <EmptyState compact icon="alert" title="Couldn’t load AI config" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading AI config…" />}
+      {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load AI config" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
       {phase === 'ready' && (
         <>
           {providerIds.length === 0 && (

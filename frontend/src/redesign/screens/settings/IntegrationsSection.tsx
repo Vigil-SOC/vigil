@@ -114,8 +114,8 @@ function ServersPanel({ notify }: SectionProps) {
       </div>
 
 
-      {phase === 'loading' && <EmptyState icon="link" title="Loading integrations…" />}
-      {phase === 'error' && <EmptyState icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
+      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
 
       {phase === 'ready' && grouped.length === 0 && (
         <EmptyState

@@ -106,12 +106,12 @@ export function SectionCard({
   )
 }
 
-function Note({ children }: { children: ReactNode }) {
-  return <div className="muted text-center py-6 text-[13px] px-[18px]">{children}</div>
-}
-
 function MiniEmpty({ title, body, icon = 'info' }: { title: string; body?: string; icon?: Parameters<typeof EmptyState>[0]['icon'] }) {
   return <EmptyState compact icon={icon} title={title} body={body} />
+}
+
+function MiniLoading({ title, icon = 'info', table = false }: { title: string; icon?: Parameters<typeof EmptyState>[0]['icon']; table?: boolean }) {
+  return <EmptyState loading compact table={table} icon={icon} title={title} />
 }
 
 function AddBtn({ on, onClick }: { on: boolean; onClick: () => void }) {
@@ -181,7 +181,7 @@ export function EvidenceCard({ caseId }: { caseId: string }) {
         <table className="tbl">
           <thead><tr><th>Type</th><th>Name</th><th>Description</th><th>Collected</th><th>By</th><th>Hash</th></tr></thead>
           <tbody>
-            {phase === 'loading' && <tr><td colSpan={6}><Note>Loading…</Note></td></tr>}
+            {phase === 'loading' && <tr><td colSpan={6}><MiniLoading table icon="doc" title="Loading evidence…" /></td></tr>}
             {phase === 'ready' && items.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="doc" title="No evidence attached" body="Add screenshots, URLs, logs, or files that support this case." /></td></tr>}
             {items.map((e) => (
               <tr key={e.id}>
@@ -302,7 +302,7 @@ export function TasksCard({ caseId }: { caseId: string }) {
         </div>
       )}
       <div className="p-[18px] pt-3 flex flex-col gap-2.5">
-        {phase === 'loading' && <Note>Loading…</Note>}
+        {phase === 'loading' && <MiniLoading icon="note" title="Loading tasks…" />}
         {phase === 'ready' && tasks.length === 0 && <MiniEmpty icon="note" title="No tasks yet" body="Add tasks to assign containment, validation, or follow-up work." />}
         {tasks.map((t) => {
           const overdue = t.due_date && t.status !== 'completed' && new Date(t.due_date).getTime() < Date.now()
@@ -392,7 +392,7 @@ export function SLACard({ caseId }: { caseId: string }) {
   return (
     <SectionCard title="SLA">
       <div className="p-[18px]">
-        {phase === 'loading' && <Note>Loading…</Note>}
+        {phase === 'loading' && <MiniLoading icon="clock" title="Loading SLA…" />}
         {phase === 'ready' && !data && <MiniEmpty icon="clock" title="No SLA policy attached" body="Apply an SLA policy to track response and resolution timing." />}
         {data && (
           <>
@@ -520,7 +520,7 @@ export function CommentsCard({ caseId }: { caseId: string }) {
   return (
     <SectionCard title="Comments" count={`${total}`} wide>
       <div className="p-[18px] flex flex-col gap-4">
-        {phase === 'loading' && <Note>Loading…</Note>}
+        {phase === 'loading' && <MiniLoading icon="note" title="Loading comments…" />}
         {phase === 'ready' && total === 0 && <MiniEmpty icon="note" title="No comments yet" body="Use comments to capture analyst notes, handoffs, and review decisions." />}
         {visible.map((c) => <CommentNode key={c.id} c={c} onReply={setReplyTo} />)}
         {tree.length > 1 && (
@@ -594,7 +594,7 @@ export function WatchersCard({ caseId }: { caseId: string }) {
         </div>
       )}
       <div className="p-[18px] flex flex-col gap-2.5">
-        {phase === 'loading' && <Note>Loading…</Note>}
+        {phase === 'loading' && <MiniLoading icon="eye" title="Loading watchers…" />}
         {phase === 'ready' && watchers.length === 0 && <MiniEmpty icon="eye" title="No watchers yet" body="Add analysts who should receive updates for this case." />}
         {watchers.map((w) => (
           <div key={w.user_id} className="flex items-center gap-2.5">
@@ -670,7 +670,7 @@ export function IOCsCard({ caseId }: { caseId: string }) {
         <table className="tbl">
           <thead><tr><th>Type</th><th>Value</th><th>Description</th><th>Source</th><th>Threat</th><th>First seen</th></tr></thead>
           <tbody>
-            {phase === 'loading' && <tr><td colSpan={6}><Note>Loading…</Note></td></tr>}
+            {phase === 'loading' && <tr><td colSpan={6}><MiniLoading table icon="alert" title="Loading IOCs…" /></td></tr>}
             {phase === 'ready' && iocs.length === 0 && <tr><td colSpan={6}><MiniEmpty icon="alert" title="No IOCs recorded" body="Add IPs, domains, hashes, URLs, or emails observed during investigation." /></td></tr>}
             {iocs.map((i) => {
               const tl = threatLevel(i)
@@ -747,7 +747,7 @@ export function RelatedCasesCard({ caseId, rows, onSelect }: { caseId: string; r
         </div>
       )}
       <div className="p-[18px] flex flex-col gap-2.5">
-        {phase === 'loading' && <Note>Loading…</Note>}
+        {phase === 'loading' && <MiniLoading icon="link" title="Loading related cases…" />}
         {phase === 'ready' && linked.length === 0 && <MiniEmpty icon="link" title="No related cases" body="Link duplicate, blocking, or related cases when investigations overlap." />}
         {linked.map((l) => (
           <div key={l.link_id} className="flex items-center gap-2.5 clickable" onClick={() => onSelect(l.related_case_id)}>
@@ -788,7 +788,7 @@ export function AuditLogCard({ caseId }: { caseId: string }) {
   return (
     <SectionCard title="Audit log" count={`${entries.length}`} wide>
       <div className="p-[18px] flex flex-col gap-2.5">
-        {phase === 'loading' && <Note>Loading…</Note>}
+        {phase === 'loading' && <MiniLoading icon="clock" title="Loading audit log…" />}
         {phase === 'ready' && entries.length === 0 && <MiniEmpty icon="clock" title="No audit entries yet" body="Status, assignment, and field changes will be recorded here." />}
         {entries.map((a) => (
           <div key={a.id} className="flex gap-2.5 text-[13px]">
