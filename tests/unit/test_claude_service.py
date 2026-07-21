@@ -320,12 +320,6 @@ class TestClaudeServiceInitialization:
             elif not original_exists and cache_file.exists():
                 cache_file.unlink()
 
-    @pytest.mark.xfail(
-        reason="Pre-existing: brittle coupling to _load_mcp_tools cache-loading "
-        "internals; mcp_tools loads empty here. strict=True so an unexpected pass "
-        "fails CI — that's the signal the loader was rewritten; remove the marker.",
-        strict=True,
-    )
     @patch('services.claude_service.get_secret')
     def test_no_event_loop_creation(self, mock_get_secret):
         """_load_mcp_tools never calls asyncio.new_event_loop."""
@@ -351,7 +345,12 @@ class TestClaudeServiceInitialization:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             cache_file.write_text(json.dumps(cache_data))
 
-            with patch('asyncio.new_event_loop') as mock_new_loop:
+            with patch('asyncio.new_event_loop') as mock_new_loop, \
+                 patch('services.mcp_client.get_mcp_client') as mock_get_client:
+                # Cached tools only surface for servers connected this boot.
+                mock_get_client.return_value.get_connection_status.return_value = {
+                    "splunk": True
+                }
                 with patch.object(ClaudeService, '_populate_mcp_registry'):
                     service = ClaudeService(use_mcp_tools=True)
                 mock_new_loop.assert_not_called()
@@ -1307,13 +1306,6 @@ class TestLoadMcpToolsCache:
         assert tool["input_schema"]["type"] == "object"
         assert "query" in tool["input_schema"]["properties"]
 
-    @pytest.mark.xfail(
-        reason="Pre-existing: brittle coupling to _load_mcp_tools cache-loading "
-        "internals (Path/open mocking); mcp_tools loads empty here. strict=True so "
-        "an unexpected pass fails CI — the signal the loader was rewritten; remove "
-        "the marker.",
-        strict=True,
-    )
     def test_cache_file_load_with_real_file(self, tmp_path):
         """_load_mcp_tools reads tools correctly from a real cache file on disk."""
         import json as _json
@@ -1345,7 +1337,12 @@ class TestLoadMcpToolsCache:
                 return real_open(path, *args, **kwargs)
 
             with patch('builtins.open', side_effect=selective_open), \
+                 patch('services.mcp_client.get_mcp_client') as mock_get_client, \
                  patch.object(service, '_populate_mcp_registry', lambda d: None):
+                # Cached tools only surface for servers connected this boot.
+                mock_get_client.return_value.get_connection_status.return_value = {
+                    "splunk": True
+                }
                 service._load_mcp_tools()
 
         assert len(service.mcp_tools) == 1

@@ -102,6 +102,12 @@ class OrchestratorConfig:
     context_max_chars: int = 10000
     plan_model: str = DEFAULT_MODEL
     review_model: str = DEFAULT_MODEL
+    # Provider that owns plan_model/review_model. Resolved alongside the model
+    # from ai_model_configs so autonomous investigations can run on
+    # non-Anthropic providers (Ollama/OpenAI/Groq). None means "the default
+    # Anthropic provider" and preserves pre-multi-provider behavior.
+    plan_provider_id: Optional[str] = None
+    review_provider_id: Optional[str] = None
 
 
 @dataclass
@@ -296,9 +302,14 @@ class DaemonConfig:
             registry = get_registry()
             plan_pick = registry.resolve_model_for_component('orchestrator_plan')
             review_pick = registry.resolve_model_for_component('orchestrator_review')
+            # resolve_model_for_component returns (provider_id, model_id). Keep
+            # BOTH: the provider_id is what lets the daemon route a non-Anthropic
+            # model through Bifrost instead of silently assuming Anthropic.
             if plan_pick is not None:
+                config.orchestrator.plan_provider_id = plan_pick[0]
                 config.orchestrator.plan_model = plan_pick[1]
             if review_pick is not None:
+                config.orchestrator.review_provider_id = review_pick[0]
                 config.orchestrator.review_model = review_pick[1]
             if plan_pick or review_pick:
                 logger.info(

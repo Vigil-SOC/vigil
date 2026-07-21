@@ -94,17 +94,19 @@
 
     "azure-sentinel": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://sentinelmcp.microsoft.com/v1/mcp"],
+      "args": ["-y", "mcp-remote@^0.1.16", "https://sentinelmcp.microsoft.com/v1/mcp"],
       "env": {
-        "_setup_note": "Microsoft Sentinel MCP (GA Nov 2025). Requires: (1) Onboarding to Microsoft Sentinel data lake, (2) Microsoft Entra OAuth. See: https://learn.microsoft.com/en-us/azure/sentinel/datalake/sentinel-mcp-get-started"
+        "_setup_note": "Microsoft Sentinel MCP (GA Nov 2025). Requires: (1) Onboarding to Microsoft Sentinel data lake, (2) Microsoft Entra OAuth. See: https://learn.microsoft.com/en-us/azure/sentinel/datalake/sentinel-mcp-get-started",
+        "_security_note": "mcp-remote pinned to >=0.1.16 to avoid CVE-2025-6514 (RCE via malicious authorization_endpoint in OAuth metadata). Do not remove the version pin."
       }
     },
 
     "splunk": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "${SPLUNK_MCP_URL}"],
+      "args": ["-y", "mcp-remote@^0.1.16", "${SPLUNK_MCP_URL}"],
       "env": {
         "_setup_note": "Splunk Official MCP Server. Deploy via Azure Marketplace (Splunk-hosted) or self-managed. See: https://www.splunk.com/en_us/blog/artificial-intelligence/unlocking-ai-driven-operations-with-splunk-mcp-server-on-azure-marketplace.html",
+        "_security_note": "mcp-remote pinned to >=0.1.16 to avoid CVE-2025-6514 (RCE via malicious authorization_endpoint in OAuth metadata). Do not remove the version pin.",
         "SPLUNK_MCP_URL": "${SPLUNK_MCP_URL}"
       }
     },
@@ -148,9 +150,10 @@
 
     "jira": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/mcp"],
+      "args": ["-y", "mcp-remote@^0.1.16", "https://mcp.atlassian.com/v1/mcp"],
       "env": {
-        "_setup_note": "Atlassian Rovo MCP Server (official). Covers Jira + Confluence + Compass. Uses OAuth 2.1 via browser flow. See: https://github.com/atlassian/atlassian-mcp-server"
+        "_setup_note": "Atlassian Rovo MCP Server (official). Covers Jira + Confluence + Compass. Uses OAuth 2.1 via browser flow. See: https://github.com/atlassian/atlassian-mcp-server",
+        "_security_note": "mcp-remote pinned to >=0.1.16 to avoid CVE-2025-6514 (RCE via malicious authorization_endpoint in OAuth metadata). Do not remove the version pin."
       }
     },
 

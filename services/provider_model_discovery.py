@@ -31,13 +31,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
-from services.url_safety import SafeUrl, UrlSafetyError, validate_provider_url
+from services.url_safety import UrlSafetyError, validate_provider_url
 
 logger = logging.getLogger(__name__)
 
@@ -326,6 +327,132 @@ def _ollama_context_from_show(show_payload: Dict[str, Any]) -> int:
     return 0
 
 
+# Ollama model families known to support OpenAI-style tool calling.
+# Derived from Ollama docs and empirical testing. The model name (or its
+# architecture family from /api/show) is matched case-insensitively.
+_OLLAMA_TOOL_CAPABLE_FAMILIES = frozenset(
+    (
+        "llama3.1",
+        "llama3.2",
+        "llama3.3",
+        "llama4",
+        "qwen2.5",
+        "qwen3",
+        "qwq",
+        "mistral",
+        "mixtral",
+        "mistral-nemo",
+        "mistral-small",
+        "mistral-large",
+        "command-r",
+        "command-r-plus",
+        "deepseek-r1",
+        "deepseek-v2",
+        "deepseek-v3",
+        "deepseek-coder-v2",
+        "nemotron",
+        "granite3",
+        "phi4",
+        "glm4",
+        "glm-4",
+        "hermes3",
+        "athene",
+        "firefunction",
+    )
+)
+
+_OLLAMA_VISION_CAPABLE_FAMILIES = frozenset(
+    (
+        "llava",
+        "llava-llama3",
+        "llava-phi3",
+        "llama3.2-vision",
+        "moondream",
+        "bakllava",
+        "minicpm-v",
+    )
+)
+
+
+def _ollama_env_tool_allowlist() -> frozenset:
+    """Operator-supplied tool-capable model names/prefixes.
+
+    ``OLLAMA_EXTRA_TOOL_MODELS`` (comma-separated) lets a deployment mark
+    custom/local models as tool-capable when neither /api/tags nor the
+    built-in family list knows them.
+    """
+    raw = os.getenv("OLLAMA_EXTRA_TOOL_MODELS", "")
+    return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
+
+
+def _name_matches_family(name_lower: str, families) -> bool:
+    return any(name_lower.startswith(f) or name_lower == f for f in families)
+
+
+def _ollama_capabilities_from_show(
+    model_name: str,
+    show_payload: Dict[str, Any],
+    live_caps: Optional[List[str]] = None,
+) -> Dict[str, bool]:
+    """Infer model capabilities from Ollama metadata.
+
+    Precedence for tool support: the live ``/api/tags`` capabilities are
+    authoritative; then an operator allowlist (``OLLAMA_EXTRA_TOOL_MODELS``);
+    then name/architecture-family heuristics (logged, since they can lag new
+    model releases).
+    """
+    name_lower = model_name.lower().split(":")[0]
+    info = show_payload.get("model_info") or {}
+    live_caps = live_caps or []
+
+    families_in_info = set()
+    for key in info:
+        parts = key.split(".")
+        if parts:
+            families_in_info.add(parts[0].lower())
+
+    # Tool support, in order of authority.
+    if "tools" in live_caps:
+        supports_tools = True
+    elif _name_matches_family(name_lower, _ollama_env_tool_allowlist()):
+        supports_tools = True
+        logger.info(
+            "ollama: %s marked tool-capable via OLLAMA_EXTRA_TOOL_MODELS",
+            model_name,
+        )
+    else:
+        supports_tools = _name_matches_family(name_lower, _OLLAMA_TOOL_CAPABLE_FAMILIES)
+        if not supports_tools:
+            for arch_family in families_in_info:
+                if arch_family in ("general", "tokenizer"):
+                    continue
+                for known in _OLLAMA_TOOL_CAPABLE_FAMILIES:
+                    normalized = known.replace("-", "").replace(".", "")
+                    if arch_family.startswith(normalized):
+                        supports_tools = True
+                        break
+                if supports_tools:
+                    break
+        if supports_tools:
+            logger.debug(
+                "ollama: %s tool support inferred from name/arch heuristic "
+                "(not reported by /api/tags)",
+                model_name,
+            )
+
+    # Vision support: prefer live capability, else name heuristic.
+    supports_vision = "vision" in live_caps or _name_matches_family(
+        name_lower, _OLLAMA_VISION_CAPABLE_FAMILIES
+    )
+
+    # Ollama models don't have native extended thinking in the Anthropic sense
+    return {
+        "supports_tools": supports_tools,
+        "supports_thinking": False,
+        "supports_vision": supports_vision,
+    }
+
+
 async def fetch_ollama_models(
     base_url: Optional[str] = None,
     *,
@@ -377,34 +504,45 @@ async def fetch_ollama_models(
     if cached is not None:
         return cached
 
-    async def _list() -> List[str]:
+    async def _list() -> List[Dict[str, Any]]:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             resp = await client.get(f"{base}/api/tags")
             resp.raise_for_status()
-            # ``resp.content`` is bytes on real httpx responses. Test
-            # fakes may omit it — gate the cap on attribute presence so
-            # unit tests using minimal stubs don't have to mock it.
             if len(getattr(resp, "content", b"") or b"") > _MAX_RESPONSE_BYTES:
                 raise RuntimeError("upstream response exceeded size cap")
             payload = resp.json()
-        return [m.get("name") for m in payload.get("models", []) if m.get("name")]
+        return [m for m in payload.get("models", []) if m.get("name")]
 
-    names = await _with_retry("ollama tags fetch", _list)
+    tag_entries = await _with_retry("ollama tags fetch", _list)
+    names = [m["name"] for m in tag_entries]
+    # Build a lookup for capabilities reported by /api/tags
+    tags_caps: Dict[str, List[str]] = {}
+    for entry in tag_entries:
+        tags_caps[entry["name"]] = entry.get("capabilities") or []
 
     async def _show(client: httpx.AsyncClient, name: str) -> ModelMeta:
         try:
             resp = await client.post(f"{base}/api/show", json={"name": name})
             resp.raise_for_status()
-            # ``resp.content`` is bytes on real httpx responses. Test
-            # fakes may omit it — gate the cap on attribute presence so
-            # unit tests using minimal stubs don't have to mock it.
             if len(getattr(resp, "content", b"") or b"") > _MAX_RESPONSE_BYTES:
                 raise RuntimeError("upstream response exceeded size cap")
-            ctx = _ollama_context_from_show(resp.json())
+            payload = resp.json()
+            ctx = _ollama_context_from_show(payload)
+            caps = _ollama_capabilities_from_show(
+                name, payload, live_caps=tags_caps.get(name, [])
+            )
         except Exception as exc:  # noqa: BLE001
             logger.debug("ollama /api/show %s failed: %s", name, exc)
             ctx = 0
-        return ModelMeta(id=name, display_name=name, context_window=ctx)
+            caps = _ollama_capabilities_from_show(
+                name, {}, live_caps=tags_caps.get(name, [])
+            )
+        return ModelMeta(
+            id=name,
+            display_name=name,
+            context_window=ctx,
+            capabilities=caps,
+        )
 
     async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
         models = await asyncio.gather(*(_show(client, n) for n in names))

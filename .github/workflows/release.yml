@@ -36,6 +36,10 @@ jobs:
   # ---------------------------------------------------------------------------
   version:
     name: Resolve version
+    # Canonical repo only. This pipeline pushes to ghcr.io/vigil-soc and needs
+    # org packages permissions a fork can't use; skipping keeps forks quiet if
+    # a vX.Y.Z tag is ever pushed in one.
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -48,6 +52,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-backend:
     name: Build backend image
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     needs: [version]
     permissions:
@@ -114,6 +119,7 @@ jobs:
   # ---------------------------------------------------------------------------
   build-daemon:
     name: Build daemon image
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -173,6 +179,7 @@ jobs:
   # ---------------------------------------------------------------------------
   smoke-test:
     name: Smoke test images
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     needs: [version, build-backend, build-daemon]
     permissions:
@@ -214,6 +221,7 @@ jobs:
   # ---------------------------------------------------------------------------
   update-release:
     name: Annotate GitHub Release
+    if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     needs: [version, smoke-test]
     permissions:
