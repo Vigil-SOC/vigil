@@ -80,7 +80,9 @@ done
 
 # --- Database init ---
 python3 scripts/init_schema.py || { echo "Schema init failed."; exit 1; }
-python3 scripts/init_default_user.py || true
+# Seed roles/reference data so first-run bootstrap can assign role-admin. No
+# default admin is seeded — the empty user table triggers the bootstrap screen.
+python3 scripts/seed_reference_data.py || true
 
 # --- Frontend deps ---
 if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend" ] && [ ! -d "frontend/node_modules" ]; then
@@ -99,8 +101,11 @@ print_ready() {
     echo "Frontend: http://localhost:6988"
     echo "Docs:     http://localhost:6987/docs"
     echo ""
-    echo "Login: admin / admin123 (change in production)"
-    [ "${DEV_MODE:-}" = "true" ] && echo "DEV_MODE active - auth bypassed"
+    if [ "${DEV_MODE:-}" = "true" ]; then
+        echo "DEV_MODE active - auth bypassed"
+    else
+        echo "First run: create your admin account at http://localhost:6988"
+    fi
     echo "=========================================="
 }
 

@@ -123,6 +123,9 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset(
         "/api/auth/logout",
         "/api/auth/password-reset/request",
         "/api/auth/password-reset/confirm",
+        # First-run account creation — unauthenticated by necessity; only ever
+        # live on an empty instance (see backend/api/auth.py bootstrap routes).
+        "/api/auth/bootstrap",
         # Health check — used by load balancers and Docker.
         "/api/health",
         # VStrike inbound receiver uses its own bearer API-key dependency.

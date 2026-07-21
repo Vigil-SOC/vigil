@@ -501,7 +501,9 @@ class DatabaseManager:
                 new_config.host,
                 new_config.port,
                 new_config.database,
-                *old,
+                old[0],
+                old[1],
+                old[2],
                 e,
             )
             self._config_generation = generation  # don't retry every interval
