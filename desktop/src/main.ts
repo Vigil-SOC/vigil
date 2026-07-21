@@ -264,6 +264,33 @@ async function checkDependencies(): Promise<boolean> {
   return true;
 }
 
+function dockerDaemonReady(): boolean {
+  try {
+    execFileSync("docker", ["info"], { env: augmentedEnv(), stdio: "ignore", timeout: 10000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Standalone talks to docker directly (no app_up.sh), so it must start Docker
+// Desktop itself; mirrors ensure_docker in scripts/lib.sh for the source path.
+async function ensureDockerRunning(): Promise<boolean> {
+  if (dockerDaemonReady()) return true;
+  sendSplash("log", "Docker daemon not reachable — starting Docker…");
+  try {
+    if (process.platform === "darwin") execFileSync("/usr/bin/open", ["-a", "Docker"], { stdio: "ignore" });
+    else if (process.platform === "linux") execFileSync("systemctl", ["start", "docker"], { stdio: "ignore" });
+  } catch {
+    /* couldn't launch it; the poll below still gives the user time to start it */
+  }
+  for (let i = 0; i < 90; i++) {
+    if (dockerDaemonReady()) return true;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return false;
+}
+
 // A GUI-launched app inherits launchd's minimal PATH, not the one from your
 // shell profile — so python (python.org), node (nvm/conda) and docker are all
 // invisible to the scripts we spawn. Ask the login shell for its real PATH
@@ -457,6 +484,11 @@ function loadBundledImage(): Promise<number> {
 
 async function bringUpStandalone(): Promise<boolean> {
   const phase = (p: string, status: string) => sendSplash("step", { phase: p, status });
+
+  if (!(await ensureDockerRunning())) {
+    sendSplash("error", "Docker Desktop isn't running and couldn't be started. Start it, then retry.");
+    return false;
+  }
 
   // Reported as its own step so first run doesn't look hung. Skipped once the
   // image is local, so a normal launch neither stalls nor needs the network. A
@@ -723,13 +755,13 @@ app.on("before-quit", async (e) => {
   e.preventDefault();
   quitting = true;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide();
-  try {
+  const teardown = (async () => {
     // `down` without -v: containers go, the volumes holding cases and
     // credentials stay.
     if (mode === "standalone") await runCompose(composeArgs("down"));
     else await runScript("app_down.sh", ["--stop-docker"]);
-  } catch {
-    /* best effort */
-  }
+  })().catch(() => {}); // best effort
+  const deadline = new Promise((r) => setTimeout(r, 15000)); // a wedged daemon must not trap the quit
+  await Promise.race([teardown, deadline]);
   app.exit(0);
 });
