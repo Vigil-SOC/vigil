@@ -167,7 +167,10 @@ class SensitiveAttributeScrubber(SpanProcessor):  # type: ignore[misc]
                 return
 
             # Check operator opt-in flags for LLM content and IOC values
-            from core.telemetry import _should_record_llm_content, _should_record_ioc_values
+            from core.telemetry_config import (
+                _should_record_ioc_values,
+                _should_record_llm_content,
+            )
 
             record_llm = _should_record_llm_content()
             record_ioc = _should_record_ioc_values()

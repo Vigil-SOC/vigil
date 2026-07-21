@@ -22,10 +22,7 @@ from arq.connections import RedisSettings
 # Ensure project root is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from services.llm_gateway import (
-    QUEUE_NAME,
-    RedisSessionStore,
-)
+from services.llm_gateway import QUEUE_NAME, RedisSessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -85,8 +82,9 @@ async def llm_call(
 
     # Restore parent span context propagated across the ARQ/Redis boundary
     try:
-        from core.telemetry import extract_traceparent, get_tracer
         from opentelemetry.trace import SpanKind
+
+        from core.telemetry import extract_traceparent, get_tracer
 
         parent_ctx = extract_traceparent({"traceparent": traceparent})
         _tracer = get_tracer("vigil.services.llm_worker")
@@ -201,8 +199,9 @@ async def llm_call_raw(
 
     # Restore parent span context propagated across the ARQ/Redis boundary
     try:
-        from core.telemetry import extract_traceparent, get_tracer
         from opentelemetry.trace import SpanKind
+
+        from core.telemetry import extract_traceparent, get_tracer
 
         parent_ctx = extract_traceparent({"traceparent": traceparent})
         _tracer = get_tracer("vigil.services.llm_worker")
@@ -594,6 +593,10 @@ def _serialize_raw_response(response: Any) -> Dict[str, Any]:
             "cache_creation_tokens": getattr(
                 response.usage, "cache_creation_input_tokens", 0
             ),
+            # This path is only taken for the shared (default Anthropic)
+            # ClaudeService; make the provider explicit so cost accounting
+            # doesn't rely on a downstream ``or "anthropic"`` fallback.
+            "provider": "anthropic",
         }
     except Exception as e:
         logger.error(f"Failed to serialise raw response: {e}")
