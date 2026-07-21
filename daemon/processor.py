@@ -328,9 +328,16 @@ class FindingProcessor:
                     if self._data_service:
                         await self._update_finding(finding)
 
+                    # Count "enriched" once, only when enrichment actually
+                    # produced data (the sole increment — _enrich_finding no
+                    # longer counts). Empty enrichment is a valid clean result,
+                    # indistinguishable from a lookup failure here, so the
+                    # breaker keys off triage success and the except-path below.
+                    if self.config.auto_enrich_enabled and finding.get("enrichment"):
+                        self.stats["enriched"] += 1
+
                     if triaged_ok:
                         self._enrich_failures = 0
-                        self.stats["enriched"] += 1
                     else:
                         self._note_enrich_failure(finding_id)
                 except Exception as e:
@@ -634,10 +641,12 @@ REASONING: [Brief explanation]
         if feed_hits:
             enrichment["threat_indicators"] = feed_hits
 
+        # enriched_at is always stamped as an "attempt" marker (it is one of
+        # _AI_ANALYSIS_KEYS): a clean finding with no hits must still leave the
+        # backfill's `ai_enrichment IS NULL` set, or it re-queues every sweep.
+        finding["enriched_at"] = datetime.utcnow().isoformat()
         if enrichment:
             finding["enrichment"] = enrichment
-            finding["enriched_at"] = datetime.utcnow().isoformat()
-            self.stats["enriched"] += 1
 
         return finding
 

@@ -10,6 +10,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.middleware.auth import get_current_active_user
+from backend.services.auth_service import AuthService
 from database.models import User
 from services import extension_session_service as ext_session
 
@@ -24,6 +25,14 @@ async def get_extension_session_token(
     current_user: User = Depends(get_current_active_user),
 ):
     """Mint a short-lived session token for an extension's connector BFF."""
+    # Mirror the connector's manifest `mountPoint.permission` server-side by
+    # convention (`<id>.view`), so the API enforces the same RBAC gate the UI
+    # and the loglm.view grant do — otherwise any authenticated user could mint.
+    required = f"{integration_id}.view"
+    if not AuthService.check_permission(current_user.user_id, required):
+        raise HTTPException(
+            status_code=403, detail=f"Missing required permission: {required}"
+        )
     username = (
         getattr(current_user, "username", None)
         or getattr(current_user, "email", None)

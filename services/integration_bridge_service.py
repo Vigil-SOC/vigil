@@ -9,6 +9,12 @@ from typing import Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 
+# Values this module last wrote to each `<ID>_MCP_URL`. Lets us re-derive when a
+# connectorUrl changes while still letting an operator-set env var win — keyed
+# globally because os.environ (the thing we guard) is process-wide.
+_DERIVED_MCP_URLS: Dict[str, str] = {}
+
+
 # Form-field names contributed by the shared proxy block (see
 # ``frontend/src/config/integrations.ts``). These are meta-config — the
 # bridge translates them into HTTPS_PROXY / ALL_PROXY env vars (which
@@ -196,11 +202,15 @@ class IntegrationBridgeService:
             if not connector_url:
                 continue
             env_key = f"{integration_id.upper().replace('-', '_')}_MCP_URL"
-            if os.environ.get(env_key):
-                continue  # explicit env wins
+            current = os.environ.get(env_key)
+            if current and current != _DERIVED_MCP_URLS.get(env_key):
+                continue  # operator-set (or externally changed) value wins
             # Trailing slash: the connector mounts streamable-HTTP at /mcp/, and
             # /mcp (no slash) 307-redirects — which mcp-remote won't follow.
             value = str(connector_url).rstrip("/") + "/mcp/"
+            _DERIVED_MCP_URLS[env_key] = value
+            if current == value:
+                continue  # unchanged; nothing to re-apply
             os.environ[env_key] = value
             applied[env_key] = value
         if applied:
