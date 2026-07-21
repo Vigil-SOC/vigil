@@ -196,36 +196,37 @@ def _has_action_verb(tool_name: str) -> bool:
     return any(tok in _ACTION_VERB_TOKENS for tok in normalized.split("_"))
 
 
-# First-party tool namespaces exempt from the destructive-verb floor, so a
-# verb in their name doesn't stall investigations on human approval:
+# First-party tool namespaces that are always executable and must never be
+# gated — checked before any tier lookup so neither the suffix match nor the
+# destructive-verb floor can stall a benign call on human approval:
 #   mempalace_  — internal memory housekeeping, not a security action
-#                 (mempalace_delete_drawer is routine memory-entry cleanup;
-#                  a future mempalace_purge_*/reset_* would trip too).
+#                 (mempalace_delete_drawer is routine memory-entry cleanup).
 #   skill_      — a DB-backed Skill only renders a prompt template and returns
 #                 text (no state change); its slug comes from a user-authored
-#                 name, so "Isolate Host Playbook" -> skill_isolate_host_playbook
-#                 would otherwise gate. Any real action stays separately gated.
-_VERB_FLOOR_EXEMPT_PREFIXES = ("mempalace_", "skill_")
+#                 name, so a skill called "Isolate Host" / "Delete Case" would
+#                 otherwise match an action tier by suffix and gate (or, for the
+#                 forbidden tier, never run). Real actions stay separately gated.
+_UNGATED_PREFIXES = ("mempalace_", "skill_")
 
 
 def get_tool_tier(tool_name: str) -> str:
     """Return the safety tier for ``tool_name``.
 
-    Resolution order: exact name, then the post-first-underscore suffix (drops
-    the MCP ``{server}_`` prefix), then a destructive-verb floor that lifts
-    otherwise-``unknown`` action tools to ``requires_approval`` (see
-    ``_ACTION_VERB_TOKENS``) — skipping the floor for first-party namespaces in
-    ``_VERB_FLOOR_EXEMPT_PREFIXES``. Returns ``"unknown"`` for tools in no tier
-    — callers treat unknown as executable-but-uncategorized (historical daemon
-    behavior).
+    First-party namespaces in ``_UNGATED_PREFIXES`` short-circuit to
+    ``"unknown"`` (always executable). Otherwise: exact name, then the
+    post-first-underscore suffix (drops the MCP ``{server}_`` prefix), then a
+    destructive-verb floor that lifts otherwise-``unknown`` action tools to
+    ``requires_approval`` (see ``_ACTION_VERB_TOKENS``). Returns ``"unknown"``
+    for tools in no tier — callers treat unknown as executable-but-
+    uncategorized (historical daemon behavior).
     """
+    if tool_name.startswith(_UNGATED_PREFIXES):
+        return "unknown"
     if tool_name in _TOOL_TIER_LOOKUP:
         return _TOOL_TIER_LOOKUP[tool_name]
     short = tool_name.split("_", 1)[-1] if "_" in tool_name else tool_name
     if short in _TOOL_TIER_LOOKUP:
         return _TOOL_TIER_LOOKUP[short]
-    if tool_name.startswith(_VERB_FLOOR_EXEMPT_PREFIXES):
-        return "unknown"
     if _has_action_verb(tool_name):
         return "requires_approval"
     return "unknown"
