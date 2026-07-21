@@ -1249,6 +1249,25 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         if tier == "requires_approval":
             return await self._request_tool_approval(inv_id, tool_name, tool_input)
 
+        # Fail-open tripwire: unknown-tier tools execute with no approval gate.
+        # Log each one so a state-changing tool the verb-floor missed is visible
+        # rather than silent — the signal for whether the daemon needs to fail
+        # closed by default. See services.tool_manager.get_tool_tier.
+        if tier == "unknown":
+            logger.warning(
+                f"{inv_id}: Executing unclassified tool '{tool_name}' "
+                "(tier=unknown; no approval gate). If it changes state, add it "
+                "to TOOL_TIERS or _ACTION_VERB_TOKENS in services.tool_manager."
+            )
+            self.workdir.append_log(
+                inv_id,
+                {
+                    "event": "unknown_tier_execute",
+                    "tool": tool_name,
+                    "tier": "unknown",
+                },
+            )
+
         if self._claude_service and hasattr(
             self._claude_service, "_execute_backend_tool"
         ):

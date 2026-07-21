@@ -14,6 +14,7 @@ skills DB never breaks a chat request.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -177,10 +178,21 @@ _ACTION_VERB_TOKENS = frozenset(
 )
 
 
+# Insert a boundary before each interior capital so camelCase vendor names
+# tokenize too: a JS/TS MCP server exposing ``suspendUser`` would otherwise
+# collapse to one unmatched token and slip the floor. See _has_action_verb.
+_CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
+
+
 def _has_action_verb(tool_name: str) -> bool:
-    """True if any ``_``/``-`` delimited token is a destructive action verb."""
-    tokens = tool_name.replace("-", "_").lower().split("_")
-    return any(tok in _ACTION_VERB_TOKENS for tok in tokens)
+    """True if any token is a destructive action verb.
+
+    Splits on ``_``/``-`` and camelCase boundaries before whole-token matching,
+    so ``suspendUser`` tokenizes to ``suspend``/``user`` instead of the single
+    unmatched token ``suspenduser``.
+    """
+    normalized = _CAMEL_BOUNDARY.sub("_", tool_name).replace("-", "_").lower()
+    return any(tok in _ACTION_VERB_TOKENS for tok in normalized.split("_"))
 
 
 def get_tool_tier(tool_name: str) -> str:
