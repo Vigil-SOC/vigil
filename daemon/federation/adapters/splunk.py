@@ -9,7 +9,7 @@ from typing import Any, Dict, Optional
 
 from core.config import get_integration_config, is_integration_enabled
 from daemon.federation.adapters._base import fresh_cursor, parse_cursor_since
-from daemon.federation.registry import (
+from daemon.federation.contract import (
     FederationAdapter,
     FetchResult,
     register_adapter,

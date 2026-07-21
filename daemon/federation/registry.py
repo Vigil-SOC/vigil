@@ -1,92 +1,37 @@
-"""Adapter contract + registry for federated monitoring.
+"""Adapter registry for federated monitoring.
 
 Each adapter wraps one external data source (Splunk, CrowdStrike, etc.) behind
 a uniform fetch interface so the runner in :mod:`daemon.poller` can iterate
 over a registry instead of hardcoding per-source loops.
 
-Adapters are intentionally thin — they delegate to existing services in
-``services/*`` for the actual API calls. The contract here only normalizes:
-
-  * how the runner detects whether the underlying integration is configured
-    (so we can skip seeding/polling sources the user hasn't set up),
-  * the fetch shape (cursor in, findings + new cursor out),
-  * the default cadence each source class warrants (EDR is faster than SIEM).
+The adapter contract itself (``FetchResult``, ``FederationAdapter``,
+``register_adapter``) lives in :mod:`daemon.federation.contract` so adapter
+modules can import it without depending on this module — which lazily imports
+every adapter in :func:`_ensure_builtins_loaded` and would otherwise form an
+import cycle. Those names are re-exported here for backward compatibility.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Protocol
+from typing import List, Optional
+
+from daemon.federation.contract import (
+    _ADAPTER_FACTORIES,
+    FederationAdapter,
+    FetchResult,
+    register_adapter,
+)
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class FetchResult:
-    """One adapter fetch's output.
-
-    ``findings`` is the list of normalized finding dicts (same shape the rest
-    of the daemon already consumes — see ``services.ingestion_service``).
-    ``cursor`` is the new persisted cursor for the next fetch — the runner
-    writes it to ``federation_sources.cursor`` after a successful fetch.
-    """
-
-    findings: List[Dict[str, Any]] = field(default_factory=list)
-    cursor: Dict[str, Any] = field(default_factory=dict)
-
-
-class FederationAdapter(Protocol):
-    """Contract every federated-monitoring source adapter implements."""
-
-    #: Unique source identifier (also the federation_sources.source_id PK).
-    name: str
-
-    def is_configured(self) -> bool:
-        """True if the underlying integration is configured (e.g. credentials set)."""
-        ...
-
-    def default_interval(self) -> int:
-        """Default poll interval (seconds). Used when seeding a fresh row."""
-        ...
-
-    async def fetch(
-        self,
-        *,
-        since: Optional[datetime],
-        cursor: Dict[str, Any],
-        max_items: int,
-    ) -> FetchResult:
-        """Pull new findings since the cursor.
-
-        ``since`` is an absolute fallback for adapters that don't honor the
-        cursor on first run; ``cursor`` is the per-source state previously
-        returned by this adapter (empty dict on first run — adapters MUST
-        treat empty as "from now", we do not backfill on cold start).
-
-        Implementations should honor ``max_items`` to bound first-run blast
-        radius if the source happens to return everything in its history.
-        """
-        ...
-
-
-# ---------------------------------------------------------------------------
-# Registry
-# ---------------------------------------------------------------------------
-
-# Adapter constructors are registered lazily so importing this module doesn't
-# pull in every service. The runner calls ``list_adapters()`` once at startup.
-_ADAPTER_FACTORIES: Dict[str, Callable[[], FederationAdapter]] = {}
-
-
-def register_adapter(name: str, factory: Callable[[], FederationAdapter]) -> None:
-    """Register an adapter factory under ``name``.
-
-    Called once per adapter module at import time. Re-registration overwrites
-    the prior factory (useful in tests).
-    """
-    _ADAPTER_FACTORIES[name] = factory
+__all__ = [
+    "FederationAdapter",
+    "FetchResult",
+    "register_adapter",
+    "list_adapters",
+    "get_adapter",
+]
 
 
 def list_adapters() -> List[FederationAdapter]:

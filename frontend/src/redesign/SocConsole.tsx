@@ -17,7 +17,7 @@ import ErrorBoundary from './shell/ErrorBoundary'
 import { ToastProvider } from './shell/toast'
 import { useDesktopNotifications } from './shell/useDesktopNotifications'
 import { RedesignThemeProvider, useSocTheme } from './shell/theme'
-import type { ScreenProps } from './shared/types'
+import type { ScreenGoOptions, ScreenProps, SettingsSectionKey } from './shared/types'
 import DashboardScreen from './screens/dashboard/DashboardScreen'
 import CasesScreen from './screens/cases/CasesScreen'
 import MetricsScreen from './screens/metrics/MetricsScreen'
@@ -120,11 +120,18 @@ function SocConsoleInner() {
   const closeChat = useCallback(() => setChatOpen(false), [])
 
   const go = useCallback(
-    (next: ScreenKey) => {
-      if (valid && next === current) return
-      navigate(`/${next}`)
+    (next: ScreenKey, options?: ScreenGoOptions) => {
+      const search = options?.search || ''
+      if (valid && next === current && !search) return
+      navigate({ pathname: `/${next}`, search }, { replace: options?.replace })
     },
     [valid, current, navigate],
+  )
+  const goSettings = useCallback(
+    (section: SettingsSectionKey) => {
+      navigate({ pathname: '/settings', search: `?section=${section}` })
+    },
+    [navigate],
   )
 
   // leaving a screen drops any full-bleed detail it had open; screens that
@@ -224,7 +231,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go('dashboard')}>Back to Dashboard</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} setViewFull={setViewFull} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} setViewFull={setViewFull} />
                 )}
               </ErrorBoundary>
             </div>

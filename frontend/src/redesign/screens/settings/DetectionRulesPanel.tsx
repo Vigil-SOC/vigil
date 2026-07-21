@@ -5,7 +5,7 @@
    ============================================================ */
 import { useState } from 'react'
 import { Icon } from '../../shared/icons'
-import { Field, Popup, Select, TextInput } from '../../shared/ui'
+import { EmptyState, Field, Popup, Select, TextInput } from '../../shared/ui'
 import { useDetectionRules, type AddSourcePayload, type DetectionSource } from './useSettings'
 import type { SectionProps } from './types'
 
@@ -50,14 +50,9 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
   const [saving, setSaving] = useState(false)
   const [confirmDel, setConfirmDel] = useState<DetectionSource | null>(null)
 
-  if (phase === 'loading') return <div className="text-sm text-tx-3 py-16 text-center">Loading detection rules…</div>
+  if (phase === 'loading') return <EmptyState loading icon="shield" title="Loading detection rules…" />
   if (phase === 'error') {
-    return (
-      <div className="py-16 text-center flex flex-col items-center gap-2.5">
-        <span className="text-sm text-tx-3">Couldn’t load detection rules: {error}</span>
-        <button className="btn ghost" onClick={reload}>Retry</button>
-      </div>
-    )
+    return <EmptyState error icon="alert" title="Couldn’t load detection rules" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
   }
 
   const onUpdateSource = async (id: string) => {
@@ -148,10 +143,14 @@ export default function DetectionRulesPanel({ notify }: SectionProps) {
       </div>
 
       {sources.length === 0 ? (
-        <div className="settings-banner info">
-          <Icon name="info" size={14} />
-          <span>No detection rule sources configured. Click “Add Source”, or the service seeds defaults on first load.</span>
-        </div>
+        <EmptyState
+          compact
+          icon="shield"
+          title="No detection rule sources configured"
+          body="Add a Git repository or local directory, or let the service seed defaults on first load."
+          primary={{ label: 'Add source', onClick: () => setAddOpen(true), icon: 'plus' }}
+          secondary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }}
+        />
       ) : (
         <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))' }}>
           {sources.map((s) => (
