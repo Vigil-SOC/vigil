@@ -42,6 +42,12 @@ from daemon.workdir import WorkdirManager
 
 logger = logging.getLogger(__name__)
 
+# Tool names already flagged as executing at the unknown (ungated) tier. The
+# fail-open tripwire logs each unclassified tool once per process rather than on
+# every routine vendor read call, so a genuinely novel tool stays visible
+# instead of drowning in per-call noise. See _execute_external_tool.
+_SEEN_UNKNOWN_TIER_TOOLS: set = set()
+
 try:
     from opentelemetry.trace import SpanKind
 
@@ -1250,22 +1256,16 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             return await self._request_tool_approval(inv_id, tool_name, tool_input)
 
         # Fail-open tripwire: unknown-tier tools execute with no approval gate.
-        # Log each one so a state-changing tool the verb-floor missed is visible
-        # rather than silent — the signal for whether the daemon needs to fail
+        # Most are benign vendor reads, so log each distinct tool once (INFO)
+        # rather than warning on every call — enough to spot a state-changing
+        # tool the verb-floor missed and decide whether the daemon should fail
         # closed by default. See services.tool_manager.get_tool_tier.
-        if tier == "unknown":
-            logger.warning(
-                f"{inv_id}: Executing unclassified tool '{tool_name}' "
-                "(tier=unknown; no approval gate). If it changes state, add it "
-                "to TOOL_TIERS or _ACTION_VERB_TOKENS in services.tool_manager."
-            )
-            self.workdir.append_log(
-                inv_id,
-                {
-                    "event": "unknown_tier_execute",
-                    "tool": tool_name,
-                    "tier": "unknown",
-                },
+        if tier == "unknown" and tool_name not in _SEEN_UNKNOWN_TIER_TOOLS:
+            _SEEN_UNKNOWN_TIER_TOOLS.add(tool_name)
+            logger.info(
+                f"Unclassified tool '{tool_name}' executing with no approval "
+                f"gate (tier=unknown, first seen {inv_id}). Classify it in "
+                "services.tool_manager if it changes state; not logged again."
             )
 
         if self._claude_service and hasattr(

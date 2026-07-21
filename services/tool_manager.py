@@ -178,10 +178,11 @@ _ACTION_VERB_TOKENS = frozenset(
 )
 
 
-# Insert a boundary before each interior capital so camelCase vendor names
-# tokenize too: a JS/TS MCP server exposing ``suspendUser`` would otherwise
-# collapse to one unmatched token and slip the floor. See _has_action_verb.
-_CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
+# Split only at a lowercase->uppercase boundary so camelCase vendor names
+# tokenize (``suspendUser`` -> ``suspend``/``user``) without shredding an
+# all-caps run: ``ISOLATE_HOST`` and acronyms like ``blockIP`` stay whole.
+# See _has_action_verb.
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z])(?=[A-Z])")
 
 
 def _has_action_verb(tool_name: str) -> bool:
@@ -195,14 +196,23 @@ def _has_action_verb(tool_name: str) -> bool:
     return any(tok in _ACTION_VERB_TOKENS for tok in normalized.split("_"))
 
 
+# First-party tool namespaces whose destructive-looking verbs are benign
+# internal housekeeping, not security actions — exempt from the verb floor so
+# they don't stall investigations on human approval. mempalace_delete_drawer
+# (routine memory-entry cleanup, injected into every agent's memory protocol)
+# is the motivating case; a future mempalace_purge_*/reset_* would trip too.
+_VERB_FLOOR_EXEMPT_PREFIXES = ("mempalace_",)
+
+
 def get_tool_tier(tool_name: str) -> str:
     """Return the safety tier for ``tool_name``.
 
     Resolution order: exact name, then the post-first-underscore suffix (drops
     the MCP ``{server}_`` prefix), then a destructive-verb floor that lifts
     otherwise-``unknown`` action tools to ``requires_approval`` (see
-    ``_ACTION_VERB_TOKENS``). Returns ``"unknown"`` for tools in no tier —
-    callers treat unknown as executable-but-uncategorized (historical daemon
+    ``_ACTION_VERB_TOKENS``) — skipping the floor for first-party namespaces in
+    ``_VERB_FLOOR_EXEMPT_PREFIXES``. Returns ``"unknown"`` for tools in no tier
+    — callers treat unknown as executable-but-uncategorized (historical daemon
     behavior).
     """
     if tool_name in _TOOL_TIER_LOOKUP:
@@ -210,6 +220,8 @@ def get_tool_tier(tool_name: str) -> str:
     short = tool_name.split("_", 1)[-1] if "_" in tool_name else tool_name
     if short in _TOOL_TIER_LOOKUP:
         return _TOOL_TIER_LOOKUP[short]
+    if tool_name.startswith(_VERB_FLOOR_EXEMPT_PREFIXES):
+        return "unknown"
     if _has_action_verb(tool_name):
         return "requires_approval"
     return "unknown"
