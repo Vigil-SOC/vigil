@@ -42,6 +42,12 @@ from daemon.workdir import WorkdirManager
 
 logger = logging.getLogger(__name__)
 
+# Tool names already flagged as executing at the unknown (ungated) tier. The
+# fail-open tripwire logs each unclassified tool once per process rather than on
+# every routine vendor read call, so a genuinely novel tool stays visible
+# instead of drowning in per-call noise. See _execute_external_tool.
+_SEEN_UNKNOWN_TIER_TOOLS: set = set()
+
 try:
     from opentelemetry.trace import SpanKind
 
@@ -1248,6 +1254,19 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
         if tier == "requires_approval":
             return await self._request_tool_approval(inv_id, tool_name, tool_input)
+
+        # Fail-open tripwire: unknown-tier tools execute with no approval gate.
+        # Most are benign vendor reads, so log each distinct tool once (INFO)
+        # rather than warning on every call — enough to spot a state-changing
+        # tool the verb-floor missed and decide whether the daemon should fail
+        # closed by default. See services.tool_manager.get_tool_tier.
+        if tier == "unknown" and tool_name not in _SEEN_UNKNOWN_TIER_TOOLS:
+            _SEEN_UNKNOWN_TIER_TOOLS.add(tool_name)
+            logger.info(
+                f"Unclassified tool '{tool_name}' executing with no approval "
+                f"gate (tier=unknown, first seen {inv_id}). Classify it in "
+                "services.tool_manager if it changes state; not logged again."
+            )
 
         if self._claude_service and hasattr(
             self._claude_service, "_execute_backend_tool"

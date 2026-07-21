@@ -14,6 +14,7 @@ skills DB never breaks a chat request.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -140,16 +141,95 @@ for _tier, _tier_tools in TOOL_TIERS.items():
         _TOOL_TIER_LOOKUP[_tier_tool] = _tier
 
 
-def get_tool_tier(tool_name: str) -> str:
-    """Return the safety tier for ``tool_name`` (strips MCP server prefixes).
+# Destructive/containment action verbs. A tool with one of these as a whole
+# token requires approval even when its exact name isn't in TOOL_TIERS: vendor
+# MCP tools are double-prefixed (crowdstrike_cs_isolate_host) so neither the
+# exact nor the suffix lookup below reaches the generic tier names
+# (isolate_host) — without this floor every vendor containment tool resolves to
+# "unknown" and executes with no approval. Whole-token match (not substring) so
+# "skill_*" doesn't trip "kill" and "get_container_*" doesn't trip "contain".
+_ACTION_VERB_TOKENS = frozenset(
+    {
+        # endpoint/network containment (+ reversals — still state-changing)
+        "isolate",
+        "unisolate",
+        "block",
+        "unblock",
+        "quarantine",
+        "contain",
+        # account/session state
+        "disable",
+        "deactivate",
+        "suspend",
+        "revoke",
+        "reset",
+        "deprovision",
+        # process/host lifecycle
+        "terminate",
+        "kill",
+        "shutdown",
+        "reboot",
+        "restart",
+        # data destruction
+        "purge",
+        "wipe",
+        "delete",
+    }
+)
 
-    Returns ``"unknown"`` for tools not in any tier — callers treat unknown as
-    executable-but-uncategorized (the historical daemon behavior).
+
+# Split only at a lowercase->uppercase boundary so camelCase vendor names
+# tokenize (``suspendUser`` -> ``suspend``/``user``) without shredding an
+# all-caps run: ``ISOLATE_HOST`` and acronyms like ``blockIP`` stay whole.
+# See _has_action_verb.
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z])(?=[A-Z])")
+
+
+def _has_action_verb(tool_name: str) -> bool:
+    """True if any token is a destructive action verb.
+
+    Splits on ``_``/``-`` and camelCase boundaries before whole-token matching,
+    so ``suspendUser`` tokenizes to ``suspend``/``user`` instead of the single
+    unmatched token ``suspenduser``.
     """
+    normalized = _CAMEL_BOUNDARY.sub("_", tool_name).replace("-", "_").lower()
+    return any(tok in _ACTION_VERB_TOKENS for tok in normalized.split("_"))
+
+
+# First-party tool namespaces that are always executable and must never be
+# gated — checked before any tier lookup so neither the suffix match nor the
+# destructive-verb floor can stall a benign call on human approval:
+#   mempalace_  — internal memory housekeeping, not a security action
+#                 (mempalace_delete_drawer is routine memory-entry cleanup).
+#   skill_      — a DB-backed Skill only renders a prompt template and returns
+#                 text (no state change); its slug comes from a user-authored
+#                 name, so a skill called "Isolate Host" / "Delete Case" would
+#                 otherwise match an action tier by suffix and gate (or, for the
+#                 forbidden tier, never run). Real actions stay separately gated.
+_UNGATED_PREFIXES = ("mempalace_", "skill_")
+
+
+def get_tool_tier(tool_name: str) -> str:
+    """Return the safety tier for ``tool_name``.
+
+    First-party namespaces in ``_UNGATED_PREFIXES`` short-circuit to
+    ``"unknown"`` (always executable). Otherwise: exact name, then the
+    post-first-underscore suffix (drops the MCP ``{server}_`` prefix), then a
+    destructive-verb floor that lifts otherwise-``unknown`` action tools to
+    ``requires_approval`` (see ``_ACTION_VERB_TOKENS``). Returns ``"unknown"``
+    for tools in no tier — callers treat unknown as executable-but-
+    uncategorized (historical daemon behavior).
+    """
+    if tool_name.startswith(_UNGATED_PREFIXES):
+        return "unknown"
     if tool_name in _TOOL_TIER_LOOKUP:
         return _TOOL_TIER_LOOKUP[tool_name]
     short = tool_name.split("_", 1)[-1] if "_" in tool_name else tool_name
-    return _TOOL_TIER_LOOKUP.get(short, "unknown")
+    if short in _TOOL_TIER_LOOKUP:
+        return _TOOL_TIER_LOOKUP[short]
+    if _has_action_verb(tool_name):
+        return "requires_approval"
+    return "unknown"
 
 
 # --- Backend tool dispatch ------------------------------------------------
