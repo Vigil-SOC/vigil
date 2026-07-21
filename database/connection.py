@@ -6,6 +6,7 @@ Handles database connections, session management, and connection pooling.
 
 import os
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Generator, TYPE_CHECKING
@@ -278,13 +279,16 @@ class DatabaseConfig:
         port: Optional[int] = None,
     ) -> str:
         driver = "postgresql+asyncpg" if async_driver else "postgresql+psycopg2"
-        effective_host = host or self.host
         effective_port = port or self.port
+        # encode every value segment; a raw '?'/'@'/':' surviving in the host or
+        # database name would re-open as libpq params (DSN allowlist bypass)
+        effective_host = quote(host or self.host, safe="")
         user = quote(self.user, safe="")
         password = quote(self.password, safe="")
+        database = quote(self.database, safe="")
         url = (
             f"{driver}://{user}:{password}"
-            f"@{effective_host}:{effective_port}/{self.database}"
+            f"@{effective_host}:{effective_port}/{database}"
         )
 
         params = dict(getattr(self, "extra_query", {}) or {})
@@ -296,6 +300,19 @@ class DatabaseConfig:
             )
 
         return url
+
+    def identity(self) -> tuple:
+        """Every field that selects a target or its credentials; refresh_if_stale
+        must adopt a change in any of these, not just host/port/database."""
+        return (
+            self.host,
+            self.port,
+            self.database,
+            self.user,
+            self.password,
+            self.ssl_mode,
+            tuple(sorted(self.extra_query.items())),
+        )
 
 
 @dataclass(frozen=True)
@@ -351,6 +368,7 @@ class DatabaseManager:
         if not hasattr(self, "_initialized"):
             self.config = DatabaseConfig()
             self._proxy_handle = None
+            self._swap_lock = threading.Lock()  # serializes the engine swap
             self._initialized = True
 
     def _build(self, config: DatabaseConfig, echo: bool) -> tuple[Engine, Any]:
@@ -407,31 +425,34 @@ class DatabaseManager:
                     proxy.close()
                 raise  # live engine/proxy untouched
 
-        old_engine, old_proxy = self._engine, self._proxy_handle
-        # Checked-out connections survive dispose() and finish against the OLD
-        # database, so report how many were in flight rather than pretend not.
-        in_flight = old_engine.pool.checkedout() if old_engine is not None else 0
+        # Serialize the swap so concurrent retargets each dispose the engine they
+        # actually replaced; an unlocked swap leaks the intermediate engine's pool.
+        with self._swap_lock:
+            old_engine, old_proxy = self._engine, self._proxy_handle
+            # Checked-out connections survive dispose() and finish against the OLD
+            # database, so report how many were in flight rather than pretend not.
+            in_flight = old_engine.pool.checkedout() if old_engine is not None else 0
 
-        self.config = new_config
-        self._engine = engine
-        self._proxy_handle = proxy
-        self._session_factory = sessionmaker(
-            bind=engine,
-            expire_on_commit=False,
-            autoflush=True,
-            autocommit=False,
-        )
+            self.config = new_config
+            self._engine = engine
+            self._proxy_handle = proxy
+            self._session_factory = sessionmaker(
+                bind=engine,
+                expire_on_commit=False,
+                autoflush=True,
+                autocommit=False,
+            )
 
-        if old_engine is not None:
-            old_engine.dispose()
-        if old_proxy is not None and old_proxy is not proxy:
-            try:
-                old_proxy.close()
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Could not close previous DB proxy: %s", e)
+            if old_engine is not None:
+                old_engine.dispose()
+            if old_proxy is not None and old_proxy is not proxy:
+                try:
+                    old_proxy.close()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("Could not close previous DB proxy: %s", e)
 
-        self._config_generation = db_config_generation()
-        self._generation_checked_at = time.monotonic()
+            self._config_generation = db_config_generation()
+            self._generation_checked_at = time.monotonic()
 
         logger.info(
             "Database target: %s:%s/%s (source=%s)",
@@ -460,14 +481,14 @@ class DatabaseManager:
         if generation == 0.0 or generation == getattr(self, "_config_generation", 0.0):
             return False
 
-        old = (self.config.host, self.config.port, self.config.database)
+        old = self.config.identity()
         try:
             new_config = DatabaseConfig()
         except Exception as e:  # noqa: BLE001
             logger.warning("Could not re-read DB config: %s", e)
             self._config_generation = generation
             return False
-        if (new_config.host, new_config.port, new_config.database) == old:
+        if new_config.identity() == old:
             self._config_generation = generation  # secrets changed, but not ours
             return False
 
