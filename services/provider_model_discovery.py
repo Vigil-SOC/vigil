@@ -467,43 +467,22 @@ async def fetch_ollama_models(
     """Fetch the Ollama library with a best-effort ``/api/show`` probe.
 
     Ollama is the legitimate "self-hosted" provider, so a loopback URL
-    is the expected default. The caller can set ``allow_loopback=True``
-    if (and only if) it has authenticated an admin who actually wants
-    to probe ``localhost`` — otherwise the URL is run through the same
-    SSRF gate as the public providers.
-
-    The route handler in ``backend/api/llm_providers.py`` decides
-    whether to pass ``allow_loopback=True`` based on the authenticated
-    caller's permissions.
+    is the expected default. The URL always passes through
+    ``validate_provider_url``; ``allow_loopback=True`` only opts a
+    loopback/private/link-local host past the range block (the
+    cloud-metadata IP stays blocked). The route handler in
+    ``backend/api/llm_providers.py`` decides whether to pass it based on
+    the authenticated caller's permissions.
     """
     raw_base = base_url or "http://localhost:11434"
 
-    if allow_loopback:
-        # Admin opted in. Still pipe through the parser to drop query/
-        # userinfo/fragment and reject non-http(s) schemes.
-        from urllib.parse import urlparse, urlunparse
-
-        parsed = urlparse(raw_base.strip())
-        if parsed.scheme not in ("http", "https"):
-            raise RuntimeError(f"scheme not allowed: {parsed.scheme}")
-        if parsed.username or parsed.password or parsed.fragment:
-            raise RuntimeError("ollama base_url must not include userinfo or fragment")
-        base = urlunparse(
-            (
-                parsed.scheme,
-                parsed.netloc.split("@")[-1],
-                parsed.path or "",
-                "",
-                "",
-                "",
-            )
-        ).rstrip("/")
-    else:
-        try:
-            safe = validate_provider_url(raw_base, allow_custom=True)
-        except UrlSafetyError as exc:
-            raise RuntimeError(str(exc)) from exc
-        base = safe.sanitized.rstrip("/")
+    try:
+        safe = validate_provider_url(
+            raw_base, allow_custom=True, allow_loopback=allow_loopback
+        )
+    except UrlSafetyError as exc:
+        raise RuntimeError(str(exc)) from exc
+    base = safe.sanitized.rstrip("/")
 
     cache_key = _cache_key("ollama", base, "")
     cached = _META_CACHE.get(cache_key)

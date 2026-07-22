@@ -556,6 +556,22 @@ class ConfigService:
         except Exception as e:
             logger.error(f"Error creating audit log: {e}")
     
+    def record_audit(
+        self,
+        config_type: str,
+        config_key: str,
+        action: str,
+        old_value: Optional[Dict[str, Any]],
+        new_value: Optional[Dict[str, Any]],
+        change_reason: Optional[str] = None,
+    ) -> None:
+        """Write a standalone audit entry (no SystemConfig row touched)."""
+        with get_session() as session:
+            self._create_audit_log(
+                session, config_type, config_key, action,
+                old_value, new_value, change_reason,
+            )
+
     def get_audit_log(
         self,
         config_type: Optional[str] = None,

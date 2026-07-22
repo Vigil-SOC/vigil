@@ -1,14 +1,3 @@
-"""Centralized URL safety / SSRF protection.
-
-Used by the LLM provider discovery and test paths so a user-supplied
-``base_url`` can never coerce the backend into reaching out to
-loopback, private, link-local, or cloud-metadata addresses.
-
-Closes the SSRF leg of the 2026-05 security disclosure: previously
-``POST /api/llm/providers/discover-models`` accepted any ``base_url``
-and the backend would happily fetch it.
-"""
-
 from __future__ import annotations
 
 import ipaddress
@@ -84,6 +73,13 @@ def _is_blocked_ip(ip_str: str) -> Tuple[bool, str]:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
         return True, f"unparseable IP: {ip_str}"
+
+    # Collapse an IPv4-mapped IPv6 literal (e.g. ::ffff:169.254.169.254) to
+    # its embedded IPv4 before classifying: on Linux it connects as real
+    # IPv4, so it must face the same range/metadata checks as the bare v4.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
 
     if str(ip) in ("169.254.169.254", "fd00:ec2::254"):
         return True, "cloud metadata address"

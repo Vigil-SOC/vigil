@@ -249,26 +249,20 @@ def _schema_message(schema: dict) -> str:
 def _audit_retarget(previous, current, user: User) -> None:
     """Record the target change. Best-effort: never fails the swap."""
     try:
-        from database.connection import get_db_manager
-        from database.models import ConfigAuditLog
+        from database.config_service import get_config_service
 
-        before = (
-            f"{previous.host}:{previous.port}/{previous.database}"
-            if previous
-            else "(none)"
+        def _target(t):
+            return {"host": t.host, "port": t.port, "database": t.database} if t else None
+
+        # config_type is NOT NULL and old_value/new_value are JSONB, so they
+        # take dicts, not text; the service commits via its session_scope.
+        get_config_service(user_id=str(user.user_id)).record_audit(
+            config_type="database",
+            config_key="DATABASE_TARGET",
+            action="update",
+            old_value=_target(previous),
+            new_value=_target(current),
         )
-        # session_scope() commits on exit; a bare Session used as a context
-        # manager only closes, so the audit row would be silently dropped.
-        with get_db_manager().session_scope() as session:
-            session.add(
-                ConfigAuditLog(
-                    config_key="DATABASE_TARGET",
-                    action="update",
-                    old_value=before,
-                    new_value=f"{current.host}:{current.port}/{current.database}",
-                    changed_by=str(user.user_id),
-                )
-            )
     except Exception as e:  # noqa: BLE001
         logger.warning("Could not write retarget audit log: %s", e)
 
