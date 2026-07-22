@@ -21,6 +21,11 @@ from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 from io import StringIO
 
+from services.source_evidence import (
+    normalize_finding_source_evidence,
+    source_evidence_from_loglm_row,
+)
+
 logger = logging.getLogger(__name__)
 
 MITRE_TACTIC_MAP = {
@@ -132,6 +137,8 @@ class IngestionService:
             logger.error("Finding missing finding_id")
             self.stats['findings_errors'] += 1
             return False
+
+        finding_data = normalize_finding_source_evidence(finding_data)
         
         try:
             if self.use_database and self.db_service:
@@ -796,6 +803,10 @@ class IngestionService:
         if row.get('incident_pred') is not None:
             entity_context['incident_pred'] = int(row['incident_pred'])
 
+        source_evidence = source_evidence_from_loglm_row(row)
+        if source_evidence is not None:
+            entity_context['source_evidence'] = source_evidence
+
         # cluster_id from attack_id if populated
         attack_id = row.get('attack_id')
         cluster_id = attack_id if attack_id else None
@@ -1029,4 +1040,3 @@ class IngestionService:
         except Exception as e:
             logger.error(f"Error ingesting from string: {e}")
             return self.stats
-

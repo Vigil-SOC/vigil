@@ -7,6 +7,10 @@ import logging
 
 from services.database_data_service import DatabaseDataService
 from services.defaults import DEFAULT_MODEL
+from services.source_evidence import (
+    normalize_finding_source_evidence,
+    project_finding_source_evidence_for_list,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -67,7 +71,9 @@ async def get_findings(
     )
     
     return {
-        "findings": findings,
+        "findings": [
+            project_finding_source_evidence_for_list(finding) for finding in findings
+        ],
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -89,7 +95,7 @@ async def get_finding(finding_id: str):
     finding = data_service.get_finding(finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
-    return finding
+    return normalize_finding_source_evidence(finding)
 
 
 @router.get("/stats/summary")
@@ -568,4 +574,3 @@ async def clear_all_findings():
     except Exception as e:
         logger.error(f"Error clearing findings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear findings: {str(e)}")
-

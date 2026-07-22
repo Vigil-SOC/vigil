@@ -60,6 +60,8 @@ export interface ApiFinding {
     usernames?: string[]
     dest_ips?: string[]
     file_hashes?: string[]
+    source_evidence?: unknown
+    [key: string]: unknown
   }
 }
 
