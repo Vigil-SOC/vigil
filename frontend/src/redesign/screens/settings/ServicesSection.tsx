@@ -24,6 +24,7 @@ interface ServiceRow {
   managed_by_vigil: boolean
   startable: boolean
   stoppable: boolean
+  required: boolean
   description: string
   detail?: string | null
 }
@@ -154,8 +155,12 @@ export default function ServicesSection({ notify }: SectionProps) {
           <ToggleRow
             key={s.name}
             label={s.name}
-            hint={s.description}
-            checked={autostart.includes(s.name)}
+            // Required services always start and can't be turned off — the app
+            // won't boot without them. Server enforces this too; the disabled
+            // toggle just makes it visible instead of silently bouncing back.
+            hint={s.required ? `${s.description} · required, always on` : s.description}
+            checked={s.required || autostart.includes(s.name)}
+            disabled={s.required}
             onChange={(v) => void toggleAutostart(s.name, v)}
           />
         ))}

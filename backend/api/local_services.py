@@ -51,6 +51,7 @@ def _status_payload(s: ServiceStatus) -> dict:
         "managed_by_vigil": s.managed_by_vigil,
         "startable": s.startable,
         "stoppable": s.stoppable,
+        "required": s.required,
         "description": s.description,
         "detail": s.detail,
     }

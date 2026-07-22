@@ -25,7 +25,7 @@ import tempfile
 from pathlib import Path
 from typing import List
 
-from services.service_manager import SERVICES
+from services.service_manager import REQUIRED_SERVICES, SERVICES
 
 logger = logging.getLogger(__name__)
 
@@ -64,24 +64,38 @@ def _read_file() -> List[str] | None:
     return _known(names, str(AUTOSTART_FILE))
 
 
+def _with_required(names: List[str]) -> List[str]:
+    """Required services first, then the rest, deduped. The app can't boot
+    without postgres/redis/bifrost, so they always autostart even if a
+    hand-edited file, env var, or API caller leaves them out."""
+    return list(dict.fromkeys([*REQUIRED_SERVICES, *names]))
+
+
 def get_autostart_services() -> List[str]:
     from_file = _read_file()
     if from_file is not None:
-        return from_file
-    env = os.getenv("AUTOSTART_SERVICES")
-    if env:
-        return _known(
-            [n.strip() for n in env.replace(",", " ").split()], "AUTOSTART_SERVICES"
-        )
-    return list(DEFAULT)
+        base = from_file
+    else:
+        env = os.getenv("AUTOSTART_SERVICES")
+        if env:
+            base = _known(
+                [n.strip() for n in env.replace(",", " ").split()],
+                "AUTOSTART_SERVICES",
+            )
+        else:
+            base = list(DEFAULT)
+    return _with_required(base)
 
 
 def set_autostart_services(names: List[str]) -> List[str]:
-    """Persist the list. Raises ValueError on an unknown service name."""
+    """Persist the list. Raises ValueError on an unknown service name.
+
+    Required services are folded in unconditionally, so a UI/API caller can't
+    persist a list that omits them and bricks the next launch."""
     unknown = [n for n in names if n not in SERVICES]
     if unknown:
         raise ValueError(f"Unknown service(s): {', '.join(unknown)}")
-    deduped = list(dict.fromkeys(names))
+    deduped = _with_required(names)
     body = _HEADER.format(valid=", ".join(SERVICES)) + "\n".join(deduped) + "\n"
     # Atomic replace: a torn write here would silently change what boots.
     fd, tmp = tempfile.mkstemp(dir=str(REPO_ROOT), prefix=".vigil-autostart.")

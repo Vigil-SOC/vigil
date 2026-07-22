@@ -200,9 +200,15 @@ ensure_container() {
 }
 
 # --- Start every service in the resolved autostart list ---
+# postgres/redis/bifrost are prepended unconditionally: the app can't boot
+# without them (schema init hard-fails if postgres is down), so a saved list
+# that omits them — via a Settings toggle or a hand-edit — must not brick
+# startup. Mirrors REQUIRED_SERVICES in services/service_manager.py.
 start_autostart_services() {
-    local svc profile container
-    for svc in $(read_autostart); do
+    local svc profile container seen=" "
+    for svc in postgres redis bifrost $(read_autostart); do
+        case "$seen" in *" $svc "*) continue ;; esac  # dedupe
+        seen="$seen$svc "
         if [ "$svc" = "ollama" ]; then
             ensure_ollama
             continue

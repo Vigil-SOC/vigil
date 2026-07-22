@@ -43,6 +43,11 @@ class ServiceSpec:
     profile: Optional[str] = None
     startable: bool = True
     stoppable: bool = True
+    # The app can't boot without these (schema init hard-fails if postgres is
+    # down), so they always autostart and can't be removed from the list — see
+    # REQUIRED_SERVICES and services/autostart_config.py. Note this is distinct
+    # from stoppable=False: ollama is non-stoppable but optional.
+    required: bool = False
     description: str = ""
 
 
@@ -54,6 +59,7 @@ SERVICES: Dict[str, ServiceSpec] = {
         "deeptempo-postgres",
         "postgres",
         stoppable=False,
+        required=True,
         description="Local PostgreSQL container",
     ),
     "redis": ServiceSpec(
@@ -61,6 +67,7 @@ SERVICES: Dict[str, ServiceSpec] = {
         "deeptempo-redis",
         "redis",
         stoppable=False,
+        required=True,
         description="Redis (ARQ job queue)",
     ),
     "bifrost": ServiceSpec(
@@ -68,6 +75,7 @@ SERVICES: Dict[str, ServiceSpec] = {
         "deeptempo-bifrost",
         "bifrost",
         stoppable=False,
+        required=True,
         description="LLM gateway",
     ),
     "pgadmin": ServiceSpec(
@@ -118,6 +126,12 @@ SERVICES: Dict[str, ServiceSpec] = {
     ),
 }
 
+# Services that always autostart and can't be removed from the autostart list.
+# Kept in sync with scripts/lib.sh::start_autostart_services.
+REQUIRED_SERVICES: tuple[str, ...] = tuple(
+    name for name, spec in SERVICES.items() if spec.required
+)
+
 
 @dataclass
 class ServiceStatus:
@@ -130,6 +144,7 @@ class ServiceStatus:
     managed_by_vigil: bool = False
     startable: bool = True
     stoppable: bool = True
+    required: bool = False
     description: str = ""
     detail: Optional[str] = None
 
@@ -292,6 +307,7 @@ def status(
             status="docker unavailable",
             startable=spec.startable,
             stoppable=spec.stoppable,
+            required=spec.required,
             description=spec.description,
             detail=detail,
         )
@@ -308,6 +324,7 @@ def status(
         managed_by_vigil=running,
         startable=spec.startable,
         stoppable=spec.stoppable,
+        required=spec.required,
         description=spec.description,
     )
 
