@@ -8,6 +8,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useRef,
   useState,
   type InputHTMLAttributes,
@@ -16,6 +17,23 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon, type IconName } from './icons'
+
+// Popup and portal-backed Select can be nested. Keep Escape scoped to the
+// most recently opened interactive layer so one keypress cannot dismiss both.
+const escapeLayers: symbol[] = []
+
+function addEscapeLayer(layer: symbol) {
+  escapeLayers.push(layer)
+}
+
+function removeEscapeLayer(layer: symbol) {
+  const index = escapeLayers.lastIndexOf(layer)
+  if (index >= 0) escapeLayers.splice(index, 1)
+}
+
+function isTopEscapeLayer(layer: symbol) {
+  return escapeLayers[escapeLayers.length - 1] === layer
+}
 
 /** Enter/Space → activate. For non-button elements given `role="button"` or
  *  `role="switch"` so they stay keyboard-operable (REDESIGN_GAPS.md §10). */
@@ -98,6 +116,8 @@ export function Popup({
   width?: number
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
+  const escapeLayerRef = useRef(Symbol('popup'))
+  const titleId = useId()
   // Keep the latest onClose in a ref so the focus effect can depend on `open`
   // alone. Depending on `onClose` (usually a fresh inline arrow each render)
   // would re-run the effect on every keystroke and steal focus back to the
@@ -107,14 +127,21 @@ export function Popup({
 
   useEffect(() => {
     if (!open) return
+    const escapeLayer = escapeLayerRef.current
+    addEscapeLayer(escapeLayer)
     const opener = document.activeElement as HTMLElement | null
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCloseRef.current()
+      if (e.key === 'Escape' && isTopEscapeLayer(escapeLayer)) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        onCloseRef.current()
+      }
     }
     document.addEventListener('keydown', onKey)
     panelRef.current?.focus()
     return () => {
       document.removeEventListener('keydown', onKey)
+      removeEscapeLayer(escapeLayer)
       opener?.focus?.()
     }
   }, [open])
@@ -127,14 +154,14 @@ export function Popup({
         className="modal"
         role="dialog"
         aria-modal="true"
-        aria-label={typeof title === 'string' ? title : 'Dialog'}
+        aria-labelledby={titleId}
         tabIndex={-1}
         style={{ width }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="modal-head">
-          <h3>{title}</h3>
-          <button className="modal-x" title="Close" onClick={onClose}><Icon name="close" size={16} /></button>
+          <h3 id={titleId}>{title}</h3>
+          <button className="modal-x" title="Close" aria-label="Close" onClick={onClose}><Icon name="close" size={16} /></button>
         </div>
         <div className="modal-body">{children}</div>
       </div>
@@ -252,6 +279,7 @@ export function Select({
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const escapeLayerRef = useRef(Symbol('select'))
   // Menu is rendered in a fixed-position portal so it escapes any overflow
   // clipping (cards, .table-wrap, the scrolling settings pane). We anchor it
   // to the trigger's bounding rect and reposition on scroll/resize.
@@ -267,6 +295,8 @@ export function Select({
 
   useEffect(() => {
     if (!open) return
+    const escapeLayer = escapeLayerRef.current
+    addEscapeLayer(escapeLayer)
     place()
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node
@@ -274,7 +304,11 @@ export function Select({
       setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape' && isTopEscapeLayer(escapeLayer)) {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        setOpen(false)
+      }
     }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
@@ -283,6 +317,7 @@ export function Select({
     return () => {
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
+      removeEscapeLayer(escapeLayer)
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
     }
