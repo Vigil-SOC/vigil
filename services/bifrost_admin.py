@@ -167,14 +167,18 @@ def sync_provider_models(provider_type: str, model_ids: list[str]) -> bool:
             provider_type,
         )
         return False
-    # Normalize + dedupe while preserving order.
-    seen: set = set()
-    normalized: list[str] = []
-    for mid in model_ids:
-        if not mid or mid in seen:
-            continue
-        seen.add(mid)
-        normalized.append(mid)
+    # Self-hosted Ollama serves whatever the user pulled/built, so pin the
+    # allow-list to the wildcard rather than a finite discovered set.
+    if provider_type == "ollama":
+        normalized = ["*"]
+    else:
+        seen: set = set()
+        normalized = []
+        for mid in model_ids:
+            if not mid or mid in seen:
+                continue
+            seen.add(mid)
+            normalized.append(mid)
 
     with httpx.Client() as client:
         prov = _get_provider(provider_type, client)

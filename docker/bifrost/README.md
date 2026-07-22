@@ -64,6 +64,31 @@ The `models` array under each `providers.<name>.keys[0]` in `config.json` is a *
 
 The bootstrap list in `config.json` only matters for the cold-start window (seconds) before the first sync iteration completes, or for environments where the backend can't reach upstream at startup.
 
+### Local Ollama: wildcard routing + private-network access
+
+Self-hosted Ollama serves whatever the user has pulled or built, so a
+finite discovered allow-list is wrong — a custom model (e.g.
+`qwythos-custom:latest`) would 400 with "no keys found that support model".
+Two settings make local Ollama route reliably:
+
+- **Wildcard allow-list.** The ollama key uses `"models": ["*"]` in
+  `config.json`, and `sync_provider_models()` forces `["*"]` for ollama
+  rather than the discovered union — so routing never depends on
+  `/api/tags` enumerating a custom model.
+- **`network_config.allow_private_network: true`.** Bifrost blocks RFC1918
+  targets (10.x, 172.16.x, 192.168.x) by default. In the container path
+  `OLLAMA_URL` resolves to `host.docker.internal` → the Docker Desktop
+  gateway (`192.168.65.254`, RFC1918), so the flag is required or every
+  call fails with "connection to private IP … is not allowed". It belongs
+  in the provider's `network_config`, **not** at the key level — Bifrost's
+  schema silently drops the key-level form. Loopback (`127.0.0.1`, `::1`)
+  is always allowed regardless.
+
+Bifrost seeds `/app/data/config.db` (SQLite) from `config.json` only on
+first boot; the store lives in the container's writable layer, so a
+`docker compose restart` keeps the stale copy. After editing `config.json`,
+re-seed with `docker compose up -d --force-recreate bifrost`.
+
 ### Legacy / non-listed models (extras)
 
 Some upstream providers drop older model IDs from their `/v1/models` listing even when those IDs are still callable (Anthropic did this with the Claude 3.x family). To surface those in the UI and let Bifrost route traffic for them, the backend unions a configurable "extras" set into both the dropdown and Bifrost's allow-list. Extras are flagged `deprecated=True` in the API response so the UI can badge them.
