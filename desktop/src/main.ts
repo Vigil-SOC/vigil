@@ -29,11 +29,15 @@ const scriptsDir = () => path.join(repoRoot!, "scripts");
 
 /* ---------------- standalone (image-based) stack ---------------- */
 
-// Staged by scripts/prepare-standalone.js into extraResources: Docker reads
-// these paths directly, and it cannot see inside app.asar.
-const standaloneDir = () => path.join(process.resourcesPath, "standalone");
+// Staged by scripts/prepare-standalone.js into extraResources; the read-only
+// source Docker never binds directly (see stageStandalone).
+const bundledStandaloneDir = () => path.join(process.resourcesPath, "standalone");
+// Where compose actually runs. Under userData ($HOME on both platforms), which
+// the Docker daemon can stat — unlike an AppImage's FUSE mount.
+const standaloneDir = () => path.join(app.getPath("userData"), "standalone");
 const composeFile = () => path.join(standaloneDir(), "docker-compose.yml");
-const standaloneAvailable = () => fs.existsSync(composeFile());
+const standaloneAvailable = () =>
+  fs.existsSync(path.join(bundledStandaloneDir(), "docker-compose.yml"));
 
 const composeArgs = (...rest: string[]): string[] => [
   "compose",
@@ -41,6 +45,26 @@ const composeArgs = (...rest: string[]): string[] => [
   composeFile(),
   ...rest,
 ];
+
+// The compose file's bind mounts (./initdb, ./db-init, ./bifrost-config.json)
+// resolve against its directory. Bundled inside an AppImage that directory is a
+// FUSE self-mount (/tmp/.mount_*) the Docker daemon cannot stat, so `up` dies on
+// "mkdir /tmp/.mount_… : file exists". Copy the tree into userData and run from
+// there. Keyed on the app version so upgrades restage new compose/init SQL. Safe
+// to wipe: it holds only read-only bind sources; DB data lives in a named volume.
+function stageStandalone(): void {
+  const dest = standaloneDir();
+  const marker = path.join(dest, ".staged-version");
+  const version = app.getVersion();
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === version) return;
+  fs.rmSync(dest, { recursive: true, force: true });
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(bundledStandaloneDir())) {
+    if (entry === "backend-image.tar.gz") continue; // large; docker load reads it, never bind-mounts it
+    fs.cpSync(path.join(bundledStandaloneDir(), entry), path.join(dest, entry), { recursive: true });
+  }
+  fs.writeFileSync(marker, version);
+}
 
 /* ---------------- config (survives across launches) ---------------- */
 
@@ -470,7 +494,7 @@ function backendImagePresent(): Promise<boolean> {
 // Optional offline image, staged into resources at build time. When present the
 // backend image is loaded from it instead of pulled, so a build handed to a
 // machine with no registry access (or no network) still runs.
-const bundledImageTar = () => path.join(standaloneDir(), "backend-image.tar.gz");
+const bundledImageTar = () => path.join(bundledStandaloneDir(), "backend-image.tar.gz");
 
 function loadBundledImage(): Promise<number> {
   return new Promise((resolve) => {
@@ -484,6 +508,13 @@ function loadBundledImage(): Promise<number> {
 
 async function bringUpStandalone(): Promise<boolean> {
   const phase = (p: string, status: string) => sendSplash("step", { phase: p, status });
+
+  try {
+    stageStandalone();
+  } catch (e) {
+    sendSplash("error", `Could not stage the Vigil stack: ${(e as Error).message}`);
+    return false;
+  }
 
   if (!(await ensureDockerRunning())) {
     sendSplash("error", "Docker Desktop isn't running and couldn't be started. Start it, then retry.");
