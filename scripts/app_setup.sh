@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# First-run setup for the Vigil desktop app: venv + Python deps + frontend deps
-# + a production SPA build (so the backend serves the UI at :6987, no Vite dev
-# server). This is setup_dev.sh plus `npm run build`. Idempotent; safe to re-run.
+# First-run setup for the Vigil desktop app: venv + Python deps + frontend deps.
+# The SPA build is deliberately NOT done here — app_up.sh is the sole builder
+# (it builds in real-auth mode and owns the .vigil-real-auth marker). Building
+# here too would produce a dev-auth bundle that app_up.sh discards and rebuilds
+# on the very next step, doubling a slow React/MUI build on every first launch.
+# Essentially setup_dev.sh. Idempotent; safe to re-run.
 #
 # Emits machine-parseable `STEP <phase> <status>` lines on stdout for the
 # Electron splash to parse (status: start|ok|fail). Human detail goes to stderr.
@@ -46,10 +49,6 @@ else
     exit 1
 fi
 
-# The backend serves frontend/build at :6987 (backend/main.py). The desktop
-# window loads that, so we build the SPA rather than run the Vite dev server.
-step frontend-build start
-(cd "$REPO_ROOT/frontend" && npm run build) >&2 || { step frontend-build fail; exit 1; }
-step frontend-build ok
-
+# No SPA build here — app_up.sh builds it (in real-auth mode) right after this
+# script returns. See the header for why building here would be wasted work.
 step setup done

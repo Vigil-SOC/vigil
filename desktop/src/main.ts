@@ -549,6 +549,19 @@ function createSplash(): void {
 }
 
 function createMainWindow(): void {
+  // Reuse an existing window rather than opening a second one. Tray "Restart
+  // Stack" tears the stack down and back up, then calls this again — a fresh
+  // BrowserWindow would leave a stale one open whose close handler runs
+  // app.quit(), killing the app the user just restarted. Reload so the reused
+  // window re-fetches from the restarted backend, and clear any restart splash.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.loadURL(BACKEND_URL);
+    mainWindow.show();
+    mainWindow.focus();
+    if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+    splashWindow = null;
+    return;
+  }
   mainWindow = new BrowserWindow({
     width: 1440,
     height: 900,
