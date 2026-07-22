@@ -433,17 +433,20 @@ async def _fetch_meta_for_row(row_dict: Dict[str, Any], discovery) -> Optional[l
         return await discovery.fetch_anthropic_models(key, base_url=base_url)
 
     if provider_type == "openai":
-        key = _resolve_key()
-        if not key:
-            logger.info(
-                "Bifrost sync: no OpenAI key available for %s — skipping",
-                row_dict["provider_id"],
-            )
-            return None
+        # A key is required only for the real OpenAI cloud; a self-hosted
+        # OpenAI-compatible server (vLLM, LM Studio) on a loopback/private
+        # address is keyless. Pass the key through (may be None) and let
+        # fetch_openai_models enforce it for the allowlisted cloud host only,
+        # and allow_loopback so the SSRF IP gate doesn't reject an RFC1918
+        # host — the same admin-gated trust anchor as the test and
+        # discover-models endpoints, and mirroring the ollama branch below.
+        # Without this, a self-hosted provider that discovers fine never syncs
+        # into Bifrost. The caller wraps this in try/except and skips on error.
         return await discovery.fetch_openai_models(
-            key,
+            _resolve_key(),
             base_url=base_url,
             organization=config.get("organization"),
+            allow_loopback=True,
         )
 
     if provider_type == "ollama":

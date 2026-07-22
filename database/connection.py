@@ -4,11 +4,12 @@ Database connection management for Vigil SOC.
 Handles database connections, session management, and connection pooling.
 """
 
+import asyncio
 import os
 import logging
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import astuple, dataclass, field
 from typing import Any, Dict, Optional, Generator, TYPE_CHECKING
 from urllib.parse import parse_qsl, quote, unquote, urlsplit
 from contextlib import contextmanager
@@ -303,7 +304,11 @@ class DatabaseConfig:
 
     def identity(self) -> tuple:
         """Every field that selects a target or its credentials; refresh_if_stale
-        must adopt a change in any of these, not just host/port/database."""
+        must adopt a change in any of these, not just host/port/database.
+
+        Includes the proxy: _build() rewrites the effective host/port whenever
+        proxy.enabled, so a proxy-only change (SSH tunnel, PgBouncer) still
+        selects a different target and must count as a change to adopt."""
         return (
             self.host,
             self.port,
@@ -312,6 +317,7 @@ class DatabaseConfig:
             self.password,
             self.ssl_mode,
             tuple(sorted(self.extra_query.items())),
+            astuple(self.proxy),
         )
 
 
@@ -369,6 +375,9 @@ class DatabaseManager:
             self.config = DatabaseConfig()
             self._proxy_handle = None
             self._swap_lock = threading.Lock()  # serializes the engine swap
+            # True while an off-loop retarget thread is running; keeps
+            # refresh_if_stale from spawning more than one (see below).
+            self._retarget_thread_running = False
             self._initialized = True
 
     def _build(self, config: DatabaseConfig, echo: bool) -> tuple[Engine, Any]:
@@ -492,6 +501,37 @@ class DatabaseManager:
             self._config_generation = generation  # secrets changed, but not ours
             return False
 
+        # retarget() validates with a synchronous engine.connect(); on the
+        # asyncio event loop that blocks every coroutine on this worker for up
+        # to the 5s connect timeout. Depends(get_db) runs in a threadpool and is
+        # fine, but async handlers that call get_db_session() directly land here
+        # on the loop — so when a loop is running, do the swap on a background
+        # thread and return on the current engine. The change is adopted a beat
+        # later; other refresh_if_stale calls see the pinned generation and the
+        # in-flight guard, so at most one thread runs.
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return self._adopt(new_config, generation, old)
+
+        self._config_generation = generation  # pin before spawning
+        if not self._retarget_thread_running:
+            self._retarget_thread_running = True
+
+            def _run() -> None:
+                try:
+                    self._adopt(new_config, generation, old)
+                finally:
+                    self._retarget_thread_running = False
+
+            threading.Thread(target=_run, name="db-retarget", daemon=True).start()
+        return False
+
+    def _adopt(
+        self, new_config: "DatabaseConfig", generation: float, old: tuple
+    ) -> bool:
+        """Retarget onto ``new_config``, pinning the generation on failure so a
+        temporarily-unreachable target isn't retried every interval."""
         try:
             self.retarget(new_config, validate=True)
         except Exception as e:  # noqa: BLE001

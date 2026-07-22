@@ -243,14 +243,47 @@ def _container_state(container: str) -> tuple[bool, str]:
     return False, "not found"
 
 
-def status(name: str) -> ServiceStatus:
+def _all_container_states() -> Dict[str, tuple[bool, str]]:
+    """One ``docker ps -a`` covering every container, so list_services() needn't
+    run a ``docker ps`` per service. ``running`` comes from the Status column
+    ('Up …' vs 'Exited …'), matching _container_state(); keyed on the exact name
+    so a ``-test`` suffix stays a separate entry."""
+    out: Dict[str, tuple[bool, str]] = {}
+    try:
+        r = subprocess.run(
+            ["docker", "ps", "-a", "--no-trunc", "--format", "{{.Names}}\t{{.Status}}"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return out
+    if r.returncode != 0:
+        return out
+    for line in r.stdout.splitlines():
+        name, _, st = line.partition("\t")
+        name = name.strip()
+        if name:
+            out[name] = (st.startswith("Up"), st.strip())
+    return out
+
+
+def status(
+    name: str,
+    *,
+    docker: Optional[tuple[bool, str]] = None,
+    states: Optional[Dict[str, tuple[bool, str]]] = None,
+) -> ServiceStatus:
+    """``docker`` and ``states`` let list_services() reuse a single
+    docker_available() probe and one batched ``docker ps`` across every service,
+    instead of spawning a fresh pair of subprocesses per service."""
     spec = _spec(name)
     if spec.container is None:
         from services import ollama_process
 
         return ollama_process.status(spec)
 
-    ok, detail = docker_available()
+    ok, detail = docker if docker is not None else docker_available()
     if not ok:
         return ServiceStatus(
             name=spec.name,
@@ -262,7 +295,10 @@ def status(name: str) -> ServiceStatus:
             description=spec.description,
             detail=detail,
         )
-    running, state = _container_state(spec.container)
+    if states is not None:
+        running, state = states.get(spec.container, (False, "not found"))
+    else:
+        running, state = _container_state(spec.container)
     return ServiceStatus(
         name=spec.name,
         kind="docker",
@@ -349,4 +385,9 @@ def _compose_action(
 
 
 def list_services() -> List[ServiceStatus]:
-    return [status(name) for name in SERVICES]
+    # Probe Docker once and snapshot all container states in a single
+    # `docker ps`, rather than per service — one Settings→Services load would
+    # otherwise spawn ~2-3 subprocesses per service.
+    docker = docker_available()
+    states = _all_container_states() if docker[0] else {}
+    return [status(name, docker=docker, states=states) for name in SERVICES]

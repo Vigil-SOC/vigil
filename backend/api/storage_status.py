@@ -249,7 +249,7 @@ def _schema_message(schema: dict) -> str:
 def _audit_retarget(previous, current, user: User) -> None:
     """Record the target change. Best-effort: never fails the swap."""
     try:
-        from database.connection import get_db_session
+        from database.connection import get_db_manager
         from database.models import ConfigAuditLog
 
         before = (
@@ -257,7 +257,9 @@ def _audit_retarget(previous, current, user: User) -> None:
             if previous
             else "(none)"
         )
-        with get_db_session() as session:
+        # session_scope() commits on exit; a bare Session used as a context
+        # manager only closes, so the audit row would be silently dropped.
+        with get_db_manager().session_scope() as session:
             session.add(
                 ConfigAuditLog(
                     config_key="DATABASE_TARGET",

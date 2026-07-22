@@ -114,10 +114,13 @@ function FindingsTab({ openChat, goSettings }: Pick<ScreenProps, 'openChat' | 'g
       if (src !== 'any' && f.src !== src) return false
       return true
     })
-    return searchRows(byFacet, columns, query)
-  }, [rows, query, sev, src, columns])
+    // allColumns, not the visibility-filtered columns: search and sort must
+    // still work on a field whose column the user hid (e.g. the active Time
+    // sort key). The helpers only touch the column matching the query/sort key.
+    return searchRows(byFacet, allColumns, query)
+  }, [rows, query, sev, src, allColumns])
 
-  const sorted = useMemo(() => sortRows(filtered, columns, sort), [filtered, columns, sort])
+  const sorted = useMemo(() => sortRows(filtered, allColumns, sort), [filtered, allColumns, sort])
 
   // reset to the first page whenever the filtered set changes shape
   // (re-sorting keeps the same rows, so it doesn't reset the page)
