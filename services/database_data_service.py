@@ -155,10 +155,18 @@ class DatabaseDataService:
         severity: Optional[str] = None, data_source: Optional[str] = None,
         cluster_id: Optional[str] = None, min_anomaly_score: Optional[float] = None,
         status: Optional[str] = None, search_query: Optional[str] = None,
-        sort_by: str = "timestamp", sort_order: str = "desc"
+        sort_by: str = "timestamp", sort_order: str = "desc",
+        include_embedding: bool = True,
     ) -> List[Dict]:
+        # Callers that only render/aggregate findings pass include_embedding=False
+        # to drop the 768-float vector they never use.
+        def _strip(items: List[Dict]) -> List[Dict]:
+            if include_embedding:
+                return items
+            return [{k: v for k, v in f.items() if k != "embedding"} for f in items]
+
         if self._demo_mode and self._demo_service:
-            return self._demo_service.get_findings(limit)
+            return _strip(self._demo_service.get_findings(limit))
         if self._db_available:
             try:
                 findings = self._db_service.get_findings(
@@ -168,7 +176,7 @@ class DatabaseDataService:
                     limit=limit, offset=offset,
                     sort_by=sort_by, sort_order=sort_order,
                 )
-                return [f.to_dict() for f in findings]
+                return [f.to_dict(include_embedding=include_embedding) for f in findings]
             except Exception as e:
                 logger.error(f"Error getting findings from DB: {e}")
                 return []
@@ -193,8 +201,23 @@ class DatabaseDataService:
                 )]
             reverse = sort_order == "desc"
             findings.sort(key=lambda f: f.get(sort_by, ''), reverse=reverse)
-            return findings[offset:offset + limit]
+            return _strip(findings[offset:offset + limit])
         return []
+
+    def get_findings_missing_enrichment(
+        self, limit: int = 100, max_age_hours: Optional[int] = None
+    ) -> List[Dict]:
+        """Findings stored but never enriched (ai_enrichment IS NULL). DB-only —
+        JSON-fallback daemons skip backfill."""
+        if not self._db_available or not self._db_service:
+            return []
+        try:
+            return self._db_service.get_findings_missing_enrichment(
+                limit=limit, max_age_hours=max_age_hours
+            )
+        except Exception as e:
+            logger.error(f"Error in get_findings_missing_enrichment: {e}")
+            return []
 
     def count_findings(
         self, severity: Optional[str] = None, data_source: Optional[str] = None,
@@ -264,7 +287,29 @@ class DatabaseDataService:
         """
         if self._demo_mode and self._demo_service:
             return self._demo_service.get_nearest_neighbors(finding_id, limit)
-        
+
+        # Prefer the DB-side ANN query; find_similar_findings returns None only
+        # when it can't run (→ fall back), whereas [] is a valid "no neighbors".
+        # same_source=True keeps the comparison within one embedding space (e.g.
+        # LogLM's 512-padded vectors aren't cosine-comparable to deeptempo's 768),
+        # matching the in-memory fallback which skips mismatched dimensions.
+        if self._db_available:
+            try:
+                neighbors = self._db_service.find_similar_findings(
+                    finding_id, limit=limit, same_source=True
+                )
+            except Exception as e:
+                logger.error(f"Error in DB-side nearest_neighbors: {e}")
+                neighbors = None
+            if neighbors is not None:
+                return {"seed_finding": finding_id, "neighbors": neighbors}
+
+        # In-memory fallback (JSON backend, or pgvector unavailable).
+        return self._nearest_neighbors_in_memory(finding_id, limit)
+
+    def _nearest_neighbors_in_memory(self, finding_id: str, limit: int) -> Dict:
+        """Python cosine-similarity fallback for when the DB-side query can't run.
+        Mismatched-length embeddings are skipped (dimension-safe)."""
         # Get all findings (from DB or JSON fallback)
         if self._db_available:
             try:
@@ -277,12 +322,12 @@ class DatabaseDataService:
             findings = self._load_findings_json()
         else:
             return {"error": "No data backend available"}
-        
+
         # Find the seed finding
         seed = next((f for f in findings if f.get('finding_id') == finding_id), None)
         if not seed or 'embedding' not in seed:
             return {"error": f"Finding {finding_id} not found or has no embedding"}
-        
+
         # Compute cosine similarity against all other findings with embeddings
         sims = []
         skipped = 0
@@ -302,7 +347,7 @@ class DatabaseDataService:
                 })
         if skipped:
             logger.warning(f"Skipped {skipped} findings with incompatible embedding dimensions")
-        
+
         sims.sort(key=lambda x: x['similarity'], reverse=True)
         return {"seed_finding": finding_id, "neighbors": sims[:limit]}
     

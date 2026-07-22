@@ -10,11 +10,13 @@ import { useMemo, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { EmptyState, TextInput } from '../../shared/ui'
 import { useMcpServers, useIntegrationsConfig } from './useSettings'
+import { useExtensions } from '../../extensions/ExtensionProvider'
 import {
   getIntegrationForServer,
   HIDDEN_MCP_SERVERS,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
+  SERVER_DISPLAY_NAMES,
   WIP_SERVERS,
   prettyServerName,
 } from './integrationsData'
@@ -27,7 +29,7 @@ import type { SectionProps } from './types'
 
 type IntegrationsTab = 'servers' | 'ingestion' | 'detection'
 const TABS: [IntegrationsTab, string][] = [
-  ['servers', 'MCP Servers'],
+  ['servers', 'Connectors'],
   ['ingestion', 'Data Ingestion'],
   ['detection', 'Detection Rules'],
 ]
@@ -52,7 +54,9 @@ export default function IntegrationsSection({ notify }: SectionProps) {
 
 function ServersPanel({ notify }: SectionProps) {
   const { servers, statuses, enabled, phase, error, reload, setServerEnabled } = useMcpServers()
-  const { config: intCfg, reload: reloadInt, saveIntegration } = useIntegrationsConfig()
+  const { config: intCfg, reload: reloadInt, saveIntegration, setIntegrationEnabled } = useIntegrationsConfig()
+  // refresh the extension registry so a newly-configured connector mounts at once
+  const { reload: reloadExtensions } = useExtensions()
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [builderOpen, setBuilderOpen] = useState(false)
@@ -84,9 +88,25 @@ function ServersPanel({ notify }: SectionProps) {
   const enabledCount = visible.filter((n) => enabled[n]).length
   const runningCount = visible.filter((n) => statuses[n] === 'running').length
 
-  const onToggle = async (name: string, want: boolean) => {
+  // Gate M — MCP server on/off (agent tools); used by every non-extension card.
+  const onToggleMcp = async (name: string, want: boolean) => {
     setBusy(name)
     const res = await setServerEnabled(name, want)
+    setBusy(null)
+    if (res.ok) notify('ok', `${prettyServerName(name)} ${want ? 'enabled' : 'disabled'}.`)
+    else notify('err', `Could not start ${prettyServerName(name)}${res.error ? `: ${res.error}` : ''}.`)
+  }
+
+  // Master — one switch over both gates for a connector-backed integration.
+  const onToggleMaster = async (name: string, id: string, want: boolean) => {
+    setBusy(name)
+    const res = await setServerEnabled(name, want)
+    try {
+      await setIntegrationEnabled(id, want)
+      reloadExtensions()
+    } catch {
+      notify('err', `Could not ${want ? 'enable' : 'disable'} the ${id} panel.`)
+    }
     setBusy(null)
     if (res.ok) notify('ok', `${prettyServerName(name)} ${want ? 'enabled' : 'disabled'}.`)
     else notify('err', `Could not start ${prettyServerName(name)}${res.error ? `: ${res.error}` : ''}.`)
@@ -115,7 +135,7 @@ function ServersPanel({ notify }: SectionProps) {
 
 
       {phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
-      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load connectors" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
 
       {phase === 'ready' && grouped.length === 0 && (
         <EmptyState
@@ -142,30 +162,66 @@ function ServersPanel({ notify }: SectionProps) {
                   ? intCfg.enabled_integrations.includes(integration.id)
                   : false
                 const needsConfig = !!integration && !isConfigured
-                // green = on · gray = needs config · red = off
-                const dotColor = isEnabled ? 'var(--ok)' : needsConfig ? 'var(--tx-faint)' : 'var(--crit)'
-                const label = isEnabled ? (isRunning ? 'Running' : 'Enabled') : needsConfig ? 'Not Configured' : 'Off'
+                // Connector-backed integration: master switch over two gates —
+                // the extension (gateD) and the MCP server / agent tools (gateM).
+                const isExtension = !!integration?.fields?.some((f) => f.name === 'connectorUrl')
+                const gateD = isConfigured
+                const gateM = isEnabled
+                const masterOn = gateD && gateM
+                const masterMixed = isExtension && gateD !== gateM
+                // "configured" once connectorUrl is saved, independent of enabled.
+                const extConfigured = Boolean(
+                  isExtension && integration && intCfg.integrations[integration.id]?.['connectorUrl'],
+                )
+                // green = enabled · amber = partial · gray = needs config · red = off
+                const dotColor = isExtension
+                  ? !extConfigured ? 'var(--tx-faint)' : masterOn ? 'var(--ok)' : masterMixed ? 'var(--high)' : 'var(--crit)'
+                  : isEnabled ? 'var(--ok)' : needsConfig ? 'var(--tx-faint)' : 'var(--crit)'
+                const label = isExtension
+                  ? !extConfigured ? 'Not Configured' : masterOn ? 'Enabled' : masterMixed ? 'Partial' : 'Off'
+                  : isEnabled ? (isRunning ? 'Running' : 'Enabled') : needsConfig ? 'Not Configured' : 'Off'
                 const canConfigure = !!integration?.fields?.length
                 return (
                   <div key={name} className="card card-sq p-3.5 flex flex-col gap-2">
                     <div className="flex items-center gap-2">
                       <span className="text-[13px] font-semibold text-tx truncate flex-1">
-                        {prettyServerName(name)}
+                        {SERVER_DISPLAY_NAMES[name] || prettyServerName(name)}
                       </span>
                       {WIP_SERVERS.has(name) && (
                         <span className="chip" style={{ color: 'var(--high)', fontSize: 10 }}>WIP</span>
                       )}
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={isEnabled}
-                        aria-label={`Toggle ${name}`}
-                        disabled={busy === name}
-                        className={`toggle${isEnabled ? ' on' : ''}`}
-                        onClick={() => onToggle(name, !isEnabled)}
-                      >
-                        <span className="toggle-knob" />
-                      </button>
+                      {isExtension && integration ? (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={masterMixed ? 'mixed' : masterOn}
+                          aria-label={`Toggle ${name}`}
+                          title={
+                            !extConfigured
+                              ? 'Configure the connector first'
+                              : masterMixed
+                                ? 'Partially enabled — toggle again to retry'
+                                : undefined
+                          }
+                          disabled={busy === name || !extConfigured}
+                          className={`toggle${masterOn ? ' on' : ''}${masterMixed ? ' mixed' : ''}`}
+                          onClick={() => onToggleMaster(name, integration.id, !masterOn)}
+                        >
+                          <span className="toggle-knob" />
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={isEnabled}
+                          aria-label={`Toggle ${name}`}
+                          disabled={busy === name}
+                          className={`toggle${isEnabled ? ' on' : ''}`}
+                          onClick={() => onToggleMcp(name, !isEnabled)}
+                        >
+                          <span className="toggle-knob" />
+                        </button>
+                      )}
                     </div>
                     <p className="text-xs text-tx-3 leading-snug line-clamp-2 min-h-[2rem]">
                       {SERVER_DESCRIPTIONS[name] || integration?.description || 'Custom MCP integration.'}
@@ -196,7 +252,7 @@ function ServersPanel({ notify }: SectionProps) {
           onClose={() => setBuilderOpen(false)}
           onSave={(id) => {
             setBuilderOpen(false)
-            notify('ok', `Custom integration "${id}" saved. Restart MCP servers to load it.`)
+            notify('ok', `Custom integration "${id}" saved. Restart connectors to load it.`)
             reload()
             reloadInt()
           }}
@@ -207,10 +263,19 @@ function ServersPanel({ notify }: SectionProps) {
         <IntegrationWizard
           integration={wizardFor}
           existingConfig={intCfg.integrations[wizardFor.id] || {}}
+          secretsSet={intCfg.secrets_set[wizardFor.id] || {}}
           onClose={() => setWizardFor(null)}
           onSave={async (id, cfg) => {
             await saveIntegration(id, cfg)
-            notify('ok', `${wizardFor.name} configured. Enable it with the toggle if it isn’t already.`)
+            // refresh the registry so a URL edit re-reads; saving alone doesn't enable
+            const isExtension = wizardFor.fields?.some((f) => f.name === 'connectorUrl')
+            if (isExtension) reloadExtensions()
+            notify(
+              'ok',
+              isExtension
+                ? `${wizardFor.name} connected. Turn it on with the toggle to enable it.`
+                : `${wizardFor.name} configured. Enable it with the toggle if it isn’t already.`,
+            )
           }}
         />
       )}

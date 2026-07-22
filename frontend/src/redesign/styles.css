@@ -501,6 +501,39 @@
       margin-top: 8px;
    }
 
+   /* ---------- page extension host ---------- */
+   .extension-host-status {
+      min-height: 60vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--tx-3);
+      font-size: 13px;
+   }
+   .extension-host-status svg {
+      animation: spin 1s linear infinite;
+      color: var(--accent);
+   }
+
+   /* ---------- data-source chip ---------- */
+   .source-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.4;
+      white-space: nowrap;
+   }
+   .source-chip svg {
+      flex: none;
+   }
+
    /* ---------- 404 / not found ---------- */
    .notfound {
       min-height: 70vh;
