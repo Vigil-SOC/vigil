@@ -14,7 +14,9 @@ import { mapApiCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
 import type { ScreenProps } from '../../shared/types'
 import { useCases, useCaseDetail, type Phase } from './useCases'
-import { EmptyState, FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
+import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
+import { useAuth } from '../../../contexts/AuthContext'
+import { useToast } from '../../shell/toast'
 import {
   inputCls,
   SectionCard,
@@ -31,6 +33,12 @@ import {
 } from './CaseSections'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
+
+function caseActionError(error: unknown, fallback: string): string {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  return (error as { message?: string })?.message || fallback
+}
 
 /** build the "Open in Vigil" auto-message for a case */
 function casePrompt(c: CaseRow): string {
@@ -256,6 +264,8 @@ function CasesTable({
   reload: () => void
   onSelect: (id: string) => void
 }) {
+  const { hasPermission } = useAuth()
+  const canDelete = hasPermission('cases.delete')
   const [query, setQuery] = useState('')
   const [statusF, setStatusF] = useState('any')
   const [prioF, setPrioF] = useState('any')
@@ -268,6 +278,7 @@ function CasesTable({
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
   const [newOpen, setNewOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<CaseRow | null>(null)
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }))
@@ -422,7 +433,35 @@ function CasesTable({
                   <td className="muted">{c.age}</td>
                   <td><span className={`sla ${c.slaState}`}>{c.sla}</span></td>
                   <td className="muted">{c.updated}</td>
-                  <td><span className="row-act"><button title="Open"><Icon name="arrowR" /></button></span></td>
+                  <td>
+                    <span className="row-act" style={{ opacity: 1 }}>
+                      {canDelete && (
+                        <button
+                          type="button"
+                          aria-label={`Delete case ${c.id}`}
+                          title="Delete case"
+                          style={{ color: 'var(--crit)' }}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setDeleteTarget(c)
+                          }}
+                        >
+                          <Icon name="trash" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Open case ${c.id}`}
+                        title="Open case"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onSelect(c.id)
+                        }}
+                      >
+                        <Icon name="arrowR" />
+                      </button>
+                    </span>
+                  </td>
                 </tr>
               ))}
           </tbody>
@@ -451,7 +490,80 @@ function CasesTable({
       </div>
 
       <NewCaseDialog open={newOpen} onClose={() => setNewOpen(false)} onCreated={reload} />
+      <DeleteCaseDialog
+        target={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={(deleted) => {
+          setResults((current) => current?.filter((c) => c.id !== deleted.id) ?? null)
+          reload()
+        }}
+      />
     </>
+  )
+}
+
+/* ---------------- Delete case confirmation ----------------
+   DELETE /cases/{id}; case-owned records follow the backend's delete policy,
+   while findings linked to the case remain available for review. */
+function DeleteCaseDialog({
+  target,
+  onClose,
+  onDeleted,
+}: {
+  target: CaseRow | null
+  onClose: () => void
+  onDeleted: (deleted: CaseRow) => void
+}) {
+  const { notify } = useToast()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (target) setError('')
+  }, [target])
+
+  const remove = async () => {
+    if (!target || busy) return
+    const deleting = target
+    setBusy(true)
+    setError('')
+    try {
+      await casesApi.delete(deleting.id)
+      setBusy(false)
+      notify('ok', `Deleted ${deleting.id}. Linked findings were preserved.`)
+      onClose()
+      onDeleted(deleting)
+    } catch (cause) {
+      const message = caseActionError(cause, `Failed to delete ${deleting.id}`)
+      setBusy(false)
+      setError(message)
+      notify('err', message)
+    }
+  }
+
+  return (
+    <ConfirmDialog
+      open={target !== null}
+      title="Delete case?"
+      body={
+        <span className="flex flex-col gap-2">
+          <span>
+            Permanently delete case <span className="mono text-tx">{target?.id}</span>?
+          </span>
+          <span>
+            The case and its case-owned records will be removed. Linked findings will remain.
+            This cannot be undone.
+          </span>
+          {error && <span role="alert" style={{ color: 'var(--crit)' }}>{error}</span>}
+        </span>
+      }
+      confirmLabel="Delete case"
+      busy={busy}
+      onConfirm={remove}
+      onClose={() => {
+        if (!busy) onClose()
+      }}
+    />
   )
 }
 
@@ -921,11 +1033,13 @@ function CasesDetail({
 }) {
   const { row, created, linked, sev, activities, resolutionSteps, phase, error, reload: reloadDetail } =
     useCaseDetail(id)
+  const { hasPermission } = useAuth()
+  const canDelete = hasPermission('cases.delete')
   // prefer the freshly-fetched detail; fall back to the list row while it loads
   const c = row || rows.find((x) => x.id === id) || null
   const [tab, setTab] = useState<CaseTab>('Overview')
   const [listQuery, setListQuery] = useState('')
-  const [action, setAction] = useState<'edit' | 'merge' | 'export' | null>(null)
+  const [action, setAction] = useState<'edit' | 'merge' | 'export' | 'delete' | null>(null)
 
   const listRows = useMemo(() => {
     const q = listQuery.trim().toLowerCase()
@@ -1037,6 +1151,11 @@ function CasesDetail({
                 <button className="btn ghost" onClick={() => setAction('edit')}><Icon name="edit" /> Edit</button>
                 <button className="btn ghost" onClick={() => setAction('merge')}><Icon name="link" /> Merge</button>
                 <button className="btn ghost" onClick={() => setAction('export')}><Icon name="download" /> Timesketch</button>
+                {canDelete && (
+                  <button className="btn danger" onClick={() => setAction('delete')}>
+                    <Icon name="trash" /> Delete case
+                  </button>
+                )}
                 <button className="btn primary to-vigil-case" onClick={() => openChat(casePrompt(c))}><Icon name="brain" /> Open in Vigil</button>
               </div>
             </div>
@@ -1080,6 +1199,14 @@ function CasesDetail({
         c={c}
         onClose={() => setAction(null)}
         onConfigure={() => goSettings('integrations')}
+      />
+      <DeleteCaseDialog
+        target={action === 'delete' ? c : null}
+        onClose={() => setAction(null)}
+        onDeleted={() => {
+          reloadList()
+          onBack()
+        }}
       />
     </div>
   )
