@@ -3,7 +3,7 @@
  * Verifies the shell mounts and every screen / dashboard tab / master-detail
  * flow renders without throwing (catches runtime errors tsc can't see).
  */
-import { describe, it, expect, beforeAll, vi } from 'vitest'
+import { afterEach, describe, it, expect, beforeAll, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { ThemeProvider } from '../contexts/ThemeContext'
@@ -205,6 +205,13 @@ beforeAll(() => {
   }
 })
 
+const defaultViewportWidth = window.innerWidth
+
+afterEach(() => {
+  localStorage.clear()
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: defaultViewportWidth })
+})
+
 const title = () => screen.getByRole('heading', { level: 1 }).textContent
 
 describe('SocConsole redesign', () => {
@@ -292,6 +299,33 @@ describe('SocConsole redesign', () => {
     fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
     // wired chat starts empty with its prompt
     expect(screen.getByText(/investigate a finding/)).toBeInTheDocument()
+  })
+
+  it('restores and persists the preferred chat width', () => {
+    localStorage.setItem('soc.chat.width.v1', '500')
+    renderConsole()
+    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
+
+    const separator = screen.getByRole('separator', { name: 'Resize Vigil Assistant' })
+    expect(separator).toHaveAttribute('aria-valuenow', '500')
+
+    fireEvent.keyDown(separator, { key: 'ArrowLeft' })
+    expect(separator).toHaveAttribute('aria-valuenow', '516')
+    expect(localStorage.getItem('soc.chat.width.v1')).toBe('516')
+  })
+
+  it('uses the full viewport and disables resizing on narrow screens', () => {
+    localStorage.setItem('soc.chat.width.v1', '700')
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 500 })
+    renderConsole()
+    fireEvent.click(screen.getByRole('button', { name: /Ask Vigil/ }))
+
+    const separator = screen.getByRole('separator', { name: 'Resize Vigil Assistant' })
+    expect(separator).toHaveAttribute('aria-valuemin', '500')
+    expect(separator).toHaveAttribute('aria-valuemax', '500')
+    expect(separator).toHaveAttribute('aria-valuenow', '500')
+    expect(separator).toHaveAttribute('tabindex', '-1')
+    expect(localStorage.getItem('soc.chat.width.v1')).toBe('700')
   })
 
   it('applies an accent + light mode from the Appearance settings page', () => {
