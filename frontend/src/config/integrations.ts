@@ -715,6 +715,45 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     docs_url: 'https://apidocs.securitycloud.symantec.com/',
   },
 
+  // DETECTION & AI
+  {
+    id: 'loglm',
+    name: 'LogLM',
+    category: 'Detection & AI',
+    description:
+      'DeepTempo LogLM anomaly detections stream into Vigil as findings, and the LogLM model-admin panel mounts natively inside the console. Requires the paid, opt-in LogLM connector.',
+    functionality_type: 'AI Detection & Model Admin',
+    has_ui: true,
+    fields: [
+      {
+        name: 'connectorUrl',
+        label: 'Connector URL',
+        type: 'url',
+        required: true,
+        placeholder: 'https://loglm-connector.internal',
+        helpText:
+          'Base URL of the LogLM connector — it serves the admin UI bundle, the extension manifest, and the session/model APIs. The browser calls this directly, so it must be reachable from the analyst\'s browser with CORS enabled.',
+      },
+      {
+        name: 'mint_secret',
+        label: 'Session Mint Secret',
+        type: 'password',
+        required: true,
+        helpText:
+          'Shared HMAC secret Vigil uses to request short-lived, user-scoped session tokens from the connector (matches the connector\'s CONNECTOR_BFF_SESSION_MINT_SECRET). Stored encrypted server-side; never sent to the browser.',
+      },
+      {
+        name: 'mcp_token',
+        label: 'MCP Bearer Token',
+        type: 'password',
+        required: true,
+        helpText:
+          'Static bearer token the LogLM agent tools present to the connector\'s MCP endpoint (matches the connector\'s CONNECTOR_MCP_AUTH_TOKEN). Stored encrypted server-side; never sent to the browser.',
+      },
+    ],
+    docs_url: 'https://docs.deeptempo.ai/loglm',
+  },
+
   // SIEM
   {
     id: 'splunk',

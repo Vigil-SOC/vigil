@@ -7,6 +7,10 @@ import logging
 
 from services.database_data_service import DatabaseDataService
 from services.defaults import DEFAULT_MODEL
+from services.source_evidence import (
+    normalize_finding_source_evidence,
+    project_finding_source_evidence_for_list,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -64,10 +68,15 @@ async def get_findings(
         cluster_id=cluster_id_str, min_anomaly_score=min_anomaly_score,
         status=status, search_query=search,
         sort_by=sort_by, sort_order=sort_order,
+        # The list view never uses the 768-float embedding — omit it so a
+        # 1000-row page (polled every 10s) isn't several MB of vectors.
+        include_embedding=False,
     )
     
     return {
-        "findings": findings,
+        "findings": [
+            project_finding_source_evidence_for_list(finding) for finding in findings
+        ],
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -89,7 +98,7 @@ async def get_finding(finding_id: str):
     finding = data_service.get_finding(finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
-    return finding
+    return normalize_finding_source_evidence(finding)
 
 
 @router.get("/stats/summary")
@@ -100,8 +109,8 @@ async def get_findings_summary():
     Returns:
         Summary statistics
     """
-    findings = data_service.get_findings()
-    
+    findings = data_service.get_findings(include_embedding=False)
+
     # Calculate statistics
     severity_counts = {}
     data_source_counts = {}
@@ -568,4 +577,3 @@ async def clear_all_findings():
     except Exception as e:
         logger.error(f"Error clearing findings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear findings: {str(e)}")
-

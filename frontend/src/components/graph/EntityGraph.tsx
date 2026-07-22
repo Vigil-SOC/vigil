@@ -42,6 +42,7 @@ import {
   AccountTree as TreeIcon,
   BubbleChart as BubbleIcon,
 } from '@mui/icons-material'
+import { getGraphEndpointId } from './entityGraphUtils'
 
 export interface GraphNode extends NodeObject {
   id: string
@@ -223,8 +224,8 @@ const EntityGraph = memo(function EntityGraph({
     () =>
       links.filter(
         (link) =>
-          filteredNodeIds.has(String(link.source)) &&
-          filteredNodeIds.has(String(link.target))
+          filteredNodeIds.has(getGraphEndpointId(link.source)) &&
+          filteredNodeIds.has(getGraphEndpointId(link.target))
       ),
     [links, filteredNodeIds]
   )
@@ -267,10 +268,7 @@ const EntityGraph = memo(function EntityGraph({
 
   // Helper to extract node ID from source/target (may be object after simulation)
   const getLinkNodeId = useCallback((nodeOrId: any): string => {
-    if (typeof nodeOrId === 'object' && nodeOrId !== null) {
-      return String(nodeOrId.id)
-    }
-    return String(nodeOrId)
+    return getGraphEndpointId(nodeOrId)
   }, [])
 
   // Memoized link color calculator
@@ -867,4 +865,3 @@ const EntityGraph = memo(function EntityGraph({
 })
 
 export default EntityGraph
-

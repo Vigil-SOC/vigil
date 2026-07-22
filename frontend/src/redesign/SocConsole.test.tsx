@@ -247,9 +247,9 @@ describe('SocConsole redesign', () => {
     // Timeline (exercises ResizeObserver + layout math); count resolves async
     fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
     expect(await screen.findByText(/events$/)).toBeInTheDocument()
-    // Entity Graph stub
+    // Entity Graph empty state
     fireEvent.click(screen.getByRole('tab', { name: 'Entity Graph' }))
-    expect(screen.getByText('Coming soon.', { exact: false })).toBeInTheDocument()
+    expect(screen.getByText('No entity graph yet')).toBeInTheDocument()
   })
 
   it('opens the Cases master-detail and returns to the table', async () => {

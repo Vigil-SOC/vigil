@@ -1,29 +1,6 @@
-"""LLM router: dispatches calls through the Bifrost gateway.
-
-Per GH #84 PR-B, Vigil routes **all** LLM traffic through Bifrost —
-Anthropic, OpenAI, Ollama, and any future providers — so that caching,
-cost tracking, and budget enforcement live in exactly one place.
-
-Anthropic traffic (including extended-thinking calls) hits Bifrost's
-Anthropic-compatible passthrough at ``{BIFROST_URL}/anthropic`` using
-the regular Anthropic SDK with a swapped ``base_url``. Non-Anthropic
-providers use Bifrost's OpenAI-format surface at ``{BIFROST_URL}/v1``.
-
-Before this PR ships, ``scripts/bifrost_capability_probe.py`` must pass
-against a live Bifrost — it verifies extended thinking, ``cache_control``
-blocks, and cache-token usage counters round-trip unchanged.
-
-Usage::
-
-    from services.llm_router import LLMRouter
-
-    router = LLMRouter()
-    provider = router.resolve_provider(provider_id)   # DB lookup
-    result = await router.dispatch(messages=..., provider=provider, enable_thinking=True)
-"""
-
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -33,10 +10,6 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Repo path setup — secrets_manager lives under backend/, which isn't on
-# sys.path in the worker/daemon. Mirror the pattern used elsewhere.
-# ---------------------------------------------------------------------------
 _REPO = Path(__file__).resolve().parent.parent
 if str(_REPO / "backend") not in sys.path:
     sys.path.insert(0, str(_REPO / "backend"))
@@ -48,25 +21,10 @@ try:  # soft imports — router is usable in tests without a DB
 except Exception:  # noqa: BLE001
     get_secret = None  # type: ignore
 
-
-# DispatchPath retained as a single-value literal so downstream code that
-# branches on it keeps working without edits. If we add another gateway
-# later, this grows back into a union.
 DispatchPath = Literal["bifrost"]
 
 
-# ---------------------------------------------------------------------------
-# Budget-error mapping (#186)
-# ---------------------------------------------------------------------------
-
-
 def _is_budget_status(status_code: Optional[int]) -> bool:
-    """Bifrost returns 429 when the VK rate limit is hit and 402 when a
-    budget tier is exceeded. We map both to ``BudgetExceeded`` so callers
-    can render a typed error rather than a generic 500. Some providers
-    map "insufficient quota" to 429 too, so the line between rate-limit
-    and budget-exceeded is fuzzy — we surface ``tier`` in the exception
-    so the UI can disambiguate when Bifrost adds richer error bodies."""
     return status_code in (402, 429)
 
 
@@ -139,8 +97,6 @@ def _bifrost_url() -> str:
 
 
 def _block_on_injection() -> bool:
-    """Honoured by the pre-dispatch hook (issue #87). Off by default —
-    we observe before enforcing. Promote via env, not by editing code."""
     return os.getenv("PROMPT_INJECTION_BLOCK", "false").lower() in ("true", "1", "yes")
 
 
@@ -152,9 +108,26 @@ def select_path(
     return "bifrost"
 
 
-# ---------------------------------------------------------------------------
-# Pre-dispatch sanitization (issue #87)
-# ---------------------------------------------------------------------------
+def _normalize_openai_tool_calls(tool_calls: Any) -> Optional[List[Dict[str, Any]]]:
+    if not tool_calls:
+        return None
+    normalized: List[Dict[str, Any]] = []
+    for tc in tool_calls:
+        fn = getattr(tc, "function", None)
+        name = getattr(fn, "name", None) if fn is not None else None
+        raw_args = getattr(fn, "arguments", None) if fn is not None else None
+        try:
+            parsed = json.loads(raw_args) if raw_args else {}
+        except (json.JSONDecodeError, TypeError):
+            parsed = {}
+        normalized.append(
+            {
+                "id": getattr(tc, "id", None),
+                "name": name,
+                "input": parsed if isinstance(parsed, dict) else {},
+            }
+        )
+    return normalized or None
 
 
 def _wrap_tool_results_in_messages(
@@ -233,6 +206,23 @@ def _scan_messages_for_injection(messages: List[Dict[str, Any]]) -> List[str]:
     return patterns
 
 
+def _bifrost_headers(interaction_id: Optional[str] = None) -> Dict[str, str]:
+    """Log-correlation and budget-VK headers every Bifrost call carries."""
+    headers: Dict[str, str] = {}
+    if interaction_id:
+        headers["x-bf-lh-vigil-interaction-id"] = interaction_id
+    try:
+        from services.budget_service import get_active_vk, should_enforce
+
+        if should_enforce():
+            vk = get_active_vk()
+            if vk:
+                headers["x-bf-vk"] = vk
+    except Exception as exc:
+        logger.debug("budget_service unavailable (%s); proceeding without x-bf-vk", exc)
+    return headers
+
+
 def _pre_dispatch_sanitize(
     messages: List[Dict[str, Any]],
     system_prompt: Optional[str],
@@ -243,10 +233,7 @@ def _pre_dispatch_sanitize(
     Returns the (possibly rewritten) ``messages`` and the system prompt
     (returned as-is — we never silently mutate user system prompts).
     """
-    from services.prompt_security import (
-        PromptInjectionBlocked,
-        scan_for_injection,
-    )
+    from services.prompt_security import PromptInjectionBlocked, scan_for_injection
 
     wrapped = _wrap_tool_results_in_messages(messages)
 
@@ -320,26 +307,7 @@ class LLMRouter:
         messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
         model = model or provider.default_model
 
-        # #185: correlation header for Bifrost log lookup.
-        # #186: VK header so Bifrost's governance layer enforces budgets.
-        # Both share the extra_headers kwarg the SDKs forward to the upstream
-        # request. Only attach x-bf-vk when budget enforcement is on; while
-        # DEV_MODE / LLM_BUDGET_UNLIMITED is set, omit the header entirely
-        # so Bifrost's bootstrap "no VK" path applies.
-        extra_headers: Dict[str, str] = {}
-        if interaction_id:
-            extra_headers["x-bf-lh-vigil-interaction-id"] = interaction_id
-        try:
-            from services.budget_service import get_active_vk, should_enforce
-
-            if should_enforce():
-                vk = get_active_vk()
-                if vk:
-                    extra_headers["x-bf-vk"] = vk
-        except Exception as _be:
-            logger.debug(
-                "budget_service unavailable (%s); proceeding without x-bf-vk", _be
-            )
+        extra_headers = _bifrost_headers(interaction_id)
         # Convert empty dict back to None so the dispatch helpers can use a
         # truthy check for "should I send any extra headers" without leaking
         # an empty dict into the SDK call.
@@ -389,10 +357,20 @@ class LLMRouter:
     ) -> Dict[str, Any]:
         from openai import AsyncOpenAI  # lazy — avoids hard dep for tests
 
+        from services.llm_format import (
+            anthropic_messages_to_openai,
+            anthropic_tools_to_openai,
+        )
+
+        # Callers (the daemon tool loop, workflows) build conversations in
+        # Anthropic shape — assistant tool_use blocks, user tool_result blocks,
+        # and tools with `input_schema`. Translate both to OpenAI shape so the
+        # multi-turn tool loop round-trips; string-content messages and already
+        # OpenAI-shaped tools pass through untouched.
         oai_messages: List[Dict[str, Any]] = []
         if system_prompt:
             oai_messages.append({"role": "system", "content": system_prompt})
-        oai_messages.extend(messages)
+        oai_messages.extend(anthropic_messages_to_openai(messages))
 
         client = AsyncOpenAI(
             base_url=f"{self.bifrost_url}/v1",
@@ -406,7 +384,7 @@ class LLMRouter:
         if temperature is not None:
             kwargs["temperature"] = temperature
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = anthropic_tools_to_openai(tools)
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
 
@@ -428,7 +406,13 @@ class LLMRouter:
                     cache_read = getattr(details, "cached_tokens", 0) or 0
             return {
                 "content": choice.content or "",
-                "tool_calls": getattr(choice, "tool_calls", None),
+                # Normalize OpenAI tool-call objects to {id, name, input} dicts
+                # so _adapt_router_result_to_raw can build Anthropic tool_use
+                # blocks without touching SDK-object internals. Arguments arrive
+                # as a JSON string; parse to a dict (empty on malformed JSON).
+                "tool_calls": _normalize_openai_tool_calls(
+                    getattr(choice, "tool_calls", None)
+                ),
                 "model": resp.model,
                 "input_tokens": getattr(usage, "prompt_tokens", 0) if usage else 0,
                 "output_tokens": getattr(usage, "completion_tokens", 0) if usage else 0,
@@ -441,6 +425,69 @@ class LLMRouter:
             # AsyncOpenAI holds an httpx connection pool; close it so file
             # descriptors / connections don't leak per call (chat()'s
             # non-streaming path routes through here).
+            await client.close()
+
+    async def stream_openai_raw(
+        self,
+        *,
+        provider: ProviderSpec,
+        messages: List[Dict[str, Any]],
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        max_tokens: int = 4096,
+        temperature: Optional[float] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        interaction_id: Optional[str] = None,
+        include_usage: bool = False,
+    ):
+        """Yield raw OpenAI stream chunks (tool-call deltas, finish_reason,
+        usage) for non-Anthropic Bifrost providers."""
+        from openai import AsyncOpenAI
+
+        from services.llm_format import (
+            anthropic_messages_to_openai,
+            anthropic_tools_to_openai,
+        )
+
+        messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
+        model = model or provider.default_model
+
+        oai_messages: List[Dict[str, Any]] = []
+        if system_prompt:
+            oai_messages.append({"role": "system", "content": system_prompt})
+        oai_messages.extend(anthropic_messages_to_openai(messages))
+
+        client = AsyncOpenAI(
+            base_url=f"{self.bifrost_url}/v1",
+            api_key="bifrost",
+        )
+        kwargs: Dict[str, Any] = {
+            "model": f"{provider.provider_type}/{model}",
+            "messages": oai_messages,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+        if include_usage:
+            kwargs["stream_options"] = {"include_usage": True}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if tools:
+            kwargs["tools"] = anthropic_tools_to_openai(tools)
+        extra_headers = _bifrost_headers(interaction_id)
+        if extra_headers:
+            kwargs["extra_headers"] = extra_headers
+
+        try:
+            stream = await client.chat.completions.create(**kwargs)
+            async for chunk in stream:
+                yield chunk
+        except Exception as exc:
+            await _wrap_budget_errors(_raise_async(exc))
+        finally:
+            # AsyncOpenAI holds an httpx connection pool; close it on normal
+            # completion, error, AND consumer disconnect (GeneratorExit, e.g.
+            # the SSE client goes away mid-stream) so file descriptors /
+            # connections don't accumulate under load.
             await client.close()
 
     async def dispatch_openai_stream(
@@ -456,65 +503,21 @@ class LLMRouter:
         interaction_id: Optional[str] = None,
     ):
         """Yield OpenAI-format text chunks for non-Anthropic Bifrost providers."""
-        from openai import AsyncOpenAI
-
-        messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
-        model = model or provider.default_model
-
-        extra_headers: Dict[str, str] = {}
-        if interaction_id:
-            extra_headers["x-bf-lh-vigil-interaction-id"] = interaction_id
-        try:
-            from services.budget_service import get_active_vk, should_enforce
-
-            if should_enforce():
-                vk = get_active_vk()
-                if vk:
-                    extra_headers["x-bf-vk"] = vk
-        except Exception as _be:
-            logger.debug(
-                "budget_service unavailable (%s); proceeding without x-bf-vk", _be
-            )
-
-        oai_messages: List[Dict[str, Any]] = []
-        if system_prompt:
-            oai_messages.append({"role": "system", "content": system_prompt})
-        oai_messages.extend(messages)
-
-        client = AsyncOpenAI(
-            base_url=f"{self.bifrost_url}/v1",
-            api_key="bifrost",
-        )
-        kwargs: Dict[str, Any] = {
-            "model": f"{provider.provider_type}/{model}",
-            "messages": oai_messages,
-            "max_tokens": max_tokens,
-            "stream": True,
-        }
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-        if tools:
-            kwargs["tools"] = tools
-        if extra_headers:
-            kwargs["extra_headers"] = extra_headers
-
-        try:
-            stream = await client.chat.completions.create(**kwargs)
-            async for chunk in stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                content = getattr(delta, "content", None)
-                if content:
-                    yield {"type": "text", "content": content}
-        except Exception as exc:
-            await _wrap_budget_errors(_raise_async(exc))
-        finally:
-            # AsyncOpenAI holds an httpx connection pool; close it on normal
-            # completion, error, AND consumer disconnect (GeneratorExit, e.g.
-            # the SSE client goes away mid-stream) so file descriptors /
-            # connections don't accumulate under load.
-            await client.close()
+        async for chunk in self.stream_openai_raw(
+            provider=provider,
+            messages=messages,
+            system_prompt=system_prompt,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            interaction_id=interaction_id,
+        ):
+            if not chunk.choices:
+                continue
+            content = getattr(chunk.choices[0].delta, "content", None)
+            if content:
+                yield {"type": "text", "content": content}
 
     async def _dispatch_anthropic(
         self,
@@ -622,15 +625,10 @@ def provider_spec_from_row(row) -> ProviderSpec:
 
 
 def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
-    """Load a provider by id (or the default Anthropic row if id is None).
-
-    Returns None if the DB is unavailable — callers should fall back to the
-    legacy ClaudeService path in that case.
-    """
     try:
         from database.connection import get_db_session
         from database.models import LLMProviderConfig
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("provider spec DB lookup skipped: %s", exc)
         return None
 
@@ -655,16 +653,6 @@ def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
 
 
 def get_default_provider_spec() -> Optional[ProviderSpec]:
-    """Load the default active provider of any type.
-
-    Preference order:
-    1. Any provider with ``is_default=True`` and ``is_active=True``
-    2. Any provider with ``is_active=True`` (first row, arbitrary order)
-
-    Returns None when no provider is configured or the DB is unavailable.
-    Used by the chat endpoint to route non-Anthropic providers through the
-    OpenAI-format Bifrost surface rather than requiring an Anthropic key.
-    """
     try:
         from database.connection import get_db_session
         from database.models import LLMProviderConfig

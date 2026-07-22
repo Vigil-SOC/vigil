@@ -25,7 +25,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from pgvector.sqlalchemy import Vector
 import uuid
+
+# Fixed width for the findings vector column; sources of other dimensions
+# (LogLM 512) are zero-padded/truncated to this before storage.
+EMBEDDING_DIM = 768
 
 
 class Base(DeclarativeBase):
@@ -62,8 +67,7 @@ class Finding(Base):
     # Primary key
     finding_id: Mapped[str] = mapped_column(String(50), primary_key=True)
 
-    # Core finding data
-    embedding: Mapped[List[float]] = mapped_column(ARRAY(Float), nullable=False)
+    embedding: Mapped[List[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
     mitre_predictions: Mapped[dict] = mapped_column(JSONB, nullable=False)
     anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
 
@@ -116,6 +120,13 @@ class Finding(Base):
         Index("idx_finding_data_source", "data_source"),
         Index("idx_finding_cluster_id", "cluster_id"),
         Index("idx_finding_anomaly_score", "anomaly_score"),
+        # HNSW ANN index for embedding cosine similarity (see find_similar_findings).
+        Index(
+            "idx_finding_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
         Index(
             "idx_finding_description",
             "description",
@@ -133,11 +144,12 @@ class Finding(Base):
         ),
     )
 
-    def to_dict(self) -> dict:
-        """Convert finding to dictionary."""
-        return {
+    def to_dict(self, include_embedding: bool = True) -> dict:
+        """Convert finding to dictionary. ``include_embedding=False`` omits the
+        768-float vector — used by list/summary responses that never consume it,
+        so they don't ship megabytes of vectors the UI ignores."""
+        d = {
             "finding_id": self.finding_id,
-            "embedding": self.embedding,
             "description": self.description,
             "mitre_predictions": self.mitre_predictions,
             "anomaly_score": self.anomaly_score,
@@ -153,6 +165,14 @@ class Finding(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+        if include_embedding:
+            # pgvector returns a numpy array; coerce to a plain list for JSON
+            # (tolerates a plain list too, for non-pgvector paths).
+            emb = self.embedding
+            if emb is not None and hasattr(emb, "tolist"):
+                emb = emb.tolist()
+            d["embedding"] = emb
+        return d
 
 
 class Case(Base):

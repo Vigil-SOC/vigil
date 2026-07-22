@@ -107,7 +107,7 @@ async def export_case_to_jira(
         if findings:
             description += f"*Findings ({len(findings)}):*\n"
             for f in findings[:10]:  # Limit to 10
-                description += f"- [{f.severity.upper()}] {f.title}\n"
+                description += f"- [{(f.severity or 'unknown').upper()}] {f.title}\n"
             if len(findings) > 10:
                 description += f"- ... and {len(findings) - 10} more\n"
             description += "\n"
@@ -166,7 +166,7 @@ async def export_case_to_jira(
                     "fields": {
                         "project": {"key": request.project_key},
                         "parent": {"key": issue_key},
-                        "summary": f"[{finding.severity.upper()}] {finding.title}",
+                        "summary": f"[{(finding.severity or 'unknown').upper()}] {finding.title}",
                         "description": finding.description[:500] if finding.description else "See parent issue",
                         "issuetype": {"name": "Sub-task"}
                     }
