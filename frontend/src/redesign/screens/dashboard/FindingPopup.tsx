@@ -15,7 +15,10 @@ import { mapApiFinding, type ApiFinding } from '../../data/mappers'
 import { techniqueName } from '../../data/mitre'
 import { ConfirmDialog, EmptyState, Popup, Select } from '../../shared/ui'
 import { Icon } from '../../shared/icons'
+import type { Finding } from '../../data/data'
 import type { Phase } from '../cases/useCases'
+import CaseCreateDialog, { type InitialCaseFinding } from '../cases/CaseCreateDialog'
+import { useAuth } from '../../../contexts/AuthContext'
 
 interface RawFinding extends ApiFinding {
   description?: string
@@ -151,13 +154,17 @@ export default function FindingPopup({
   onClose,
   onChanged,
   onConfigureAi,
+  onCaseCreated,
 }: {
   id: string | null
   onClose: () => void
   /** called after a status change / delete so the list can refetch */
   onChanged?: () => void
   onConfigureAi?: () => void
+  onCaseCreated?: (caseId: string) => void
 }) {
+  const { hasPermission } = useAuth()
+  const canCreateCase = hasPermission('cases.write')
   const [raw, setRaw] = useState<RawFinding | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -171,6 +178,7 @@ export default function FindingPopup({
   const [status, setStatus] = useState('')
   const [acting, setActing] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
+  const [caseFinding, setCaseFinding] = useState<InitialCaseFinding | null>(null)
 
   useEffect(() => {
     if (!id) return
@@ -255,8 +263,14 @@ export default function FindingPopup({
       id || 'Finding'
     )
 
+  const createCase = (finding: Finding) => {
+    setCaseFinding({ id: finding.id, severity: finding.sev })
+    onClose()
+  }
+
   return (
-    <Popup open={id !== null} onClose={onClose} title={title} width={640}>
+    <>
+      <Popup open={id !== null} onClose={onClose} title={title} width={640}>
       {phase === 'loading' && <div className="muted">Loading finding…</div>}
       {phase === 'error' && <div className="muted">Couldn’t load finding: {error}</div>}
       {phase === 'ready' && f && raw && (
@@ -367,6 +381,11 @@ export default function FindingPopup({
 
           {/* actions */}
           <div className="fp-actions">
+            {canCreateCase && onCaseCreated && (
+              <button className="btn primary" onClick={() => createCase(f)} disabled={acting}>
+                <Icon name="folder" size={14} /> Create case
+              </button>
+            )}
             <button className="btn danger" onClick={() => setConfirmDel(true)} disabled={acting}>
               <Icon name="trash" size={14} /> Delete finding
             </button>
@@ -383,6 +402,16 @@ export default function FindingPopup({
         onConfirm={doDelete}
         onClose={() => setConfirmDel(false)}
       />
-    </Popup>
+      </Popup>
+      <CaseCreateDialog
+        open={caseFinding !== null}
+        initialFindings={caseFinding ? [caseFinding] : []}
+        onClose={() => setCaseFinding(null)}
+        onCreated={(caseId) => {
+          setCaseFinding(null)
+          onCaseCreated?.(caseId)
+        }}
+      />
+    </>
   )
 }

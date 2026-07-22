@@ -17,8 +17,12 @@ import type { ScreenProps } from '../../shared/types'
 
 type DashTab = 'findings' | 'attack' | 'timeline' | 'entity'
 
-export default function DashboardScreen({ openChat, goSettings }: ScreenProps) {
+export default function DashboardScreen({ openChat, go, goSettings }: ScreenProps) {
   const [tab, setTab] = useState<DashTab>('findings')
+  const openCreatedCase = useCallback(
+    (caseId: string) => go('cases', { search: `?case=${encodeURIComponent(caseId)}` }),
+    [go],
+  )
   const tabs: [DashTab, string][] = [
     ['findings', 'Findings'],
     ['attack', 'ATT&CK'],
@@ -42,9 +46,9 @@ export default function DashboardScreen({ openChat, goSettings }: ScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'findings' && <FindingsTab openChat={openChat} goSettings={goSettings} />}
+      {tab === 'findings' && <FindingsTab openChat={openChat} goSettings={goSettings} onCaseCreated={openCreatedCase} />}
       {tab === 'attack' && <AttackTab />}
-      {tab === 'timeline' && <TimelineTab />}
+      {tab === 'timeline' && <TimelineTab onCaseCreated={openCreatedCase} />}
       {tab === 'entity' && <EntityStub />}
     </>
   )
@@ -104,7 +108,11 @@ function findingPrompt(f: Finding): string {
   return `Investigate finding ${f.id} — ${parts.join(', ')}. What happened and what should I do next?`
 }
 
-function FindingsTab({ openChat, goSettings }: Pick<ScreenProps, 'openChat' | 'goSettings'>) {
+function FindingsTab({
+  openChat,
+  goSettings,
+  onCaseCreated,
+}: Pick<ScreenProps, 'openChat' | 'goSettings'> & { onCaseCreated: (caseId: string) => void }) {
   const { rows, phase, error, reload } = useFindings()
   const { kpis, reload: reloadKpis } = useDashboardKpis()
   const [query, setQuery] = useState('')
@@ -309,7 +317,13 @@ function FindingsTab({ openChat, goSettings }: Pick<ScreenProps, 'openChat' | 'g
           ><Icon name="chevR" size={14} /></button>
         </span>
       </div>
-      <FindingPopup id={detailId} onClose={() => setDetailId(null)} onChanged={() => { reload(); reloadKpis() }} onConfigureAi={() => goSettings('ai-config')} />
+      <FindingPopup
+        id={detailId}
+        onClose={() => setDetailId(null)}
+        onChanged={() => { reload(); reloadKpis() }}
+        onConfigureAi={() => goSettings('ai-config')}
+        onCaseCreated={onCaseCreated}
+      />
     </>
   )
 }
@@ -530,7 +544,7 @@ function computeLayout(events: TimelineEvent[], zoom: number, containerW: number
   return { min, max, pxPerDay, innerW, plotH, bars, ticks, grids, months }
 }
 
-function TimelineTab() {
+function TimelineTab({ onCaseCreated }: { onCaseCreated: (caseId: string) => void }) {
   const [filter, setFilter] = useState<'all' | 'finding'>('all')
   const [speed, setSpeed] = useState(1)
   const [zoom, setZoom] = useState(1)
@@ -754,7 +768,7 @@ function TimelineTab() {
           <div className="tl-playhead" ref={playheadRef} style={{ display: 'none' }} />
         </div>
       </div>
-      <FindingPopup id={detailId} onClose={() => setDetailId(null)} />
+      <FindingPopup id={detailId} onClose={() => setDetailId(null)} onCaseCreated={onCaseCreated} />
     </>
   )
 }

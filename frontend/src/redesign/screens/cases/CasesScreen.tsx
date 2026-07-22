@@ -15,6 +15,8 @@ import type { CaseRow } from '../../data/data'
 import type { ScreenProps } from '../../shared/types'
 import { useCases, useCaseDetail, type Phase } from './useCases'
 import { EmptyState, FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
+import { useAuth } from '../../../contexts/AuthContext'
+import CaseCreateDialog from './CaseCreateDialog'
 import {
   inputCls,
   SectionCard,
@@ -256,6 +258,8 @@ function CasesTable({
   reload: () => void
   onSelect: (id: string) => void
 }) {
+  const { hasPermission } = useAuth()
+  const canCreate = hasPermission('cases.write')
   const [query, setQuery] = useState('')
   const [statusF, setStatusF] = useState('any')
   const [prioF, setPrioF] = useState('any')
@@ -365,7 +369,9 @@ function CasesTable({
           Advanced Search
         </button>
         <button className="btn ghost icon" title="Refresh" onClick={reload}><Icon name="refresh" /></button>
-        <button className="btn primary" onClick={() => setNewOpen(true)}><Icon name="plus" /> New Case</button>
+        {canCreate && (
+          <button className="btn primary" onClick={() => setNewOpen(true)}><Icon name="plus" /> New Case</button>
+        )}
       </div>
       {showAdvanced && <AdvancedSearchPanel onResults={setResults} rows={rows} />}
       {results && (
@@ -405,7 +411,9 @@ function CasesTable({
                   icon={rows.length === 0 ? 'folder' : 'filter'}
                   title={results ? 'No cases match this search' : rows.length === 0 ? 'No cases yet' : 'No cases match these filters'}
                   body={results || rows.length > 0 ? 'Clear the search and filters to return to the full case queue.' : 'Create a case manually or link findings from the dashboard to start an investigation record.'}
-                  primary={results || rows.length > 0 ? { label: 'Clear filters', onClick: () => { setResults(null); setQuery(''); setStatusF('any'); setPrioF('any'); setAssigneeF('any') }, icon: 'close' } : { label: 'New case', onClick: () => setNewOpen(true), icon: 'plus' }}
+                  primary={results || rows.length > 0
+                    ? { label: 'Clear filters', onClick: () => { setResults(null); setQuery(''); setStatusF('any'); setPrioF('any'); setAssigneeF('any') }, icon: 'close' }
+                    : canCreate ? { label: 'New case', onClick: () => setNewOpen(true), icon: 'plus' } : undefined}
                 />
               </StateRow>
             )}
@@ -450,7 +458,11 @@ function CasesTable({
         </span>
       </div>
 
-      <NewCaseDialog open={newOpen} onClose={() => setNewOpen(false)} onCreated={reload} />
+      <CaseCreateDialog
+        open={newOpen}
+        onClose={() => setNewOpen(false)}
+        onCreated={() => reload()}
+      />
     </>
   )
 }
@@ -601,90 +613,6 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
         <button className="btn primary" onClick={run} disabled={busy}>{busy ? 'Searching…' : 'Search'}</button>
       </div>
     </div>
-  )
-}
-
-/* ---------------- New case dialog ----------------
-   POST /cases/ with title/priority/status/description (no findings yet);
-   refreshes the list on success. */
-function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: () => void }) {
-  const [title, setTitle] = useState('')
-  const [priority, setPriority] = useState('medium')
-  const [status, setStatus] = useState('open')
-  const [description, setDescription] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-
-  const submit = async () => {
-    if (!title.trim()) {
-      setErr('Title is required.')
-      return
-    }
-    setBusy(true)
-    setErr('')
-    try {
-      await casesApi.create({
-        title: title.trim(),
-        description: description.trim() || undefined,
-        finding_ids: [],
-        priority,
-        status,
-      })
-      setTitle(''); setDescription(''); setPriority('medium'); setStatus('open')
-      onCreated()
-      onClose()
-    } catch (e) {
-      setErr((e as { message?: string })?.message || 'Failed to create case')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Popup open={open} onClose={onClose} title="New case" width={520}>
-      <div className="flex flex-col gap-3.5">
-        <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-          <span>Title</span>
-          <input className={inputCls} placeholder="Case title" value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
-        </label>
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-            <span>Priority</span>
-            <Select
-              value={priority}
-              onSelect={setPriority}
-              options={[
-                { value: 'critical', label: 'Critical' },
-                { value: 'high', label: 'High' },
-                { value: 'medium', label: 'Medium' },
-                { value: 'low', label: 'Low' },
-              ]}
-            />
-          </label>
-          <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-            <span>Status</span>
-            <Select
-              value={status}
-              onSelect={setStatus}
-              options={[
-                { value: 'open', label: 'Open' },
-                { value: 'investigating', label: 'Investigating' },
-                { value: 'closed', label: 'Closed' },
-              ]}
-            />
-          </label>
-        </div>
-        <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-          <span>Description</span>
-          <textarea className={inputCls} rows={4} placeholder="Optional description" value={description} onChange={(e) => setDescription(e.target.value)} style={{ resize: 'vertical' }} />
-        </label>
-        {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
-        <div className="flex justify-end gap-2.5">
-          <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Creating…' : 'Create case'}</button>
-        </div>
-      </div>
-    </Popup>
   )
 }
 
