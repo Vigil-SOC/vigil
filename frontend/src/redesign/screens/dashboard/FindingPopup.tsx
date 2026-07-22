@@ -16,6 +16,8 @@ import { techniqueName } from '../../data/mitre'
 import { ConfirmDialog, EmptyState, Popup, Select } from '../../shared/ui'
 import { Icon } from '../../shared/icons'
 import type { Phase } from '../cases/useCases'
+import { parseSourceEvidence } from '../../data/sourceEvidence'
+import { SourceEvidenceSection } from './SourceEvidenceSection'
 
 interface RawFinding extends ApiFinding {
   description?: string
@@ -244,6 +246,7 @@ export default function FindingPopup({
   const f = raw ? mapApiFinding(raw) : null
   const preds = Object.entries(raw?.mitre_predictions || {}).sort((a, b) => b[1] - a[1])
   const ec = raw?.entity_context || {}
+  const sourceEvidence = parseSourceEvidence(ec.source_evidence)
 
   const title =
     phase === 'ready' && f ? (
@@ -323,6 +326,8 @@ export default function FindingPopup({
               </div>
             </div>
           )}
+
+          <SourceEvidenceSection evidence={sourceEvidence} />
 
           {/* AI enrichment — on-demand */}
           <div className="modal-section">
