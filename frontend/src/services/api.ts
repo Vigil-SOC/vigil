@@ -993,6 +993,15 @@ export interface MempalaceHealth {
   memories_count_source: 'chromadb' | 'unavailable'
 }
 
+// Mint a short-lived session token; the backend calls the connector BFF
+// server-to-server so the mint secret never reaches the browser.
+export const extensionsApi = {
+  getSessionToken: (integrationId: string) =>
+    api.get<{ token: string | null; expires_in: number | null; user: string }>(
+      `/integrations/${integrationId}/session-token`,
+    ),
+}
+
 // LLM Provider API (GH #88 — multi-provider LLM config)
 export interface LLMProvider {
   provider_id: string

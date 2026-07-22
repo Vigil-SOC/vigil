@@ -16,6 +16,7 @@ delete the legacy loops in a follow-up.
 """
 
 import asyncio
+import hmac
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any
@@ -479,12 +480,46 @@ class DataPoller:
         
         async def handle_webhook(request: web.Request) -> web.Response:
             """Handle incoming webhook data."""
+            # Fail closed: no token configured => ingestion is disabled, and every
+            # request must present a matching bearer (constant-time compare).
+            token = self.config.webhook_token
+            if not token:
+                logger.error(
+                    "Ingest webhook rejected: DAEMON_WEBHOOK_TOKEN is not set "
+                    "(fail-closed; ingestion disabled until configured)"
+                )
+                return web.json_response(
+                    {"error": "ingest disabled: server missing DAEMON_WEBHOOK_TOKEN"},
+                    status=503,
+                )
+            presented = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            if not hmac.compare_digest(presented, token):
+                return web.json_response({"error": "unauthorized"}, status=401)
             try:
                 data = await request.json()
-                
+
                 # Support batch or single finding
                 findings = data if isinstance(data, list) else [data]
-                
+
+                # Block pushes for a disabled integration: 503 the whole batch so
+                # the connector holds its cursor and retries (nothing dropped; feed
+                # resumes on re-enable). Only registered-but-disabled sources are
+                # blocked, so generic 'webhook'/'flow' pushes are unaffected.
+                from database.config_service import get_config_service
+                # Run the sync SQLAlchemy lookup off the event loop so a slow or
+                # locked DB can't freeze the whole daemon on the ingest hot path.
+                disabled = await asyncio.to_thread(
+                    lambda: get_config_service().get_disabled_integration_ids()
+                )
+                blocked = {
+                    s for f in findings if (s := f.get("data_source")) in disabled
+                }
+                if blocked:
+                    return web.json_response(
+                        {"error": f"ingestion disabled for source(s): {sorted(blocked)}"},
+                        status=503,
+                    )
+
                 count = 0
                 for finding_data in findings:
                     finding_id = finding_data.get('finding_id')

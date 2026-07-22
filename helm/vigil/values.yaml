@@ -153,8 +153,8 @@ llmWorker:
 postgresql:
   enabled: true
   image:
-    repository: postgres
-    tag: "16-alpine"
+    repository: pgvector/pgvector
+    tag: "pg16"
     pullPolicy: IfNotPresent
   auth:
     database: deeptempo_soc
@@ -288,8 +288,8 @@ dbInit:
   enabled: true
   image:
     # Uses the same image as Postgres so psql is available.
-    repository: postgres
-    tag: "16-alpine"
+    repository: pgvector/pgvector
+    tag: "pg16"
     pullPolicy: IfNotPresent
   # Explicit ordering — files added under database/init/ will NOT auto-run.
   # Update this list when new init SQL lands.
@@ -309,6 +309,7 @@ dbInit:
     - 14_threat_indicators.sql
     - 15_federation.sql
     - 16_llm_budgets.sql
+    - 17_loglm_setup.sql
   resources:
     requests:
       cpu: 50m

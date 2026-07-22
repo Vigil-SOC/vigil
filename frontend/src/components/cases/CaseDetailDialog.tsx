@@ -499,7 +499,7 @@ export default function CaseDetailDialog({
                   {findings.slice(0, 10).map((finding) => (
                     <ListItem key={finding.finding_id}>
                       <Chip
-                        label={finding.severity.toUpperCase()}
+                        label={(finding.severity || 'unknown').toUpperCase()}
                         size="small"
                         color={
                           finding.severity === 'critical' ? 'error' :

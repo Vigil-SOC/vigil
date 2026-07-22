@@ -37,6 +37,7 @@ email-validator>=2.0.0
 # Database
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.9
+pgvector>=0.3.0  # pgvector column type + <=> ANN for finding embeddings
 alembic>=1.13.0
 
 # Optional proxy hops in front of the metadata DB and DB-shaped

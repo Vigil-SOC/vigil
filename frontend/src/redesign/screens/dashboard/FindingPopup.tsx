@@ -15,7 +15,10 @@ import { mapApiFinding, type ApiFinding } from '../../data/mappers'
 import { techniqueName } from '../../data/mitre'
 import { ConfirmDialog, EmptyState, Popup, Select } from '../../shared/ui'
 import { Icon } from '../../shared/icons'
+import SourceChip from '../../shared/SourceChip'
 import type { Phase } from '../cases/useCases'
+import { parseSourceEvidence } from '../../data/sourceEvidence'
+import { SourceEvidenceSection } from './SourceEvidenceSection'
 
 interface RawFinding extends ApiFinding {
   description?: string
@@ -244,6 +247,7 @@ export default function FindingPopup({
   const f = raw ? mapApiFinding(raw) : null
   const preds = Object.entries(raw?.mitre_predictions || {}).sort((a, b) => b[1] - a[1])
   const ec = raw?.entity_context || {}
+  const sourceEvidence = parseSourceEvidence(ec.source_evidence)
 
   const title =
     phase === 'ready' && f ? (
@@ -274,7 +278,7 @@ export default function FindingPopup({
           </div>
 
           <div className="kv-grid fp-grid">
-            <span className="k">Source</span><span className="v">{f.src}</span>
+            <span className="k">Source</span><span className="v"><SourceChip source={f.src} /></span>
             <span className="k">Host</span><span className="v mono">{f.host}</span>
             <span className="k">User</span><span className="v mono">{f.user}</span>
             <span className="k">Time</span><span className="v">{f.time}</span>
@@ -323,6 +327,8 @@ export default function FindingPopup({
               </div>
             </div>
           )}
+
+          <SourceEvidenceSection evidence={sourceEvidence} />
 
           {/* AI enrichment — on-demand */}
           <div className="modal-section">

@@ -2,10 +2,17 @@
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+# Values this module last wrote to each `<ID>_MCP_URL`. Lets us re-derive when a
+# connectorUrl changes while still letting an operator-set env var win — keyed
+# globally because os.environ (the thing we guard) is process-wide.
+_DERIVED_MCP_URLS: Dict[str, str] = {}
 
 
 # Form-field names contributed by the shared proxy block (see
@@ -178,6 +185,40 @@ class IntegrationBridgeService:
             logger.info(f"Prepared server config for {server_name} ({integration_id})")
 
         return servers
+
+    def derive_remote_mcp_env(self) -> Dict[str, str]:
+        """Derive a ``<UPPER_ID>_MCP_URL`` env var from each configured
+        integration's ``connectorUrl`` so a static ``mcp-config.json`` entry
+        (e.g. ``${LOGLM_MCP_URL}``) resolves from one source of truth. An
+        explicit pre-existing env value wins. Returns the mapping applied."""
+        config = self.load_integration_config()
+        integrations = config.get("integrations", {})
+        applied: Dict[str, str] = {}
+        # Any configured connector, not just enabled ones: the master toggle
+        # enables the MCP server before adding the integration to
+        # enabled_integrations, so gating on enablement raced to an empty URL.
+        for integration_id, cfg in integrations.items():
+            connector_url = (cfg or {}).get("connectorUrl")
+            if not connector_url:
+                continue
+            env_key = f"{integration_id.upper().replace('-', '_')}_MCP_URL"
+            current = os.environ.get(env_key)
+            if current and current != _DERIVED_MCP_URLS.get(env_key):
+                continue  # operator-set (or externally changed) value wins
+            # Trailing slash: the connector mounts streamable-HTTP at /mcp/, and
+            # /mcp (no slash) 307-redirects — which mcp-remote won't follow.
+            value = str(connector_url).rstrip("/") + "/mcp/"
+            _DERIVED_MCP_URLS[env_key] = value
+            if current == value:
+                continue  # unchanged; nothing to re-apply
+            os.environ[env_key] = value
+            applied[env_key] = value
+        if applied:
+            logger.info(
+                "Derived remote MCP URLs from integration configs: %s",
+                list(applied),
+            )
+        return applied
 
     def _config_to_env_vars(self, integration_id: str, config: Dict) -> Dict[str, str]:
         """

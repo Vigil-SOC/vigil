@@ -3,13 +3,15 @@
    dock, floating "Ask Vigil" FAB, and the theme tweaks panel.
    Ported from the design's index HTML + main.js.
    ============================================================ */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import './styles.css'
 import { useAuth } from '../contexts/AuthContext'
-import { configApi, orchestratorApi } from '../services/api'
-import { Icon } from './shared/icons'
-import { NAV, TITLES, type ScreenKey } from './data/data'
+import { orchestratorApi } from '../services/api'
+import { Icon, type IconName } from './shared/icons'
+import { NAV, TITLES, type ScreenKey, type NavGate } from './data/data'
+import { ExtensionProvider, useExtensions } from './extensions/ExtensionProvider'
+import ExtensionHost from './extensions/ExtensionHost'
 import { accentVars } from './shell/accent'
 import Chat from './shell/Chat'
 import UserMenu from './shell/UserMenu'
@@ -40,10 +42,6 @@ const SCREENS: Record<ScreenKey, (props: ScreenProps) => JSX.Element> = {
   settings: SettingsScreen,
 }
 
-const SCREEN_KEYS = Object.keys(SCREENS) as ScreenKey[]
-const isScreenKey = (s: string | undefined): s is ScreenKey =>
-  s !== undefined && (SCREEN_KEYS as string[]).includes(s)
-
 /** Per-screen permission gate, mirroring the production ProtectedRoute routes
  *  (App.tsx). Screens absent here are ungated. In DEV_MODE the auth context
  *  grants every permission, so all items show in the preview. */
@@ -59,10 +57,16 @@ export default function SocConsole() {
   // shell (which both styles .soc-console and renders the settings screen).
   return (
     <RedesignThemeProvider>
-      <SocConsoleInner />
+      <ExtensionProvider>
+        <SocConsoleInner />
+      </ExtensionProvider>
     </RedesignThemeProvider>
   )
 }
+
+/** Like data.ts `NAV`, but the key is a plain string so extension screens
+ *  (keys outside the built-in `ScreenKey` union) can join the rail. */
+type NavItem = [IconName, string, string | null, NavGate?]
 
 function SocConsoleInner() {
   // the active screen comes from the URL (/<screen>); the cases screen
@@ -70,24 +74,52 @@ function SocConsoleInner() {
   const navigate = useNavigate()
   const { hasPermission } = useAuth()
   const { screen } = useParams<{ screen?: string }>()
-  // an unknown segment (e.g. /foo) renders the 404 screen; `current`
-  // falls back to dashboard only so the chrome has a valid key to render.
-  const valid = isScreenKey(screen)
-  const current: ScreenKey = valid ? screen : 'dashboard'
+  const { mountPoints, enabledIntegrations, loading: extLoading } = useExtensions()
+
+  // Merge built-in screens/nav/titles/perms with registered extensions;
+  // built-ins win so an extension can't shadow a core screen.
+  const { screens, navItems, titles, screenPerms } = useMemo(() => {
+    const screens: Record<string, (p: ScreenProps) => JSX.Element> = { ...SCREENS }
+    const titles: Record<string, [string, string]> = { ...TITLES }
+    const screenPerms: Record<string, string | undefined> = { ...SCREEN_PERMS }
+    const navItems: NavItem[] = [...(NAV as NavItem[])]
+    const extNav: NavItem[] = []
+    for (const { ext, mount } of mountPoints) {
+      if (screens[mount.key]) continue
+      screens[mount.key] = (p: ScreenProps) => (
+        <ExtensionHost {...p} ext={ext} mount={mount} />
+      )
+      titles[mount.key] = [mount.title, mount.subtitle ?? '']
+      if (mount.permission) screenPerms[mount.key] = mount.permission
+      extNav.push([
+        (mount.icon || 'brain') as IconName,
+        mount.navLabel,
+        mount.key,
+        mount.gate?.integration ? { integration: mount.gate.integration } : undefined,
+      ])
+    }
+    // Slot extension tabs just above the pinned Settings entry (append if absent).
+    const settingsIdx = navItems.findIndex(([, , key]) => key === 'settings')
+    navItems.splice(settingsIdx === -1 ? navItems.length : settingsIdx, 0, ...extNav)
+    return { screens, navItems, titles, screenPerms }
+  }, [mountPoints])
+
+  // Unknown segment → 404, but while manifests load a deep-linked extension tab
+  // shows a loading state instead of flashing 404. `current` falls back to
+  // dashboard only so the chrome has a valid key to render.
+  const valid = screen !== undefined && screen in screens
+  const current: string = valid ? (screen as string) : 'dashboard'
+  const resolvingExtension = !valid && screen !== undefined && extLoading
   // whether the user may view the current screen (DEV_MODE → always true)
-  const currentPerm = valid ? SCREEN_PERMS[current] : undefined
+  const currentPerm = valid ? screenPerms[current] : undefined
   const allowed = !currentPerm || hasPermission(currentPerm)
 
   const { mode, accent } = useSocTheme()
   const [chatOpen, setChatOpen] = useState(false)
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
-  // runtime-dynamic rail membership (mirrors production NavigationRail):
-  // integrations are fetched once, orchestrator status is polled every 10s. No
-  // rail item is gated today — Auto Ops is intentionally always-visible and
-  // Timesketch has no redesign screen yet — but the plumbing is live so adding
-  // a NavGate to data.ts is the only step needed to gate one (see data.ts).
-  const [enabledIntegrations, setEnabledIntegrations] = useState<string[]>([])
+  // enabled integrations come from ExtensionProvider (so a connector configured
+  // in Settings shows in the rail without a refresh); orchestrator polled 10s.
   const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
 
   // fire desktop notifications for newly-arrived findings (gated by the General
@@ -120,7 +152,9 @@ function SocConsoleInner() {
   const closeChat = useCallback(() => setChatOpen(false), [])
 
   const go = useCallback(
-    (next: ScreenKey, options?: ScreenGoOptions) => {
+    // next is a plain string (not just ScreenKey) so extension screens can
+    // navigate; options carry the query-string + replace behavior from main.
+    (next: string, options?: ScreenGoOptions) => {
       const search = options?.search || ''
       if (valid && next === current && !search) return
       navigate({ pathname: `/${next}`, search }, { replace: options?.replace })
@@ -140,14 +174,9 @@ function SocConsoleInner() {
     setViewFull(false)
   }, [current])
 
-  // nav membership: integrations once, orchestrator status on a 10s poll
+  // orchestrator status on a 10s poll (enabled integrations come from
+  // ExtensionProvider above, not fetched here)
   useEffect(() => {
-    configApi
-      .getIntegrations()
-      .then((res) =>
-        setEnabledIntegrations((res.data as { enabled_integrations?: string[] })?.enabled_integrations || []),
-      )
-      .catch(() => setEnabledIntegrations([]))
     const pollStatus = () =>
       orchestratorApi
         .getStatus()
@@ -160,8 +189,8 @@ function SocConsoleInner() {
     return () => clearInterval(id)
   }, [])
 
-  const [title, sub] = valid ? TITLES[current] : ['Page not found', 'This page doesn’t exist']
-  const Screen = SCREENS[current]
+  const [title, sub] = valid ? titles[current] : ['Page not found', 'This page doesn’t exist']
+  const Screen = screens[current]
 
   const wrapperClass = ['soc-console', chatOpen ? 'chat-active' : ''].filter(Boolean).join(' ')
 
@@ -183,8 +212,8 @@ function SocConsoleInner() {
             <VigilLogo className="nav-logo full" />
           </button>
           <div className="rail-sep" />
-          {NAV.filter(([, , key, gate]) => {
-            const perm = key ? SCREEN_PERMS[key] : undefined
+          {navItems.filter(([, , key, gate]) => {
+            const perm = key ? screenPerms[key] : undefined
             if (perm && !hasPermission(perm)) return false
             if (gate?.integration && !enabledIntegrations.includes(gate.integration)) return false
             if (gate?.orchestrator && !orchestratorEnabled) return false
@@ -222,7 +251,14 @@ function SocConsoleInner() {
             <div className="screen" style={viewFull ? { height: '100%' } : undefined}>
               <ErrorBoundary resetKey={valid ? current : 'notfound'}>
                 {!valid ? (
-                  <NotFoundScreen path={screen} onHome={() => go('dashboard')} />
+                  resolvingExtension ? (
+                    <div className="extension-host-status">
+                      <Icon name="refresh" size={22} />
+                      <p>Loading…</p>
+                    </div>
+                  ) : (
+                    <NotFoundScreen path={screen} onHome={() => go('dashboard')} />
+                  )
                 ) : !allowed ? (
                   <div className="access-denied">
                     <Icon name="lock" size={26} />
