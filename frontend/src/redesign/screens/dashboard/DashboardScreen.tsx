@@ -14,7 +14,6 @@ import { DataTable, useTableSort, searchRows, sortRows, ColumnPicker } from '../
 import { baseFindingColumns, extraFindingColumns } from './findingsColumns'
 import FindingPopup from './FindingPopup'
 import AttackTechniqueFindings from './AttackTechniqueFindings'
-import SourceChip from '../../shared/SourceChip'
 import { SEV_COLOR, TL_MONTHS, type TimelineEvent } from './attackData'
 import type { ScreenProps } from '../../shared/types'
 
@@ -206,64 +205,28 @@ function FindingsTab({ openChat, goSettings }: Pick<ScreenProps, 'openChat' | 'g
       </div>
 
       <div className="table-wrap list-scroll list-scroll-kpi">
-        <table className="tbl findings-tbl">
-          <thead>
-            <tr>
-              <th>Finding ID</th>
-              <SortHeader label="Severity" col="sev" sort={sort} onSort={toggleSort} />
-              <th>MITRE Technique</th><th>Tactic</th>
-              <th>Source</th><th>Host</th><th>User</th>
-              <SortHeader label="Time" col="time" sort={sort} onSort={toggleSort} />
-              <SortHeader label="Score" col="score" sort={sort} onSort={toggleSort} />
-              <SortHeader label="Status" col="status" sort={sort} onSort={toggleSort} />
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {phase === 'loading' && (
-              <tr><td colSpan={11}><EmptyState loading table compact icon="search" title="Loading findings…" /></td></tr>
-            )}
-            {phase === 'error' && (
-              <tr><td colSpan={11}><EmptyState error table icon="alert" title="Couldn’t load findings" body={error} primary={{ label: 'Retry', onClick: refresh, icon: 'refresh' }} /></td></tr>
-            )}
-            {phase === 'ready' && filtered.length === 0 && (
-              <tr><td colSpan={11}>
-                <EmptyState
-                  table
-                  icon={rows.length === 0 ? 'shield' : 'filter'}
-                  title={rows.length === 0 ? 'No findings yet' : 'No findings match this view'}
-                  body={rows.length === 0 ? 'Ingest alerts or run a workflow to populate the findings queue.' : 'Clear search and filters to return to the full findings queue.'}
-                  primary={rows.length === 0 ? { label: 'Configure integrations', onClick: () => goSettings('integrations'), icon: 'link' } : { label: 'Clear filters', onClick: () => { setQuery(''); setSev('any'); setSrc('any') }, icon: 'close' }}
-                />
-              </td></tr>
-            )}
-            {phase === 'ready' && paged.map((f) => (
-              <tr key={f.id} className="clickable" onClick={() => setDetailId(f.id)}>
-                <td><span className="id-cell">{f.id}</span></td>
-                <td><span className={`sev ${f.sev.toLowerCase()}`}><span className="dot" />{f.sev}</span></td>
-                <td><span className="tag">{f.tech}</span> <span className="muted">{f.conf}%</span></td>
-                <td>{f.tactic}</td>
-                <td><SourceChip source={f.src} /></td>
-                <td><span className="mono">{f.host}</span></td>
-                <td><span className="mono muted">{f.user}</span></td>
-                <td className="muted">{f.time}</td>
-                <td>
-                  <span className="scorebar">
-                    <span className="track"><i className={f.score >= 0.8 ? 'hot' : ''} style={{ width: `${f.score * 100}%` }} /></span>
-                    <span className="num">{f.score.toFixed(2)}</span>
-                  </span>
-                </td>
-                <td><span className={`status ${f.status}`}>{f.status}</span></td>
-                <td>
-                  <span className="row-act">
-                    <button title="View" onClick={(e) => { e.stopPropagation(); setDetailId(f.id) }}><Icon name="eye" /></button>
-                    <button title="Investigate with Vigil" onClick={(e) => { e.stopPropagation(); openChat(findingPrompt(f)) }}><Icon name="brain" /></button>
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable
+          columns={columns}
+          rows={paged}
+          rowKey={(f) => f.id}
+          phase={phase}
+          error={error}
+          sort={sort}
+          onSort={toggleSort}
+          onRowClick={(f) => setDetailId(f.id)}
+          onRetry={refresh}
+          className="tbl findings-tbl"
+          loadingMessage={<EmptyState loading table compact icon="search" title="Loading findings…" />}
+          emptyMessage={
+            <EmptyState
+              table
+              icon={rows.length === 0 ? 'shield' : 'filter'}
+              title={rows.length === 0 ? 'No findings yet' : 'No findings match this view'}
+              body={rows.length === 0 ? 'Ingest alerts or run a workflow to populate the findings queue.' : 'Clear search and filters to return to the full findings queue.'}
+              primary={rows.length === 0 ? { label: 'Configure integrations', onClick: () => goSettings('integrations'), icon: 'link' } : { label: 'Clear filters', onClick: () => { setQuery(''); setSev('any'); setSrc('any') }, icon: 'close' }}
+            />
+          }
+        />
       </div>
       <div className="pager">
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

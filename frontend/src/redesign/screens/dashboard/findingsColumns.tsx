@@ -1,4 +1,5 @@
 import { Icon } from '../../shared/icons'
+import SourceChip from '../../shared/SourceChip'
 import type { ColumnDef } from '../../shared/DataTable'
 import type { Finding } from '../../data/data'
 
@@ -46,7 +47,7 @@ export function baseFindingColumns(
     { key: 'tactic', label: 'Tactic', render: (f) => f.tactic },
     {
       key: 'src', label: 'Source',
-      render: (f) => <span className="muted">{f.src}</span>,
+      render: (f) => <SourceChip source={f.src} />,
       searchVal: (f) => f.src,
     },
     {
