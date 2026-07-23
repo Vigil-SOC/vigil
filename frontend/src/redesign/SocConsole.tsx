@@ -3,7 +3,7 @@
    dock, floating "Ask Vigil" FAB, and the theme tweaks panel.
    Ported from the design's index HTML + main.js.
    ============================================================ */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import './styles.css'
 import { useAuth } from '../contexts/AuthContext'
@@ -68,6 +68,30 @@ export default function SocConsole() {
 /** Like data.ts `NAV`, but the key is a plain string so extension screens
  *  (keys outside the built-in `ScreenKey` union) can join the rail. */
 type NavItem = [IconName, string, string | null, NavGate?]
+
+// Resizable Vigil Assistant dock. The desktop width is user-preferred and
+// persisted; the effective width is always clamped to the viewport.
+const CHAT_MIN_WIDTH = 360
+const CHAT_MAX_WIDTH = 720
+const CHAT_DEFAULT_WIDTH = 420
+const CHAT_WIDTH_STORAGE_KEY = 'soc.chat.width.v1'
+
+const clampChatPreference = (width: number) =>
+  Math.min(CHAT_MAX_WIDTH, Math.max(CHAT_MIN_WIDTH, Math.round(width)))
+
+const chatMaxForViewport = (viewport: number) =>
+  Math.max(CHAT_MIN_WIDTH, Math.min(CHAT_MAX_WIDTH, viewport))
+
+function readChatWidth(): number {
+  if (typeof window === 'undefined') return CHAT_DEFAULT_WIDTH
+  try {
+    const stored = Number(window.localStorage.getItem(CHAT_WIDTH_STORAGE_KEY))
+    if (!Number.isFinite(stored) || stored <= 0) return CHAT_DEFAULT_WIDTH
+    return clampChatPreference(stored)
+  } catch {
+    return CHAT_DEFAULT_WIDTH
+  }
+}
 
 function SocConsoleInner() {
   // the active screen comes from the URL (/<screen>); the cases screen
@@ -231,6 +255,7 @@ function SocConsoleInner() {
   const resizeMinWidth = viewportWidth <= 600 ? effectiveChatWidth : CHAT_MIN_WIDTH
   const resizeMaxWidth = viewportWidth <= 600 ? effectiveChatWidth : chatViewportMax
   const consoleStyle = {
+    ...bgVars(bg.base),
     ...accentVars(accent.a, accent.b),
     '--chat-w': `${effectiveChatWidth}px`,
   } as CSSProperties
@@ -239,7 +264,7 @@ function SocConsoleInner() {
     <div
       className={wrapperClass}
       data-theme={isDarkBase(bg.base) ? 'dark' : 'light'}
-      style={{ ...bgVars(bg.base), ...accentVars(accent.a, accent.b) }}
+      style={consoleStyle}
     >
       <ToastProvider>
       <div className="shell">
