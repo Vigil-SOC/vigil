@@ -239,6 +239,15 @@ def test_is_extra_model_flips_after_registration():
 # ---------------------------------------------------------------------------
 
 
+class _Prov:
+    """Minimal stand-in for an LLMProviderConfig row."""
+
+    def __init__(self, provider_id, provider_type, default_model=None):
+        self.provider_id = provider_id
+        self.provider_type = provider_type
+        self.default_model = default_model
+
+
 class _StubRegistry(ModelRegistry):
     """ModelRegistry that returns canned DB responses without touching a DB."""
 
@@ -247,10 +256,12 @@ class _StubRegistry(ModelRegistry):
         *,
         assignments: Optional[Dict[str, ComponentAssignment]] = None,
         default_anthropic: Optional[Dict[str, str]] = None,
+        active_providers=None,
     ):
         super().__init__()
         self._assignments = assignments or {}
         self._default_anthropic = default_anthropic
+        self._active = active_providers or []
 
     def get_all_assignments(  # type: ignore[override]
         self,
@@ -259,6 +270,9 @@ class _StubRegistry(ModelRegistry):
 
     def _default_anthropic_provider(self):  # type: ignore[override]
         return self._default_anthropic
+
+    def _active_providers(self):  # type: ignore[override]
+        return self._active
 
 
 def test_resolve_uses_explicit_component_assignment():
@@ -328,3 +342,62 @@ def test_agent_override_pins_model_but_uses_default_provider():
     )
     assert provider == "anthropic-default"
     assert model == "claude-opus-4-20250514"
+
+
+# ---------------------------------------------------------------------------
+# Non-Anthropic models in the picker (GH #409)
+# ---------------------------------------------------------------------------
+
+
+async def test_list_available_models_floors_empty_provider_to_default(monkeypatch):
+    """An active Ollama provider whose discovery returns nothing (empty
+    bootstrap) must still surface its configured default_model, not vanish
+    and let the aggregate collapse to Anthropic (#409)."""
+    from services import model_registry
+
+    async def _no_models(_row):
+        return []
+
+    monkeypatch.setattr(model_registry, "fetch_provider_models", _no_models)
+    reg = _StubRegistry(
+        active_providers=[_Prov("ollama-local", "ollama", default_model="llama3.1:8b")]
+    )
+    models = await reg.list_available_models()
+    assert [m.model_id for m in models] == ["llama3.1:8b"]
+    assert all(m.provider_type == "ollama" for m in models)
+
+
+async def test_list_available_models_uses_live_ids_when_present(monkeypatch):
+    """When discovery returns real ids the default_model floor is not used."""
+    from services import model_registry
+
+    async def _live(_row):
+        return ["llama3.1:8b", "mistral:7b"]
+
+    monkeypatch.setattr(model_registry, "fetch_provider_models", _live)
+    reg = _StubRegistry(
+        active_providers=[_Prov("ollama-local", "ollama", default_model="qwen:0.5b")]
+    )
+    ids = [m.model_id for m in await reg.list_available_models()]
+    assert ids == ["llama3.1:8b", "mistral:7b"]
+    assert "qwen:0.5b" not in ids
+
+
+async def test_fallback_models_reflects_ollama_not_anthropic():
+    """fallback_models() must return the configured provider's models
+    (Ollama here), never a hardcoded Anthropic set (#409)."""
+    reg = _StubRegistry(
+        active_providers=[_Prov("ollama-local", "ollama", default_model="llama3.1:8b")]
+    )
+    models = await reg.fallback_models()
+    ids = [m.model_id for m in models]
+    assert "llama3.1:8b" in ids
+    assert all(m.provider_type == "ollama" for m in models)
+    assert not any(mid.startswith("claude") for mid in ids)
+
+
+async def test_fallback_models_empty_when_no_providers():
+    """No configured providers → empty, so the caller can apply its own
+    last-resort default (the fresh-install Claude bootstrap in the API)."""
+    reg = _StubRegistry(active_providers=[])
+    assert await reg.fallback_models() == []
