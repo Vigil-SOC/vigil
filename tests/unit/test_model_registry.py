@@ -328,3 +328,44 @@ def test_agent_override_pins_model_but_uses_default_provider():
     )
     assert provider == "anthropic-default"
     assert model == "claude-opus-4-20250514"
+
+
+# ---------------------------------------------------------------------------
+# Embedding flag plumbing (issue #433)
+# ---------------------------------------------------------------------------
+
+
+def test_get_model_info_surfaces_is_embedding_from_live_meta():
+    from services import model_registry
+
+    class _M:
+        id = "nomic-embed-text:latest"
+        display_name = "nomic-embed-text"
+        context_window = 2048
+        capabilities = {
+            "supports_tools": False,
+            "supports_thinking": False,
+            "supports_vision": False,
+            "is_embedding": True,
+        }
+
+    try:
+        model_registry.record_live_meta("ollama", [_M()])
+        info = ModelRegistry.get_model_info(
+            provider_id="ollama-local",
+            provider_type="ollama",
+            model_id="nomic-embed-text:latest",
+        )
+        assert info.is_embedding is True
+        assert info.to_dict()["is_embedding"] is True
+    finally:
+        model_registry.clear_live_meta("ollama")
+
+
+def test_get_model_info_is_embedding_defaults_false():
+    info = ModelRegistry.get_model_info(
+        provider_id="ollama-local",
+        provider_type="ollama",
+        model_id="llama3.1:8b",
+    )
+    assert info.is_embedding is False

@@ -1154,9 +1154,18 @@ async def get_models():
 
     # Dedupe by bare model_id: the picker uses it as both the menu key and the
     # stored value, and two providers can advertise the same id. First wins.
+    # Embedding-only models (e.g. nomic-embed-text) are dropped here: they show
+    # up in provider discovery but can't hold a chat, so they must not appear in
+    # the chat picker. Signal is the registry's is_embedding flag (from the
+    # provider capability array), with a name heuristic as fallback for
+    # providers/paths that don't carry live capability meta.
+    from services.provider_model_discovery import is_embedding_model_id
+
     seen: set = set()
     models = []
     for m in all_models:
+        if getattr(m, "is_embedding", False) or is_embedding_model_id(m.model_id):
+            continue
         if m.model_id in seen:
             continue
         seen.add(m.model_id)

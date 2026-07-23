@@ -395,6 +395,25 @@ def _name_matches_family(name_lower: str, families) -> bool:
     return any(name_lower.startswith(f) or name_lower == f for f in families)
 
 
+# Name prefixes for embedding families whose id doesn't contain "embed"
+# (e.g. BAAI general embedding, GTE, MiniLM, OpenAI text-embedding-*).
+_EMBEDDING_NAME_PREFIXES = ("bge-", "gte-", "all-minilm", "text-embedding")
+
+
+def is_embedding_model_id(model_id: str) -> bool:
+    """Best-effort name check for embedding-only models.
+
+    Used as a fallback signal when a provider doesn't report a machine
+    capability (older Ollama, or a bootstrap/fallback id with no live meta).
+    The authoritative signal is the provider capability array; this only
+    fills the gap.
+    """
+    name = (model_id or "").lower().split(":")[0]
+    if "embed" in name:
+        return True
+    return name.startswith(_EMBEDDING_NAME_PREFIXES)
+
+
 def _ollama_capabilities_from_show(
     model_name: str,
     show_payload: Dict[str, Any],
@@ -451,11 +470,26 @@ def _ollama_capabilities_from_show(
         name_lower, _OLLAMA_VISION_CAPABLE_FAMILIES
     )
 
+    # Embedding vs chat: Ollama's capability array is authoritative. An
+    # embedding-only model reports ["embedding"] and no "completion"; chat
+    # models report "completion" (plus optionally tools/vision/thinking).
+    # Consult both the /api/tags caps (live_caps) and the /api/show top-level
+    # capabilities; fall back to a name heuristic when neither is reported.
+    all_caps = {c.lower() for c in live_caps}
+    all_caps |= {c.lower() for c in (show_payload.get("capabilities") or [])}
+    if "embedding" in all_caps:
+        is_embedding = "completion" not in all_caps
+    elif all_caps:
+        is_embedding = False
+    else:
+        is_embedding = is_embedding_model_id(name_lower)
+
     # Ollama models don't have native extended thinking in the Anthropic sense
     return {
         "supports_tools": supports_tools,
         "supports_thinking": False,
         "supports_vision": supports_vision,
+        "is_embedding": is_embedding,
     }
 
 
