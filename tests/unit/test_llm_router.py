@@ -863,3 +863,112 @@ def test_discover_anthropic_api_key_returns_none_when_db_unavailable():
 
     with patch.object(builtins, "__import__", side_effect=boom_import):
         assert llm_router.discover_anthropic_api_key() is None
+
+
+# ---------------------------------------------------------------------------
+# Streaming — dispatch_openai_stream / stream_openai_raw (GH #325, #436)
+# ---------------------------------------------------------------------------
+
+
+def _delta_chunk(content):
+    """A minimal OpenAI streaming chunk carrying a content delta."""
+    return SimpleNamespace(
+        choices=[SimpleNamespace(delta=SimpleNamespace(content=content))]
+    )
+
+
+async def _achunks(chunks):
+    for c in chunks:
+        yield c
+
+
+@pytest.mark.asyncio
+async def test_dispatch_openai_stream_yields_text_and_skips_empty():
+    """The chat SSE path streams non-Anthropic providers through Bifrost's
+    OpenAI-compatible /v1 endpoint. Text deltas must surface as
+    {"type": "text", "content": ...}; frames with no choices or no content
+    (e.g. role/usage-only frames) must be skipped."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    chunks = [
+        _delta_chunk("Hello"),
+        SimpleNamespace(choices=[]),  # no choices -> skipped
+        _delta_chunk(None),  # no content -> skipped
+        _delta_chunk(", world"),
+    ]
+    mock_client = MagicMock()
+    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=_achunks(chunks))
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client) as oai_ctor:
+        out = [
+            ev
+            async for ev in router.dispatch_openai_stream(
+                provider=_ollama_spec(),
+                messages=[{"role": "user", "content": "hi"}],
+                system_prompt="be terse",
+            )
+        ]
+
+    assert out == [
+        {"type": "text", "content": "Hello"},
+        {"type": "text", "content": ", world"},
+    ]
+    # base_url must be Bifrost's OpenAI-compatible /v1 endpoint
+    assert oai_ctor.call_args.kwargs["base_url"] == "http://test-bifrost:8080/v1"
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert kwargs["stream"] is True
+    # model is provider-prefixed so Bifrost routes to the right backend
+    assert kwargs["model"] == "ollama/llama3.1:8b"
+    assert kwargs["messages"][0] == {"role": "system", "content": "be terse"}
+    # client is closed on normal completion (no httpx pool leak)
+    mock_client.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_openai_raw_include_usage_sets_stream_options():
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    mock_client = MagicMock()
+    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=_achunks([]))
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        _ = [
+            c
+            async for c in router.stream_openai_raw(
+                provider=_ollama_spec(),
+                messages=[{"role": "user", "content": "hi"}],
+                include_usage=True,
+            )
+        ]
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert kwargs["stream"] is True
+    assert kwargs["stream_options"] == {"include_usage": True}
+    mock_client.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stream_openai_raw_closes_client_on_early_disconnect():
+    """If the SSE consumer goes away mid-stream, GeneratorExit propagates into
+    stream_openai_raw's yield and the finally must still close the client so
+    the httpx pool doesn't leak under load."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+
+    async def _endless():
+        for i in range(100):  # far more than the consumer will read
+            yield _delta_chunk(f"tok{i}")
+
+    mock_client = MagicMock()
+    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=_endless())
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        agen = router.stream_openai_raw(
+            provider=_ollama_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        first = await agen.__anext__()
+        assert getattr(first.choices[0].delta, "content", None) == "tok0"
+        await agen.aclose()  # simulate consumer disconnect mid-stream
+
+    mock_client.close.assert_awaited_once()
