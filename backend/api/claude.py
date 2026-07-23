@@ -1130,8 +1130,18 @@ async def get_models():
         all_models = []
 
     if not all_models:
-        # Fallback — ensures the Chat UI still has something to render if the
-        # provider registry isn't reachable (e.g. fresh install, no DB).
+        # Live discovery returned nothing. Before rendering anything, reflect
+        # the providers the instance actually has configured — an Ollama-only
+        # deployment must not be shown Claude models it can't call (#409).
+        try:
+            all_models = await registry.fallback_models()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("get_models: provider fallback failed: %s", exc)
+            all_models = []
+
+    if not all_models:
+        # Genuinely nothing configured (fresh install / no DB). Last-resort
+        # default so the Chat UI still renders a picker.
         return {
             "models": [
                 {

@@ -606,6 +606,9 @@ export interface AIOperationsSettings {
   history_window: number
   tool_response_budget_default: number
   thinking_budget: number
+  local_ollama_recovery_enabled: boolean
+  local_ollama_recovery_retry_limit: number
+  local_ollama_recovery_restart_gateway: boolean
 }
 
 export const AI_OPS_DEFAULTS: AIOperationsSettings = {
@@ -613,6 +616,9 @@ export const AI_OPS_DEFAULTS: AIOperationsSettings = {
   history_window: 20,
   tool_response_budget_default: 8000,
   thinking_budget: 10000,
+  local_ollama_recovery_enabled: true,
+  local_ollama_recovery_retry_limit: 1,
+  local_ollama_recovery_restart_gateway: true,
 }
 
 export function useAiOperations() {

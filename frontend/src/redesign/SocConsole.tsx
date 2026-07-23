@@ -117,6 +117,11 @@ function SocConsoleInner() {
 
   const { accent, bg } = useSocTheme()
   const [chatOpen, setChatOpen] = useState(false)
+  const [chatWidth, setChatWidth] = useState(readChatWidth)
+  const [viewportWidth, setViewportWidth] = useState(() =>
+    typeof window === 'undefined' ? 1440 : window.innerWidth,
+  )
+  const [chatResizing, setChatResizing] = useState(false)
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
   // enabled integrations come from ExtensionProvider (so a connector configured
@@ -151,6 +156,25 @@ function SocConsoleInner() {
     if (prompt) setChatSeed(prompt)
   }, [])
   const closeChat = useCallback(() => setChatOpen(false), [])
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  const previewChatWidth = useCallback((width: number) => {
+    setChatWidth(clampChatPreference(width))
+  }, [])
+  const commitChatWidth = useCallback((width: number) => {
+    const next = clampChatPreference(width)
+    setChatWidth(next)
+    try {
+      localStorage.setItem(CHAT_WIDTH_STORAGE_KEY, String(next))
+    } catch {
+      /* localStorage unavailable — keep the in-memory preference */
+    }
+  }, [])
 
   const go = useCallback(
     // next is a plain string (not just ScreenKey) so extension screens can
@@ -193,9 +217,23 @@ function SocConsoleInner() {
   const [title, sub] = valid ? titles[current] : ['Page not found', 'This page doesn’t exist']
   const Screen = screens[current]
 
-  const wrapperClass = ['soc-console', chatOpen ? 'chat-active' : ''].filter(Boolean).join(' ')
+  const wrapperClass = [
+    'soc-console',
+    chatOpen ? 'chat-active' : '',
+    chatResizing ? 'chat-resizing' : '',
+  ].filter(Boolean).join(' ')
 
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
+  const chatViewportMax = chatMaxForViewport(viewportWidth)
+  const effectiveChatWidth = viewportWidth <= 600
+    ? viewportWidth
+    : Math.min(chatWidth, chatViewportMax)
+  const resizeMinWidth = viewportWidth <= 600 ? effectiveChatWidth : CHAT_MIN_WIDTH
+  const resizeMaxWidth = viewportWidth <= 600 ? effectiveChatWidth : chatViewportMax
+  const consoleStyle = {
+    ...accentVars(accent.a, accent.b),
+    '--chat-w': `${effectiveChatWidth}px`,
+  } as CSSProperties
 
   return (
     <div
@@ -280,7 +318,18 @@ function SocConsoleInner() {
         </div>
 
         {/* Vigil chat dock */}
-        <Chat open={chatOpen} onClose={closeChat} seed={chatSeed} onSeedConsumed={() => setChatSeed(null)} />
+        <Chat
+          open={chatOpen}
+          onClose={closeChat}
+          seed={chatSeed}
+          width={effectiveChatWidth}
+          minWidth={resizeMinWidth}
+          maxWidth={resizeMaxWidth}
+          onWidthChange={previewChatWidth}
+          onWidthCommit={commitChatWidth}
+          onResizeStateChange={setChatResizing}
+          onSeedConsumed={() => setChatSeed(null)}
+        />
       </div>
 
       {/* floating Vigil assistant button — hidden while the chat dock is open
