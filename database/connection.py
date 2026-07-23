@@ -621,6 +621,16 @@ class DatabaseManager:
             raise RuntimeError("Database not initialized. Call initialize() first.")
 
         try:
+            # Enable pgvector before create_all(); the findings table uses
+            # VECTOR(768) which requires the extension to exist first.
+            with self._engine.connect() as conn:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
+        except Exception as e:
+            # Non-fatal: pgvector may be unavailable in non-embedding deployments.
+            logger.warning(f"Could not enable pgvector extension: {e}")
+
+        try:
             Base.metadata.create_all(self._engine)
             logger.info("Database tables created successfully")
         except Exception as e:
