@@ -4,6 +4,7 @@ import type { ScreenKey } from '../data/data'
 export type SettingsSectionKey =
   | 'appearance'
   | 'ai-config'
+  | 'services'
   | 'integrations'
   | 'users'
   | 'sla'

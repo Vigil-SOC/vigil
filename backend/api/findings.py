@@ -6,7 +6,10 @@ from pydantic import BaseModel
 import logging
 
 from services.database_data_service import DatabaseDataService
-from services.defaults import DEFAULT_MODEL
+from services.source_evidence import (
+    normalize_finding_source_evidence,
+    project_finding_source_evidence_for_list,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -64,10 +67,15 @@ async def get_findings(
         cluster_id=cluster_id_str, min_anomaly_score=min_anomaly_score,
         status=status, search_query=search,
         sort_by=sort_by, sort_order=sort_order,
+        # The list view never uses the 768-float embedding — omit it so a
+        # 1000-row page (polled every 10s) isn't several MB of vectors.
+        include_embedding=False,
     )
     
     return {
-        "findings": findings,
+        "findings": [
+            project_finding_source_evidence_for_list(finding) for finding in findings
+        ],
         "total": total,
         "offset": offset,
         "limit": limit,
@@ -89,7 +97,7 @@ async def get_finding(finding_id: str):
     finding = data_service.get_finding(finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
-    return finding
+    return normalize_finding_source_evidence(finding)
 
 
 @router.get("/stats/summary")
@@ -100,8 +108,8 @@ async def get_findings_summary():
     Returns:
         Summary statistics
     """
-    findings = data_service.get_findings()
-    
+    findings = data_service.get_findings(include_embedding=False)
+
     # Calculate statistics
     severity_counts = {}
     data_source_counts = {}
@@ -309,7 +317,8 @@ async def get_or_generate_enrichment(finding_id: str, force_regenerate: bool = Q
     
     This endpoint checks if AI enrichment already exists for the finding.
     If it exists, returns the cached enrichment immediately.
-    If not, generates new enrichment using Claude AI, caches it, and returns it.
+    If not, generates new enrichment using the configured reporting model,
+    caches it, and returns it.
     
     Args:
         finding_id: The finding ID to enrich
@@ -350,17 +359,34 @@ async def get_or_generate_enrichment(finding_id: str, force_regenerate: bool = Q
             "enrichment": existing_enrichment
         }
     
-    # Generate new enrichment using Claude
+    # Generate new enrichment using the configured reporting provider.
     try:
-        from services.claude_service import ClaudeService
-        
-        claude_service = ClaudeService(use_backend_tools=True, use_mcp_tools=False)
-        
-        # Check if API key is configured
-        if not claude_service.has_api_key():
+        from services.llm_router import LLMRouter, get_provider_spec
+        from services.model_registry import get_registry
+
+        resolved_model = get_registry().resolve_model_for_component("reporting")
+        if not resolved_model:
             from backend.api.claude import NO_PROVIDER_DETAIL
 
             raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
+
+        provider_id, model_id = resolved_model
+        provider = get_provider_spec(provider_id)
+        if provider is None:
+            raise HTTPException(
+                status_code=503,
+                detail=f"Configured provider '{provider_id}' is unavailable",
+            )
+
+        claude_service = None
+        if provider.provider_type == "anthropic":
+            from services.claude_service import ClaudeService
+
+            claude_service = ClaudeService(use_backend_tools=True, use_mcp_tools=False)
+            if not claude_service.has_api_key():
+                from backend.api.claude import NO_PROVIDER_DETAIL
+
+                raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
         
         # Extract finding details (use `or` to guard against keys present with None values)
         severity = finding.get('severity') or 'unknown'
@@ -474,23 +500,81 @@ Please provide a detailed analysis in the following JSON structure:
 Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC analyst make quick, informed decisions."""
 
         # Generate enrichment
-        logger.info(f"Generating AI enrichment for {finding_id}")
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: claude_service.chat(
-                message=prompt,
-                model=DEFAULT_MODEL,
-                max_tokens=4096
-            )
+        logger.info(
+            "Generating AI enrichment for %s via %s/%s",
+            finding_id,
+            provider.provider_id,
+            model_id,
         )
+        loop = asyncio.get_event_loop()
+        if provider.provider_type == "anthropic":
+            # The enrichment JSON schema is large; a tight cap truncates it.
+            response = await loop.run_in_executor(
+                None,
+                lambda: claude_service.chat(
+                    message=prompt,
+                    model=model_id,
+                    max_tokens=4096,
+                ),
+            )
+        else:
+            # Local models are slow per token; bound them tighter than the
+            # cloud path while leaving room for the full JSON object.
+            dispatch_args = {
+                "provider": provider,
+                "messages": [{"role": "user", "content": f"/no_think\n{prompt}"}],
+                "system_prompt": (
+                    "You are a cybersecurity analyst. Respond only with valid "
+                    "JSON matching the requested enrichment schema. Keep the "
+                    "response concise and do not include chain-of-thought."
+                ),
+                "model": model_id,
+                "max_tokens": 1400,
+            }
+            from services.local_ai_recovery import (
+                is_gateway_connection_error,
+                local_bifrost_recovery_enabled,
+                local_bifrost_recovery_retry_limit,
+                recover_local_bifrost,
+            )
+
+            retry_limit = local_bifrost_recovery_retry_limit()
+            for attempt in range(retry_limit + 1):
+                try:
+                    result = await LLMRouter().dispatch(**dispatch_args)
+                    break
+                except Exception as dispatch_error:
+                    eligible = (
+                        provider.provider_type == "ollama"
+                        and local_bifrost_recovery_enabled()
+                        and is_gateway_connection_error(dispatch_error)
+                    )
+                    if not eligible or attempt >= retry_limit:
+                        raise
+
+                    recovery = await recover_local_bifrost()
+                    if not recovery.ready:
+                        logger.warning(
+                            "Local Bifrost recovery for %s failed: %s",
+                            finding_id,
+                            recovery.detail,
+                        )
+                        raise
+                    logger.info(
+                        "Local Bifrost recovery for %s: %s; retrying enrichment (%s/%s)",
+                        finding_id,
+                        recovery.detail,
+                        attempt + 1,
+                        retry_limit,
+                    )
+            response = result.get("content", "")
         
         # Parse JSON response
         import json
         import re
         
         if not response:
-            raise ValueError("Claude API returned an empty response")
+            raise ValueError("LLM provider returned an empty response")
         
         # Try to extract JSON from response (handle markdown code blocks)
         json_match = re.search(r'```json\s*(\{.*?\})\s*```', response, re.DOTALL)
@@ -523,10 +607,17 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
                 "analysis_notes": response[:1000],  # Store first 1000 chars as notes
                 "raw_response": response  # Store full response
             }
+
+        # Keep the provider's original response even when it parsed cleanly.
+        # Analysts can compare the rendered fields against the local model's
+        # exact output without having to regenerate the enrichment.
+        enrichment["raw_response"] = response
         
         # Add metadata
         enrichment['generated_at'] = datetime.utcnow().isoformat() + 'Z'
-        enrichment['model'] = DEFAULT_MODEL
+        enrichment['model'] = model_id
+        enrichment['provider_id'] = provider.provider_id
+        enrichment['provider_type'] = provider.provider_type
         
         # Save enrichment to database
         success = data_service.update_finding(finding_id, ai_enrichment=enrichment)
@@ -543,10 +634,12 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
             "enrichment": enrichment
         }
     
+    except HTTPException:
+        raise  # preserve 503 (no provider / unavailable) so the UI can distinguish it
     except Exception as e:
         logger.error(f"Error generating enrichment for {finding_id}: {e}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Failed to generate enrichment: {str(e)}"
         )
 
@@ -568,4 +661,3 @@ async def clear_all_findings():
     except Exception as e:
         logger.error(f"Error clearing findings: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to clear findings: {str(e)}")
-

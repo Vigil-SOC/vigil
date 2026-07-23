@@ -606,6 +606,9 @@ export interface AIOperationsSettings {
   history_window: number
   tool_response_budget_default: number
   thinking_budget: number
+  local_ollama_recovery_enabled: boolean
+  local_ollama_recovery_retry_limit: number
+  local_ollama_recovery_restart_gateway: boolean
 }
 
 export const AI_OPS_DEFAULTS: AIOperationsSettings = {
@@ -613,6 +616,9 @@ export const AI_OPS_DEFAULTS: AIOperationsSettings = {
   history_window: 20,
   tool_response_budget_default: 8000,
   thinking_budget: 10000,
+  local_ollama_recovery_enabled: true,
+  local_ollama_recovery_retry_limit: 1,
+  local_ollama_recovery_restart_gateway: true,
 }
 
 export function useAiOperations() {
@@ -898,12 +904,15 @@ export function useCostAnalytics(timeRange: CostTimeRange) {
 export interface IntegrationsConfig {
   enabled_integrations: string[]
   integrations: Record<string, Record<string, unknown>>
+  // Per-integration {secretField: isSet} — booleans only, never the values.
+  secrets_set: Record<string, Record<string, boolean>>
 }
 
 export function useIntegrationsConfig() {
   const [config, setConfig] = useState<IntegrationsConfig>({
     enabled_integrations: [],
     integrations: {},
+    secrets_set: {},
   })
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
@@ -925,6 +934,7 @@ export function useIntegrationsConfig() {
             setConfig({
               enabled_integrations: d.enabled_integrations || [],
               integrations: d.integrations || {},
+              secrets_set: d.secrets_set || {},
             })
             setPhase('ready')
           })
@@ -940,16 +950,46 @@ export function useIntegrationsConfig() {
   const saveIntegration = useCallback(
     async (integrationId: string, fieldConfig: Record<string, unknown>) => {
       const integrations = { ...config.integrations, [integrationId]: fieldConfig }
-      const enabled_integrations = config.enabled_integrations.includes(integrationId)
-        ? config.enabled_integrations
-        : [...config.enabled_integrations, integrationId]
+      // Extensions keep configure/enable separate (saving must not flip the gate
+      // on); others auto-enable on save.
+      const isExtension = Object.prototype.hasOwnProperty.call(fieldConfig, 'connectorUrl')
+      const enabled_integrations =
+        isExtension || config.enabled_integrations.includes(integrationId)
+          ? config.enabled_integrations
+          : [...config.enabled_integrations, integrationId]
       await configApi.setIntegrations({ enabled_integrations, integrations })
-      setConfig({ enabled_integrations, integrations })
+      // Refetch so redacted config + secrets_set reflect what persisted (no
+      // plaintext lingers here; a just-entered secret now reads as "set").
+      try {
+        const res = await configApi.getIntegrations()
+        const d = res.data as Partial<IntegrationsConfig>
+        setConfig({
+          enabled_integrations: d.enabled_integrations ?? enabled_integrations,
+          integrations: d.integrations ?? {},
+          secrets_set: d.secrets_set ?? config.secrets_set,
+        })
+      } catch {
+        setConfig({ enabled_integrations, integrations, secrets_set: config.secrets_set })
+      }
     },
     [config],
   )
 
-  return { config, phase, reload, saveIntegration }
+  // Toggle enablement without touching stored config, so re-enabling restores
+  // it. Re-POSTing the redacted config is safe — blank secrets are kept server-side.
+  const setIntegrationEnabled = useCallback(
+    async (integrationId: string, enabled: boolean) => {
+      const enabled_integrations = enabled
+        ? Array.from(new Set([...config.enabled_integrations, integrationId]))
+        : config.enabled_integrations.filter((id) => id !== integrationId)
+      const integrations = config.integrations
+      await configApi.setIntegrations({ enabled_integrations, integrations })
+      setConfig({ enabled_integrations, integrations, secrets_set: config.secrets_set })
+    },
+    [config],
+  )
+
+  return { config, phase, reload, saveIntegration, setIntegrationEnabled }
 }
 
 /* ---------------- Integrations · S3 storage ---------------- */

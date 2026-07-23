@@ -12,8 +12,17 @@ export default defineConfig(({ mode }) => {
   // Load env from root directory (parent of frontend)
   const env = loadEnv(mode, resolve(__dirname, '..'), '')
   
-  // If DEV_MODE is set in root .env, pass it to frontend as VITE_DEV_MODE
-  const devMode = env.DEV_MODE === 'true' ? 'true' : 'false'
+  // Frontend auth bypass. An explicit VITE_DEV_MODE wins (the desktop app sets
+  // it false so its login/bootstrap flow is real); otherwise inherit root .env
+  // DEV_MODE for terminal dev. loadEnv('' prefix) also surfaces process.env, so
+  // read that first for the explicit override.
+  const explicit = process.env.VITE_DEV_MODE ?? env.VITE_DEV_MODE
+  const devMode =
+    explicit === 'true' || explicit === 'false'
+      ? explicit
+      : env.DEV_MODE === 'true'
+        ? 'true'
+        : 'false'
 
   // Context path (sub-path) the app is served under. Empty = root. In prod the
   // backend injects <meta name="vigil-base-path"> into index.html and the bundle
@@ -23,17 +32,26 @@ export default defineConfig(({ mode }) => {
   const isDev = mode === 'development'
   const base = isDev && contextPath ? `${contextPath}/` : './'
 
+  // Injected as a runtime <meta> so the dev SPA's trust gate reads the same
+  // origins the backend uses for the CSP + SSRF guard (mirrors base-path).
+  const extensionAllowlist =
+    process.env.EXTENSION_CONNECTOR_ALLOWLIST || env.EXTENSION_CONNECTOR_ALLOWLIST || ''
+
   return {
     base,
     plugins: [
       {
-        name: 'inject-base-path',
+        name: 'inject-runtime-config',
         transformIndexHtml(html) {
-          if (!contextPath) return html
-          return html.replace(
-            '<head>',
-            `<head>\n    <meta name="vigil-base-path" content="${contextPath}">`,
-          )
+          const tags: string[] = []
+          if (contextPath)
+            tags.push(`<meta name="vigil-base-path" content="${contextPath}">`)
+          if (extensionAllowlist)
+            tags.push(
+              `<meta name="vigil-extension-allowlist" content="${extensionAllowlist}">`,
+            )
+          if (!tags.length) return html
+          return html.replace('<head>', `<head>\n    ${tags.join('\n    ')}`)
         },
       },
       react(),

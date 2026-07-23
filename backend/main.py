@@ -56,6 +56,7 @@ from api.ingestion import router as ingestion_router
 from api.timeline import router as timeline_router
 from api.graph import router as graph_router
 from api.vstrike import router as vstrike_router
+from api.extensions import router as extensions_router
 from api.custom_agents import router as custom_agents_router
 
 # Enhanced case management routers
@@ -123,6 +124,9 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset(
         "/api/auth/logout",
         "/api/auth/password-reset/request",
         "/api/auth/password-reset/confirm",
+        # First-run account creation — unauthenticated by necessity; only ever
+        # live on an empty instance (see backend/api/auth.py bootstrap routes).
+        "/api/auth/bootstrap",
         # Health check — used by load balancers and Docker.
         "/api/health",
         # VStrike inbound receiver uses its own bearer API-key dependency.
@@ -339,6 +343,12 @@ app.include_router(
 # VStrike /findings is public-but-bearer-authenticated inside the router.
 # All VStrike management/UI/proxy routes require an authenticated user session.
 app.include_router(vstrike_router, prefix=f"{_CONTEXT_PATH}/api/integrations/vstrike", tags=["vstrike"])
+# Page-extension host — mints connector session tokens.
+app.include_router(
+    extensions_router,
+    prefix=f"{_CONTEXT_PATH}/api/integrations",
+    tags=["extensions"],
+)
 app.include_router(
     storage_status_router,
     prefix=f"{_CONTEXT_PATH}/api/storage",
@@ -457,6 +467,18 @@ app.include_router(
 )
 
 
+def _mcp_auto_connect_enabled() -> bool:
+    """Keep optional MCP processes from blocking a local backend startup."""
+    dev_mode = os.getenv("DEV_MODE", "false").lower() in {"1", "true", "yes"}
+    default = "false" if dev_mode else "true"
+    return os.getenv("MCP_AUTO_CONNECT_ON_STARTUP", default).lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 async def _connect_external_services():
     """Connect external startup integrations (skipped under TESTING)."""
     import asyncio
@@ -501,6 +523,17 @@ async def _connect_external_services():
         logger.warning(
             "  LLM calls will fail until Redis is running and ARQ worker is started"
         )
+
+    # MCP tools connect lazily when an agent actually needs them. Starting
+    # every configured stdio server during local development makes the entire
+    # API unavailable if an optional integration has a stale executable or
+    # missing runtime. Preserve eager connection outside DEV_MODE unless an
+    # operator explicitly overrides it.
+    if not _mcp_auto_connect_enabled():
+        logger.info(
+            "MCP auto-connect disabled; optional MCP servers will connect on demand"
+        )
+        return
 
     logger.info("Initializing MCP client with persistent connections...")
     try:
@@ -650,14 +683,48 @@ async def startup_event():
             os.environ["POSTGRESQL_CONNECTION_STRING"] = default_conn
             logger.debug("Using default PostgreSQL connection string")
 
-        # Load GitHub token for MCP github server
-        github_token = get_secret("GITHUB_TOKEN")
-        if github_token:
-            os.environ["GITHUB_TOKEN"] = github_token
-            logger.debug("Loaded GitHub token from secrets")
+        # Rehydrate integration credentials into os.environ so MCP servers gated
+        # on ${<ID>_<FIELD>} survive a restart — set_secret only writes os.environ
+        # in the saving process, so without this they'd go dormant.
+        from services.integration_secrets import INTEGRATION_SECRET_FIELDS
+
+        rehydrated = 0
+        for field_map in INTEGRATION_SECRET_FIELDS.values():
+            for env_key in field_map.values():
+                value = get_secret(env_key)
+                if value:
+                    os.environ[env_key] = value
+                    rehydrated += 1
+        logger.debug("Rehydrated %d integration secret(s) into env", rehydrated)
 
     except Exception as e:
         logger.warning(f"Error loading secrets for MCP servers: {e}")
+
+    # A configured connector with no allowlisted origin will be blocked by the
+    # default CSP — warn rather than fail silently. Best-effort.
+    try:
+        from services.extension_trust import connector_allowlist_origins
+
+        if not connector_allowlist_origins():
+            from services.integration_bridge_service import get_integration_bridge
+
+            cfg = get_integration_bridge().load_integration_config()
+            connectors = [
+                iid
+                for iid, c in (cfg.get("integrations") or {}).items()
+                if (c or {}).get("connectorUrl")
+            ]
+            if connectors:
+                logger.warning(
+                    "Page-extension connector(s) %s are configured but "
+                    "EXTENSION_CONNECTOR_ALLOWLIST is empty; their UI bundle "
+                    "import and BFF calls will be blocked by the "
+                    "Content-Security-Policy. Add each connector's origin to "
+                    "EXTENSION_CONNECTOR_ALLOWLIST.",
+                    connectors,
+                )
+    except Exception as e:  # pragma: no cover - defensive
+        logger.debug("Connector allowlist check skipped: %s", e)
 
     # Initialize data storage backend
     logger.info("Initializing data storage...")
@@ -904,8 +971,23 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
         global _index_html_cache
         if _index_html_cache is None:
             raw = (frontend_build_dir / "index.html").read_text()
-            config_tag = f'<meta name="vigil-base-path" content="{_CONTEXT_PATH}">'
-            _index_html_cache = raw.replace("<head>", f"<head>\n    {config_tag}", 1)
+            tags = [f'<meta name="vigil-base-path" content="{_CONTEXT_PATH}">']
+            # Expose the connector allowlist to the SPA (same source as the CSP +
+            # SSRF guard). A <meta>, not an inline <script>, because CSP is
+            # script-src 'self'.
+            try:
+                from services.extension_trust import connector_allowlist_origins
+
+                origins = connector_allowlist_origins()
+                if origins:
+                    allow = ",".join(origins)
+                    tags.append(
+                        f'<meta name="vigil-extension-allowlist" content="{allow}">'
+                    )
+            except Exception as e:  # pragma: no cover - defensive
+                logger.debug("extension allowlist meta injection skipped: %s", e)
+            injected = "\n    ".join(tags)
+            _index_html_cache = raw.replace("<head>", f"<head>\n    {injected}", 1)
         return _index_html_cache
 
     # When served under a context path, redirect the bare path (no trailing

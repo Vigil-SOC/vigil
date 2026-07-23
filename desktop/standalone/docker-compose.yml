@@ -1,0 +1,150 @@
+# Standalone stack: every service runs from a published image, so the app needs
+# no source tree, venv, Python or Node — only Docker. Mirrors
+# docker/docker-compose.yml minus the build: contexts and the dev-only services.
+#
+# Its own project name and unnamed containers keep it isolated from a dev stack
+# (project "docker", containers deeptempo-*) so both can coexist on one machine.
+# Only the backend publishes a port; postgres/redis/bifrost stay on the internal
+# network, which is what keeps the default postgres password unreachable.
+name: vigil
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: deeptempo
+      POSTGRES_PASSWORD: deeptempo_secure_password_change_me
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Must run here, not just in db-seed: the extensions have to exist before
+      # the backend's create_all (its indexes use pg_trgm's gin_trgm_ops), and
+      # the auth tables have to be created by this SQL — with the DEFAULT
+      # clauses create_all does not emit — or seeding the admin row fails on
+      # the columns it omits. 00_apply.sh explains why it isn't plain *.sql.
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ./db-init:/db-init:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U deeptempo -d deeptempo_soc"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - vigil
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - vigil
+
+  bifrost:
+    image: maximhq/bifrost:latest
+    environment:
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+    volumes:
+      - ./bifrost-config.json:/app/data/config.json:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # wget --spider does HEAD and Bifrost /health only answers GET (405 on HEAD).
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/health | grep -q '\"status\":\"ok\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - vigil
+
+  backend:
+    image: ghcr.io/vigil-soc/vigil-backend:${VIGIL_VERSION}
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=deeptempo_soc
+      - POSTGRES_USER=deeptempo
+      - POSTGRES_PASSWORD=deeptempo_secure_password_change_me
+      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
+      - BIFROST_URL=http://bifrost:8080
+      - REDIS_URL=redis://redis:6379/0
+      - PYTHONUNBUFFERED=1
+      # Auth stays on (DEV_MODE defaults to false in the image). The app mints
+      # this per install and persists it; the backend fails closed without it.
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?set by the desktop app}
+    ports:
+      - "127.0.0.1:6987:6987"
+    volumes:
+      # HOME is /app in the image, so the encrypted secret store resolves to
+      # /app/.vigil. Without this volume every UI-configured key dies on restart.
+      - vigil_home:/app/.vigil
+    # backend/api/logs.py writes logs/ relative to the workdir, but /app is
+    # root-owned and the image runs as vigil(999), so startup dies on
+    # PermissionError. A named volume mounts root-owned and fails the same way;
+    # tmpfs can be given the right owner, and scratch is the correct shape here
+    # since real logs go to stdout.
+    tmpfs:
+      - /app/logs:uid=999,gid=999
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      bifrost:
+        condition: service_healthy
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - vigil
+
+  # Second pass over the same files, once the backend's create_all has built the
+  # tables the data-only scripts need. Behind a profile so `up` ignores it; the
+  # app runs it with `compose run`. A healthy backend only means /api/health
+  # answers and create_all may still be running, so wait for a table only it
+  # creates — its DDL is one transaction, so that sentinel implies the rest.
+  db-seed:
+    profiles:
+      - seed
+    image: postgres:16-alpine
+    environment:
+      PGHOST: postgres
+      PGUSER: deeptempo
+      PGDATABASE: deeptempo_soc
+      PGPASSWORD: deeptempo_secure_password_change_me
+    volumes:
+      - ./db-init:/db-init:ro
+      - ./initdb/00_apply.sh:/apply.sh:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >
+        for i in $$(seq 1 60); do
+          [ "$$(psql -tAc "SELECT to_regclass('public.sla_policies') IS NOT NULL")" = t ] && break;
+          sleep 1;
+        done;
+        exec sh /apply.sh
+    restart: "no"
+    networks:
+      - vigil
+
+volumes:
+  postgres_data:
+  redis_data:
+  vigil_home:
+
+networks:
+  vigil:

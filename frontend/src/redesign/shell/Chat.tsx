@@ -406,15 +406,23 @@ export default function Chat({
       .catch(() => {})
   }, [])
 
-  // model list + MCP tool status — fetched once, the first time the dock opens
-  const metaLoadedRef = useRef(false)
+  // model list — refetched every time the dock opens so providers added or
+  // activated after the first open (e.g. Ollama) show up without a full page
+  // reload (#409). The classic ClaudeDrawer already refetches on each open.
   useEffect(() => {
-    if (!open || metaLoadedRef.current) return
-    metaLoadedRef.current = true
+    if (!open) return
     claudeApi
       .getModels()
       .then((r) => setModels((r.data?.models || []) as { id: string; name: string }[]))
       .catch(() => {})
+  }, [open])
+
+  // MCP tool status + configured default — fetched once, the first time the
+  // dock opens.
+  const metaLoadedRef = useRef(false)
+  useEffect(() => {
+    if (!open || metaLoadedRef.current) return
+    metaLoadedRef.current = true
     aiConfigApi
       .getConfig()
       .then((r) => {

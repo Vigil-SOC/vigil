@@ -96,7 +96,12 @@ def test_process_finding_increments_counter_and_continues(monkeypatch):
     p._update_finding = AsyncMock()
     p._evaluate_for_response = AsyncMock()
 
-    asyncio.run(p._process_finding(_poisoned_finding(), source="splunk"))
+    async def _run():
+        await p._process_finding(_poisoned_finding(), source="splunk")
+        # Triage/enrich + response evaluation now run in a background task.
+        await asyncio.gather(*p._enrich_tasks)
+
+    asyncio.run(_run())
 
     assert p.stats["sanitization_flagged"] == 1
     assert p.stats["processed"] == 1

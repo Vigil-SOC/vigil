@@ -503,13 +503,18 @@ async def _probe_provider_connection(
                 success = True
         elif provider_type == "openai":
             try:
+                # Self-hosted OpenAI-compatible servers (vLLM, LM Studio,
+                # Ollama's /v1) live on localhost/the LAN and are keyless;
+                # allow_loopback lets an admin test them. The route handler is
+                # admin-gated, same as the ollama branch.
                 safe = validate_provider_url(
                     base_url or "https://api.openai.com/v1",
                     allow_custom=True,
+                    allow_loopback=True,
                 )
             except UrlSafetyError as exc:
                 raise RuntimeError(f"invalid base_url: {exc}") from exc
-            if not api_key:
+            if safe.is_allowlisted_host and not api_key:
                 raise RuntimeError("no api key configured")
             headers: Dict[str, str] = {}
             if safe.is_allowlisted_host:
@@ -643,15 +648,14 @@ async def discover_models(
                 req.api_key, base_url=req.base_url
             )
         elif req.provider_type == "openai":
-            if not req.api_key:
-                raise HTTPException(
-                    status_code=400,
-                    detail="api_key is required to discover OpenAI models",
-                )
+            # api_key is enforced inside fetch_openai_models — only for the real
+            # OpenAI cloud, so a keyless self-hosted server still discovers.
+            # allow_loopback for the same self-hosted case; handler is admin-gated.
             meta = await discovery.fetch_openai_models(
                 req.api_key,
                 base_url=req.base_url,
                 organization=req.organization,
+                allow_loopback=True,
             )
         else:  # ollama
             # Admin opted in to a self-hosted Ollama URL — loopback is

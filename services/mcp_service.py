@@ -332,6 +332,11 @@ class MCPService:
                 return "stdio"
         return "unknown"
     
+    def reload_server_configs(self) -> None:
+        """Rebuild server configs so a connectorUrl saved after startup is
+        re-substituted into the init-time-cached spawn args."""
+        self._initialize_servers()
+
     def _initialize_servers(self):
         """
         Initialize MCP server configurations from mcp-config.json.
@@ -342,7 +347,16 @@ class MCPService:
         """
         python_exe_str = str(self.python_exe)
         project_path_str = str(self.project_root)
-        
+
+        # Resolve ${<ID>_MCP_URL} placeholders from integration connectorUrls
+        # (see derive_remote_mcp_env). Best-effort.
+        try:
+            from services.integration_bridge_service import get_integration_bridge
+
+            get_integration_bridge().derive_remote_mcp_env()
+        except Exception as e:  # pragma: no cover - defensive
+            logger.debug("remote MCP env derivation skipped: %s", e)
+
         # Load servers from mcp-config.json
         mcp_config_path = self.project_root / "mcp-config.json"
         server_configs = []

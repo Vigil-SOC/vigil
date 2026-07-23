@@ -71,6 +71,29 @@ class TestLoginContract:
 
 
 @pytest.mark.integration
+class TestBootstrapContract:
+    def test_status_reports_required_flag(self, client):
+        resp = client.get("/api/auth/bootstrap")
+        assert resp.status_code == 200
+        assert isinstance(resp.json()["required"], bool)
+
+    def test_create_rejects_missing_fields(self, client):
+        resp = client.post("/api/auth/bootstrap", json={})
+        assert resp.status_code == 422
+
+    def test_create_rejects_invalid_email(self, client):
+        resp = client.post(
+            "/api/auth/bootstrap",
+            json={
+                "username": "admin",
+                "email": "not-an-email",
+                "password": "trombone-sunrise-ledger-88",
+            },
+        )
+        assert resp.status_code == 422
+
+
+@pytest.mark.integration
 class TestPasswordResetContract:
     def test_request_always_returns_200_for_unknown_email(self, client):
         """No user-enumeration via response shape."""

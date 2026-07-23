@@ -30,6 +30,7 @@ import { findingsApi, agentsApi, workflowApi } from '../../services/api'
 import FindingDetailDialog from './FindingDetailDialog'
 import { notificationService } from '../../services/notifications'
 import { SeverityChip } from '../ui'
+import { sourceBadge } from '../../config/sourceBadges'
 
 interface FindingsTableProps {
   filters?: any
@@ -526,7 +527,22 @@ export default function FindingsTable({ filters = {}, searchQuery = '', limit, r
                     borderRight: `1px solid ${alpha(theme.palette.divider, 0.1)}`,
                   }}
                 >
-                  {finding.data_source || '-'}
+                  {finding.data_source ? (
+                    <Chip
+                      label={sourceBadge(finding.data_source).label}
+                      size="small"
+                      sx={{
+                        bgcolor: alpha(sourceBadge(finding.data_source).color, 0.15),
+                        color: sourceBadge(finding.data_source).color,
+                        fontWeight: 600,
+                        fontSize: '0.7rem',
+                        height: 20,
+                        '& .MuiChip-label': { px: 1 },
+                      }}
+                    />
+                  ) : (
+                    '-'
+                  )}
                 </TableCell>
                 <TableCell 
                   sx={{ 

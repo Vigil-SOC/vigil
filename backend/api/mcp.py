@@ -176,6 +176,12 @@ async def set_server_enabled(
         # Missing-credentials case is dormancy-by-design, not an error —
         # the UI treats it via the existing "Not Configured" chip.
         if mcp_client is not None:
+            # Re-derive configs so a connectorUrl saved this session lands in the
+            # init-time-cached spawn args before we connect.
+            try:
+                mcp_service.reload_server_configs()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("reload_server_configs before connect failed: %s", exc)
             try:
                 connected = await mcp_client.connect_to_server(
                     server_name, persistent=True
