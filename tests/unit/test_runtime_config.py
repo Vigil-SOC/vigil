@@ -128,6 +128,52 @@ class TestTypeCoercion:
                 == 2
             )
 
+    def test_local_recovery_enabled_bool_env_fallback(self, monkeypatch):
+        from services import runtime_config
+
+        monkeypatch.setenv("LOCAL_OLLAMA_RECOVERY_ENABLED", "false")
+        with patch.object(runtime_config, "_fetch_db_config", return_value={}):
+            assert (
+                runtime_config.get_ai_operations_setting(
+                    "local_ollama_recovery_enabled", True
+                )
+                is False
+            )
+
+    def test_local_recovery_restart_bool_env_fallback(self, monkeypatch):
+        from services import runtime_config
+
+        monkeypatch.setenv("LOCAL_OLLAMA_RECOVERY_RESTART_GATEWAY", "false")
+        with patch.object(runtime_config, "_fetch_db_config", return_value={}):
+            assert (
+                runtime_config.get_ai_operations_setting(
+                    "local_ollama_recovery_restart_gateway", True
+                )
+                is False
+            )
+
+
+class TestAIOperationsSettingsModel:
+    """The Settings-UI config model must expose the local-recovery toggles
+    with safe defaults and clamp the retry limit to the documented range."""
+
+    def test_defaults_include_local_recovery_toggles(self):
+        from backend.api.config import AI_OPERATIONS_DEFAULTS
+
+        assert AI_OPERATIONS_DEFAULTS["local_ollama_recovery_enabled"] is True
+        assert AI_OPERATIONS_DEFAULTS["local_ollama_recovery_retry_limit"] == 1
+        assert AI_OPERATIONS_DEFAULTS["local_ollama_recovery_restart_gateway"] is True
+
+    def test_retry_limit_rejects_out_of_range(self):
+        from pydantic import ValidationError
+
+        from backend.api.config import AIOperationsSettingsConfig
+
+        with pytest.raises(ValidationError):
+            AIOperationsSettingsConfig(local_ollama_recovery_retry_limit=5)
+        with pytest.raises(ValidationError):
+            AIOperationsSettingsConfig(local_ollama_recovery_retry_limit=-1)
+
 
 class TestCacheBehavior:
     def test_cache_avoids_repeated_db_fetch(self):
