@@ -360,6 +360,7 @@ def record_live_meta(provider_type: str, meta_list: List[Any]) -> None:
             "supports_tools": bool(caps.get("supports_tools", False)),
             "supports_thinking": bool(caps.get("supports_thinking", False)),
             "supports_vision": bool(caps.get("supports_vision", False)),
+            "is_embedding": bool(caps.get("is_embedding", False)),
         }
 
 
@@ -386,6 +387,7 @@ def _default_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
         "supports_tools": False,
         "supports_thinking": False,
         "supports_vision": False,
+        "is_embedding": False,
         "pricing_source": "unknown",
     }
 
@@ -416,6 +418,7 @@ def _catalog_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
             "supports_tools",
             "supports_thinking",
             "supports_vision",
+            "is_embedding",
         ):
             if field_name in source and source[field_name]:
                 entry[field_name] = source[field_name]
@@ -472,6 +475,10 @@ class ModelInfo:
     # but is no longer advertised by the upstream API. Kept in the UI
     # list so a user's saved selection doesn't silently disappear.
     deprecated: bool = False
+    # True for embedding-only models (e.g. nomic-embed-text). They stay in
+    # the registry (analytics / future config) but are filtered out of the
+    # chat model picker, since you can't hold a conversation with them.
+    is_embedding: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -487,6 +494,7 @@ class ModelInfo:
             "supports_vision": self.supports_vision,
             "pricing_source": self.pricing_source,
             "deprecated": self.deprecated,
+            "is_embedding": self.is_embedding,
         }
 
 
@@ -747,6 +755,7 @@ class ModelRegistry:
             supports_vision=entry["supports_vision"],
             pricing_source=entry.get("pricing_source", "exact"),
             deprecated=deprecated,
+            is_embedding=bool(entry.get("is_embedding", False)),
         )
 
     # ---- assignments -----------------------------------------------------

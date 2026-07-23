@@ -381,3 +381,51 @@ def test_fetch_provider_models_hard_fallback_when_sync_fails(monkeypatch):
     # Bootstrap list is preserved.
     assert "claude-opus-4-7" in result
     _reset_registry_state()
+
+
+# ---------------------------------------------------------------------------
+# Embedding-model detection (issue #433 — keep embedders out of chat picker)
+# ---------------------------------------------------------------------------
+
+
+def test_ollama_caps_flag_embedding_only_from_capability_array():
+    caps = discovery._ollama_capabilities_from_show(
+        "nomic-embed-text:latest",
+        {"capabilities": ["embedding"]},
+        live_caps=["embedding"],
+    )
+    assert caps["is_embedding"] is True
+
+
+def test_ollama_caps_completion_model_is_not_embedding():
+    caps = discovery._ollama_capabilities_from_show(
+        "llama3.1:8b",
+        {"capabilities": ["completion", "tools"]},
+        live_caps=["completion", "tools"],
+    )
+    assert caps["is_embedding"] is False
+
+
+def test_ollama_caps_name_fallback_when_no_capability_array():
+    # Older Ollama reports no capabilities → fall back to the name heuristic.
+    embed = discovery._ollama_capabilities_from_show(
+        "nomic-embed-text:latest", {}, live_caps=[]
+    )
+    chat = discovery._ollama_capabilities_from_show("llama3.1:8b", {}, live_caps=[])
+    assert embed["is_embedding"] is True
+    assert chat["is_embedding"] is False
+
+
+def test_is_embedding_model_id_heuristic():
+    for embed in (
+        "nomic-embed-text:latest",
+        "mxbai-embed-large",
+        "snowflake-arctic-embed",
+        "bge-m3",
+        "all-minilm",
+        "gte-small",
+        "text-embedding-3-small",
+    ):
+        assert discovery.is_embedding_model_id(embed) is True, embed
+    for chat in ("llama3.1:8b", "qwen2.5:14b", "claude-sonnet-4-6", "gpt-4o"):
+        assert discovery.is_embedding_model_id(chat) is False, chat
