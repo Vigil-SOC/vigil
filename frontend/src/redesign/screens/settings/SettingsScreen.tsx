@@ -18,6 +18,7 @@ import UsersSection from './UsersSection'
 import AutoInvestigateSection from './AutoInvestigateSection'
 import DeveloperSection from './DeveloperSection'
 import AiConfigSection from './AiConfigSection'
+import ServicesSection from './ServicesSection'
 import IntegrationsSection from './IntegrationsSection'
 import SlaPoliciesSection from './SlaPoliciesSection'
 import type { SectionProps } from './types'
@@ -35,6 +36,7 @@ interface SectionDef {
 const SECTIONS: SectionDef[] = [
   { key: 'appearance', label: 'Appearance', icon: 'palette', Component: AppearanceSection },
   { key: 'ai-config', label: 'AI Config', icon: 'sparkle', Component: AiConfigSection },
+  { key: 'services', label: 'Services', icon: 'play', Component: ServicesSection },
   { key: 'integrations', label: 'Integrations', icon: 'link', Component: IntegrationsSection },
   { key: 'users', label: 'Users', icon: 'lock', Component: UsersSection },
   { key: 'sla', label: 'SLA Policies', icon: 'clock', Component: SlaPoliciesSection },

@@ -54,7 +54,10 @@ export interface ApiFinding {
   description?: string
   mitre_predictions?: Record<string, number>
   status?: string
-  /** host / user / IP entities extracted by the backend */
+  /** host / user / IP entities extracted by the backend.
+   *  Open-ended on purpose: the set of keys varies by data source (CrowdStrike
+   *  emits device_id and no dest_ips; Splunk emits dest_ips), so anything
+   *  beyond the known names is carried through to `Finding.extra`. */
   entity_context?: {
     hostnames?: string[]
     usernames?: string[]
@@ -168,6 +171,21 @@ function topTechnique(preds?: Record<string, number>): { tech: string; conf: num
   return best ? { tech: best, conf: Math.round(bestConf * 100) } : { tech: DASH, conf: 0 }
 }
 
+/** entity_context keys already surfaced as fixed columns; the rest become `extra`. */
+const MAPPED_ENTITY_KEYS = new Set(['hostnames', 'usernames'])
+
+/** Flatten leftover entity_context entries to display strings. */
+function extraEntities(ec: ApiFinding['entity_context']): Record<string, string> | undefined {
+  if (!ec) return undefined
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(ec)) {
+    if (MAPPED_ENTITY_KEYS.has(k) || v == null) continue
+    const text = Array.isArray(v) ? v.filter(Boolean).join(', ') : String(v)
+    if (text) out[k] = text
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 export function mapApiFinding(f: ApiFinding): Finding {
   const { tech, conf } = topTechnique(f.mitre_predictions)
   const ec = f.entity_context
@@ -184,6 +202,7 @@ export function mapApiFinding(f: ApiFinding): Finding {
     ts: epochMs(f.timestamp),
     score: typeof f.anomaly_score === 'number' ? f.anomaly_score : 0,
     status: findingStatus(f.status),
+    extra: extraEntities(ec),
   }
 }
 

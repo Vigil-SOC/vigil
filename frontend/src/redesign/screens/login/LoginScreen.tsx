@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import '../../styles.css'
 import { useAuth } from '../../../contexts/AuthContext'
+import { bootstrapApi } from '../../../services/api'
 import { Icon } from '../../shared/icons'
 import { VigilLogo } from '../../shared/VigilLogo'
 import { accentVars } from '../../shell/accent'
@@ -40,9 +41,38 @@ function LoginInner() {
   const [error, setError] = useState('')
   const mfaInputRef = useRef<HTMLInputElement>(null)
 
+  // null until the bootstrap check resolves; true means the instance has no
+  // account yet, so show first-account creation instead of sign-in.
+  const [needsBootstrap, setNeedsBootstrap] = useState<boolean | null>(null)
+  const [email, setEmail] = useState('')
+
   useEffect(() => {
     if (showMfa) setTimeout(() => mfaInputRef.current?.focus(), 80)
   }, [showMfa])
+
+  useEffect(() => {
+    // Fail closed to sign-in: a transient error shouldn't expose account
+    // creation on an instance that already has users.
+    bootstrapApi
+      .status()
+      .then((res) => setNeedsBootstrap(res.data.required))
+      .catch(() => setNeedsBootstrap(false))
+  }, [])
+
+  const handleBootstrap = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      await bootstrapApi.create({ username: usernameOrEmail, email, password })
+      await login(usernameOrEmail, password)
+      navigate('/dashboard')
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Could not create your account.')
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -95,10 +125,10 @@ function LoginInner() {
           </div>
 
           <div className="brand-body">
-            <h1>Security operations, under one calm pane of glass.</h1>
+            <h1>Vigilant, Open, Trustworthy.</h1>
             <p>
-              Triage findings, correlate signals across your estate, and let Vigil
-              surface what actually needs an analyst — before it becomes an incident.
+              Open source and community built, Vigil stands watch beside
+              your analysts on the journey toward greater autonomy.
             </p>
           </div>
         </section>
@@ -107,11 +137,19 @@ function LoginInner() {
         <section className="auth-pane">
           <div className="form-wrap">
             <header>
-              <h2>{showMfa ? 'Two-factor authentication' : 'Sign in'}</h2>
+              <h2>
+                {needsBootstrap
+                  ? 'Create your account'
+                  : showMfa
+                    ? 'Two-factor authentication'
+                    : 'Sign in'}
+              </h2>
               <p>
-                {showMfa
-                  ? 'Confirm your identity to finish signing in.'
-                  : 'Authenticate to access the operations console.'}
+                {needsBootstrap
+                  ? 'No account exists yet. Set up the first administrator.'
+                  : showMfa
+                    ? 'Confirm your identity to finish signing in.'
+                    : 'Authenticate to access the operations console.'}
               </p>
             </header>
 
@@ -122,13 +160,92 @@ function LoginInner() {
               </div>
             )}
 
+            {needsBootstrap ? (
+              <form onSubmit={handleBootstrap} autoComplete="on" noValidate>
+                <div className="field">
+                  <label htmlFor="bs-user">Username</label>
+                  <div className="ctrl">
+                    <Icon name="user" className="lead" />
+                    <input
+                      id="bs-user"
+                      name="username"
+                      type="text"
+                      placeholder="admin"
+                      autoComplete="username"
+                      autoFocus
+                      disabled={loading}
+                      value={usernameOrEmail}
+                      onChange={(e) => setUsernameOrEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="bs-email">Email</label>
+                  <div className="ctrl">
+                    <Icon name="send" className="lead" />
+                    <input
+                      id="bs-email"
+                      name="email"
+                      type="email"
+                      placeholder="you@company.com"
+                      autoComplete="email"
+                      disabled={loading}
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="bs-pass">Password</label>
+                  <div className="ctrl">
+                    <Icon name="lock" className="lead" />
+                    <input
+                      id="bs-pass"
+                      name="new-password"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="At least 12 characters"
+                      autoComplete="new-password"
+                      disabled={loading}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                    <button
+                      className="reveal"
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      title={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      <Icon name="eye" size={17} />
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  className="btn-signin"
+                  type="submit"
+                  disabled={loading || !usernameOrEmail || !email || !password}
+                >
+                  {loading ? (
+                    <span className="spin" aria-hidden="true" />
+                  ) : (
+                    <>
+                      Create account
+                      <Icon name="arrowR" />
+                    </>
+                  )}
+                </button>
+              </form>
+            ) : (
             <form onSubmit={handleSubmit} autoComplete="on" noValidate>
               {!showMfa ? (
                 <>
                   <div className="field">
                     <label htmlFor="auth-user">Username or email</label>
                     <div className="ctrl">
-                      <Icon name="name" className="lead" />
+                      <Icon name="user" className="lead" />
                       <input
                         id="auth-user"
                         name="username"
@@ -235,6 +352,7 @@ function LoginInner() {
                 )}
               </button>
             </form>
+            )}
           </div>
         </section>
       </div>

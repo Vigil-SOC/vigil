@@ -1364,16 +1364,27 @@ export const detectionRulesApi = {
   reload: () => api.post('/detection-rules/reload'),
 }
 
-// Local Services API (Docker containers management)
+// Local Services API (Docker containers + the host-native Ollama process)
 export const localServicesApi = {
   // Splunk management
   getSplunkStatus: () => api.get('/services/splunk/status'),
   startSplunk: () => api.post('/services/splunk/start'),
   stopSplunk: () => api.post('/services/splunk/stop'),
   restartSplunk: () => api.post('/services/splunk/restart'),
-  
+
   // PostgreSQL management
   getPostgresStatus: () => api.get('/services/postgres/status'),
+
+  // Generic management — service names are allowlisted server-side
+  list: () => api.get('/services'),
+  getStatus: (name: string) => api.get(`/services/${name}/status`),
+  start: (name: string) => api.post(`/services/${name}/start`),
+  stop: (name: string) => api.post(`/services/${name}/stop`),
+  restart: (name: string) => api.post(`/services/${name}/restart`),
+
+  // Which services ./start.sh brings up automatically
+  getAutostart: () => api.get('/services/autostart'),
+  setAutostart: (services: string[]) => api.put('/services/autostart', { services }),
 }
 
 // Workflow Builder phase (used inline in the builder UI)
@@ -1659,6 +1670,25 @@ export const kafkaApi = {
     session_timeout_ms: number
   }) => api.put('/kafka/config', config),
   getStatus: () => api.get('/kafka/status'),
+}
+
+export interface BootstrapStatus {
+  required: boolean
+}
+
+export interface BootstrapPayload {
+  username: string
+  email: string
+  password: string
+  full_name?: string
+}
+
+// First-account creation, for an instance with an empty user table (no signup
+// otherwise, and creating a user needs an existing admin). Self-closes once any
+// user exists.
+export const bootstrapApi = {
+  status: () => api.get<BootstrapStatus>('/auth/bootstrap'),
+  create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),
 }
 
 export default api

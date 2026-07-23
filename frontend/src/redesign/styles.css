@@ -276,6 +276,7 @@
       font-weight: 500;
       white-space: nowrap;
       overflow: hidden;
+      text-overflow: ellipsis;
       max-width: 0;
       opacity: 0;
       transition: max-width .2s cubic-bezier(.4, 0, .2, 1), opacity .16s;
