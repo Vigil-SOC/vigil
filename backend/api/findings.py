@@ -497,18 +497,20 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
             provider.provider_id,
             model_id,
         )
-        max_enrichment_tokens = 1400
         loop = asyncio.get_event_loop()
         if provider.provider_type == "anthropic":
+            # The enrichment JSON schema is large; a tight cap truncates it.
             response = await loop.run_in_executor(
                 None,
                 lambda: claude_service.chat(
                     message=prompt,
                     model=model_id,
-                    max_tokens=max_enrichment_tokens,
+                    max_tokens=4096,
                 ),
             )
         else:
+            # Local models are slow per token; bound them tighter than the
+            # cloud path while leaving room for the full JSON object.
             dispatch_args = {
                 "provider": provider,
                 "messages": [{"role": "user", "content": f"/no_think\n{prompt}"}],
@@ -518,7 +520,7 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
                     "response concise and do not include chain-of-thought."
                 ),
                 "model": model_id,
-                "max_tokens": max_enrichment_tokens,
+                "max_tokens": 1400,
             }
             from services.local_ai_recovery import (
                 is_gateway_connection_error,
@@ -623,10 +625,12 @@ Respond ONLY with valid JSON. Be specific and actionable. Focus on helping a SOC
             "enrichment": enrichment
         }
     
+    except HTTPException:
+        raise  # preserve 503 (no provider / unavailable) so the UI can distinguish it
     except Exception as e:
         logger.error(f"Error generating enrichment for {finding_id}: {e}")
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Failed to generate enrichment: {str(e)}"
         )
 

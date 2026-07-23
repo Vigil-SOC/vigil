@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -19,6 +20,8 @@ from services.runtime_config import get_ai_operations_setting
 logger = logging.getLogger(__name__)
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+# Serializes recovery within one event loop only; multi-worker hosts could
+# still issue concurrent docker restarts. Acceptable for a local dev feature.
 _RECOVERY_LOCK = asyncio.Lock()
 _HEALTH_WAIT_SECONDS = 45
 
@@ -65,7 +68,15 @@ def is_gateway_connection_error(error: Exception) -> bool:
         (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.NetworkError),
     ):
         return True
-    return error.__class__.__name__ in {"APIConnectionError", "APIConnectionTimeout"}
+    try:
+        import openai
+
+        # APITimeoutError subclasses APIConnectionError, so this covers both.
+        if isinstance(error, openai.APIConnectionError):
+            return True
+    except ImportError:
+        pass
+    return error.__class__.__name__ in {"APIConnectionError", "APITimeoutError"}
 
 
 async def _bifrost_healthy() -> bool:
@@ -106,7 +117,8 @@ async def _restart_bifrost() -> bool:
 
 
 async def _wait_for_bifrost() -> bool:
-    for _ in range(_HEALTH_WAIT_SECONDS):
+    deadline = time.monotonic() + _HEALTH_WAIT_SECONDS
+    while time.monotonic() < deadline:
         if await _bifrost_healthy():
             return True
         await asyncio.sleep(1)
