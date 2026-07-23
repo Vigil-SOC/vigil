@@ -9,6 +9,7 @@ import { Icon } from '../../shared/icons'
 import { ConfirmDialog, SettingsCard, ToggleRow } from '../../shared/ui'
 import { casesApi, findingsApi, mcpApi, orchestratorApi } from '../../../services/api'
 import { notificationService } from '../../../services/notifications'
+import { useAuth } from '../../../contexts/AuthContext'
 import { useGeneralSettings, useMempalaceHealth } from './useSettings'
 import CostAnalyticsCard from './CostAnalyticsCard'
 import type { SectionProps } from './types'
@@ -18,6 +19,9 @@ type ClearAction = 'findings' | 'investigations' | 'cases' | 'workspace'
 export default function GeneralSection({ notify }: SectionProps) {
   const { config, setConfig, phase, error, reload, save } = useGeneralSettings()
   const { health, loading: healthLoading, reload: reloadHealth } = useMempalaceHealth()
+  const { hasPermission } = useAuth()
+  const canDeleteFindings = hasPermission('findings.delete')
+  const canDeleteCases = hasPermission('cases.delete')
 
   const [saving, setSaving] = useState(false)
   const [clearAction, setClearAction] = useState<ClearAction | null>(null)
@@ -159,18 +163,31 @@ export default function GeneralSection({ notify }: SectionProps) {
         desc="Clear generated findings, investigations, cases, and metrics while preserving configuration."
       >
         <div className="flex gap-2 flex-wrap">
-          <button className="btn danger" onClick={() => setClearAction('findings')} disabled={clearing}>
-            <Icon name="trash" /> Clear Findings
-          </button>
-          <button className="btn danger" onClick={() => setClearAction('investigations')} disabled={clearing}>
-            <Icon name="trash" /> Clear Investigations
-          </button>
-          <button className="btn danger" onClick={() => setClearAction('cases')} disabled={clearing}>
-            <Icon name="trash" /> Clear Cases &amp; Metrics
-          </button>
-          <button className="btn danger" onClick={() => setClearAction('workspace')} disabled={clearing}>
-            <Icon name="trash" /> Clear Workspace Data
-          </button>
+          {canDeleteFindings && (
+            <button className="btn danger" onClick={() => setClearAction('findings')} disabled={clearing}>
+              <Icon name="trash" /> Clear Findings
+            </button>
+          )}
+          {canDeleteFindings && (
+            <button className="btn danger" onClick={() => setClearAction('investigations')} disabled={clearing}>
+              <Icon name="trash" /> Clear Investigations
+            </button>
+          )}
+          {canDeleteCases && (
+            <button className="btn danger" onClick={() => setClearAction('cases')} disabled={clearing}>
+              <Icon name="trash" /> Clear Cases &amp; Metrics
+            </button>
+          )}
+          {canDeleteCases && canDeleteFindings && (
+            <button className="btn danger" onClick={() => setClearAction('workspace')} disabled={clearing}>
+              <Icon name="trash" /> Clear Workspace Data
+            </button>
+          )}
+          {!canDeleteFindings && !canDeleteCases && (
+            <span className="text-sm text-tx-3">
+              You do not have permission to clear workspace data.
+            </span>
+          )}
         </div>
       </SettingsCard>
 

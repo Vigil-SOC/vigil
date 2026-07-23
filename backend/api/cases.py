@@ -1,11 +1,14 @@
 """Cases API endpoints."""
 
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 from pathlib import Path
 
+from backend.middleware.auth import get_current_user
+from backend.services.auth_service import AuthService
+from database.models import User
 from services.database_data_service import DatabaseDataService
 from services.report_service import ReportService, REPORTLAB_AVAILABLE
 
@@ -78,8 +81,12 @@ async def get_cases(
 
 
 @router.delete("/all")
-async def clear_all_cases():
-    """Delete all cases and case-derived generated data."""
+async def clear_all_cases(current_user: User = Depends(get_current_user)):
+    """Delete all cases and case-derived generated data (requires cases.delete)."""
+    if not AuthService.check_permission(current_user.user_id, "cases.delete"):
+        raise HTTPException(
+            status_code=403, detail="Permission denied: cases.delete required"
+        )
     try:
         from database.connection import get_session
         from database.models import (
