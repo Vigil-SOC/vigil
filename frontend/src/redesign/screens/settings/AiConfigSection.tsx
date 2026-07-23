@@ -398,8 +398,8 @@ function OperationsPanel({ notify }: SectionProps) {
 
   return (
     <SettingsCard
-      title="AI Operations (Cost & Performance)"
-      desc="Runtime toggles for Anthropic prompt caching, conversation history windowing, tool-response truncation, and the daemon's default thinking budget. Persist in the DB and take effect across backend / daemon / llm-worker within ~60s."
+      title="AI Operations (Cost, Performance & Local Recovery)"
+      desc="Runtime controls for model performance and for self-healing local Ollama enrichment. These settings persist in the DB and take effect without a service restart."
       actions={
         <button className="btn ghost" onClick={() => { setSettings(AI_OPS_DEFAULTS); persist(AI_OPS_DEFAULTS) }}>
           <Icon name="refresh" /> Reset to defaults
@@ -416,6 +416,25 @@ function OperationsPanel({ notify }: SectionProps) {
         {numField('history_window', 'History window (turns)', '20 turns ≈ 40 messages. 0 disables.', 0, 200)}
         {numField('tool_response_budget_default', 'Tool-result budget (tokens)', 'Default truncation budget for tool results.', 500, 60000)}
         {numField('thinking_budget', 'Daemon thinking budget (tokens)', 'Default extended-thinking budget for the daemon.', 500, 32000)}
+      </div>
+      <div className="mt-5" style={{ paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+        <h4 style={{ margin: '0 0 10px', fontSize: 12, letterSpacing: '0.04em' }}>Local Ollama enrichment recovery</h4>
+        <ToggleRow
+          label="Automatically retry local AI enrichment"
+          hint="When a local Ollama enrichment request loses the Bifrost connection, retry it in the background. This only applies to local Ollama; cloud providers are never retried here."
+          checked={settings.local_ollama_recovery_enabled}
+          onChange={(v) => { const next = { ...settings, local_ollama_recovery_enabled: v }; setSettings(next); persist(next) }}
+        />
+        <ToggleRow
+          label="Restart the local AI gateway when unavailable"
+          hint="If Bifrost is unhealthy, restart the local gateway before retrying. Disable this to retry only when the gateway is already healthy."
+          checked={settings.local_ollama_recovery_restart_gateway}
+          disabled={!settings.local_ollama_recovery_enabled}
+          onChange={(v) => { const next = { ...settings, local_ollama_recovery_restart_gateway: v }; setSettings(next); persist(next) }}
+        />
+        <div className="settings-grid-2 mt-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)' }}>
+          {numField('local_ollama_recovery_retry_limit', 'Retry attempts', 'Retries after the first failed request. 0 disables retries.', 0, 3)}
+        </div>
       </div>
     </SettingsCard>
   )
