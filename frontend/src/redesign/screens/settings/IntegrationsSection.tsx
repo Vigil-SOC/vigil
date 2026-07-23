@@ -30,7 +30,7 @@ import type { SectionProps } from './types'
 type IntegrationsTab = 'servers' | 'ingestion' | 'detection'
 const TABS: [IntegrationsTab, string][] = [
   ['servers', 'Connectors'],
-  ['ingestion', 'Data Ingestion'],
+  ['ingestion', 'Manual Upload'],
   ['detection', 'Detection Rules'],
 ]
 
