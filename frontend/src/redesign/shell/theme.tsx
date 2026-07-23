@@ -150,9 +150,10 @@ export function RedesignThemeProvider({ children }: { children: ReactNode }) {
       const base = BG_PRESETS[key]
       if (!base) return
       setBg({ key, base })
-      setMode(isDarkBase(base) ? 'dark' : 'light')
+      const next = isDarkBase(base) ? 'dark' : 'light'
+      if (next !== mode) setMode(next)
     },
-    [setMode],
+    [mode, setMode],
   )
 
   const setBgHex = useCallback(
@@ -160,10 +161,11 @@ export function RedesignThemeProvider({ children }: { children: ReactNode }) {
       const base = normBgHex(input)
       if (!base) return false
       setBg({ key: null, base })
-      setMode(isDarkBase(base) ? 'dark' : 'light')
+      const next = isDarkBase(base) ? 'dark' : 'light'
+      if (next !== mode) setMode(next)
       return true
     },
-    [setMode],
+    [mode, setMode],
   )
 
   const value = useMemo<SocThemeValue>(
