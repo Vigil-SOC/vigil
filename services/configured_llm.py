@@ -48,6 +48,7 @@ class ConfiguredTextResult:
     model: str
     path: str
     raw: Dict[str, Any]
+    text_only: bool = False  # tools were requested but this path could not run them
 
 
 class NoConfiguredLLMProvider(RuntimeError):
@@ -55,7 +56,9 @@ class NoConfiguredLLMProvider(RuntimeError):
 
     def __init__(self, detail: Dict[str, str] | str = NO_PROVIDER_CONFIGURED):
         self.detail = detail
-        message = detail.get("message", str(detail)) if isinstance(detail, dict) else detail
+        message = (
+            detail.get("message", str(detail)) if isinstance(detail, dict) else detail
+        )
         super().__init__(message)
 
 
@@ -67,14 +70,18 @@ def _model_for_provider(provider: Any, requested_model: Optional[str]) -> str:
     back to their own default model.
     """
     model = requested_model or getattr(provider, "default_model", None) or DEFAULT_MODEL
-    if model.startswith("claude-") and getattr(provider, "provider_type", None) != "anthropic":
-        return provider.default_model
+    if (
+        model.startswith("claude-")
+        and getattr(provider, "provider_type", None) != "anthropic"
+    ):
+        return getattr(provider, "default_model", None) or DEFAULT_MODEL
     return model
 
 
 def resolve_configured_llm(component: str = "chat_default") -> ConfiguredLLMSelection:
     """Resolve the effective provider/model for a component."""
-    from services.llm_router import get_default_provider_spec, get_provider_spec
+    from services.llm_router import (get_default_provider_spec,
+                                     get_provider_spec)
     from services.model_registry import get_registry
 
     resolved = get_registry().resolve_model_for_component(component)
@@ -152,7 +159,7 @@ async def generate_configured_text(
     thinking_budget: int = 10000,
 ) -> ConfiguredTextResult:
     """Generate text through the configured component provider."""
-    selection = resolve_configured_llm(component)
+    selection = await asyncio.to_thread(resolve_configured_llm, component)
 
     if selection.provider is not None and selection.provider_type != "anthropic":
         from services.llm_router import LLMRouter
@@ -176,6 +183,7 @@ async def generate_configured_text(
             model=selection.model,
             path=result.get("path", "bifrost"),
             raw=result,
+            text_only=bool(recommended_tools),
         )
 
     from services.claude_service import ClaudeService
@@ -226,7 +234,7 @@ async def estimate_configured_cost(
     try:
         from services.cost_estimator import estimate_cost
 
-        selection = resolve_configured_llm(component)
+        selection = await asyncio.to_thread(resolve_configured_llm, component)
         estimate = await estimate_cost(
             provider_type=selection.provider_type,
             model_id=selection.model,

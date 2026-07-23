@@ -119,6 +119,27 @@ async def test_generate_non_anthropic_uses_router_without_claude_key(monkeypatch
     assert calls["messages"] == [{"role": "user", "content": "hello"}]
     assert calls["tools"] is None
     assert "cannot execute tools" in calls["system_prompt"]
+    assert result.text_only is True
+
+
+@pytest.mark.asyncio
+async def test_generate_non_anthropic_without_tools_is_not_text_only(monkeypatch):
+    _patch_registry(monkeypatch, ("ollama-local", "qwen3.5:latest"))
+
+    import services.llm_router as llm_router
+
+    monkeypatch.setattr(llm_router, "get_provider_spec", lambda pid: _ollama_spec())
+    monkeypatch.setattr(llm_router, "get_default_provider_spec", lambda: None)
+
+    class _Router:
+        async def dispatch(self, **kwargs):
+            return {"content": "ok", "path": "bifrost", "provider": "ollama"}
+
+    monkeypatch.setattr(llm_router, "LLMRouter", _Router)
+
+    result = await generate_configured_text(message="hello", component="reporting")
+
+    assert result.text_only is False
 
 
 @pytest.mark.asyncio
@@ -128,9 +149,7 @@ async def test_generate_anthropic_uses_claude_service(monkeypatch):
     import services.claude_service as claude_service
     import services.llm_router as llm_router
 
-    monkeypatch.setattr(
-        llm_router, "get_provider_spec", lambda pid: _anthropic_spec()
-    )
+    monkeypatch.setattr(llm_router, "get_provider_spec", lambda pid: _anthropic_spec())
     monkeypatch.setattr(llm_router, "get_default_provider_spec", lambda: None)
 
     calls = {}
@@ -168,9 +187,7 @@ async def test_generate_anthropic_uses_claude_service(monkeypatch):
     assert calls["init"]["use_mcp_tools"] is True
     assert calls["init"]["use_agent_sdk"] is False
     assert calls["init"]["enable_thinking"] is True
-    assert calls["chat"]["context"] == [
-        {"role": "user", "content": "previous"}
-    ]
+    assert calls["chat"]["context"] == [{"role": "user", "content": "previous"}]
     assert calls["chat"]["model"] == "claude-sonnet-test"
     assert calls["chat"]["recommended_tools"] == [{"name": "get_finding"}]
 
@@ -220,9 +237,7 @@ async def test_generate_anthropic_without_key_raises(monkeypatch):
     import services.claude_service as claude_service
     import services.llm_router as llm_router
 
-    monkeypatch.setattr(
-        llm_router, "get_provider_spec", lambda pid: _anthropic_spec()
-    )
+    monkeypatch.setattr(llm_router, "get_provider_spec", lambda pid: _anthropic_spec())
     monkeypatch.setattr(llm_router, "get_default_provider_spec", lambda: None)
 
     class _ClaudeService:

@@ -649,6 +649,7 @@ For each phase:
             skill_tools_available=skill_tool_names,
         )
 
+        warning = None
         try:
             llm_result = await generate_configured_text(
                 message=prompt,
@@ -663,6 +664,9 @@ For each phase:
             response_text = llm_result.content
             success = response_text is not None
             error = None if success else "Claude returned no response"
+            if success and llm_result.text_only:
+                warning = "Provider path ran text-only; tools were not executed."
+                logger.warning("Workflow %s ran text-only (no tools)", workflow.id)
         except NoConfiguredLLMProvider as exc:
             response_text = ""
             success = False
@@ -689,6 +693,7 @@ For each phase:
             "result": response_text or "",
             "tool_calls": [],
             "error": error,
+            "warning": warning,
             "parameters": parameters,
             "skill_tools_available": skill_tool_names,
             "executed_at": datetime.now().isoformat(),
@@ -898,6 +903,11 @@ For each phase:
             finished = datetime.utcnow()
             if phase_ok:
                 output = {"text": response_text or ""}
+                if getattr(llm_result, "text_only", False):
+                    output["text_only"] = True
+                    logger.warning(
+                        "Workflow phase %s ran text-only (no tools)", phase_id
+                    )
                 run_service.upsert_phase(
                     run_id,
                     phase_id,
