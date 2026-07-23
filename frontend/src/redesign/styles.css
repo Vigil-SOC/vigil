@@ -200,6 +200,17 @@
       margin-right: var(--chat-w);
    }
 
+   .chat-resizing,
+   .chat-resizing * {
+      cursor: col-resize !important;
+      user-select: none !important;
+   }
+
+   .chat-resizing .main,
+   .chat-resizing .chat {
+      transition: none;
+   }
+
    /* ---------- nav rail ---------- */
    .rail {
       width: var(--rail-w);
@@ -2076,6 +2087,45 @@
       transition: transform .26s cubic-bezier(.4, 0, .2, 1);
    }
 
+   .chat-resize-handle {
+      position: absolute;
+      z-index: 4;
+      top: 0;
+      bottom: 0;
+      left: -7px;
+      width: 14px;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      cursor: col-resize;
+      touch-action: none;
+   }
+
+   .chat-resize-handle::after {
+      content: "";
+      position: absolute;
+      top: 42%;
+      bottom: 42%;
+      left: 6px;
+      width: 2px;
+      min-height: 38px;
+      border-radius: 2px;
+      background: var(--line-strong);
+      opacity: 0;
+      transition: opacity .14s, background .14s;
+   }
+
+   .chat:hover .chat-resize-handle::after,
+   .chat-resize-handle:focus-visible::after,
+   .chat.resizing .chat-resize-handle::after {
+      opacity: 1;
+      background: var(--accent-2);
+   }
+
+   .chat-resize-handle:focus-visible {
+      box-shadow: 0 0 0 2px var(--accent-line);
+   }
+
    .chat.open {
       transform: none;
    }
@@ -3429,8 +3479,8 @@
       }
 
       .chat {
-         width: 100%;
-         max-width: 420px;
+         width: min(var(--chat-w), calc(100vw - 24px));
+         max-width: none;
       }
 
       /* .detail-body is already a single-column flex stack — nothing to change */
@@ -3440,6 +3490,16 @@
 
       .chat-fab {
          padding: 13px;
+      }
+   }
+
+   @media (max-width: 600px) {
+      .chat {
+         width: 100vw;
+      }
+
+      .chat-resize-handle {
+         display: none;
       }
    }
 
