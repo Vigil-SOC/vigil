@@ -13,6 +13,7 @@ import { NAV, TITLES, type ScreenKey, type NavGate } from './data/data'
 import { ExtensionProvider, useExtensions } from './extensions/ExtensionProvider'
 import ExtensionHost from './extensions/ExtensionHost'
 import { accentVars } from './shell/accent'
+import { bgVars, isDarkBase } from './shell/bg'
 import Chat from './shell/Chat'
 import UserMenu from './shell/UserMenu'
 import ErrorBoundary from './shell/ErrorBoundary'
@@ -52,8 +53,8 @@ const SCREEN_PERMS: Partial<Record<ScreenKey, string>> = {
 }
 
 export default function SocConsole() {
-  // the theme provider is the single source of truth for mode + accent, read
-  // here and written from the Appearance settings page; it must wrap the inner
+  // the theme provider is the single source of truth for mode + accent + bg,
+  // read here and written from the Appearance settings page; it must wrap the inner
   // shell (which both styles .soc-console and renders the settings screen).
   return (
     <RedesignThemeProvider>
@@ -114,7 +115,7 @@ function SocConsoleInner() {
   const currentPerm = valid ? screenPerms[current] : undefined
   const allowed = !currentPerm || hasPermission(currentPerm)
 
-  const { mode, accent } = useSocTheme()
+  const { accent, bg } = useSocTheme()
   const [chatOpen, setChatOpen] = useState(false)
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
@@ -197,7 +198,11 @@ function SocConsoleInner() {
   const mainClass = ['main', chatOpen ? 'chat-open' : ''].filter(Boolean).join(' ')
 
   return (
-    <div className={wrapperClass} data-theme={mode} style={accentVars(accent.a, accent.b)}>
+    <div
+      className={wrapperClass}
+      data-theme={isDarkBase(bg.base) ? 'dark' : 'light'}
+      style={{ ...bgVars(bg.base), ...accentVars(accent.a, accent.b) }}
+    >
       <ToastProvider>
       <div className="shell">
         {/* nav rail */}
