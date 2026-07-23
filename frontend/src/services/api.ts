@@ -7,10 +7,19 @@ import { basePath } from '../config/basePath'
 const api = axios.create({
   baseURL: `${basePath}/api`,
   withCredentials: true,
+  // A dead local backend can leave Vite's proxy connection open indefinitely.
+  // Bound every request so the UI can show a recoverable error instead of a
+  // permanent loading state.
+  timeout: 15_000,
   headers: {
     'Content-Type': 'application/json',
   },
 })
+
+// LLM-backed calls (chat, agents, workflows, enrichment) can legitimately run
+// for minutes, so they override the short default. Streaming endpoints pass 0
+// to disable the timeout entirely for the life of the SSE connection.
+const LLM_TIMEOUT = 180_000
 
 // Read the csrf_token cookie set by the backend CSRF middleware. The
 // backend seeds this on any request that doesn't already have one, so
@@ -187,7 +196,13 @@ export const findingsApi = {
   delete: (id: string) => api.delete(`/findings/${id}`),
   
   getEnrichment: (id: string, force_regenerate: boolean = false) =>
-    api.post(`/findings/${id}/enrich`, null, { params: { force_regenerate } }),
+    // Enrichment may need to restart a local Bifrost gateway and then wait for
+    // a local model response. Keep the ordinary API timeout short, but do not
+    // abandon this recoverable request while that work is still in progress.
+    api.post(`/findings/${id}/enrich`, null, {
+      params: { force_regenerate },
+      timeout: LLM_TIMEOUT,
+    }),
 
   deleteAll: () => api.delete('/findings/all'),
 }
@@ -239,7 +254,8 @@ export const casesApi = {
   removeFinding: (id: string, finding_id: string) =>
     api.delete(`/cases/${id}/findings/${finding_id}`),
   
-  generateReport: (id: string) => api.post(`/cases/${id}/generate-report`),
+  generateReport: (id: string) =>
+    api.post(`/cases/${id}/generate-report`, null, { timeout: LLM_TIMEOUT }),
   
   getSummary: () => api.get('/cases/stats/summary'),
   
@@ -674,7 +690,7 @@ export const claudeApi = {
     agent_id?: string
     streaming?: boolean
     use_agent_sdk?: boolean
-  }) => api.post('/claude/chat', data),
+  }) => api.post('/claude/chat', data, { timeout: LLM_TIMEOUT }),
   
   chatStream: (data: {
     messages: Array<{ 
@@ -697,6 +713,7 @@ export const claudeApi = {
     agent_id?: string
   }) => api.post('/claude/chat/stream', data, {
     responseType: 'stream',
+    timeout: 0,
     headers: {
       'Accept': 'text/event-stream',
     }
@@ -726,11 +743,12 @@ export const claudeApi = {
       }>
     }>
     model?: string
-  }) => api.post('/claude/summarize', data),
-  
+  }) => api.post('/claude/summarize', data, { timeout: LLM_TIMEOUT }),
+
   analyzeFinding: (finding_id: string, context?: string) =>
     api.post('/claude/analyze-finding', null, {
       params: { finding_id, context },
+      timeout: LLM_TIMEOUT,
     }),
   
   generateChatReport: (data: {
@@ -744,7 +762,7 @@ export const claudeApi = {
       }>
     }>
     notes?: string
-  }) => api.post('/claude/generate-chat-report', data),
+  }) => api.post('/claude/generate-chat-report', data, { timeout: LLM_TIMEOUT }),
   
   // Agent SDK endpoints
   runAgentTask: (data: {
@@ -755,7 +773,7 @@ export const claudeApi = {
     model?: string
     session_id?: string
     agent_id?: string
-  }) => api.post('/claude/agent/task', data),
+  }) => api.post('/claude/agent/task', data, { timeout: LLM_TIMEOUT }),
   
   streamAgentTask: (data: {
     task: string
@@ -767,6 +785,7 @@ export const claudeApi = {
     agent_id?: string
   }) => api.post('/claude/agent/stream', data, {
     responseType: 'stream',
+    timeout: 0,
     headers: {
       'Accept': 'text/event-stream',
     }
@@ -786,15 +805,15 @@ export const agentsApi = {
     finding_id: string
     agent_id?: string
     additional_context?: string
-  }) => api.post('/agents/agents/investigate', data),
-  
+  }) => api.post('/agents/agents/investigate', data, { timeout: LLM_TIMEOUT }),
+
   runAgent: (data: {
     finding_id?: string
     case_id?: string
     task?: string
     agent_id?: string
     use_agent_sdk?: boolean
-  }) => api.post('/agents/agents/run', data),
+  }) => api.post('/agents/agents/run', data, { timeout: LLM_TIMEOUT }),
 
   // Custom Agent Builder (issue #80)
   listCustom: () => api.get('/agents/custom'),
@@ -814,7 +833,10 @@ export const agentsApi = {
     description: string
     current_draft?: GeneratedAgentDraft | null
     feedback?: string
-  }) => api.post<{ draft: GeneratedAgentDraft }>('/agents/custom/generate', data),
+  }) =>
+    api.post<{ draft: GeneratedAgentDraft }>('/agents/custom/generate', data, {
+      timeout: LLM_TIMEOUT,
+    }),
 }
 
 export interface GeneratedAgentDraft {
@@ -1428,7 +1450,7 @@ export const workflowApi = {
     case_id?: string
     context?: string
     hypothesis?: string
-  }) => api.post(`/workflows/${id}/execute`, params),
+  }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
   reloadFiles: () => api.post('/workflows/reload'),
 
   // Run history (#127) — execution is persisted to workflow_runs so the
@@ -1464,7 +1486,7 @@ export const workflowApi = {
 
   // AI generation (returns draft — does not save)
   generate: (description: string) =>
-    api.post('/workflows/generate', { description }),
+    api.post('/workflows/generate', { description }, { timeout: LLM_TIMEOUT }),
 }
 
 // Skills API (workflow skill management and execution)
@@ -1481,7 +1503,7 @@ export const skillsApi = {
     case_id?: string
     context?: string
     hypothesis?: string
-  }) => api.post(`/workflows/${skillId}/execute`, params),
+  }) => api.post(`/workflows/${skillId}/execute`, params, { timeout: LLM_TIMEOUT }),
 
   // Force reload skills from disk
   reloadSkills: () => api.post('/workflows/reload'),
@@ -1512,7 +1534,7 @@ export const orchestratorApi = {
   scanFindings: (severities?: string[]) =>
     api.post('/orchestrator/scan-findings', {
       severities: severities || ['critical', 'high'],
-    }),
+    }, { timeout: LLM_TIMEOUT }),
   reviewInvestigation: (id: string, action: 'approve' | 'rework', notes?: string) =>
     api.post(`/orchestrator/investigations/${id}/review`, { action, notes }),
 
@@ -1692,4 +1714,3 @@ export const bootstrapApi = {
 }
 
 export default api
-
