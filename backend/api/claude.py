@@ -1111,11 +1111,16 @@ async def websocket_chat(websocket: WebSocket):
 
 @router.get("/models")
 async def get_models():
-    """List available models.
+    """List available models for the Chat UI model picker.
 
-    Backward-compatible alias for `/api/ai/models` (GH #89). Returns the
-    Anthropic subset so the existing Chat UI model picker continues to
-    show only Claude models even when Ollama/OpenAI providers are active.
+    Backward-compatible alias for `/api/ai/models` (GH #89). Returns every
+    model across all *active* providers (Anthropic, Ollama, OpenAI, …) so the
+    picker reflects what the instance can actually run: an Ollama-only
+    deployment shows its Ollama models instead of Claude models it will never
+    call. IDs stay as bare model ids so a persisted `chat_default.model_id`
+    selection still matches a menu entry; the chat send path resolves the
+    provider from the active default when no `provider_id::` prefix is present
+    (see `_resolve_provider_model_for_request`).
     """
     registry = get_registry()
     try:
@@ -1124,8 +1129,7 @@ async def get_models():
         logger.warning("get_models: registry lookup failed: %s", exc)
         all_models = []
 
-    anthropic_only = [m for m in all_models if m.provider_type == "anthropic"]
-    if not anthropic_only:
+    if not all_models:
         # Fallback — ensures the Chat UI still has something to render if the
         # provider registry isn't reachable (e.g. fresh install, no DB).
         return {
@@ -1148,19 +1152,26 @@ async def get_models():
             ]
         }
 
-    return {
-        "models": [
+    # Dedupe by bare model_id: the picker uses it as both the menu key and the
+    # stored value, and two providers can advertise the same id. First wins.
+    seen: set = set()
+    models = []
+    for m in all_models:
+        if m.model_id in seen:
+            continue
+        seen.add(m.model_id)
+        models.append(
             {
                 "id": m.model_id,
                 "name": m.display_name,
                 "description": (
                     f"{m.context_window // 1000}K context, "
-                    f"${m.input_cost_per_1k:.4f}/1K in / ${m.output_cost_per_1k:.4f}/1K out"
+                    f"${m.input_cost_per_1k:.4f}/1K in / "
+                    f"${m.output_cost_per_1k:.4f}/1K out"
                 ),
             }
-            for m in anthropic_only
-        ]
-    }
+        )
+    return {"models": models}
 
 
 class SummarizeRequest(BaseModel):
