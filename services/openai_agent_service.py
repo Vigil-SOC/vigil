@@ -8,21 +8,34 @@ from collections import deque
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
 from services import tool_manager
+
 # The provider-agnostic loop skeleton (guards, backoff, loop-detection, tool
 # exec/approval orchestration, telemetry) now lives in services.agent_loop. This
 # service supplies the OpenAI TurnEngine plus the tool-execution runtime the
 # controller calls back into. Several private names are re-exported here so
 # existing imports (and their tests) keep resolving from this module.
-from services.agent_loop import (_HISTORY_WINDOW_DEFAULT,  # noqa: F401
-                                 _LOOP_DETECT_THRESHOLD, LoopController,
-                                 OpenAITurnEngine, PendingApprovalError,
-                                 _canonical_args, _detect_infinite_loop)
+from services.agent_loop import _HISTORY_WINDOW_DEFAULT  # noqa: F401
+from services.agent_loop import (
+    _LOOP_DETECT_THRESHOLD,
+    LoopController,
+    OpenAITurnEngine,
+    PendingApprovalError,
+    _canonical_args,
+    _detect_infinite_loop,
+)
 from services.llm_format import anthropic_tools_to_openai
 from services.llm_router import ProviderSpec
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["OpenAIAgentService", "PendingApprovalError", "anthropic_tools_to_openai"]
+__all__ = [
+    "OpenAIAgentService",
+    "PendingApprovalError",
+    "anthropic_tools_to_openai",
+    # Re-exported for compatibility with existing test imports.
+    "_canonical_args",
+    "_LOOP_DETECT_THRESHOLD",
+]
 
 _TOOL_TIMEOUT_S = 30.0
 _MAX_TOOL_RESPONSE_CHARS = 50_000
@@ -159,10 +172,13 @@ class OpenAIAgentService:
             max_tokens=max_tokens,
             temperature=temperature,
             tools=tools,
+            runtime=self,
+            session_id=session_id,
+            agent_id=agent_id,
             history_window=history_window,
         )
-        controller = LoopController(engine=engine, runtime=self)
-        async for event in controller.run(session_id=session_id, agent_id=agent_id):
+        controller = LoopController(engine=engine)
+        async for event in controller.run():
             yield event
 
     async def run(
@@ -253,8 +269,7 @@ class OpenAIAgentService:
         """Queue a pending approval instead of executing the tool, returning the
         message for the model and the action id to poll (None if not created)."""
         try:
-            from services.approval_service import (ActionType,
-                                                   get_approval_service)
+            from services.approval_service import ActionType, get_approval_service
 
             service = get_approval_service()
             try:
@@ -300,8 +315,7 @@ class OpenAIAgentService:
         """Poll the approval queue until an operator decides, returning
         ``(decision, detail, waited_seconds)``. A vanished action reads as a
         rejection so an uncleared action never executes."""
-        from services.approval_service import (ActionStatus,
-                                               get_approval_service)
+        from services.approval_service import ActionStatus, get_approval_service
 
         service = get_approval_service()
         started = time.monotonic()

@@ -3,21 +3,22 @@
 This module houses the two halves of the multi-turn tool loop that used to live
 entirely inside ``OpenAIAgentService``:
 
-  - :class:`LoopController` — the **provider-agnostic** loop skeleton: iteration
-    and wall-clock guards, inter-iteration backoff, canonicalized loop-detection,
-    the tool-execution + human-approval flow, per-turn telemetry, and the
-    iteration-limit message. It knows nothing about any specific provider; it
-    drives a :class:`TurnEngine` for model I/O and calls back into a ``runtime``
-    handle for tool execution, approval, and logging.
+  - :class:`LoopController` — the **provider-agnostic** loop *sequencer*: only
+    the cross-cutting guards every provider shares — the iteration cap, the
+    wall-clock timeout, inter-iteration backoff, canonicalized loop-detection,
+    and the stop/limit messages. It knows nothing about any specific provider; it
+    drives a :class:`TurnEngine` and forwards its events.
   - :class:`TurnEngine` — the interface a provider adapter implements, plus the
     :class:`OpenAITurnEngine` adapter that speaks the OpenAI-compatible dialect
     (delta reassembly over ``LLMRouter.stream_openai_raw``, tool-call
-    normalization, usage accounting, and the malformed-tool-JSON heuristic).
+    normalization, per-tool gated execution, telemetry, usage accounting, and the
+    malformed-tool-JSON heuristic).
 
-Each engine owns its own message-history dialect; the controller only ever sees
-provider-agnostic :class:`TurnResult` / :class:`NormalizedToolCall` values. This
-lets a future ``AnthropicTurnEngine`` keep native Anthropic-block history without
-the controller having to convert anything.
+Each engine owns its own message-history dialect, SSE event vocabulary, tool
+execution/gating, and telemetry; the controller only ever sees provider-agnostic
+:class:`TurnResult` / :class:`ToolPhaseResult` values. This lets a future
+``AnthropicTurnEngine`` keep native Anthropic-block history, emit thinking
+events, and batch-execute tools without the controller having to know.
 
 Behaviour here is a straight lift of the previous ``OpenAIAgentService.stream``
 loop — the split is structural, not behavioural.
@@ -43,6 +44,7 @@ __all__ = [
     "PendingApprovalError",
     "NormalizedToolCall",
     "TurnResult",
+    "ToolPhaseResult",
     "TurnEngine",
     "OpenAITurnEngine",
     "LoopController",
@@ -162,12 +164,33 @@ class TurnResult:
     duration_ms: int = 0
 
 
+@dataclass
+class ToolPhaseResult:
+    """The terminal outcome of an engine's tool-execution phase.
+
+    ``halt`` tells the controller to stop the whole run immediately (e.g. an
+    approval failed closed or timed out). ``waited`` is human approval think-time
+    the controller adds back to its wall-clock baseline so operator delay isn't
+    charged against the processing-time guard.
+    """
+
+    halt: bool = False
+    waited: float = 0.0
+
+
 class TurnEngine(Protocol):
     """Provider adapter driven by :class:`LoopController`.
 
-    Implementations own their message-history dialect. ``stream_turn`` yields
-    SSE-compatible delta dicts (``text``/``thinking``/…) as they arrive and
-    terminates by yielding exactly one :class:`TurnResult`.
+    Implementations own their message-history dialect, their provider-shaped SSE
+    event vocabulary, their tool execution/gating, and their own telemetry — the
+    controller only sequences turns and enforces the cross-cutting guards. Each
+    engine is constructed per-run with its full context (session/agent, runtime).
+
+    ``stream_turn`` yields SSE-compatible delta dicts (``text``/``thinking``/…)
+    as they arrive, records its own interaction telemetry, and terminates by
+    yielding exactly one :class:`TurnResult`. ``execute_tools`` runs the tool
+    calls for a turn — yielding provider-shaped tool events, extending history,
+    and terminating with a :class:`ToolPhaseResult`.
     """
 
     #: Resolved model id (for cost lookup).
@@ -183,9 +206,9 @@ class TurnEngine(Protocol):
 
     def append_assistant(self, turn: TurnResult) -> None: ...
 
-    def append_tool_result(
-        self, tool_call_id: str, result_text: str, is_error: bool
-    ) -> None: ...
+    def execute_tools(
+        self, turn: TurnResult, *, iteration: int
+    ) -> AsyncIterator[Union[Dict[str, Any], ToolPhaseResult]]: ...
 
 
 class OpenAITurnEngine:
@@ -206,6 +229,9 @@ class OpenAITurnEngine:
         max_tokens: int,
         temperature: Optional[float],
         tools: List[Dict[str, Any]],
+        runtime: Any,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
         history_window: int = _HISTORY_WINDOW_DEFAULT,
         router: Optional[LLMRouter] = None,
     ):
@@ -215,6 +241,12 @@ class OpenAITurnEngine:
         self._max_tokens = max_tokens
         self._temperature = temperature
         self._tools = tools
+        # Tool execution, approval, and telemetry live on the runtime (the
+        # OpenAIAgentService instance) — the engine calls back into it, mirroring
+        # the PR3a arrangement now that the controller no longer owns that work.
+        self._runtime = runtime
+        self._session_id = session_id
+        self._agent_id = agent_id
         self._router = router or LLMRouter()
         # The loop appends assistant/tool turns in OpenAI shape, so normalize the
         # incoming history up front; the router re-converts idempotently.
@@ -237,7 +269,7 @@ class OpenAITurnEngine:
         if turn.assistant_message is not None:
             self._history.append(turn.assistant_message)
 
-    def append_tool_result(
+    def _append_tool_result(
         self, tool_call_id: str, result_text: str, is_error: bool
     ) -> None:
         # OpenAI tool messages carry no is_error field, so mark failures inline —
@@ -370,7 +402,7 @@ class OpenAITurnEngine:
                 "7B+ model with tool support)."
             )
 
-        yield TurnResult(
+        turn = TurnResult(
             text=text_buffer,
             finish_reason=finish_reason,
             raw_tool_call_count=len(tool_calls_buffer),
@@ -382,14 +414,117 @@ class OpenAITurnEngine:
             output_tokens=output_tokens,
             duration_ms=duration_ms,
         )
+        # Persist this iteration's interaction log (non-fatal, fire-and-forget)
+        # via the runtime, then hand the turn to the controller.
+        self._record_turn(turn, iteration)
+        yield turn
+
+    def _record_turn(self, turn: TurnResult, iteration: int) -> None:
+        """Record per-iteration cost + interaction telemetry via the runtime."""
+        cost_usd = self._runtime._compute_cost(
+            self._model,
+            self._provider.provider_type,
+            turn.input_tokens,
+            turn.output_tokens,
+        )
+        self._runtime._log_interaction(
+            session_id=self._session_id,
+            agent_id=self._agent_id,
+            model=self.model_label,
+            iteration=iteration,
+            interaction_id=turn.interaction_id,
+            duration_ms=turn.duration_ms,
+            text_content=turn.text,
+            tool_calls_count=turn.raw_tool_call_count,
+            finish_reason=turn.finish_reason,
+            input_tokens=turn.input_tokens,
+            output_tokens=turn.output_tokens,
+            cost_usd=cost_usd,
+        )
+
+    async def execute_tools(
+        self, turn: TurnResult, *, iteration: int
+    ) -> AsyncIterator[Union[Dict[str, Any], ToolPhaseResult]]:
+        """Execute a turn's tool calls, one at a time, through the runtime.
+
+        Each call passes through the runtime's tier/approval gate; a
+        ``requires_approval`` tool holds the run until an operator decides.
+        Yields ``tool_processing`` / ``tool_result`` / ``approval_required`` /
+        ``error`` events and terminates with a :class:`ToolPhaseResult`.
+        """
+        runtime = self._runtime
+        halt = False
+        total_waited = 0.0
+        for tc in turn.tool_calls:
+            tool_name = tc.name
+            tool_call_id = tc.id
+            raw_args = tc.arguments
+
+            yield {
+                "type": "tool_processing",
+                "tool_name": tool_name,
+                "tool_id": tool_call_id,
+            }
+
+            try:
+                result_text, is_error = await runtime._execute_tool(tool_name, raw_args)
+            except PendingApprovalError as exc:
+                # Hold the run here until an operator decides, so a run never
+                # completes with the action un-taken.
+                yield {
+                    "type": "approval_required",
+                    "tool_name": tool_name,
+                    "tool_id": tool_call_id,
+                    "action_id": exc.action_id,
+                    "content": str(exc),
+                }
+                yield {"type": "text", "content": f"\n\n_{exc}_\n\n"}
+                if not exc.action_id:
+                    # No action to poll — fail closed rather than hang.
+                    yield {"type": "error", "content": str(exc)}
+                    halt = True
+                    break
+                decision, detail, waited = await runtime._await_approval(exc.action_id)
+                # Human think-time isn't LLM processing time.
+                total_waited += waited
+                if decision == "approved":
+                    result_text, is_error = await runtime._execute_tool(
+                        tool_name, raw_args, approved=True
+                    )
+                    runtime._mark_action_executed(exc.action_id, result_text, is_error)
+                elif decision == "rejected":
+                    result_text, is_error = (
+                        f"Operator REJECTED this action. Reason: {detail}. "
+                        "Do not retry it; continue with another approach or "
+                        "report that the step could not be completed.",
+                        True,
+                    )
+                else:
+                    yield {"type": "error", "content": detail}
+                    halt = True
+                    break
+
+            preview = result_text[:500] + ("…" if len(result_text) > 500 else "")
+            yield {
+                "type": "tool_result",
+                "tool_name": tool_name,
+                "tool_id": tool_call_id,
+                "result": preview,
+                "is_error": is_error,
+            }
+
+            self._append_tool_result(tool_call_id, result_text, is_error)
+
+        yield ToolPhaseResult(halt=halt, waited=total_waited)
 
 
 class _ToolRuntime(Protocol):
-    """The tool-side collaborator the controller calls back into.
+    """The tool-side collaborator the OpenAI engine calls back into.
 
-    In PR3a this is the ``OpenAIAgentService`` instance (so its existing,
-    unit-tested methods — and any test doubles patched onto them — keep being
-    the code that runs). Relocating these into the controller is deferred.
+    This is the ``OpenAIAgentService`` instance (so its existing, unit-tested
+    methods — and any test doubles patched onto them — keep being the code that
+    runs). The engine owns tool execution and telemetry orchestration; the
+    controller no longer touches the runtime.
     """
 
     async def _execute_tool(
@@ -410,32 +545,28 @@ class _ToolRuntime(Protocol):
 
 
 class LoopController:
-    """Provider-agnostic multi-turn agentic tool loop.
+    """Provider-agnostic multi-turn agentic loop sequencer.
 
-    Drives a :class:`TurnEngine` for model I/O and a ``runtime`` handle for tool
-    execution / approval / telemetry. Yields SSE-compatible event dicts matching
-    the frontend protocol.
+    Owns only the cross-cutting guards shared by every provider: the iteration
+    cap, the wall-clock timeout, inter-iteration backoff, canonicalized
+    loop-detection, and the stop/limit messages. Everything provider-specific —
+    streaming, telemetry, tool execution/gating, history mutation, and the
+    provider's SSE event vocabulary — lives in the :class:`TurnEngine` it drives.
+    Yields SSE-compatible event dicts matching the frontend protocol.
     """
 
     def __init__(
         self,
         *,
         engine: TurnEngine,
-        runtime: Any,
         max_iterations: int = _MAX_TOOL_ITERATIONS,
         max_processing_time_s: float = _MAX_PROCESSING_TIME_S,
     ):
         self._engine = engine
-        self._runtime = runtime
         self._max_iterations = max_iterations
         self._max_processing_time_s = max_processing_time_s
 
-    async def run(
-        self,
-        *,
-        session_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
-    ) -> AsyncIterator[Dict[str, Any]]:
+    async def run(self) -> AsyncIterator[Dict[str, Any]]:
         """Run the agentic loop, yielding SSE event dicts.
 
         Guardrails (unchanged from the pre-refactor OpenAI loop):
@@ -445,7 +576,6 @@ class LoopController:
             - infinite loop detection (3 repeated identical tool sets)
         """
         engine = self._engine
-        runtime = self._runtime
 
         start_time = asyncio.get_event_loop().time()
         tool_call_history: deque = deque(maxlen=_LOOP_DETECT_WINDOW)
@@ -467,6 +597,7 @@ class LoopController:
                 await asyncio.sleep(_inter_iteration_delay(iteration))
 
             # Stream one model turn; re-yield deltas, capture the terminal result.
+            # The engine records its own telemetry before yielding the TurnResult.
             turn: Optional[TurnResult] = None
             try:
                 async for item in engine.stream_turn(iteration=iteration):
@@ -483,27 +614,6 @@ class LoopController:
                 # A well-behaved engine always yields a terminal TurnResult; if
                 # one didn't, stop rather than spin.
                 break
-
-            cost_usd = runtime._compute_cost(
-                engine.model,
-                engine.provider_type,
-                turn.input_tokens,
-                turn.output_tokens,
-            )
-            runtime._log_interaction(
-                session_id=session_id,
-                agent_id=agent_id,
-                model=engine.model_label,
-                iteration=iteration,
-                interaction_id=turn.interaction_id,
-                duration_ms=turn.duration_ms,
-                text_content=turn.text,
-                tool_calls_count=turn.raw_tool_call_count,
-                finish_reason=turn.finish_reason,
-                input_tokens=turn.input_tokens,
-                output_tokens=turn.output_tokens,
-                cost_usd=cost_usd,
-            )
 
             # No actionable tool call → done.
             if turn.finish_reason != "tool_calls" or turn.raw_tool_call_count == 0:
@@ -537,74 +647,19 @@ class LoopController:
                 }
                 break
 
-            halt = False
-            for tc in turn.tool_calls:
-                tool_name = tc.name
-                tool_call_id = tc.id
-                raw_args = tc.arguments
-
-                yield {
-                    "type": "tool_processing",
-                    "tool_name": tool_name,
-                    "tool_id": tool_call_id,
-                }
-
-                try:
-                    result_text, is_error = await runtime._execute_tool(
-                        tool_name, raw_args
-                    )
-                except PendingApprovalError as exc:
-                    # Hold the run here until an operator decides, so a run never
-                    # completes with the action un-taken.
-                    yield {
-                        "type": "approval_required",
-                        "tool_name": tool_name,
-                        "tool_id": tool_call_id,
-                        "action_id": exc.action_id,
-                        "content": str(exc),
-                    }
-                    yield {"type": "text", "content": f"\n\n_{exc}_\n\n"}
-                    if not exc.action_id:
-                        # No action to poll — fail closed rather than hang.
-                        yield {"type": "error", "content": str(exc)}
-                        halt = True
-                        break
-                    decision, detail, waited = await runtime._await_approval(
-                        exc.action_id
-                    )
-                    # Human think-time isn't LLM processing time.
-                    start_time += waited
-                    if decision == "approved":
-                        result_text, is_error = await runtime._execute_tool(
-                            tool_name, raw_args, approved=True
-                        )
-                        runtime._mark_action_executed(
-                            exc.action_id, result_text, is_error
-                        )
-                    elif decision == "rejected":
-                        result_text, is_error = (
-                            f"Operator REJECTED this action. Reason: {detail}. "
-                            "Do not retry it; continue with another approach or "
-                            "report that the step could not be completed.",
-                            True,
-                        )
-                    else:
-                        yield {"type": "error", "content": detail}
-                        halt = True
-                        break
-
-                preview = result_text[:500] + ("…" if len(result_text) > 500 else "")
-                yield {
-                    "type": "tool_result",
-                    "tool_name": tool_name,
-                    "tool_id": tool_call_id,
-                    "result": preview,
-                    "is_error": is_error,
-                }
-
-                engine.append_tool_result(tool_call_id, result_text, is_error)
-            if halt:
-                return
+            # Hand the tool-execution phase to the engine; it yields provider-
+            # shaped tool events and reports back whether to halt and how much
+            # human approval time to exclude from the wall-clock guard.
+            phase: Optional[ToolPhaseResult] = None
+            async for tool_event in engine.execute_tools(turn, iteration=iteration):
+                if isinstance(tool_event, ToolPhaseResult):
+                    phase = tool_event
+                else:
+                    yield tool_event
+            if phase is not None:
+                start_time += phase.waited
+                if phase.halt:
+                    return
         else:
             # for/else: loop exhausted without break
             yield {
