@@ -7,11 +7,13 @@ daemon, workflow) relies on:
   * a recognised backend tool returns ``(result, handled=True)``;
   * an unrecognised tool returns ``(None, handled=False)`` so the caller falls
     back to the MCP layer.
+
+Tests are ``async def`` (pytest asyncio-mode=auto) — never ``asyncio.run``,
+which would close the shared loop and pollute later tests.
 """
 
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -24,15 +26,15 @@ sys.path.insert(0, str(REPO))
 pytestmark = pytest.mark.unit
 
 
-def test_unknown_tool_returns_not_handled():
+async def test_unknown_tool_returns_not_handled():
     from services.tool_manager import execute_backend_tool
 
-    result, handled = asyncio.run(execute_backend_tool("splunk_search", {}))
+    result, handled = await execute_backend_tool("splunk_search", {})
     assert result is None
     assert handled is False
 
 
-def test_list_findings_routes_to_data_service():
+async def test_list_findings_routes_to_data_service():
     from services import tool_manager
 
     findings = [
@@ -50,10 +52,8 @@ def test_list_findings_routes_to_data_service():
         mock_ds = mock_ds_cls.return_value
         mock_ds.count_findings.return_value = 1
         mock_ds.get_findings.return_value = findings
-        result, handled = asyncio.run(
-            tool_manager.execute_backend_tool(
-                "list_findings", {"limit": 10, "offset": 0}
-            )
+        result, handled = await tool_manager.execute_backend_tool(
+            "list_findings", {"limit": 10, "offset": 0}
         )
 
     assert handled is True

@@ -10,11 +10,14 @@ These tests lock that routing for both call sites:
 
   * ``_execute_approved_tool``  — the post-approval, guardrail-bypassing path.
   * ``_execute_external_tool``  — the guarded path (tier gate runs first).
+
+Tests are ``async def`` (pytest asyncio-mode=auto) so each gets its own event
+loop — never ``asyncio.run``, which would close the shared loop and pollute
+later tests.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sys
 from pathlib import Path
@@ -45,47 +48,54 @@ def _runner():
     return runner
 
 
-def test_approved_tool_routes_backend_via_tool_manager():
+async def test_approved_tool_routes_backend_via_tool_manager():
     """A backend tool is dispatched through tool_manager; MCP is not touched."""
     runner = _runner()
     with patch(
         "daemon.agent_runner.execute_backend_tool",
         new=AsyncMock(return_value=({"ok": 1}, True)),
     ) as m_backend, patch("services.mcp_client.get_mcp_client") as m_mcp:
-        result = asyncio.run(
-            runner._execute_approved_tool("list_findings", {"limit": 5})
-        )
+        result = await runner._execute_approved_tool("list_findings", {"limit": 5})
 
     assert json.loads(result) == {"ok": 1}
     m_backend.assert_awaited_once()
     m_mcp.assert_not_called()
 
 
-def test_approved_tool_falls_back_to_mcp_when_not_handled():
-    """A non-backend tool (handled=False) falls through to the MCP client."""
+async def test_approved_tool_falls_back_to_mcp_when_not_handled():
+    """A non-backend tool (handled=False) falls through to the MCP client.
+
+    Asserts the resolved 3-arg ``call_tool(server, tool, args)`` signature so a
+    regression to the old 2-arg call (which raised TypeError) can't slip past.
+    """
     runner = _runner()
+    runner._claude_service._truncate_tool_response = MagicMock(
+        side_effect=lambda content, tool_name=None: content
+    )
     client = MagicMock()
+    client.tools_cache = {"splunk": [{"name": "search"}]}
     client.call_tool = AsyncMock(return_value={"mcp": "yes"})
     with patch(
         "daemon.agent_runner.execute_backend_tool",
         new=AsyncMock(return_value=(None, False)),
     ) as m_backend, patch("services.mcp_client.get_mcp_client", return_value=client):
-        result = asyncio.run(runner._execute_approved_tool("splunk_search", {}))
+        result = await runner._execute_approved_tool("splunk_search", {})
 
     assert json.loads(result) == {"mcp": "yes"}
     m_backend.assert_awaited_once()
-    client.call_tool.assert_awaited_once()
+    client.call_tool.assert_awaited_once_with("splunk", "search", {})
+    runner._claude_service._truncate_tool_response.assert_called_once()
 
 
-def test_external_tool_routes_backend_via_tool_manager():
+async def test_external_tool_routes_backend_via_tool_manager():
     """The guarded path also dispatches backend tools through tool_manager."""
     runner = _runner()
     with patch("daemon.agent_runner._get_tool_tier", return_value="read"), patch(
         "daemon.agent_runner.execute_backend_tool",
         new=AsyncMock(return_value=({"ok": 2}, True)),
     ) as m_backend, patch("services.mcp_client.get_mcp_client") as m_mcp:
-        result = asyncio.run(
-            runner._execute_external_tool("inv-1", "list_findings", {"limit": 5})
+        result = await runner._execute_external_tool(
+            "inv-1", "list_findings", {"limit": 5}
         )
 
     assert json.loads(result) == {"ok": 2}
@@ -93,20 +103,21 @@ def test_external_tool_routes_backend_via_tool_manager():
     m_mcp.assert_not_called()
 
 
-def test_external_tool_falls_back_to_mcp_when_not_handled():
+async def test_external_tool_falls_back_to_mcp_when_not_handled():
     """The guarded path falls through to MCP for non-backend tools."""
     runner = _runner()
+    runner._claude_service._truncate_tool_response = MagicMock(
+        side_effect=lambda content, tool_name=None: content
+    )
     client = MagicMock()
-    client.tools_cache = {"splunk": [{"name": "splunk_search"}]}
+    client.tools_cache = {"splunk": [{"name": "search"}]}
     client.call_tool = AsyncMock(return_value={"mcp": "ok"})
     with patch("daemon.agent_runner._get_tool_tier", return_value="read"), patch(
         "daemon.agent_runner.execute_backend_tool",
         new=AsyncMock(return_value=(None, False)),
     ) as m_backend, patch("services.mcp_client.get_mcp_client", return_value=client):
-        result = asyncio.run(
-            runner._execute_external_tool("inv-1", "splunk_search", {})
-        )
+        result = await runner._execute_external_tool("inv-1", "splunk_search", {})
 
     assert json.loads(result) == {"mcp": "ok"}
     m_backend.assert_awaited_once()
-    client.call_tool.assert_awaited_once()
+    client.call_tool.assert_awaited_once_with("splunk", "search", {})
