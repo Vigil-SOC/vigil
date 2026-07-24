@@ -47,6 +47,7 @@ __all__ = [
     "ToolPhaseResult",
     "TurnEngine",
     "OpenAITurnEngine",
+    "AnthropicTurnEngine",
     "LoopController",
 ]
 
@@ -516,6 +517,227 @@ class OpenAITurnEngine:
             self._append_tool_result(tool_call_id, result_text, is_error)
 
         yield ToolPhaseResult(halt=halt, waited=total_waited)
+
+
+class AnthropicTurnEngine:
+    """Anthropic-native :class:`TurnEngine` over ``client.messages.stream``.
+
+    Wraps a ``ClaudeService`` instance and reuses its proven helpers
+    (``async_client.messages.stream``, ``_process_mixed_tool_use``,
+    ``_clean_blocks_for_resend``, ``_persist_interaction``). Lifted from the
+    body of ``ClaudeService.chat_stream``:
+
+      - ``stream_turn`` emits ``thinking_start``/``thinking``/``thinking_end`` and
+        ``text`` deltas, reads final usage via ``get_final_message()``, and
+        persists the reasoning trace — one interaction row per iteration.
+      - ``execute_tools`` runs the turn's tool calls as a single batch through
+        ``_process_mixed_tool_use`` and appends the Anthropic-block tool results.
+
+    Canonical history is Anthropic content-block shape (native to this engine),
+    so no conversion happens at the boundary. Approval gating is intentionally
+    absent here — it matches ``chat_stream``'s current behaviour and is unified
+    across providers in a later sub-PR.
+    """
+
+    def __init__(
+        self,
+        *,
+        runtime: Any,
+        messages: List[Dict[str, Any]],
+        system_prompt: Optional[str],
+        model: str,
+        max_tokens: int,
+        tools: Optional[List[Dict[str, Any]]],
+        thinking_config: Optional[Dict[str, Any]],
+        use_thinking: bool,
+        thinking_budget: Optional[int] = None,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        investigation_id: Optional[str] = None,
+    ):
+        self._runtime = runtime
+        self._messages = messages
+        self._system_prompt = system_prompt
+        self._model = model
+        self._max_tokens = max_tokens
+        self._tools = tools
+        self._thinking_config = thinking_config
+        self._use_thinking = use_thinking
+        self._thinking_budget = thinking_budget
+        self._session_id = session_id
+        self._agent_id = agent_id
+        self._investigation_id = investigation_id
+        # Raw response blocks from the most recent turn, handed to execute_tools.
+        self._last_accumulated: List[Any] = []
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+    @property
+    def provider_type(self) -> str:
+        return "anthropic"
+
+    @property
+    def model_label(self) -> str:
+        return f"anthropic/{self._model}"
+
+    def _build_api_kwargs(self, interaction_id: str) -> Dict[str, Any]:
+        api_kwargs: Dict[str, Any] = {
+            "model": self._model,
+            "max_tokens": self._max_tokens,
+            "messages": self._messages,
+        }
+        if self._system_prompt:
+            api_kwargs["system"] = self._system_prompt
+        if self._tools:
+            api_kwargs["tools"] = self._tools
+        if self._thinking_config:
+            api_kwargs["thinking"] = self._thinking_config
+        # #185: fresh interaction UUID per streaming iteration so each upstream
+        # Bifrost call lands its own log row correlated with the local one.
+        api_kwargs["extra_headers"] = {"x-bf-lh-vigil-interaction-id": interaction_id}
+        return api_kwargs
+
+    async def stream_turn(
+        self, *, iteration: int
+    ) -> AsyncIterator[Union[Dict[str, Any], TurnResult]]:
+        interaction_id = str(uuid.uuid4())
+        api_kwargs = self._build_api_kwargs(interaction_id)
+
+        stream_started = asyncio.get_event_loop().time()
+        accumulated_content: List[Any] = []
+        current_thinking_block: List[str] = []
+        in_thinking = False
+        final_message = None
+        stop_reason = None
+
+        async with self._runtime.async_client.messages.stream(**api_kwargs) as stream:
+            async for event in stream:
+                if not hasattr(event, "type"):
+                    continue
+                event_type = event.type
+
+                if event_type == "content_block_start":
+                    block = getattr(event, "content_block", None)
+                    if block is not None and getattr(block, "type", None) == "thinking":
+                        in_thinking = True
+                        current_thinking_block = []
+                        yield {"type": "thinking_start"}
+
+                elif event_type == "content_block_delta":
+                    delta = getattr(event, "delta", None)
+                    delta_type = getattr(delta, "type", None) if delta else None
+                    if delta_type == "thinking_delta" and hasattr(delta, "thinking"):
+                        thinking_text = getattr(delta, "thinking", "")
+                        current_thinking_block.append(thinking_text)
+                        yield {"type": "thinking", "content": thinking_text}
+                    elif delta_type == "text_delta" and hasattr(delta, "text"):
+                        if not in_thinking:
+                            text = getattr(delta, "text", "")
+                            yield {"type": "text", "content": text}
+
+                elif event_type == "content_block_stop":
+                    if in_thinking:
+                        in_thinking = False
+                        yield {"type": "thinking_end"}
+
+            final_message = await stream.get_final_message()
+            accumulated_content = final_message.content
+            stop_reason = final_message.stop_reason
+
+        duration_ms = int((asyncio.get_event_loop().time() - stream_started) * 1000)
+        usage = getattr(final_message, "usage", None)
+
+        # Persist this iteration's reasoning trace (non-fatal, fire-and-forget).
+        try:
+            await asyncio.to_thread(
+                self._runtime._persist_interaction,
+                session_id=self._session_id,
+                agent_id=self._agent_id,
+                investigation_id=self._investigation_id,
+                model=getattr(final_message, "model", self._model),
+                system_prompt=self._system_prompt,
+                request_messages=self._messages,
+                response_content=(
+                    list(accumulated_content) if accumulated_content else []
+                ),
+                thinking_enabled=self._use_thinking,
+                thinking_budget=(self._thinking_budget if self._use_thinking else None),
+                stop_reason=stop_reason,
+                input_tokens=(getattr(usage, "input_tokens", 0) if usage else 0),
+                output_tokens=(getattr(usage, "output_tokens", 0) if usage else 0),
+                cache_read_tokens=(
+                    getattr(usage, "cache_read_input_tokens", 0) if usage else 0
+                ),
+                cache_creation_tokens=(
+                    getattr(usage, "cache_creation_input_tokens", 0) if usage else 0
+                ),
+                duration_ms=duration_ms,
+                interaction_id=interaction_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Reasoning-trace persist skipped (stream): %s", exc)
+
+        # Normalize tool_use blocks so the controller can loop-detect and decide.
+        normalized: List[NormalizedToolCall] = []
+        raw_tool_call_count = 0
+        for block in accumulated_content:
+            if getattr(block, "type", None) == "tool_use":
+                raw_tool_call_count += 1
+                name = getattr(block, "name", "") or ""
+                tool_input = getattr(block, "input", {}) or {}
+                block_id = getattr(block, "id", "") or f"toolu_{uuid.uuid4().hex[:12]}"
+                try:
+                    arguments = json.dumps(tool_input, sort_keys=True, default=str)
+                except (TypeError, ValueError):
+                    arguments = str(tool_input)
+                normalized.append(
+                    NormalizedToolCall(id=block_id, name=name, arguments=arguments)
+                )
+
+        # stop_reason "tool_use" is the Anthropic signal for "run tools"; map it
+        # to the controller's provider-agnostic "tool_calls" sentinel.
+        finish_reason = "tool_calls" if stop_reason == "tool_use" else stop_reason
+        assistant_message = {
+            "role": "assistant",
+            "content": self._runtime._clean_blocks_for_resend(accumulated_content),
+        }
+        self._last_accumulated = accumulated_content
+
+        yield TurnResult(
+            text="",
+            finish_reason=finish_reason,
+            raw_tool_call_count=raw_tool_call_count,
+            tool_calls=normalized,
+            assistant_message=assistant_message,
+            malformed_help=None,
+            interaction_id=interaction_id,
+            input_tokens=(getattr(usage, "input_tokens", 0) if usage else 0),
+            output_tokens=(getattr(usage, "output_tokens", 0) if usage else 0),
+            duration_ms=duration_ms,
+        )
+
+    def append_assistant(self, turn: TurnResult) -> None:
+        if turn.assistant_message is not None:
+            self._messages.append(turn.assistant_message)
+
+    async def execute_tools(
+        self, turn: TurnResult, *, iteration: int
+    ) -> AsyncIterator[Union[Dict[str, Any], ToolPhaseResult]]:
+        """Batch-execute the turn's tool calls via the runtime.
+
+        Mirrors ``chat_stream``: one ``tool_processing`` signal, all tool_use
+        blocks routed through ``_process_mixed_tool_use``, and the results
+        appended as a single Anthropic ``user`` message. No per-tool approval
+        gate today (unified across providers in a later sub-PR).
+        """
+        yield {"type": "tool_processing"}
+        tool_results = await self._runtime._process_mixed_tool_use(
+            self._last_accumulated
+        )
+        self._messages.append({"role": "user", "content": tool_results})
+        yield ToolPhaseResult(halt=False, waited=0.0)
 
 
 class _ToolRuntime(Protocol):

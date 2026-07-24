@@ -26,11 +26,17 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from services.agent_loop import (LoopController,  # noqa: E402
-                                 NormalizedToolCall, OpenAITurnEngine,
-                                 PendingApprovalError, ToolPhaseResult,
-                                 TurnResult, _canonical_args,
-                                 _inter_iteration_delay)
+from services.agent_loop import (  # noqa: E402
+    AnthropicTurnEngine,
+    LoopController,
+    NormalizedToolCall,
+    OpenAITurnEngine,
+    PendingApprovalError,
+    ToolPhaseResult,
+    TurnResult,
+    _canonical_args,
+    _inter_iteration_delay,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -504,3 +510,217 @@ class TestOpenAIExecuteTools:
         assert events[-1]["type"] == "error"
         assert phase.halt is True
         await_mock.assert_not_awaited()
+
+
+# --------------------------------------------------------------------------
+# AnthropicTurnEngine — characterization tests (lifted chat_stream behaviour)
+# --------------------------------------------------------------------------
+class _FakeAnthropicStream:
+    def __init__(self, events, final_message):
+        self._events = events
+        self._final = final_message
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_a):
+        return False
+
+    def __aiter__(self):
+        async def _gen():
+            for e in self._events:
+                yield e
+
+        return _gen()
+
+    async def get_final_message(self):
+        return self._final
+
+
+def _thinking_start():
+    return SimpleNamespace(
+        type="content_block_start", content_block=SimpleNamespace(type="thinking")
+    )
+
+
+def _thinking_delta(text):
+    return SimpleNamespace(
+        type="content_block_delta",
+        delta=SimpleNamespace(type="thinking_delta", thinking=text),
+    )
+
+
+def _text_delta(text):
+    return SimpleNamespace(
+        type="content_block_delta",
+        delta=SimpleNamespace(type="text_delta", text=text),
+    )
+
+
+def _block_stop():
+    return SimpleNamespace(type="content_block_stop")
+
+
+def _final(content, stop_reason, *, model="claude-opus-4-8", usage=None):
+    return SimpleNamespace(
+        content=content,
+        stop_reason=stop_reason,
+        model=model,
+        usage=usage
+        or SimpleNamespace(
+            input_tokens=7,
+            output_tokens=9,
+            cache_read_input_tokens=0,
+            cache_creation_input_tokens=0,
+        ),
+    )
+
+
+def _anthropic_runtime(events, final_message, *, process_result=None):
+    messages_ns = SimpleNamespace(
+        stream=MagicMock(return_value=_FakeAnthropicStream(events, final_message))
+    )
+    return SimpleNamespace(
+        async_client=SimpleNamespace(messages=messages_ns),
+        _process_mixed_tool_use=AsyncMock(return_value=process_result or []),
+        _clean_blocks_for_resend=MagicMock(side_effect=lambda blocks: list(blocks)),
+        _persist_interaction=MagicMock(),
+    )
+
+
+def _anthropic_engine(runtime, *, messages=None, tools=None, use_thinking=False):
+    return AnthropicTurnEngine(
+        runtime=runtime,
+        messages=(
+            messages if messages is not None else [{"role": "user", "content": "hi"}]
+        ),
+        system_prompt="sys",
+        model="claude-opus-4-8",
+        max_tokens=1024,
+        tools=tools,
+        thinking_config=(
+            {"type": "enabled", "budget_tokens": 1000} if use_thinking else None
+        ),
+        use_thinking=use_thinking,
+        thinking_budget=1000 if use_thinking else None,
+        session_id="s",
+        agent_id="a",
+        investigation_id=None,
+    )
+
+
+async def _run_anth_turn(engine):
+    events, result = [], None
+    async for item in engine.stream_turn(iteration=0):
+        if isinstance(item, TurnResult):
+            result = item
+        else:
+            events.append(item)
+    return events, result
+
+
+class TestAnthropicStreamTurn:
+    @pytest.mark.asyncio
+    async def test_thinking_and_text_deltas_in_order(self):
+        events_in = [
+            _thinking_start(),
+            _thinking_delta("pondering"),
+            _block_stop(),
+            _text_delta("answer"),
+        ]
+        rt = _anthropic_runtime(
+            events_in,
+            _final([SimpleNamespace(type="text", text="answer")], "end_turn"),
+        )
+        events, _result = await _run_anth_turn(_anthropic_engine(rt, use_thinking=True))
+        assert [e["type"] for e in events] == [
+            "thinking_start",
+            "thinking",
+            "thinking_end",
+            "text",
+        ]
+        assert events[1]["content"] == "pondering"
+        assert events[3]["content"] == "answer"
+
+    @pytest.mark.asyncio
+    async def test_done_turn_reports_stop_reason_and_no_tools(self):
+        rt = _anthropic_runtime(
+            [_text_delta("done")],
+            _final([SimpleNamespace(type="text", text="done")], "end_turn"),
+        )
+        _events, result = await _run_anth_turn(_anthropic_engine(rt))
+        assert result.finish_reason == "end_turn"
+        assert result.raw_tool_call_count == 0
+        assert result.tool_calls == []
+
+    @pytest.mark.asyncio
+    async def test_tool_use_turn_normalizes_and_maps_finish_reason(self):
+        block = SimpleNamespace(
+            type="tool_use", name="isolate_host", input={"host": "h1"}, id="toolu_1"
+        )
+        rt = _anthropic_runtime([], _final([block], "tool_use"))
+        _events, result = await _run_anth_turn(_anthropic_engine(rt))
+        # stop_reason "tool_use" maps to the controller's "tool_calls" sentinel.
+        assert result.finish_reason == "tool_calls"
+        assert result.raw_tool_call_count == 1
+        tc = result.tool_calls[0]
+        assert tc.name == "isolate_host" and tc.id == "toolu_1"
+        assert _canonical_args(tc.arguments) == '{"host":"h1"}'
+        # assistant_message content comes from _clean_blocks_for_resend.
+        rt._clean_blocks_for_resend.assert_called_once()
+        assert result.assistant_message["role"] == "assistant"
+
+    @pytest.mark.asyncio
+    async def test_persists_interaction_and_reads_usage(self):
+        rt = _anthropic_runtime(
+            [_text_delta("hi")],
+            _final(
+                [SimpleNamespace(type="text", text="hi")],
+                "end_turn",
+                usage=SimpleNamespace(
+                    input_tokens=11,
+                    output_tokens=22,
+                    cache_read_input_tokens=3,
+                    cache_creation_input_tokens=4,
+                ),
+            ),
+        )
+        _events, result = await _run_anth_turn(_anthropic_engine(rt))
+        rt._persist_interaction.assert_called_once()
+        assert result.input_tokens == 11 and result.output_tokens == 22
+
+
+class TestAnthropicExecuteTools:
+    @pytest.mark.asyncio
+    async def test_batch_executes_and_appends_user_results(self):
+        block = SimpleNamespace(
+            type="tool_use", name="list_findings", input={}, id="toolu_9"
+        )
+        tool_results = [
+            {"type": "tool_result", "tool_use_id": "toolu_9", "content": "ok"}
+        ]
+        rt = _anthropic_runtime(
+            [], _final([block], "tool_use"), process_result=tool_results
+        )
+        messages = [{"role": "user", "content": "hi"}]
+        engine = _anthropic_engine(rt, messages=messages)
+        # Populate _last_accumulated via a turn, then append assistant (as the
+        # controller would) before executing tools.
+        _events, turn = await _run_anth_turn(engine)
+        engine.append_assistant(turn)
+
+        events, phase = [], None
+        async for item in engine.execute_tools(turn, iteration=0):
+            if isinstance(item, ToolPhaseResult):
+                phase = item
+            else:
+                events.append(item)
+
+        # Single, detail-less tool_processing signal (Anthropic shape).
+        assert events == [{"type": "tool_processing"}]
+        rt._process_mixed_tool_use.assert_awaited_once()
+        # History now ends with the user tool-result message.
+        assert messages[-1] == {"role": "user", "content": tool_results}
+        assert messages[-2] == turn.assistant_message  # assistant appended first
+        # No approval gate on this path today: never halts, never waits.
+        assert phase.halt is False and phase.waited == 0.0

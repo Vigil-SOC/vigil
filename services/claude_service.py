@@ -2798,287 +2798,33 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                     "remaining_messages": len(messages),
                 }
 
-            api_kwargs = {
-                "model": model,
-                "max_tokens": max_tokens,
-                "messages": messages,
-            }
-            if effective_system_prompt:
-                api_kwargs["system"] = effective_system_prompt
-            if tools:
-                api_kwargs["tools"] = tools
-                logger.debug(f"🔧 Stream with {len(tools)} MCP tools")
-            if thinking_config:
-                api_kwargs["thinking"] = thinking_config
-                logger.info(f"💭 Stream thinking config: {thinking_config}")
-
-            # Stream with proper tool use handling using streaming API throughout
-            max_iterations = 30  # Allow more iterations for complex workflows
-            max_processing_time = 300  # 5 minutes maximum total processing time
-            iteration = 0
-            start_time = asyncio.get_event_loop().time()
-            last_tool_calls = []  # Track recent tool calls to detect loops
-            iteration_delays = []  # Track delays for rate limiting
-
-            logger.debug(
-                f"🚀 Starting stream iterations (max: {max_iterations}, max_time: {max_processing_time}s)"
+            resolved_budget = (
+                thinking_budget if thinking_budget is not None else self.thinking_budget
             )
 
-            while iteration < max_iterations:
-                iteration += 1
-                current_time = asyncio.get_event_loop().time()
-                elapsed_time = current_time - start_time
+            # The multi-turn loop now lives behind the provider-agnostic
+            # LoopController; this service supplies the Anthropic TurnEngine plus
+            # its proven helpers (streaming, tool dispatch, persistence). Local
+            # import keeps claude_service out of any import cycle at module load.
+            from services.agent_loop import AnthropicTurnEngine, LoopController
 
-                # Check if we've exceeded maximum processing time
-                if elapsed_time > max_processing_time:
-                    logger.warning(
-                        f"⏱️ Maximum processing time ({max_processing_time}s) exceeded after {iteration} iterations"
-                    )
-                    yield {
-                        "type": "text",
-                        "content": "\n\n[Maximum processing time reached. Stopping to prevent timeout.]",
-                    }
-                    break
-
-                logger.debug(
-                    f"🔄 Stream iteration {iteration}/{max_iterations} (elapsed: {elapsed_time:.1f}s)"
-                )
-
-                # Add rate limiting delay between iterations (except first one)
-                if iteration > 1:
-                    # Start with 500ms delay, increase with exponential backoff if many iterations
-                    base_delay = 0.5  # 500ms
-                    if iteration > 15:
-                        # Increase delay for later iterations to be more conservative
-                        delay = base_delay * (1.5 ** (iteration - 15))
-                    else:
-                        delay = base_delay
-
-                    # Cap delay at 3 seconds
-                    delay = min(delay, 3.0)
-
-                    logger.debug(
-                        f"⏳ Rate limiting: waiting {delay:.2f}s before iteration {iteration}"
-                    )
-                    await asyncio.sleep(delay)
-                    iteration_delays.append(delay)
-
-                # #185: fresh interaction UUID per streaming iteration so each
-                # upstream Bifrost call (one per loop turn) lands its own log
-                # row that correlates with the local LLMInteractionLog row
-                # written below.
-                _stream_interaction_id = str(uuid.uuid4())
-                api_kwargs["extra_headers"] = {
-                    **(api_kwargs.get("extra_headers") or {}),
-                    "x-bf-lh-vigil-interaction-id": _stream_interaction_id,
-                }
-
-                # Use streaming API to avoid timeout issues with tool use
-                _stream_started = asyncio.get_event_loop().time()
-                async with self.async_client.messages.stream(**api_kwargs) as stream:
-                    accumulated_content = []
-                    current_thinking_block = []
-                    in_thinking = False
-
-                    event_count = 0
-                    thinking_event_count = 0
-                    text_event_count = 0
-
-                    # Handle different event types from the stream
-                    async for event in stream:
-                        event_count += 1
-                        # Check event type
-                        if hasattr(event, "type"):
-                            event_type = event.type
-
-                            # Handle content block start (including thinking blocks)
-                            if event_type == "content_block_start":
-                                if hasattr(event, "content_block"):
-                                    block = event.content_block
-                                    if (
-                                        hasattr(block, "type")
-                                        and block.type == "thinking"
-                                    ):
-                                        in_thinking = True
-                                        current_thinking_block = []
-                                        # Emit thinking block start marker
-                                        logger.debug("💭 Thinking block started")
-                                        yield {"type": "thinking_start"}
-
-                            # Handle content block delta (text chunks)
-                            elif event_type == "content_block_delta":
-                                if hasattr(event, "delta"):
-                                    delta = event.delta
-                                    if hasattr(delta, "type"):
-                                        if delta.type == "thinking_delta" and hasattr(
-                                            delta, "thinking"
-                                        ):
-                                            # This is thinking content
-                                            thinking_text = delta.thinking
-                                            current_thinking_block.append(thinking_text)
-                                            thinking_event_count += 1
-                                            if thinking_event_count <= 2:
-                                                logger.debug(
-                                                    f"💭 Thinking delta: {thinking_text[:50]}..."
-                                                )
-                                            # Emit thinking chunk
-                                            yield {
-                                                "type": "thinking",
-                                                "content": thinking_text,
-                                            }
-                                        elif delta.type == "text_delta" and hasattr(
-                                            delta, "text"
-                                        ):
-                                            if not in_thinking:
-                                                # Regular text content
-                                                text_event_count += 1
-                                                if text_event_count <= 2:
-                                                    logger.debug(
-                                                        f"📝 Text delta: {delta.text[:50]}..."
-                                                    )
-                                                yield {
-                                                    "type": "text",
-                                                    "content": delta.text,
-                                                }
-
-                            # Handle content block stop
-                            elif event_type == "content_block_stop":
-                                if in_thinking:
-                                    in_thinking = False
-                                    total_thinking = "".join(current_thinking_block)
-                                    logger.info(
-                                        f"💭 Thinking block ended - {len(total_thinking)} chars"
-                                    )
-                                    # Emit thinking block end marker
-                                    yield {"type": "thinking_end"}
-
-                    logger.debug(
-                        f"📊 Stream events: total={event_count}, thinking={thinking_event_count}, text={text_event_count}"
-                    )
-
-                    # Get the final message to check for tool use
-                    final_message = await stream.get_final_message()
-                    accumulated_content = final_message.content
-                    stop_reason = final_message.stop_reason
-
-                    logger.debug(f"🏁 Stream stop reason: {stop_reason}")
-
-                # Persist reasoning trace for this streaming iteration (GH #79)
-                try:
-                    _stream_duration_ms = int(
-                        (asyncio.get_event_loop().time() - _stream_started) * 1000
-                    )
-                    _fm_usage = getattr(final_message, "usage", None)
-                    await asyncio.to_thread(
-                        self._persist_interaction,
-                        session_id=session_id,
-                        agent_id=agent_id,
-                        investigation_id=investigation_id,
-                        model=getattr(final_message, "model", model),
-                        system_prompt=effective_system_prompt,
-                        request_messages=messages,
-                        response_content=(
-                            list(accumulated_content) if accumulated_content else []
-                        ),
-                        thinking_enabled=use_thinking,
-                        thinking_budget=(
-                            (
-                                thinking_budget
-                                if thinking_budget is not None
-                                else self.thinking_budget
-                            )
-                            if use_thinking
-                            else None
-                        ),
-                        stop_reason=stop_reason,
-                        input_tokens=(
-                            getattr(_fm_usage, "input_tokens", 0) if _fm_usage else 0
-                        ),
-                        output_tokens=(
-                            getattr(_fm_usage, "output_tokens", 0) if _fm_usage else 0
-                        ),
-                        cache_read_tokens=(
-                            getattr(_fm_usage, "cache_read_input_tokens", 0)
-                            if _fm_usage
-                            else 0
-                        ),
-                        cache_creation_tokens=(
-                            getattr(_fm_usage, "cache_creation_input_tokens", 0)
-                            if _fm_usage
-                            else 0
-                        ),
-                        duration_ms=_stream_duration_ms,
-                        interaction_id=_stream_interaction_id,
-                    )
-                except Exception as _pe:
-                    logger.debug(f"Reasoning-trace persist skipped (stream): {_pe}")
-
-                # Check if tool use is needed
-                if stop_reason == "tool_use" and accumulated_content:
-                    logger.info(f"🔧 Tool use in stream - processing...")
-
-                    # Check for infinite loop detection
-                    current_tool_calls = []
-                    for block in accumulated_content:
-                        if hasattr(block, "type") and block.type == "tool_use":
-                            tool_name = getattr(block, "name", "unknown")
-                            tool_input = getattr(block, "input", {})
-                            tool_signature = f"{tool_name}:{str(tool_input)}"
-                            current_tool_calls.append(tool_signature)
-
-                    # Check if we're calling the same tools repeatedly (potential infinite loop)
-                    if (
-                        current_tool_calls
-                        and current_tool_calls in last_tool_calls[-3:]
-                    ):
-                        logger.warning(
-                            f"⚠️ Infinite loop detected - same tool calls repeated"
-                        )
-                        yield {
-                            "type": "text",
-                            "content": "\n\n[Detected repeated tool calls. Stopping to prevent infinite loop.]",
-                        }
-                        break
-
-                    last_tool_calls.append(current_tool_calls)
-                    # Keep only last 5 tool call sets for comparison
-                    if len(last_tool_calls) > 5:
-                        last_tool_calls.pop(0)
-
-                    yield {"type": "tool_processing"}
-
-                    # Route each tool call to the correct processor (backend or MCP)
-                    tool_results = await self._process_mixed_tool_use(
-                        accumulated_content
-                    )
-                    logger.info(
-                        f"✅ Tool processing complete in stream - {len(tool_results)} results"
-                    )
-
-                    # Add assistant message and tool results to conversation.
-                    # Strip non-spec keys from the replayed response blocks so a
-                    # proxy-injected "caller" field doesn't fail strict request
-                    # validation on the next iteration.
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": self._clean_blocks_for_resend(
-                                accumulated_content
-                            ),
-                        }
-                    )
-                    messages.append({"role": "user", "content": tool_results})
-
-                    # Update api_kwargs for next iteration with tool results
-                    api_kwargs["messages"] = messages
-                else:
-                    # Done - no more tool use needed
-                    total_elapsed = asyncio.get_event_loop().time() - start_time
-                    total_delay = sum(iteration_delays)
-                    logger.info(
-                        f"✅ Stream complete after {iteration} iteration(s) in {total_elapsed:.1f}s (rate limiting: {total_delay:.1f}s)"
-                    )
-                    break
+            engine = AnthropicTurnEngine(
+                runtime=self,
+                messages=messages,
+                system_prompt=effective_system_prompt,
+                model=model,
+                max_tokens=max_tokens,
+                tools=tools,
+                thinking_config=thinking_config,
+                use_thinking=use_thinking,
+                thinking_budget=resolved_budget,
+                session_id=session_id,
+                agent_id=agent_id,
+                investigation_id=investigation_id,
+            )
+            controller = LoopController(engine=engine)
+            async for event in controller.run():
+                yield event
 
         except Exception as e:
             logger.error(f"Error in Claude chat stream: {e}")
