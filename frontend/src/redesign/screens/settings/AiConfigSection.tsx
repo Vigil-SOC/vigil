@@ -10,6 +10,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
   ConfirmDialog,
+  EmptyState,
   Field,
   NumberInput,
   Select,
@@ -149,13 +150,8 @@ function ProvidersPanel({ notify }: SectionProps) {
         </button>
       }
     >
-      {phase === 'loading' && <div className="text-sm text-tx-3 py-8 text-center">Loading providers…</div>}
-      {phase === 'error' && (
-        <div className="py-8 text-center flex flex-col items-center gap-2.5">
-          <span className="text-sm text-tx-3">Couldn’t load providers: {error}</span>
-          <button className="btn ghost" onClick={reload}>Retry</button>
-        </div>
-      )}
+      {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading providers…" />}
+      {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load providers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
       {phase === 'ready' && (
         <div className="table-wrap">
           <table className="tbl">
@@ -167,7 +163,7 @@ function ProvidersPanel({ notify }: SectionProps) {
             </thead>
             <tbody>
               {providers.length === 0 && (
-                <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: '24px 0' }}>No providers configured.</td></tr>
+                <tr><td colSpan={6}><EmptyState table compact icon="sparkle" title="No AI providers configured" body="Add Ollama, Anthropic, or OpenAI-compatible providers before using AI analysis, workflow generation, or agent chat." primary={{ label: 'Add provider', onClick: () => { setEditing(null); setDialogOpen(true) }, icon: 'plus' }} /></td></tr>
               )}
               {providers.map((p) => (
                 <tr key={p.provider_id}>
@@ -301,20 +297,12 @@ function ModelAssignmentPanel({ notify }: SectionProps) {
       title="Model Assignment"
       desc="Pick a provider + model for each system component. Unassigned rows fall back to the chat_default assignment. The model list is live-queried from each provider."
     >
-      {phase === 'loading' && <div className="text-sm text-tx-3 py-8 text-center">Loading AI config…</div>}
-      {phase === 'error' && (
-        <div className="py-8 text-center flex flex-col items-center gap-2.5">
-          <span className="text-sm text-tx-3">Couldn’t load AI config: {error}</span>
-          <button className="btn ghost" onClick={reload}>Retry</button>
-        </div>
-      )}
+      {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading AI config…" />}
+      {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load AI config" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
       {phase === 'ready' && (
         <>
           {providerIds.length === 0 && (
-            <div className="settings-banner info mb-3">
-              <Icon name="info" size={14} />
-              <span>No models discovered — add at least one active provider under Providers first.</span>
-            </div>
+            <EmptyState compact icon="sparkle" title="No assignable models discovered" body="Add and test at least one active provider before assigning models to Vigil components." />
           )}
           <div className="table-wrap">
             <table className="tbl">
@@ -410,8 +398,8 @@ function OperationsPanel({ notify }: SectionProps) {
 
   return (
     <SettingsCard
-      title="AI Operations (Cost & Performance)"
-      desc="Runtime toggles for Anthropic prompt caching, conversation history windowing, tool-response truncation, and the daemon's default thinking budget. Persist in the DB and take effect across backend / daemon / llm-worker within ~60s."
+      title="AI Operations (Cost, Performance & Local Recovery)"
+      desc="Runtime controls for model performance and for self-healing local Ollama enrichment. These settings persist in the DB and take effect without a service restart."
       actions={
         <button className="btn ghost" onClick={() => { setSettings(AI_OPS_DEFAULTS); persist(AI_OPS_DEFAULTS) }}>
           <Icon name="refresh" /> Reset to defaults
@@ -428,6 +416,25 @@ function OperationsPanel({ notify }: SectionProps) {
         {numField('history_window', 'History window (turns)', '20 turns ≈ 40 messages. 0 disables.', 0, 200)}
         {numField('tool_response_budget_default', 'Tool-result budget (tokens)', 'Default truncation budget for tool results.', 500, 60000)}
         {numField('thinking_budget', 'Daemon thinking budget (tokens)', 'Default extended-thinking budget for the daemon.', 500, 32000)}
+      </div>
+      <div className="mt-5" style={{ paddingTop: 16, borderTop: '1px solid var(--line)' }}>
+        <h4 style={{ margin: '0 0 10px', fontSize: 12, letterSpacing: '0.04em' }}>Local Ollama enrichment recovery</h4>
+        <ToggleRow
+          label="Automatically retry local AI enrichment"
+          hint="When a local Ollama enrichment request loses the Bifrost connection, retry it in the background. This only applies to local Ollama; cloud providers are never retried here."
+          checked={settings.local_ollama_recovery_enabled}
+          onChange={(v) => { const next = { ...settings, local_ollama_recovery_enabled: v }; setSettings(next); persist(next) }}
+        />
+        <ToggleRow
+          label="Restart the local AI gateway when unavailable"
+          hint="If Bifrost is unhealthy, restart the local gateway before retrying. Disable this to retry only when the gateway is already healthy."
+          checked={settings.local_ollama_recovery_restart_gateway}
+          disabled={!settings.local_ollama_recovery_enabled}
+          onChange={(v) => { const next = { ...settings, local_ollama_recovery_restart_gateway: v }; setSettings(next); persist(next) }}
+        />
+        <div className="settings-grid-2 mt-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)' }}>
+          {numField('local_ollama_recovery_retry_limit', 'Retry attempts', 'Retries after the first failed request. 0 disables retries.', 0, 3)}
+        </div>
       </div>
     </SettingsCard>
   )

@@ -6,6 +6,7 @@
 import { useMemo, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
+import { EmptyState } from '../../shared/ui'
 import { Pie, Hbars, Trend } from '../../shared/charts'
 import {
   useAnalytics,
@@ -347,7 +348,7 @@ function AnalyticsBody({ data }: { data: AnalyticsData }) {
 }
 
 function InsightsRail({ timeRange, onClose }: { timeRange: TimeRange; onClose: () => void }) {
-  const { insights, generatedAt, isStale, generating, phase } = useAnalyticsInsights(timeRange)
+  const { insights, generatedAt, isStale, generating, phase, reload } = useAnalyticsInsights(timeRange)
   return (
     <aside className="insights-rail">
       <div className="ir-head">
@@ -363,12 +364,15 @@ function InsightsRail({ timeRange, onClose }: { timeRange: TimeRange; onClose: (
         </button>
       </div>
       <div className="ir-body">
-        {phase === 'loading' && <div className="text-sm text-tx-3">Loading insights…</div>}
-        {phase === 'error' && <div className="text-sm text-tx-3">Couldn’t load insights.</div>}
+        {phase === 'loading' && <EmptyState loading compact icon="brain" title="Loading insights…" />}
+        {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load insights" primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
         {phase === 'ready' && insights.length === 0 && (
-          <div className="text-sm text-tx-3">
-            {generating ? 'Generating insights — this can take up to a minute.' : 'No insights yet.'}
-          </div>
+          <EmptyState
+            compact
+            icon="brain"
+            title={generating ? 'Generating insights' : 'No insights yet'}
+            body={generating ? 'This can take up to a minute.' : 'AI insights will appear after enough analytics data is available.'}
+          />
         )}
         {insights.map((i) => {
           const when = (() => {
@@ -402,6 +406,11 @@ export default function AnalyticsScreen() {
   ]
   const [showInsights, setShowInsights] = useState(true)
   const { data, phase, error, reload } = useAnalytics(range)
+  const hasActivity = data
+    ? data.metrics.totalFindings > 0 ||
+      data.metrics.totalCases > 0 ||
+      data.timeSeriesData.some((p) => p.findings > 0 || p.cases > 0 || p.alerts > 0)
+    : false
 
   return (
     <div className="flex items-start min-h-full">
@@ -431,18 +440,18 @@ export default function AnalyticsScreen() {
           </button>
         </div>
 
-        {phase === 'loading' && (
-          <div className="text-sm text-tx-3 py-20 text-center">Loading analytics…</div>
-        )}
-        {phase === 'error' && (
-          <div className="py-20 text-center">
-            <div className="flex flex-col items-center gap-2.5">
-              <span className="text-sm text-tx-3">Couldn’t load analytics: {error}</span>
-              <button className="btn ghost" onClick={reload}>Retry</button>
-            </div>
-          </div>
-        )}
-        {phase === 'ready' && data && <AnalyticsBody data={data} />}
+        {phase === 'loading' && <EmptyState loading icon="chart" title="Loading analytics…" />}
+        {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load analytics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+        {phase === 'ready' && data && (hasActivity ? (
+          <AnalyticsBody data={data} />
+        ) : (
+          <EmptyState
+            icon="chart"
+            title="No analytics data in this range"
+            body="Ingest findings, create cases, or select a broader time range to populate this report."
+            primary={range !== 'all' ? { label: 'Show all time', onClick: () => setRange('all'), icon: 'clock' } : undefined}
+          />
+        ))}
       </div>
 
       {showInsights && <InsightsRail timeRange={range} onClose={() => setShowInsights(false)} />}

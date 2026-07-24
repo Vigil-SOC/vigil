@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Header, Request, Response, status
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.services.auth_cookies import (
@@ -47,8 +48,29 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
+# The role the first account gets: it has to be able to create every other one.
+ADMIN_ROLE_ID = "role-admin"
+
+# Arbitrary constant identifying the bootstrap advisory lock.
+_BOOTSTRAP_LOCK = 8_274_119
+
 
 # Request/Response Models
+class BootstrapStatusResponse(BaseModel):
+    """Whether the instance still needs its first account."""
+
+    required: bool
+
+
+class BootstrapRequest(BaseModel):
+    """First-admin details."""
+
+    username: str
+    email: EmailStr
+    password: str
+    full_name: Optional[str] = None
+
+
 class LoginRequest(BaseModel):
     """Login request."""
 
@@ -142,6 +164,85 @@ def _apply_new_password(user: User, plaintext: str) -> None:
     user.password_changed_at = datetime.utcnow()
 
 
+def _has_any_user(session: Session) -> bool:
+    return session.query(User.user_id).first() is not None
+
+
+def _user_payload(user: User, session: Session) -> dict:
+    """User dict plus resolved permissions — the shape the SPA gates on.
+    Login/refresh must include it, not just /me: the client stores the user
+    from the login response and checks permissions before any /me refresh."""
+    payload = user.to_dict()
+    payload["permissions"] = AuthService.get_user_permissions(user.user_id, session)
+    return payload
+
+
+@router.get("/bootstrap", response_model=BootstrapStatusResponse)
+async def bootstrap_status(session: Session = Depends(get_db)):
+    """Report whether this instance has no account yet.
+
+    There is no self-service signup and creating a user needs users.write, so
+    an instance with an empty user table cannot be signed into at all. The
+    login screen asks this to offer first-account creation instead.
+    """
+    return BootstrapStatusResponse(required=not _has_any_user(session))
+
+
+@router.post("/bootstrap", status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")
+async def bootstrap_admin(
+    request: Request,
+    payload: BootstrapRequest,
+    session: Session = Depends(get_db),
+):
+    """Create the first admin account. Only ever available on an empty instance.
+
+    Unauthenticated by necessity — it is the only way to obtain the account
+    every other user-creating path requires. It closes permanently as soon as
+    one user exists, so it is not a signup endpoint.
+    """
+    # Serialize bootstrap attempts. Without this two callers both read an empty
+    # table and both create an admin; there is no row yet to lock instead. Held
+    # until the transaction create_user commits, so it covers check-and-create.
+    session.execute(
+        text("SELECT pg_advisory_xact_lock(:key)"), {"key": _BOOTSTRAP_LOCK}
+    )
+
+    if _has_any_user(session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="An account already exists. Ask an administrator to create yours.",
+        )
+
+    try:
+        validate_password_strength(
+            payload.password,
+            user_inputs=[payload.username, payload.email],
+        )
+    except PasswordPolicyError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=exc.as_detail()
+        )
+
+    user = AuthService.create_user(
+        username=payload.username,
+        email=payload.email,
+        password=payload.password,
+        full_name=payload.full_name or payload.username,
+        role_id=ADMIN_ROLE_ID,
+        session=session,
+    )
+    if not user:
+        # Nothing to collide with on an empty instance except a racing bootstrap.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Could not create the account. Try again.",
+        )
+
+    logger.info("First admin account created: %s", user.username)
+    return user.to_dict()
+
+
 @router.post("/login", response_model=LoginResponse)
 @limiter.limit("5/minute")
 async def login(
@@ -224,7 +325,9 @@ async def login(
     logger.info(f"User logged in: {user.username}")
 
     return LoginResponse(
-        access_token=access_token, refresh_token=refresh_token, user=user.to_dict()
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=_user_payload(user, session),
     )
 
 
@@ -376,7 +479,9 @@ async def refresh_token(
     )
 
     return LoginResponse(
-        access_token=access_token, refresh_token=refresh_token, user=user.to_dict()
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user=_user_payload(user, session),
     )
 
 
@@ -395,10 +500,7 @@ async def get_current_user_info(
     Returns:
         User information with permissions
     """
-    user_dict = current_user.to_dict()
-    permissions = AuthService.get_user_permissions(current_user.user_id, session)
-    user_dict["permissions"] = permissions
-    return user_dict
+    return _user_payload(current_user, session)
 
 
 @router.put("/me")

@@ -136,11 +136,13 @@ INSERT INTO roles (role_id, name, description, permissions, is_system_role) VALU
 }', true)
 ON CONFLICT (role_id) DO NOTHING;
 
--- Create default admin user (password: admin123 - CHANGE IN PRODUCTION!)
--- Password hash for 'admin123' using bcrypt
-INSERT INTO users (user_id, username, email, password_hash, full_name, role_id, is_active, is_verified) VALUES
-('user-admin-default', 'admin', 'admin@deeptempo.ai', '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY5aeWG6QErKLzG', 'System Administrator', 'role-admin', true, true)
-ON CONFLICT (user_id) DO NOTHING;
+-- No default admin is seeded. The row that used to live here carried a bcrypt
+-- hash matching no password, so it could never be signed into — it only made
+-- the users table non-empty, which is the signal POST /api/auth/bootstrap uses
+-- to offer first-account creation. Leaving the table empty lets the operator
+-- choose their own credentials instead, and keeps a known default password out
+-- of every deployment. Existing installs are unaffected: their admin row
+-- already exists, so bootstrap stays closed for them.
 
 -- Update trigger for updated_at
 CREATE OR REPLACE FUNCTION update_updated_at_column()

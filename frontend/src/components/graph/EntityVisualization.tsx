@@ -13,16 +13,15 @@
  * the original props passed through, so callers don't need to know which
  * view is active.
  *
- * The VStrike-readiness probe runs once per session (cached at module level
- * for `STALE_TIME_MS`); we still need it because the provider is always
- * mounted, but we shouldn't anchor into it on surfaces where VStrike isn't
- * actually configured.
+ * The VStrike-readiness probe first checks the MCP server enabled state, then
+ * verifies the iframe token route. The provider is always mounted, but we
+ * shouldn't anchor into it on surfaces where VStrike is disabled.
  */
 
 import { ReactNode, useEffect, useRef, useState } from 'react'
 import { Box, CircularProgress } from '@mui/material'
 import EntityGraph, { GraphLink, GraphNode } from './EntityGraph'
-import { vstrikeApi } from '../../services/api'
+import { mcpApi, vstrikeApi } from '../../services/api'
 import { useVStrikeIframe } from '../../contexts/VStrikeIframeContext'
 
 export interface EntityVisualizationProps {
@@ -56,16 +55,24 @@ type ProbeState =
 
 interface CachedProbe {
   state: ProbeState
-  fetchedAt: number
   inFlight?: Promise<ProbeState>
 }
 
-const STALE_TIME_MS = 60_000
+const VSTRIKE_MCP_SERVER = 'vstrike'
 
 const _cache: { entry: CachedProbe | null } = { entry: null }
 
 async function probeVStrike(): Promise<ProbeState> {
   try {
+    const statusesResp = await mcpApi.getStatuses()
+    const statusList = statusesResp.data?.statuses || []
+    const vstrikeStatus = Array.isArray(statusList)
+      ? statusList.find((item: { name?: string }) => item.name === VSTRIKE_MCP_SERVER)
+      : null
+    if (!vstrikeStatus?.enabled) {
+      return { kind: 'unavailable' }
+    }
+
     const tokenResp = await vstrikeApi.iframeToken()
     if (tokenResp.data?.iframe_url && tokenResp.data?.token) {
       return { kind: 'ready' }
@@ -77,21 +84,16 @@ async function probeVStrike(): Promise<ProbeState> {
 }
 
 function getCachedOrFetch(): { state: ProbeState; promise?: Promise<ProbeState> } {
-  const now = Date.now()
   const cached = _cache.entry
-  if (cached && now - cached.fetchedAt < STALE_TIME_MS) {
-    if (cached.inFlight) {
-      return { state: cached.state, promise: cached.inFlight }
-    }
-    return { state: cached.state }
+  if (cached?.inFlight) {
+    return { state: cached.state, promise: cached.inFlight }
   }
   const promise = probeVStrike().then((next) => {
-    _cache.entry = { state: next, fetchedAt: Date.now() }
+    _cache.entry = { state: next }
     return next
   })
   _cache.entry = {
     state: { kind: 'pending' },
-    fetchedAt: now,
     inFlight: promise,
   }
   return { state: { kind: 'pending' }, promise }

@@ -6,6 +6,7 @@
    ============================================================ */
 import { useState } from 'react'
 import { Icon } from '../../shared/icons'
+import { EmptyState } from '../../shared/ui'
 import { Pie, GroupedBars, Trend } from '../../shared/charts'
 import { useCaseMetrics, type CaseMetricsData } from './useCaseMetrics'
 
@@ -47,6 +48,7 @@ function successRate(resolved: number, assigned: number): number {
 export default function MetricsScreen() {
   const [days, setDays] = useState(30)
   const { data, phase, error, reload } = useCaseMetrics(days)
+  const hasCases = data ? data.totalCases > 0 || data.byPriority.some((p) => p.count > 0) || data.byStatus.some((s) => s.count > 0) : false
 
   return (
     <>
@@ -64,22 +66,31 @@ export default function MetricsScreen() {
         <button className="btn primary"><Icon name="download" /> Export report</button>
       </div>
 
-      {phase === 'loading' && <div className="text-sm text-tx-3 py-20 text-center">Loading case metrics…</div>}
-      {phase === 'error' && (
-        <div className="py-20 text-center">
-          <div className="flex flex-col items-center gap-2.5">
-            <span className="text-sm text-tx-3">Couldn’t load case metrics: {error}</span>
-            <button className="btn ghost" onClick={reload}>Retry</button>
-          </div>
-        </div>
-      )}
-      {phase === 'ready' && data && <MetricsBody data={data} />}
+      {phase === 'loading' && <EmptyState loading icon="bars" title="Loading case metrics…" />}
+      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load case metrics" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {phase === 'ready' && data && (hasCases ? (
+        <MetricsBody data={data} />
+      ) : (
+        <EmptyState
+          icon="bars"
+          title="No case metrics yet"
+          body="Create or import cases to populate priority, status, response time, and analyst performance metrics."
+        />
+      ))}
     </>
   )
 }
 
 function MetricsBody({ data }: { data: CaseMetricsData }) {
   const { totalCases, openCases, criticalCases, mttdHours, mttrHours, mttdByPriority, mttrByPriority, byPriority, byStatus, analysts } = data
+
+  if (totalCases === 0) {
+    return (
+      <div className="text-sm text-tx-3 py-20 text-center">
+        No case metrics yet. Metrics populate after findings are uploaded and cases are created.
+      </div>
+    )
+  }
 
   const priorityRows = byPriority.map((p) => ({
     label: (PRIORITY_LABELS.find(([k]) => k === p.priority)?.[1]) || p.priority,
@@ -201,7 +212,7 @@ function MetricsBody({ data }: { data: CaseMetricsData }) {
               </thead>
               <tbody>
                 {analysts.length === 0 && (
-                  <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: '32px 0' }}>No analyst activity in range.</td></tr>
+                  <tr><td colSpan={5}><EmptyState table compact icon="lock" title="No analyst activity in range" body="Assigned and closed cases will populate this table." /></td></tr>
                 )}
                 {analysts.map((a) => {
                   const rate = successRate(a.cases_resolved, a.cases_assigned)

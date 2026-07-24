@@ -51,23 +51,13 @@ COMMENT ON COLUMN llm_provider_configs.provider_type IS 'anthropic | openai | ol
 COMMENT ON COLUMN llm_provider_configs.api_key_ref IS 'Secret name in secrets_manager (never the key itself)';
 COMMENT ON COLUMN llm_provider_configs.config IS 'Provider-specific extras (e.g., openai organization, ollama pull policy)';
 
--- ============================================================================
--- Seed default Anthropic row to preserve existing behavior
--- ============================================================================
-INSERT INTO llm_provider_configs (
-    provider_id, provider_type, name, base_url, api_key_ref,
-    default_model, is_active, is_default, config
-) VALUES (
-    'anthropic-default',
-    'anthropic',
-    'Anthropic (default)',
-    NULL,
-    'CLAUDE_API_KEY',
-    'claude-sonnet-4-5-20250929',
-    TRUE,
-    TRUE,
-    '{}'::jsonb
-) ON CONFLICT (provider_id) DO NOTHING;
+-- No default provider is seeded. A fresh install starts with an empty
+-- provider list so SetupGate (which treats an active default provider as
+-- "configured") shows the setup wizard and the operator picks their own —
+-- Ollama, an OpenAI-compatible server, or Anthropic — instead of being forced
+-- onto Anthropic with a hardcoded, no-key model. Existing deployments are
+-- unaffected: they already ran the old seed, and this file's INSERTs used
+-- ON CONFLICT DO NOTHING, so their row persists.
 
 -- ============================================================================
 -- Grant Permissions

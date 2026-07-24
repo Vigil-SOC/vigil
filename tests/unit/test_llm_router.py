@@ -135,6 +135,74 @@ async def test_dispatch_bifrost_for_ollama():
     mock_client.close.assert_awaited_once()
 
 
+@pytest.mark.asyncio
+async def test_dispatch_bifrost_translates_anthropic_tools_and_messages():
+    """The daemon builds tools/messages in Anthropic shape. The OpenAI Bifrost
+    dispatch must translate both (input_schema->parameters, tool_use->tool_calls,
+    tool_result->role:tool) and normalize the response tool_calls back to
+    {id,name,input} dicts, or the daemon's multi-turn tool loop breaks on
+    non-Anthropic providers.
+    """
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    returned_tc = SimpleNamespace(
+        id="call_9",
+        function=SimpleNamespace(name="get_case", arguments='{"case_id": "C1"}'),
+    )
+    fake_resp = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content="", tool_calls=[returned_tc])
+            )
+        ],
+        model="ollama/llama3.1:8b",
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+    mock_client = MagicMock()
+    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    anthropic_tools = [
+        {"name": "get_case", "description": "d", "input_schema": {"type": "object"}}
+    ]
+    anthropic_messages = [
+        {"role": "user", "content": "investigate"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "tool_use", "id": "call_9", "name": "get_case", "input": {}}
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"type": "tool_result", "tool_use_id": "call_9", "content": "case data"}
+            ],
+        },
+    ]
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        out = await router.dispatch(
+            provider=_ollama_spec(),
+            messages=anthropic_messages,
+            tools=anthropic_tools,
+        )
+
+    kwargs = mock_client.chat.completions.create.call_args.kwargs
+    # Tools translated to OpenAI function shape.
+    assert kwargs["tools"][0]["type"] == "function"
+    assert kwargs["tools"][0]["function"]["name"] == "get_case"
+    assert kwargs["tools"][0]["function"]["parameters"] == {"type": "object"}
+    # Messages translated: user text, assistant tool_calls, tool result message.
+    roles = [m["role"] for m in kwargs["messages"]]
+    assert roles == ["user", "assistant", "tool"]
+    assert kwargs["messages"][1]["tool_calls"][0]["id"] == "call_9"
+    assert kwargs["messages"][2]["tool_call_id"] == "call_9"
+    # Response tool_calls normalized to {id,name,input} dicts.
+    assert out["tool_calls"] == [
+        {"id": "call_9", "name": "get_case", "input": {"case_id": "C1"}}
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Dispatch — Anthropic direct branch
 # ---------------------------------------------------------------------------
@@ -780,11 +848,11 @@ def test_discover_anthropic_api_key_returns_none_when_no_rows():
 def test_discover_anthropic_api_key_returns_none_when_db_unavailable():
     """DB import error => silent None, so the legacy chain stays usable
     in environments where database.connection can't import."""
-    from services import llm_router
-
     # Patch ``get_db_session`` to raise on import. Easiest: make the
     # entire ``database.connection`` import fail by patching builtins.
     import builtins
+
+    from services import llm_router
 
     real_import = builtins.__import__
 

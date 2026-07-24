@@ -360,6 +360,7 @@ def record_live_meta(provider_type: str, meta_list: List[Any]) -> None:
             "supports_tools": bool(caps.get("supports_tools", False)),
             "supports_thinking": bool(caps.get("supports_thinking", False)),
             "supports_vision": bool(caps.get("supports_vision", False)),
+            "is_embedding": bool(caps.get("is_embedding", False)),
         }
 
 
@@ -386,6 +387,7 @@ def _default_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
         "supports_tools": False,
         "supports_thinking": False,
         "supports_vision": False,
+        "is_embedding": False,
         "pricing_source": "unknown",
     }
 
@@ -416,6 +418,7 @@ def _catalog_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
             "supports_tools",
             "supports_thinking",
             "supports_vision",
+            "is_embedding",
         ):
             if field_name in source and source[field_name]:
                 entry[field_name] = source[field_name]
@@ -472,6 +475,10 @@ class ModelInfo:
     # but is no longer advertised by the upstream API. Kept in the UI
     # list so a user's saved selection doesn't silently disappear.
     deprecated: bool = False
+    # True for embedding-only models (e.g. nomic-embed-text). They stay in
+    # the registry (analytics / future config) but are filtered out of the
+    # chat model picker, since you can't hold a conversation with them.
+    is_embedding: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -487,6 +494,7 @@ class ModelInfo:
             "supports_vision": self.supports_vision,
             "pricing_source": self.pricing_source,
             "deprecated": self.deprecated,
+            "is_embedding": self.is_embedding,
         }
 
 
@@ -747,6 +755,7 @@ class ModelRegistry:
             supports_vision=entry["supports_vision"],
             pricing_source=entry.get("pricing_source", "exact"),
             deprecated=deprecated,
+            is_embedding=bool(entry.get("is_embedding", False)),
         )
 
     # ---- assignments -----------------------------------------------------
@@ -860,6 +869,30 @@ class ModelRegistry:
         finally:
             session.close()
 
+    def _active_providers(self) -> List:
+        """Return active ``LLMProviderConfig`` rows.
+
+        Isolated (and overridable) so the aggregation logic in
+        ``list_available_models`` / ``fallback_models`` can be unit-tested
+        without a live Postgres.
+        """
+        try:
+            from database.connection import get_db_session
+            from database.models import LLMProviderConfig
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("_active_providers: DB unreachable: %s", exc)
+            return []
+
+        session = get_db_session()
+        try:
+            return (
+                session.query(LLMProviderConfig)
+                .filter(LLMProviderConfig.is_active.is_(True))
+                .all()
+            )
+        finally:
+            session.close()
+
     async def list_available_models(self) -> List[ModelInfo]:
         """Aggregate live model lists across all active providers.
 
@@ -869,22 +902,7 @@ class ModelRegistry:
         still returned with ``deprecated=True`` so users don't see their
         saved selection silently disappear.
         """
-        try:
-            from database.connection import get_db_session
-            from database.models import LLMProviderConfig
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("list_available_models: DB unreachable: %s", exc)
-            return []
-
-        session = get_db_session()
-        try:
-            providers = (
-                session.query(LLMProviderConfig)
-                .filter(LLMProviderConfig.is_active.is_(True))
-                .all()
-            )
-        finally:
-            session.close()
+        providers = self._active_providers()
 
         # Collect pinned (provider_id, model_id) pairs so we can keep
         # orphaned selections visible.
@@ -910,6 +928,22 @@ class ModelRegistry:
                     exc,
                 )
                 model_ids = [p.default_model] if p.default_model else []
+
+            # An active provider that discovers no models (e.g. an Ollama
+            # endpoint unreachable at sync time — its bootstrap list is
+            # empty) would otherwise contribute nothing, collapsing the
+            # aggregate to whatever other providers return (often just
+            # Anthropic). Floor it to the configured default_model so the
+            # provider is always represented in the picker (#409).
+            if not model_ids and getattr(p, "default_model", None):
+                logger.info(
+                    "Provider %s (%s) discovered no models — flooring to "
+                    "default_model %s so it still appears in the picker",
+                    p.provider_id,
+                    p.provider_type,
+                    p.default_model,
+                )
+                model_ids = [p.default_model]
 
             provider_live: set = set()
             for mid in model_ids:
@@ -960,6 +994,41 @@ class ModelRegistry:
 
         return out
 
+    async def fallback_models(self) -> List[ModelInfo]:
+        """Provider-aware bootstrap list for the picker.
+
+        Used when live discovery yields nothing at all. Reflects the
+        *configured* providers (their bootstrap lists, extras and
+        ``default_model``) instead of hardcoding Claude, so an Ollama-only
+        instance never shows Anthropic models it can't call (#409). Returns
+        ``[]`` when no provider is configured — the caller then applies its
+        own last-resort default.
+        """
+        out: List[ModelInfo] = []
+        seen: set = set()
+        for p in self._active_providers():
+            ids = list(_FALLBACK_MODELS_BY_PROVIDER.get(p.provider_type, ()))
+            for mid in get_extra_model_ids(p.provider_type):
+                if mid not in ids:
+                    ids.append(mid)
+            default_model = getattr(p, "default_model", None)
+            if default_model and default_model not in ids:
+                ids.insert(0, default_model)
+            for mid in ids:
+                key = (p.provider_id, mid)
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    self.get_model_info(
+                        provider_id=p.provider_id,
+                        provider_type=p.provider_type,
+                        model_id=mid,
+                        deprecated=is_extra_model(p.provider_type, mid),
+                    )
+                )
+        return out
+
 
 # ---------------------------------------------------------------------------
 # Module-level singleton accessor
@@ -991,3 +1060,15 @@ def invalidate_model_cache(provider_id: Optional[str] = None) -> None:
     except Exception:  # noqa: BLE001
         pass
     clear_live_meta()
+
+
+def find_provider_for_model(model_id: str) -> Optional[str]:
+    """Reverse-lookup: find which provider_id owns a model from the cache.
+
+    Returns the first provider_id whose cached model list contains model_id,
+    or None if not found.
+    """
+    for pid, models in _MODEL_LIST_CACHE._entries.items():
+        if model_id in models:
+            return pid
+    return None

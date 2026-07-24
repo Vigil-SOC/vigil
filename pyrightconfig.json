@@ -1,0 +1,13 @@
+{
+  "//": "backend/ is added to sys.path at runtime (backend/main.py), so modules like `secrets_manager` are imported bare (`from secrets_manager import ...`). Tell static analysis (Pylance / pyright) the same so those imports resolve.",
+  "extraPaths": ["backend"],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    "**/.*",
+    "venv",
+    "frontend",
+    "build",
+    "dist"
+  ]
+}

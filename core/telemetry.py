@@ -60,16 +60,13 @@ def _is_otel_enabled() -> bool:
     return val in ("true", "1", "yes")
 
 
-def _should_record_llm_content() -> bool:
-    """Return True only when the operator has explicitly opted in."""
-    val = os.environ.get("VIGIL_OTEL_RECORD_LLM_CONTENT", "").lower()
-    return val in ("true", "1", "yes")
-
-
-def _should_record_ioc_values() -> bool:
-    """Return True only when the operator has explicitly opted in."""
-    val = os.environ.get("VIGIL_OTEL_RECORD_IOC_VALUES", "").lower()
-    return val in ("true", "1", "yes")
+# Opt-in flag helpers live in core.telemetry_config so the sanitizer can
+# read them without importing this module (breaks the import cycle).
+# Re-exported here for backwards compatibility with existing callers/tests.
+from core.telemetry_config import (  # noqa: E402
+    _should_record_ioc_values,
+    _should_record_llm_content,
+)
 
 
 # ---------------------------------------------------------------------------

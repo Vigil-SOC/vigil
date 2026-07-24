@@ -3,9 +3,9 @@
 import asyncio
 import logging
 import re
-from typing import Dict, List, Optional, Any
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from services.configured_llm import (
     NoConfiguredLLMProvider,
@@ -594,6 +594,76 @@ For each phase:
     # Internal execution helpers
     # ------------------------------------------------------------------
 
+    def _resolve_agent_provider(self, component: str):
+        """Resolve ``(provider_spec, model_id)`` for a workflow agent.
+
+        Uses the same ``ai_model_configs`` chain the daemon and Model
+        Assignment UI use (component → chat_default → default Anthropic).
+        Returns ``(None, model_id)`` when the resolved provider is Anthropic —
+        that path stays on ``ClaudeService.chat``. A non-Anthropic provider
+        returns its ``ProviderSpec`` so the caller runs the OpenAI agent loop.
+        Any failure degrades to ``(None, DEFAULT_MODEL)`` (legacy behavior).
+        """
+        try:
+            from services.llm_router import get_provider_spec
+            from services.model_registry import get_registry
+
+            pick = get_registry().resolve_model_for_component(component)
+            if not pick:
+                return None, DEFAULT_MODEL
+            provider_id, model_id = pick
+            spec = get_provider_spec(provider_id)
+            if spec is None or spec.provider_type == "anthropic":
+                return None, model_id
+            return spec, model_id
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Provider resolution failed (%s); using default", exc)
+            return None, DEFAULT_MODEL
+
+    async def _run_agent_turn(
+        self,
+        *,
+        claude_service,
+        component: str,
+        message: str,
+        system_prompt: Optional[str],
+        recommended_tools: Optional[List[str]],
+        max_tokens: int,
+        session_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Run one workflow agent turn on the correct provider.
+
+        Anthropic → the existing ``ClaudeService.chat`` loop (unchanged).
+        Non-Anthropic → ``OpenAIAgentService`` (full multi-turn tool loop with
+        the same tier/approval gating), returning the final text like ``chat``.
+        """
+        spec, model_id = self._resolve_agent_provider(component)
+
+        if spec is None:
+            return await asyncio.to_thread(
+                claude_service.chat,
+                message=message,
+                system_prompt=system_prompt,
+                model=model_id,
+                max_tokens=max_tokens,
+                recommended_tools=recommended_tools,
+            )
+
+        from services.openai_agent_service import OpenAIAgentService
+
+        agent = OpenAIAgentService(recommended_tools=recommended_tools)
+        return await agent.run(
+            provider=spec,
+            messages=[{"role": "user", "content": message}],
+            system_prompt=system_prompt,
+            model=model_id,
+            max_tokens=max_tokens,
+            enable_tools=True,
+            session_id=session_id,
+            agent_id=agent_id,
+        )
+
     async def _execute_oneshot(
         self,
         workflow: "WorkflowDefinition",
@@ -621,6 +691,19 @@ For each phase:
         all_tools, skill_tool_names = self._collect_tools(workflow, agent_profiles)
         system_prompt = self._build_system_prompt(workflow, skill_tool_names)
 
+        claude_service = ClaudeService(
+            use_backend_tools=True,
+            use_mcp_tools=True,
+            use_agent_sdk=False,
+            enable_thinking=True,
+        )
+        # The oneshot composite call runs on the workflow-default assignment
+        # (chat_default). Only require an Anthropic key when that resolves to
+        # Anthropic — a non-Anthropic provider carries its own Bifrost key.
+        oneshot_provider, oneshot_model = self._resolve_agent_provider("chat_default")
+        if oneshot_provider is None and not claude_service.has_api_key():
+            return {"success": False, "error": "Claude API not configured"}
+
         workflow_dict = workflow.to_dict(include_body=False)
 
         # #184 Phase 2: pre-call cost estimate for the run record. Workflows
@@ -629,14 +712,25 @@ For each phase:
         # gives operators an audit trail of expected vs. actual spend.
         # Best-effort — telemetry never blocks a workflow.
         trigger_context = dict(parameters or {})
-        cost_estimate = await estimate_configured_cost(
-            component="orchestrator_plan",
-            message=prompt,
-            system_prompt=system_prompt,
-            max_tokens=8192,
-        )
-        if cost_estimate is not None:
-            trigger_context["cost_estimate"] = cost_estimate
+        try:
+            from services.cost_estimator import estimate_cost
+
+            _est = await estimate_cost(
+                provider_type=(
+                    oneshot_provider.provider_type if oneshot_provider else "anthropic"
+                ),
+                model_id=oneshot_model,
+                messages=[{"role": "user", "content": prompt}],
+                system_prompt=system_prompt,
+                max_tokens=8192,
+            )
+            trigger_context["cost_estimate"] = _est.to_dict()
+        except Exception as _est_err:  # noqa: BLE001
+            logger.debug(
+                "Workflow %s pre-flight estimate failed (%s); proceeding",
+                workflow.id,
+                _est_err,
+            )
 
         run_service = get_workflow_run_service()
         run_id = run_service.begin_run(
@@ -651,26 +745,18 @@ For each phase:
 
         warning = None
         try:
-            llm_result = await generate_configured_text(
+            response_text = await self._run_agent_turn(
+                claude_service=claude_service,
+                component="chat_default",
                 message=prompt,
                 system_prompt=system_prompt,
-                component="orchestrator_plan",
-                max_tokens=8192,
                 recommended_tools=all_tools if all_tools else None,
-                use_backend_tools=True,
-                use_mcp_tools=True,
-                enable_thinking=True,
+                max_tokens=8192,
+                session_id=run_id,
             )
             response_text = llm_result.content
             success = response_text is not None
-            error = None if success else "Claude returned no response"
-            if success and llm_result.text_only:
-                warning = "Provider path ran text-only; tools were not executed."
-                logger.warning("Workflow %s ran text-only (no tools)", workflow.id)
-        except NoConfiguredLLMProvider as exc:
-            response_text = ""
-            success = False
-            error = str(exc)
+            error = None if success else "LLM returned no response"
         except Exception as exc:  # noqa: BLE001
             response_text = ""
             success = False
@@ -755,11 +841,9 @@ For each phase:
         """Shared phase-loop body used by both initial execute and
         resume. Walks phases from ``start_index``; pauses or completes
         the run as appropriate."""
+        from services.approval_service import ActionType, get_approval_service
+        from services.claude_service import ClaudeService
         from services.soc_agents import SOCAgentLibrary
-        from services.approval_service import (
-            ActionType,
-            get_approval_service,
-        )
         from services.workflow_run_service import get_workflow_run_service
 
         run_service = get_workflow_run_service()
@@ -854,14 +938,32 @@ For each phase:
             # projected USD band. No gating — Bifrost VK is the budget
             # gate. Best-effort, never blocks the phase.
             phase_input_context: Dict[str, Any] = {"prior_outputs": accumulated}
-            cost_estimate = await estimate_configured_cost(
-                component="orchestrator_plan",
-                message=phase_prompt,
-                system_prompt=system_prompt,
-                max_tokens=8192,
+            phase_component = (
+                getattr(profile, "component_category", None) or "chat_default"
             )
-            if cost_estimate is not None:
-                phase_input_context["cost_estimate"] = cost_estimate
+            try:
+                from services.cost_estimator import estimate_cost
+
+                _est_provider, _est_model = self._resolve_agent_provider(
+                    phase_component
+                )
+                _phase_est = await estimate_cost(
+                    provider_type=(
+                        _est_provider.provider_type if _est_provider else "anthropic"
+                    ),
+                    model_id=_est_model,
+                    messages=[{"role": "user", "content": phase_prompt}],
+                    system_prompt=system_prompt,
+                    max_tokens=8192,
+                )
+                phase_input_context["cost_estimate"] = _phase_est.to_dict()
+            except Exception as _phase_est_err:  # noqa: BLE001
+                logger.debug(
+                    "Workflow run %s phase %s estimate failed (%s); proceeding",
+                    run_id,
+                    phase_id,
+                    _phase_est_err,
+                )
 
             # Run the phase.
             run_service.upsert_phase(
@@ -875,23 +977,19 @@ For each phase:
             )
 
             try:
-                llm_result = await generate_configured_text(
+                response_text = await self._run_agent_turn(
+                    claude_service=claude_service,
+                    component=phase_component,
                     message=phase_prompt,
                     system_prompt=system_prompt,
-                    component="orchestrator_plan",
-                    max_tokens=8192,
                     recommended_tools=phase_tools or None,
-                    use_backend_tools=True,
-                    use_mcp_tools=True,
-                    enable_thinking=True,
+                    max_tokens=8192,
+                    session_id=run_id,
+                    agent_id=agent_id,
                 )
                 response_text = llm_result.content
                 phase_ok = response_text is not None
-                phase_error = None if phase_ok else "Claude returned no response"
-            except NoConfiguredLLMProvider as exc:
-                response_text = ""
-                phase_ok = False
-                phase_error = str(exc)
+                phase_error = None if phase_ok else "LLM returned no response"
             except Exception as exc:  # noqa: BLE001
                 response_text = ""
                 phase_ok = False
@@ -1152,14 +1250,16 @@ You have access to SOC tools and must ground every conclusion in tool output.
                         if techniques
                         else "None"
                     )
-                    parts.append(f"""**Target Finding:**
+                    parts.append(
+                        f"""**Target Finding:**
 - Finding ID: {finding.get('finding_id')}
 - Severity: {finding.get('severity')}
 - Data Source: {finding.get('data_source')}
 - Timestamp: {finding.get('timestamp')}
 - Anomaly Score: {finding.get('anomaly_score', 'N/A')}
 - Description: {finding.get('description', 'N/A')}
-- MITRE ATT&CK Techniques: {technique_str}""")
+- MITRE ATT&CK Techniques: {technique_str}"""
+                    )
                 else:
                     parts.append(
                         f"**Target Finding ID:** {finding_id} (details will be retrieved during execution)"
@@ -1176,13 +1276,15 @@ You have access to SOC tools and must ground every conclusion in tool output.
                 data_service = DatabaseDataService()
                 case = data_service.get_case(case_id)
                 if case:
-                    parts.append(f"""**Target Case:**
+                    parts.append(
+                        f"""**Target Case:**
 - Case ID: {case.get('case_id')}
 - Title: {case.get('title')}
 - Status: {case.get('status')}
 - Priority: {case.get('priority')}
 - Description: {case.get('description', 'N/A')}
-- Finding Count: {len(case.get('finding_ids', []))}""")
+- Finding Count: {len(case.get('finding_ids', []))}"""
+                    )
                 else:
                     parts.append(
                         f"**Target Case ID:** {case_id} (details will be retrieved during execution)"

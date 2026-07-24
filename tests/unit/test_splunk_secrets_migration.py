@@ -1,6 +1,6 @@
 """Regression tests for the Splunk MCP secrets migration (GH #84 PR-F follow-up).
 
-``tools/_legacy/splunk.py`` previously read SPLUNK_* credentials straight
+``tools/splunk.py`` previously read SPLUNK_* credentials straight
 from ``os.environ``. It now routes through ``backend/secrets_manager`` so
 operators can keep Splunk creds in the keyring / dotenv without surfacing
 them in ``.env``. These tests lock in the fallback behavior so a refactor
@@ -18,7 +18,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 REPO = Path(__file__).resolve().parent.parent.parent
-SPLUNK_TOOL = REPO / "tools" / "_legacy" / "splunk.py"
+SPLUNK_TOOL = REPO / "tools" / "splunk.py"
 
 
 @pytest.fixture

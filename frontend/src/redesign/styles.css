@@ -200,6 +200,17 @@
       margin-right: var(--chat-w);
    }
 
+   .chat-resizing,
+   .chat-resizing * {
+      cursor: col-resize !important;
+      user-select: none !important;
+   }
+
+   .chat-resizing .main,
+   .chat-resizing .chat {
+      transition: none;
+   }
+
    /* ---------- nav rail ---------- */
    .rail {
       width: var(--rail-w);
@@ -276,6 +287,7 @@
       font-weight: 500;
       white-space: nowrap;
       overflow: hidden;
+      text-overflow: ellipsis;
       max-width: 0;
       opacity: 0;
       transition: max-width .2s cubic-bezier(.4, 0, .2, 1), opacity .16s;
@@ -499,6 +511,39 @@
 
    .access-denied .btn {
       margin-top: 8px;
+   }
+
+   /* ---------- page extension host ---------- */
+   .extension-host-status {
+      min-height: 60vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      color: var(--tx-3);
+      font-size: 13px;
+   }
+   .extension-host-status svg {
+      animation: spin 1s linear infinite;
+      color: var(--accent);
+   }
+
+   /* ---------- data-source chip ---------- */
+   .source-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.4;
+      white-space: nowrap;
+   }
+   .source-chip svg {
+      flex: none;
    }
 
    /* ---------- 404 / not found ---------- */
@@ -1240,6 +1285,82 @@
       color: var(--tx-3);
    }
 
+   .empty-state {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      min-height: 190px;
+      padding: 28px 24px;
+      text-align: center;
+      color: var(--tx-2);
+   }
+
+   .empty-state.compact {
+      min-height: 96px;
+      padding: 18px 16px;
+      gap: 9px;
+   }
+
+   .empty-state-table {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 160px;
+   }
+
+   /* compact in-table rows (loading / linked-list empties) size to their
+      content instead of the full 160px block */
+   .empty-state-table.compact {
+      min-height: 0;
+   }
+
+   .empty-state-icon {
+      display: grid;
+      place-items: center;
+      width: 46px;
+      height: 46px;
+      border: 1px solid var(--line-soft);
+      border-radius: 10px;
+      background: var(--bg-2);
+      color: var(--accent-2);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.02);
+   }
+
+   .empty-state.compact .empty-state-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+   }
+
+   .empty-state-copy {
+      max-width: 520px;
+   }
+
+   .empty-state-copy h3 {
+      margin: 0;
+      font-size: 14.5px;
+      font-weight: 650;
+      color: var(--tx);
+   }
+
+   .empty-state-copy p {
+      margin: 5px 0 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--tx-3);
+   }
+
+   .empty-state-actions {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 9px;
+      flex-wrap: wrap;
+      margin-top: 2px;
+   }
+
    /* ---------- charts ---------- */
    .chart-grid {
       display: grid;
@@ -1964,6 +2085,45 @@
       flex-direction: column;
       transform: translateX(100%);
       transition: transform .26s cubic-bezier(.4, 0, .2, 1);
+   }
+
+   .chat-resize-handle {
+      position: absolute;
+      z-index: 4;
+      top: 0;
+      bottom: 0;
+      left: -7px;
+      width: 14px;
+      border: 0;
+      outline: 0;
+      background: transparent;
+      cursor: col-resize;
+      touch-action: none;
+   }
+
+   .chat-resize-handle::after {
+      content: "";
+      position: absolute;
+      top: 42%;
+      bottom: 42%;
+      left: 6px;
+      width: 2px;
+      min-height: 38px;
+      border-radius: 2px;
+      background: var(--line-strong);
+      opacity: 0;
+      transition: opacity .14s, background .14s;
+   }
+
+   .chat:hover .chat-resize-handle::after,
+   .chat-resize-handle:focus-visible::after,
+   .chat.resizing .chat-resize-handle::after {
+      opacity: 1;
+      background: var(--accent-2);
+   }
+
+   .chat-resize-handle:focus-visible {
+      box-shadow: 0 0 0 2px var(--accent-line);
    }
 
    .chat.open {
@@ -3226,6 +3386,12 @@
       border-color: var(--tx);
    }
 
+   /* background swatches: a faint inset ring so the very dark bases stay
+      visible against the panel */
+   .appr-bg-sw {
+      box-shadow: inset 0 0 0 1px #ffffff26;
+   }
+
    .appr-custom {
       display: flex;
       align-items: center;
@@ -3313,8 +3479,8 @@
       }
 
       .chat {
-         width: 100%;
-         max-width: 420px;
+         width: min(var(--chat-w), calc(100vw - 24px));
+         max-width: none;
       }
 
       /* .detail-body is already a single-column flex stack — nothing to change */
@@ -3324,6 +3490,16 @@
 
       .chat-fab {
          padding: 13px;
+      }
+   }
+
+   @media (max-width: 600px) {
+      .chat {
+         width: 100vw;
+      }
+
+      .chat-resize-handle {
+         display: none;
       }
    }
 
@@ -4350,49 +4526,14 @@
       gap: 18px;
    }
 
+   /* full-height wrapper so the Entity Graph tab centres its EmptyState;
+      the EmptyState primitive owns the icon/copy styling */
    .entity-empty {
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 16px;
-      text-align: center;
       min-height: calc(100vh - 180px);
       padding: 40px;
-   }
-
-   .entity-empty .ee-graphic svg {
-      width: 220px;
-      height: 150px;
-   }
-
-   .entity-empty .ee-graphic line {
-      stroke: var(--line);
-      stroke-width: 1.5;
-   }
-
-   .entity-empty .ee-graphic circle {
-      fill: var(--bg-2);
-      stroke: var(--tx-faint);
-      stroke-width: 1.5;
-   }
-
-   .entity-empty .ee-graphic circle.n-core {
-      fill: var(--accent-dim);
-      stroke: var(--accent);
-      stroke-width: 2;
-   }
-
-   .entity-empty h3 {
-      font-size: 19px;
-   }
-
-   .entity-empty p {
-      font-size: 13.5px;
-      color: var(--tx-3);
-      max-width: 440px;
-      line-height: 1.55;
-      margin: -4px 0 6px;
    }
 
    /* ---------- Timeline tab ---------- */
@@ -5412,6 +5553,34 @@
       line-height: 1.45;
    }
 
+   .fp-ai-progress {
+      min-height: 20px;
+   }
+
+   .fp-ai-progress .spin {
+      width: 16px;
+      height: 16px;
+      flex: 0 0 16px;
+      border: 2px solid var(--line);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: soc-spin .7s linear infinite;
+   }
+
+   .fp-raw-ai-output {
+      max-height: 280px;
+      margin: 0;
+      padding: 12px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg-2);
+      color: var(--tx-2);
+      font: 12px/1.5 var(--font-mono);
+      white-space: pre-wrap;
+      word-break: break-word;
+   }
+
    .fp-actions {
       margin-top: 20px;
       padding-top: 14px;
@@ -5419,6 +5588,165 @@
       display: flex;
       justify-content: flex-end;
       gap: 10px;
+   }
+
+   .source-evidence,
+   .source-evidence-status {
+      border: 1px solid var(--line);
+      border-radius: var(--r);
+      background: var(--bg-2);
+   }
+
+   .source-evidence>summary {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 12px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--tx);
+   }
+
+   .source-evidence>summary:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+      border-radius: var(--r);
+   }
+
+   .source-evidence-count {
+      margin-left: auto;
+      color: var(--tx-3);
+      font-size: 12px;
+      font-weight: 400;
+   }
+
+   .source-evidence-caption {
+      margin: 0;
+      padding: 0 14px 12px;
+      color: var(--tx-3);
+      font-size: 12px;
+      line-height: 1.5;
+   }
+
+   .source-evidence-table-scroll {
+      overflow-x: auto;
+      border-top: 1px solid var(--line);
+   }
+
+   .source-evidence-table-scroll:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: -2px;
+   }
+
+   .source-evidence-table {
+      width: 100%;
+      min-width: 760px;
+      border-collapse: collapse;
+      font-size: 11.5px;
+   }
+
+   .source-evidence-table th,
+   .source-evidence-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid var(--line-soft);
+      text-align: left;
+      white-space: nowrap;
+   }
+
+   .source-evidence-table th {
+      color: var(--tx-3);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+   }
+
+   .source-evidence-records {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 0 14px 12px;
+   }
+
+   .source-evidence-record {
+      border: 1px solid var(--line-soft);
+      border-radius: var(--r-sm);
+      background: var(--bg-1);
+   }
+
+   .source-evidence-record>summary {
+      padding: 9px 10px;
+      cursor: pointer;
+      color: var(--tx-2);
+      font-size: 12px;
+   }
+
+   .source-evidence-record dl {
+      display: grid;
+      grid-template-columns: minmax(110px, 180px) 1fr;
+      margin: 0;
+      padding: 0 10px 10px;
+      gap: 6px 10px;
+   }
+
+   .source-evidence-record dl>div {
+      display: contents;
+   }
+
+   .source-evidence-record dt,
+   .source-evidence-record dd {
+      margin: 0;
+      font-size: 11.5px;
+      overflow-wrap: anywhere;
+   }
+
+   .source-evidence-record dt {
+      color: var(--tx-3);
+   }
+
+   .source-evidence-raw {
+      padding: 0 14px 12px;
+   }
+
+   .source-evidence-raw h5 {
+      margin: 0 0 7px;
+      color: var(--tx-3);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+   }
+
+   .source-evidence-raw pre {
+      max-height: 280px;
+      margin: 0;
+      padding: 10px;
+      overflow: auto;
+      border: 1px solid var(--line-soft);
+      border-radius: var(--r-sm);
+      background: var(--bg-1);
+      color: var(--tx-2);
+      font-family: var(--mono);
+      font-size: 11.5px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+   }
+
+   .source-evidence-status {
+      padding: 12px 14px;
+   }
+
+   .source-evidence-status>h4 {
+      margin-bottom: 7px;
+   }
+
+   .source-evidence-status p {
+      margin: 0;
+      color: var(--tx-2);
+      font-size: 12.5px;
+      line-height: 1.5;
    }
 
    /* ATT&CK inline "show findings" expansion */

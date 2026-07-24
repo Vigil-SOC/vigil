@@ -9,7 +9,9 @@ import { useFindings, useDashboardKpis } from './useFindings'
 import type { Finding } from '../../data/data'
 import { useAttack } from './useAttack'
 import { useTimeline } from './useTimeline'
-import { FilterButton, FilterGroup } from '../../shared/ui'
+import { EmptyState, FilterButton, FilterGroup } from '../../shared/ui'
+import { DataTable, useTableSort, searchRows, sortRows, ColumnPicker } from '../../shared/DataTable'
+import { baseFindingColumns, extraFindingColumns } from './findingsColumns'
 import FindingPopup from './FindingPopup'
 import AttackTechniqueFindings from './AttackTechniqueFindings'
 import { SEV_COLOR, TL_MONTHS, type TimelineEvent } from './attackData'
@@ -17,7 +19,7 @@ import type { ScreenProps } from '../../shared/types'
 
 type DashTab = 'findings' | 'attack' | 'timeline' | 'entity'
 
-export default function DashboardScreen({ openChat }: ScreenProps) {
+export default function DashboardScreen({ openChat, goSettings }: ScreenProps) {
   const [tab, setTab] = useState<DashTab>('findings')
   const tabs: [DashTab, string][] = [
     ['findings', 'Findings'],
@@ -42,7 +44,7 @@ export default function DashboardScreen({ openChat }: ScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'findings' && <FindingsTab openChat={openChat} />}
+      {tab === 'findings' && <FindingsTab openChat={openChat} goSettings={goSettings} />}
       {tab === 'attack' && <AttackTab />}
       {tab === 'timeline' && <TimelineTab />}
       {tab === 'entity' && <EntityStub />}
@@ -53,48 +55,6 @@ export default function DashboardScreen({ openChat }: ScreenProps) {
 /* ---------------- Findings ---------------- */
 const NDASH = '—'
 
-/* Sorting — only columns with a meaningful order are sortable. */
-type SortKey = 'sev' | 'time' | 'score' | 'status'
-type SortState = { key: SortKey; dir: 'asc' | 'desc' }
-const SEV_RANK: Record<Finding['sev'], number> = { Critical: 4, High: 3, Medium: 2, Low: 1 }
-const STATUS_RANK: Record<Finding['status'], number> = { open: 0, investigating: 1, closed: 2 }
-// status reads best low→high (open first); the rest read best high→low
-const DEFAULT_DIR: Record<SortKey, 'asc' | 'desc'> = { sev: 'desc', time: 'desc', score: 'desc', status: 'asc' }
-
-/** comparable time key: findings normally carry epoch-ms `ts`; when it's
- *  missing, fall back to the YYYYMMDD in the id plus HH:MM from the display string */
-function timeKey(f: Finding): number {
-  if (typeof f.ts === 'number') return f.ts
-  const d = /(\d{8})/.exec(f.id)?.[1]
-  if (!d) return 0
-  const t = /(\d{1,2}):(\d{2})/.exec(f.time)
-  return Number(d) * 10000 + (t ? Number(t[1]) * 100 + Number(t[2]) : 0)
-}
-
-function sortVal(f: Finding, key: SortKey): number {
-  switch (key) {
-    case 'sev': return SEV_RANK[f.sev]
-    case 'score': return f.score
-    case 'time': return timeKey(f)
-    case 'status': return STATUS_RANK[f.status]
-  }
-}
-
-function SortHeader(
-  { label, col, sort, onSort }:
-  { label: string; col: SortKey; sort: SortState; onSort: (k: SortKey) => void },
-) {
-  const active = sort.key === col
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(col)}>
-      {label}
-      {active && (
-        <span className="arr"><Icon name={sort.dir === 'asc' ? 'arrowUp' : 'arrowDn'} size={12} /></span>
-      )}
-    </th>
-  )
-}
-
 /** build the "Investigate with Vigil" auto-message for a finding */
 function findingPrompt(f: Finding): string {
   const parts = [`${f.sev} severity`, `MITRE ${f.tech}${f.tactic !== NDASH ? ` (${f.tactic})` : ''}`, `source ${f.src}`]
@@ -104,7 +64,7 @@ function findingPrompt(f: Finding): string {
   return `Investigate finding ${f.id} — ${parts.join(', ')}. What happened and what should I do next?`
 }
 
-function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
+function FindingsTab({ openChat, goSettings }: Pick<ScreenProps, 'openChat' | 'goSettings'>) {
   const { rows, phase, error, reload } = useFindings()
   const { kpis, reload: reloadKpis } = useDashboardKpis()
   const [query, setQuery] = useState('')
@@ -113,11 +73,34 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
   const [detailId, setDetailId] = useState<string | null>(null)
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
-  const [sort, setSort] = useState<SortState>({ key: 'time', dir: 'desc' })
-  const toggleSort = (key: SortKey) =>
-    setSort((s) => (s.key === key
-      ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' }
-      : { key, dir: DEFAULT_DIR[key] }))
+  // null = untouched, so use each column's default visibility. An empty Set is
+  // meaningfully different: the user unhid everything.
+  const [hiddenCols, setHiddenCols] = useState<Set<string> | null>(null)
+
+  // Base columns are fixed; the rest are derived from whatever entity keys the
+  // loaded rows actually carry, so a new source needs no code change here.
+  const allColumns = useMemo(() => {
+    const base = baseFindingColumns(
+      (f) => setDetailId(f.id),
+      (f) => openChat(findingPrompt(f)),
+    )
+    const extra = extraFindingColumns(rows)
+    // actions stay last
+    return [...base.slice(0, -1), ...extra, base[base.length - 1]]
+  }, [rows, openChat])
+
+  // Columns marked visible:false start hidden but stay toggleable.
+  const defaultHidden = useMemo(
+    () => new Set(allColumns.filter((c) => c.visible === false).map((c) => c.key)),
+    [allColumns],
+  )
+  const effectiveHidden = hiddenCols ?? defaultHidden
+  const columns = useMemo(
+    () => allColumns.filter((c) => !effectiveHidden.has(c.key)),
+    [allColumns, effectiveHidden],
+  )
+
+  const { sort, toggle: toggleSort } = useTableSort(allColumns, { key: 'time', dir: 'desc' })
 
   // source options derive from the data
   const srcOptions = useMemo(() => {
@@ -126,28 +109,18 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
   }, [rows])
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return rows.filter((f) => {
+    const byFacet = rows.filter((f) => {
       if (sev !== 'any' && f.sev.toLowerCase() !== sev) return false
       if (src !== 'any' && f.src !== src) return false
-      if (!q) return true
-      return (
-        f.id.toLowerCase().includes(q) ||
-        f.tech.toLowerCase().includes(q) ||
-        f.host.toLowerCase().includes(q) ||
-        f.user.toLowerCase().includes(q) ||
-        f.src.toLowerCase().includes(q)
-      )
+      return true
     })
-  }, [rows, query, sev, src])
+    // allColumns, not the visibility-filtered columns: search and sort must
+    // still work on a field whose column the user hid (e.g. the active Time
+    // sort key). The helpers only touch the column matching the query/sort key.
+    return searchRows(byFacet, allColumns, query)
+  }, [rows, query, sev, src, allColumns])
 
-  const sorted = useMemo(() => {
-    const { key, dir } = sort
-    return [...filtered].sort((a, b) => {
-      const d = sortVal(a, key) - sortVal(b, key)
-      return dir === 'asc' ? d : -d
-    })
-  }, [filtered, sort])
+  const sorted = useMemo(() => sortRows(filtered, allColumns, sort), [filtered, allColumns, sort])
 
   // reset to the first page whenever the filtered set changes shape
   // (re-sorting keeps the same rows, so it doesn't reset the page)
@@ -200,7 +173,7 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
         </div>
         <FilterButton
           activeCount={(sev !== 'any' ? 1 : 0) + (src !== 'any' ? 1 : 0)}
-          onClearAll={() => { setSev('any'); setSrc('any') }}
+          onClearAll={() => { setSev('any'); setSrc('any'); setHiddenCols(null) }}
         >
           <FilterGroup
             label="Severity"
@@ -215,6 +188,16 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
             ]}
           />
           <FilterGroup label="Source" value={src} onSelect={setSrc} options={srcOptions} />
+          <ColumnPicker
+            columns={allColumns}
+            hidden={effectiveHidden}
+            onToggle={(key) => setHiddenCols((h) => {
+              const next = new Set(h ?? defaultHidden)
+              if (next.has(key)) next.delete(key)
+              else next.add(key)
+              return next
+            })}
+          />
         </FilterButton>
         <div className="flex-1" />
         <button className="btn ghost icon" title="Refresh" onClick={refresh}><Icon name="refresh" /></button>
@@ -222,63 +205,28 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
       </div>
 
       <div className="table-wrap list-scroll list-scroll-kpi">
-        <table className="tbl findings-tbl">
-          <thead>
-            <tr>
-              <th>Finding ID</th>
-              <SortHeader label="Severity" col="sev" sort={sort} onSort={toggleSort} />
-              <th>MITRE Technique</th><th>Tactic</th>
-              <th>Source</th><th>Host</th><th>User</th>
-              <SortHeader label="Time" col="time" sort={sort} onSort={toggleSort} />
-              <SortHeader label="Score" col="score" sort={sort} onSort={toggleSort} />
-              <SortHeader label="Status" col="status" sort={sort} onSort={toggleSort} />
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {phase === 'loading' && (
-              <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>Loading findings…</td></tr>
-            )}
-            {phase === 'error' && (
-              <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                  <span>Couldn’t load findings: {error}</span>
-                  <button className="btn ghost" onClick={refresh}>Retry</button>
-                </div>
-              </td></tr>
-            )}
-            {phase === 'ready' && filtered.length === 0 && (
-              <tr><td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-                {rows.length === 0 ? 'No findings found.' : 'No findings match your filters.'}
-              </td></tr>
-            )}
-            {phase === 'ready' && paged.map((f) => (
-              <tr key={f.id} className="clickable" onClick={() => setDetailId(f.id)}>
-                <td><span className="id-cell">{f.id}</span></td>
-                <td><span className={`sev ${f.sev.toLowerCase()}`}><span className="dot" />{f.sev}</span></td>
-                <td><span className="tag">{f.tech}</span> <span className="muted">{f.conf}%</span></td>
-                <td>{f.tactic}</td>
-                <td className="muted">{f.src}</td>
-                <td><span className="mono">{f.host}</span></td>
-                <td><span className="mono muted">{f.user}</span></td>
-                <td className="muted">{f.time}</td>
-                <td>
-                  <span className="scorebar">
-                    <span className="track"><i className={f.score >= 0.8 ? 'hot' : ''} style={{ width: `${f.score * 100}%` }} /></span>
-                    <span className="num">{f.score.toFixed(2)}</span>
-                  </span>
-                </td>
-                <td><span className={`status ${f.status}`}>{f.status}</span></td>
-                <td>
-                  <span className="row-act">
-                    <button title="View" onClick={(e) => { e.stopPropagation(); setDetailId(f.id) }}><Icon name="eye" /></button>
-                    <button title="Investigate with Vigil" onClick={(e) => { e.stopPropagation(); openChat(findingPrompt(f)) }}><Icon name="brain" /></button>
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <DataTable
+          columns={columns}
+          rows={paged}
+          rowKey={(f) => f.id}
+          phase={phase}
+          error={error}
+          sort={sort}
+          onSort={toggleSort}
+          onRowClick={(f) => setDetailId(f.id)}
+          onRetry={refresh}
+          className="tbl findings-tbl"
+          loadingMessage={<EmptyState loading table compact icon="search" title="Loading findings…" />}
+          emptyMessage={
+            <EmptyState
+              table
+              icon={rows.length === 0 ? 'shield' : 'filter'}
+              title={rows.length === 0 ? 'No findings yet' : 'No findings match this view'}
+              body={rows.length === 0 ? 'Ingest alerts or run a workflow to populate the findings queue.' : 'Clear search and filters to return to the full findings queue.'}
+              primary={rows.length === 0 ? { label: 'Configure integrations', onClick: () => goSettings('integrations'), icon: 'link' } : { label: 'Clear filters', onClick: () => { setQuery(''); setSev('any'); setSrc('any') }, icon: 'close' }}
+            />
+          }
+        />
       </div>
       <div className="pager">
         <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -308,7 +256,7 @@ function FindingsTab({ openChat }: { openChat: (prompt?: string) => void }) {
           ><Icon name="chevR" size={14} /></button>
         </span>
       </div>
-      <FindingPopup id={detailId} onClose={() => setDetailId(null)} onChanged={() => { reload(); reloadKpis() }} />
+      <FindingPopup id={detailId} onClose={() => setDetailId(null)} onChanged={() => { reload(); reloadKpis() }} onConfigureAi={() => goSettings('ai-config')} />
     </>
   )
 }
@@ -397,18 +345,13 @@ function AttackTab() {
               </thead>
               <tbody>
                 {phase === 'loading' && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>Loading techniques…</td></tr>
+                  <tr><td colSpan={9}><EmptyState loading table compact icon="graph" title="Loading techniques…" /></td></tr>
                 )}
                 {phase === 'error' && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                      <span>Couldn’t load ATT&CK data: {error}</span>
-                      <button className="btn ghost" onClick={reload}>Retry</button>
-                    </div>
-                  </td></tr>
+                  <tr><td colSpan={9}><EmptyState error table icon="alert" title="Couldn’t load ATT&CK data" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></td></tr>
                 )}
                 {phase === 'ready' && techniques.length === 0 && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>No techniques at this confidence threshold.</td></tr>
+                  <tr><td colSpan={9}><EmptyState table icon="filter" title="No techniques at this confidence threshold" body="Lower the confidence threshold or load findings with ATT&CK mappings." /></td></tr>
                 )}
                 {phase === 'ready' && techniques.map((t) => (
                   <Fragment key={t.id}>
@@ -444,19 +387,11 @@ function AttackTab() {
 function EntityStub() {
   return (
     <div className="entity-empty">
-      <div className="ee-graphic">
-        <svg viewBox="0 0 220 150" fill="none">
-          <line x1="110" y1="75" x2="40" y2="36" /><line x1="110" y1="75" x2="186" y2="42" />
-          <line x1="110" y1="75" x2="52" y2="120" /><line x1="110" y1="75" x2="172" y2="116" />
-          <line x1="40" y1="36" x2="186" y2="42" /><line x1="52" y1="120" x2="172" y2="116" />
-          <circle cx="110" cy="75" r="13" className="n-core" />
-          <circle cx="40" cy="36" r="8" /><circle cx="186" cy="42" r="8" />
-          <circle cx="52" cy="120" r="8" /><circle cx="172" cy="116" r="8" />
-        </svg>
-      </div>
-      <h3>Entity Graph</h3>
-      <p>Interactive host, user &amp; device relationship graph — pivot across shared entities to trace lateral movement. Coming soon.</p>
-      <button className="btn primary"><Icon name="graph" /> Preview the graph</button>
+      <EmptyState
+        icon="graph"
+        title="No entity graph yet"
+        body="Host, user, and source relationships appear here once findings include entity fields."
+      />
     </div>
   )
 }
@@ -714,6 +649,14 @@ function TimelineTab() {
         <button className="tl-iconbtn" title="Export visible events (CSV)" onClick={exportCsv}><Icon name="download" /></button>
       </div>
       <div className="tl-hint">Drag anywhere to scrub · click a bar to investigate · scroll to pan</div>
+      {tlPhase === 'ready' && events.length === 0 && (
+        <EmptyState
+          icon="clock"
+          title={filter === 'finding' ? 'No finding events in this window' : 'No timeline events yet'}
+          body={filter === 'finding' ? 'Switch to All events or load findings with timestamps.' : 'Create cases or ingest findings to build an investigation timeline.'}
+          primary={filter === 'finding' ? { label: 'Show all events', onClick: () => changeFilter('all'), icon: 'filter' } : undefined}
+        />
+      )}
       <div className="tl-scroll" ref={scrollRef}>
         <div
           className="tl-inner"

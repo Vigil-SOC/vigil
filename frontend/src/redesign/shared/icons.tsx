@@ -4,7 +4,10 @@
    ============================================================ */
 import type { CSSProperties } from 'react'
 
-export const ICON: Record<string, string> = {
+// Deliberately not annotated Record<string, string>: that widens IconName to
+// `string`, so a misspelled name type-checks and renders an empty svg instead
+// of failing the build.
+export const ICON = {
   shield: '<path d="M12 2l8 3v6c0 5-3.5 8.5-8 11-4.5-2.5-8-6-8-11V5l8-3z"/>',
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>',
@@ -63,6 +66,7 @@ export const ICON: Record<string, string> = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   moon: '<path d="M21 12.8A9 9 0 1111.2 3 7 7 0 0021 12.8z"/>',
   bot: '<rect x="4" y="8" width="16" height="12" rx="2.5"/><path d="M12 4v4M9 13h.01M15 13h.01M2 14v2M22 14v2"/>',
+  user: '<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>',
 }
 
 export type IconName = keyof typeof ICON

@@ -1,11 +1,14 @@
 """Cases API endpoints."""
 
 from typing import List, Optional, Dict, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 from pathlib import Path
 
+from backend.middleware.auth import get_current_user
+from backend.services.auth_service import AuthService
+from database.models import User
 from services.database_data_service import DatabaseDataService
 from services.report_service import ReportService, REPORTLAB_AVAILABLE
 
@@ -75,6 +78,84 @@ async def get_cases(
         cases = [c for c in cases if c.get('priority') == priority]
     
     return {"cases": cases, "total": len(cases)}
+
+
+@router.delete("/all")
+async def clear_all_cases(current_user: User = Depends(get_current_user)):
+    """Delete all cases and case-derived generated data (requires cases.delete)."""
+    if not AuthService.check_permission(current_user.user_id, "cases.delete"):
+        raise HTTPException(
+            status_code=403, detail="Permission denied: cases.delete required"
+        )
+    try:
+        from database.connection import get_session
+        from database.models import (
+            AIDecisionLog,
+            AttackLayer,
+            Case,
+            CaseAttachment,
+            CaseAuditLog,
+            CaseClosureInfo,
+            CaseComment,
+            CaseEscalation,
+            CaseEvidence,
+            CaseIOC,
+            CaseMetrics,
+            CaseNotification,
+            CaseRelationship,
+            CaseSLA,
+            CaseTask,
+            CaseWatcher,
+            Investigation,
+            SketchMapping,
+            case_findings,
+        )
+
+        with get_session() as session:
+            count = session.query(Case).count()
+
+            for model in (
+                CaseAttachment,
+                CaseClosureInfo,
+                CaseEscalation,
+                CaseEvidence,
+                CaseIOC,
+                CaseMetrics,
+                CaseNotification,
+                CaseRelationship,
+                CaseSLA,
+                CaseTask,
+                CaseWatcher,
+                CaseComment,
+            ):
+                session.query(model).delete(synchronize_session=False)
+
+            session.execute(case_findings.delete())
+            session.query(SketchMapping).filter(SketchMapping.case_id.isnot(None)).delete(
+                synchronize_session=False
+            )
+            session.query(AIDecisionLog).filter(AIDecisionLog.case_id.isnot(None)).delete(
+                synchronize_session=False
+            )
+            session.query(Investigation).filter(Investigation.case_id.isnot(None)).update(
+                {"case_id": None},
+                synchronize_session=False,
+            )
+            session.query(AttackLayer).filter(AttackLayer.case_id.isnot(None)).update(
+                {"case_id": None},
+                synchronize_session=False,
+            )
+            session.query(CaseAuditLog).delete(synchronize_session=False)
+            session.query(Case).delete(synchronize_session=False)
+            session.commit()
+
+        return {
+            "success": True,
+            "deleted": count,
+            "message": f"Deleted {count} cases and case-derived records",
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear cases: {str(e)}")
 
 
 @router.get("/{case_id}")
@@ -1150,4 +1231,3 @@ async def search_cases(data: SearchRequest):
         offset=data.offset
     )
     return results
-

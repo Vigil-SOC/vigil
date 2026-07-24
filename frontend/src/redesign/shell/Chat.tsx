@@ -5,7 +5,14 @@
    Tailwind-authored chat-* component classes in styles.css plus
    utilities for one-offs.
    ============================================================ */
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { format } from 'date-fns'
 import { Markdown } from '../shared/Markdown'
 import { Icon } from '../shared/icons'
@@ -221,12 +228,25 @@ export default function Chat({
   open,
   onClose,
   seed,
+  width = 420,
+  minWidth = 360,
+  maxWidth = 720,
+  onWidthChange,
+  onWidthCommit,
+  onResizeStateChange,
   onSeedConsumed,
 }: {
   open: boolean
   onClose: () => void
   /** when set, auto-send this prompt (e.g. "Investigate finding …") */
   seed?: string | null
+  /** Effective dock width, shared with the main canvas by SocConsole. */
+  width?: number
+  minWidth?: number
+  maxWidth?: number
+  onWidthChange?: (width: number) => void
+  onWidthCommit?: (width: number) => void
+  onResizeStateChange?: (resizing: boolean) => void
   onSeedConsumed?: () => void
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
@@ -244,6 +264,7 @@ export default function Chat({
   const [agentsInfoOpen, setAgentsInfoOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [resizing, setResizing] = useState(false)
   // Offline cache (localStorage) — server is the source of truth (useConversations
   // below); this is the fallback shown when the server list can't be reached.
   const [history, setHistory] = useState<Conversation[]>(() => loadHistory())
@@ -287,6 +308,12 @@ export default function Chat({
   const menuRef = useRef<HTMLDivElement>(null)
   const openerRef = useRef<HTMLElement | null>(null)
   const panelRef = useRef<HTMLElement>(null)
+  const resizeRef = useRef<{
+    pointerId: number
+    startX: number
+    startWidth: number
+    lastWidth: number
+  } | null>(null)
   // the investigation key (seed prompt) of the current thread, if any
   const currentKeyRef = useRef<string | null>(null)
   // Default the model to the configured `chat_default` assignment (Settings →
@@ -307,6 +334,21 @@ export default function Chat({
       openerRef.current = null
     }
   }, [open])
+
+  useEffect(() => {
+    if (open) return
+    resizeRef.current = null
+    setResizing(false)
+    onResizeStateChange?.(false)
+  }, [open, onResizeStateChange])
+
+  useEffect(
+    () => () => {
+      resizeRef.current = null
+      onResizeStateChange?.(false)
+    },
+    [onResizeStateChange],
+  )
 
   // any of the dock's own dialogs (they own their Esc + focus handling)
   const anyPopupOpen = historyOpen || settingsOpen || agentsInfoOpen || traceOpen
@@ -364,15 +406,23 @@ export default function Chat({
       .catch(() => {})
   }, [])
 
-  // model list + MCP tool status — fetched once, the first time the dock opens
-  const metaLoadedRef = useRef(false)
+  // model list — refetched every time the dock opens so providers added or
+  // activated after the first open (e.g. Ollama) show up without a full page
+  // reload (#409). The classic ClaudeDrawer already refetches on each open.
   useEffect(() => {
-    if (!open || metaLoadedRef.current) return
-    metaLoadedRef.current = true
+    if (!open) return
     claudeApi
       .getModels()
       .then((r) => setModels((r.data?.models || []) as { id: string; name: string }[]))
       .catch(() => {})
+  }, [open])
+
+  // MCP tool status + configured default — fetched once, the first time the
+  // dock opens.
+  const metaLoadedRef = useRef(false)
+  useEffect(() => {
+    if (!open || metaLoadedRef.current) return
+    metaLoadedRef.current = true
     aiConfigApi
       .getConfig()
       .then((r) => {
@@ -873,16 +923,79 @@ export default function Chat({
     }
   }
 
+  const clampWidth = (next: number) => Math.min(maxWidth, Math.max(minWidth, Math.round(next)))
+  const onResizePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || maxWidth <= minWidth) return
+    const startWidth = clampWidth(width)
+    resizeRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth,
+      lastWidth: startWidth,
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    setResizing(true)
+    onResizeStateChange?.(true)
+    event.preventDefault()
+  }
+  const onResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = resizeRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    const next = clampWidth(drag.startWidth + drag.startX - event.clientX)
+    drag.lastWidth = next
+    onWidthChange?.(next)
+  }
+  const finishResize = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = resizeRef.current
+    if (!drag || drag.pointerId !== event.pointerId) return
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    }
+    resizeRef.current = null
+    setResizing(false)
+    onResizeStateChange?.(false)
+    onWidthCommit?.(drag.lastWidth)
+  }
+  const onResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (maxWidth <= minWidth) return
+    const step = event.shiftKey ? 48 : 16
+    let next: number | null = null
+    if (event.key === 'ArrowLeft') next = width + step
+    else if (event.key === 'ArrowRight') next = width - step
+    else if (event.key === 'Home') next = minWidth
+    else if (event.key === 'End') next = maxWidth
+    if (next == null) return
+    event.preventDefault()
+    const clamped = clampWidth(next)
+    onWidthChange?.(clamped)
+    onWidthCommit?.(clamped)
+  }
+
   return (
     <>
     <aside
       ref={panelRef}
-      className={`chat${open ? ' open' : ''}`}
+      className={`chat${open ? ' open' : ''}${resizing ? ' resizing' : ''}`}
       role="dialog"
       aria-label="Vigil Assistant"
       aria-hidden={!open}
       onKeyDown={onPanelKeyDown}
     >
+      <div
+        className="chat-resize-handle"
+        role="separator"
+        aria-label="Resize Vigil Assistant"
+        aria-orientation="vertical"
+        aria-valuemin={Math.round(minWidth)}
+        aria-valuemax={Math.round(maxWidth)}
+        aria-valuenow={Math.round(width)}
+        tabIndex={open && maxWidth > minWidth ? 0 : -1}
+        onPointerDown={onResizePointerDown}
+        onPointerMove={onResizePointerMove}
+        onPointerUp={finishResize}
+        onPointerCancel={finishResize}
+        onKeyDown={onResizeKeyDown}
+      />
       <div className="chat-head">
         <span className="ch-ico"><Icon name="brain" /></span>
         <h3 className="ch-title">Vigil Assistant</h3>
@@ -892,7 +1005,7 @@ export default function Chat({
           <button title="SOC Agents" onClick={() => setAgentsInfoOpen(true)}><Icon name="note" /></button>
           <button title="Chat settings" onClick={() => setSettingsOpen(true)}><Icon name="gear" /></button>
           <button title="Clear chat" onClick={reset} disabled={loading || messages.length === 0}><Icon name="trash" /></button>
-          <button title="Close panel" onClick={onClose}><Icon name="close" /></button>
+          <button type="button" title="Close assistant" aria-label="Close Vigil Assistant" onClick={onClose}><Icon name="close" /></button>
         </div>
       </div>
 

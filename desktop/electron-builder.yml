@@ -1,0 +1,29 @@
+appId: ai.deeptempo.vigil
+productName: Vigil
+directories:
+  output: release
+files:
+  - dist/**/*
+  - src/splash.html
+  - build/**/*
+# Docker mounts these paths, and it cannot see inside app.asar — they must stay
+# unpacked on disk. Staged by scripts/prepare-standalone.js.
+extraResources:
+  - from: standalone
+    to: standalone
+# Two ways to run: against a checkout (live source, development) or against
+# published images (no source tree, Docker only) — see Mode in src/main.ts.
+# scripts/sign.js ad-hoc signs the mac bundle here. Without a valid signature
+# macOS can't identify the app, and TCC denies protected folders (Documents,
+# Desktop, …) silently — no permission prompt is ever shown.
+afterPack: scripts/sign.js
+mac:
+  target:
+    - dmg
+  icon: build/icons/icon.icns
+  identity: null # no Developer ID cert; sign.js applies an ad-hoc signature
+linux:
+  target:
+    - AppImage
+  icon: build/icons
+  category: Security

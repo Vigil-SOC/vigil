@@ -14,7 +14,9 @@ import { mapApiCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
 import type { ScreenProps } from '../../shared/types'
 import { useCases, useCaseDetail, type Phase } from './useCases'
-import { FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
+import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
+import { useAuth } from '../../../contexts/AuthContext'
+import { useToast } from '../../shell/toast'
 import {
   inputCls,
   SectionCard,
@@ -31,6 +33,12 @@ import {
 } from './CaseSections'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
+
+function caseActionError(error: unknown, fallback: string): string {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  return (error as { message?: string })?.message || fallback
+}
 
 /** build the "Open in Vigil" auto-message for a case */
 function casePrompt(c: CaseRow): string {
@@ -126,10 +134,10 @@ function FindingsCard({ total, linked, phase }: { total: number; linked: DetailD
           <thead><tr><th>Finding ID</th><th>Severity</th><th>Technique</th><th>Time</th></tr></thead>
           <tbody>
             {phase === 'loading' && (
-              <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: '24px 0' }}>Loading findings…</td></tr>
+              <tr><td colSpan={4}><EmptyState loading table compact icon="search" title="Loading findings…" /></td></tr>
             )}
             {phase === 'ready' && linked.length === 0 && (
-              <tr><td colSpan={4} className="muted" style={{ textAlign: 'center', padding: '24px 0' }}>No data here.</td></tr>
+              <tr><td colSpan={4}><EmptyState table compact icon="shield" title="No findings linked" body="Attach findings to this case to keep investigation evidence in one place." /></td></tr>
             )}
             {linked.map((f) => (
               <tr key={f.id}>
@@ -154,7 +162,7 @@ function TimelineCard({ caseId }: { caseId: string }) {
   const [events, setEvents] = useState<TlEvent[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
 
-  useEffect(() => {
+  const load = useCallback(() => {
     let cancelled = false
     setPhase('loading')
     timelineApi
@@ -171,6 +179,8 @@ function TimelineCard({ caseId }: { caseId: string }) {
     }
   }, [caseId])
 
+  useEffect(() => load(), [load])
+
   const fmt = (s: string) => {
     const d = new Date(s)
     return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d · HH:mm')
@@ -179,9 +189,9 @@ function TimelineCard({ caseId }: { caseId: string }) {
   return (
     <SectionCard title="Timeline" count={phase === 'ready' ? `${events.length} events` : undefined}>
       <div className="p-[18px]">
-        {phase === 'loading' && <div className="muted">Loading timeline…</div>}
-        {phase === 'error' && <div className="muted">Couldn’t load the timeline.</div>}
-        {phase === 'ready' && events.length === 0 && <div className="muted">No timeline events.</div>}
+        {phase === 'loading' && <EmptyState loading compact icon="clock" title="Loading timeline…" />}
+        {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load the timeline" primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />}
+        {phase === 'ready' && events.length === 0 && <EmptyState compact icon="clock" title="No timeline events" body="Case activity, findings, comments, and workflow events will appear here." />}
         {phase === 'ready' && events.length > 0 && (
           <div className="timeline">
             {events.map((e, i) => (
@@ -197,7 +207,7 @@ function TimelineCard({ caseId }: { caseId: string }) {
   )
 }
 
-export default function CasesScreen({ openChat, setViewFull }: ScreenProps) {
+export default function CasesScreen({ openChat, goSettings, setViewFull }: ScreenProps) {
   // the open case lives in a ?case=<id> query param so it's shareable /
   // deep-linkable; no ?case ⇒ show the full-width table.
   const [searchParams, setSearchParams] = useSearchParams()
@@ -221,6 +231,7 @@ export default function CasesScreen({ openChat, setViewFull }: ScreenProps) {
       onSelect={selectCase}
       onBack={backToList}
       openChat={openChat}
+      goSettings={goSettings}
       reloadList={reload}
     />
   ) : (
@@ -232,7 +243,7 @@ export default function CasesScreen({ openChat, setViewFull }: ScreenProps) {
 function StateRow({ children }: { children: ReactNode }) {
   return (
     <tr>
-      <td colSpan={11} className="muted" style={{ textAlign: 'center', padding: '40px 0' }}>
+      <td colSpan={11}>
         {children}
       </td>
     </tr>
@@ -253,6 +264,8 @@ function CasesTable({
   reload: () => void
   onSelect: (id: string) => void
 }) {
+  const { hasPermission } = useAuth()
+  const canDelete = hasPermission('cases.delete')
   const [query, setQuery] = useState('')
   const [statusF, setStatusF] = useState('any')
   const [prioF, setPrioF] = useState('any')
@@ -265,6 +278,7 @@ function CasesTable({
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
   const [newOpen, setNewOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<CaseRow | null>(null)
 
   const toggleSort = (key: SortKey) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }))
@@ -389,22 +403,21 @@ function CasesTable({
             </tr>
           </thead>
           <tbody>
-            {phase === 'loading' && <StateRow>Loading cases…</StateRow>}
+            {phase === 'loading' && <StateRow><EmptyState loading table compact icon="folder" title="Loading cases…" /></StateRow>}
             {phase === 'error' && (
               <StateRow>
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                  <span>Couldn’t load cases: {error}</span>
-                  <button className="btn ghost" onClick={reload}>Retry</button>
-                </div>
+                <EmptyState error table icon="alert" title="Couldn’t load cases" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
               </StateRow>
             )}
             {phase === 'ready' && sorted.length === 0 && (
               <StateRow>
-                {results
-                  ? 'No cases match your search.'
-                  : rows.length === 0
-                    ? 'No cases found.'
-                    : 'No cases match your filters.'}
+                <EmptyState
+                  table
+                  icon={rows.length === 0 ? 'folder' : 'filter'}
+                  title={results ? 'No cases match this search' : rows.length === 0 ? 'No cases yet' : 'No cases match these filters'}
+                  body={results || rows.length > 0 ? 'Clear the search and filters to return to the full case queue.' : 'Create a case manually or link findings from the dashboard to start an investigation record.'}
+                  primary={results || rows.length > 0 ? { label: 'Clear filters', onClick: () => { setResults(null); setQuery(''); setStatusF('any'); setPrioF('any'); setAssigneeF('any') }, icon: 'close' } : { label: 'New case', onClick: () => setNewOpen(true), icon: 'plus' }}
+                />
               </StateRow>
             )}
             {phase === 'ready' &&
@@ -420,7 +433,35 @@ function CasesTable({
                   <td className="muted">{c.age}</td>
                   <td><span className={`sla ${c.slaState}`}>{c.sla}</span></td>
                   <td className="muted">{c.updated}</td>
-                  <td><span className="row-act"><button title="Open"><Icon name="arrowR" /></button></span></td>
+                  <td>
+                    <span className="row-act" style={{ opacity: 1 }}>
+                      {canDelete && (
+                        <button
+                          type="button"
+                          aria-label={`Delete case ${c.id}`}
+                          title="Delete case"
+                          style={{ color: 'var(--crit)' }}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setDeleteTarget(c)
+                          }}
+                        >
+                          <Icon name="trash" />
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        aria-label={`Open case ${c.id}`}
+                        title="Open case"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          onSelect(c.id)
+                        }}
+                      >
+                        <Icon name="arrowR" />
+                      </button>
+                    </span>
+                  </td>
                 </tr>
               ))}
           </tbody>
@@ -449,7 +490,80 @@ function CasesTable({
       </div>
 
       <NewCaseDialog open={newOpen} onClose={() => setNewOpen(false)} onCreated={reload} />
+      <DeleteCaseDialog
+        target={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onDeleted={(deleted) => {
+          setResults((current) => current?.filter((c) => c.id !== deleted.id) ?? null)
+          reload()
+        }}
+      />
     </>
+  )
+}
+
+/* ---------------- Delete case confirmation ----------------
+   DELETE /cases/{id}; case-owned records follow the backend's delete policy,
+   while findings linked to the case remain available for review. */
+function DeleteCaseDialog({
+  target,
+  onClose,
+  onDeleted,
+}: {
+  target: CaseRow | null
+  onClose: () => void
+  onDeleted: (deleted: CaseRow) => void
+}) {
+  const { notify } = useToast()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    if (target) setError('')
+  }, [target])
+
+  const remove = async () => {
+    if (!target || busy) return
+    const deleting = target
+    setBusy(true)
+    setError('')
+    try {
+      await casesApi.delete(deleting.id)
+      setBusy(false)
+      notify('ok', `Deleted ${deleting.id}. Linked findings were preserved.`)
+      onClose()
+      onDeleted(deleting)
+    } catch (cause) {
+      const message = caseActionError(cause, `Failed to delete ${deleting.id}`)
+      setBusy(false)
+      setError(message)
+      notify('err', message)
+    }
+  }
+
+  return (
+    <ConfirmDialog
+      open={target !== null}
+      title="Delete case?"
+      body={
+        <span className="flex flex-col gap-2">
+          <span>
+            Permanently delete case <span className="mono text-tx">{target?.id}</span>?
+          </span>
+          <span>
+            The case and its case-owned records will be removed. Linked findings will remain.
+            This cannot be undone.
+          </span>
+          {error && <span role="alert" style={{ color: 'var(--crit)' }}>{error}</span>}
+        </span>
+      }
+      confirmLabel="Delete case"
+      busy={busy}
+      onConfirm={remove}
+      onClose={() => {
+        if (!busy) onClose()
+      }}
+    />
   )
 }
 
@@ -825,7 +939,7 @@ function MergeCaseDialog({ open, c, rows, onClose, onMerged }: { open: boolean; 
 /* ---------------- Export to Timesketch dialog ----------------
    POST /timesketch/export. Requires the Timesketch integration to be
    configured; surfaces the backend error otherwise. */
-function ExportTimesketchDialog({ open, c, onClose }: { open: boolean; c: CaseRow | null; onClose: () => void }) {
+function ExportTimesketchDialog({ open, c, onClose, onConfigure }: { open: boolean; c: CaseRow | null; onClose: () => void; onConfigure: () => void }) {
   const [timeline, setTimeline] = useState('')
   const [sketch, setSketch] = useState('')
   const [busy, setBusy] = useState(false)
@@ -878,7 +992,17 @@ function ExportTimesketchDialog({ open, c, onClose }: { open: boolean; c: CaseRo
             <span>Sketch name <span className="normal-case font-normal text-tx-faint">(new sketch if it doesn't exist)</span></span>
             <input className={inputCls} value={sketch} onChange={(e) => setSketch(e.target.value)} />
           </label>
-          {err && <div className="text-[13px]" style={{ color: 'var(--crit)' }}>{err}</div>}
+          {err && (
+            <EmptyState
+              error
+              compact
+              icon="alert"
+              title="Timesketch export failed"
+              body={err}
+              primary={{ label: 'Configure integrations', onClick: onConfigure, icon: 'link' }}
+              secondary={{ label: 'Retry', onClick: submit, icon: 'refresh' }}
+            />
+          )}
           <div className="flex justify-end gap-2.5">
             <button className="btn ghost" onClick={onClose}>Cancel</button>
             <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Exporting…' : 'Export'}</button>
@@ -896,6 +1020,7 @@ function CasesDetail({
   onSelect,
   onBack,
   openChat,
+  goSettings,
   reloadList,
 }: {
   id: string
@@ -903,15 +1028,18 @@ function CasesDetail({
   onSelect: (id: string) => void
   onBack: () => void
   openChat: (prompt?: string) => void
+  goSettings: ScreenProps['goSettings']
   reloadList: () => void
 }) {
   const { row, created, linked, sev, activities, resolutionSteps, phase, error, reload: reloadDetail } =
     useCaseDetail(id)
+  const { hasPermission } = useAuth()
+  const canDelete = hasPermission('cases.delete')
   // prefer the freshly-fetched detail; fall back to the list row while it loads
   const c = row || rows.find((x) => x.id === id) || null
   const [tab, setTab] = useState<CaseTab>('Overview')
   const [listQuery, setListQuery] = useState('')
-  const [action, setAction] = useState<'edit' | 'merge' | 'export' | null>(null)
+  const [action, setAction] = useState<'edit' | 'merge' | 'export' | 'delete' | null>(null)
 
   const listRows = useMemo(() => {
     const q = listQuery.trim().toLowerCase()
@@ -978,7 +1106,11 @@ function CasesDetail({
         </div>
         <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
           {listRows.length === 0 && (
-            <div className="muted" style={{ padding: '16px 18px', fontSize: 13 }}>No cases match.</div>
+            <div className="muted" style={{ padding: '16px 18px', fontSize: 13 }}>
+              {rows.length === 0
+                ? 'No cases yet. Upload findings or create a case to start case tracking.'
+                : 'No cases match your filters.'}
+            </div>
           )}
           {listRows.map((cr) => (
             <div
@@ -1023,6 +1155,11 @@ function CasesDetail({
                 <button className="btn ghost" onClick={() => setAction('edit')}><Icon name="edit" /> Edit</button>
                 <button className="btn ghost" onClick={() => setAction('merge')}><Icon name="link" /> Merge</button>
                 <button className="btn ghost" onClick={() => setAction('export')}><Icon name="download" /> Timesketch</button>
+                {canDelete && (
+                  <button className="btn danger" onClick={() => setAction('delete')}>
+                    <Icon name="trash" /> Delete case
+                  </button>
+                )}
                 <button className="btn primary to-vigil-case" onClick={() => openChat(casePrompt(c))}><Icon name="brain" /> Open in Vigil</button>
               </div>
             </div>
@@ -1065,6 +1202,15 @@ function CasesDetail({
         open={action === 'export'}
         c={c}
         onClose={() => setAction(null)}
+        onConfigure={() => goSettings('integrations')}
+      />
+      <DeleteCaseDialog
+        target={action === 'delete' ? c : null}
+        onClose={() => setAction(null)}
+        onDeleted={() => {
+          reloadList()
+          onBack()
+        }}
       />
     </div>
   )

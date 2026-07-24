@@ -1,0 +1,16 @@
+node_modules/
+dist/
+release/
+
+# The repo root ignores build/, which would swallow our icon set — and
+# electron-builder.yml needs it to package the app. A deeper .gitignore wins.
+!/build/
+
+# Staged from the pinned backend image by scripts/prepare-standalone.js at build
+# time — generated, never hand-edited. The docker-compose.yml and initdb/ beside
+# them ARE source.
+standalone/db-init/
+standalone/bifrost-config.json
+# Optional offline image tarball (~600MB), produced by scripts/bundle-image.sh
+# for a no-registry-access build. Never committed.
+standalone/backend-image.tar.gz

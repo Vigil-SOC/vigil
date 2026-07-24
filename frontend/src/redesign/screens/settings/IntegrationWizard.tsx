@@ -19,11 +19,13 @@ import {
 interface Props {
   integration: IntegrationMetadata
   existingConfig?: Record<string, unknown>
+  // Per-field {secretField: isSet} from the backend — booleans only, no values.
+  secretsSet?: Record<string, boolean>
   onClose: () => void
   onSave: (id: string, config: Record<string, unknown>) => Promise<void>
 }
 
-export default function IntegrationWizard({ integration, existingConfig = {}, onClose, onSave }: Props) {
+export default function IntegrationWizard({ integration, existingConfig = {}, secretsSet = {}, onClose, onSave }: Props) {
   const [config, setConfig] = useState<Record<string, unknown>>(existingConfig)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -69,9 +71,14 @@ export default function IntegrationWizard({ integration, existingConfig = {}, on
       )
     }
     if (f.type === 'password') {
+      const saved = secretsSet[f.name] === true
       return (
         <Field key={f.name} label={f.label} hint={f.helpText}>
-          <PasswordInput value={String(value)} placeholder={f.placeholder} onChange={(e) => set(f.name, e.target.value)} />
+          <PasswordInput
+            value={String(value)}
+            placeholder={saved ? '•••••••• saved — leave blank to keep' : f.placeholder}
+            onChange={(e) => set(f.name, e.target.value)}
+          />
         </Field>
       )
     }
@@ -82,14 +89,20 @@ export default function IntegrationWizard({ integration, existingConfig = {}, on
     )
   }
 
-  const requiredOk = fields
-    .filter((f) => f.required)
-    .every((f) => {
-      const v = config[f.name] ?? f.default
-      return v !== undefined && v !== ''
-    })
+  // A stored secret satisfies its required-check (it comes back redacted and is
+  // kept when left blank) — key off the per-field "is set" signal, not the value.
+  const missingRequired = fields.filter((f) => {
+    if (!f.required) return false
+    const v = config[f.name] ?? f.default
+    const hasValue = v !== undefined && v !== ''
+    return !hasValue && !(f.type === 'password' && secretsSet[f.name] === true)
+  })
 
   const handleSave = async () => {
+    if (missingRequired.length) {
+      setError(`Please fill in: ${missingRequired.map((f) => f.label).join(', ')}`)
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -131,7 +144,7 @@ export default function IntegrationWizard({ integration, existingConfig = {}, on
 
         <div className="flex justify-end gap-2.5 mt-1">
           <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
-          <button className="btn primary" onClick={handleSave} disabled={!requiredOk || saving}>
+          <button className="btn primary" onClick={handleSave} disabled={saving}>
             <Icon name="check2" /> {saving ? 'Saving…' : 'Save Configuration'}
           </button>
         </div>
