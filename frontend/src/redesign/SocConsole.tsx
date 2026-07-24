@@ -52,6 +52,44 @@ const SCREEN_PERMS: Partial<Record<ScreenKey, string>> = {
   settings: 'settings.read',
 }
 
+/* ---------- resizable chat dock (#401) ----------
+ * The dock width is an operator preference persisted in localStorage and
+ * clamped to a sensible band; on narrow viewports the dock goes full-width and
+ * resizing is disabled. These module-level helpers back that behaviour. */
+const CHAT_MIN_WIDTH = 360
+const CHAT_MAX_WIDTH = 720
+const CHAT_DEFAULT_WIDTH = 420
+const CHAT_WIDTH_STORAGE_KEY = 'soc.chat.width.v1'
+
+/** Clamp a requested dock width to the [min, max] band (rounded to a whole px). */
+function clampChatPreference(width: number): number {
+  return Math.min(CHAT_MAX_WIDTH, Math.max(CHAT_MIN_WIDTH, Math.round(width)))
+}
+
+/** Largest dock width allowed for a viewport — never more than half the screen
+ *  (so the main canvas stays usable) and never beyond the hard max. */
+function chatMaxForViewport(viewportWidth: number): number {
+  return Math.min(
+    CHAT_MAX_WIDTH,
+    Math.max(CHAT_MIN_WIDTH, Math.floor(viewportWidth * 0.5)),
+  )
+}
+
+/** Restore the persisted dock-width preference, clamped; default when unset or
+ *  when localStorage is unavailable. */
+function readChatWidth(): number {
+  try {
+    const raw = localStorage.getItem(CHAT_WIDTH_STORAGE_KEY)
+    if (raw) {
+      const parsed = Number.parseInt(raw, 10)
+      if (Number.isFinite(parsed)) return clampChatPreference(parsed)
+    }
+  } catch {
+    /* localStorage unavailable — fall through to the default */
+  }
+  return CHAT_DEFAULT_WIDTH
+}
+
 export default function SocConsole() {
   // the theme provider is the single source of truth for mode + accent + bg,
   // read here and written from the Appearance settings page; it must wrap the inner
