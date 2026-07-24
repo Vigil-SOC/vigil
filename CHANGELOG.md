@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.4.0](https://github.com/Vigil-SOC/vigil/compare/v0.3.0...v0.4.0) (2026-07-24)
+
+
+### Features
+
+* **auth:** harden authentication for production readiness ([#361](https://github.com/Vigil-SOC/vigil/issues/361)) ([201173a](https://github.com/Vigil-SOC/vigil/commit/201173a90534ad4f2d237f24b178405866cbc372))
+* **cases:** add guarded per-case deletion ([#402](https://github.com/Vigil-SOC/vigil/issues/402)) ([8659257](https://github.com/Vigil-SOC/vigil/commit/8659257ba970b17cd70ec62e44a4c0ea6774c578))
+* **findings:** render structured source evidence ([#404](https://github.com/Vigil-SOC/vigil/issues/404)) ([ba90f1b](https://github.com/Vigil-SOC/vigil/commit/ba90f1b7545f5c65110275fd48d206560d7dbfe0))
+* **llm:** native OpenAI-format agentic loop across chat, daemon, and workflows ([#357](https://github.com/Vigil-SOC/vigil/issues/357)) ([94ad791](https://github.com/Vigil-SOC/vigil/commit/94ad791d2b2be869dbd8d7407166e0a247f857a1))
+* local Ollama enrichment recovery (settings + implementation) ([#435](https://github.com/Vigil-SOC/vigil/issues/435)) ([df7095d](https://github.com/Vigil-SOC/vigil/commit/df7095db526f9dd5c2b60216c4667760a986656c))
+* **loglm:** page-extension host, authenticated MCP, and pgvector embeddings ([#398](https://github.com/Vigil-SOC/vigil/issues/398)) ([709da6a](https://github.com/Vigil-SOC/vigil/commit/709da6a0556f0cc336a2ee4c7c66c9bff7c38cda))
+* **redesign:** make assistant dock resizable ([#401](https://github.com/Vigil-SOC/vigil/issues/401)) ([e555120](https://github.com/Vigil-SOC/vigil/commit/e5551208d54038b45dc17d819120d697e4fb18b8))
+* **theme:** add Background tweak deriving full ramp from base ([#372](https://github.com/Vigil-SOC/vigil/issues/372)) ([6befe9d](https://github.com/Vigil-SOC/vigil/commit/6befe9d954e0f5b501bd58505791361f98495920))
+* Vigil desktop app + first-run bootstrap + provider-URL SSRF hardening ([#397](https://github.com/Vigil-SOC/vigil/issues/397)) ([d8229e8](https://github.com/Vigil-SOC/vigil/commit/d8229e8a171b234323454953017ef055be425b9a))
+
+
+### Bug Fixes
+
+* **agents:** approval-gate vendor MCP action tools ([#399](https://github.com/Vigil-SOC/vigil/issues/399)) ([2205e94](https://github.com/Vigil-SOC/vigil/commit/2205e94f8e89fb97ac1d8aff1a271e3fd67b5b4a))
+* **chat:** hide embedding models from the chat picker ([#434](https://github.com/Vigil-SOC/vigil/issues/434)) ([e3e9520](https://github.com/Vigil-SOC/vigil/commit/e3e952070046ac64a682f8562ad26c131b220325)), closes [#433](https://github.com/Vigil-SOC/vigil/issues/433)
+* **chat:** self-heal stale/removed model selection ([#385](https://github.com/Vigil-SOC/vigil/issues/385)) ([4589edd](https://github.com/Vigil-SOC/vigil/commit/4589edda5cea3db7bc72dd90473f4c26b17268da))
+* **chat:** show non-Anthropic models in picker ([#432](https://github.com/Vigil-SOC/vigil/issues/432)) ([d2f5339](https://github.com/Vigil-SOC/vigil/commit/d2f5339c6f6f4305274efdfc21205ba7abb9b40e)), closes [#409](https://github.com/Vigil-SOC/vigil/issues/409)
+* **db:** enable pgvector extension before create_all() ([#407](https://github.com/Vigil-SOC/vigil/issues/407)) ([b02fc5e](https://github.com/Vigil-SOC/vigil/commit/b02fc5ef65222681b11738ee7cb7a39251390a84)), closes [#406](https://github.com/Vigil-SOC/vigil/issues/406)
+* **frontend:** Corrects Bug: Frontend chat drawer only lists anthropic models [#409](https://github.com/Vigil-SOC/vigil/issues/409) ([#412](https://github.com/Vigil-SOC/vigil/issues/412)) ([f83c2eb](https://github.com/Vigil-SOC/vigil/commit/f83c2ebfae96ba13aefdb64c0b8314a3cf7b7a88))
+* **logs:** don't crash backend when logs dir isn't writable ([#382](https://github.com/Vigil-SOC/vigil/issues/382)) ([22078a4](https://github.com/Vigil-SOC/vigil/commit/22078a445515bcc39650918f66439445bfb86437)), closes [#376](https://github.com/Vigil-SOC/vigil/issues/376)
+* **mcp:** pin mcp-remote to &gt;=0.1.16 to close CVE-2025-6514 ([#390](https://github.com/Vigil-SOC/vigil/issues/390)) ([b2fcaf5](https://github.com/Vigil-SOC/vigil/commit/b2fcaf58142b2956c73607d2393ed4dcb4d3e893))
+* **redesign:** define missing chat-dock width helpers ([#438](https://github.com/Vigil-SOC/vigil/issues/438)) ([6f4b0df](https://github.com/Vigil-SOC/vigil/commit/6f4b0df660a9cdf6712c72e18cdc6366f38cec9e))
+* **redesign:** scope Escape to topmost dialog layer ([#400](https://github.com/Vigil-SOC/vigil/issues/400)) ([79b4343](https://github.com/Vigil-SOC/vigil/commit/79b43436acb3608bab6dfbd580f139c16ccde326))
+* repair stale setup docs and dev-bootstrap provisioning ([#375](https://github.com/Vigil-SOC/vigil/issues/375)) ([0b3bb1c](https://github.com/Vigil-SOC/vigil/commit/0b3bb1caf2bc3b8f10c6d12851a8d23842ce1220))
+* **scripts:** correct daemon frontend.pid path ([#384](https://github.com/Vigil-SOC/vigil/issues/384)) ([d273d23](https://github.com/Vigil-SOC/vigil/commit/d273d23dc58f01157d05e8531a30bdce04219dd9))
+
 ## [0.3.0](https://github.com/Vigil-SOC/vigil/compare/v0.2.3...v0.3.0) (2026-06-26)
 
 
