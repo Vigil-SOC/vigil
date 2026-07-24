@@ -1106,7 +1106,11 @@ function CasesDetail({
         </div>
         <div style={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
           {listRows.length === 0 && (
-            <div className="muted" style={{ padding: '16px 18px', fontSize: 13 }}>No cases match.</div>
+            <div className="muted" style={{ padding: '16px 18px', fontSize: 13 }}>
+              {rows.length === 0
+                ? 'No cases yet. Upload findings or create a case to start case tracking.'
+                : 'No cases match your filters.'}
+            </div>
           )}
           {listRows.map((cr) => (
             <div

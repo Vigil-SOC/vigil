@@ -7,7 +7,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
-  ConfirmDialog,
   Field,
   NumberInput,
   Select,
@@ -94,11 +93,9 @@ interface NumOpts {
 }
 
 export default function AutoInvestigateSection({ notify }: SectionProps) {
-  const { config, setConfig, status, models, phase, save, purgeAll } = useOrchestrator()
+  const { config, setConfig, status, models, phase, save } = useOrchestrator()
   const lastSaved = useRef<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
   const [advanced, setAdvanced] = useState(false)
-  const [confirmPurge, setConfirmPurge] = useState(false)
-  const [purging, setPurging] = useState(false)
 
   // sync the "last saved" baseline whenever a fresh config loads
   useEffect(() => {
@@ -137,19 +134,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
     applyAndSave({
       auto_assign_severities: cur.includes(sev) ? cur.filter((s) => s !== sev) : [...cur, sev],
     })
-  }
-
-  const handlePurge = async () => {
-    setPurging(true)
-    try {
-      const deleted = await purgeAll()
-      notify('ok', `Cleared ${deleted} investigation${deleted === 1 ? '' : 's'}.`)
-      setConfirmPurge(false)
-    } catch {
-      notify('err', 'Failed to clear investigations.')
-    } finally {
-      setPurging(false)
-    }
   }
 
   const numField = (label: string, field: keyof OrchestratorConfig, opts: NumOpts = {}) => {
@@ -210,11 +194,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       <SettingsCard
         title="Auto Investigate"
         desc="Runtime toggles for the autonomous investigation orchestrator. Changes save automatically and take effect across backend / daemon / llm-worker within ~60 seconds."
-        actions={
-          <button className="btn danger" onClick={() => setConfirmPurge(true)}>
-            <Icon name="trash" /> Clear All Investigations
-          </button>
-        }
       >
         {status && (
           <div className={`settings-banner ${status.enabled ? 'ok' : 'info'} mb-4`}>
@@ -393,16 +372,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           <span className="text-xs text-tx-3">Hidden — click Show to fine-tune limits.</span>
         )}
       </SettingsCard>
-
-      <ConfirmDialog
-        open={confirmPurge}
-        title="Clear all auto-investigations?"
-        body="This will kill any running investigations and permanently delete all investigation records, logs, and working directories. This cannot be undone."
-        confirmLabel="Clear all"
-        busy={purging}
-        onConfirm={handlePurge}
-        onClose={() => setConfirmPurge(false)}
-      />
     </>
   )
 }

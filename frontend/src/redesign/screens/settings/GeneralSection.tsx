@@ -1,24 +1,30 @@
 /* ============================================================
    Settings · General — auto-sync / notifications / keyring toggles,
-   destructive "clear all findings", and always-on Mempalace health.
+   destructive data cleanup controls, and always-on Mempalace health.
    Mirrors the legacy Settings.tsx "general" tab. (Cost Analytics
    embed from the legacy tab is deferred — see REDESIGN_GAPS.md.)
    ============================================================ */
 import { useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog, SettingsCard, ToggleRow } from '../../shared/ui'
-import { findingsApi, mcpApi } from '../../../services/api'
+import { casesApi, findingsApi, mcpApi, orchestratorApi } from '../../../services/api'
 import { notificationService } from '../../../services/notifications'
+import { useAuth } from '../../../contexts/AuthContext'
 import { useGeneralSettings, useMempalaceHealth } from './useSettings'
 import CostAnalyticsCard from './CostAnalyticsCard'
 import type { SectionProps } from './types'
 
+type ClearAction = 'findings' | 'investigations' | 'cases' | 'workspace'
+
 export default function GeneralSection({ notify }: SectionProps) {
   const { config, setConfig, phase, error, reload, save } = useGeneralSettings()
   const { health, loading: healthLoading, reload: reloadHealth } = useMempalaceHealth()
+  const { hasPermission } = useAuth()
+  const canDeleteFindings = hasPermission('findings.delete')
+  const canDeleteCases = hasPermission('cases.delete')
 
   const [saving, setSaving] = useState(false)
-  const [confirmClear, setConfirmClear] = useState(false)
+  const [clearAction, setClearAction] = useState<ClearAction | null>(null)
   const [clearing, setClearing] = useState(false)
   const [testing, setTesting] = useState(false)
 
@@ -62,14 +68,45 @@ export default function GeneralSection({ notify }: SectionProps) {
   }
 
   const handleClear = async () => {
+    if (!clearAction) return
     setClearing(true)
     try {
-      const res = await findingsApi.deleteAll()
-      const count = (res.data as { deleted_count?: number })?.deleted_count
-      notify('ok', count != null ? `Cleared ${count} findings.` : 'All findings cleared.')
-      setConfirmClear(false)
+      if (clearAction === 'findings') {
+        const res = await findingsApi.deleteAll()
+        const data = res.data as { deleted?: number; deleted_count?: number }
+        const count = data.deleted ?? data.deleted_count
+        notify('ok', count != null ? `Cleared ${count} findings.` : 'All findings cleared.')
+      } else if (clearAction === 'investigations') {
+        const res = await orchestratorApi.purgeAll()
+        const count = (res.data as { deleted?: number })?.deleted
+        notify('ok', count != null ? `Cleared ${count} investigations.` : 'All investigations cleared.')
+      } else if (clearAction === 'cases') {
+        const res = await casesApi.deleteAll()
+        const count = (res.data as { deleted?: number })?.deleted
+        notify('ok', count != null ? `Cleared ${count} cases and case metrics.` : 'Cases and metrics cleared.')
+      } else {
+        const failed: string[] = []
+        for (const [label, clear] of [
+          ['investigations', () => orchestratorApi.purgeAll()],
+          ['cases', () => casesApi.deleteAll()],
+          ['findings', () => findingsApi.deleteAll()],
+        ] as const) {
+          try {
+            await clear()
+          } catch {
+            failed.push(label)
+          }
+        }
+        if (failed.length) {
+          notify('err', `Workspace cleanup completed, but failed to clear ${failed.join(', ')}.`)
+        } else {
+          notify('ok', 'Workspace data cleared.')
+        }
+      }
+      setClearAction(null)
+      reloadHealth()
     } catch (e) {
-      notify('err', (e as { message?: string })?.message || 'Failed to clear findings.')
+      notify('err', (e as { message?: string })?.message || 'Failed to clear data.')
     } finally {
       setClearing(false)
     }
@@ -123,15 +160,35 @@ export default function GeneralSection({ notify }: SectionProps) {
 
       <SettingsCard
         title="Data Management"
-        desc="Clear all findings from the database to start fresh."
+        desc="Clear generated findings, investigations, cases, and metrics while preserving configuration."
       >
-        <button
-          className="btn danger"
-          onClick={() => setConfirmClear(true)}
-          disabled={clearing}
-        >
-          <Icon name="trash" /> {clearing ? 'Clearing…' : 'Clear All Findings'}
-        </button>
+        <div className="flex gap-2 flex-wrap">
+          {canDeleteFindings && (
+            <button className="btn danger" onClick={() => setClearAction('findings')} disabled={clearing}>
+              <Icon name="trash" /> Clear Findings
+            </button>
+          )}
+          {canDeleteFindings && (
+            <button className="btn danger" onClick={() => setClearAction('investigations')} disabled={clearing}>
+              <Icon name="trash" /> Clear Investigations
+            </button>
+          )}
+          {canDeleteCases && (
+            <button className="btn danger" onClick={() => setClearAction('cases')} disabled={clearing}>
+              <Icon name="trash" /> Clear Cases &amp; Metrics
+            </button>
+          )}
+          {canDeleteCases && canDeleteFindings && (
+            <button className="btn danger" onClick={() => setClearAction('workspace')} disabled={clearing}>
+              <Icon name="trash" /> Clear Workspace Data
+            </button>
+          )}
+          {!canDeleteFindings && !canDeleteCases && (
+            <span className="text-sm text-tx-3">
+              You do not have permission to clear workspace data.
+            </span>
+          )}
+        </div>
       </SettingsCard>
 
       <CostAnalyticsCard />
@@ -193,14 +250,44 @@ export default function GeneralSection({ notify }: SectionProps) {
       </SettingsCard>
 
       <ConfirmDialog
-        open={confirmClear}
-        title="Clear All Findings?"
-        body="This will permanently delete all findings from the database. This action cannot be undone."
-        confirmLabel="Yes, clear all"
+        open={clearAction != null}
+        title={clearDialogTitle(clearAction)}
+        body={clearDialogBody(clearAction)}
+        confirmLabel="Yes, clear"
         busy={clearing}
         onConfirm={handleClear}
-        onClose={() => setConfirmClear(false)}
+        onClose={() => setClearAction(null)}
       />
     </>
   )
+}
+
+function clearDialogTitle(action: ClearAction | null): string {
+  switch (action) {
+    case 'findings':
+      return 'Clear findings?'
+    case 'investigations':
+      return 'Clear investigations?'
+    case 'cases':
+      return 'Clear cases and metrics?'
+    case 'workspace':
+      return 'Clear workspace data?'
+    default:
+      return 'Clear data?'
+  }
+}
+
+function clearDialogBody(action: ClearAction | null): string {
+  switch (action) {
+    case 'findings':
+      return 'This will permanently delete all findings from the database. Cases and settings are not deleted.'
+    case 'investigations':
+      return 'This will kill running investigations and permanently delete investigation records, logs, and working directories.'
+    case 'cases':
+      return 'This will permanently delete all cases and case-derived metrics. Findings and settings are not deleted.'
+    case 'workspace':
+      return 'This will permanently delete generated findings, investigations, cases, and case-derived metrics. Users, providers, integrations, credentials, and settings are preserved.'
+    default:
+      return 'This action cannot be undone.'
+  }
 }

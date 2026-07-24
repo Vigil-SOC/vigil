@@ -235,6 +235,8 @@ export const casesApi = {
   }) => api.patch(`/cases/${id}`, data),
   
   delete: (id: string) => api.delete(`/cases/${id}`),
+
+  deleteAll: () => api.delete('/cases/all'),
   
   addActivity: (id: string, data: {
     activity_type: string
