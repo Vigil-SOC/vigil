@@ -1,8 +1,8 @@
 // frontend/src/redesign/screens/setup/ModelAssignmentDialog.tsx
 //
-// Setup step panel — assigns models per component, mirroring Settings → AI Config.
+// Setup step panel — assign models per component (mirrors Settings → AI Config).
 // chat_default is the required base every unset component inherits; the rest are
-// optional overrides. Any assignment satisfies the model-assignment step.
+// optional overrides.
 import { useEffect, useState } from 'react'
 import { Field, Select } from '../../shared/ui'
 import { Banner, StepFooter, useSaveAction } from '../../shared/formKit'
@@ -40,9 +40,8 @@ const ModelAssignmentDialog = ({ onClose, onSaved }: Props) => {
         setModels(modelsRes.status === 'fulfilled' ? modelsRes.value.data.models || [] : [])
         const cfg = cfgRes.status === 'fulfilled' ? cfgRes.value.data : null
         const raw = cfg?.components?.length ? cfg.components : Object.keys(COMPONENT_LABELS)
-        // chat_default is rendered and validated unconditionally, so keep it in
-        // the list the save loop iterates — else a backend list missing it would
-        // validate but never persist the required default.
+        // Keep chat_default in the saved list even if the backend omits it —
+        // it's rendered and validated unconditionally, so it must persist.
         const comps = raw.includes(CHAT_DEFAULT_KEY) ? raw : [CHAT_DEFAULT_KEY, ...raw]
         setComponents(comps)
         const next: Record<string, string> = {}
@@ -85,8 +84,7 @@ const ModelAssignmentDialog = ({ onClose, onSaved }: Props) => {
   }
 
   const save = () => {
-    // Validate on click instead of disabling Save with no explanation. chat_default
-    // is required — it's the base every unset component falls back to.
+    // Validate on click rather than disabling Save with no explanation.
     if (!(rows[CHAT_DEFAULT_KEY] || '').includes(SEP)) {
       setSelectError(
         models.length === 0 ? 'Connect an AI provider first.' : 'Pick a default model.',
@@ -100,7 +98,6 @@ const ModelAssignmentDialog = ({ onClose, onSaved }: Props) => {
         const was = initial[c] ?? (c === CHAT_DEFAULT_KEY ? '' : INHERIT)
         if (desired === was) continue
         if (desired === INHERIT) {
-          // switched back to inherit — clear only if a stored assignment existed
           if (was !== INHERIT) ops.push(aiConfigApi.clearComponent(c))
         } else {
           ops.push(aiConfigApi.setComponent(c, parse(desired)))

@@ -1,7 +1,6 @@
 // frontend/src/setup/setupSteps.ts
 //
-// The setup-checklist registry: pure data + readiness predicates, no JSX.
-// useSetupChecklist feeds these predicates live backend state.
+// The setup-checklist registry: step data + readiness predicates (no JSX).
 import { INTEGRATIONS } from '../config/integrations'
 import type { LLMProvider, AIConfigResponse, BudgetSettings } from '../services/api'
 
@@ -28,7 +27,6 @@ export const DATA_SOURCE_CATALOG_IDS = new Set<string>(
 
 // --- Normalized backend state the predicates read -------------------------
 
-// One snapshot of everything the checklist derives from (each source fail-open).
 export interface SetupState {
   providers: LLMProvider[]
   enabledIntegrations: string[]
@@ -54,18 +52,15 @@ export type SetupStepId =
   | 'cost-guardrails'
   | 'autonomy'
 
-// Gating tier: 'required' drives the hard gate (today: only the LLM provider);
-// 'recommended' is strongly nudged but skippable; 'optional' is nice-to-have.
+// 'required' drives the hard gate; 'recommended' is nudged but skippable.
 export type SetupTier = 'required' | 'recommended' | 'optional'
 
-// Shell-agnostic Settings section key — each shell builds its own navigation to it.
 export type SettingsSection = 'ai-config' | 'integrations' | 'autoinvestigate'
 
 export interface SetupStep {
   id: SetupStepId
   label: string
   description: string
-  // Status word shown as a tag once the step is satisfied (replaces the button).
   doneLabel: string
   tier: SetupTier
   settingsSection: SettingsSection

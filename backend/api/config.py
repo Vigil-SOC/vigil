@@ -1223,9 +1223,8 @@ async def set_ai_operations_config(config: AIOperationsSettingsConfig):
 class OrchestratorSettingsConfig(BaseModel):
     """Orchestrator configuration for autonomous investigations."""
 
-    # Autonomous mode is opt-in. This default also feeds ORCHESTRATOR_DEFAULTS,
-    # so GET /config/orchestrator reports disabled until the user turns it on —
-    # matching GET /api/orchestrator/status, which already defaults False.
+    # Opt-in; also feeds ORCHESTRATOR_DEFAULTS. Matches GET /api/orchestrator/status,
+    # which already defaults False.
     enabled: bool = False
     dry_run: bool = False
     auto_assign_findings: bool = True

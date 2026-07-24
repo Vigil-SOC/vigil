@@ -100,9 +100,8 @@ const StepRow = ({
         <div className="text-tx text-sm font-medium">{step.label}</div>
         <div className="text-tx-3 text-xs mt-0.5">{step.description}</div>
       </div>
-      {/* The action stays interactive even once the step is satisfied, so a
-          completed step can be reopened and changed. Ready + collapsed shows the
-          done tag next to a "Change" button; the ✓ ring is the standing cue. */}
+      {/* Stays interactive when satisfied, so a done step can be reopened.
+          Ready + collapsed shows the done tag beside a "Change" button. */}
       <div className="shrink-0 flex items-center gap-2">
         {step.ready && !expanded && (
           <span className="whitespace-nowrap text-ok text-xs font-medium">{step.doneLabel}</span>

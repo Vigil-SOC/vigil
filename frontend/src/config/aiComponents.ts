@@ -1,8 +1,7 @@
 // frontend/src/config/aiComponents.ts
 //
-// Display labels for the backend's assignable AI components (the ids come from
-// services/model_registry.py COMPONENTS). Shared by the AI Config settings panel
-// and the setup wizard's model-assignment step so the two can't drift.
+// Display labels for the backend AI components (ids: services/model_registry.py
+// COMPONENTS). Shared by AI Config settings + the setup wizard so they can't drift.
 export const CHAT_DEFAULT_KEY = 'chat_default'
 
 export const COMPONENT_LABELS: Record<string, { label: string; description: string }> = {

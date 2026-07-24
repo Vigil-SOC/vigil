@@ -1,9 +1,8 @@
 // frontend/src/hooks/useSetupChecklist.ts
 //
-// Soft-checklist state: fetches every domain the setup steps read and runs each
-// readiness predicate. Purely additive — the hard gate lives in useSetupStatus /
-// SetupGate. `requiredReady` / `incompleteCount` are scaffolding for a planned
-// dashboard nudge, currently exercised only by tests.
+// Soft-checklist state: runs each step's readiness predicate over fetched state.
+// Purely additive — the hard gate lives in useSetupStatus / SetupGate.
+// `requiredReady` / `incompleteCount` feed a planned dashboard nudge (tests only).
 import { useCallback, useEffect, useState } from 'react'
 import { llmProviderApi, aiConfigApi, budgetsApi, configApi } from '../services/api'
 import {

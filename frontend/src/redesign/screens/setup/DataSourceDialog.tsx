@@ -1,7 +1,6 @@
 // frontend/src/redesign/screens/setup/DataSourceDialog.tsx
 //
-// Setup step panel — pick a telemetry source, enter credentials, connect. Picking
-// one opens IntegrationWizard; save persists creds then enables the MCP server.
+// Setup step panel — pick a telemetry source, enter credentials, connect.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import IntegrationWizard from '../settings/IntegrationWizard'
 import type { IntegrationMetadata } from '../../../components/settings/IntegrationWizard'
@@ -88,7 +87,6 @@ const DataSourceDialog = ({ onSaved }: Props) => {
     )
   }, [dataSources, query])
 
-  // Persist creds, then connect. Throwing surfaces in the wizard's error banner.
   const handleSave = async (id: string, config: Record<string, unknown>) => {
     const cur = cfg.current
     const integrations = { ...cur.integrations, [id]: config }
