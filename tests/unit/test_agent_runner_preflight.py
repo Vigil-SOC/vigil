@@ -76,7 +76,11 @@ def _stub_estimate(high_usd: float, low_usd: float = 0.0, source: str = "exact")
 
 
 def _run(coro):
-    return asyncio.get_event_loop().run_until_complete(coro)
+    # asyncio.run() creates, drives, and closes its own event loop, so this is
+    # robust regardless of whether a prior test left a current loop set. On
+    # Python 3.13, asyncio.get_event_loop() raises when no loop is current —
+    # which happened once an async test file ran earlier in the session (#442).
+    return asyncio.run(coro)
 
 
 def test_preflight_proceeds_when_estimate_fits_budget():
