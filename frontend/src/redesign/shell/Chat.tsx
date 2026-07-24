@@ -622,7 +622,8 @@ export default function Chat({
             } catch {
               continue
             }
-            if (ev.error) throw new Error(ev.error)
+            if (ev.error || ev.type === 'error')
+              throw new Error(ev.error || ev.content || 'stream error')
             if (ev.type === 'thinking_start') {
               setIsThinking(true)
               curThinking = ''
