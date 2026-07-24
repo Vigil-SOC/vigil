@@ -7,7 +7,7 @@ import type { LLMProvider, AIConfigResponse, BudgetSettings } from '../services/
 
 // --- Data-source identification -------------------------------------------
 
-// Categories whose connected integrations mean Vigil is actually being fed
+// Categories whose configured integrations mean Vigil is actually being fed
 // telemetry. Enrichment / output / identity / sandbox / forensics are excluded.
 export const DATA_SOURCE_CATEGORIES = new Set<string>([
   'SIEM',
@@ -17,32 +17,21 @@ export const DATA_SOURCE_CATEGORIES = new Set<string>([
   'Data Pipeline',
 ])
 
-// MCP connection names are mcp-config.json keys, which drift from catalog ids
-// for a few real data-source servers. Keep in sync when mcp-config.json gains a
-// data-source server whose key differs from its catalog id. (Verified 2026-06-18.)
-export const MCP_ONLY_DATA_SOURCE_IDS = [
-  'elastic', // catalog id: elastic-siem (SIEM)
-  'splunk-selfhosted', // SIEM, no catalog entry
-  'aws-security', // catalog id: aws-security-hub (Cloud Security)
-  'gcp-scc', // catalog id: gcp-security (Cloud Security)
-] as const
-
-export const DATA_SOURCE_SERVER_IDS = new Set<string>([
-  ...INTEGRATIONS.filter((i) => DATA_SOURCE_CATEGORIES.has(i.category)).map((i) => i.id),
-  ...MCP_ONLY_DATA_SOURCE_IDS,
-])
+// Catalog ids of every data-source integration. Readiness keys off the user's
+// enabled_integrations (catalog ids) — NOT live MCP connectivity: several
+// data-source servers are keyless stdio processes that boot (and so report
+// "connected") with no credentials, which would flip this step to done before
+// the user connected anything.
+export const DATA_SOURCE_CATALOG_IDS = new Set<string>(
+  INTEGRATIONS.filter((i) => DATA_SOURCE_CATEGORIES.has(i.category)).map((i) => i.id),
+)
 
 // --- Normalized backend state the predicates read -------------------------
-
-export interface McpConnection {
-  name: string
-  connected: boolean
-}
 
 // One snapshot of everything the checklist derives from (each source fail-open).
 export interface SetupState {
   providers: LLMProvider[]
-  connections: McpConnection[]
+  enabledIntegrations: string[]
   assignments: AIConfigResponse['assignments']
   budget: BudgetSettings | null
   orchestratorEnabled: boolean
@@ -50,7 +39,7 @@ export interface SetupState {
 
 export const emptySetupState = (): SetupState => ({
   providers: [],
-  connections: [],
+  enabledIntegrations: [],
   assignments: {},
   budget: null,
   orchestratorEnabled: false,
@@ -102,8 +91,7 @@ export const SETUP_STEPS: SetupStep[] = [
     doneLabel: 'Connected',
     tier: 'recommended',
     settingsSection: 'integrations',
-    selectReady: (s) =>
-      s.connections.some((c) => c.connected && DATA_SOURCE_SERVER_IDS.has(c.name)),
+    selectReady: (s) => s.enabledIntegrations.some((id) => DATA_SOURCE_CATALOG_IDS.has(id)),
   },
   {
     id: 'model-assignment',
