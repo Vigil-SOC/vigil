@@ -4,39 +4,30 @@ import asyncio
 import json
 import logging
 import time
-import uuid
 from collections import deque
 from typing import Any, AsyncIterator, Dict, List, Optional, Set
 
 from services import tool_manager
+# The provider-agnostic loop skeleton (guards, backoff, loop-detection, tool
+# exec/approval orchestration, telemetry) now lives in services.agent_loop. This
+# service supplies the OpenAI TurnEngine plus the tool-execution runtime the
+# controller calls back into. Several private names are re-exported here so
+# existing imports (and their tests) keep resolving from this module.
+from services.agent_loop import (_HISTORY_WINDOW_DEFAULT,  # noqa: F401
+                                 _LOOP_DETECT_THRESHOLD, LoopController,
+                                 OpenAITurnEngine, PendingApprovalError,
+                                 _canonical_args, _detect_infinite_loop)
 from services.llm_format import anthropic_tools_to_openai
-from services.llm_router import LLMRouter, ProviderSpec
+from services.llm_router import ProviderSpec
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["OpenAIAgentService", "anthropic_tools_to_openai"]
+__all__ = ["OpenAIAgentService", "PendingApprovalError", "anthropic_tools_to_openai"]
 
-_MAX_TOOL_ITERATIONS = 30
-_MAX_PROCESSING_TIME_S = 300.0
 _TOOL_TIMEOUT_S = 30.0
 _MAX_TOOL_RESPONSE_CHARS = 50_000
-_HISTORY_WINDOW_DEFAULT = 20
-_LOOP_DETECT_WINDOW = 5
-_LOOP_DETECT_THRESHOLD = 3
-_BASE_INTER_ITERATION_DELAY_S = 0.5
-_MAX_INTER_ITERATION_DELAY_S = 3.0
-_BACKOFF_ITERATION_THRESHOLD = 15
 _APPROVAL_POLL_INTERVAL_S = 5.0
 _APPROVAL_WAIT_TIMEOUT_S = 600.0
-
-
-class PendingApprovalError(Exception):
-    """Tool call blocked pending human approval; action_id is the queue row to
-    poll, or None when the request could not be created."""
-
-    def __init__(self, message: str, action_id: Optional[str] = None):
-        super().__init__(message)
-        self.action_id = action_id
 
 
 def _truncate(text: str, max_chars: int = _MAX_TOOL_RESPONSE_CHARS) -> str:
@@ -44,31 +35,6 @@ def _truncate(text: str, max_chars: int = _MAX_TOOL_RESPONSE_CHARS) -> str:
         return text
     omitted = len(text) - max_chars
     return text[:max_chars] + f"\n...[truncated, {omitted} chars omitted]"
-
-
-def _inter_iteration_delay(iteration: int) -> float:
-    """Exponential backoff matching ClaudeService: 500ms base, ramp after 15."""
-    if iteration <= _BACKOFF_ITERATION_THRESHOLD:
-        return _BASE_INTER_ITERATION_DELAY_S
-    exp = iteration - _BACKOFF_ITERATION_THRESHOLD
-    delay = _BASE_INTER_ITERATION_DELAY_S * (1.5**exp)
-    return min(delay, _MAX_INTER_ITERATION_DELAY_S)
-
-
-def _canonical_args(raw: str) -> str:
-    """Canonicalize tool-call argument JSON for stable loop detection.
-
-    Parse and re-serialize with sorted keys so cosmetic streaming
-    differences (whitespace, key ordering) don't make a repeated call look
-    distinct and defeat the infinite-loop guard. Falls back to the stripped
-    raw string when the arguments aren't valid JSON.
-    """
-    try:
-        return json.dumps(
-            json.loads(raw or "{}"), sort_keys=True, separators=(",", ":")
-        )
-    except (json.JSONDecodeError, TypeError):
-        return (raw or "").strip()
 
 
 class OpenAIAgentService:
@@ -141,27 +107,6 @@ class OpenAIAgentService:
         """
         return bool(self._all_tools_openai_format())
 
-    @staticmethod
-    def _apply_history_window(
-        messages: List[Dict[str, Any]],
-        window: int = _HISTORY_WINDOW_DEFAULT,
-    ) -> List[Dict[str, Any]]:
-        """Enforce a sliding history window (configurable max turns).
-
-        Keeps the system message (if first) + the most recent `window * 2`
-        messages. Matches ClaudeService._apply_history_window behavior.
-        """
-        if window <= 0:
-            return messages
-        max_msgs = window * 2
-        if len(messages) <= max_msgs:
-            return messages
-        # Preserve system message at index 0 if present
-        if messages and messages[0].get("role") == "system":
-            keep = max_msgs - 1
-            return [messages[0]] + messages[-keep:]
-        return messages[-max_msgs:]
-
     async def stream(
         self,
         *,
@@ -193,301 +138,32 @@ class OpenAIAgentService:
             - Infinite loop detection (3 repeated identical tool sets)
         """
         # Stash attribution context for tool gating (approval requests) raised
-        # deep in the loop without threading it through every call.
+        # deep in the loop without threading it through every call. The
+        # controller drives this instance as its ``runtime`` — the approval and
+        # tool-exec callbacks below read these.
         self._session_id = session_id
         self._agent_id = agent_id
 
-        router = LLMRouter()
         model = model or provider.default_model
-
         tools = self._all_tools_openai_format() if enable_tools else []
 
-        from services.llm_format import anthropic_messages_to_openai
-
-        # The loop appends assistant/tool turns in OpenAI shape, so normalize
-        # the incoming history up front; the router re-converts idempotently.
-        oai_messages = anthropic_messages_to_openai(messages)
-        oai_messages = self._apply_history_window(oai_messages, history_window)
-
-        start_time = asyncio.get_event_loop().time()
-
-        # Infinite loop detection state
-        tool_call_history: deque = deque(maxlen=_LOOP_DETECT_WINDOW)
-
-        for iteration in range(_MAX_TOOL_ITERATIONS):
-            elapsed = asyncio.get_event_loop().time() - start_time
-            if elapsed > _MAX_PROCESSING_TIME_S:
-                yield {
-                    "type": "text",
-                    "content": (
-                        "\n\n[Maximum processing time "
-                        f"({_MAX_PROCESSING_TIME_S:.0f}s) exceeded "
-                        f"after {iteration} iterations.]"
-                    ),
-                }
-                break
-
-            if iteration > 0:
-                delay = _inter_iteration_delay(iteration)
-                await asyncio.sleep(delay)
-
-            interaction_id = str(uuid.uuid4())
-
-            # Accumulate streamed response
-            text_buffer = ""
-            tool_calls_buffer: Dict[int, Dict[str, Any]] = {}
-            finish_reason: Optional[str] = None
-            input_tokens = 0
-            output_tokens = 0
-            iter_start = time.monotonic()
-
-            try:
-                async for chunk in router.stream_openai_raw(
-                    provider=provider,
-                    messages=oai_messages,
-                    system_prompt=system_prompt,
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    tools=tools or None,
-                    interaction_id=interaction_id,
-                    # Ask for a final usage-only chunk so token counts (and thus
-                    # cost) are recorded — without this, streamed responses carry
-                    # no usage and analytics would show $0 for OpenAI/Groq/Ollama.
-                    include_usage=True,
-                ):
-                    # The usage-only chunk (include_usage) arrives with an
-                    # empty ``choices`` list, so read usage before skipping it.
-                    usage = getattr(chunk, "usage", None)
-                    if usage:
-                        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
-                        output_tokens = getattr(usage, "completion_tokens", 0) or 0
-                    if not chunk.choices:
-                        continue
-                    choice = chunk.choices[0]
-                    delta = choice.delta
-                    finish_reason = choice.finish_reason or finish_reason
-
-                    if delta and delta.content:
-                        text_buffer += delta.content
-                        yield {"type": "text", "content": delta.content}
-
-                    if delta and delta.tool_calls:
-                        for tc_delta in delta.tool_calls:
-                            idx = tc_delta.index
-                            if idx not in tool_calls_buffer:
-                                tool_calls_buffer[idx] = {
-                                    "id": tc_delta.id or "",
-                                    "name": "",
-                                    "arguments": "",
-                                }
-                            entry = tool_calls_buffer[idx]
-                            if tc_delta.id:
-                                entry["id"] = tc_delta.id
-                            if tc_delta.function:
-                                if tc_delta.function.name:
-                                    entry["name"] += tc_delta.function.name
-                                if tc_delta.function.arguments:
-                                    entry["arguments"] += tc_delta.function.arguments
-
-            except Exception as exc:
-                logger.error("OpenAI stream error iteration %d: %s", iteration, exc)
-                yield {"type": "error", "content": str(exc)}
-                break
-
-            iter_duration_ms = int((time.monotonic() - iter_start) * 1000)
-            cost_usd = self._compute_cost(
-                model, provider.provider_type, input_tokens, output_tokens
-            )
-
-            # Persist interaction log (non-fatal)
-            self._log_interaction(
-                session_id=session_id,
-                agent_id=agent_id,
-                model=f"{provider.provider_type}/{model}",
-                iteration=iteration,
-                interaction_id=interaction_id,
-                duration_ms=iter_duration_ms,
-                text_content=text_buffer,
-                tool_calls_count=len(tool_calls_buffer),
-                finish_reason=finish_reason,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                cost_usd=cost_usd,
-            )
-
-            # No tool calls → done
-            if finish_reason != "tool_calls" or not tool_calls_buffer:
-                # Detect malformed tool calls dumped as text (common with
-                # smaller models that attempt tool use but fail at structured
-                # output). Filter it rather than passing hallucinated JSON.
-                if (
-                    text_buffer
-                    and iteration == 0
-                    and (
-                        '{"type":"function"' in text_buffer
-                        or (
-                            '"function"' in text_buffer
-                            and '"parameters"' in text_buffer
-                        )
-                    )
-                ):
-                    logger.warning(
-                        "Model output contains raw tool-call JSON in text "
-                        "(model may not support structured tool calling)"
-                    )
-                    yield {
-                        "type": "text",
-                        "content": (
-                            "I attempted to use tools but this model doesn't "
-                            "reliably support structured tool calling. Please "
-                            "select a more capable model in Settings > AI Config "
-                            "(e.g., sec8-tools, gpt-4o, or any 7B+ model with "
-                            "tool support)."
-                        ),
-                    }
-                break
-
-            # Build assistant message with tool_calls
-            assistant_msg: Dict[str, Any] = {"role": "assistant"}
-            if text_buffer:
-                assistant_msg["content"] = text_buffer
-            assistant_tool_calls = []
-            for idx in sorted(tool_calls_buffer.keys()):
-                tc = tool_calls_buffer[idx]
-                name = (tc["name"] or "").strip()
-                if not name:
-                    # A tool-call slot that never received a function name is
-                    # unusable — skip it rather than emit a malformed call the
-                    # provider will reject.
-                    logger.warning(
-                        "Skipping tool call %d with empty name (id=%r)", idx, tc["id"]
-                    )
-                    continue
-                assistant_tool_calls.append(
-                    {
-                        # Some providers omit the streamed id; synthesize a stable
-                        # one so tool results can be correlated back to the call.
-                        "id": tc["id"] or f"call_{uuid.uuid4().hex[:12]}",
-                        "type": "function",
-                        "function": {"name": name, "arguments": tc["arguments"]},
-                    }
-                )
-
-            if not assistant_tool_calls:
-                # Every tool-call slot was malformed. Surface any assistant
-                # text and stop rather than loop on an empty turn.
-                if "content" in assistant_msg:
-                    oai_messages.append(assistant_msg)
-                break
-
-            assistant_msg["tool_calls"] = assistant_tool_calls
-            oai_messages.append(assistant_msg)
-
-            # Infinite loop detection (canonicalized args so cosmetic
-            # streaming differences don't defeat repeat detection)
-            call_signature = frozenset(
-                "{}:{}".format(
-                    tc["function"]["name"],
-                    _canonical_args(tc["function"]["arguments"]),
-                )
-                for tc in assistant_tool_calls
-            )
-            tool_call_history.append(call_signature)
-            if self._detect_infinite_loop(tool_call_history):
-                yield {
-                    "type": "text",
-                    "content": (
-                        "\n\n[Stopping: repeated identical tool calls "
-                        "detected (possible infinite loop).]"
-                    ),
-                }
-                break
-
-            # Execute each tool and append results
-            halt = False
-            for tc in assistant_tool_calls:
-                tool_name = tc["function"]["name"]
-                tool_call_id = tc["id"]
-                raw_args = tc["function"]["arguments"]
-
-                yield {
-                    "type": "tool_processing",
-                    "tool_name": tool_name,
-                    "tool_id": tool_call_id,
-                }
-
-                try:
-                    result_text, is_error = await self._execute_tool(
-                        tool_name, raw_args
-                    )
-                except PendingApprovalError as exc:
-                    # Hold the run here until an operator decides, so a run
-                    # never completes with the action un-taken.
-                    yield {
-                        "type": "approval_required",
-                        "tool_name": tool_name,
-                        "tool_id": tool_call_id,
-                        "action_id": exc.action_id,
-                        "content": str(exc),
-                    }
-                    yield {"type": "text", "content": f"\n\n_{exc}_\n\n"}
-                    if not exc.action_id:
-                        # No action to poll — fail closed rather than hang.
-                        yield {"type": "error", "content": str(exc)}
-                        halt = True
-                        break
-                    decision, detail, waited = await self._await_approval(exc.action_id)
-                    # Human think-time isn't LLM processing time.
-                    start_time += waited
-                    if decision == "approved":
-                        result_text, is_error = await self._execute_tool(
-                            tool_name, raw_args, approved=True
-                        )
-                        self._mark_action_executed(exc.action_id, result_text, is_error)
-                    elif decision == "rejected":
-                        result_text, is_error = (
-                            f"Operator REJECTED this action. Reason: {detail}. "
-                            "Do not retry it; continue with another approach or "
-                            "report that the step could not be completed.",
-                            True,
-                        )
-                    else:
-                        yield {"type": "error", "content": detail}
-                        halt = True
-                        break
-
-                preview = result_text[:500] + ("…" if len(result_text) > 500 else "")
-                yield {
-                    "type": "tool_result",
-                    "tool_name": tool_name,
-                    "tool_id": tool_call_id,
-                    "result": preview,
-                    "is_error": is_error,
-                }
-
-                # OpenAI tool messages carry no is_error field, so mark failures
-                # inline — otherwise the model treats an error as a valid result.
-                oai_messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call_id,
-                        "content": (
-                            f"ERROR: {result_text}" if is_error else result_text
-                        ),
-                    }
-                )
-            if halt:
-                return
-        else:
-            # for/else: loop exhausted without break
-            yield {
-                "type": "text",
-                "content": (
-                    f"\n\n[Tool iteration limit ({_MAX_TOOL_ITERATIONS}) "
-                    "reached. Stopping.]"
-                ),
-            }
+        # Provider-specific model I/O lives in the engine; the provider-agnostic
+        # loop skeleton (guards, backoff, loop-detection, tool-exec/approval
+        # orchestration, telemetry) lives in the controller, which calls back
+        # into this service for tool execution, approval, cost, and logging.
+        engine = OpenAITurnEngine(
+            provider=provider,
+            messages=messages,
+            system_prompt=system_prompt,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tools=tools,
+            history_window=history_window,
+        )
+        controller = LoopController(engine=engine, runtime=self)
+        async for event in controller.run(session_id=session_id, agent_id=agent_id):
+            yield event
 
     async def run(
         self,
@@ -533,11 +209,12 @@ class OpenAIAgentService:
 
     @staticmethod
     def _detect_infinite_loop(history: deque) -> bool:
-        """Detect if the same tool call set repeats >= threshold times."""
-        if len(history) < _LOOP_DETECT_THRESHOLD:
-            return False
-        recent = list(history)[-_LOOP_DETECT_THRESHOLD:]
-        return len(set(recent)) == 1
+        """Detect if the same tool call set repeats >= threshold times.
+
+        Kept as a thin passthrough to the controller's implementation so
+        existing callers/tests that reach for it on this class still resolve.
+        """
+        return _detect_infinite_loop(history)
 
     async def _execute_tool(
         self, tool_name: str, raw_arguments: str, *, approved: bool = False
@@ -576,7 +253,8 @@ class OpenAIAgentService:
         """Queue a pending approval instead of executing the tool, returning the
         message for the model and the action id to poll (None if not created)."""
         try:
-            from services.approval_service import ActionType, get_approval_service
+            from services.approval_service import (ActionType,
+                                                   get_approval_service)
 
             service = get_approval_service()
             try:
@@ -622,7 +300,8 @@ class OpenAIAgentService:
         """Poll the approval queue until an operator decides, returning
         ``(decision, detail, waited_seconds)``. A vanished action reads as a
         rejection so an uncleared action never executes."""
-        from services.approval_service import ActionStatus, get_approval_service
+        from services.approval_service import (ActionStatus,
+                                               get_approval_service)
 
         service = get_approval_service()
         started = time.monotonic()
