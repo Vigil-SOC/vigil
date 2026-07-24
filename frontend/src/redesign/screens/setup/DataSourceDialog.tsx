@@ -1,7 +1,6 @@
 // frontend/src/redesign/screens/setup/DataSourceDialog.tsx
 //
-// Setup step panel — pick a telemetry source, enter credentials, connect. Picking
-// one opens IntegrationWizard; save persists creds then enables the MCP server.
+// Setup step panel — pick a telemetry source, enter credentials, connect.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import IntegrationWizard from '../settings/IntegrationWizard'
 import type { IntegrationMetadata } from '../../../components/settings/IntegrationWizard'
@@ -14,9 +13,9 @@ interface Props {
   onSaved: () => void
 }
 
-// Catalog id → MCP server name for the data-source ids that differ from their
-// server (the drift in setupSteps' MCP_ONLY_DATA_SOURCE_IDS). Shared by the
-// picker filter and the connect-on-save so the two can't diverge.
+// Catalog id → MCP server name for the few data-source ids whose mcp-config.json
+// server key differs from their catalog id. Shared by the picker filter and the
+// connect-on-save so the two can't diverge.
 const CATALOG_TO_SERVER: Record<string, string> = {
   'aws-security-hub': 'aws-security',
   'gcp-security': 'gcp-scc',
@@ -88,11 +87,11 @@ const DataSourceDialog = ({ onSaved }: Props) => {
     )
   }, [dataSources, query])
 
-  // Persist creds, then connect. Throwing surfaces in the wizard's error banner.
   const handleSave = async (id: string, config: Record<string, unknown>) => {
     const cur = cfg.current
     const integrations = { ...cur.integrations, [id]: config }
-    const enabled = cur.enabled_integrations.includes(id)
+    const alreadyEnabled = cur.enabled_integrations.includes(id)
+    const enabled = alreadyEnabled
       ? cur.enabled_integrations
       : [...cur.enabled_integrations, id]
     await configApi.setIntegrations({ enabled_integrations: enabled, integrations })
@@ -105,6 +104,14 @@ const DataSourceDialog = ({ onSaved }: Props) => {
     // subsystem down, not a cred failure — let it through.
     if (data?.connected === false) {
       mcpApi.setServerEnabled(serverName, false).catch(() => {})
+      // Roll back the enabled bit too (keeping the creds), so the setup
+      // checklist's data-source step — which keys off enabled_integrations —
+      // doesn't count a source that never connected. Only if we just added it,
+      // so re-editing an already-connected source stays enabled.
+      if (!alreadyEnabled)
+        configApi
+          .setIntegrations({ enabled_integrations: cur.enabled_integrations, integrations })
+          .catch(() => {})
       const missing = data.missing_credentials?.length
         ? `Missing required credentials: ${data.missing_credentials.join(', ')}.`
         : null

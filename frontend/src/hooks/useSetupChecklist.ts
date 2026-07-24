@@ -1,17 +1,15 @@
 // frontend/src/hooks/useSetupChecklist.ts
 //
-// Soft-checklist state: fetches every domain the setup steps read and runs each
-// readiness predicate. Purely additive — the hard gate lives in useSetupStatus /
-// SetupGate. `requiredReady` / `incompleteCount` are scaffolding for a planned
-// dashboard nudge, currently exercised only by tests.
+// Soft-checklist state: runs each step's readiness predicate over fetched state.
+// Purely additive — the hard gate lives in useSetupStatus / SetupGate.
+// `requiredReady` / `incompleteCount` feed a planned dashboard nudge (tests only).
 import { useCallback, useEffect, useState } from 'react'
-import { llmProviderApi, mcpApi, aiConfigApi, budgetsApi, configApi } from '../services/api'
+import { llmProviderApi, aiConfigApi, budgetsApi, configApi } from '../services/api'
 import {
   SETUP_STEPS,
   emptySetupState,
   type SetupState,
   type SetupStep,
-  type McpConnection,
 } from '../setup/setupSteps'
 
 export interface ChecklistStep extends SetupStep {
@@ -30,20 +28,17 @@ export interface SetupChecklist {
 // flaky endpoint can't crash the page. Advisory — not a security control.
 const fetchSetupState = async (): Promise<SetupState> => {
   const base = emptySetupState()
-  const [providers, connections, aiConfig, budget, orchestrator] = await Promise.allSettled([
+  const [providers, integrations, aiConfig, budget, orchestrator] = await Promise.allSettled([
     llmProviderApi.list(),
-    mcpApi.getConnections(),
+    configApi.getIntegrations(),
     aiConfigApi.getConfig(),
     budgetsApi.get(),
     configApi.getOrchestrator(),
   ])
 
   if (providers.status === 'fulfilled') base.providers = providers.value.data || []
-  if (connections.status === 'fulfilled')
-    base.connections = (connections.value.data?.connections ?? []).map((c: McpConnection) => ({
-      name: c.name,
-      connected: !!c.connected,
-    }))
+  if (integrations.status === 'fulfilled')
+    base.enabledIntegrations = integrations.value.data?.enabled_integrations ?? []
   if (aiConfig.status === 'fulfilled') base.assignments = aiConfig.value.data?.assignments ?? {}
   if (budget.status === 'fulfilled') base.budget = budget.value.data ?? null
   if (orchestrator.status === 'fulfilled')

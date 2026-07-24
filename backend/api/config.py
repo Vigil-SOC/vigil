@@ -1223,7 +1223,9 @@ async def set_ai_operations_config(config: AIOperationsSettingsConfig):
 class OrchestratorSettingsConfig(BaseModel):
     """Orchestrator configuration for autonomous investigations."""
 
-    enabled: bool = True
+    # Opt-in; also feeds ORCHESTRATOR_DEFAULTS. Matches GET /api/orchestrator/status,
+    # which already defaults False.
+    enabled: bool = False
     dry_run: bool = False
     auto_assign_findings: bool = True
     auto_assign_severities: List[str] = ["critical", "high"]

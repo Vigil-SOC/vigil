@@ -100,36 +100,20 @@ const StepRow = ({
         <div className="text-tx text-sm font-medium">{step.label}</div>
         <div className="text-tx-3 text-xs mt-0.5">{step.description}</div>
       </div>
-      {/* Button and the "done" tag share this slot (tag overlaid) and crossfade —
-          no layout shift. When ready the button is inert + hidden from a11y. */}
-      <div className="shrink-0 relative">
-        <div
-          className={`transition-opacity duration-200 motion-reduce:transition-none ${
-            step.ready ? 'opacity-0 pointer-events-none' : 'opacity-100'
-          }`}
-          aria-hidden={step.ready}
-        >
-          <button
-            className={`btn ${required ? 'primary' : 'ghost'}`}
-            onClick={onAction}
-            tabIndex={step.ready ? -1 : undefined}
-          >
-            {expanded ? 'Close' : required ? 'Connect' : 'Configure'}
-            <Icon
-              name="chevD"
-              size={14}
-              className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-            />
-          </button>
-        </div>
-        <span
-          className={`absolute inset-0 flex items-center justify-end whitespace-nowrap pointer-events-none text-ok text-xs font-medium transition-opacity duration-200 motion-reduce:transition-none ${
-            step.ready ? 'opacity-100' : 'opacity-0'
-          }`}
-          aria-hidden={!step.ready}
-        >
-          {step.doneLabel}
-        </span>
+      {/* Stays interactive when satisfied, so a done step can be reopened.
+          Ready + collapsed shows the done tag beside a "Change" button. */}
+      <div className="shrink-0 flex items-center gap-2">
+        {step.ready && !expanded && (
+          <span className="whitespace-nowrap text-ok text-xs font-medium">{step.doneLabel}</span>
+        )}
+        <button className={`btn ${required && !step.ready ? 'primary' : 'ghost'}`} onClick={onAction}>
+          {expanded ? 'Close' : step.ready ? 'Change' : required ? 'Connect' : 'Configure'}
+          <Icon
+            name="chevD"
+            size={14}
+            className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
+          />
+        </button>
       </div>
     </div>
   )
