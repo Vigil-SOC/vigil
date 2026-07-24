@@ -2,7 +2,7 @@
 
 from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from pathlib import Path
 import json
 import logging
@@ -18,7 +18,7 @@ from secrets_manager import get_secret, set_secret, delete_secret, get_secrets_m
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from database.config_service import get_config_service
 from services.defaults import DEFAULT_MODEL
-from services.integration_secrets import redact_secrets, split_secrets
+from services.integration_secrets import redact_secrets, secret_fields_for, split_secrets
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -705,6 +705,17 @@ async def set_theme_config(config: ThemeConfig):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _secrets_set_map(integrations: dict) -> dict:
+    """Per-integration ``{secret_field: bool}`` — booleans only, never the
+    values, so the wizard can show "saved" without the browser seeing a secret."""
+    result: dict = {}
+    for iid in integrations:
+        fields = secret_fields_for(iid)
+        if fields:
+            result[iid] = {field: bool(get_secret(env)) for field, env in fields.items()}
+    return result
+
+
 @router.get("/integrations")
 async def get_integrations_config():
     """
@@ -735,6 +746,7 @@ async def get_integrations_config():
                 "configured": True,
                 "enabled_integrations": enabled_integrations,
                 "integrations": integrations,
+                "secrets_set": _secrets_set_map(integrations),
             }
 
         # Fallback to file-based config
@@ -750,6 +762,7 @@ async def get_integrations_config():
                     "configured": True,
                     "enabled_integrations": config.get("enabled_integrations", []),
                     "integrations": redacted,
+                    "secrets_set": _secrets_set_map(redacted),
                 }
 
         return {"configured": False, "enabled_integrations": [], "integrations": {}}
@@ -822,6 +835,16 @@ async def set_integrations_config(config: IntegrationsConfig):
         }
         with open(config_file, "w") as f:
             json.dump(config_data, f, indent=2)
+
+        # Derive <ID>_MCP_URL env vars (e.g. LOGLM_MCP_URL) from any
+        # connectorUrl just saved, so static mcp-config.json remote-MCP
+        # entries resolve without a separately-set env var. Best-effort.
+        try:
+            from services.integration_bridge_service import get_integration_bridge
+
+            get_integration_bridge().derive_remote_mcp_env()
+        except Exception as e:
+            logger.warning(f"Could not derive remote MCP env vars: {e}")
 
         return {"success": True, "message": "Integrations configuration saved"}
     except Exception as e:
@@ -1140,6 +1163,9 @@ class AIOperationsSettingsConfig(BaseModel):
     history_window: int = 20
     tool_response_budget_default: int = 8000
     thinking_budget: int = 10000
+    local_ollama_recovery_enabled: bool = True
+    local_ollama_recovery_retry_limit: int = Field(default=1, ge=0, le=3)
+    local_ollama_recovery_restart_gateway: bool = True
 
 
 AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()

@@ -31,6 +31,15 @@ export const WIP_SERVERS = new Set([
   'microsoft-defender', 'azure-ad', 'microsoft-teams',
 ])
 
+/** Card-title overrides for `prettyServerName`. Fix casing/branding here rather
+ *  than renaming the server id, which is load-bearing (mcp-config.json, backend
+ *  registration, persisted enabled-state store). */
+export const SERVER_DISPLAY_NAMES: Record<string, string> = {
+  loglm: 'LogLM',
+  'deeptempo-findings': 'Findings & Cases',
+  'tempo-flow': 'Agent Workflows',
+}
+
 export interface McpCategory {
   label: string
   servers: string[]
@@ -40,6 +49,7 @@ export interface McpCategory {
     `servers` list contains it; anything unmatched lands in "Other". */
 export const MCP_CATEGORIES: McpCategory[] = [
   { label: 'Internal / Platform', servers: ['deeptempo-findings', 'tempo-flow', 'approval', 'attack-layer', 'security-detections'] },
+  { label: 'DeepTempo', servers: ['loglm'] },
   { label: 'Reference Servers', servers: ['github'] },
   { label: 'EDR / XDR', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
   { label: 'SIEM / Data Lake', servers: ['splunk', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },

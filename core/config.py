@@ -62,14 +62,3 @@ def get_enabled_integrations() -> list[str]:
 def get_general_config(key: str, default: Any = None) -> Any:
     data = _load_json_config(GENERAL_CONFIG_FILE)
     return data.get(key, default)
-
-
-def get_database_url() -> str:
-    from backend.secrets_manager import get_secret
-    url = get_secret("POSTGRESQL_CONNECTION_STRING")
-    if url:
-        return url
-    return os.getenv(
-        "DATABASE_URL",
-        "postgresql://deeptempo:deeptempo@localhost:5432/deeptempo_soc"
-    )

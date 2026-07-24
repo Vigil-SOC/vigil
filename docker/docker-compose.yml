@@ -1,6 +1,8 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    # pgvector-capable image (findings.embedding uses vector(768) + HNSW).
+    # The stock postgres:16 image does NOT ship the `vector` extension.
+    image: pgvector/pgvector:pg16
     container_name: deeptempo-postgres
     environment:
       POSTGRES_DB: deeptempo_soc

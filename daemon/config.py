@@ -18,6 +18,7 @@ class PollingConfig:
     generic_interval: int = 120  # 2 minutes for other sources
     webhook_enabled: bool = True
     webhook_port: int = 8081
+    webhook_token: str = ""  # required bearer for /ingest; empty = fail closed
 
 
 @dataclass
@@ -28,6 +29,11 @@ class ProcessingConfig:
     batch_size: int = 10
     max_concurrent_tasks: int = 5
     triage_timeout: int = 60  # seconds
+    enrich_max_inflight: int = 50          # cap on pending background enrich tasks (backpressure)
+    enrich_backfill_enabled: bool = True   # sweep for stored-but-never-enriched findings
+    enrich_backfill_interval: int = 300    # seconds between sweeps
+    enrich_backfill_batch: int = 50        # findings re-queued per sweep
+    enrich_backfill_max_age_hours: int = 168  # only backfill findings newer than this (7d)
 
 
 @dataclass
@@ -96,6 +102,12 @@ class OrchestratorConfig:
     context_max_chars: int = 10000
     plan_model: str = DEFAULT_MODEL
     review_model: str = DEFAULT_MODEL
+    # Provider that owns plan_model/review_model. Resolved alongside the model
+    # from ai_model_configs so autonomous investigations can run on
+    # non-Anthropic providers (Ollama/OpenAI/Groq). None means "the default
+    # Anthropic provider" and preserves pre-multi-provider behavior.
+    plan_provider_id: Optional[str] = None
+    review_provider_id: Optional[str] = None
 
 
 @dataclass
@@ -169,11 +181,17 @@ class DaemonConfig:
         config.polling.crowdstrike_interval = int(os.getenv("DAEMON_CROWDSTRIKE_POLL_INTERVAL", "60"))
         config.polling.webhook_enabled = os.getenv("DAEMON_WEBHOOK_ENABLED", "true").lower() == "true"
         config.polling.webhook_port = int(os.getenv("DAEMON_WEBHOOK_PORT", "8081"))
+        config.polling.webhook_token = os.getenv("DAEMON_WEBHOOK_TOKEN", "")
         
         # Processing
         config.processing.auto_triage_enabled = os.getenv("DAEMON_AUTO_TRIAGE", "true").lower() == "true"
         config.processing.auto_enrich_enabled = os.getenv("DAEMON_AUTO_ENRICH", "true").lower() == "true"
         config.processing.batch_size = int(os.getenv("DAEMON_BATCH_SIZE", "10"))
+        config.processing.enrich_max_inflight = int(os.getenv("DAEMON_ENRICH_MAX_INFLIGHT", "50"))
+        config.processing.enrich_backfill_enabled = os.getenv("DAEMON_ENRICH_BACKFILL", "true").lower() == "true"
+        config.processing.enrich_backfill_interval = int(os.getenv("DAEMON_ENRICH_BACKFILL_INTERVAL", "300"))
+        config.processing.enrich_backfill_batch = int(os.getenv("DAEMON_ENRICH_BACKFILL_BATCH", "50"))
+        config.processing.enrich_backfill_max_age_hours = int(os.getenv("DAEMON_ENRICH_BACKFILL_MAX_AGE_HOURS", "168"))
         
         # Response
         config.response.auto_response_enabled = os.getenv("DAEMON_AUTO_RESPONSE", "true").lower() == "true"
@@ -284,9 +302,14 @@ class DaemonConfig:
             registry = get_registry()
             plan_pick = registry.resolve_model_for_component('orchestrator_plan')
             review_pick = registry.resolve_model_for_component('orchestrator_review')
+            # resolve_model_for_component returns (provider_id, model_id). Keep
+            # BOTH: the provider_id is what lets the daemon route a non-Anthropic
+            # model through Bifrost instead of silently assuming Anthropic.
             if plan_pick is not None:
+                config.orchestrator.plan_provider_id = plan_pick[0]
                 config.orchestrator.plan_model = plan_pick[1]
             if review_pick is not None:
+                config.orchestrator.review_provider_id = review_pick[0]
                 config.orchestrator.review_model = review_pick[1]
             if plan_pick or review_pick:
                 logger.info(

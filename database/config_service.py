@@ -6,7 +6,7 @@ and integration configurations with automatic audit logging.
 """
 
 import logging
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Set
 from datetime import datetime
 from contextlib import contextmanager
 
@@ -526,6 +526,18 @@ class ConfigService:
         except Exception as e:
             logger.error(f"Error getting enabled integrations: {e}")
             return []
+
+    def get_disabled_integration_ids(self) -> Set[str]:
+        """Registered-but-disabled integration IDs. Sources with no config row
+        (webhook, flow) are never disabled. On DB error return empty (fail open)
+        so a lookup blip can't silently drop ingestion."""
+        try:
+            with get_session() as session:
+                integrations = session.query(IntegrationConfig).filter_by(enabled=False).all()
+                return {i.integration_id for i in integrations}
+        except Exception as e:
+            logger.error(f"Error getting disabled integrations: {e}")
+            return set()
     
     # =========================================================================
     # Audit Methods
@@ -556,6 +568,22 @@ class ConfigService:
         except Exception as e:
             logger.error(f"Error creating audit log: {e}")
     
+    def record_audit(
+        self,
+        config_type: str,
+        config_key: str,
+        action: str,
+        old_value: Optional[Dict[str, Any]],
+        new_value: Optional[Dict[str, Any]],
+        change_reason: Optional[str] = None,
+    ) -> None:
+        """Write a standalone audit entry (no SystemConfig row touched)."""
+        with get_session() as session:
+            self._create_audit_log(
+                session, config_type, config_key, action,
+                old_value, new_value, change_reason,
+            )
+
     def get_audit_log(
         self,
         config_type: Optional[str] = None,

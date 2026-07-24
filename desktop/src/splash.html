@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'" />
+    <title>Starting Vigil</title>
+    <style>
+      /* Colors mirror the app theme tokens in frontend/src/redesign/styles.css:
+         --bg #0c0f14, --tx #e8ebf0, --tx-3 #7c8593, --line #232a35. The spinner
+         and Retry use the sage logo color (#BCC1AB) so the splash matches the
+         app icon; ok/fail use the theme green/red. */
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; height: 100vh; display: flex; flex-direction: column;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #0c0f14; color: #e8ebf0; padding: 26px 30px; user-select: none;
+      }
+      h1 { font-size: 17px; font-weight: 600; margin: 0 0 2px; letter-spacing: -0.01em; }
+      .sub { font-size: 12px; color: #7c8593; margin-bottom: 18px; }
+      ul { list-style: none; margin: 0; padding: 0; flex: 1; }
+      li { display: flex; align-items: center; gap: 10px; font-size: 13px; padding: 4px 0; color: #7c8593; }
+      .dot { width: 14px; height: 14px; border-radius: 50%; flex: 0 0 auto; border: 2px solid #232a35; }
+      li.start .dot { border-color: #bcc1ab; border-top-color: transparent; animation: spin 0.7s linear infinite; }
+      li.ok .dot { background: #3aab74; border-color: #3aab74; }
+      li.fail .dot { background: #e5635f; border-color: #e5635f; }
+      li.ok, li.start { color: #e8ebf0; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .log { font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10.5px;
+        color: #58616e; height: 54px; overflow: hidden; white-space: pre-wrap;
+        border-top: 1px solid #1b212b; padding-top: 8px; margin-top: 8px; }
+      .err { color: #e5635f; }
+      .acts { display: none; gap: 8px; margin-top: 10px; }
+      button { background: #bcc1ab; border: 0; color: #0c0f14; font-weight: 600;
+        padding: 7px 14px; border-radius: 6px; cursor: pointer; }
+      button.ghost { background: transparent; color: #7c8593; border: 1px solid #232a35; }
+    </style>
+  </head>
+  <body>
+    <h1>Vigil</h1>
+    <div class="sub" id="sub">Starting the security operations stack…</div>
+    <ul id="steps"></ul>
+    <div class="log" id="log"></div>
+    <div class="acts">
+      <button id="retry">Retry</button>
+      <button id="quit" class="ghost">Quit</button>
+    </div>
+    <script>
+      const LABELS = {
+        submodules: "Fetching submodules", python: "Locating Python", env: "Loading configuration",
+        venv: "Creating virtual environment", deps: "Installing Python dependencies",
+        "frontend-deps": "Installing UI dependencies", "frontend-build": "Building the UI",
+        docker: "Starting Docker", services: "Starting services (postgres, redis, bifrost, ollama)",
+        images: "Preparing Vigil (first run only)",
+        frontend: "Checking the UI build", schema: "Preparing the database",
+        backend: "Starting the backend", setup: "Setup complete", up: "Ready",
+      };
+      const stepsEl = document.getElementById("steps");
+      const logEl = document.getElementById("log");
+      const rows = {};
+      function row(phase) {
+        if (rows[phase]) return rows[phase];
+        const li = document.createElement("li");
+        li.innerHTML = '<span class="dot"></span><span></span>';
+        li.querySelector("span:last-child").textContent = LABELS[phase] || phase;
+        stepsEl.appendChild(li);
+        rows[phase] = li;
+        return li;
+      }
+      window.vigil.onStep(({ phase, status }) => {
+        if (phase === "up" || phase === "setup") { if (status === "done") return; }
+        const li = row(phase);
+        li.className = status;
+      });
+      window.vigil.onLog((line) => { logEl.textContent = line; });
+      window.vigil.onError((msg) => {
+        document.getElementById("sub").innerHTML = '<span class="err">' + msg + "</span>";
+        const acts = document.querySelector(".acts");
+        acts.style.display = "flex";
+        document.getElementById("retry").onclick = () => {
+          acts.style.display = "none";
+          document.getElementById("sub").textContent = "Retrying…";
+          window.vigil.retry();
+        };
+        // The splash is frameless and the tray may be unavailable (Linux), so
+        // this is the only guaranteed way out of a failed start.
+        document.getElementById("quit").onclick = () => window.vigil.quit();
+      });
+    </script>
+  </body>
+</html>

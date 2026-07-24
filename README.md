@@ -264,6 +264,39 @@ source venv/bin/activate
 python daemon/main.py
 ```
 
+### Desktop App (Standalone)
+
+The desktop app packages the full stack into an installable bundle — no
+source tree required. It runs the backend as a Docker container loaded from
+an offline image tarball, alongside a bundled Bifrost LLM gateway, so
+**Docker Desktop must be installed and running**. Local LLMs (Ollama) work
+out of the box: Bifrost is configured to route any pulled/built model and to
+reach Ollama on the host via `host.docker.internal`.
+
+Build a local DMG (Apple Silicon shown; the image tarball is arch-specific):
+
+```bash
+# 1. Build the backend image from source and stage it as an offline tarball
+bash desktop/scripts/bundle-image.sh linux/arm64
+
+# 2. Package the app (copies the Bifrost config, bundles the tarball)
+cd desktop && npm run dist
+# -> desktop/release/Vigil-<version>-arm64.dmg
+```
+
+> **macOS Gatekeeper (unsigned build).** Locally built DMGs are ad-hoc
+> signed, not notarized, so macOS quarantines the app and shows *"Vigil is
+> damaged and can't be opened"* or *"can't be opened because Apple cannot
+> check it"*. Clear the quarantine attribute after installing to
+> `/Applications`:
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/Vigil.app
+> ```
+>
+> Alternatively, open it once via **System Settings → Privacy & Security →
+> Open Anyway**. Proper signing/notarization is pending.
+
 ---
 
 ## Architecture

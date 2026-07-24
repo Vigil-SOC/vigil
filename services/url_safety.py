@@ -1,14 +1,3 @@
-"""Centralized URL safety / SSRF protection.
-
-Used by the LLM provider discovery and test paths so a user-supplied
-``base_url`` can never coerce the backend into reaching out to
-loopback, private, link-local, or cloud-metadata addresses.
-
-Closes the SSRF leg of the 2026-05 security disclosure: previously
-``POST /api/llm/providers/discover-models`` accepted any ``base_url``
-and the backend would happily fetch it.
-"""
-
 from __future__ import annotations
 
 import ipaddress
@@ -85,6 +74,13 @@ def _is_blocked_ip(ip_str: str) -> Tuple[bool, str]:
     except ValueError:
         return True, f"unparseable IP: {ip_str}"
 
+    # Collapse an IPv4-mapped IPv6 literal (e.g. ::ffff:169.254.169.254) to
+    # its embedded IPv4 before classifying: on Linux it connects as real
+    # IPv4, so it must face the same range/metadata checks as the bare v4.
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        ip = mapped
+
     if str(ip) in ("169.254.169.254", "fd00:ec2::254"):
         return True, "cloud metadata address"
     if ip.is_loopback:
@@ -106,6 +102,7 @@ def validate_provider_url(
     url: str,
     *,
     allow_custom: bool = True,
+    allow_loopback: bool = False,
     allowed_hosts: Iterable[str] = DEFAULT_ALLOWED_PROVIDER_HOSTS,
     allowed_schemes: Iterable[str] = ("http", "https"),
 ) -> SafeUrl:
@@ -119,6 +116,10 @@ def validate_provider_url(
     fragment removed. Callers should append fixed provider paths
     (``/models``, ``/api/tags``, ...) onto ``sanitized`` rather than
     onto the original input.
+
+    ``allow_loopback=True`` permits a self-hosted provider on a
+    loopback/private/link-local address (the cloud-metadata IP stays
+    blocked). Pass it only for an admin-gated, provider-type-scoped call.
     """
     if not url or not isinstance(url, str):
         raise UrlSafetyError("url is required")
@@ -151,6 +152,12 @@ def validate_provider_url(
 
         for addr in _resolve_host(host):
             blocked, reason = _is_blocked_ip(addr)
+            # allow_loopback opts a self-hosted provider (Ollama, vLLM,
+            # LM Studio on localhost / the LAN) past the loopback/private/
+            # link-local block, but the cloud-metadata address — the actual
+            # SSRF target — stays blocked regardless.
+            if blocked and allow_loopback and reason != "cloud metadata address":
+                continue
             if blocked:
                 raise UrlSafetyError(f"resolved address {addr} is disallowed: {reason}")
 

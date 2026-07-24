@@ -5,7 +5,7 @@ Handles uploading and ingesting findings/cases from various file formats:
 - JSON files
 - CSV files
 - JSONL (JSON Lines) files
-- Parquet files (DeepTempo LogLM embeddings)
+- Parquet files
 - S3 sync
 """
 
@@ -296,7 +296,7 @@ async def get_supported_formats():
             "parquet": {
                 "name": "Parquet",
                 "extensions": [".parquet"],
-                "description": "DeepTempo LogLM embedding parquet files. Columns are auto-mapped to findings.",
+                "description": "Supported parquet files. Columns are auto-mapped to findings when the schema is recognized.",
                 "expected_columns": [
                     "sequence_id (-> finding_id)",
                     "embedding (variable-dimension float vector)",
@@ -399,7 +399,7 @@ async def sync_s3_folder(prefix: Optional[str] = Query(None)):
 
     Scans the given prefix (or the configured parquet_prefix) and auto-detects
     file types by extension:
-      .parquet -> DeepTempo LogLM parquet ingestion
+      .parquet -> supported parquet ingestion
       .csv     -> CSV finding ingestion
       .json    -> JSON finding/case ingestion
       .jsonl / .ndjson -> JSON-Lines finding ingestion
@@ -706,4 +706,3 @@ async def get_s3_status():
             "connected": False,
             "error": str(e)
         }
-

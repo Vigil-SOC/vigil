@@ -5,9 +5,10 @@
    tab set (AI Config / Integrations / Users / Auto Investigate /
    Federation / System / General / Developer).
    ============================================================ */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon, type IconName } from '../../shared/icons'
-import type { ScreenProps } from '../../shared/types'
+import type { ScreenProps, SettingsSectionKey } from '../../shared/types'
 import { useToast } from '../../shell/toast'
 import AppearanceSection from './AppearanceSection'
 import GeneralSection from './GeneralSection'
@@ -17,26 +18,15 @@ import UsersSection from './UsersSection'
 import AutoInvestigateSection from './AutoInvestigateSection'
 import DeveloperSection from './DeveloperSection'
 import AiConfigSection from './AiConfigSection'
+import ServicesSection from './ServicesSection'
 import IntegrationsSection from './IntegrationsSection'
 import SlaPoliciesSection from './SlaPoliciesSection'
 import type { SectionProps } from './types'
 
 const IS_DEV_MODE = import.meta.env.VITE_DEV_MODE === 'true'
 
-type SectionKey =
-  | 'appearance'
-  | 'ai-config'
-  | 'integrations'
-  | 'users'
-  | 'sla'
-  | 'autoinvestigate'
-  | 'federation'
-  | 'system'
-  | 'general'
-  | 'dev'
-
 interface SectionDef {
-  key: SectionKey
+  key: SettingsSectionKey
   label: string
   icon: IconName
   devOnly?: boolean
@@ -46,6 +36,7 @@ interface SectionDef {
 const SECTIONS: SectionDef[] = [
   { key: 'appearance', label: 'Appearance', icon: 'palette', Component: AppearanceSection },
   { key: 'ai-config', label: 'AI Config', icon: 'sparkle', Component: AiConfigSection },
+  { key: 'services', label: 'Services', icon: 'play', Component: ServicesSection },
   { key: 'integrations', label: 'Integrations', icon: 'link', Component: IntegrationsSection },
   { key: 'users', label: 'Users', icon: 'lock', Component: UsersSection },
   { key: 'sla', label: 'SLA Policies', icon: 'clock', Component: SlaPoliciesSection },
@@ -57,9 +48,16 @@ const SECTIONS: SectionDef[] = [
 ]
 
 export default function SettingsScreen({ setViewFull }: ScreenProps) {
-  const sections = SECTIONS.filter((s) => !s.devOnly || IS_DEV_MODE)
-  // open on the first section (Appearance)
-  const [active, setActive] = useState<SectionKey>('appearance')
+  const sections = useMemo(() => SECTIONS.filter((s) => !s.devOnly || IS_DEV_MODE), [])
+  const [searchParams, setSearchParams] = useSearchParams()
+  const sectionParam = searchParams.get('section')
+  const sectionKeys = useMemo(() => new Set(sections.map((s) => s.key)), [sections])
+  // the active section is derived straight from the URL (?section=), falling
+  // back to Appearance for a missing / unknown / dev-gated key
+  const active: SettingsSectionKey =
+    sectionParam && sectionKeys.has(sectionParam as SettingsSectionKey)
+      ? (sectionParam as SettingsSectionKey)
+      : 'appearance'
   // section save/test results surface through the shell-wide toast (§10) rather
   // than a settings-local banner, so feedback is consistent across the console
   const { notify } = useToast()
@@ -79,7 +77,7 @@ export default function SettingsScreen({ setViewFull }: ScreenProps) {
           <button
             key={s.key}
             className={`settings-nav-item${s.key === active ? ' active' : ''}`}
-            onClick={() => setActive(s.key)}
+            onClick={() => setSearchParams({ section: s.key }, { replace: true })}
           >
             <Icon name={s.icon} size={16} />
             <span>{s.label}</span>

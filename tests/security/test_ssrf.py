@@ -77,3 +77,26 @@ def test_non_allowlisted_requires_allow_custom():
 def test_default_allowed_hosts_includes_openai_anthropic():
     assert "api.openai.com" in DEFAULT_ALLOWED_PROVIDER_HOSTS
     assert "api.anthropic.com" in DEFAULT_ALLOWED_PROVIDER_HOSTS
+
+
+# An IPv4-mapped IPv6 literal connects as real IPv4 on Linux, so it must
+# not slip the metadata block by classifying as a plain private address.
+IPV4_MAPPED_METADATA = [
+    "http://[::ffff:169.254.169.254]/latest/meta-data",
+    "http://[::ffff:a9fe:a9fe]/latest/meta-data",
+]
+
+
+@pytest.mark.parametrize("url", IPV4_MAPPED_METADATA)
+def test_ipv4_mapped_metadata_blocked_even_with_loopback(url):
+    with pytest.raises(UrlSafetyError):
+        validate_provider_url(url, allow_custom=True, allow_loopback=True)
+
+
+def test_allow_loopback_permits_localhost_but_not_metadata():
+    safe = validate_provider_url("http://127.0.0.1:11434", allow_loopback=True)
+    assert safe.sanitized == "http://127.0.0.1:11434"
+    with pytest.raises(UrlSafetyError):
+        validate_provider_url(
+            "http://169.254.169.254/latest/meta-data", allow_loopback=True
+        )

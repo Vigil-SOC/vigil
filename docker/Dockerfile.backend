@@ -9,7 +9,9 @@
 # ---------------------------------------------------------------------------
 # Stage 1: build the React frontend
 # ---------------------------------------------------------------------------
-FROM node:20-slim AS frontend-builder
+# Pin to the build host's arch: the output is arch-independent static assets,
+# and running esbuild under QEMU (cross-arch build) crashes it (write EPIPE).
+FROM --platform=$BUILDPLATFORM node:20-slim AS frontend-builder
 
 WORKDIR /build/frontend
 

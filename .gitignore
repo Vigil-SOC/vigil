@@ -5,9 +5,10 @@ __pycache__/
 
 # C extensions
 *.so
-
+node_modules/
 # Distribution / packaging
 .Python
+desktop/
 build/
 develop-eggs/
 dist/
@@ -240,3 +241,6 @@ splunk_test_data.json
 *_test.json
 enrichment_result_*.json
 claude_analysis_*.txt
+
+# Autostart list, written by Settings -> Services (see services/autostart_config.py)
+.vigil-autostart

@@ -4,7 +4,7 @@
    FederationTab.tsx. Auto-refreshes every 10s via useFederation.
    ============================================================ */
 import { Icon } from '../../shared/icons'
-import { Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
+import { EmptyState, Select, SettingsCard, TextInput, Toggle } from '../../shared/ui'
 import { useFederation } from './useSettings'
 import type { SectionProps } from './types'
 
@@ -135,9 +135,14 @@ export default function FederationSection({ notify }: SectionProps) {
           <tbody>
             {sources.length === 0 && (
               <tr>
-                <td colSpan={7} className="muted" style={{ textAlign: 'center', padding: '28px 0' }}>
-                  No federation sources available. Configure an integration (Splunk, CrowdStrike,
-                  Sentinel, etc.) under Integrations first — adapters auto-seed when the daemon starts.
+                <td colSpan={7}>
+                  <EmptyState
+                    table
+                    compact
+                    icon="graph"
+                    title="No federation sources available"
+                    body="Configure an integration such as Splunk, CrowdStrike, or Sentinel first. Federation adapters auto-seed when the daemon starts."
+                  />
                 </td>
               </tr>
             )}

@@ -1,13 +1,13 @@
 """Runtime-editable AI operations settings (GH #84 PR-F).
 
-The four cost/perf toggles introduced across PR-C and PR-D —
-``prompt_cache_enabled``, ``history_window``, ``tool_response_budget_default``,
-``thinking_budget`` — need to be adjustable from the Settings UI at runtime
-without restarting the backend, daemon, or LLM worker. Persisting them as
-env vars in ``.env`` means a restart round-trip per change; persisting
-them in ``system_config`` lets us flip values live across all three
-processes while still letting operators pin values via env vars in
-hardened production deployments.
+The cost/perf and local-Ollama resilience toggles — ``prompt_cache_enabled``,
+``history_window``, ``tool_response_budget_default``, ``thinking_budget``, and
+the ``local_ollama_recovery_*`` controls — need to be adjustable from the
+Settings UI at runtime without restarting the backend, daemon, or LLM worker.
+Persisting them as env vars in ``.env`` means a restart round-trip per change;
+persisting them in ``system_config`` lets us flip values live across all three
+processes while still letting operators pin values via env vars in hardened
+production deployments.
 
 Resolution order for ``get_ai_operations_setting(key, default)``:
   1. In-process cache (short TTL, default 60s) — avoids per-call DB hits
@@ -43,6 +43,9 @@ ENV_FALLBACKS = {
     "history_window": "CLAUDE_HISTORY_WINDOW",
     "tool_response_budget_default": "TOOL_RESPONSE_BUDGET_DEFAULT",
     "thinking_budget": "CLAUDE_THINKING_BUDGET",
+    "local_ollama_recovery_enabled": "LOCAL_OLLAMA_RECOVERY_ENABLED",
+    "local_ollama_recovery_retry_limit": "LOCAL_OLLAMA_RECOVERY_RETRY_LIMIT",
+    "local_ollama_recovery_restart_gateway": "LOCAL_OLLAMA_RECOVERY_RESTART_GATEWAY",
 }
 
 _cache_lock = threading.Lock()
