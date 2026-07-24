@@ -7,7 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from services.defaults import DEFAULT_MODEL
+from services.configured_llm import (
+    NoConfiguredLLMProvider,
+    estimate_configured_cost,
+    generate_configured_text,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -669,7 +673,6 @@ For each phase:
         """Legacy composite-prompt path for file-based workflows that
         don't have structured phases. No approval gating possible —
         there's no phase_id to attach an approval to."""
-        from services.claude_service import ClaudeService
         from services.soc_agents import SOCAgentLibrary
         from services.workflow_run_service import get_workflow_run_service
 
@@ -740,6 +743,7 @@ For each phase:
             skill_tools_available=skill_tool_names,
         )
 
+        warning = None
         try:
             response_text = await self._run_agent_turn(
                 claude_service=claude_service,
@@ -750,6 +754,7 @@ For each phase:
                 max_tokens=8192,
                 session_id=run_id,
             )
+            response_text = llm_result.content
             success = response_text is not None
             error = None if success else "LLM returned no response"
         except Exception as exc:  # noqa: BLE001
@@ -774,6 +779,7 @@ For each phase:
             "result": response_text or "",
             "tool_calls": [],
             "error": error,
+            "warning": warning,
             "parameters": parameters,
             "skill_tools_available": skill_tool_names,
             "executed_at": datetime.now().isoformat(),
@@ -787,13 +793,7 @@ For each phase:
         triggered_by: Optional[str],
     ) -> Dict[str, Any]:
         """Phase-by-phase execution path for custom workflows (#128)."""
-        from services.claude_service import ClaudeService
         from services.workflow_run_service import get_workflow_run_service
-
-        if not ClaudeService(
-            use_backend_tools=False, use_mcp_tools=False, use_agent_sdk=False
-        ).has_api_key():
-            return {"success": False, "error": "Claude API not configured"}
 
         _, skill_tool_names = self._collect_tools(workflow, {})
 
@@ -852,13 +852,6 @@ For each phase:
         workflow_dict = workflow.to_dict(include_body=False)
 
         target_context = self._build_target_context(parameters)
-
-        claude_service = ClaudeService(
-            use_backend_tools=True,
-            use_mcp_tools=True,
-            use_agent_sdk=False,
-            enable_thinking=True,
-        )
 
         phase_outputs: List[Dict[str, Any]] = []
         last_response_text = ""
@@ -994,6 +987,7 @@ For each phase:
                     session_id=run_id,
                     agent_id=agent_id,
                 )
+                response_text = llm_result.content
                 phase_ok = response_text is not None
                 phase_error = None if phase_ok else "LLM returned no response"
             except Exception as exc:  # noqa: BLE001
@@ -1007,6 +1001,11 @@ For each phase:
             finished = datetime.utcnow()
             if phase_ok:
                 output = {"text": response_text or ""}
+                if getattr(llm_result, "text_only", False):
+                    output["text_only"] = True
+                    logger.warning(
+                        "Workflow phase %s ran text-only (no tools)", phase_id
+                    )
                 run_service.upsert_phase(
                     run_id,
                     phase_id,

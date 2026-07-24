@@ -80,6 +80,22 @@ def clean_tables():
     _clear()
 
 
+@pytest.fixture(autouse=True)
+def _select_anthropic_test_adapter(monkeypatch):
+    """Keep approval-state tests independent of the operator's LLM routing."""
+    import services.configured_llm as configured_llm
+
+    selection = configured_llm.ConfiguredLLMSelection(
+        provider_id="anthropic-test",
+        provider_type="anthropic",
+        model="claude-sonnet-test",
+        provider=None,
+    )
+    monkeypatch.setattr(
+        configured_llm, "resolve_configured_llm", lambda component: selection
+    )
+
+
 def _make_workflow(approval_on_phase_2: bool = True):
     """Build an in-memory WorkflowDefinition with 2 phases."""
     from services.workflows_service import WorkflowDefinition

@@ -341,7 +341,6 @@ async def get_or_generate_enrichment(finding_id: str, force_regenerate: bool = Q
             }
         }
     """
-    import asyncio
     from datetime import datetime
     
     # Get the finding
