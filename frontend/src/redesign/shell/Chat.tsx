@@ -957,6 +957,7 @@ export default function Chat({
     onWidthCommit?.(drag.lastWidth)
   }
   const onResizeKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (maxWidth <= minWidth) return
     const step = event.shiftKey ? 48 : 16
     let next: number | null = null
     if (event.key === 'ArrowLeft') next = width + step
