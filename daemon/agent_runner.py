@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 # interactive OpenAI agent, workflows) shares one policy. Aliased to the
 # historical name so call sites — and the test that patches
 # ``daemon.agent_runner._get_tool_tier`` — stay unchanged.
+from services.tool_manager import execute_backend_tool
 from services.tool_manager import get_tool_tier as _get_tool_tier
 
 
@@ -1268,33 +1269,35 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 "services.tool_manager if it changes state; not logged again."
             )
 
-        if self._claude_service and hasattr(
-            self._claude_service, "_execute_backend_tool"
-        ):
-            try:
-                result = await self._claude_service._execute_backend_tool(
-                    tool_name, tool_input
+        # Built-in backend tools route through the shared dispatch table
+        # (services.tool_manager); a miss (handled=False) falls through to the
+        # daemon's own MCP client below. See #393.
+        try:
+            result, handled = await execute_backend_tool(
+                tool_name,
+                tool_input,
+                skill_index=getattr(self._claude_service, "_skill_tool_index", None),
+            )
+            if handled and result is not None:
+                _r = (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
                 )
-                if result is not None:
-                    _r = (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
-                    try:
-                        if _tool_span is not None:
-                            _tool_span.set_attribute("vigil.tool.success", True)
-                            _tool_span.set_attribute("vigil.tool.output_size", len(_r))
-                            _tool_span.set_attribute(
-                                "vigil.tool.duration_ms",
-                                round((_time.monotonic() - _t0) * 1000, 1),
-                            )
-                            _tool_span.end()
-                    except Exception:
-                        pass
-                    return _r
-            except Exception:
-                pass
+                try:
+                    if _tool_span is not None:
+                        _tool_span.set_attribute("vigil.tool.success", True)
+                        _tool_span.set_attribute("vigil.tool.output_size", len(_r))
+                        _tool_span.set_attribute(
+                            "vigil.tool.duration_ms",
+                            round((_time.monotonic() - _t0) * 1000, 1),
+                        )
+                        _tool_span.end()
+                except Exception:
+                    pass
+                return _r
+        except Exception:
+            pass
 
         try:
             from services.mcp_client import get_mcp_client
@@ -1529,21 +1532,22 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
     async def _execute_approved_tool(self, tool_name: str, tool_input: Dict) -> str:
         """Execute a tool that has already been approved, bypassing guardrails."""
-        if self._claude_service and hasattr(
-            self._claude_service, "_execute_backend_tool"
-        ):
-            try:
-                result = await self._claude_service._execute_backend_tool(
-                    tool_name, tool_input
+        # Built-in backend tools route through the shared dispatch table (#393);
+        # a miss (handled=False) falls through to the MCP client below.
+        try:
+            result, handled = await execute_backend_tool(
+                tool_name,
+                tool_input,
+                skill_index=getattr(self._claude_service, "_skill_tool_index", None),
+            )
+            if handled and result is not None:
+                return (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
                 )
-                if result is not None:
-                    return (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
-            except Exception:
-                pass
+        except Exception:
+            pass
         try:
             from services.mcp_client import get_mcp_client
 
