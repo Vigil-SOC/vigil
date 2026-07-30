@@ -96,7 +96,46 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error creating finding {finding_id}: {e}")
             return None
-    
+
+    def bulk_create_findings(self, rows: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Dedup + insert many findings in one transaction; per-row create_finding
+        doesn't scale to hundred-thousand-row parquet files."""
+        if not rows:
+            return {'imported': 0, 'skipped': 0}
+
+        by_id = {r['finding_id']: r for r in rows}
+        ids = list(by_id.keys())
+        try:
+            with self.db_manager.session_scope() as session:
+                existing = {
+                    row_id for (row_id,) in session.execute(
+                        select(Finding.finding_id).where(Finding.finding_id.in_(ids))
+                    )
+                }
+                new_ids = [i for i in ids if i not in existing]
+                for finding_id in new_ids:
+                    r = by_id[finding_id]
+                    session.add(Finding(
+                        finding_id=finding_id,
+                        embedding=_normalize_embedding(r.get('embedding')),
+                        mitre_predictions=r.get('mitre_predictions') or {},
+                        anomaly_score=r.get('anomaly_score', 0.0),
+                        timestamp=r['timestamp'],
+                        data_source=r.get('data_source', 'imported'),
+                        external_id=r.get('external_id'),
+                        description=r.get('description'),
+                        entity_context=r.get('entity_context'),
+                        evidence_links=r.get('evidence_links'),
+                        cluster_id=r.get('cluster_id'),
+                        severity=r.get('severity'),
+                        status=r.get('status', 'new'),
+                    ))
+                session.flush()
+                return {'imported': len(new_ids), 'skipped': len(rows) - len(new_ids)}
+        except Exception as e:
+            logger.error(f"Error bulk-creating findings: {e}")
+            return {'imported': 0, 'skipped': 0, 'errors': len(rows)}
+
     def get_finding(self, finding_id: str) -> Optional[Finding]:
         """
         Get a finding by ID.

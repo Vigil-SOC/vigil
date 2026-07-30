@@ -2,7 +2,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   SETUP_STEPS,
-  DATA_SOURCE_SERVER_IDS,
+  DATA_SOURCE_CATALOG_IDS,
   emptySetupState,
   type SetupState,
   type SetupStepId,
@@ -23,24 +23,21 @@ const budget = (vk: string) => ({
   enforcement_mode: 'warning' as const,
 })
 
-describe('DATA_SOURCE_SERVER_IDS', () => {
-  it('includes catalog sources + mcp-only drift aliases, excludes non-sources', () => {
-    // real MCP data-source servers + the drift aliases that would otherwise be
-    // false negatives (connection name differs from the catalog id)
+describe('DATA_SOURCE_CATALOG_IDS', () => {
+  it('includes catalog data sources, excludes enrichment / identity / internal', () => {
     for (const id of [
       'splunk',
       'crowdstrike',
       'sentinelone',
       'azure-sentinel',
-      'elastic',
-      'splunk-selfhosted',
-      'aws-security',
-      'gcp-scc',
+      'elastic-siem',
+      'aws-security-hub',
+      'gcp-security',
     ])
-      expect(DATA_SOURCE_SERVER_IDS.has(id)).toBe(true)
-    // enrichment / output / internal servers must not count as a data source
-    for (const id of ['virustotal', 'slack', 'jira', 'approval', 'deeptempo-findings'])
-      expect(DATA_SOURCE_SERVER_IDS.has(id)).toBe(false)
+      expect(DATA_SOURCE_CATALOG_IDS.has(id)).toBe(true)
+    // enrichment / identity / reference integrations must not count as a data source
+    for (const id of ['virustotal', 'okta', 'github', 'shodan'])
+      expect(DATA_SOURCE_CATALOG_IDS.has(id)).toBe(false)
   })
 })
 
@@ -51,21 +48,11 @@ describe('step readiness predicates', () => {
     expect(ready('llm-provider', emptySetupState())).toBe(false)
   })
 
-  it('data-source: ready for a connected source (incl. drift alias), not for non-sources or disconnected', () => {
-    expect(ready('data-source', state({ connections: [{ name: 'splunk', connected: true }] }))).toBe(true)
-    expect(ready('data-source', state({ connections: [{ name: 'elastic', connected: true }] }))).toBe(true)
-    expect(ready('data-source', state({ connections: [{ name: 'splunk', connected: false }] }))).toBe(false)
-    expect(
-      ready(
-        'data-source',
-        state({
-          connections: [
-            { name: 'approval', connected: true },
-            { name: 'virustotal', connected: true },
-          ],
-        }),
-      ),
-    ).toBe(false)
+  it('data-source: ready once a data-source integration is enabled, not for non-sources', () => {
+    expect(ready('data-source', state({ enabledIntegrations: ['splunk'] }))).toBe(true)
+    expect(ready('data-source', state({ enabledIntegrations: ['elastic-siem'] }))).toBe(true)
+    expect(ready('data-source', state({ enabledIntegrations: [] }))).toBe(false)
+    expect(ready('data-source', state({ enabledIntegrations: ['virustotal', 'okta'] }))).toBe(false)
   })
 
   it('model-assignment: ready once any component is assigned', () => {

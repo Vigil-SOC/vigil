@@ -17,9 +17,10 @@ import {
   TextInput,
   ToggleRow,
 } from '../../shared/ui'
-import { ingestionApi } from '../../../services/api'
+import { ingestionApi, type IngestionJob } from '../../../services/api'
 import {
   useDarktrace,
+  useIngestionJob,
   useKafka,
   useS3,
   type KafkaConfig,
@@ -45,48 +46,81 @@ export default function DataIngestionPanel({ notify }: SectionProps) {
 }
 
 /* ---------------- Manual upload ---------------- */
+const ACCEPTED_UPLOAD_TYPES = '.parquet,.csv,.json,.jsonl,.ndjson'
+
+/** Independent of S3/Kafka/Darktrace so their failures can't hide it. */
 function ManualUploadPanel({ notify }: SectionProps) {
+  const { job, attaching, upload } = useIngestionJob()
   const fileRef = useRef<HTMLInputElement>(null)
-  const [upload, setUpload] = useState<File | null>(null)
-  const [uploading, setUploading] = useState(false)
+  const [file, setFile] = useState<File | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const running = job?.status === 'running'
 
   const doUpload = async () => {
-    if (!upload) return
-    setUploading(true)
+    if (!file) return
+    setSubmitting(true)
     try {
-      const res = await ingestionApi.uploadFile(upload)
-      notify(res.data.success ? 'ok' : 'err', res.data.message || 'Upload complete.')
-      if (res.data.success) setUpload(null)
+      await upload(file)
+      setFile(null)
+      notify('ok', `Ingesting ${file.name} in the background.`)
     } catch (e) {
       notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Upload failed.')
     } finally {
-      setUploading(false)
+      setSubmitting(false)
     }
   }
 
   return (
     <SettingsCard
       title="Manual Upload"
-      desc="Upload a local file directly into Vigil."
+      desc="Upload a local file directly into Vigil. Large files keep ingesting in the background — you can leave this page."
     >
       <div className="flex items-center gap-2.5 flex-wrap">
         <input
           ref={fileRef}
           type="file"
-          accept=".parquet,.csv,.json,.jsonl,.ndjson"
+          accept={ACCEPTED_UPLOAD_TYPES}
           className="hidden"
-          onChange={(e) => setUpload(e.target.files?.[0] || null)}
+          data-testid="manual-upload-input"
+          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          onClick={(e) => { (e.target as HTMLInputElement).value = '' }} // lets the same file be retried
         />
-        <button className="btn ghost" onClick={() => fileRef.current?.click()}>
-          <Icon name="paperclip" /> {upload ? upload.name : 'Choose File'}
+        <button className="btn ghost" onClick={() => fileRef.current?.click()} disabled={running}>
+          <Icon name="paperclip" /> {file ? file.name : 'Choose File'}
         </button>
-        {upload && <span className="text-xs text-tx-3">{formatFileSize(upload.size)}</span>}
-        <button className="btn primary" disabled={!upload || uploading} onClick={doUpload}>
-          <Icon name="upload" /> {uploading ? 'Uploading...' : 'Upload'}
+        {file && <span className="text-xs text-tx-3">{formatFileSize(file.size)}</span>}
+        <button className="btn primary" disabled={!file || submitting || running || attaching} onClick={doUpload}>
+          <Icon name="upload" /> {submitting ? 'Uploading…' : 'Upload'}
         </button>
       </div>
       <p className="text-xs text-tx-3 mt-1.5">Allowed file types: .parquet, .csv, .json, .jsonl, .ndjson.</p>
+
+      {job && <IngestionJobStatus job={job} />}
     </SettingsCard>
+  )
+}
+
+function IngestionJobStatus({ job }: { job: IngestionJob }) {
+  if (job.status === 'running') {
+    const pct = job.determinate && job.total > 0
+      ? Math.min(100, Math.round((job.processed / job.total) * 100))
+      : null
+    return (
+      <div className="settings-banner info mt-3" role="status" aria-live="polite">
+        <span className="spin" aria-hidden="true" />
+        <span className="text-xs">
+          Ingesting <span className="font-mono">{job.filename}</span> —{' '}
+          {pct !== null ? `${job.processed} of ${job.total} rows (${pct}%)` : `${job.processed} rows so far`}
+        </span>
+      </div>
+    )
+  }
+  const ok = job.status === 'succeeded'
+  return (
+    <div className={`settings-banner ${ok ? 'ok' : 'err'} mt-3`}>
+      <Icon name={ok ? 'check2' : 'alert'} size={13} />
+      <span className="text-xs"><span className="font-mono">{job.filename}</span> — {job.message}</span>
+    </div>
   )
 }
 

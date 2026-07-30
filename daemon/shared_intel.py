@@ -7,7 +7,6 @@ overlapping investigations and link related cases.
 import logging
 import os
 from collections import defaultdict
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
@@ -20,11 +19,9 @@ def _get_mempalace_searcher():
     try:
         from mempalace.searcher import search_memories
 
-        data_dir = Path(
-            os.environ.get(
-                "MEMPALACE_PALACE_PATH", str(Path.home() / ".mempalace" / "palace")
-            )
-        )
+        from services.mempalace_paths import get_palace_path
+
+        data_dir = get_palace_path()
         return (search_memories, data_dir)
     except Exception as e:
         logger.debug(f"MemPalace searcher unavailable in daemon: {e}")

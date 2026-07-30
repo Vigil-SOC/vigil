@@ -11,6 +11,7 @@ import api, {
   configApi,
   detectionRulesApi,
   federationApi,
+  ingestionApi,
   kafkaApi,
   llmProviderApi,
   localServicesApi,
@@ -23,6 +24,7 @@ import api, {
   type BudgetSettings,
   type ComponentAssignment,
   type FederationSourceView,
+  type IngestionJob,
   type LLMProvider,
   type MempalaceHealth,
   type PlatformDatabaseProxyConfig,
@@ -1283,4 +1285,55 @@ export function useDetectionRules() {
   )
 
   return { sources, stats, phase, error, reload, addSource, removeSource, updateSource, updateAll }
+}
+
+/* ---------------- Integrations · Local file ingestion ---------------- */
+const JOB_POLL_MS = 1000
+
+/** Tracks one background ingestion job, re-attaching to whatever already runs. */
+export function useIngestionJob() {
+  const [job, setJob] = useState<IngestionJob | null>(null)
+  const [attaching, setAttaching] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    ingestionApi
+      .listJobs()
+      .then((res) => {
+        if (cancelled) return
+        const jobs = res.data || []
+        setJob(jobs.find((j) => j.status === 'running') || jobs[0] || null)
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setAttaching(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (job?.status !== 'running') return
+    let cancelled = false
+    const timer = setInterval(() => {
+      ingestionApi
+        .getJob(job.job_id)
+        .then((res) => {
+          if (!cancelled) setJob(res.data)
+        })
+        .catch(() => undefined)
+    }, JOB_POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [job?.job_id, job?.status])
+
+  const upload = useCallback(
+    (file: File) => ingestionApi.uploadFile(file).then((res) => setJob(res.data)),
+    [],
+  )
+
+  return { job, attaching, upload }
 }

@@ -9,15 +9,25 @@ Handles uploading and ingesting findings/cases from various file formats:
 - S3 sync
 """
 
+import asyncio
 import logging
 import os
-from typing import Optional, List
+from datetime import datetime
+from typing import Dict, Optional, List
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Query
 from pydantic import BaseModel
 from pathlib import Path
+from starlette.concurrency import run_in_threadpool
 import tempfile
 
 from services.ingestion_service import IngestionService
+from services.ingestion_jobs import (
+    IngestionJob,
+    IngestionJobConflict,
+    get_job_registry,
+    run_job,
+    summarize_stats,
+)
 from services.database_data_service import DatabaseDataService
 
 logger = logging.getLogger(__name__)
@@ -25,6 +35,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("MAX_UPLOAD_SIZE_MB", "500")) * 1024 * 1024
+
+EXTENSION_FORMATS = {
+    '.json': 'json',
+    '.csv': 'csv',
+    '.jsonl': 'jsonl',
+    '.ndjson': 'jsonl',
+    '.parquet': 'parquet',
+}
+
+_running_tasks: set = set()  # asyncio only weak-refs tasks; unheld ones get GC'd
 
 
 class IngestionStats(BaseModel):
@@ -41,123 +61,99 @@ class IngestionStats(BaseModel):
     message: str
 
 
-@router.post("/upload", response_model=IngestionStats)
+class IngestionJobStatus(BaseModel):
+    """Snapshot of a background ingestion job."""
+    job_id: str
+    filename: str
+    format: str
+    data_type: str
+    status: str
+    determinate: bool
+    processed: int
+    total: int
+    created_at: datetime
+    finished_at: Optional[datetime]
+    message: str
+    error: Optional[str]
+    stats: Dict[str, int]
+
+
+async def _spool_upload(file: UploadFile, suffix: str) -> Path:
+    """Stream an upload to a temp file, enforcing the size cap as it goes."""
+
+    with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix=suffix) as temp_file:
+        temp_path = Path(temp_file.name)
+        total_size = 0
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            if total_size > MAX_UPLOAD_SIZE_BYTES:
+                temp_file.close()
+                temp_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE_BYTES // (1024*1024)}MB."
+                )
+            temp_file.write(chunk)
+    return temp_path
+
+
+@router.post("/upload", response_model=IngestionJobStatus, status_code=202)
 async def upload_and_ingest_file(
     file: UploadFile = File(...),
     data_type: str = Form("finding"),
     format: Optional[str] = Form(None)
 ):
-    """
-    Upload and ingest a file containing findings or cases.
-    
-    Args:
-        file: The file to upload (JSON, CSV, JSONL, or Parquet)
-        data_type: Type of data ('finding' or 'case')
-        format: File format ('json', 'csv', 'jsonl', 'parquet'). Auto-detected if not provided.
-    
-    Returns:
-        Ingestion statistics
-    """
+    """Accept a file and ingest it as a background job; poll /ingest/jobs/{id}."""
     if data_type not in ['finding', 'case']:
         raise HTTPException(status_code=400, detail="data_type must be 'finding' or 'case'")
-    
-    # Auto-detect format from filename if not provided
+
+    filename = file.filename or 'upload'
     if not format:
-        filename = file.filename.lower()
-        if filename.endswith('.json'):
-            format = 'json'
-        elif filename.endswith('.csv'):
-            format = 'csv'
-        elif filename.endswith('.jsonl') or filename.endswith('.ndjson'):
-            format = 'jsonl'
-        elif filename.endswith('.parquet'):
-            format = 'parquet'
-        else:
+        format = EXTENSION_FORMATS.get(Path(filename).suffix.lower())
+        if format is None:
             raise HTTPException(
                 status_code=400,
                 detail="Unable to detect file format. Please specify format parameter or use .json, .csv, .jsonl, or .parquet extension"
             )
-    
+
     if format not in ['json', 'csv', 'jsonl', 'parquet']:
         raise HTTPException(status_code=400, detail="format must be 'json', 'csv', 'jsonl', or 'parquet'")
-    
+
+    temp_path = await _spool_upload(file, f'.{format}')
+
+    job = IngestionJob(filename=filename, fmt=format, data_type=data_type)
     try:
-        suffix = '.parquet' if format == 'parquet' else f'.{format}'
-        with tempfile.NamedTemporaryFile(mode='wb', delete=False, suffix=suffix) as temp_file:
-            total_size = 0
-            chunk_size = 1024 * 1024
-            while True:
-                chunk = await file.read(chunk_size)
-                if not chunk:
-                    break
-                total_size += len(chunk)
-                if total_size > MAX_UPLOAD_SIZE_BYTES:
-                    temp_file.close()
-                    Path(temp_file.name).unlink(missing_ok=True)
-                    raise HTTPException(
-                        status_code=413,
-                        detail=f"File too large. Maximum upload size is {MAX_UPLOAD_SIZE_BYTES // (1024*1024)}MB."
-                    )
-                temp_file.write(chunk)
-            temp_path = Path(temp_file.name)
-        
-        try:
-            # Ingest the file
-            ingestion_service = IngestionService()
-            
-            if format == 'json':
-                stats = ingestion_service.ingest_json_file(temp_path)
-            elif format == 'csv':
-                stats = ingestion_service.ingest_csv_file(temp_path, data_type=data_type)
-            elif format == 'jsonl':
-                stats = ingestion_service.ingest_jsonl_file(temp_path, data_type=data_type)
-            elif format == 'parquet':
-                stats = ingestion_service.ingest_parquet_file(temp_path)
-            
-            # Clean up temp file
-            temp_path.unlink()
-            
-            # Determine success
-            success = (
-                stats['findings_errors'] == 0 and
-                stats['cases_errors'] == 0 and
-                (stats['findings_imported'] > 0 or stats['cases_imported'] > 0 or
-                 stats['findings_skipped'] > 0 or stats['cases_skipped'] > 0)
-            )
-            
-            # Build message
-            messages = []
-            if stats['findings_imported'] > 0:
-                messages.append(f"Imported {stats['findings_imported']} findings")
-            if stats['findings_skipped'] > 0:
-                messages.append(f"Skipped {stats['findings_skipped']} duplicate findings")
-            if stats['cases_imported'] > 0:
-                messages.append(f"Imported {stats['cases_imported']} cases")
-            if stats['cases_skipped'] > 0:
-                messages.append(f"Skipped {stats['cases_skipped']} duplicate cases")
-            if stats['findings_errors'] > 0:
-                messages.append(f"⚠ {stats['findings_errors']} finding errors")
-            if stats['cases_errors'] > 0:
-                messages.append(f"⚠ {stats['cases_errors']} case errors")
-            
-            message = ". ".join(messages) if messages else "No data imported"
-            
-            return IngestionStats(
-                **stats,
-                success=success,
-                message=message
-            )
-        
-        finally:
-            # Ensure temp file is deleted
-            if temp_path.exists():
-                temp_path.unlink()
-    
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error ingesting file: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+        get_job_registry().start(job)
+    except IngestionJobConflict as conflict:
+        temp_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=409,
+            detail=f"Already ingesting '{conflict.active.filename}'. Wait for it to finish."
+        )
+
+    task = asyncio.create_task(run_in_threadpool(run_job, job, temp_path))
+    _running_tasks.add(task)
+    task.add_done_callback(_running_tasks.discard)
+
+    return IngestionJobStatus(**job.snapshot())
+
+
+@router.get("/jobs", response_model=List[IngestionJobStatus])
+async def list_ingestion_jobs():
+    """List recent jobs newest first, so the UI can re-attach to a running one."""
+    return [IngestionJobStatus(**job.snapshot()) for job in get_job_registry().recent()]
+
+
+@router.get("/jobs/{job_id}", response_model=IngestionJobStatus)
+async def get_ingestion_job(job_id: str):
+    """Get one job's status, progress, and final statistics."""
+    job = get_job_registry().get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Unknown ingestion job '{job_id}'")
+    return IngestionJobStatus(**job.snapshot())
 
 
 @router.post("/ingest-string", response_model=IngestionStats)
@@ -166,57 +162,19 @@ async def ingest_from_string(
     format: str = Form("json"),
     data_type: str = Form("finding")
 ):
-    """
-    Ingest data from a string.
-    
-    Args:
-        data: Data as string
-        format: Format ('json', 'csv', 'jsonl')
-        data_type: Type of data ('finding' or 'case')
-    
-    Returns:
-        Ingestion statistics
-    """
+    """Ingest data from a string; format is 'json', 'csv', or 'jsonl'."""
     if data_type not in ['finding', 'case']:
         raise HTTPException(status_code=400, detail="data_type must be 'finding' or 'case'")
-    
+
     if format not in ['json', 'csv', 'jsonl']:
         raise HTTPException(status_code=400, detail="format must be 'json', 'csv', or 'jsonl'")
-    
+
     try:
         ingestion_service = IngestionService()
         stats = ingestion_service.ingest_from_string(data, format=format, data_type=data_type)
-        
-        # Determine success
-        success = (
-            stats['findings_errors'] == 0 and
-            stats['cases_errors'] == 0 and
-            (stats['findings_imported'] > 0 or stats['cases_imported'] > 0)
-        )
-        
-        # Build message
-        messages = []
-        if stats['findings_imported'] > 0:
-            messages.append(f"Imported {stats['findings_imported']} findings")
-        if stats['findings_skipped'] > 0:
-            messages.append(f"Skipped {stats['findings_skipped']} duplicate findings")
-        if stats['cases_imported'] > 0:
-            messages.append(f"Imported {stats['cases_imported']} cases")
-        if stats['cases_skipped'] > 0:
-            messages.append(f"Skipped {stats['cases_skipped']} duplicate cases")
-        if stats['findings_errors'] > 0:
-            messages.append(f"⚠ {stats['findings_errors']} finding errors")
-        if stats['cases_errors'] > 0:
-            messages.append(f"⚠ {stats['cases_errors']} case errors")
-        
-        message = ". ".join(messages) if messages else "No data imported"
-        
-        return IngestionStats(
-            **stats,
-            success=success,
-            message=message
-        )
-    
+        success, message = summarize_stats(stats)
+        return IngestionStats(**stats, success=success, message=message)
+
     except Exception as e:
         logger.error(f"Error ingesting string data: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
@@ -436,36 +394,20 @@ async def sync_s3_folder(prefix: Optional[str] = Query(None)):
             prefix=prefix
         )
 
-        success = (
-            stats.get('findings_errors', 0) == 0
-            and stats.get('cases_errors', 0) == 0
-            and (
-                stats.get('findings_imported', 0) > 0
-                or stats.get('cases_imported', 0) > 0
-                or stats.get('findings_skipped', 0) > 0
-                or stats.get('cases_skipped', 0) > 0
-            )
-        )
+        success, summary = summarize_stats(stats)
 
-        messages = []
+        prefix = []
         fp = stats.get('files_processed', 0)
         fs = stats.get('files_skipped', 0)
         if fp > 0:
-            messages.append(f"Processed {fp} file(s)")
+            prefix.append(f"Processed {fp} file(s)")
         if fs > 0:
-            messages.append(f"Skipped {fs} unsupported file(s)")
-        if stats.get('findings_imported', 0) > 0:
-            messages.append(f"Imported {stats['findings_imported']} findings")
-        if stats.get('findings_skipped', 0) > 0:
-            messages.append(f"Skipped {stats['findings_skipped']} duplicate findings")
-        if stats.get('cases_imported', 0) > 0:
-            messages.append(f"Imported {stats['cases_imported']} cases")
-        if stats.get('findings_errors', 0) > 0:
-            messages.append(f"{stats['findings_errors']} finding errors")
-        if stats.get('cases_errors', 0) > 0:
-            messages.append(f"{stats['cases_errors']} case errors")
+            prefix.append(f"Skipped {fs} unsupported file(s)")
 
-        message = ". ".join(messages) if messages else "No supported files found or no data imported"
+        if not prefix and summary == "No data imported":
+            message = "No supported files found or no data imported"
+        else:
+            message = ". ".join(prefix + [summary])
 
         return IngestionStats(
             findings_total=stats.get('findings_total', 0),
@@ -585,18 +527,11 @@ async def ingest_s3_file(request: S3FileIngestRequest):
     """
     key = request.key
     ext = Path(key).suffix.lower()
-    FORMAT_MAP = {
-        '.parquet': 'parquet',
-        '.csv': 'csv',
-        '.json': 'json',
-        '.jsonl': 'jsonl',
-        '.ndjson': 'jsonl',
-    }
-    fmt = FORMAT_MAP.get(ext)
+    fmt = EXTENSION_FORMATS.get(ext)
     if fmt is None:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported file extension '{ext}'. Supported: {', '.join(FORMAT_MAP.keys())}"
+            detail=f"Unsupported file extension '{ext}'. Supported: {', '.join(EXTENSION_FORMATS.keys())}"
         )
 
     try:
@@ -623,32 +558,7 @@ async def ingest_s3_file(request: S3FileIngestRequest):
             if tmp_path and tmp_path.exists():
                 tmp_path.unlink()
 
-        success = (
-            stats.get('findings_errors', 0) == 0
-            and stats.get('cases_errors', 0) == 0
-            and (
-                stats.get('findings_imported', 0) > 0
-                or stats.get('cases_imported', 0) > 0
-                or stats.get('findings_skipped', 0) > 0
-                or stats.get('cases_skipped', 0) > 0
-            )
-        )
-
-        messages = []
-        if stats.get('findings_imported', 0) > 0:
-            messages.append(f"Imported {stats['findings_imported']} findings")
-        if stats.get('findings_skipped', 0) > 0:
-            messages.append(f"Skipped {stats['findings_skipped']} duplicate findings")
-        if stats.get('cases_imported', 0) > 0:
-            messages.append(f"Imported {stats['cases_imported']} cases")
-        if stats.get('cases_skipped', 0) > 0:
-            messages.append(f"Skipped {stats['cases_skipped']} duplicate cases")
-        if stats.get('findings_errors', 0) > 0:
-            messages.append(f"{stats['findings_errors']} finding errors")
-        if stats.get('cases_errors', 0) > 0:
-            messages.append(f"{stats['cases_errors']} case errors")
-
-        message = ". ".join(messages) if messages else "No data imported"
+        success, message = summarize_stats(stats)
 
         return IngestionStats(
             findings_total=stats.get('findings_total', 0),

@@ -30,6 +30,7 @@ import {
 } from './useSettings'
 import type { LLMProvider, AIModelInfo } from '../../../services/api'
 import type { SectionProps } from './types'
+import { COMPONENT_LABELS, CHAT_DEFAULT_KEY } from '../../../config/aiComponents'
 
 type AiTab = 'providers' | 'models' | 'operations' | 'budgets'
 const TABS: [AiTab, string][] = [
@@ -227,17 +228,6 @@ function ProvidersPanel({ notify }: SectionProps) {
 }
 
 /* ---------------- Model assignment ---------------- */
-const COMPONENT_LABELS: Record<string, { label: string; description: string }> = {
-  chat_default: { label: 'Chat (Default)', description: 'Fallback for interactive chat and every component below when unset.' },
-  triage: { label: 'Triage Agent', description: 'Automated alert triage — cheaper/faster models work well here.' },
-  investigation: { label: 'Investigation Agents', description: 'Investigator, Threat Hunter, Correlator, etc. — the heavy lifters.' },
-  orchestrator_plan: { label: 'Orchestrator — Planning', description: 'Generates the investigation plan from the initial finding.' },
-  orchestrator_review: { label: 'Orchestrator — Review', description: 'Reviews and approves sub-agent output at the end of an investigation.' },
-  summarization: { label: 'Context Summarization', description: 'Compresses long conversations — a cheap model is usually fine.' },
-  reporting: { label: 'Report Generation', description: 'Reporter agent output — clarity and structure matter more than depth.' },
-}
-const CHAT_DEFAULT_KEY = 'chat_default'
-
 interface RowState { inherit: boolean; providerId: string; modelId: string }
 
 function ModelAssignmentPanel({ notify }: SectionProps) {

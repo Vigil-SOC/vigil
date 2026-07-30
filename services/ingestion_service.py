@@ -35,6 +35,51 @@ MITRE_TACTIC_MAP = {
     11: 'Privilege Escalation', 12: 'Exfiltration',
 }
 
+# 64 bits. The old 8 chars gave 32, where a 200k-row file is near-certain to
+# collide and every collision is silently reported as a duplicate.
+ID_HASH_WIDTH = 16
+
+# Columns identifying a row when the source carries no id of its own, ordered
+# most to least selective.
+PARQUET_IDENTITY_COLUMNS = (
+    'embedding', 'event_start_time', 'event_end_time', 'focal_ip', 'engaged_ip',
+)
+TEMPO_CSV_IDENTITY_COLUMNS = (
+    'event_start', 'event_end', 'IP1', 'IP2', 'mitre_tactic', 'created_at',
+)
+
+# Column-name aliases for entity_context on schemas ingest doesn't recognize.
+# First match wins; raw row is always kept in raw_features regardless.
+ENTITY_FIELD_ALIASES = {
+    'src_ip': ('src_ip', 'source_ip', 'srcip', 'ip1', 'saddr'),
+    'dst_ip': ('dest_ip', 'dst_ip', 'destination_ip', 'dstip', 'ip2', 'daddr'),
+    'src_port': ('src_port', 'source_port', 'sport', 'srcport'),
+    'dst_port': ('dest_port', 'dst_port', 'destination_port', 'dport', 'dstport'),
+    'proto': ('proto', 'protocol', 'ip_proto'),
+    'timestamp': ('timestamp', 'ts', 'event_time', 'time', 'created_at'),
+}
+
+
+def _first_present(row: Dict[str, Any], aliases: tuple) -> Any:
+    """First non-null value among a row's aliases for one logical field."""
+    for alias in aliases:
+        if row.get(alias) is not None:
+            return row[alias]
+    return None
+
+
+def row_identity_key(row: Dict[str, Any], columns: tuple) -> str:
+    """Content-derived id key for rows with no id column: re-ingest still dedupes."""
+    parts = []
+    for column in columns:
+        value = row.get(column)
+        if isinstance(value, (list, tuple)):
+            value = hashlib.sha256(
+                ','.join(repr(v) for v in value).encode()
+            ).hexdigest()
+        parts.append(f"{column}={value!r}")
+    return '|'.join(parts)
+
 
 class IngestionService:
     """Service for ingesting data from various formats into the database."""
@@ -71,7 +116,25 @@ class IngestionService:
             'cases_skipped': 0,
             'cases_errors': 0,
         }
-    
+        self._identity_warned: set = set()
+
+    def _identity_fallback(
+        self,
+        row: Dict[str, Any],
+        columns: tuple,
+        missing_column: str
+    ) -> str:
+        """Content-derived id key for a row whose id column is absent."""
+        if missing_column not in self._identity_warned:
+            self._identity_warned.add(missing_column)
+            logger.warning(
+                "No '%s' column in this source; deriving finding ids from row "
+                "content (%s). Rows identical across those columns will dedupe.",
+                missing_column,
+                ', '.join(columns),
+            )
+        return row_identity_key(row, columns)
+
     def reset_stats(self):
         """Reset ingestion statistics."""
         for key in self.stats:
@@ -200,7 +263,56 @@ class IngestionService:
             self.stats['findings_errors'] += 1
             logger.error(f"Error ingesting finding {finding_id}: {e}")
             return False
-    
+
+    def _ingest_finding_batch(self, finding_dicts: List[Dict[str, Any]]) -> None:
+        """Bulk-dedup and insert a batch in one DB round trip, vs. per-row ingest_finding."""
+        if not finding_dicts:
+            return
+
+        if not self.use_database or not self.db_service:
+            for finding_data in finding_dicts:
+                self.ingest_finding(finding_data)
+            return
+
+        valid = []
+        for finding_data in finding_dicts:
+            if not finding_data.get('finding_id'):
+                logger.error("Finding missing finding_id")
+                self.stats['findings_errors'] += 1
+                continue
+            try:
+                finding_data = normalize_finding_source_evidence(finding_data)
+                finding_data['timestamp'] = self.parse_timestamp(finding_data.get('timestamp'))
+                finding_data['anomaly_score'] = float(finding_data.get('anomaly_score', 0.0))
+            except Exception as e:
+                logger.error(f"Error preparing finding {finding_data.get('finding_id')}: {e}")
+                self.stats['findings_errors'] += 1
+                continue
+            valid.append(finding_data)
+
+        if not valid:
+            return
+
+        try:
+            result = self.db_service.bulk_create_findings(valid)
+            self.stats['findings_imported'] += result['imported']
+            self.stats['findings_skipped'] += result['skipped']
+            self.stats['findings_errors'] += result.get('errors', 0)
+        except Exception as e:
+            logger.error(f"Error bulk ingesting findings: {e}")
+            self.stats['findings_errors'] += len(valid)
+
+    def _ingest_findings_batched(self, findings, batch_size: int = 1000) -> None:
+        """Feed an iterable of finding dicts through _ingest_finding_batch in chunks."""
+        batch = []
+        for finding in findings:
+            batch.append(finding)
+            if len(batch) >= batch_size:
+                self._ingest_finding_batch(batch)
+                batch = []
+        if batch:
+            self._ingest_finding_batch(batch)
+
     def ingest_case(self, case_data: Dict[str, Any]) -> bool:
         """
         Ingest a single case into the database.
@@ -276,17 +388,8 @@ class IngestionService:
             return False
     
     def ingest_json_file(self, file_path: Union[str, Path]) -> Dict[str, Any]:
-        """
-        Ingest data from a JSON file using streaming for large files.
-        
-        Supports:
-        - {"findings": [...], "cases": [...]}  (dict with findings/cases keys)
-        - [{"finding_id": ...}, ...]  (top-level array of findings)
-        - [{"case_id": ...}, ...]  (top-level array of cases)
-        
-        Uses ijson for streaming when available, falls back to json.load for
-        small files or unsupported structures.
-        """
+        """Ingest a JSON file: {findings, cases} dict or a top-level findings/cases array.
+        Streams via ijson when available, else falls back to json.load."""
         self.reset_stats()
         file_path = Path(file_path)
         
@@ -317,33 +420,41 @@ class IngestionService:
             f.seek(0)
             
             if peek == b'{':
-                for item in ijson.items(f, 'findings.item'):
-                    self.stats['findings_total'] += 1
-                    self.ingest_finding(item)
+                def _findings():
+                    for item in ijson.items(f, 'findings.item'):
+                        self.stats['findings_total'] += 1
+                        yield item
+                self._ingest_findings_batched(_findings())
                 f.seek(0)
                 for item in ijson.items(f, 'cases.item'):
                     self.stats['cases_total'] += 1
                     self.ingest_case(item)
             elif peek == b'[':
                 first_key = None
+                finding_batch = []
                 for item in ijson.items(f, 'item'):
                     if first_key is None:
                         first_key = 'finding' if 'finding_id' in item else 'case' if 'case_id' in item else 'finding'
                     if first_key == 'finding':
                         self.stats['findings_total'] += 1
-                        self.ingest_finding(item)
+                        finding_batch.append(item)
+                        if len(finding_batch) >= 1000:
+                            self._ingest_finding_batch(finding_batch)
+                            finding_batch = []
                     else:
                         self.stats['cases_total'] += 1
                         self.ingest_case(item)
+                if finding_batch:
+                    self._ingest_finding_batch(finding_batch)
 
     def _ingest_json_full(self, file_path: Path) -> None:
         """Fallback: load entire JSON file into memory."""
         with open(file_path, 'r') as f:
             data = json.load(f)
-        
+
         findings = []
         cases = []
-        
+
         if isinstance(data, dict):
             findings = data.get('findings', [])
             cases = data.get('cases', [])
@@ -352,57 +463,53 @@ class IngestionService:
                 findings = data
             elif data and 'case_id' in data[0]:
                 cases = data
-        
+
         self.stats['findings_total'] = len(findings)
         self.stats['cases_total'] = len(cases)
-        
-        for finding in findings:
-            self.ingest_finding(finding)
+
+        self._ingest_findings_batched(findings)
         for case in cases:
             self.ingest_case(case)
     
     def ingest_jsonl_file(self, file_path: Union[str, Path], data_type: str = 'finding') -> Dict[str, Any]:
-        """
-        Ingest data from a JSONL (JSON Lines) file.
-        
-        Args:
-            file_path: Path to JSONL file
-            data_type: Type of data ('finding' or 'case')
-        
-        Returns:
-            Dictionary with statistics
-        """
+        """Ingest a JSON Lines file, one finding or case per line."""
         self.reset_stats()
         file_path = Path(file_path)
-        
+
         if not file_path.exists():
             logger.error(f"File not found: {file_path}")
             return self.stats
-        
+
         try:
+            finding_batch = []
             with open(file_path, 'r') as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
-                    
+
                     try:
                         data = json.loads(line)
-                        
+
                         if data_type == 'finding':
                             self.stats['findings_total'] += 1
-                            self.ingest_finding(data)
+                            finding_batch.append(data)
+                            if len(finding_batch) >= 1000:
+                                self._ingest_finding_batch(finding_batch)
+                                finding_batch = []
                         elif data_type == 'case':
                             self.stats['cases_total'] += 1
                             self.ingest_case(data)
-                    
+
                     except json.JSONDecodeError as e:
                         logger.error(f"Invalid JSON on line {line_num}: {e}")
                         if data_type == 'finding':
                             self.stats['findings_errors'] += 1
                         else:
                             self.stats['cases_errors'] += 1
-            
+            if finding_batch:
+                self._ingest_finding_batch(finding_batch)
+
             logger.info(f"JSONL ingestion complete: {self.stats}")
             return self.stats
         
@@ -411,45 +518,41 @@ class IngestionService:
             return self.stats
     
     def ingest_csv_file(self, file_path: Union[str, Path], data_type: str = 'finding') -> Dict[str, Any]:
-        """
-        Ingest data from a CSV file.
-        
-        Args:
-            file_path: Path to CSV file
-            data_type: Type of data ('finding' or 'case')
-        
-        Returns:
-            Dictionary with statistics
-        """
+        """Ingest a CSV file: generic finding/case rows, or the Tempo alert format."""
         self.reset_stats()
         file_path = Path(file_path)
-        
+
         if not file_path.exists():
             logger.error(f"File not found: {file_path}")
             return self.stats
-        
+
         try:
+            finding_batch = []
             with open(file_path, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
-                
+
                 for row_num, row in enumerate(reader, 1):
                     try:
                         if data_type == 'finding':
                             self.stats['findings_total'] += 1
-                            finding_data = self._csv_row_to_finding(row)
-                            self.ingest_finding(finding_data)
+                            finding_batch.append(self._csv_row_to_finding(row))
+                            if len(finding_batch) >= 1000:
+                                self._ingest_finding_batch(finding_batch)
+                                finding_batch = []
                         elif data_type == 'case':
                             self.stats['cases_total'] += 1
                             case_data = self._csv_row_to_case(row)
                             self.ingest_case(case_data)
-                    
+
                     except Exception as e:
                         logger.error(f"Error processing CSV row {row_num}: {e}")
                         if data_type == 'finding':
                             self.stats['findings_errors'] += 1
                         else:
                             self.stats['cases_errors'] += 1
-            
+            if finding_batch:
+                self._ingest_finding_batch(finding_batch)
+
             logger.info(f"CSV ingestion complete: {self.stats}")
             return self.stats
         
@@ -538,17 +641,22 @@ class IngestionService:
             sequence_id, attack_id, IP1, IP2, mitre_tactic,
             incident_confidence, event_start, event_end, created_at, user_feedback
         """
-        sequence_id = str(row.get('sequence_id', ''))
+        sequence_id = str(row.get('sequence_id') or '').strip()
 
         # Parse event_start as timestamp
         event_start_str = row.get('event_start', '')
         event_ts = self.parse_timestamp(event_start_str) if event_start_str else datetime.utcnow()
 
-        # Generate finding_id from sequence_id + attack_id to ensure uniqueness
-        # when the same sequence appears with different attack clusters
-        attack_id = row.get('attack_id', '').strip()
-        unique_key = f"{sequence_id}_{attack_id}" if attack_id else sequence_id
-        id_hash = hashlib.sha256(unique_key.encode()).hexdigest()[:8]
+        # sequence_id + attack_id keeps the same sequence distinct across
+        # attack clusters; content identity covers rows carrying neither.
+        attack_id = (row.get('attack_id') or '').strip()
+        if sequence_id:
+            unique_key = f"{sequence_id}_{attack_id}" if attack_id else sequence_id
+        else:
+            unique_key = self._identity_fallback(
+                row, TEMPO_CSV_IDENTITY_COLUMNS, 'sequence_id'
+            )
+        id_hash = hashlib.sha256(unique_key.encode()).hexdigest()[:ID_HASH_WIDTH]
         finding_id = f"f-{event_ts.strftime('%Y%m%d')}-{id_hash}"
 
         # MITRE tactic comes as a name (e.g. "Command and Control")
@@ -648,27 +756,8 @@ class IngestionService:
         file_path: Union[str, Path],
         data_source: str = 'flow'
     ) -> Dict[str, Any]:
-        """
-        Ingest findings from a DeepTempo LogLM parquet file.
-
-        Parquet files contain embedding vectors and metadata from the LogLM
-        model. Columns are mapped to the findings schema as follows:
-          sequence_id   -> finding_id (hashed to f-YYYYMMDD-xxxxxxxx)
-          embedding     -> embedding (variable dimension, stored as-is)
-          mitre_pred    -> mitre_predictions (integer label stored as key)
-          incident_pred -> severity (1=attack, 0=benign)
-          confidence_score -> anomaly_score
-          focal_ip      -> entity_context.src_ip
-          engaged_ip    -> entity_context.dst_ip
-          event_start/end_time -> timestamp + entity_context
-
-        Args:
-            file_path: Path to parquet file
-            data_source: Data source label (default 'flow')
-
-        Returns:
-            Dictionary with ingestion statistics
-        """
+        """LogLM embedding exports route through _parquet_row_to_finding; anything
+        else ingests generically via _generic_row_to_finding."""
         self.reset_stats()
         file_path = Path(file_path)
 
@@ -686,11 +775,15 @@ class IngestionService:
             logger.info(f"Parquet columns: {sorted(col_names)}")
             self.stats['findings_total'] = parquet_file.metadata.num_rows
 
+            schema_kind = self._detect_parquet_schema(col_names)
+            logger.info(f"Detected parquet schema: {schema_kind}")
+
             sampled_first_row = False
             batch_size = 1000
             for batch in parquet_file.iter_batches(batch_size=batch_size):
                 batch_dict = batch.to_pydict()
                 batch_len = len(next(iter(batch_dict.values()))) if batch_dict else 0
+                finding_batch = []
                 for i in range(batch_len):
                     try:
                         row = {col: batch_dict[col][i] for col in col_names if col in batch_dict}
@@ -698,11 +791,14 @@ class IngestionService:
                             sample = {k: (type(v).__name__, v) for k, v in row.items() if k != 'embedding'}
                             logger.info(f"Parquet sample row (types+values): {sample}")
                             sampled_first_row = True
-                        finding_data = self._parquet_row_to_finding(row, data_source)
-                        self.ingest_finding(finding_data)
+                        if schema_kind == 'loglm':
+                            finding_batch.append(self._parquet_row_to_finding(row, data_source))
+                        else:
+                            finding_batch.append(self._generic_row_to_finding(row, data_source))
                     except Exception as e:
                         logger.error(f"Error processing parquet row: {e}")
                         self.stats['findings_errors'] += 1
+                self._ingest_finding_batch(finding_batch)
 
             logger.info(f"Parquet ingestion complete: {self.stats}")
             return self.stats
@@ -729,7 +825,7 @@ class IngestionService:
         Returns:
             Finding dictionary ready for ingest_finding()
         """
-        sequence_id = str(row.get('sequence_id', ''))
+        sequence_id = str(row.get('sequence_id') or '')
 
         # Derive event timestamp from event_start_time (epoch milliseconds)
         event_start_ms = row.get('event_start_time')
@@ -738,8 +834,10 @@ class IngestionService:
         else:
             event_ts = datetime.utcnow()
 
-        # Generate finding_id: f-{YYYYMMDD}-{8-char hash of sequence_id}
-        id_hash = hashlib.sha256(sequence_id.encode()).hexdigest()[:8]
+        unique_key = sequence_id or self._identity_fallback(
+            row, PARQUET_IDENTITY_COLUMNS, 'sequence_id'
+        )
+        id_hash = hashlib.sha256(unique_key.encode()).hexdigest()[:ID_HASH_WIDTH]
         finding_id = f"f-{event_ts.strftime('%Y%m%d')}-{id_hash}"
 
         # Embedding: stored as-is regardless of dimension
@@ -825,6 +923,48 @@ class IngestionService:
             'status': 'new',
         }
 
+    def _detect_parquet_schema(self, col_names: set) -> str:
+        """'loglm' for DeepTempo embedding exports, else 'generic'."""
+        if 'embedding' in col_names or 'sequence_id' in col_names:
+            return 'loglm'
+        return 'generic'
+
+    def _generic_row_to_finding(
+        self,
+        row: Dict[str, Any],
+        data_source: str = 'flow'
+    ) -> Dict[str, Any]:
+        """Unscored finding shell for a schema with no known column layout."""
+        timestamp = _first_present(row, ENTITY_FIELD_ALIASES['timestamp'])
+        event_ts = self.parse_timestamp(timestamp) if timestamp is not None else datetime.utcnow()
+
+        unique_key = row_identity_key(row, tuple(sorted(row.keys())))
+        id_hash = hashlib.sha256(unique_key.encode()).hexdigest()[:ID_HASH_WIDTH]
+        finding_id = f"f-{event_ts.strftime('%Y%m%d')}-{id_hash}"
+
+        entity_context = {
+            'src_ip': _first_present(row, ENTITY_FIELD_ALIASES['src_ip']),
+            'dst_ip': _first_present(row, ENTITY_FIELD_ALIASES['dst_ip']),
+            'src_port': _first_present(row, ENTITY_FIELD_ALIASES['src_port']),
+            'dst_port': _first_present(row, ENTITY_FIELD_ALIASES['dst_port']),
+            'proto': _first_present(row, ENTITY_FIELD_ALIASES['proto']),
+            'raw_features': row,
+        }
+
+        return {
+            'finding_id': finding_id,
+            'embedding': [0.0] * 768,
+            'mitre_predictions': {},
+            'anomaly_score': 0.0,
+            'timestamp': event_ts.isoformat(),
+            'data_source': data_source,
+            'entity_context': entity_context,
+            'evidence_links': None,
+            'cluster_id': None,
+            'severity': None,
+            'status': 'unscored',
+        }
+
     # Extension -> (ingestion method name, temp file suffix, file mode for write)
     _S3_FORMAT_MAP = {
         '.parquet': 'parquet',
@@ -840,25 +980,7 @@ class IngestionService:
         prefix: str = "",
         data_source: str = 'flow'
     ) -> Dict[str, Any]:
-        """
-        Discover and ingest all supported files from an S3 prefix.
-
-        Lists files under the prefix and auto-routes each by extension:
-          .parquet          -> ingest_parquet_file
-          .csv              -> ingest_csv_file
-          .json             -> ingest_json_file
-          .jsonl / .ndjson  -> ingest_jsonl_file
-        Unsupported extensions are skipped with a warning.
-
-        Args:
-            s3_service: An initialised S3Service instance
-            prefix: S3 key prefix (folder path), e.g. "embeddings/"
-            data_source: Data source label for parquet files
-
-        Returns:
-            Dictionary with aggregated ingestion statistics plus
-            files_processed and files_skipped counts.
-        """
+        """Discover and ingest all supported files from an S3 prefix, routed by extension."""
         self.reset_stats()
         files_processed = 0
         files_skipped = 0
@@ -894,14 +1016,8 @@ class IngestionService:
 
                 file_stats = self._ingest_file_by_format(tmp_path, fmt, data_source)
 
-                self.stats['findings_total'] += file_stats.get('findings_total', 0)
-                self.stats['findings_imported'] += file_stats.get('findings_imported', 0)
-                self.stats['findings_skipped'] += file_stats.get('findings_skipped', 0)
-                self.stats['findings_errors'] += file_stats.get('findings_errors', 0)
-                self.stats['cases_total'] += file_stats.get('cases_total', 0)
-                self.stats['cases_imported'] += file_stats.get('cases_imported', 0)
-                self.stats['cases_skipped'] += file_stats.get('cases_skipped', 0)
-                self.stats['cases_errors'] += file_stats.get('cases_errors', 0)
+                for key in self.stats:
+                    self.stats[key] += file_stats.get(key, 0)
                 files_processed += 1
 
             except Exception as e:
@@ -940,17 +1056,18 @@ class IngestionService:
         self,
         file_path: Path,
         fmt: str,
-        data_source: str = 'flow'
+        data_source: str = 'flow',
+        data_type: str = 'finding'
     ) -> Dict[str, Any]:
         """Dispatch a local file to the appropriate ingestion method."""
         if fmt == 'parquet':
             return self.ingest_parquet_file(file_path, data_source=data_source)
         elif fmt == 'csv':
-            return self.ingest_csv_file(file_path, data_type='finding')
+            return self.ingest_csv_file(file_path, data_type=data_type)
         elif fmt == 'json':
             return self.ingest_json_file(file_path)
         elif fmt == 'jsonl':
-            return self.ingest_jsonl_file(file_path, data_type='finding')
+            return self.ingest_jsonl_file(file_path, data_type=data_type)
         else:
             logger.warning(f"No handler for format '{fmt}', skipping {file_path}")
             return {}
@@ -961,17 +1078,7 @@ class IngestionService:
         format: str = 'json',
         data_type: str = 'finding'
     ) -> Dict[str, Any]:
-        """
-        Ingest data from a string.
-        
-        Args:
-            data_string: Data as string
-            format: Format ('json', 'jsonl', 'csv')
-            data_type: Type of data ('finding' or 'case')
-        
-        Returns:
-            Dictionary with statistics
-        """
+        """Ingest data from a string; format is 'json', 'jsonl', or 'csv'."""
         self.reset_stats()
         
         try:
@@ -999,40 +1106,41 @@ class IngestionService:
                 
                 self.stats['findings_total'] = len(findings)
                 self.stats['cases_total'] = len(cases)
-                
-                for finding in findings:
-                    self.ingest_finding(finding)
-                
+
+                self._ingest_findings_batched(findings)
                 for case in cases:
                     self.ingest_case(case)
-            
+
             elif format == 'jsonl':
+                finding_batch = []
                 for line in data_string.strip().split('\n'):
                     line = line.strip()
                     if not line:
                         continue
-                    
+
                     data = json.loads(line)
-                    
+
                     if data_type == 'finding':
                         self.stats['findings_total'] += 1
-                        self.ingest_finding(data)
+                        finding_batch.append(data)
                     elif data_type == 'case':
                         self.stats['cases_total'] += 1
                         self.ingest_case(data)
-            
+                self._ingest_findings_batched(finding_batch)
+
             elif format == 'csv':
                 reader = csv.DictReader(StringIO(data_string))
-                
+
+                finding_batch = []
                 for row in reader:
                     if data_type == 'finding':
                         self.stats['findings_total'] += 1
-                        finding_data = self._csv_row_to_finding(row)
-                        self.ingest_finding(finding_data)
+                        finding_batch.append(self._csv_row_to_finding(row))
                     elif data_type == 'case':
                         self.stats['cases_total'] += 1
                         case_data = self._csv_row_to_case(row)
                         self.ingest_case(case_data)
+                self._ingest_findings_batched(finding_batch)
             
             logger.info(f"String ingestion complete: {self.stats}")
             return self.stats

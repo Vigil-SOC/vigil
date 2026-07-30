@@ -482,12 +482,6 @@ export const mcpApi = {
 
   getServerStatus: (name: string) => api.get(`/mcp/servers/${name}/status`),
 
-  // Persistent connection status for all MCP servers — includes
-  // `connected: boolean` and (when not connected) `missing_credentials`
-  // and/or `error`. Used to detect whether an integration like VStrike is
-  // configured and ready.
-  getConnections: () => api.get('/mcp/connections/status'),
-
   // NOTE: startServer / stopServer / startAll / stopAll were removed —
   // every server in mcp-config.json is stdio-based, and the old endpoints
   // explicitly refused stdio. Runtime start/stop now lives on the enable
@@ -1145,19 +1139,39 @@ export const aiConfigApi = {
 }
 
 // Ingestion API
+export interface IngestionJob {
+  job_id: string
+  filename: string
+  format: string
+  data_type: string
+  status: 'running' | 'succeeded' | 'failed'
+  determinate: boolean // false for CSV/JSONL — row count unknown until read ends
+  processed: number
+  total: number
+  created_at: string
+  finished_at: string | null
+  message: string
+  error: string | null
+  stats: Record<string, number>
+}
+
 export const ingestionApi = {
   listS3Files: (prefix?: string) =>
     api.get('/ingest/s3-files', { params: { prefix: prefix ?? '' } }),
   ingestS3File: (key: string) =>
     api.post('/ingest/s3-file', { key }),
+  // Returns once the body is spooled; the ingest runs as a background job.
   uploadFile: (file: File, dataType: string = 'finding') => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('data_type', dataType)
-    return api.post('/ingest/upload', formData, {
+    return api.post<IngestionJob>('/ingest/upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 0,
     })
   },
+  listJobs: () => api.get<IngestionJob[]>('/ingest/jobs'),
+  getJob: (jobId: string) => api.get<IngestionJob>(`/ingest/jobs/${jobId}`),
 }
 
 // Analytics API (#184 Phase 2)
