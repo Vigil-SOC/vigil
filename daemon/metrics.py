@@ -1,22 +1,8 @@
-"""Metrics collection for daemon operations.
-
-DaemonMetrics is a thin wrapper around OpenTelemetry instruments.  It
-preserves the existing public interface (record_poll, record_processing,
-get_summary, reset, get_poll_count, get_total_processed) so all callers
-(poller.py, processor.py, responder.py, scheduler.py) need zero changes.
-
-Prometheus-format /metrics is now served on port 9090 by the OTEL
-PrometheusMetricReader initialised in core/telemetry.init_telemetry().
-
-MetricsServer has been narrowed to a health-only server on
-DAEMON_HEALTH_PORT (default 9091) exposing /health and /status.
-"""
-
 import asyncio
 import logging
 import os
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from aiohttp import web
@@ -28,29 +14,25 @@ logger = logging.getLogger(__name__)
 DAEMON_HEALTH_PORT = int(os.getenv("DAEMON_HEALTH_PORT", "9091"))
 
 
-# ---------------------------------------------------------------------------
-# DaemonMetrics — OTEL-backed, public interface unchanged
-# ---------------------------------------------------------------------------
+def _emit(instrument: Any, value: Any, attrs: Optional[Dict[str, str]] = None) -> None:
+    """Record to an OTEL counter or histogram when one exists; never raises."""
+    if instrument is None:
+        return
+    try:
+        emit = getattr(instrument, "add", None) or instrument.record
+        emit(value, attrs or {})
+    except Exception as _err:
+        logger.debug("OTEL emit failed (non-fatal): %s", _err)
+
 
 class DaemonMetrics:
-    """Metrics tracking backed by OpenTelemetry instruments.
-
-    Falls back to in-memory counters if OTEL is unavailable so the daemon
-    boots cleanly even without telemetry configured.
-    """
-
     def __init__(self):
-        self._start_time = datetime.utcnow()
-
-        # In-memory shadow counters (used by get_summary / get_poll_count /
-        # get_total_processed which must return values synchronously).
+        self._start_time = datetime.now(timezone.utc)
         self._poll_counts: Dict[str, int] = defaultdict(int)
         self._poll_durations: Dict[str, list] = defaultdict(list)
         self._events_counts: Dict[str, int] = defaultdict(int)
         self._processing_count: int = 0
         self._processing_durations: list = []
-
-        # OTEL instruments — created lazily; None if OTEL not available.
         self._polls_counter = None
         self._events_counter = None
         self._poll_duration_hist = None
@@ -89,50 +71,35 @@ class DaemonMetrics:
         except Exception as _err:
             logger.debug("OTEL instruments unavailable, using in-memory only: %s", _err)
 
-    # ------------------------------------------------------------------
-    # Public interface (preserved exactly)
-    # ------------------------------------------------------------------
-
     def record_poll(self, source: str, duration: float, events_count: int):
-        """Record a poll operation."""
         attrs = {"source": source}
 
-        # Shadow counters
         self._poll_counts[source] += 1
         self._poll_durations[source].append(duration)
         self._events_counts[source] += events_count
 
-        # OTEL
-        try:
-            if self._polls_counter is not None:
-                self._polls_counter.add(1, attrs)
-            if self._events_counter is not None:
-                self._events_counter.add(events_count, attrs)
-            if self._poll_duration_hist is not None:
-                self._poll_duration_hist.record(duration, attrs)
-        except Exception as _err:
-            logger.debug("OTEL record_poll failed (non-fatal): %s", _err)
+        _emit(self._polls_counter, 1, attrs)
+        _emit(self._events_counter, events_count, attrs)
+        _emit(self._poll_duration_hist, duration, attrs)
 
-        logger.debug("Recorded poll for %s: %d events in %.2fs", source, events_count, duration)
+        logger.debug(
+            "Recorded poll for %s: %d events in %.2fs", source, events_count, duration
+        )
 
     def get_poll_count(self, source: str) -> int:
-        """Get total poll count for a source."""
+
         return self._poll_counts.get(source, 0)
 
     def record_processing(self, findings_count: int, duration: float):
-        """Record findings processing operation."""
         self._processing_count += findings_count
         self._processing_durations.append(duration)
 
-        try:
-            if self._processed_counter is not None:
-                self._processed_counter.add(findings_count)
-            if self._processing_duration_hist is not None:
-                self._processing_duration_hist.record(duration)
-        except Exception as _err:
-            logger.debug("OTEL record_processing failed (non-fatal): %s", _err)
+        _emit(self._processed_counter, findings_count)
+        _emit(self._processing_duration_hist, duration)
 
-        logger.debug("Recorded processing: %d findings in %.2fs", findings_count, duration)
+        logger.debug(
+            "Recorded processing: %d findings in %.2fs", findings_count, duration
+        )
 
     def get_total_processed(self) -> int:
         """Get total number of findings processed."""
@@ -140,7 +107,7 @@ class DaemonMetrics:
 
     def get_summary(self) -> Dict[str, Any]:
         """Get summary of all metrics (used for /status display only)."""
-        uptime = (datetime.utcnow() - self._start_time).total_seconds()
+        uptime = (datetime.now(timezone.utc) - self._start_time).total_seconds()
         total_polls = sum(self._poll_counts.values())
 
         poll_stats = {}
@@ -171,34 +138,19 @@ class DaemonMetrics:
         }
 
     def reset(self):
-        """Reset in-memory shadow counters (OTEL instruments are cumulative by design)."""
         self._poll_counts.clear()
         self._poll_durations.clear()
         self._events_counts.clear()
         self._processing_count = 0
         self._processing_durations.clear()
-        self._start_time = datetime.utcnow()
+        self._start_time = datetime.now(timezone.utc)
         logger.info("Metrics reset")
 
 
-# ---------------------------------------------------------------------------
-# MetricsServer — health/status only on DAEMON_HEALTH_PORT
-# Prometheus /metrics is served by core/telemetry PrometheusMetricReader on 9090
-# ---------------------------------------------------------------------------
-
 class MetricsServer:
-    """Health and status HTTP server for the daemon.
-
-    Serves /health and /status on DAEMON_HEALTH_PORT (default 9091).
-    Prometheus metrics are emitted on port 9090 by the OTEL
-    PrometheusMetricReader; this server no longer renders them.
-    """
-
     def __init__(self, config: MetricsConfig):
         self.config = config
-        self._start_time = datetime.utcnow()
-
-        # Component references (set externally)
+        self._start_time = datetime.now(timezone.utc)
         self.poller = None
         self.kafka_ingestor = None
         self.processor = None
@@ -210,8 +162,10 @@ class MetricsServer:
     def _health_port(self) -> int:
         return DAEMON_HEALTH_PORT
 
+    def _uptime(self) -> float:
+        return (datetime.now(timezone.utc) - self._start_time).total_seconds()
+
     async def run(self, shutdown_event: asyncio.Event):
-        """Run the health HTTP server."""
         app = web.Application()
         app.router.add_get("/health", self._handle_health)
         app.router.add_get("/status", self._handle_status)
@@ -229,39 +183,19 @@ class MetricsServer:
         logger.info("Health server stopped")
 
     async def _handle_health(self, request: web.Request) -> web.Response:
-        """Handle health check request."""
         health: Dict[str, Any] = {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "uptime_seconds": (datetime.utcnow() - self._start_time).total_seconds(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "uptime_seconds": self._uptime(),
         }
 
-        components = {}
-
-        if self.poller:
-            components["poller"] = "running"
-        else:
-            components["poller"] = "not_initialized"
-
-        if self.processor:
-            components["processor"] = "running"
-        else:
-            components["processor"] = "not_initialized"
-
-        if self.responder:
-            components["responder"] = "running"
-        else:
-            components["responder"] = "not_initialized"
-
-        if self.scheduler:
-            components["scheduler"] = "running"
-        else:
-            components["scheduler"] = "not_initialized"
-
-        if self.orchestrator:
-            components["orchestrator"] = "running" if self.orchestrator.enabled else "disabled"
-        else:
-            components["orchestrator"] = "not_initialized"
+        parts = self._components()
+        parts.pop("kafka")  # optional ingested, its absence is not a health signal
+        components = {
+            name: "running" if c else "not_initialized" for name, c in parts.items()
+        }
+        if self.orchestrator and not self.orchestrator.enabled:
+            components["orchestrator"] = "disabled"
 
         health["components"] = components
 
@@ -276,13 +210,13 @@ class MetricsServer:
         return web.json_response(health, status=status_code)
 
     async def _handle_status(self, request: web.Request) -> web.Response:
-        """Handle detailed status request."""
+
         metrics = self._collect_metrics()
 
         status = {
             "daemon": {
                 "start_time": self._start_time.isoformat(),
-                "uptime_seconds": (datetime.utcnow() - self._start_time).total_seconds(),
+                "uptime_seconds": self._uptime(),
             },
             "poller": metrics.get("poller", {}),
             "kafka": metrics.get("kafka", {}),
@@ -294,29 +228,26 @@ class MetricsServer:
 
         return web.json_response(status)
 
+    def _components(self) -> Dict[str, Any]:
+        """The daemon subsystems this server reports on, in report order."""
+        return {
+            "poller": self.poller,
+            "kafka": self.kafka_ingestor,
+            "processor": self.processor,
+            "responder": self.responder,
+            "scheduler": self.scheduler,
+            "orchestrator": self.orchestrator,
+        }
+
     def _collect_metrics(self) -> Dict[str, Any]:
-        """Collect metrics from all component stats dicts."""
-        metrics: Dict[str, Any] = {}
-
-        if self.poller:
-            metrics["poller"] = self.poller.stats.copy()
-
-        if self.kafka_ingestor:
-            metrics["kafka"] = dict(self.kafka_ingestor.stats)
-
-        if self.processor:
-            metrics["processor"] = self.processor.stats.copy()
-
-        if self.responder:
-            metrics["responder"] = self.responder.stats.copy()
-
-        if self.scheduler:
-            metrics["scheduler"] = self.scheduler.stats.copy()
+        metrics: Dict[str, Any] = {
+            name: dict(c.stats) for name, c in self._components().items() if c
+        }
 
         if self.orchestrator:
-            orch_stats = self.orchestrator.stats.copy()
-            orch_stats["active_agents"] = self.orchestrator.agent_runner.active_count
-            orch_stats["enabled"] = self.orchestrator.enabled
-            metrics["orchestrator"] = orch_stats
+            metrics["orchestrator"]["active_agents"] = (
+                self.orchestrator.agent_runner.active_count
+            )
+            metrics["orchestrator"]["enabled"] = self.orchestrator.enabled
 
         return metrics
