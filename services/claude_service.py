@@ -1887,104 +1887,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
     async def _process_tool_use(self, content: List) -> List[Dict]:
         """Process tool use requests and call MCP tools."""
-        tool_results = []
-
-        for item in content:
-            # Handle both dict and object formats
-            if isinstance(item, dict):
-                item_type = item.get("type")
-                tool_name = item.get("name")
-                tool_id = item.get("id")
-                arguments = item.get("input", {})
-            else:
-                item_type = getattr(item, "type", None)
-                tool_name = getattr(item, "name", None)
-                tool_id = getattr(item, "id", None)
-                arguments = getattr(item, "input", {})
-
-            if item_type == "tool_use" and tool_name:
-                # Extract server name from tool name (format: server_toolname)
-                parts = tool_name.split("_", 1)
-                if len(parts) == 2:
-                    server_name, actual_tool_name = parts
-                else:
-                    # Try to find tool in any server by checking tool cache
-                    server_name = None
-                    actual_tool_name = tool_name
-                    from services.mcp_client import get_mcp_client
-
-                    mcp_client = get_mcp_client()
-                    if mcp_client:
-                        # Check which server has this tool
-                        for srv_name, tools in mcp_client.tools_cache.items():
-                            if any(t["name"] == tool_name for t in tools):
-                                server_name = srv_name
-                                break
-
-                if server_name:
-                    try:
-                        from services.mcp_client import get_mcp_client
-
-                        mcp_client = get_mcp_client()
-                        if mcp_client:
-                            # Call tool with 30 second timeout
-                            result = await mcp_client.call_tool(
-                                server_name, actual_tool_name, arguments, timeout=30.0
-                            )
-
-                            # Format result for Claude API with size guard
-                            if isinstance(result, dict):
-                                content = result.get(
-                                    "content", [{"type": "text", "text": str(result)}]
-                                )
-                            else:
-                                content = [{"type": "text", "text": str(result)}]
-                            # Issue #87: truncate first, then wrap each text
-                            # block in <vigil:tool_result> so attacker payloads
-                            # in MCP responses are clearly framed as data.
-                            from services.prompt_security import wrap_tool_result
-
-                            for block in content:
-                                if (
-                                    isinstance(block, dict)
-                                    and block.get("type") == "text"
-                                ):
-                                    block["text"] = self._truncate_tool_response(
-                                        block["text"], tool_name=tool_name
-                                    )
-                                    block["text"] = wrap_tool_result(
-                                        block["text"],
-                                        source=server_name or "mcp",
-                                        tool=actual_tool_name,
-                                    )
-
-                            tool_results.append(
-                                {
-                                    "type": "tool_result",
-                                    "tool_use_id": tool_id,
-                                    "content": content,
-                                }
-                            )
-                    except Exception as e:
-                        logger.error(f"Error calling tool {tool_name}: {e}")
-                        from services.prompt_security import wrap_tool_result
-
-                        err_text = wrap_tool_result(
-                            f"Error: {str(e)}",
-                            source=server_name or "mcp",
-                            tool=actual_tool_name,
-                        )
-                        tool_results.append(
-                            {
-                                "type": "tool_result",
-                                "tool_use_id": tool_id,
-                                "content": [{"type": "text", "text": err_text}],
-                            }
-                        )
-                else:
-                    logger.warning(f"Could not determine server for tool {tool_name}")
-
-        return tool_results
+        return await self._tool_executor.process_mcp_tool_use(content)
 
     async def _process_mixed_tool_use(self, content: List) -> List[Dict]:
         """
@@ -3569,30 +3472,23 @@ Provide only the JSON, no additional text."""
 
     async def _execute_mcp_tool(self, tool_name: str, arguments: Dict) -> str:
         """Execute an MCP tool via the tool name, with response size guard."""
-        parts = tool_name.split("_", 1)
-        if len(parts) != 2:
-            return f"Invalid MCP tool format: {tool_name}"
-
-        server_name, actual_tool_name = parts
-
         try:
-            from services.mcp_client import get_mcp_client
+            from services.mcp_gateway import GatewayContext, call_tool
 
-            mcp_client = get_mcp_client()
-            if mcp_client:
-                result = await mcp_client.call_tool(
-                    server_name, actual_tool_name, arguments, timeout=30.0
-                )
-                if isinstance(result, dict):
-                    raw = json.dumps(result.get("content", result))
-                else:
-                    raw = str(result)
-                return self._truncate_tool_response(raw, tool_name=actual_tool_name)
+            result = await call_tool(
+                GatewayContext("claude_service"), tool_name, arguments
+            )
+            if result is None:
+                return f"No MCP server found for tool: {tool_name}"
+            raw = (
+                json.dumps(result.get("content", result))
+                if isinstance(result, dict)
+                else str(result)
+            )
+            return self._truncate_tool_response(raw, tool_name=tool_name)
         except Exception as e:
             logger.error(f"MCP tool execution error: {e}")
             return f"Error: {str(e)}"
-
-        return "MCP client unavailable"
 
     async def run_agent_task(
         self,

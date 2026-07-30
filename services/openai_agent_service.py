@@ -708,29 +708,25 @@ class OpenAIAgentService:
     ) -> tuple[str, bool]:
         """Execute an MCP tool via the shared MCP client."""
         try:
-            from services.mcp_client import get_mcp_client
+            from services.mcp_gateway import (
+                GatewayContext,
+                call_tool,
+                resolve_tool,
+            )
             from services.prompt_security import wrap_tool_result
 
-            client = get_mcp_client()
-            if not client:
-                return f"MCP client unavailable for tool: {tool_name}", True
-
-            parts = tool_name.split("_", 1)
-            if len(parts) == 2:
-                server_name, actual_tool = parts
-            else:
-                server_name = self._find_tool_server(client, tool_name)
-                actual_tool = tool_name
-
+            server_name, actual_tool = resolve_tool(tool_name)
             if not server_name:
                 return f"No MCP server found for tool: {tool_name}", True
 
-            result = await client.call_tool(
-                server_name,
-                actual_tool,
+            result = await call_tool(
+                GatewayContext("openai_agent"),
+                tool_name,
                 arguments,
                 timeout=_TOOL_TIMEOUT_S,
             )
+            if result is None:
+                return f"MCP gateway could not route tool: {tool_name}", True
 
             if isinstance(result, dict):
                 content_blocks = result.get(
@@ -752,13 +748,6 @@ class OpenAIAgentService:
         except Exception as exc:
             logger.error("MCP tool %s failed: %s", tool_name, exc)
             return f"Error executing {tool_name}: {exc}", True
-
-    @staticmethod
-    def _find_tool_server(client: Any, tool_name: str) -> Optional[str]:
-        for srv_name, tools in client.tools_cache.items():
-            if any(t["name"] == tool_name for t in tools):
-                return srv_name
-        return None
 
     @staticmethod
     def _compute_cost(

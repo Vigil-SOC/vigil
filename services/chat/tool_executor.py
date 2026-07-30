@@ -15,6 +15,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from services.chat.context_manager import ContextManager
+from services.mcp_gateway import GatewayContext, call_tool, resolve_tool
 
 logger = logging.getLogger(__name__)
 
@@ -191,58 +192,44 @@ class ToolExecutor:
             if item_type != "tool_use" or not tool_name:
                 continue
 
-            parts = tool_name.split("_", 1)
-            if len(parts) == 2:
-                server_name, actual_tool_name = parts
-            else:
-                server_name = None
-                actual_tool_name = tool_name
-                from services.mcp_client import get_mcp_client
-
-                mcp_client = get_mcp_client()
-                if mcp_client:
-                    for srv_name, tools in mcp_client.tools_cache.items():
-                        if any(t["name"] == tool_name for t in tools):
-                            server_name = srv_name
-                            break
-
+            server_name, actual_tool_name = resolve_tool(tool_name)
             if not server_name:
                 logger.warning("Could not determine server for tool %s", tool_name)
                 continue
 
             try:
-                from services.mcp_client import get_mcp_client
+                raw = await call_tool(
+                    GatewayContext("chat"), tool_name, arguments, timeout=30.0
+                )
+                if raw is None:
+                    logger.warning("MCP gateway could not route tool %s", tool_name)
+                    continue
 
-                mcp_client = get_mcp_client()
-                if mcp_client:
-                    raw = await mcp_client.call_tool(
-                        server_name, actual_tool_name, arguments, timeout=30.0
-                    )
-                    if isinstance(raw, dict):
-                        blocks = raw.get("content", [{"type": "text", "text": str(raw)}])
-                    else:
-                        blocks = [{"type": "text", "text": str(raw)}]
+                if isinstance(raw, dict):
+                    blocks = raw.get("content", [{"type": "text", "text": str(raw)}])
+                else:
+                    blocks = [{"type": "text", "text": str(raw)}]
 
-                    from services.prompt_security import wrap_tool_result
+                from services.prompt_security import wrap_tool_result
 
-                    for block in blocks:
-                        if isinstance(block, dict) and block.get("type") == "text":
-                            block["text"] = ContextManager.truncate_tool_response(
-                                block["text"], tool_name=tool_name
-                            )
-                            block["text"] = wrap_tool_result(
-                                block["text"],
-                                source=server_name,
-                                tool=actual_tool_name,
-                            )
+                for block in blocks:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        block["text"] = ContextManager.truncate_tool_response(
+                            block["text"], tool_name=tool_name
+                        )
+                        block["text"] = wrap_tool_result(
+                            block["text"],
+                            source=server_name,
+                            tool=actual_tool_name,
+                        )
 
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": blocks,
-                        }
-                    )
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": blocks,
+                    }
+                )
             except Exception as exc:
                 logger.error("Error calling MCP tool %s: %s", tool_name, exc)
                 from services.prompt_security import wrap_tool_result

@@ -1048,7 +1048,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 self._update_db_record(
                     inv_id, {"current_activity": f"Calling {tool_name}"}
                 )
-                result = await self._execute_tool(inv_id, tool_name, tool_input)
+                result = await self._execute_tool(inv_id, tool_name, tool_input, turn)
                 # Heartbeat after each tool — same reason as the post-LLM update
                 # above. A burst of slow MCP calls inside one iteration must
                 # not look like staleness to the supervisor (issue #147).
@@ -1073,7 +1073,9 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             "tool_calls": tool_calls_made,
         }
 
-    async def _execute_tool(self, inv_id: str, tool_name: str, tool_input: Dict) -> str:
+    async def _execute_tool(
+        self, inv_id: str, tool_name: str, tool_input: Dict, turn: Optional[int] = None
+    ) -> str:
         """Execute a tool call, routing between workdir tools, backend tools, and MCP tools."""
         try:
             if tool_name == "read_investigation_file":
@@ -1102,7 +1104,9 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 return self._handle_signal_complete(inv_id, tool_input)
 
             else:
-                return await self._execute_external_tool(inv_id, tool_name, tool_input)
+                return await self._execute_external_tool(
+                    inv_id, tool_name, tool_input, turn
+                )
 
         except Exception as e:
             logger.error(f"{inv_id}: Tool {tool_name} error: {e}")
@@ -1195,7 +1199,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         return "Investigation marked as complete. Awaiting master agent review."
 
     async def _execute_external_tool(
-        self, inv_id: str, tool_name: str, tool_input: Dict
+        self, inv_id: str, tool_name: str, tool_input: Dict, turn: Optional[int] = None
     ) -> str:
         """Route to backend or MCP tool execution, enforcing safety guardrails."""
         import time as _time
@@ -1297,52 +1301,31 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 pass
 
         try:
-            from services.mcp_client import get_mcp_client
+            from services.mcp_gateway import GatewayContext, call_tool
 
-            client = get_mcp_client()
-            if client:
-                server_name = None
-                actual_tool_name = tool_name
-
-                if "_" in tool_name:
-                    prefix, suffix = tool_name.split("_", 1)
-                    if prefix in (client.tools_cache or {}):
-                        server_name = prefix
-                        actual_tool_name = suffix
-
-                if server_name is None:
-                    for srv_name, tools in (client.tools_cache or {}).items():
-                        if any(t["name"] == tool_name for t in tools):
-                            server_name = srv_name
-                            actual_tool_name = tool_name
-                            break
-
-                if server_name:
-                    result = await client.call_tool(
-                        server_name, actual_tool_name, tool_input
-                    )
-                    if result is not None:
-                        _r = (
-                            json.dumps(result, default=str)
-                            if not isinstance(result, str)
-                            else result
+            result = await call_tool(
+                GatewayContext("agent_runner", inv_id, turn), tool_name, tool_input
+            )
+            if result is not None:
+                _r = (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
+                )
+                try:
+                    if _tool_span is not None:
+                        _tool_span.set_attribute("vigil.tool.success", True)
+                        _tool_span.set_attribute("vigil.tool.output_size", len(_r))
+                        _tool_span.set_attribute(
+                            "vigil.tool.duration_ms",
+                            round((_time.monotonic() - _t0) * 1000, 1),
                         )
-                        try:
-                            if _tool_span is not None:
-                                _tool_span.set_attribute("vigil.tool.success", True)
-                                _tool_span.set_attribute(
-                                    "vigil.tool.output_size", len(_r)
-                                )
-                                _tool_span.set_attribute(
-                                    "vigil.tool.duration_ms",
-                                    round((_time.monotonic() - _t0) * 1000, 1),
-                                )
-                                _tool_span.end()
-                        except Exception:
-                            pass
-                        return _r
+                        _tool_span.end()
+                except Exception:
+                    pass
+                return _r
         except Exception as e:
-            logger.debug(f"MCP tool {tool_name} call failed: {e}")
+            logger.warning(f"{inv_id}: MCP tool {tool_name} call failed: {e}")
 
         _result_str = f"Tool '{tool_name}' not found or unavailable"
         try:
@@ -1483,7 +1466,9 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 tool_name = pending.get("tool_name")
                 tool_input = pending.get("tool_input", {})
                 if tool_name:
-                    result = await self._execute_approved_tool(tool_name, tool_input)
+                    result = await self._execute_approved_tool(
+                        tool_name, tool_input, inv_id
+                    )
                     self.workdir.append_file(
                         inv_id,
                         "context.md",
@@ -1527,8 +1512,14 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             logger.error(f"{inv_id}: Error checking approval {action_id}: {e}")
             return False
 
-    async def _execute_approved_tool(self, tool_name: str, tool_input: Dict) -> str:
-        """Execute a tool that has already been approved, bypassing guardrails."""
+    async def _execute_approved_tool(
+        self, tool_name: str, tool_input: Dict, inv_id: Optional[str] = None
+    ) -> str:
+        """Execute a tool that has already been approved, bypassing guardrails.
+
+        A human approved this action, so a failure here must never be silent —
+        both legs log at error/warning rather than swallowing.
+        """
         if self._claude_service and hasattr(
             self._claude_service, "_execute_backend_tool"
         ):
@@ -1542,22 +1533,29 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                         if not isinstance(result, str)
                         else result
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(
+                    f"{inv_id}: Approved tool {tool_name} failed in backend "
+                    f"dispatch ({e}); falling back to MCP gateway"
+                )
         try:
-            from services.mcp_client import get_mcp_client
+            from services.mcp_gateway import GatewayContext, call_tool
 
-            client = get_mcp_client()
-            if client:
-                result = await client.call_tool(tool_name, tool_input)
-                if result is not None:
-                    return (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
+            result = await call_tool(
+                GatewayContext("agent_runner_approved", inv_id), tool_name, tool_input
+            )
+            if result is not None:
+                return (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
+                )
         except Exception as e:
-            logger.debug(f"Approved tool {tool_name} failed: {e}")
+            logger.error(f"{inv_id}: Approved tool {tool_name} failed: {e}")
+        logger.error(
+            f"{inv_id}: Approved tool {tool_name} did not execute — "
+            "no backend or MCP handler produced a result"
+        )
         return f"Tool '{tool_name}' execution failed"
 
     def _mark_failed(self, inv_id: str, reason: str):

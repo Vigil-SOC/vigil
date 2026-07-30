@@ -1004,21 +1004,21 @@ class Orchestrator:
 
             if case_a and case_b and case_a != case_b:
                 try:
-                    from services.mcp_client import get_mcp_client
+                    from services.mcp_gateway import GatewayContext, call_tool
 
-                    client = get_mcp_client()
-                    if client:
-                        await client.call_tool(
-                            "link_related_cases",
-                            {
-                                "case_id": case_a,
-                                "related_case_id": case_b,
-                                "relationship": "shared_iocs",
-                            },
-                        )
+                    linked = await call_tool(
+                        GatewayContext("orchestrator", inv_id),
+                        "link_related_cases",
+                        {
+                            "case_id": case_a,
+                            "related_case_id": case_b,
+                            "relationship": "shared_iocs",
+                        },
+                    )
+                    if linked is not None:
                         logger.info(f"Linked cases {case_a} <-> {case_b}")
                 except Exception as e:
-                    logger.debug(f"Failed to link cases: {e}")
+                    logger.warning(f"Failed to link cases: {e}")
 
             cross_note = (
                 f"\n\n## Cross-Investigation Note\n"
