@@ -2,7 +2,7 @@
 
 Everything Vigil does with a language model lives here. The layering below is
 the point of the package: it is what tells you where a new file goes, and it is
-enforced by `tests/unit/test_llm_boundary.py`.
+enforced by `tests/llm/test_boundary.py`.
 
 ## The harness boundary
 
@@ -26,7 +26,8 @@ router and every harness need it.
 
 1. `router/` must not import `harness/`. The dependency runs one way.
 2. Nothing under `core/llm/` imports `backend` or `daemon` at module scope.
-   Existing lazy in-function imports of those are tolerated and tracked; new
-   ones are not.
+   Lazy in-function imports of those are the sanctioned escape hatch. One
+   module-scope import is grandfathered by name in the ratchet — `harness/
+   claude.py` reading `backend.schemas.tool_schemas` — and belongs to #414.
 3. `providers/registry.py` and `bifrost/admin.py` import each other lazily, by
    design. Do not hoist either import to module scope — it is a real cycle.
