@@ -168,7 +168,7 @@ BIFROST_URL="http://bifrost:8080"
 All backend API endpoints use:
 
 ```python
-from services.claude_service import ClaudeService
+from core.llm.harness.claude import ClaudeService
 
 claude_service = ClaudeService(
     use_backend_tools=True,   # ✅ Backend tools
@@ -296,7 +296,7 @@ Web UI → Backend → Claude Agent SDK → Backend Tools → Services
 
 ```python
 # Check tool initialization
-from services.claude_service import ClaudeService
+from core.llm.harness.claude import ClaudeService
 claude = ClaudeService(use_backend_tools=True)
 print(f"Loaded: {len(claude.backend_tools)} tools")
 # Should show: 19

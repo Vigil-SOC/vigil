@@ -78,7 +78,7 @@ Manage autonomous response actions:
 When initializing the Claude service, enable Agent SDK and backend tools:
 
 ```python
-from services.claude_service import ClaudeService
+from core.llm.harness.claude import ClaudeService
 
 # Enable Agent SDK with backend tools (recommended for web UI)
 claude = ClaudeService(

@@ -136,7 +136,7 @@ See `values.yaml` for the full schema. Non-obvious choices:
   because the orchestrator holds in-memory state. Do not template this.
 - **LLM worker image**: inherits from `backend.image` unless
   `llmWorker.image.repository` is set. The only difference at runtime is the
-  entrypoint (`services.run_llm_worker`).
+  entrypoint (`core.llm.gateway.run_worker`).
 - **Daemon probes**: target port `9091` (`/health`), not `9090`. Port `9090`
   is the Prometheus `/metrics` port, which is only served when
   `config.VIGIL_OTEL_ENABLED=true`.

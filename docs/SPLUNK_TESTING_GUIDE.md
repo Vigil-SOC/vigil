@@ -366,7 +366,7 @@ python scripts/test_splunk_claude_integration.py \
 ```bash
 # Check API key
 python -c "
-from services.claude_service import ClaudeService
+from core.llm.harness.claude import ClaudeService
 claude = ClaudeService()
 if claude.has_api_key():
     print('✓ API key configured')

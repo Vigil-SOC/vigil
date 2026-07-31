@@ -95,7 +95,7 @@ rely on Bifrost reading `env.ANTHROPIC_API_KEY` from its docker env
 anymore — that was the old flow and caused the "key lost on restart"
 problem. Instead:
 
-- On backend startup, `services.bifrost_admin.sync_all_provider_keys()`
+- On backend startup, `core.llm.bifrost.admin.sync_all_provider_keys()`
   pushes every key in the secrets manager to Bifrost via its admin API
   (`PUT /api/providers/{name}`).
 - On provider create/update/delete in the UI, the corresponding endpoint

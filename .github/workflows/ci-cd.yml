@@ -124,7 +124,7 @@ jobs:
           # This step also carries the #415 ratchets (test_no_ambient_state,
           # test_settings_env_example): no continue-on-error here, unlike the lint
           # job, so a new raw env read or env.example drift fails the pipeline.
-          pytest tests/unit/ -m "not external_service" -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term
+          pytest tests/unit/ tests/llm/ -m "not external_service" -v --cov=backend --cov=services --cov=daemon --cov=core --cov-report=xml --cov-report=term
         env:
           TESTING: "true"
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
@@ -289,7 +289,7 @@ jobs:
         run: |
           # Complement of the no-service unit job: only @pytest.mark.external_service
           # tests, which require a real PostgreSQL.
-          pytest tests/unit/ -m external_service -v --no-cov
+          pytest tests/unit/ tests/llm/ -m external_service -v --no-cov
 
   # ============================================================================
   # Security Scanning

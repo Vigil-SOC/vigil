@@ -353,7 +353,7 @@ def test_claude_enrichment(mocker):
     mock_response = {
         "content": [{"type": "text", "text": "Test response"}]
     }
-    mocker.patch('services.claude_service.anthropic.Anthropic')
+    mocker.patch('core.llm.harness.claude.anthropic.Anthropic')
     
     result = ClaudeService.enrich_finding({"id": "test"})
     assert result is not None
