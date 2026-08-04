@@ -781,6 +781,106 @@ def get_session() -> Session:
     return get_db_session()
 
 
+class SchemaDriftError(RuntimeError):
+    """The deployed schema is missing columns the ORM expects.
+
+    Raised only when ``DB_STRICT_SCHEMA`` is set; the default is to report the
+    drift loudly and keep serving.
+    """
+
+
+_TRUTHY = {"1", "true", "yes", "on"}
+
+# Cached verdict from the startup check. The health endpoint reads this rather
+# than re-inspecting: schema_report() walks every mapped table, and
+# init_database() runs on every DatabaseDataService construction — including
+# inside the health handler — so an uncached check would put a full inspector
+# pass on the event loop for every scrape.
+_schema_drift_report: Optional[Dict[str, Any]] = None
+_schema_drift_checked = False
+
+
+def reset_schema_drift_check() -> None:
+    """Forget the cached verdict so the next check re-inspects. For tests."""
+    global _schema_drift_report, _schema_drift_checked
+    _schema_drift_report = None
+    _schema_drift_checked = False
+
+
+def get_schema_drift_report() -> Optional[Dict[str, Any]]:
+    """The cached startup verdict, or None if the check has not run yet."""
+    return _schema_drift_report
+
+
+def check_schema_drift(
+    db_manager: Optional["DatabaseManager"] = None,
+) -> Optional[Dict[str, Any]]:
+    """Report a schema that is a release behind the models, once, at startup.
+
+    ``create_all`` is ``checkfirst=True``: it creates missing tables and never
+    alters existing ones, and it returns successfully either way. A column added
+    to a model therefore reaches every existing deployment as silent drift, and
+    surfaces much later as ``UndefinedColumn`` on a column that is plainly
+    present in ``models.py``. ``schema_report()`` has always been able to spot
+    this; nothing consulted it outside an on-demand endpoint. See #562.
+
+    Default behaviour is to log at ERROR and keep serving — taking a running SOC
+    offline over a missing nullable column is worse than the drift. Set
+    ``DB_STRICT_SCHEMA=true`` (CI, fresh deploys) to make it fatal instead.
+
+    Returns the report, or None if it could not be produced. Memoised.
+    """
+    global _schema_drift_report, _schema_drift_checked
+
+    if _schema_drift_checked:
+        return _schema_drift_report
+
+    manager = db_manager if db_manager is not None else get_db_manager()
+    strict = os.getenv("DB_STRICT_SCHEMA", "").strip().lower() in _TRUTHY
+
+    try:
+        report = manager.schema_report()
+    except Exception as e:  # noqa: BLE001
+        # Never let the check itself be the thing that breaks startup.
+        logger.warning("Could not check for schema drift: %s", e)
+        _schema_drift_checked = True
+        return None
+
+    _schema_drift_report = report
+    _schema_drift_checked = True
+
+    if report["state"] != "drifted":
+        return report
+
+    missing = [
+        f"{table}.{column}"
+        for table, columns in sorted(report["missing_columns"].items())
+        for column in columns
+    ]
+    detail = ", ".join(missing) or "none"
+    tables = ", ".join(report["missing_tables"])
+
+    message = (
+        "Database schema is behind the models: missing columns: %s. "
+        "create_all cannot add them (checkfirst=True never alters an existing "
+        "table), so reads of these tables will fail with UndefinedColumn. Run "
+        "scripts/migrate_schema.py against this database, and check it has a "
+        "step for each column above — it only covers columns registered by hand."
+    )
+    if strict:
+        logger.error(message, detail)
+        raise SchemaDriftError(
+            f"Refusing to start with a drifted schema (DB_STRICT_SCHEMA is set). "
+            f"Missing columns: {detail}."
+            + (f" Missing tables: {tables}." if tables else "")
+        )
+
+    logger.error(message, detail)
+    if tables:
+        logger.error("Database schema is also missing tables: %s", tables)
+    return report
+
+
 def init_database(echo: bool = False, create_tables: bool = True):
     """
     Initialize the database.
@@ -788,9 +888,16 @@ def init_database(echo: bool = False, create_tables: bool = True):
     Args:
         echo: If True, log all SQL statements
         create_tables: If True, create all tables
+
+    Raises:
+        SchemaDriftError: if the schema is behind the models and
+            ``DB_STRICT_SCHEMA`` is set.
     """
     db_manager = get_db_manager()
     db_manager.initialize(echo=echo)
 
     if create_tables:
         db_manager.create_tables()
+
+    # After create_all, so we report what the schema actually ended up as.
+    check_schema_drift(db_manager)

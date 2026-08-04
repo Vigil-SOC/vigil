@@ -187,6 +187,10 @@ jobs:
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
       POSTGRES_DB: deeptempo_test
+      # Fail the build if the schema is behind the models. CI provisions from
+      # empty, so drift here means a provisioning bug, not a stale deployment
+      # (#562).
+      DB_STRICT_SCHEMA: "true"
 
     steps:
       - uses: actions/checkout@v5
@@ -286,6 +290,15 @@ jobs:
           # Complement of the no-service unit job: only @pytest.mark.external_service
           # tests, which require a real PostgreSQL.
           pytest tests/unit/ -m external_service -v --no-cov
+
+      - name: Run schema upgrade-path tests
+        run: |
+          # Every other DB job provisions from empty, which is exactly why #562
+          # was invisible: create_all builds a complete schema from scratch, so a
+          # column missing from existing deployments still looks fine here. These
+          # tests move the model ahead of a provisioned database and assert on
+          # what an upgrade actually does.
+          pytest tests/integration/test_schema_drift_upgrade.py -v --no-cov
 
   # ============================================================================
   # Security Scanning
