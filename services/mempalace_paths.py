@@ -21,9 +21,9 @@ directory is created on first access so callers don't each need to
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
+from core.config import get_settings
 logger = logging.getLogger(__name__)
 
 # Matches mcp-config.json's default for the mempalace server. Keep in
@@ -34,22 +34,13 @@ _DEFAULT_PALACE = Path.home() / ".vigil" / "mempalace" / "palace"
 
 
 def get_palace_path(*, ensure_exists: bool = True) -> Path:
-    """Return the resolved mempalace palace path.
-
-    Reads ``MEMPALACE_PALACE_PATH`` from the environment, falling back
-    to ``~/.vigil/mempalace/palace``. When ``ensure_exists=True``
-    (default) the directory is created if missing — safe to call from
-    hot paths.
-    """
-    raw = os.environ.get("MEMPALACE_PALACE_PATH")
+    raw = get_settings().mempalace_palace_path
     palace = Path(raw).expanduser() if raw else _DEFAULT_PALACE
     if ensure_exists:
         try:
             palace.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            # Don't let a filesystem hiccup kill the caller — the
-            # palace being missing is a degraded-but-survivable mode.
-            logger.warning("Could not create palace dir %s: %s", palace, e)
+            logger.warning("Could not create palace dir %s: %s", palace, e)  # survivable
     return palace
 
 

@@ -20,6 +20,7 @@ import logging
 from pathlib import Path
 from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
+from core.config import vigil_path
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class DotEnvBackend(SecretsBackend):
 
     def __init__(self, env_file: Optional[Path] = None):
         """Initialize with path to .env file."""
-        self.env_file = env_file or Path.home() / ".deeptempo" / ".env"
+        self.env_file = env_file or vigil_path(".env")
         self._cache: Dict[str, str] = {}
         self._load_env_file()
 
@@ -638,7 +639,7 @@ class SecretsManager:
     ) -> Dict[str, Any]:
         """Move secrets from the dotenv backend to the encrypted backend.
 
-        For each key currently stored in ``~/.deeptempo/.env`` (the dotenv
+        For each key currently stored in the dotenv backend's file (the dotenv
         backend's file):
 
         - If the encrypted store doesn't have the key, copy it across, then
@@ -776,10 +777,9 @@ def get_secrets_manager(
             else:
                 # Check general config file
                 try:
-                    from pathlib import Path
                     import json
 
-                    config_file = Path.home() / ".deeptempo" / "general_config.json"
+                    config_file = vigil_path("general_config.json")
                     if config_file.exists():
                         with open(config_file, "r") as f:
                             config = json.load(f)

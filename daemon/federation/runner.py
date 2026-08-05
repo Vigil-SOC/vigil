@@ -25,6 +25,7 @@ import time
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+from core.config import DEFAULT_REDIS_URL, get_settings
 from daemon.dedup import RedisDedupSet
 from daemon.federation import registry, store
 from daemon.federation.seed import seed_federation_sources
@@ -214,11 +215,9 @@ class FederationRunner:
     async def _consume_poll_now(self, source_id: str) -> bool:
         """Return True if the user clicked Poll Now since the last tick."""
         try:
-            import os
-
             import redis.asyncio as aioredis  # type: ignore
 
-            url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+            url = get_settings().redis_url or DEFAULT_REDIS_URL
             r = aioredis.from_url(url, decode_responses=True)
             key = f"vigil:federation:trigger:{source_id}"
             # GETDEL is atomic — flag is consumed on read.
@@ -237,11 +236,9 @@ def request_poll_now(source_id: str) -> bool:
     need its own event loop dance.
     """
     try:
-        import os
-
         import redis  # type: ignore
 
-        url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        url = get_settings().redis_url or DEFAULT_REDIS_URL
         client = redis.from_url(url, decode_responses=True)
         client.set(f"vigil:federation:trigger:{source_id}", str(int(time.time())), ex=300)
         return True

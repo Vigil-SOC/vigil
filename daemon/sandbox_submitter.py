@@ -21,33 +21,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from core.config import get_settings
+from core.secrets import get_secret
 
 import requests
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_ALLOWED_TYPES = "exe,dll,doc,docx,xls,xlsx,pdf,js,vbs,ps1,bat,msi"
 _MD5_LEN = 32
 _SHA1_LEN = 40
 _SHA256_LEN = 64
-
-
-def _env_bool(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in ("1", "true", "yes", "on")
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        return default
 
 
 @dataclass
@@ -63,26 +49,23 @@ class SandboxSettings:
 
     @classmethod
     def from_env(cls) -> "SandboxSettings":
-        allowed = os.getenv("SANDBOX_ALLOWED_FILE_TYPES", _DEFAULT_ALLOWED_TYPES)
+        settings = get_settings()
+        allowed = settings.sandbox_allowed_file_types
         return cls(
-            auto_submit=_env_bool("SANDBOX_AUTO_SUBMIT", False),
-            max_file_size_mb=_env_int("SANDBOX_MAX_FILE_SIZE_MB", 100),
+            auto_submit=settings.sandbox_auto_submit,
+            max_file_size_mb=settings.sandbox_max_file_size_mb,
             allowed_types=[t.strip().lower() for t in allowed.split(",") if t.strip()],
-            timeout_seconds=_env_int("SANDBOX_ANALYSIS_TIMEOUT", 300),
-            joe_enabled=_env_bool("JOE_SANDBOX_ENABLED", False),
-            cape_enabled=_env_bool("CAPE_SANDBOX_ENABLED", False),
-            hybrid_enabled=_env_bool("HYBRID_ANALYSIS_ENABLED", False),
-            anyrun_enabled=_env_bool("ANYRUN_ENABLED", False),
+            timeout_seconds=settings.sandbox_analysis_timeout,
+            joe_enabled=settings.joe_sandbox_enabled,
+            cape_enabled=settings.cape_sandbox_enabled,
+            hybrid_enabled=settings.hybrid_analysis_enabled,
+            anyrun_enabled=settings.anyrun_enabled,
         )
 
 
 class SandboxSubmitter:
-    """Encapsulates hash-based sandbox submission with safety gating.
-
-    Designed to be instantiated once per daemon process and reused across
-    many findings. All HTTP calls are routed through ``asyncio.to_thread``
-    so the caller stays async.
-    """
+    # One instance per daemon process, reused across findings. All HTTP calls go
+    # through asyncio.to_thread so the caller stays async.
 
     def __init__(self, settings: Optional[SandboxSettings] = None):
         self.settings = settings or SandboxSettings.from_env()
@@ -189,8 +172,8 @@ class SandboxSubmitter:
     # ---------- per-sandbox handlers ----------
 
     async def _submit_cape(self, hash_val: str) -> Dict[str, Any]:
-        url = os.getenv("CAPE_SANDBOX_URL", "").rstrip("/")
-        api_key = os.getenv("CAPE_SANDBOX_API_KEY", "")
+        url = get_settings().cape_sandbox_url.rstrip("/")
+        api_key = get_secret("CAPE_SANDBOX_API_KEY") or ""
         if not url:
             return {"status": "skipped", "reason": "no_url"}
         headers = {"Authorization": f"Token {api_key}"} if api_key else {}
@@ -225,7 +208,7 @@ class SandboxSubmitter:
         from core.config import get_integration_config
 
         cfg = get_integration_config("hybrid_analysis") or {}
-        api_key = cfg.get("api_key") or os.getenv("HYBRID_ANALYSIS_API_KEY", "")
+        api_key = cfg.get("api_key") or get_secret("HYBRID_ANALYSIS_API_KEY") or ""
         if not api_key:
             return {"status": "skipped", "reason": "no_api_key"}
         try:
@@ -250,7 +233,7 @@ class SandboxSubmitter:
         from core.config import get_integration_config
 
         cfg = get_integration_config("anyrun") or {}
-        api_key = cfg.get("api_key") or os.getenv("ANYRUN_API_KEY", "")
+        api_key = cfg.get("api_key") or get_secret("ANYRUN_API_KEY") or ""
         if not api_key:
             return {"status": "skipped", "reason": "no_api_key"}
         try:
@@ -272,10 +255,8 @@ class SandboxSubmitter:
         return {"status": "unknown"}
 
     async def _submit_joe(self, hash_val: str) -> Dict[str, Any]:
-        api_key = os.getenv("JOE_SANDBOX_API_KEY", "") or os.getenv("JBXAPIKEY", "")
-        base = os.getenv(
-            "JOE_SANDBOX_URL", "https://jbxcloud.joesecurity.org/api"
-        ).rstrip("/")
+        api_key = get_secret("JOE_SANDBOX_API_KEY") or get_secret("JBXAPIKEY") or ""
+        base = get_settings().joe_sandbox_url.rstrip("/")
         if not api_key:
             return {"status": "skipped", "reason": "no_api_key"}
         try:

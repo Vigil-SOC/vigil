@@ -17,10 +17,17 @@ from backend.services.custom_agent_service import (
     CustomAgentService,
 )
 from services.soc_agents import CUSTOM_AGENT_ID_PREFIX
+from api._meta import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api",
+    tags=["custom-agents"],
+    auth=Auth.REQUIRED,
+)
 service = CustomAgentService()
 
 

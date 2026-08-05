@@ -10,6 +10,9 @@ from typing import Optional, Dict, List
 from datetime import datetime
 import os
 
+from core.secrets import get_secret
+from core.config import vigil_path
+
 logger = logging.getLogger(__name__)
 
 
@@ -83,7 +86,7 @@ class MCPServer:
         
         try:
             # Prepare environment
-            env = os.environ.copy()
+            env = os.environ.copy()  # noqa: ENV001 - MCP child process env
             env.update(self.env)
             
             # Start process
@@ -206,7 +209,8 @@ class MCPService:
     """Service for managing MCP servers."""
     
     # Path to persist enabled/disabled state for each MCP server
-    _STATE_FILE = Path.home() / ".deeptempo" / "mcp_server_enabled.json"
+    _STATE_FILE = vigil_path("mcp_server_enabled.json")
+    _STATE_WRITE_FILE = vigil_path("mcp_server_enabled.json", write=True)
     
     def __init__(self, project_root: Optional[Path] = None):
         """
@@ -250,8 +254,7 @@ class MCPService:
     def _save_enabled_state(self) -> None:
         """Persist the enabled/disabled state to disk."""
         try:
-            self._STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._STATE_FILE, "w") as f:
+            with open(self._STATE_WRITE_FILE, "w") as f:
                 json.dump({"enabled": self._enabled_servers}, f, indent=2)
         except Exception as e:
             logger.error(f"Could not save MCP enabled state: {e}")
@@ -301,7 +304,9 @@ class MCPService:
         def replace_var(match):
             var_name = match.group(1)
             default = match.group(2)
-            env_val = os.environ.get(var_name)
+            env_val = os.environ.get(var_name)  # noqa: ENV001 - operator export wins
+            if env_val is None:
+                env_val = get_secret(var_name)  # UI-set credential, no restart needed
             if env_val is not None:
                 return env_val
             if default is not None:
@@ -396,7 +401,7 @@ class MCPService:
                     # entries still take precedence. Required-credential
                     # detection scans the raw config above, not this spawn env,
                     # so dormancy behavior is unchanged.
-                    env = os.environ.copy()
+                    env = os.environ.copy()  # noqa: ENV001 - MCP child env
                     env.update(
                         {
                             k: self._substitute_env_vars(v)

@@ -31,9 +31,10 @@ fine: estimates over-bound, actuals are exact.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
+
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,7 @@ async def estimate_anthropic(
     in_rate, out_rate = registry.get_cost_rates(model_id, "anthropic")
     pricing_source = registry.get_pricing_source(model_id, "anthropic")
 
-    api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
+    api_key = get_secret("ANTHROPIC_API_KEY") or get_secret("CLAUDE_API_KEY")
     input_tokens = 0
     method = "char_heuristic"
 

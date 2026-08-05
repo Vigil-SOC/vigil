@@ -11,8 +11,15 @@ from backend.services.auth_service import AuthService
 from database.models import User
 from services.database_data_service import DatabaseDataService
 from services.report_service import ReportService, REPORTLAB_AVAILABLE
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/cases",
+    tags=["cases"],
+    auth=Auth.REQUIRED,
+)
 # Use DatabaseDataService which automatically uses PostgreSQL if available, falls back to JSON
 data_service = DatabaseDataService()
 if REPORTLAB_AVAILABLE:

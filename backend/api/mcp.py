@@ -15,9 +15,16 @@ from backend.middleware.auth import get_current_active_user
 from backend.services.auth_service import AuthService
 from database.models import User
 from services.mcp_service import MCPService
+from api._meta import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/mcp",
+    tags=["mcp"],
+    auth=Auth.REQUIRED,
+)
 
 
 def _require_mcp_admin(current_user: User) -> None:

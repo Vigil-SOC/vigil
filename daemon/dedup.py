@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Optional
+
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ class RedisDedupSet:
     ):
         self.namespace = namespace
         self.key = f"vigil:dedup:{namespace}"
-        self.redis_url = redis_url or os.getenv("REDIS_URL", DEFAULT_REDIS_URL)
+        self.redis_url = redis_url or get_settings().redis_url or DEFAULT_REDIS_URL
         self.max_size = max_size
         self.ttl_seconds = ttl_seconds
 

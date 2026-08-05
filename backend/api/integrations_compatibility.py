@@ -17,8 +17,15 @@ from backend.middleware.auth import get_current_active_user
 from backend.services.auth_service import AuthService
 from database.models import User
 from services.integration_compatibility_service import get_compatibility_service
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/integrations",
+    tags=["integrations"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 
 

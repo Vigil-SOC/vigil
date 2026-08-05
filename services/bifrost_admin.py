@@ -17,11 +17,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 import httpx
 
+from core.config import get_settings
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 5.0
@@ -35,7 +35,7 @@ _sync_in_flight: Optional["asyncio.Future[Dict[str, Any]]"] = None
 
 
 def _bifrost_base_url() -> str:
-    return os.getenv("BIFROST_URL", "http://localhost:8080").rstrip("/")
+    return get_settings().bifrost_url.rstrip("/")
 
 
 def _get_provider(name: str, client: httpx.Client) -> Optional[Dict[str, Any]]:
@@ -421,9 +421,9 @@ async def _fetch_meta_for_row(row_dict: Dict[str, Any], discovery) -> Optional[l
             except Exception as exc:  # noqa: BLE001
                 logger.debug("secret lookup for %s failed: %s", api_key_ref, exc)
         if provider_type == "anthropic":
-            return os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
+            return get_secret("ANTHROPIC_API_KEY") or get_secret("CLAUDE_API_KEY")
         if provider_type == "openai":
-            return os.getenv("OPENAI_API_KEY")
+            return get_secret("OPENAI_API_KEY")
         return None
 
     if provider_type == "anthropic":

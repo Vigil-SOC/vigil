@@ -12,12 +12,12 @@ ignore HSTS on plain HTTP anyway and emitting it would be noise.
 """
 
 import logging
-import os
 from typing import Callable, Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +42,6 @@ _OPTIONAL_CONNECTOR_DIRECTIVES = ("style-src", "img-src", "font-src")
 _CONNECTOR_CSP_DIRECTIVES = (
     _REQUIRED_CONNECTOR_DIRECTIVES + _OPTIONAL_CONNECTOR_DIRECTIVES
 )
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in ("true", "1", "yes", "on")
 
 
 def _augment_csp_with_origins(
@@ -91,31 +84,31 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     ):
         super().__init__(app)
         self.hsts_enabled = (
-            _env_bool("VIGIL_HSTS_ENABLED", True)
+            get_settings().vigil_hsts_enabled
             if hsts_enabled is None
             else hsts_enabled
         )
         self.frame_options_enabled = (
-            _env_bool("VIGIL_FRAME_OPTIONS_ENABLED", True)
+            get_settings().vigil_frame_options_enabled
             if frame_options_enabled is None
             else frame_options_enabled
         )
         self.content_type_options_enabled = (
-            _env_bool("VIGIL_CONTENT_TYPE_OPTIONS_ENABLED", True)
+            get_settings().vigil_content_type_options_enabled
             if content_type_options_enabled is None
             else content_type_options_enabled
         )
         self.referrer_policy_enabled = (
-            _env_bool("VIGIL_REFERRER_POLICY_ENABLED", True)
+            get_settings().vigil_referrer_policy_enabled
             if referrer_policy_enabled is None
             else referrer_policy_enabled
         )
         self.csp_enabled = (
-            _env_bool("VIGIL_CSP_ENABLED", True)
+            get_settings().vigil_csp_enabled
             if csp_enabled is None
             else csp_enabled
         )
-        self.csp_policy = csp_policy or os.getenv("VIGIL_CSP_POLICY") or DEFAULT_CSP
+        self.csp_policy = csp_policy or get_settings().vigil_csp_policy or DEFAULT_CSP
         # Admit allowlisted connector origins so the browser may import their
         # bundle + call their BFF. Read once at startup (restart to change).
         try:
@@ -140,7 +133,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                     connector_origins,
                 )
         self.hsts_max_age = (
-            int(os.getenv("VIGIL_HSTS_MAX_AGE", "31536000"))
+            get_settings().vigil_hsts_max_age
             if hsts_max_age is None
             else hsts_max_age
         )

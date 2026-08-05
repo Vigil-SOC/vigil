@@ -22,12 +22,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -881,14 +882,6 @@ def get_vstrike_service() -> Optional[VStrikeService]:
     call and refreshes it on 401. Old api_key values left over in the
     secrets store are tolerated but ignored.
     """
-    try:
-        from backend.secrets_manager import get_secret
-    except Exception as e:  # pragma: no cover - import-time fallback
-        logger.debug("Secrets manager unavailable, using os.environ: %s", e)
-
-        def get_secret(name: str) -> Optional[str]:  # type: ignore[misc]
-            return os.environ.get(name)
-
     base_url = get_secret("VSTRIKE_BASE_URL")
     username = get_secret("VSTRIKE_USERNAME")
     password = get_secret("VSTRIKE_PASSWORD")

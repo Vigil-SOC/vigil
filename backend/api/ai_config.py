@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from api._meta import Auth, RouterMeta
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from database.connection import get_db, get_db_session
@@ -31,6 +32,12 @@ from services.model_registry import (  # noqa: E402
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/ai",
+    tags=["ai-config"],
+    auth=Auth.REQUIRED,
+)
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,10 +15,8 @@ if str(_REPO / "backend") not in sys.path:
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-try:  # soft imports — router is usable in tests without a DB
-    from secrets_manager import get_secret  # type: ignore
-except Exception:  # noqa: BLE001
-    get_secret = None  # type: ignore
+from core.config import get_settings
+from core.secrets import get_secret
 
 DispatchPath = Literal["bifrost"]
 
@@ -93,11 +90,11 @@ class ProviderSpec:
 
 
 def _bifrost_url() -> str:
-    return os.getenv("BIFROST_URL", "http://bifrost:8080").rstrip("/")
+    return get_settings().bifrost_url.rstrip("/")
 
 
 def _block_on_injection() -> bool:
-    return os.getenv("PROMPT_INJECTION_BLOCK", "false").lower() in ("true", "1", "yes")
+    return get_settings().prompt_injection_block
 
 
 def select_path(
@@ -536,11 +533,10 @@ class LLMRouter:
         from services.defaults import build_thinking_kwargs
 
         api_key: Optional[str] = None
-        if provider.api_key_ref and get_secret is not None:
+        if provider.api_key_ref:
             api_key = get_secret(provider.api_key_ref)
         if not api_key:
-            # Fall back to common env names so local dev still works.
-            api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
+            api_key = get_secret("ANTHROPIC_API_KEY") or get_secret("CLAUDE_API_KEY")
         if not api_key:
             raise RuntimeError(
                 f"Anthropic provider '{provider.provider_id}' has no resolvable API key"

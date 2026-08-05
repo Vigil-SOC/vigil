@@ -29,10 +29,11 @@ already owns provider key/model writes) and governance/budget endpoints
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
 import httpx
+
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ _DEFAULT_TIMEOUT = 5.0
 
 
 def _bifrost_base_url() -> str:
-    return os.getenv("BIFROST_URL", "http://localhost:8080").rstrip("/")
+    return get_settings().bifrost_url.rstrip("/")
 
 
 # ---------------------------------------------------------------------------

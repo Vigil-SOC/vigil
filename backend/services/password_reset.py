@@ -22,10 +22,11 @@ confirm handler rejects.
 
 import hashlib
 import logging
-import os
 from typing import Optional
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+
+from core.config import DEFAULT_REDIS_URL, get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +39,7 @@ _USED_TOKEN_PREFIX = "password_reset_used:"
 
 def _ttl_seconds() -> int:
     try:
-        return int(os.getenv("PASSWORD_RESET_TTL_SECONDS", str(DEFAULT_TTL_SECONDS)))
+        return get_settings().password_reset_ttl_seconds
     except ValueError:
         return DEFAULT_TTL_SECONDS
 
@@ -68,7 +69,7 @@ def _redis_client():
     except Exception as exc:
         logger.warning("redis.asyncio unavailable: %s — reset single-use check disabled", exc)
         return None
-    url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    url = get_settings().redis_url or DEFAULT_REDIS_URL
     _reset_redis_client = redis_asyncio.from_url(url, decode_responses=True)
     return _reset_redis_client
 

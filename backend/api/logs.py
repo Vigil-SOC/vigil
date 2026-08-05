@@ -6,8 +6,15 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/logs",
+    tags=["logs"],
+    auth=Auth.REQUIRED,
+)
 
 # Create dedicated logger for frontend logs
 frontend_logger = logging.getLogger('frontend')

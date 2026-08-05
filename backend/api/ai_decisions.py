@@ -12,10 +12,17 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from database.service import DatabaseService
+from api._meta import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/ai",
+    tags=["ai-decisions"],
+    auth=Auth.REQUIRED,
+)
 
 
 # ========== Request/Response Models ==========

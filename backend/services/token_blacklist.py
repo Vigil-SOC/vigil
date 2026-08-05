@@ -19,9 +19,10 @@ you deliberately prefer availability over security during Redis outages.
 """
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Optional
+
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ _USER_CUTOFF_PREFIX = "user_revoked_before:"
 
 # If True, Redis failures during verification allow the request through.
 # Default: False (fail-closed). Set REVOCATION_FAIL_OPEN=true for fail-open.
-_FAIL_OPEN = os.getenv("REVOCATION_FAIL_OPEN", "false").lower() in ("1", "true", "yes")
+_FAIL_OPEN = get_settings().revocation_fail_open
 
 
 _client = None
@@ -49,7 +50,7 @@ def _get_client():
     except Exception as exc:
         logger.warning("redis.asyncio unavailable: %s — token revocation disabled", exc)
         return None
-    url = os.getenv("REDIS_URL", DEFAULT_REDIS_URL)
+    url = get_settings().redis_url or DEFAULT_REDIS_URL
     _client = redis_asyncio.from_url(url, decode_responses=True)
     return _client
 

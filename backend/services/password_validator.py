@@ -1,22 +1,15 @@
 """Password strength validation using zxcvbn entropy scoring (NIST 800-63B)."""
 
 import logging
-import os
 from pathlib import Path
 from typing import Iterable, List, Optional
 
 from zxcvbn import zxcvbn
 
+from core.config import get_settings
+
 logger = logging.getLogger(__name__)
 
-_MIN_LENGTH = 12
-# bcrypt rejects inputs longer than 72 *bytes* (it raises, it does not
-# truncate), so cap here to match — otherwise a long password passes
-# validation and then 500s at hash time. A byte cap also bounds zxcvbn's
-# super-linear matching. 72 bytes == 72 chars for ASCII, comfortably above
-# NIST's "at least 64 characters" recommendation.
-_MAX_BYTES = 72
-_MIN_SCORE = 3
 _BLOCKLIST_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "common_passwords.txt"
 _blocklist: Optional[frozenset] = None
 
@@ -36,13 +29,6 @@ class PasswordPolicyError(ValueError):
         if not self.suggestions:
             return str(self)
         return f"{self} ({'; '.join(self.suggestions)})"
-
-
-def _env_int(key: str, default: int) -> int:
-    try:
-        return int(os.getenv(key, default))
-    except (ValueError, TypeError):
-        return default
 
 
 def _get_blocklist() -> frozenset:
@@ -75,9 +61,9 @@ def validate_password_strength(
     All kwargs are test overrides; production uses env/defaults.
     user_inputs: terms (username, email) zxcvbn penalizes if embedded.
     """
-    limit = min_length if min_length is not None else _env_int("AUTH_MIN_PASSWORD_LENGTH", _MIN_LENGTH)
-    byte_ceiling = max_bytes if max_bytes is not None else _env_int("AUTH_MAX_PASSWORD_BYTES", _MAX_BYTES)
-    threshold = min_score if min_score is not None else _env_int("AUTH_MIN_ZXCVBN_SCORE", _MIN_SCORE)
+    limit = min_length if min_length is not None else get_settings().auth_min_password_length
+    byte_ceiling = max_bytes if max_bytes is not None else get_settings().auth_max_password_bytes
+    threshold = min_score if min_score is not None else get_settings().auth_min_zxcvbn_score
     # zxcvbn scores run 0-4; clamp so a misconfigured 5+ can't reject every
     # password and a negative value can't underflow the check.
     threshold = max(0, min(4, threshold))
@@ -88,9 +74,7 @@ def validate_password_strength(
             suggestions=[f"Add {limit - len(password)} more characters."],
         )
 
-    # Reject over-length inputs before the expensive zxcvbn pass. Measured in
-    # bytes to match bcrypt's hard 72-byte limit (see _MAX_BYTES).
-    if len(password.encode("utf-8")) > byte_ceiling:
+    if len(password.encode("utf-8")) > byte_ceiling:  # before the costly zxcvbn pass
         raise PasswordPolicyError(
             f"Password must be at most {byte_ceiling} bytes long",
             suggestions=["Use a shorter passphrase."],

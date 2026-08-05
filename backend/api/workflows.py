@@ -5,8 +5,15 @@ from typing import Any, Dict, List, Optional
 import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api",
+    tags=["workflows"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 
 

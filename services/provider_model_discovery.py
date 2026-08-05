@@ -31,13 +31,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
-import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from core.config import get_settings
 from services.url_safety import UrlSafetyError, validate_provider_url
 
 logger = logging.getLogger(__name__)
@@ -387,7 +387,7 @@ def _ollama_env_tool_allowlist() -> frozenset:
     custom/local models as tool-capable when neither /api/tags nor the
     built-in family list knows them.
     """
-    raw = os.getenv("OLLAMA_EXTRA_TOOL_MODELS", "")
+    raw = get_settings().ollama_extra_tool_models
     return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
 
 
@@ -578,7 +578,7 @@ def ollama_ping(base_url: Optional[str] = None, timeout: float = 2.0) -> bool:
     :func:`fetch_ollama_models` (async, plus an ``/api/show`` per model).
     """
     base = (
-        (base_url or os.getenv("OLLAMA_URL") or "http://localhost:11434")
+        (base_url or get_settings().ollama_url)
         .strip()
         .rstrip("/")
     )

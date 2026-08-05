@@ -17,8 +17,15 @@ from pydantic import BaseModel, Field
 from daemon.federation import registry as fed_registry
 from daemon.federation import store as fed_store
 from daemon.federation.runner import request_poll_now
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/federation",
+    tags=["federation"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 
 

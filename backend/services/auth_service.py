@@ -7,7 +7,6 @@ Handles password hashing, JWT generation/validation, MFA, and session management
 import base64
 import hashlib
 import logging
-import os
 import secrets
 import uuid
 from datetime import datetime, timedelta
@@ -19,29 +18,21 @@ from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
 from database.models import User, Role
+from core.config import get_settings
+from core.secrets import get_secret
 from database.connection import get_db_session
 
 logger = logging.getLogger(__name__)
 
 
 def _is_dev_mode() -> bool:
-    return os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
+    return get_settings().dev_mode
 
 
 def _load_jwt_secret() -> str:
-    """
-    Load the JWT signing secret at import time.
-
-    Priority: env var / secrets backend. In DEV_MODE, fall back to a
-    deterministic dev secret so tokens survive restarts locally. In
-    production (DEV_MODE=false), fail-closed at startup if unset.
-    """
-    try:
-        from backend.secrets_manager import get_secret
-
-        value = get_secret("JWT_SECRET_KEY")
-    except Exception:
-        value = os.environ.get("JWT_SECRET_KEY")
+    # Resolved at import time. DEV_MODE falls back to a deterministic dev secret
+    # so tokens survive restarts; production fails closed when unset.
+    value = get_secret("JWT_SECRET_KEY")
 
     if value:
         return value
@@ -62,15 +53,15 @@ def _load_jwt_secret() -> str:
 # JWT Configuration
 JWT_SECRET_KEY = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
-JWT_ACCESS_EXPIRATION_MINUTES = int(os.getenv("JWT_ACCESS_EXPIRATION_MINUTES", "30"))
-JWT_REFRESH_EXPIRATION_DAYS = int(os.getenv("JWT_REFRESH_EXPIRATION_DAYS", "7"))
+JWT_ACCESS_EXPIRATION_MINUTES = get_settings().jwt_access_expiration_minutes
+JWT_REFRESH_EXPIRATION_DAYS = get_settings().jwt_refresh_expiration_days
 
 # Account lockout configuration
-LOCKOUT_THRESHOLD = int(os.getenv("AUTH_LOCKOUT_THRESHOLD", "5"))
-LOCKOUT_DURATION_MINUTES = int(os.getenv("AUTH_LOCKOUT_DURATION_MINUTES", "15"))
+LOCKOUT_THRESHOLD = get_settings().auth_lockout_threshold
+LOCKOUT_DURATION_MINUTES = get_settings().auth_lockout_duration_minutes
 
 # Number of prior password hashes to remember and reject on reuse
-PASSWORD_HISTORY_LIMIT = int(os.getenv("AUTH_PASSWORD_HISTORY_LIMIT", "5"))
+PASSWORD_HISTORY_LIMIT = get_settings().auth_password_history_limit
 
 
 class AccountLockedError(Exception):
@@ -528,10 +519,7 @@ class AuthService:
             True if user has permission
         """
         # DEV MODE: Grant all permissions
-        import os
-
-        DEV_MODE = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
-        if DEV_MODE:
+        if _is_dev_mode():
             return True
 
         should_close_session = session is None
@@ -568,10 +556,7 @@ class AuthService:
             Dictionary of permissions
         """
         # DEV MODE: Return all permissions
-        import os
-
-        DEV_MODE = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
-        if DEV_MODE:
+        if _is_dev_mode():
             return {
                 "findings.read": True,
                 "findings.write": True,

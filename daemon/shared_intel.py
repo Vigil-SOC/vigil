@@ -5,20 +5,19 @@ overlapping investigations and link related cases.
 """
 
 import logging
-import os
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set
+
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 
 def _get_mempalace_searcher():
-    """Return a MemPalace Searcher handle for cross-run lookups, or None if unavailable."""
-    if os.environ.get("MEMPALACE_DAEMON_ENABLED", "false").lower() != "true":
+    if get_settings().mempalace_daemon_enabled is not True:
         return None
     try:
         from mempalace.searcher import search_memories
-
         from services.mempalace_paths import get_palace_path
 
         data_dir = get_palace_path()

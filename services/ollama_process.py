@@ -33,6 +33,8 @@ from services.provider_model_discovery import ollama_ping
 if TYPE_CHECKING:
     from services.service_manager import ActionResult, ServiceSpec, ServiceStatus
 
+from core.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -49,7 +51,7 @@ def base_url() -> str:
     ``OLLAMA_URL`` holds the host-side value (``.env`` ships localhost:11434).
     See :func:`container_base_url` for the container-side form.
     """
-    return (os.getenv("OLLAMA_URL") or "http://localhost:11434").strip().rstrip("/")
+    return get_settings().ollama_url.strip().rstrip("/")
 
 
 def container_base_url() -> str:

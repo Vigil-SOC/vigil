@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete as sa_delete, update
 from sqlalchemy.orm import Session
+from api._meta import Auth, RouterMeta
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from secrets_manager import delete_secret, get_secret, set_secret  # noqa: E402
@@ -35,6 +36,12 @@ from services.url_safety import (  # noqa: E402
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/llm/providers",
+    tags=["llm-providers"],
+    auth=Auth.REQUIRED,
+)
 
 VALID_PROVIDER_TYPES = {"anthropic", "openai", "ollama"}
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")

@@ -6,8 +6,15 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from services.case_metrics_service import CaseMetricsService
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/cases/metrics",
+    tags=["case-metrics"],
+    auth=Auth.REQUIRED,
+)
 metrics_service = CaseMetricsService()
 
 

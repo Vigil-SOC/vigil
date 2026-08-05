@@ -30,78 +30,9 @@ from backend.middleware.csrf import CSRFMiddleware
 from backend.middleware.rate_limit import limiter
 from backend.middleware.security_headers import SecurityHeadersMiddleware
 
-from api import (
-    findings_router,
-    cases_router,
-    mcp_router,
-    claude_router,
-    config_router,
-    attack_router,
-    agents_router,
-    custom_integrations_router,
-    storage_status_router,
-    ai_decisions_router,
-    logs_router,
-    workflows_router,
-    approvals_router,
-    reasoning_router,
-    conversations_router,
-    skills_router,
-    llm_providers_router,
-    ai_config_router,
-)
-from api.local_services import router as local_services_router
-from api.integrations_compatibility import router as compatibility_router
-from api.ingestion import router as ingestion_router
-from api.timeline import router as timeline_router
-from api.graph import router as graph_router
-from api.vstrike import router as vstrike_router
-from api.extensions import router as extensions_router
-from api.custom_agents import router as custom_agents_router
-
-# Enhanced case management routers
-from api.case_templates import router as case_templates_router
-from api.case_metrics import router as case_metrics_router
-from api.case_search import router as case_search_router
-from api.webhooks import router as webhooks_router
-from api.sla_policies import router as sla_policies_router
-
-# Darktrace inbound webhook receiver
-from api.darktrace_webhook import router as darktrace_webhook_router
-
-# Cloudflare Cloudy inbound webhook receiver (gated; see CLOUDY_INGESTION_ENABLED)
-from api.cloudflare_webhooks import (
-    router as cloudflare_webhooks_router,
-    cloudy_ingestion_enabled,
-)
-
-# Authentication routers
-from api.auth import router as auth_router
-from api.users import router as users_router
-
-# JIRA export router
-from api.jira_export import router as jira_export_router
-
-# Analytics router
-from api.analytics import router as analytics_router
-
-# Detection Rules router
-from api.detection_rules import router as detection_rules_router
-
-# Orchestrator router
-from api.orchestrator import router as orchestrator_router
-
-# Federation router (federated monitoring of external SIEM/EDR sources)
-from api.federation import router as federation_router
-
-# Budgets (Bifrost VK config + live quota — #186)
-from api.budgets import router as budgets_router
-
-# Kafka ingestion router
-from api.kafka import router as kafka_router
-
-from core.rate_limit import rate_limit_dependency
+from api._discovery import mount_routers
 from backend.middleware.auth import get_current_active_user
+from core.config import get_settings
 from monitoring import init_sentry, PROMETHEUS_AVAILABLE, get_metrics_response
 
 # Single source of truth for the "require an authenticated active user"
@@ -166,7 +97,7 @@ app = FastAPI(
 # (served at root). All API routers, the health endpoint, the static/assets
 # mounts and the SPA catch-all are prefixed with this; the frontend learns it
 # at runtime via the <meta name="vigil-base-path"> injected into index.html below.
-_CONTEXT_PATH = os.getenv("VIGIL_CONTEXT_PATH", "").rstrip("/")
+_CONTEXT_PATH = get_settings().vigil_context_path.rstrip("/")
 
 # Wire the shared slowapi Limiter used by auth endpoints. The decorator-based
 # limits (@limiter.limit) read state from app.state.limiter, so both must be set.
@@ -192,7 +123,7 @@ _DEFAULT_CORS_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
 ]
-_cors_origins_raw = os.getenv("VIGIL_CORS_ORIGINS")
+_cors_origins_raw = get_settings().vigil_cors_origins
 if _cors_origins_raw:
     _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
 else:
@@ -229,254 +160,23 @@ app.add_middleware(SecurityHeadersMiddleware)
 if PROMETHEUS_AVAILABLE:
     app.add_middleware(PrometheusMiddleware)
 
-# Include API routers
-
-# Authentication routes: login/refresh/password-reset are public; the
-# inner /me, /change-password, /mfa routes already use get_current_active_user
-# inline. Leaving the router itself unwrapped preserves that mix.
-app.include_router(auth_router, prefix=f"{_CONTEXT_PATH}/api/auth", tags=["authentication"])
-app.include_router(
-    users_router, prefix=f"{_CONTEXT_PATH}/api/users", tags=["users"], dependencies=AUTH_DEPENDENCY
-)
-
-# JIRA export
-app.include_router(
-    jira_export_router,
-    prefix=f"{_CONTEXT_PATH}/api",
-    tags=["jira-export"],
-    dependencies=AUTH_DEPENDENCY,
-)
-
-# Analytics
-app.include_router(
-    analytics_router, prefix=f"{_CONTEXT_PATH}/api", tags=["analytics"], dependencies=AUTH_DEPENDENCY
-)
-# Budgets — same prefix as analytics so /api/analytics/budget* lives next
-# to /api/analytics/cost. The router itself owns the /analytics path
-# segment per its endpoint definitions.
-app.include_router(
-    budgets_router, prefix=f"{_CONTEXT_PATH}/api", tags=["budgets"], dependencies=AUTH_DEPENDENCY
-)
-
-# Core API endpoints
-app.include_router(
-    findings_router,
-    prefix=f"{_CONTEXT_PATH}/api/findings",
-    tags=["findings"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    cases_router, prefix=f"{_CONTEXT_PATH}/api/cases", tags=["cases"], dependencies=AUTH_DEPENDENCY
-)
-app.include_router(
-    mcp_router, prefix=f"{_CONTEXT_PATH}/api/mcp", tags=["mcp"], dependencies=AUTH_DEPENDENCY
-)
-
-# Claude routes expose AI and agent execution capabilities and must require
-# an authenticated user session. Keep rate limiting in addition to auth.
-app.include_router(
-    claude_router,
-    prefix=f"{_CONTEXT_PATH}/api/claude",
-    tags=["claude"],
-    dependencies=[*AUTH_DEPENDENCY, Depends(rate_limit_dependency)],
-)
-app.include_router(
-    reasoning_router,
-    prefix=f"{_CONTEXT_PATH}/api/reasoning",
-    tags=["reasoning"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    conversations_router,
-    prefix=f"{_CONTEXT_PATH}/api/conversations",
-    tags=["conversations"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    config_router, prefix=f"{_CONTEXT_PATH}/api/config", tags=["config"], dependencies=AUTH_DEPENDENCY
-)
-app.include_router(
-    llm_providers_router,
-    prefix=f"{_CONTEXT_PATH}/api/llm/providers",
-    tags=["llm-providers"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    ai_config_router, prefix=f"{_CONTEXT_PATH}/api/ai", tags=["ai-config"], dependencies=AUTH_DEPENDENCY
-)
-app.include_router(
-    attack_router, prefix=f"{_CONTEXT_PATH}/api/attack", tags=["attack"], dependencies=AUTH_DEPENDENCY
-)
-app.include_router(
-    custom_agents_router,
-    prefix=f"{_CONTEXT_PATH}/api",
-    tags=["custom-agents"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    agents_router, prefix=f"{_CONTEXT_PATH}/api/agents", tags=["agents"], dependencies=AUTH_DEPENDENCY
-)
-app.include_router(
-    compatibility_router,
-    prefix=f"{_CONTEXT_PATH}/api/integrations",
-    tags=["integrations"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    custom_integrations_router,
-    prefix=f"{_CONTEXT_PATH}/api/custom-integrations",
-    tags=["custom-integrations"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    skills_router,
-    prefix=f"{_CONTEXT_PATH}/api/skills",
-    tags=["skills"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    ingestion_router,
-    prefix=f"{_CONTEXT_PATH}/api/ingest",
-    tags=["ingestion"],
-    dependencies=AUTH_DEPENDENCY,
-)
-# VStrike /findings is public-but-bearer-authenticated inside the router.
-# All VStrike management/UI/proxy routes require an authenticated user session.
-app.include_router(vstrike_router, prefix=f"{_CONTEXT_PATH}/api/integrations/vstrike", tags=["vstrike"])
-# Page-extension host — mints connector session tokens.
-app.include_router(
-    extensions_router,
-    prefix=f"{_CONTEXT_PATH}/api/integrations",
-    tags=["extensions"],
-)
-app.include_router(
-    storage_status_router,
-    prefix=f"{_CONTEXT_PATH}/api/storage",
-    tags=["storage"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    ai_decisions_router,
-    prefix=f"{_CONTEXT_PATH}/api/ai",
-    tags=["ai-decisions"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    timeline_router,
-    prefix=f"{_CONTEXT_PATH}/api/timeline",
-    tags=["timeline"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    graph_router, prefix=f"{_CONTEXT_PATH}/api/graph", tags=["graph"], dependencies=AUTH_DEPENDENCY
-)
-app.include_router(
-    logs_router, prefix=f"{_CONTEXT_PATH}/api/logs", tags=["logs"], dependencies=AUTH_DEPENDENCY
-)
-app.include_router(
-    local_services_router,
-    prefix=f"{_CONTEXT_PATH}/api/services",
-    tags=["local-services"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    detection_rules_router,
-    prefix=f"{_CONTEXT_PATH}/api/detection-rules",
-    tags=["detection-rules"],
-    dependencies=AUTH_DEPENDENCY,
-)
-
-# Workflows engine
-app.include_router(
-    workflows_router, prefix=f"{_CONTEXT_PATH}/api", tags=["workflows"], dependencies=AUTH_DEPENDENCY
-)
-app.include_router(
-    approvals_router, prefix=f"{_CONTEXT_PATH}/api", tags=["approvals"], dependencies=AUTH_DEPENDENCY
-)
-
-# Autonomous orchestrator
-app.include_router(
-    orchestrator_router,
-    prefix=f"{_CONTEXT_PATH}/api/orchestrator",
-    tags=["orchestrator"],
-    dependencies=AUTH_DEPENDENCY,
-)
-# Federated monitoring (per-source SIEM/EDR pull driven by federation_sources)
-app.include_router(
-    federation_router,
-    prefix=f"{_CONTEXT_PATH}/api/federation",
-    tags=["federation"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(kafka_router, prefix=_CONTEXT_PATH, dependencies=AUTH_DEPENDENCY)
-
-# Enhanced case management routers
-app.include_router(
-    case_templates_router,
-    prefix=f"{_CONTEXT_PATH}/api/cases/templates",
-    tags=["case-templates"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    case_metrics_router,
-    prefix=f"{_CONTEXT_PATH}/api/cases/metrics",
-    tags=["case-metrics"],
-    dependencies=AUTH_DEPENDENCY,
-)
-app.include_router(
-    case_search_router,
-    prefix=f"{_CONTEXT_PATH}/api/cases/search",
-    tags=["case-search"],
-    dependencies=AUTH_DEPENDENCY,
-)
-# Webhook management routes require authenticated user sessions.
-# Inbound third-party webhook receivers should live in dedicated routers
-# with endpoint-specific HMAC/API-key validation.
-app.include_router(
-    webhooks_router,
-    prefix=f"{_CONTEXT_PATH}/api/webhooks",
-    tags=["webhooks"],
-    dependencies=AUTH_DEPENDENCY,
-)
-# Darktrace inbound webhook receiver — only mount when explicitly enabled.
-# env.example and docs/integrations/DARKTRACE.md document DARKTRACE_ENABLED
-# as the on/off toggle; leaving it unset must leave the receiver off.
-if os.environ.get("DARKTRACE_ENABLED", "false").lower() == "true":
-    app.include_router(
-        darktrace_webhook_router,
-        prefix=f"{_CONTEXT_PATH}/api/webhooks/darktrace",
-        tags=["darktrace"],
-    )
-
-# Cloudflare Cloudy webhook — only mount when explicitly enabled. Hard-off by
-# default since the upstream API contract is not yet stable; flip
-# CLOUDY_INGESTION_ENABLED=true (or system_config cloudflare.cloudy.enabled)
-# once the partnership confirms the wire format. The endpoint itself also
-# checks the flag at request time, so even a misconfigured mount fails closed.
-if cloudy_ingestion_enabled():
-    app.include_router(
-        cloudflare_webhooks_router,
-        prefix=f"{_CONTEXT_PATH}/api/webhooks/cloudflare",
-        tags=["cloudflare"],
-    )
-app.include_router(
-    sla_policies_router,
-    prefix=f"{_CONTEXT_PATH}/api/sla-policies",
-    tags=["sla-policies"],
-    dependencies=AUTH_DEPENDENCY,
+# Mount every router in backend/api/ (issue #478). Each module declares its
+# own prefix, tags, auth posture and optional feature gate in ROUTER_META, so
+# adding a router needs no edit to this file. See backend/api/_meta.py.
+mount_routers(
+    app,
+    context_path=_CONTEXT_PATH,
+    auth_dependency=AUTH_DEPENDENCY,
 )
 
 
 def _mcp_auto_connect_enabled() -> bool:
-    """Keep optional MCP processes from blocking a local backend startup."""
-    dev_mode = os.getenv("DEV_MODE", "false").lower() in {"1", "true", "yes"}
-    default = "false" if dev_mode else "true"
-    return os.getenv("MCP_AUTO_CONNECT_ON_STARTUP", default).lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    # Off by default in DEV_MODE so optional MCP processes cannot block a local
+    # backend startup; an explicit setting wins either way.
+    settings = get_settings()
+    if settings.mcp_auto_connect_on_startup is not None:
+        return settings.mcp_auto_connect_on_startup
+    return not settings.dev_mode
 
 
 async def _connect_external_services():
@@ -493,7 +193,7 @@ async def _connect_external_services():
     try:
         from services.bifrost_admin import sync_all_provider_models
 
-        refresh_interval_s = int(os.getenv("MODEL_CATALOG_REFRESH_INTERVAL_S", "300"))
+        refresh_interval_s = get_settings().model_catalog_refresh_interval_s
 
         async def _model_catalog_refresher():
             while True:
@@ -625,9 +325,7 @@ async def startup_event():
     logger.info("Starting Vigil SOC Backend")
     logger.info("=" * 60)
 
-    import os
-
-    _testing = os.getenv("TESTING", "false").lower() in ("true", "1", "yes")
+    _testing = get_settings().testing
 
     # Keep the sync-endpoint threadpool in lockstep with the DB connection pool.
     # Starlette runs `def` endpoints (and sync deps) on anyio's default thread
@@ -692,17 +390,16 @@ async def startup_event():
     # Load secrets into environment for MCP servers
     try:
         from backend.secrets_manager import get_secret
-        import os
 
         # Load PostgreSQL connection string for database backend
         postgres_conn = get_secret("POSTGRESQL_CONNECTION_STRING")
         if postgres_conn:
-            os.environ["POSTGRESQL_CONNECTION_STRING"] = postgres_conn
+            os.environ["POSTGRESQL_CONNECTION_STRING"] = postgres_conn  # noqa: ENV001
             logger.debug("Loaded PostgreSQL connection string from secrets")
         else:
             # Set default connection string if not configured
             default_conn = "postgresql://deeptempo:deeptempo_secure_password_change_me@localhost:5432/deeptempo_soc"
-            os.environ["POSTGRESQL_CONNECTION_STRING"] = default_conn
+            os.environ["POSTGRESQL_CONNECTION_STRING"] = default_conn  # noqa: ENV001
             logger.debug("Using default PostgreSQL connection string")
 
         # Rehydrate integration credentials into os.environ so MCP servers gated
@@ -715,7 +412,7 @@ async def startup_event():
             for env_key in field_map.values():
                 value = get_secret(env_key)
                 if value:
-                    os.environ[env_key] = value
+                    os.environ[env_key] = value  # noqa: ENV001 - MCP child env
                     rehydrated += 1
         logger.debug("Rehydrated %d integration secret(s) into env", rehydrated)
 
@@ -753,7 +450,6 @@ async def startup_event():
     try:
         from services.database_data_service import DatabaseDataService
         from core.config import is_demo_mode
-        import os
 
         # Defense-in-depth: ensure the SQLAlchemy-managed schema exists before
         # any endpoint tries to query it. start.sh runs scripts/init_schema.py
@@ -762,7 +458,7 @@ async def startup_event():
         # here is fatal — we do NOT silently fall back to JSON because that
         # leaves the DB in an inconsistent state (some endpoints use
         # get_db_session() directly, see backend/api/case_metrics.py).
-        data_backend_env = os.getenv("DATA_BACKEND", "database").lower()
+        data_backend_env = get_settings().data_backend.lower()
         if not is_demo_mode() and data_backend_env == "database":
             try:
                 from database.connection import init_database
@@ -788,7 +484,7 @@ async def startup_event():
             logger.info(f"  Backend: {backend_info['backend']}")
         else:
             # Check configuration preference
-            data_backend = os.getenv("DATA_BACKEND", "database").lower()
+            data_backend = get_settings().data_backend.lower()
             use_database = data_backend == "database"
 
             if use_database:

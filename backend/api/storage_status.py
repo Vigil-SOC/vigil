@@ -11,10 +11,17 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.middleware.auth import get_current_active_user, require_settings_admin
 from database.models import User
+from api._meta import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/storage",
+    tags=["storage"],
+    auth=Auth.REQUIRED,
+)
 
 # Serializes engine swaps; two concurrent retargets would race on the manager.
 _RETARGET_LOCK = threading.Lock()

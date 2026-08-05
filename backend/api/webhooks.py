@@ -3,8 +3,19 @@
 from typing import List, Optional, Dict
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/webhooks",
+    tags=["webhooks"],
+    # Webhook *management* routes require an authenticated user session. Inbound
+    # third-party receivers must NOT be added here: they belong in their own
+    # module with Auth.PUBLIC_WEBHOOK, an `enabled` gate, and endpoint-specific
+    # HMAC/API-key validation.
+    auth=Auth.REQUIRED,
+)
 
 # Webhook configuration would be stored in database
 # For now, providing API structure

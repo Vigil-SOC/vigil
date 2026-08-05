@@ -7,8 +7,15 @@ import logging
 
 from services.defaults import DEFAULT_MODEL
 from services.soc_agents import SOCAgentLibrary, AgentManager, CUSTOM_AGENT_ID_PREFIX
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/agents",
+    tags=["agents"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 
 # Global agent manager instance

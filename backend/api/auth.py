@@ -5,7 +5,6 @@ Handles login, logout, token refresh, password management, and MFA.
 """
 
 import logging
-import os
 from datetime import datetime
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, Header, Request, Response, status
@@ -43,10 +42,25 @@ from backend.middleware.auth import get_current_active_user
 from backend.middleware.rate_limit import limiter
 from database.models import User
 from database.connection import get_db
+from api._meta import Auth, RouterMeta
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/auth",
+    tags=["authentication"],
+    auth=Auth.ROUTER_MANAGED,
+    reason=(
+        "A deliberate mix. login / refresh / password-reset / bootstrap "
+        "cannot require auth (chicken-and-egg) and are listed in "
+        "PUBLIC_API_PATHS; the inner /me, /change-password and /mfa routes "
+        "declare get_current_active_user inline. A router-level auth "
+        "dependency here would break login."
+    ),
+)
 
 # The role the first account gets: it has to be able to create every other one.
 ADMIN_ROLE_ID = "role-admin"
@@ -786,7 +800,7 @@ async def password_reset_request(
     user = session.query(User).filter(User.email == body.email).first()
     if user and user.is_active:
         token = generate_reset_token(user.user_id)
-        frontend_base = os.getenv("VIGIL_FRONTEND_URL", "").rstrip("/")
+        frontend_base = get_settings().vigil_frontend_url.rstrip("/")
         if frontend_base:
             reset_link = f"{frontend_base}/reset-password?token={token}"
         else:

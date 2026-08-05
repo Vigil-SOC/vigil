@@ -16,11 +16,13 @@ email and log the content instead. Flip to `smtp` when SMTP creds are set.
 """
 
 import logging
-import os
 import smtplib
 from abc import ABC, abstractmethod
 from email.message import EmailMessage
 from typing import Optional
+
+from core.config import get_settings
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ class ConsoleBackend(EmailBackend):
         logger.info(
             "[email/console] to=%s from=%s subject=%r\n%s",
             to,
-            from_addr or os.getenv("SMTP_FROM", "noreply@vigil.local"),
+            from_addr or get_settings().smtp_from,
             subject,
             body,
         )
@@ -60,13 +62,13 @@ class SMTPBackend(EmailBackend):
         use_tls: Optional[bool] = None,
         default_from: Optional[str] = None,
     ):
-        self.host = host or os.getenv("SMTP_HOST", "")
-        self.port = port or int(os.getenv("SMTP_PORT", "587"))
-        self.username = username or os.getenv("SMTP_USER") or os.getenv("SMTP_USERNAME")
-        self.password = password or os.getenv("SMTP_PASSWORD")
-        tls_env = os.getenv("SMTP_TLS", "true").strip().lower()
-        self.use_tls = use_tls if use_tls is not None else tls_env in ("true", "1", "yes", "on")
-        self.default_from = default_from or os.getenv("SMTP_FROM", "noreply@vigil.local")
+        settings = get_settings()
+        self.host = host or settings.smtp_host
+        self.port = port or settings.smtp_port
+        self.username = username or settings.smtp_user or settings.smtp_username
+        self.password = password or get_secret("SMTP_PASSWORD")
+        self.use_tls = use_tls if use_tls is not None else settings.smtp_tls
+        self.default_from = default_from or settings.smtp_from
 
     def send(
         self,
@@ -105,7 +107,7 @@ def get_email_backend() -> EmailBackend:
     global _backend
     if _backend is not None:
         return _backend
-    choice = (os.getenv("VIGIL_EMAIL_BACKEND") or "console").strip().lower()
+    choice = get_settings().vigil_email_backend.strip().lower()
     if choice == "smtp":
         _backend = SMTPBackend()
     else:

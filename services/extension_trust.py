@@ -10,11 +10,9 @@ app-admin act of configuring a connector URL in Settings.
 
 from __future__ import annotations
 
-import os
+from core.config import get_settings
 from typing import Optional
 from urllib.parse import urlsplit
-
-_ALLOWLIST_ENV = "EXTENSION_CONNECTOR_ALLOWLIST"
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
@@ -32,12 +30,10 @@ def canonical_origin(value: str) -> Optional[str]:
 
 
 def connector_allowlist_origins() -> list[str]:
-    """Canonicalized, de-duplicated trusted connector origins from
-    ``EXTENSION_CONNECTOR_ALLOWLIST`` (may be empty)."""
-    raw = os.getenv(_ALLOWLIST_ENV, "")
+    # Canonicalized, de-duplicated trusted connector origins (may be empty).
     seen: set[str] = set()
     origins: list[str] = []
-    for entry in raw.split(","):
+    for entry in get_settings().extension_connector_allowlist:
         origin = canonical_origin(entry)
         if origin and origin not in seen:
             seen.add(origin)

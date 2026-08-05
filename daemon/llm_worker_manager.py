@@ -93,8 +93,8 @@ class LLMWorkerManager:
     # ------------------------------------------------------------------
 
     def _start_worker(self):
-        """Spawn the ARQ worker as a child process."""
-        env = {**os.environ, "PYTHONPATH": PROJECT_ROOT}
+        # Exports the parent env into a child process; not a config read.
+        env = {**os.environ, "PYTHONPATH": PROJECT_ROOT}  # noqa: ENV001
         log_path = Path(PROJECT_ROOT) / "logs" / "llm_worker.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
         try:

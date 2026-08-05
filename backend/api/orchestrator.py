@@ -13,8 +13,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/orchestrator",
+    tags=["orchestrator"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 
 

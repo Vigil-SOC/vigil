@@ -11,8 +11,15 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api",
+    tags=["approvals"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 
 

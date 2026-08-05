@@ -20,8 +20,9 @@ are the only exception and must still call ``Anthropic()`` directly.
 
 from __future__ import annotations
 
-import os
 from typing import Optional
+
+from core.config import get_settings
 
 _DEFAULT_TIMEOUT = 1800.0
 
@@ -43,10 +44,10 @@ def _bifrost_anthropic_base_url() -> str:
     it (the SDK appends ``/v1/messages`` and ``/v1/messages/count_tokens``),
     bypassing Bifrost for Anthropic traffic.
     """
-    override = os.getenv("ANTHROPIC_BASE_URL", "").strip()
+    override = get_settings().anthropic_base_url.strip()
     if override:
         return override.rstrip("/")
-    base = os.getenv("BIFROST_URL", "http://bifrost:8080").rstrip("/")
+    base = get_settings().bifrost_url.rstrip("/")
     return f"{base}/anthropic"
 
 

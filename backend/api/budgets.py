@@ -22,8 +22,18 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    # Bare /api, deliberately the same prefix as analytics, so
+    # /api/analytics/budget* lives next to /api/analytics/cost. This router owns
+    # the /analytics path segment in its own endpoint definitions.
+    prefix="/api",
+    tags=["budgets"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 
 

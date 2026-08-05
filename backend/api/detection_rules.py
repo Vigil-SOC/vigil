@@ -4,10 +4,17 @@ import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from api._meta import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/detection-rules",
+    tags=["detection-rules"],
+    auth=Auth.REQUIRED,
+)
 
 
 class AddSourceRequest(BaseModel):

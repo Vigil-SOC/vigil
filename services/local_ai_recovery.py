@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import httpx
 
+from core.config import get_settings
 from services.runtime_config import get_ai_operations_setting
 
 logger = logging.getLogger(__name__)
@@ -36,12 +36,12 @@ class RecoveryResult:
 
 
 def _bifrost_url() -> str:
-    return os.getenv("BIFROST_URL", "http://localhost:8080").rstrip("/")
+    return get_settings().bifrost_url.rstrip("/")
 
 
 def local_bifrost_recovery_enabled() -> bool:
     """Return true only for an explicitly local, host-run dev server."""
-    if os.getenv("DEV_MODE", "false").lower() not in {"1", "true", "yes"}:
+    if not get_settings().dev_mode:
         return False
     if urlparse(_bifrost_url()).hostname not in _LOOPBACK_HOSTS:
         return False

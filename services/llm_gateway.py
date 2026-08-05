@@ -11,7 +11,6 @@ enqueue LLM requests here instead of calling Claude directly. This provides:
 import asyncio
 import json
 import logging
-import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +20,8 @@ from arq.jobs import DeserializationError
 
 from services.defaults import DEFAULT_MODEL
 
+from core.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 QUEUE_NAME = "arq:llm"
@@ -29,7 +30,7 @@ DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 
 
 def _redis_settings() -> RedisSettings:
-    url = os.getenv("REDIS_URL", DEFAULT_REDIS_URL)
+    url = get_settings().redis_url or DEFAULT_REDIS_URL
     # Parse redis://host:port/db
     from urllib.parse import urlparse
 

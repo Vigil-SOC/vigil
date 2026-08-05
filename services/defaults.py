@@ -5,14 +5,15 @@ All values are overridable via environment variables so operator deployments
 can change them without code changes.
 """
 
-import os
 from typing import Any, Dict, Optional
 
 # Fallback model ID used when no provider-specific model can be resolved
 # (e.g. fresh install, DB unavailable, no ai_model_configs row).
 # Operators on Ollama-only deployments should set this to their local model
 # (e.g. "llama3.2:1b") so the failsafe never tries to call an Anthropic model.
-DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "claude-sonnet-4-6")
+from core.config import get_settings
+
+DEFAULT_MODEL: str = get_settings().default_model
 
 # Anthropic models that reject the legacy extended-thinking shape
 # thinking={"type": "enabled", "budget_tokens": N} with a 400 and instead

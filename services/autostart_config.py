@@ -25,6 +25,7 @@ import tempfile
 from pathlib import Path
 from typing import List
 
+from core.config import get_settings
 from services.service_manager import REQUIRED_SERVICES, SERVICES
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ def get_autostart_services() -> List[str]:
     if from_file is not None:
         base = from_file
     else:
-        env = os.getenv("AUTOSTART_SERVICES")
+        env = get_settings().autostart_services
         if env:
             base = _known(
                 [n.strip() for n in env.replace(",", " ").split()],

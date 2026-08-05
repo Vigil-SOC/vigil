@@ -8,7 +8,6 @@ The SentrySpanProcessor bridges OTEL error spans to Sentry breadcrumbs so
 both systems remain useful without creating duplicate transaction records.
 """
 
-import os
 import time
 import logging
 
@@ -18,6 +17,7 @@ import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +97,10 @@ except ImportError:
 def init_sentry() -> None:
     """Initialize Sentry error tracking and performance monitoring."""
 
-    sentry_dsn = os.getenv("SENTRY_DSN")
-    environment = os.getenv("ENVIRONMENT", "development")
-    release = os.getenv("RELEASE_VERSION", "unknown")
+    settings = get_settings()
+    sentry_dsn = settings.sentry_dsn
+    environment = settings.environment
+    release = settings.release_version
 
     if not sentry_dsn:
         logger.info("Sentry DSN not configured, skipping initialization")
@@ -108,7 +109,7 @@ def init_sentry() -> None:
 
     # When OTEL is active, disable Sentry's own distributed tracing to prevent
     # double-tracing. Sentry still captures errors — tracing is OTEL's job.
-    otel_active = os.getenv("VIGIL_OTEL_ENABLED", "").lower() in ("true", "1", "yes")
+    otel_active = get_settings().vigil_otel_enabled
     traces_sample_rate = 0.0 if otel_active else (
         0.1 if environment == "production" else 1.0
     )
@@ -152,7 +153,7 @@ def before_send_filter(event, hint):
         return None
 
     # Don't send test errors
-    if os.getenv("TESTING") == "true":
+    if get_settings().testing:
         return None
 
     return event

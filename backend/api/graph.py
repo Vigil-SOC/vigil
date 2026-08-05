@@ -6,8 +6,15 @@ from pydantic import BaseModel
 import logging
 
 from services.database_data_service import DatabaseDataService
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/graph",
+    tags=["graph"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 
 

@@ -4,7 +4,6 @@ import asyncio
 import base64
 import json
 import logging
-import os
 import platform
 import sys
 import threading
@@ -15,6 +14,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 sys.path.insert(0, str(Path(__file__).parent.parent / "backend"))
 from secrets_manager import get_secret, set_secret
 
+from core.config import get_settings
 from services.defaults import DEFAULT_MODEL, build_thinking_kwargs
 
 # GH #89 — resolve the summarization model via ai_model_configs with a safe
@@ -815,8 +815,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                             tool_name,
                             schema_scan.patterns,
                         )
-                        block = os.getenv("PROMPT_INJECTION_BLOCK", "false")
-                        if block.lower() in ("true", "1", "yes"):
+                        if get_settings().prompt_injection_block:
                             logger.error("Skipping poisoned tool %s", tool_name)
                             continue
                     self.mcp_tools.append(claude_tool)

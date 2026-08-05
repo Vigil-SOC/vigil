@@ -470,7 +470,7 @@ class SystemConfig(Base):
     """
     System Configuration - Stores system-wide configuration settings.
 
-    This replaces file-based configs in ~/.deeptempo/ for better multi-user
+    This replaces file-based configs in ~/.vigil/ for better multi-user
     support, ACID compliance, and audit trails.
     """
 

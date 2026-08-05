@@ -6,24 +6,18 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, List, Any, Callable
 from dataclasses import dataclass, field
 
+from core.config import get_settings
 from daemon.config import SchedulerConfig
 
 logger = logging.getLogger(__name__)
 
 
 def _sandbox_poll_enabled() -> bool:
-    import os
-
-    return os.getenv("SANDBOX_AUTO_SUBMIT", "false").strip().lower() in ("1", "true", "yes", "on")
+    return get_settings().sandbox_auto_submit
 
 
 def _sandbox_poll_interval() -> int:
-    import os
-
-    try:
-        return max(30, int(os.getenv("SANDBOX_POLL_INTERVAL", "60")))
-    except ValueError:
-        return 60
+    return max(30, get_settings().sandbox_poll_interval)
 
 
 @dataclass

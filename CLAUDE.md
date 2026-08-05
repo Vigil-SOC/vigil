@@ -6,12 +6,16 @@ This file provides guidance for AI assistants (Claude Code and similar tools) wo
 
 ## Project Overview
 
-**Vigil** is an open-source, AI-native Security Operations Center (SOC) platform. It orchestrates 13 specialized AI agents via Claude to perform triage, investigation, threat hunting, forensics, and automated response across 30+ security integrations.
+**Vigil** is an open-source, AI-native Security Operations Center (SOC) platform. It orchestrates 13 specialized AI agents via Claude to perform triage, investigation, threat hunting, forensics, and automated response across 40 security integrations.
 
 **Core pillars:**
-- **Agents** — 13 specialized AI agents (Triage, Investigator, Threat Hunter, Correlator, Responder, Reporter, MITRE Analyst, Forensics, Threat Intel, Compliance, Malware Analyst, Network Analyst)
+- **Agents** — 13 agents defined in `AGENT_CONFIGS`, which is the authoritative
+  list: triage, investigator, threat_hunter, correlator, responder, reporter,
+  mitre_analyst, forensics, threat_intel, compliance, malware_analyst,
+  network_analyst, auto_responder. (The README says "12" — it omits
+  `auto_responder`.)
 - **Workflows** — Multi-agent orchestrated playbooks (Incident Response, Full Investigation, Threat Hunt, Forensic Analysis)
-- **Integrations** — 30+ tools via MCP protocol (Splunk, CrowdStrike, VirusTotal, Shodan, Timesketch, Jira, Slack, etc.)
+- **Integrations** — 40 MCP servers in `mcp-config.json` (Splunk, CrowdStrike, VirusTotal, Shodan, Timesketch, Jira, Slack, etc.). Count only dict-valued keys: the `mcpServers` object also holds 7 `_comment_*` string keys used as section separators.
 
 **Ports:**
 - Backend API: `http://localhost:6987`
@@ -64,9 +68,16 @@ vigil/
 ├── docs/                 # Detailed documentation
 ├── docker/               # docker-compose.yml + Dockerfiles
 ├── scripts/              # Init and utility shell scripts
-├── mcp-config.json       # 30+ MCP server definitions
+├── mcp-config.json       # 40 MCP server definitions (+ `_comment_*` separator keys)
 └── env.example           # Template for all 220+ environment variables
 ```
+
+> **sys.path quirk:** `backend/main.py` puts `backend/` on `sys.path`, so modules
+> there are imported *bare* — `from secrets_manager import get_secret`, not
+> `from backend.secrets_manager import …`. `setup.cfg` (`mypy_path = backend`) and
+> `pyrightconfig.json` (`extraPaths`) mirror this so static analysis resolves them.
+> Note the resulting name collisions: `backend/services/` and `backend/tools/` are
+> **not** the top-level `services/` and `tools/` packages.
 
 ---
 
@@ -96,6 +107,18 @@ cd frontend && npm run dev
 # 4. (Optional) Daemon
 ./start.sh --daemon
 ```
+
+### Desktop (Electron)
+
+```bash
+cd desktop && npm run dev    # builds TS, launches Electron
+cd desktop && npm run dist   # packages a .dmg via electron-builder
+```
+
+The desktop app drives the stack through `scripts/app_up.sh` / `app_down.sh`
+rather than `start.sh`: no `--reload`, no Vite (the built SPA is served by the
+backend at :6987), and it **forces `DEV_MODE=false`** because its login and
+first-run bootstrap are the point.
 
 ### Fresh Environment
 
@@ -132,29 +155,59 @@ encrypted at `~/.vigil/secrets.enc` — see [docs/STATE.md](docs/STATE.md).
 
 Default dev login: **admin / admin123** (when `DEV_MODE=false`)
 
+### Reading configuration
+
+Config flows through exactly three channels. Do not add `os.getenv` calls —
+`tests/unit/test_no_ambient_state.py` fails CI on them.
+
+| Need | Use | Owner |
+|------|-----|-------|
+| Non-secret setting | `core.config.get_settings().field` | env / `.env` |
+| Credential | `core.secrets.get_secret("NAME")` | `~/.vigil/secrets.enc`, then env |
+| UI-editable at runtime | `services.runtime_config` / `database.config_service` | `system_config` table |
+
+`core/config.py` is the single definition site: every setting is a typed field
+with its default, and `tests/unit/test_settings_env_example.py` fails if a field
+is missing from `env.example` or vice versa. `get_settings()` is `lru_cache`d, so
+a test that changes env mid-test must call `get_settings.cache_clear()`.
+
+Config file paths go through `core.config.vigil_path()`, which reads from
+`~/.vigil` with a fallback to the legacy `~/.deeptempo` copy and always writes to
+`~/.vigil`. Pass `write=True` on save paths.
+
+The two legitimate exceptions, both marked `# noqa: ENV001`: exporting env into
+spawned MCP child processes (env is their config protocol, so third-party servers
+need no adaptation), and genuinely dynamic variable names.
+
 ---
 
 ## Running Tests
 
 ### Python (pytest)
 
-```bash
-# All tests
-pytest
+The pytest config lives at **`tests/pytest.ini`** — there is no root-level
+`pytest.ini` and no `[tool:pytest]` in `setup.cfg`. A bare `pytest` from the repo
+root therefore finds no ini file: markers go unregistered, `--asyncio-mode=auto`
+and the coverage flags are skipped, and collection starts from the CWD instead of
+`testpaths = tests`. Always scope to `tests/` (or pass `-c tests/pytest.ini`).
 
-# With coverage
-pytest --cov=. --cov-report=html
+```bash
+# All tests, with the intended config
+pytest tests/
 
 # By marker
-pytest -m unit
-pytest -m integration   # requires running PostgreSQL
-pytest -m "not slow"
+pytest tests/ -m unit
+pytest tests/ -m integration   # requires running PostgreSQL
+pytest tests/ -m "not external_service"   # what CI's main unit job runs
 
 # Specific file
-pytest tests/test_backend_tools.py -v
+pytest tests/unit/test_backend_tools.py -v
 ```
 
-Available markers: `unit`, `integration`, `slow`, `auth`, `siem`, `claude`, `database`, `api`, `daemon`, `performance`
+Available markers: `unit`, `integration`, `slow`, `auth`, `siem`, `claude`,
+`database`, `api`, `daemon`, `performance`, `external_service`.
+`--strict-markers` is on, so an unregistered marker is an error — add new ones to
+`tests/pytest.ini`.
 
 ### Frontend (vitest)
 
@@ -190,6 +243,32 @@ pre-commit run --all-files
 
 All FastAPI endpoints and service methods use `async/await`. Long-running LLM operations go through the ARQ Redis queue (worker pattern). Never add blocking I/O to endpoint handlers.
 
+**The DB layer is synchronous SQLAlchemy — there is no `AsyncSession` in this
+repo.** `database/connection.py` exposes a `sessionmaker` and a `get_db()`
+dependency yielding a plain `Session`. So don't type a dependency as
+`AsyncSession` or `await` a session call. Handlers that are fully synchronous can
+be plain `def` (FastAPI runs those in a threadpool); handlers that must stay
+`async` should push sync DB calls through `asyncio.to_thread` rather than
+blocking the loop.
+
+### LLM Traffic Routes Through Bifrost
+
+All LLM calls — including Anthropic — go through the **Bifrost** gateway
+(`BIFROST_URL`, default `http://bifrost:8080`), which layers on caching,
+centralized cost tracking, and budget enforcement.
+
+- **Never instantiate `Anthropic()` directly.** Import
+  `create_anthropic_client` / `create_async_anthropic_client` from
+  `services/llm_clients.py` — the single source of truth for client
+  construction. The one exception is key-validation endpoints that must hit the
+  real upstream to verify a user-supplied credential.
+- `services/llm_router.py` dispatches and translates Bifrost's budget/rate-limit
+  responses (HTTP 402/429) into `services.budget_service.BudgetExceeded`.
+- `services/model_registry.py` resolves component→provider+model assignments and
+  owns the pricing/capability catalog.
+- Provider API keys are **not** in `.env` — they live in the encrypted secrets
+  store and are configured via the UI.
+
 ### Service Layer
 
 Business logic lives in `services/`, not in API route handlers. Route handlers in `backend/api/` should delegate to service classes. When adding a feature:
@@ -203,7 +282,8 @@ Agents access external tools through the MCP protocol. Tool definitions live in 
 
 ### Database
 
-- PostgreSQL 16 via SQLAlchemy ORM (`services/models.py`)
+- PostgreSQL 16 via SQLAlchemy ORM — models in **`database/models.py`**, sessions
+  and the `get_db` dependency in `database/connection.py`
 - Schema initialized by `database/init/` SQL files. **Execution order
   differs by deploy path:** docker-compose mounts the directory at
   `/docker-entrypoint-initdb.d`, where Postgres runs files in
@@ -300,11 +380,14 @@ Key config variables: `DAEMON_AUTO_TRIAGE`, `DAEMON_CONFIDENCE_THRESHOLD`, `ORCH
 Follow the existing pattern:
 ```python
 # backend/api/your_feature.py
+from sqlalchemy.orm import Session
+from database.connection import get_db
+
 router = APIRouter(prefix="/api/your-feature", tags=["your-feature"])
 
 @router.get("/")
-async def list_items(db: AsyncSession = Depends(get_db)):
-    return await your_feature_service.list(db)
+async def list_items(db: Session = Depends(get_db)):
+    return your_feature_service.list(db)   # sync Session — do not await it
 ```
 Register in `backend/main.py`.
 
@@ -351,6 +434,7 @@ GitHub Actions workflows in `.github/workflows/`:
 | `ci-cd.yml` | Push/PR to main, develop | Lint → Unit Tests → Integration Tests → Security Scan → Docker Build |
 | `release-please.yml` | Push to `main`, manual | Read Conventional Commits since last tag → open/update a release PR with bumped `VERSION` / `Chart.yaml` (`appVersion` + `version`, lockstep) / `frontend/package.json` / `frontend/package-lock.json` + `CHANGELOG.md`. On merge, push `vX.Y.Z` tag and create the GitHub Release. See `RELEASING.md`. |
 | `release.yml` | Version tags (`v*.*.*`) | Build & push `vigil-backend` + `vigil-daemon` images to GHCR → Trivy scan → smoke-test that they start → annotate the GitHub Release with image digests. **Publishes images only — it does not deploy.** Does **not** create the GitHub Release object either (release-please owns that). |
+| `helm-chart.yml` | Push/PR touching `helm/` | Verify `database/init/` ↔ chart-bundle copies are in sync (`diff -r`) → `helm lint`/`template` across default, dev, and Bitnami-subchart values → kubeconform → `ct lint` |
 | `nightly.yml` | Daily 2 AM UTC | Comprehensive security & performance audits |
 
 CI runs:

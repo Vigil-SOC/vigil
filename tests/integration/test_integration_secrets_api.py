@@ -88,7 +88,7 @@ def test_post_strips_secrets_from_json_mirror(tmp_path):
     payload = _post_payload()
     _invoke_post(payload, tmp_home=tmp_path)
 
-    json_path = tmp_path / ".deeptempo" / "integrations_config.json"
+    json_path = tmp_path / ".vigil" / "integrations_config.json"
     assert json_path.exists()
     import json
 

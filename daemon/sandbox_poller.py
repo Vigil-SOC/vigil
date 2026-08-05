@@ -14,33 +14,22 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 import requests
 
+from core.config import get_settings
+from core.secrets import get_secret
+
 logger = logging.getLogger(__name__)
-
-_SANDBOX_TIMEOUT_DEFAULT = 300
-
-
-def _env_int(name: str, default: int) -> int:
-    try:
-        return int(os.getenv(name, str(default)))
-    except (TypeError, ValueError):
-        return default
 
 
 class SandboxPoller:
-    """Resolve pending sandbox submissions into reports + IOCs."""
-
     def __init__(self, data_service: Any = None) -> None:
         self._data_service = data_service
         self._correlation = None
-        self._timeout_seconds = _env_int(
-            "SANDBOX_ANALYSIS_TIMEOUT", _SANDBOX_TIMEOUT_DEFAULT
-        )
+        self._timeout_seconds = get_settings().sandbox_analysis_timeout
 
     def _init_services(self) -> None:
         if self._data_service is None:
@@ -176,8 +165,8 @@ class SandboxPoller:
         return None
 
     async def _fetch_cape(self, task_id: str) -> Optional[Dict[str, Any]]:
-        base = os.getenv("CAPE_SANDBOX_URL", "").rstrip("/")
-        api_key = os.getenv("CAPE_SANDBOX_API_KEY", "")
+        base = get_settings().cape_sandbox_url.rstrip("/")
+        api_key = get_secret("CAPE_SANDBOX_API_KEY") or ""
         if not base:
             return None
         headers = {"Authorization": f"Token {api_key}"} if api_key else {}
@@ -207,7 +196,7 @@ class SandboxPoller:
         from core.config import get_integration_config
 
         cfg = get_integration_config("hybrid_analysis") or {}
-        api_key = cfg.get("api_key") or os.getenv("HYBRID_ANALYSIS_API_KEY", "")
+        api_key = cfg.get("api_key") or get_secret("HYBRID_ANALYSIS_API_KEY") or ""
         if not api_key:
             return None
         resp = await asyncio.to_thread(
@@ -227,7 +216,7 @@ class SandboxPoller:
         from core.config import get_integration_config
 
         cfg = get_integration_config("anyrun") or {}
-        api_key = cfg.get("api_key") or os.getenv("ANYRUN_API_KEY", "")
+        api_key = cfg.get("api_key") or get_secret("ANYRUN_API_KEY") or ""
         if not api_key:
             return None
         resp = await asyncio.to_thread(
@@ -243,10 +232,8 @@ class SandboxPoller:
         return None
 
     async def _fetch_joe(self, task_id: str) -> Optional[Dict[str, Any]]:
-        api_key = os.getenv("JOE_SANDBOX_API_KEY", "") or os.getenv("JBXAPIKEY", "")
-        base = os.getenv(
-            "JOE_SANDBOX_URL", "https://jbxcloud.joesecurity.org/api"
-        ).rstrip("/")
+        api_key = get_secret("JOE_SANDBOX_API_KEY") or get_secret("JBXAPIKEY") or ""
+        base = get_settings().joe_sandbox_url.rstrip("/")
         if not api_key:
             return None
         resp = await asyncio.to_thread(

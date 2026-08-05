@@ -128,7 +128,7 @@ def get_ai_operations_setting(key: str, default: Any) -> Any:
         return _coerce(cache[key], default)
     env_name = ENV_FALLBACKS.get(key)
     if env_name:
-        raw = os.getenv(env_name)
+        raw = os.getenv(env_name)  # noqa: ENV001 - ENV_FALLBACKS layer, dynamic name
         if raw is not None and raw != "":
             return _coerce(raw, default)
     return default

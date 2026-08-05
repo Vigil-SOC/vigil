@@ -23,8 +23,20 @@ from database.models import User
 from services.claude_service import ClaudeService
 from services.defaults import DEFAULT_MODEL
 from services.model_registry import get_registry
+from api._meta import Auth, RouterMeta
+from core.rate_limit import rate_limit_dependency
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/claude",
+    tags=["claude"],
+    # These routes expose AI and agent execution, so they must require an
+    # authenticated session AND keep rate limiting on top of it — the cost of an
+    # unmetered call here is real money, not just data exposure.
+    auth=Auth.REQUIRED,
+    extra_dependencies=(Depends(rate_limit_dependency),),
+)
 
 
 def _user_text_from_content(content) -> str:

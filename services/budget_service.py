@@ -19,8 +19,9 @@ The 60s runtime-config TTL the rest of Vigil uses applies here too.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Optional
+
+from core.config import get_settings as get_app_settings
 
 logger = logging.getLogger(__name__)
 
@@ -52,10 +53,6 @@ class BudgetExceeded(Exception):
 # ---------------------------------------------------------------------------
 
 
-def _env_truthy(name: str) -> bool:
-    return os.getenv(name, "").lower() in ("true", "1", "yes")
-
-
 def should_enforce() -> bool:
     """True if we should attach the VK header and respect Bifrost's gating.
 
@@ -63,9 +60,8 @@ def should_enforce() -> bool:
     no default VK is configured (bootstrap window — accept calls without
     enforcement until the operator provisions a key).
     """
-    if _env_truthy("DEV_MODE"):
-        return False
-    if _env_truthy("LLM_BUDGET_UNLIMITED"):
+    app_settings = get_app_settings()
+    if app_settings.dev_mode or app_settings.llm_budget_unlimited:
         return False
     if not get_active_vk():
         return False

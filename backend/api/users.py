@@ -16,10 +16,17 @@ from backend.services.password_validator import PasswordPolicyError, validate_pa
 from backend.services.token_blacklist import revoke_all_for_user
 from database.models import User, Role
 from database.connection import get_db, get_db_session
+from api._meta import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/users",
+    tags=["users"],
+    auth=Auth.REQUIRED,
+)
 
 
 # Request/Response Models

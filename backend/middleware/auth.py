@@ -6,7 +6,6 @@ Supports DEV_MODE for bypassing authentication during development.
 """
 
 import logging
-import os
 from typing import Optional, Callable
 from functools import wraps
 from fastapi import HTTPException, Header, Depends, Request, status
@@ -18,10 +17,12 @@ from backend.services.token_blacklist import is_token_revoked
 from database.models import User
 from database.connection import get_db, get_db_session
 
+from core.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 # Dev mode flag - ONLY for development, never in production!
-DEV_MODE = os.getenv("DEV_MODE", "false").lower() in ("true", "1", "yes")
+DEV_MODE = get_settings().dev_mode
 
 if DEV_MODE:
     logger.warning("⚠️  DEV_MODE is ENABLED - Authentication is BYPASSED!")

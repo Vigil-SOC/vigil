@@ -14,18 +14,18 @@ DAEMON_HEALTH_PORT (default 9091) exposing /health and /status.
 
 import asyncio
 import logging
-import os
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, Optional
 
 from aiohttp import web
 
+from core.config import get_settings
 from daemon.config import MetricsConfig
 
 logger = logging.getLogger(__name__)
 
-DAEMON_HEALTH_PORT = int(os.getenv("DAEMON_HEALTH_PORT", "9091"))
+DAEMON_HEALTH_PORT = get_settings().daemon_health_port
 
 
 # ---------------------------------------------------------------------------

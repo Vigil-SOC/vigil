@@ -19,17 +19,47 @@ Signature header: ``X-Darktrace-Signature`` (hex HMAC-SHA256 of raw body).
 import asyncio
 import hmac
 import logging
-import os
 from hashlib import sha256
 from typing import Any, Callable, Dict, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
 
 from services.darktrace_ingestion import DarktraceIngestionService
+from api._meta import Auth, RouterMeta
+from core.config import get_settings
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def darktrace_enabled() -> bool:
+    """Master flag for the Darktrace webhook receiver.
+
+    Off unless explicitly enabled. Lives here rather than inline in
+    ``backend/main.py`` so the gate travels with the receiver it guards and
+    can be unit-tested directly (issue #478). Reads the typed ``Settings``
+    field rather than the raw env var so there is a single source of truth
+    for the flag, matching ``cloudflare_webhooks.cloudy_ingestion_enabled``.
+    """
+    return get_settings().darktrace_enabled
+
+
+ROUTER_META = RouterMeta(
+    prefix="/api/webhooks/darktrace",
+    tags=["darktrace"],
+    auth=Auth.PUBLIC_WEBHOOK,
+    reason=(
+        "Inbound receiver for Darktrace pushes — the caller is a machine, so "
+        "there is no session to authenticate. Each endpoint verifies an "
+        "HMAC-SHA256 X-Darktrace-Signature and fails closed when no shared "
+        "secret is configured."
+    ),
+    # env.example and docs/integrations/DARKTRACE.md document DARKTRACE_ENABLED
+    # as the on/off toggle; leaving it unset must leave the receiver off.
+    enabled=darktrace_enabled,
+)
 
 
 def _get_settings() -> Dict[str, Any]:
@@ -47,31 +77,27 @@ def _get_settings() -> Dict[str, Any]:
 def _get_max_body_bytes() -> int:
     settings = _get_settings()
     try:
-        kb = int(settings.get("max_body_kb") or os.environ.get("DARKTRACE_MAX_BODY_KB", "1024"))
+        kb = int(settings.get("max_body_kb") or get_settings().darktrace_max_body_kb)
     except (TypeError, ValueError):
         kb = 1024
     return max(1, kb) * 1024
 
 
+# Read at request time, not import time, so a secret saved in the UI takes
+# effect without a restart.
 def _get_secret() -> Optional[str]:
-    """Fetch the HMAC shared secret at request time (not import time). Prefers
-    the secrets manager (set via Settings UI); falls back to env var."""
     try:
-        from secrets_manager import get_secret as _gs
-        secret = _gs("DARKTRACE_WEBHOOK_SECRET")
-        if secret:
-            return secret
+        return get_secret("DARKTRACE_WEBHOOK_SECRET") or None
     except Exception as exc:  # noqa: BLE001
-        logger.debug("secrets_manager lookup failed, using env: %s", exc)
-    secret = os.environ.get("DARKTRACE_WEBHOOK_SECRET")
-    return secret or None
+        logger.debug("DARKTRACE_WEBHOOK_SECRET lookup failed: %s", exc)
+        return None
 
 
 def _get_console_url() -> str:
     url = _get_settings().get("url")
     if url:
         return str(url)
-    return os.environ.get("DARKTRACE_URL", "") or ""
+    return get_settings().darktrace_url
 
 
 def _verify_signature(raw_body: bytes, provided: Optional[str]) -> bool:

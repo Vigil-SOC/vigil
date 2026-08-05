@@ -7,16 +7,12 @@ cycle between the bootstrap and the span-scrubbing processor).
 """
 from __future__ import annotations
 
-import os
+from core.config import get_settings
 
 
 def _should_record_llm_content() -> bool:
-    """Return True only when the operator has explicitly opted in."""
-    val = os.environ.get("VIGIL_OTEL_RECORD_LLM_CONTENT", "").lower()
-    return val in ("true", "1", "yes")
+    return get_settings().vigil_otel_record_llm_content
 
 
 def _should_record_ioc_values() -> bool:
-    """Return True only when the operator has explicitly opted in."""
-    val = os.environ.get("VIGIL_OTEL_RECORD_IOC_VALUES", "").lower()
-    return val in ("true", "1", "yes")
+    return get_settings().vigil_otel_record_ioc_values

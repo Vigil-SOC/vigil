@@ -19,10 +19,17 @@ from pydantic import BaseModel
 from backend.middleware.auth import get_current_user
 from database.models import User
 from services import conversation_service
+from api._meta import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/conversations",
+    tags=["conversations"],
+    auth=Auth.REQUIRED,
+)
 
 
 class UpdateConversationRequest(BaseModel):

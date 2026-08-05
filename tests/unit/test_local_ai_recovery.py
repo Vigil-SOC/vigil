@@ -1,21 +1,37 @@
 import httpx
 import pytest
 
+from core.config import get_settings
 from services import local_ai_recovery as recovery
 
 
 def test_local_recovery_requires_dev_mode_and_loopback_gateway(monkeypatch):
+    # get_settings() is lru_cached, so changing env mid-test needs an explicit
+    # invalidation; the autouse fixture only clears around the test.
     monkeypatch.setenv("DEV_MODE", "true")
     monkeypatch.setenv("BIFROST_URL", "http://localhost:8080")
     monkeypatch.setattr(recovery, "get_ai_operations_setting", lambda key, default: True)
+    get_settings.cache_clear()
     assert recovery.local_bifrost_recovery_enabled() is True
 
     monkeypatch.setenv("BIFROST_URL", "http://bifrost:8080")
+    get_settings.cache_clear()
     assert recovery.local_bifrost_recovery_enabled() is False
 
     monkeypatch.setenv("BIFROST_URL", "http://localhost:8080")
     monkeypatch.setenv("DEV_MODE", "false")
+    get_settings.cache_clear()
     assert recovery.local_bifrost_recovery_enabled() is False
+
+
+def test_unset_bifrost_url_still_counts_as_local(monkeypatch):
+    # The default has to stay loopback or a host-run dev server silently loses
+    # recovery: nothing else sets BIFROST_URL on a bare uvicorn start.
+    monkeypatch.setenv("DEV_MODE", "true")
+    monkeypatch.delenv("BIFROST_URL", raising=False)
+    monkeypatch.setattr(recovery, "get_ai_operations_setting", lambda key, default: True)
+    get_settings.cache_clear()
+    assert recovery.local_bifrost_recovery_enabled() is True
 
 
 def test_retry_limit_is_bounded(monkeypatch):

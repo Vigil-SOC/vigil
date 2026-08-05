@@ -16,10 +16,17 @@ from database.models import User, Case, Finding
 from database.connection import get_db, get_db_session
 from core.config import get_integration_config
 import requests
+from api._meta import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api",
+    tags=["jira-export"],
+    auth=Auth.REQUIRED,
+)
 
 
 # Request/Response Models

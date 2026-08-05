@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from contextvars import ContextVar
-from pathlib import Path
 from typing import Any, Optional
+
+from core.config import get_settings, vigil_path
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +56,7 @@ def get_investigation_id() -> Optional[str]:
 # ---------------------------------------------------------------------------
 
 def _is_otel_enabled() -> bool:
-    val = os.environ.get("VIGIL_OTEL_ENABLED", "").lower()
-    return val in ("true", "1", "yes")
+    return get_settings().vigil_otel_enabled
 
 
 # Opt-in flag helpers live in core.telemetry_config so the sanitizer can
@@ -171,9 +170,10 @@ def _do_init(service_name: str) -> None:
 
     global _tracer_provider, _meter_provider
 
-    endpoint = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
-    environment = os.environ.get("ENVIRONMENT", "development")
-    version = os.environ.get("RELEASE_VERSION", "unknown")
+    settings = get_settings()
+    endpoint = settings.otel_exporter_otlp_endpoint
+    environment = settings.environment
+    version = settings.release_version
 
     resource = Resource.create(
         {
@@ -211,7 +211,7 @@ def _do_init(service_name: str) -> None:
     tracer_provider.add_span_processor(batch_processor)
 
     # Wire Sentry alongside OTEL when configured (prevents double-tracing)
-    sentry_dsn = os.environ.get("SENTRY_DSN", "")
+    sentry_dsn = get_settings().sentry_dsn
     if sentry_dsn:
         try:
             from backend.monitoring import SentrySpanProcessor
@@ -459,8 +459,7 @@ def _install_json_logging() -> None:
     root.addHandler(console)
 
     try:
-        log_dir = Path.home() / ".deeptempo"
-        log_dir.mkdir(parents=True, exist_ok=True)
+        log_dir = vigil_path(write=True)
         file_handler = logging.FileHandler(log_dir / "vigil.log")
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)

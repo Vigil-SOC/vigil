@@ -1,10 +1,9 @@
-"""Daemon configuration management."""
-
-import os
 import logging
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+from core.config import DEFAULT_REDIS_URL, get_settings
+from core.secrets import get_secret
 from services.defaults import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
@@ -12,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PollingConfig:
-    """Configuration for data source polling intervals."""
     splunk_interval: int = 300  # 5 minutes
     crowdstrike_interval: int = 60  # 1 minute
     generic_interval: int = 120  # 2 minutes for other sources
@@ -23,7 +21,6 @@ class PollingConfig:
 
 @dataclass
 class ProcessingConfig:
-    """Configuration for AI processing pipeline."""
     auto_triage_enabled: bool = True
     auto_enrich_enabled: bool = True
     batch_size: int = 10
@@ -38,7 +35,6 @@ class ProcessingConfig:
 
 @dataclass
 class ResponseConfig:
-    """Configuration for autonomous response."""
     auto_response_enabled: bool = True
     confidence_threshold: float = 0.90
     force_manual_approval: bool = False
@@ -47,7 +43,6 @@ class ResponseConfig:
 
 @dataclass
 class EscalationConfig:
-    """Configuration for alert escalation."""
     enabled: bool = True
     escalate_severities: List[str] = field(default_factory=lambda: ["critical", "high"])
     slack_enabled: bool = True
@@ -63,7 +58,6 @@ class EscalationConfig:
 
 @dataclass
 class SchedulerConfig:
-    """Configuration for scheduled tasks."""
     threat_hunt_enabled: bool = True
     threat_hunt_interval: int = 86400  # Daily (24 hours)
     report_generation_enabled: bool = True
@@ -75,7 +69,6 @@ class SchedulerConfig:
 
 @dataclass
 class MetricsConfig:
-    """Configuration for metrics/health endpoint."""
     enabled: bool = True
     port: int = 9091
     path: str = "/metrics"
@@ -83,7 +76,6 @@ class MetricsConfig:
 
 @dataclass
 class OrchestratorConfig:
-    """Configuration for the autonomous agent orchestrator."""
     enabled: bool = False
     loop_interval: int = 60
     max_concurrent_agents: int = 3
@@ -112,13 +104,8 @@ class OrchestratorConfig:
 
 @dataclass
 class KafkaConfig:
-    """Configuration for Kafka ingestion.
-
-    MVP scope: JSON-only deserialization, single consumer group,
-    enable/disable + bootstrap servers + topics overridable via
-    ``SystemConfig["kafka.settings"]``. Secrets (SASL password,
-    SSL cert path) stay in env only.
-    """
+    # JSON-only deserialization, single consumer group. Non-secret fields are
+    # overridable via SystemConfig["kafka.settings"]; credentials via get_secret.
     enabled: bool = False
     bootstrap_servers: str = "localhost:9092"
     consumer_group: str = "vigil-soc"
@@ -136,7 +123,6 @@ class KafkaConfig:
 
 @dataclass
 class LLMQueueConfig:
-    """Configuration for the ARQ-based LLM request queue."""
     redis_url: str = "redis://localhost:6379/0"
     max_concurrent_llm_calls: int = 5
     triage_timeout: int = 90
@@ -147,7 +133,6 @@ class LLMQueueConfig:
 
 @dataclass
 class DaemonConfig:
-    """Main daemon configuration."""
     polling: PollingConfig = field(default_factory=PollingConfig)
     processing: ProcessingConfig = field(default_factory=ProcessingConfig)
     response: ResponseConfig = field(default_factory=ResponseConfig)
@@ -157,106 +142,89 @@ class DaemonConfig:
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
     llm_queue: LLMQueueConfig = field(default_factory=LLMQueueConfig)
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
-    
+
     # Database
     database_url: Optional[str] = None
-    
+
     # Logging
     log_level: str = "INFO"
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    
+
     @classmethod
     def from_env(cls) -> "DaemonConfig":
-        """Load configuration from environment variables."""
         config = cls()
-        
-        # Database
-        config.database_url = os.getenv("DATABASE_URL")
-        
-        # Logging
-        config.log_level = os.getenv("DAEMON_LOG_LEVEL", "INFO")
-        
-        # Polling intervals
-        config.polling.splunk_interval = int(os.getenv("DAEMON_SPLUNK_POLL_INTERVAL", "300"))
-        config.polling.crowdstrike_interval = int(os.getenv("DAEMON_CROWDSTRIKE_POLL_INTERVAL", "60"))
-        config.polling.webhook_enabled = os.getenv("DAEMON_WEBHOOK_ENABLED", "true").lower() == "true"
-        config.polling.webhook_port = int(os.getenv("DAEMON_WEBHOOK_PORT", "8081"))
-        config.polling.webhook_token = os.getenv("DAEMON_WEBHOOK_TOKEN", "")
-        
-        # Processing
-        config.processing.auto_triage_enabled = os.getenv("DAEMON_AUTO_TRIAGE", "true").lower() == "true"
-        config.processing.auto_enrich_enabled = os.getenv("DAEMON_AUTO_ENRICH", "true").lower() == "true"
-        config.processing.batch_size = int(os.getenv("DAEMON_BATCH_SIZE", "10"))
-        config.processing.enrich_max_inflight = int(os.getenv("DAEMON_ENRICH_MAX_INFLIGHT", "50"))
-        config.processing.enrich_backfill_enabled = os.getenv("DAEMON_ENRICH_BACKFILL", "true").lower() == "true"
-        config.processing.enrich_backfill_interval = int(os.getenv("DAEMON_ENRICH_BACKFILL_INTERVAL", "300"))
-        config.processing.enrich_backfill_batch = int(os.getenv("DAEMON_ENRICH_BACKFILL_BATCH", "50"))
-        config.processing.enrich_backfill_max_age_hours = int(os.getenv("DAEMON_ENRICH_BACKFILL_MAX_AGE_HOURS", "168"))
-        
-        # Response
-        config.response.auto_response_enabled = os.getenv("DAEMON_AUTO_RESPONSE", "true").lower() == "true"
-        config.response.confidence_threshold = float(os.getenv("DAEMON_CONFIDENCE_THRESHOLD", "0.90"))
-        config.response.force_manual_approval = os.getenv("DAEMON_FORCE_APPROVAL", "false").lower() == "true"
-        config.response.dry_run = os.getenv("DAEMON_DRY_RUN", "false").lower() == "true"
-        
-        # Escalation
-        config.escalation.enabled = os.getenv("DAEMON_ESCALATION_ENABLED", "true").lower() == "true"
-        config.escalation.slack_enabled = os.getenv("DAEMON_SLACK_ENABLED", "true").lower() == "true"
-        config.escalation.slack_channel = os.getenv("DAEMON_SLACK_CHANNEL", "#soc-alerts")
-        config.escalation.pagerduty_enabled = os.getenv("DAEMON_PAGERDUTY_ENABLED", "false").lower() == "true"
-        
-        severities = os.getenv("DAEMON_ESCALATE_SEVERITIES", "critical,high")
-        config.escalation.escalate_severities = [s.strip() for s in severities.split(",")]
-        
-        # Scheduler
-        config.scheduler.threat_hunt_enabled = os.getenv("DAEMON_THREAT_HUNT_ENABLED", "true").lower() == "true"
-        config.scheduler.threat_hunt_interval = int(os.getenv("DAEMON_THREAT_HUNT_INTERVAL", "86400"))
-        config.scheduler.cleanup_retention_days = int(os.getenv("DAEMON_CLEANUP_RETENTION_DAYS", "90"))
-        
-        # Metrics
-        config.metrics.enabled = os.getenv("DAEMON_METRICS_ENABLED", "true").lower() == "true"
-        config.metrics.port = int(os.getenv("DAEMON_HEALTH_PORT", "9091"))
-        
-        # Orchestrator
-        config.orchestrator.enabled = os.getenv("ORCHESTRATOR_ENABLED", "false").lower() == "true"
-        config.orchestrator.loop_interval = int(os.getenv("ORCHESTRATOR_LOOP_INTERVAL", "60"))
-        config.orchestrator.max_concurrent_agents = int(os.getenv("ORCHESTRATOR_MAX_AGENTS", "3"))
-        config.orchestrator.max_iterations_per_agent = int(os.getenv("ORCHESTRATOR_MAX_ITERATIONS", "50"))
-        config.orchestrator.max_cost_per_investigation = float(os.getenv("ORCHESTRATOR_MAX_COST", "5.0"))
-        config.orchestrator.max_total_hourly_cost = float(os.getenv("ORCHESTRATOR_MAX_HOURLY_COST", "20.0"))
-        config.orchestrator.max_total_daily_cost = float(os.getenv("ORCHESTRATOR_MAX_DAILY_COST", "100.0"))
-        config.orchestrator.max_runtime_per_investigation = int(os.getenv("ORCHESTRATOR_MAX_RUNTIME", "3600"))
-        config.orchestrator.stale_threshold = int(os.getenv("ORCHESTRATOR_STALE_THRESHOLD", "300"))
-        config.orchestrator.workdir_base = os.getenv("ORCHESTRATOR_WORKDIR", "data/investigations")
-        config.orchestrator.auto_assign_findings = os.getenv("ORCHESTRATOR_AUTO_ASSIGN", "true").lower() == "true"
-        config.orchestrator.dry_run = os.getenv("ORCHESTRATOR_DRY_RUN", "false").lower() == "true"
-        config.orchestrator.dedup_window_minutes = int(os.getenv("ORCHESTRATOR_DEDUP_WINDOW", "30"))
-        
-        severities = os.getenv("ORCHESTRATOR_AUTO_SEVERITIES", "critical,high")
-        config.orchestrator.auto_assign_severities = [s.strip() for s in severities.split(",")]
-        
-        # LLM Queue
-        config.llm_queue.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-        config.llm_queue.max_concurrent_llm_calls = int(os.getenv("LLM_MAX_CONCURRENT", "5"))
+        settings = get_settings()
 
-        # Kafka ingestion (env defaults; may be overridden by SystemConfig below)
-        config.kafka.enabled = os.getenv("KAFKA_ENABLED", "false").lower() == "true"
-        config.kafka.bootstrap_servers = os.getenv(
-            "KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"
+        config.database_url = settings.database_url
+        config.log_level = settings.daemon_log_level
+
+        config.polling.splunk_interval = settings.daemon_splunk_poll_interval
+        config.polling.crowdstrike_interval = settings.daemon_crowdstrike_poll_interval
+        config.polling.webhook_enabled = settings.daemon_webhook_enabled
+        config.polling.webhook_port = settings.daemon_webhook_port
+        config.polling.webhook_token = get_secret("DAEMON_WEBHOOK_TOKEN") or ""
+
+        config.processing.auto_triage_enabled = settings.daemon_auto_triage
+        config.processing.auto_enrich_enabled = settings.daemon_auto_enrich
+        config.processing.batch_size = settings.daemon_batch_size
+        config.processing.enrich_max_inflight = settings.daemon_enrich_max_inflight
+        config.processing.enrich_backfill_enabled = settings.daemon_enrich_backfill
+        config.processing.enrich_backfill_interval = settings.daemon_enrich_backfill_interval
+        config.processing.enrich_backfill_batch = settings.daemon_enrich_backfill_batch
+        config.processing.enrich_backfill_max_age_hours = settings.daemon_enrich_backfill_max_age_hours
+
+        config.response.auto_response_enabled = settings.daemon_auto_response
+        config.response.confidence_threshold = settings.daemon_confidence_threshold
+        config.response.force_manual_approval = settings.daemon_force_approval
+        config.response.dry_run = settings.daemon_dry_run
+
+        config.escalation.enabled = settings.daemon_escalation_enabled
+        config.escalation.slack_enabled = (
+            True if settings.daemon_slack_enabled is None else settings.daemon_slack_enabled
         )
-        config.kafka.consumer_group = os.getenv("KAFKA_CONSUMER_GROUP", "vigil-soc")
-        topics = os.getenv("KAFKA_TOPICS", "").strip()
-        config.kafka.topics = [t.strip() for t in topics.split(",") if t.strip()]
-        config.kafka.auto_offset_reset = os.getenv("KAFKA_AUTO_OFFSET_RESET", "latest")
-        config.kafka.max_poll_records = int(os.getenv("KAFKA_MAX_POLL_RECORDS", "500"))
-        config.kafka.session_timeout_ms = int(
-            os.getenv("KAFKA_SESSION_TIMEOUT_MS", "30000")
-        )
-        config.kafka.security_protocol = os.getenv("KAFKA_SECURITY_PROTOCOL", "PLAINTEXT")
-        config.kafka.sasl_mechanism = os.getenv("KAFKA_SASL_MECHANISM") or None
-        config.kafka.sasl_username = os.getenv("KAFKA_SASL_USERNAME") or None
-        config.kafka.sasl_password = os.getenv("KAFKA_SASL_PASSWORD") or None
-        config.kafka.ssl_ca_location = os.getenv("KAFKA_SSL_CA_LOCATION") or None
+        config.escalation.slack_channel = settings.daemon_slack_channel
+        config.escalation.pagerduty_enabled = settings.daemon_pagerduty_enabled
+        config.escalation.escalate_severities = list(settings.daemon_escalate_severities)
+
+        config.scheduler.threat_hunt_enabled = settings.daemon_threat_hunt_enabled
+        config.scheduler.threat_hunt_interval = settings.daemon_threat_hunt_interval
+        config.scheduler.cleanup_retention_days = settings.daemon_cleanup_retention_days
+
+        config.metrics.enabled = settings.daemon_metrics_enabled
+        config.metrics.port = settings.daemon_health_port
+
+        config.orchestrator.enabled = settings.orchestrator_enabled
+        config.orchestrator.loop_interval = settings.orchestrator_loop_interval
+        config.orchestrator.max_concurrent_agents = settings.orchestrator_max_agents
+        config.orchestrator.max_iterations_per_agent = settings.orchestrator_max_iterations
+        config.orchestrator.max_cost_per_investigation = settings.orchestrator_max_cost
+        config.orchestrator.max_total_hourly_cost = settings.orchestrator_max_hourly_cost
+        config.orchestrator.max_total_daily_cost = settings.orchestrator_max_daily_cost
+        config.orchestrator.max_runtime_per_investigation = settings.orchestrator_max_runtime
+        config.orchestrator.stale_threshold = settings.orchestrator_stale_threshold
+        config.orchestrator.workdir_base = settings.orchestrator_workdir
+        config.orchestrator.auto_assign_findings = settings.orchestrator_auto_assign
+        config.orchestrator.dry_run = settings.orchestrator_dry_run
+        config.orchestrator.dedup_window_minutes = settings.orchestrator_dedup_window
+        config.orchestrator.agent_loop_delay = settings.orchestrator_agent_loop_delay
+        config.orchestrator.context_max_chars = settings.orchestrator_context_max_chars
+        config.orchestrator.auto_assign_severities = list(settings.orchestrator_auto_severities)
+
+        config.llm_queue.redis_url = settings.redis_url or DEFAULT_REDIS_URL
+        config.llm_queue.max_concurrent_llm_calls = settings.llm_max_concurrent
+
+        config.kafka.enabled = settings.kafka_enabled  # SystemConfig may override below
+        config.kafka.bootstrap_servers = settings.kafka_bootstrap_servers
+        config.kafka.consumer_group = settings.kafka_consumer_group
+        config.kafka.topics = list(settings.kafka_topics)
+        config.kafka.auto_offset_reset = settings.kafka_auto_offset_reset
+        config.kafka.max_poll_records = settings.kafka_max_poll_records
+        config.kafka.session_timeout_ms = settings.kafka_session_timeout_ms
+        config.kafka.security_protocol = settings.kafka_security_protocol
+        config.kafka.sasl_mechanism = settings.kafka_sasl_mechanism or None
+        config.kafka.sasl_username = get_secret("KAFKA_SASL_USERNAME") or None
+        config.kafka.sasl_password = get_secret("KAFKA_SASL_PASSWORD") or None
+        config.kafka.ssl_ca_location = settings.kafka_ssl_ca_location or None
 
         # Override with DB-persisted settings (set via Settings UI)
         try:
@@ -352,9 +320,8 @@ class DaemonConfig:
             logger.debug(f"Could not load Kafka config from DB (using env/defaults): {e}")
 
         return config
-    
+
     def setup_logging(self):
-        """Configure logging based on settings."""
         logging.basicConfig(
             level=getattr(logging, self.log_level.upper()),
             format=self.log_format

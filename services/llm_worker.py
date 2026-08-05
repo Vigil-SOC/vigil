@@ -12,7 +12,6 @@ are enqueuing concurrently.
 import asyncio
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -24,14 +23,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from services.llm_gateway import QUEUE_NAME, RedisSessionStore
 
+from core.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_REDIS_URL = "redis://localhost:6379/0"
-MAX_CONCURRENT_LLM_CALLS = int(os.getenv("LLM_MAX_CONCURRENT", "5"))
+MAX_CONCURRENT_LLM_CALLS = get_settings().llm_max_concurrent
 
 
 def _redis_settings() -> RedisSettings:
-    url = os.getenv("REDIS_URL", DEFAULT_REDIS_URL)
+    url = get_settings().redis_url or DEFAULT_REDIS_URL
     from urllib.parse import urlparse
 
     parsed = urlparse(url)

@@ -7,10 +7,17 @@ from sqlalchemy import select, func
 
 from database.connection import get_db_manager
 from database.models import LLMInteractionLog
+from api._meta import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/reasoning",
+    tags=["reasoning"],
+    auth=Auth.REQUIRED,
+)
 
 
 @router.get("/{session_id}")

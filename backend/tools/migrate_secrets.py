@@ -1,4 +1,4 @@
-"""CLI: move secrets from ~/.deeptempo/.env into ~/.vigil/secrets.enc.
+"""CLI: move secrets from the dotenv backend into ~/.vigil/secrets.enc.
 
 Wraps ``SecretsManager.migrate_dotenv_secrets_to_encrypted`` so an operator
 can run the migration outside the running backend, e.g. before the first
@@ -33,7 +33,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="migrate_secrets",
         description=(
-            "Move secrets from the dotenv backend (~/.deeptempo/.env) into "
+            "Move secrets from the dotenv backend (~/.vigil/.env) into "
             "the encrypted backend (~/.vigil/secrets.enc)."
         ),
     )

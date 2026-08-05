@@ -22,8 +22,15 @@ from database.models import User
 from services import service_manager
 from services.autostart_config import get_autostart_services, set_autostart_services
 from services.service_manager import SERVICES, ActionResult, ServiceStatus
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/services",
+    tags=["local-services"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 
 # Path params are constrained to the registry, so an argument like `-f/etc/passwd`

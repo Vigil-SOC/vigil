@@ -203,7 +203,7 @@ def _compose(
 ) -> subprocess.CompletedProcess:
     from services.ollama_process import container_base_url
 
-    env = os.environ.copy()
+    env = os.environ.copy()  # noqa: ENV001 - child process env
     if profile:
         env["COMPOSE_PROFILES"] = profile
     # Containers reach the host-native Ollama via host.docker.internal; the

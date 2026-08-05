@@ -7,8 +7,15 @@ import logging
 
 from services.database_data_service import DatabaseDataService
 from services.mitre_lookup import get_time_range, iter_techniques, resolve_technique
+from api._meta import Auth, RouterMeta
 
 router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/attack",
+    tags=["attack"],
+    auth=Auth.REQUIRED,
+)
 logger = logging.getLogger(__name__)
 data_service = DatabaseDataService()
 

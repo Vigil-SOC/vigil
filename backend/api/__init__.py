@@ -1,43 +1,15 @@
-"""API package initialization."""
+"""API package.
 
-from api.findings import router as findings_router
-from api.cases import router as cases_router
-from api.mcp import router as mcp_router
-from api.claude import router as claude_router
-from api.config import router as config_router
-from api.attack import router as attack_router
-from api.agents import router as agents_router
-from api.custom_integrations import router as custom_integrations_router
-from api.ingestion import router as ingestion_router
-from api.storage_status import router as storage_status_router
-from api.ai_decisions import router as ai_decisions_router
-from api.logs import router as logs_router
-from api.workflows import router as workflows_router
-from api.approvals import router as approvals_router
-from api.reasoning import router as reasoning_router
-from api.conversations import router as conversations_router
-from api.skills import router as skills_router
-from api.llm_providers import router as llm_providers_router
-from api.ai_config import router as ai_config_router
+Routers are discovered and mounted by :mod:`api._discovery`, which scans this
+package for modules exporting a ``router`` and a ``ROUTER_META``. There is
+deliberately no re-export list here: the previous one covered only 19 of the
+42 router modules (``main.py`` imported the other 23 directly), so it was a
+second, inconsistent convention that had to be kept in sync by hand — and its
+eager imports meant one bad module broke the whole package (issue #478).
 
-__all__ = [
-    'findings_router',
-    'cases_router',
-    'mcp_router',
-    'claude_router',
-    'config_router',
-    'attack_router',
-    'agents_router',
-    'custom_integrations_router',
-    'ingestion_router',
-    'storage_status_router',
-    'ai_decisions_router',
-    'logs_router',
-    'workflows_router',
-    'approvals_router',
-    'reasoning_router',
-    'conversations_router',
-    'skills_router',
-    'llm_providers_router',
-    'ai_config_router',
-]
+Adding a router: create the module with a ``router`` and a ``ROUTER_META``.
+Nothing here or in ``backend/main.py`` needs to change. A module in this
+package that is *not* a router (a shared helper) must be listed in
+``api._discovery._SKIP``, or discovery treats it as a router and fails at
+startup.
+"""

@@ -5,7 +5,6 @@ Handles database connections, session management, and connection pooling.
 """
 
 import asyncio
-import os
 import logging
 import threading
 import time
@@ -61,6 +60,9 @@ from database.models import (
     Conversation,
     ChatMessage,
 )
+
+from core.config import get_settings
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -237,10 +239,11 @@ class DatabaseConfig:
             self._from_env()
 
         # Connection pool settings
-        self.pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
-        self.max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "20"))
-        self.pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
-        self.pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
+        settings = get_settings()
+        self.pool_size = settings.db_pool_size
+        self.max_overflow = settings.db_max_overflow
+        self.pool_timeout = settings.db_pool_timeout
+        self.pool_recycle = settings.db_pool_recycle
         try:
             self.proxy = _load_platform_db_proxy()
         except Exception as e:  # noqa: BLE001
@@ -251,14 +254,15 @@ class DatabaseConfig:
             self.proxy = ProxyConfig()
 
     def _from_env(self) -> None:
-        self.host = os.getenv("POSTGRES_HOST", "localhost")
-        self.port = int(os.getenv("POSTGRES_PORT", "5432"))
-        self.database = os.getenv("POSTGRES_DB", "deeptempo_soc")
-        self.user = os.getenv("POSTGRES_USER", "deeptempo")
-        self.password = os.getenv(
-            "POSTGRES_PASSWORD", "deeptempo_secure_password_change_me"
+        settings = get_settings()
+        self.host = settings.postgres_host
+        self.port = settings.postgres_port
+        self.database = settings.postgres_db
+        self.user = settings.postgres_user
+        self.password = (
+            get_secret("POSTGRES_PASSWORD") or "deeptempo_secure_password_change_me"
         )
-        self.ssl_mode = os.getenv("POSTGRES_SSL_MODE", "prefer")
+        self.ssl_mode = settings.postgres_ssl_mode
         self.extra_query: Dict[str, str] = {}
 
     def _from_dsn(self, parsed: ParsedDsn) -> None:
@@ -267,9 +271,7 @@ class DatabaseConfig:
         self.database = parsed.database
         self.user = parsed.user
         self.password = parsed.password
-        self.ssl_mode = parsed.query.get("sslmode") or os.getenv(
-            "POSTGRES_SSL_MODE", "prefer"
-        )
+        self.ssl_mode = parsed.query.get("sslmode") or get_settings().postgres_ssl_mode
         self.extra_query = {k: v for k, v in parsed.query.items() if k != "sslmode"}
 
     def get_database_url(
@@ -336,7 +338,7 @@ class RetargetResult:
 # a SOC tool. The DSN lives in the secrets file, which is file-backed and
 # DB-independent (you cannot read the new database's address from the old
 # database), so its mtime is the cross-process change signal.
-_CONFIG_CHECK_INTERVAL = float(os.getenv("DB_CONFIG_CHECK_INTERVAL", "5"))
+_CONFIG_CHECK_INTERVAL = get_settings().db_config_check_interval
 
 
 def db_config_generation() -> float:

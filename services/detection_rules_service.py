@@ -1,7 +1,7 @@
 """
 Detection Rules Service - Manages detection rule sources (git repos, local directories).
 
-Persists source metadata to ~/.deeptempo/detection_sources.json.
+Persists source metadata to ~/.vigil/detection_sources.json.
 Provides CRUD operations, git pull updates, and builds env vars for Security-Detections-MCP.
 """
 
@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from collections import defaultdict
+from core.config import vigil_path
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +77,8 @@ class DetectionRulesService:
     """Service for managing detection rule sources."""
 
     def __init__(self):
-        self.config_dir = Path.home() / ".deeptempo"
-        self.config_path = self.config_dir / "detection_sources.json"
+        self.config_path = vigil_path("detection_sources.json")
+        self.write_path = vigil_path("detection_sources.json", write=True)
         self.base_dir = Path.home() / "security-detections"
         self.sources: List[Dict[str, Any]] = []
         self._load_config()
@@ -133,10 +134,8 @@ class DetectionRulesService:
         self._save_config()
 
     def _save_config(self):
-        """Persist sources to config file."""
-        self.config_dir.mkdir(parents=True, exist_ok=True)
         try:
-            with open(self.config_path, "w") as f:
+            with open(self.write_path, "w") as f:
                 json.dump({"sources": self.sources, "version": 1}, f, indent=2)
         except Exception as e:
             logger.error(f"Error saving detection sources config: {e}")

@@ -13,12 +13,12 @@ All routine operations are pure Python logic.
 import asyncio
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from core.config import get_settings
 from daemon.agent_runner import AgentRunner
 from daemon.config import OrchestratorConfig
 
@@ -841,7 +841,7 @@ class Orchestrator:
         only when explicitly set to "false" to allow emergency disable in
         broken environments.
         """
-        if os.environ.get("MEMPALACE_DAEMON_ENABLED", "true").lower() == "false":
+        if get_settings().mempalace_daemon_enabled is False:
             logger.warning(
                 "MemPalace daemon integration disabled via MEMPALACE_DAEMON_ENABLED=false "
                 "(core dependency — only disable for emergency debugging)"
@@ -1107,10 +1107,7 @@ class Orchestrator:
     ):
         """Optionally forward urgent notifications to Slack."""
         try:
-            import os
-
-            slack_enabled = os.getenv("DAEMON_SLACK_ENABLED", "false").lower() == "true"
-            if not slack_enabled:
+            if get_settings().daemon_slack_enabled is not True:
                 return
 
             import requests

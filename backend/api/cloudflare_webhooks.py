@@ -20,23 +20,22 @@ import asyncio
 import hmac
 import json
 import logging
-import os
 from hashlib import sha256
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
+from api._meta import Auth, RouterMeta
+from core.config import get_settings
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
+# Off unless explicitly enabled. system_config wins so the Settings UI can flip
+# the receiver without a restart; env is the fallback.
 def cloudy_ingestion_enabled() -> bool:
-    """Master flag for the Cloudy webhook receiver.
-
-    Off unless explicitly enabled. Reads system_config first (so the
-    Settings UI can flip it without a restart), then falls back to env.
-    """
     try:
         from database.config_service import get_config_service
         cfg = get_config_service().get_system_config("cloudflare.cloudy.enabled")
@@ -47,32 +46,32 @@ def cloudy_ingestion_enabled() -> bool:
                 return False
     except Exception as exc:  # noqa: BLE001
         logger.debug("system_config read for cloudflare.cloudy.enabled failed: %s", exc)
-    return os.environ.get("CLOUDY_INGESTION_ENABLED", "false").strip().lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
+    return get_settings().cloudy_ingestion_enabled
+
+
+ROUTER_META = RouterMeta(
+    prefix="/api/webhooks/cloudflare",
+    tags=["cloudflare"],
+    auth=Auth.PUBLIC_WEBHOOK,
+    reason=(
+        "Inbound receiver for Cloudflare Cloudy pushes — the caller is a "
+        "machine, so there is no session to authenticate. The endpoints "
+        "verify an HMAC shared secret and re-check the enable flag at request "
+        "time, so even a misconfigured mount fails closed."
+    ),
+    # Hard-off by default: the upstream API contract is not yet stable. Flip
+    # CLOUDY_INGESTION_ENABLED=true (or system_config cloudflare.cloudy.enabled)
+    # once the partnership confirms the wire format.
+    enabled=cloudy_ingestion_enabled,
+)
 
 
 def _get_secret() -> Optional[str]:
-    """HMAC shared secret. Prefer secrets manager; fall back to env."""
-    try:
-        from secrets_manager import get_secret as _gs
-        secret = _gs("CLOUDY_WEBHOOK_SECRET")
-        if secret:
-            return secret
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("secrets_manager lookup for CLOUDY_WEBHOOK_SECRET failed: %s", exc)
-    return os.environ.get("CLOUDY_WEBHOOK_SECRET") or None
+    return get_secret("CLOUDY_WEBHOOK_SECRET") or None
 
 
 def _get_max_body_bytes() -> int:
-    try:
-        kb = int(os.environ.get("CLOUDY_WEBHOOK_MAX_BODY_KB", "1024"))
-    except (TypeError, ValueError):
-        kb = 1024
-    return max(1, kb) * 1024
+    return max(1, get_settings().cloudy_webhook_max_body_kb) * 1024
 
 
 def _verify_signature(raw_body: bytes, provided: Optional[str]) -> bool:

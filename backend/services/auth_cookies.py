@@ -8,11 +8,12 @@ dev doesn't require a restart cycle through the router.
 """
 
 import logging
-import os
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import Response
+
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +27,14 @@ ACCESS_COOKIE_PATH = "/"
 REFRESH_COOKIE_PATH = "/api/auth/refresh"
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in ("true", "1", "yes", "on")
-
-
 def _cookie_secure() -> bool:
     # Default true so a misconfiguration in prod fails safe. Local HTTP dev
     # must explicitly set VIGIL_COOKIE_SECURE=false.
-    return _env_bool("VIGIL_COOKIE_SECURE", True)
+    return get_settings().vigil_cookie_secure
 
 
 def _cookie_samesite() -> str:
-    raw = (os.getenv("VIGIL_COOKIE_SAMESITE") or "strict").strip().lower()
+    raw = get_settings().vigil_cookie_samesite.strip().lower()
     if raw not in ("strict", "lax", "none"):
         logger.warning(
             "Invalid VIGIL_COOKIE_SAMESITE=%r, falling back to 'strict'", raw

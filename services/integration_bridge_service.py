@@ -3,8 +3,8 @@
 import json
 import logging
 import os
-from pathlib import Path
 from typing import Dict, List, Optional
+from core.config import vigil_path
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,7 @@ class IntegrationBridgeService:
 
     def __init__(self):
         """Initialize the integration bridge service."""
-        self.config_path = Path.home() / ".deeptempo" / "integrations_config.json"
+        self.config_path = vigil_path("integrations_config.json")
 
     def load_integration_config(self) -> Dict:
         """
@@ -202,7 +202,7 @@ class IntegrationBridgeService:
             if not connector_url:
                 continue
             env_key = f"{integration_id.upper().replace('-', '_')}_MCP_URL"
-            current = os.environ.get(env_key)
+            current = os.environ.get(env_key)  # noqa: ENV001 - MCP child env
             if current and current != _DERIVED_MCP_URLS.get(env_key):
                 continue  # operator-set (or externally changed) value wins
             # Trailing slash: the connector mounts streamable-HTTP at /mcp/, and
@@ -211,7 +211,7 @@ class IntegrationBridgeService:
             _DERIVED_MCP_URLS[env_key] = value
             if current == value:
                 continue  # unchanged; nothing to re-apply
-            os.environ[env_key] = value
+            os.environ[env_key] = value  # noqa: ENV001 - MCP child env
             applied[env_key] = value
         if applied:
             logger.info(

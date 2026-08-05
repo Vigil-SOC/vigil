@@ -29,13 +29,13 @@ Report-only mode:
 """
 
 import logging
-import os
 import secrets
 from typing import Callable, Iterable, Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,13 +45,6 @@ CSRF_HEADER_NAME = "X-CSRF-Token"
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 _DEFAULT_EXEMPT = ("/api/webhooks/", "/api/ingest/")
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in ("true", "1", "yes", "on")
 
 
 def _parse_exempt_paths(raw: Optional[str]) -> tuple:
@@ -72,20 +65,20 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     ):
         super().__init__(app)
         self.enabled = (
-            _env_bool("VIGIL_CSRF_ENABLED", True) if enabled is None else enabled
+            get_settings().vigil_csrf_enabled if enabled is None else enabled
         )
         self.report_only = (
-            _env_bool("VIGIL_CSRF_REPORT_ONLY", True)
+            get_settings().vigil_csrf_report_only
             if report_only is None
             else report_only
         )
         self.exempt_paths = (
             tuple(exempt_paths)
             if exempt_paths is not None
-            else _parse_exempt_paths(os.getenv("VIGIL_CSRF_EXEMPT_PATHS"))
+            else _parse_exempt_paths(get_settings().vigil_csrf_exempt_paths)
         )
         self.cookie_secure = (
-            _env_bool("VIGIL_COOKIE_SECURE", True)
+            get_settings().vigil_cookie_secure
             if cookie_secure is None
             else cookie_secure
         )

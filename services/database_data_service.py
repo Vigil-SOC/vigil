@@ -12,6 +12,7 @@ from database.connection import get_db_manager, init_database
 from database.service import DatabaseService
 from core.exceptions import DatabaseError
 from core.config import is_demo_mode
+from core.config import vigil_path
 
 logger = logging.getLogger(__name__)
 
@@ -634,7 +635,7 @@ class DatabaseDataService:
             
             if not s3_config:
                 # Fallback to file-based config
-                config_file = Path.home() / '.deeptempo' / 's3_config.json'
+                config_file = vigil_path('s3_config.json')
                 if config_file.exists():
                     with open(config_file, 'r') as f:
                         s3_config = json.load(f)
@@ -724,7 +725,7 @@ class DatabaseDataService:
             s3_config = config_service.get_integration_config('s3')
             
             if not s3_config:
-                config_file = Path.home() / '.deeptempo' / 's3_config.json'
+                config_file = vigil_path('s3_config.json')
                 if config_file.exists():
                     with open(config_file, 'r') as f:
                         s3_config = json.load(f)
