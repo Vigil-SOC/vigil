@@ -1,5 +1,3 @@
-"""Detection Rules API endpoints for managing detection rule sources."""
-
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException
@@ -11,7 +9,6 @@ router = APIRouter()
 
 
 class AddSourceRequest(BaseModel):
-    """Request to add a new detection rule source."""
     name: str
     source_type: str  # 'git' or 'local'
     format: str  # 'sigma', 'splunk', 'elastic', 'kql', 'auto'
@@ -22,18 +19,11 @@ class AddSourceRequest(BaseModel):
 
 
 class RemoveSourceRequest(BaseModel):
-    """Request to remove a detection rule source."""
     delete_files: bool = False
 
 
 @router.get("/sources")
 async def list_sources():
-    """
-    List all registered detection rule sources.
-    
-    Returns:
-        List of sources with metadata (name, format, rule count, status, etc.)
-    """
     try:
         from services.detection_rules_service import get_detection_rules_service
         service = get_detection_rules_service()
@@ -46,15 +36,6 @@ async def list_sources():
 
 @router.get("/sources/{source_id}")
 async def get_source(source_id: str):
-    """
-    Get details for a specific detection rule source.
-    
-    Args:
-        source_id: The source ID
-    
-    Returns:
-        Source details
-    """
     try:
         from services.detection_rules_service import get_detection_rules_service
         service = get_detection_rules_service()
@@ -71,15 +52,6 @@ async def get_source(source_id: str):
 
 @router.post("/sources")
 async def add_source(request: AddSourceRequest):
-    """
-    Add a new detection rule source (git repo or local directory).
-    
-    Args:
-        request: Source configuration (name, type, format, url/path, etc.)
-    
-    Returns:
-        The newly created source
-    """
     try:
         from services.detection_rules_service import get_detection_rules_service
         service = get_detection_rules_service()
@@ -102,16 +74,6 @@ async def add_source(request: AddSourceRequest):
 
 @router.delete("/sources/{source_id}")
 async def remove_source(source_id: str, delete_files: bool = False):
-    """
-    Remove a detection rule source.
-    
-    Args:
-        source_id: The source ID to remove
-        delete_files: Whether to delete the cloned files on disk
-    
-    Returns:
-        Success status
-    """
     try:
         from services.detection_rules_service import get_detection_rules_service
         service = get_detection_rules_service()
@@ -128,15 +90,6 @@ async def remove_source(source_id: str, delete_files: bool = False):
 
 @router.post("/sources/{source_id}/update")
 async def update_source(source_id: str):
-    """
-    Update a single detection rule source (git pull or rescan).
-    
-    Args:
-        source_id: The source ID to update
-    
-    Returns:
-        Updated source details
-    """
     try:
         from services.detection_rules_service import get_detection_rules_service
         service = get_detection_rules_service()
@@ -155,12 +108,6 @@ async def update_source(source_id: str):
 
 @router.post("/update-all")
 async def update_all_sources():
-    """
-    Update all detection rule sources (git pull all repos).
-    
-    Returns:
-        Results for each source update
-    """
     try:
         from services.detection_rules_service import get_detection_rules_service
         service = get_detection_rules_service()
@@ -177,12 +124,6 @@ async def update_all_sources():
 
 @router.get("/stats")
 async def get_stats():
-    """
-    Get aggregate detection rule statistics.
-    
-    Returns:
-        Statistics including total rules, breakdown by format, and per-source counts
-    """
     try:
         from services.detection_rules_service import get_detection_rules_service
         service = get_detection_rules_service()
@@ -195,12 +136,6 @@ async def get_stats():
 
 @router.get("/mcp-env")
 async def get_mcp_env():
-    """
-    Get the environment variables that would be passed to the Security-Detections-MCP server.
-    
-    Returns:
-        Dictionary of environment variable names to their values
-    """
     try:
         from services.detection_rules_service import get_detection_rules_service
         service = get_detection_rules_service()
@@ -213,13 +148,6 @@ async def get_mcp_env():
 
 @router.post("/reload")
 async def reload_service():
-    """
-    Reload the detection rules service (re-reads config and rescans all sources).
-    Also restarts the security-detections MCP server.
-    
-    Returns:
-        Success status with updated stats
-    """
     try:
         from services.detection_rules_service import get_detection_rules_service
         service = get_detection_rules_service()
@@ -248,10 +176,6 @@ async def reload_service():
 
 
 async def _restart_security_detections_mcp():
-    """
-    Restart the security-detections MCP server to pick up new/updated rule sources.
-    This triggers a re-index of all detection rules in the MCP server.
-    """
     try:
         from services.mcp_client import get_mcp_client
         

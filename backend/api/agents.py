@@ -1,5 +1,3 @@
-"""Agents API endpoints for SOC agent management."""
-
 from typing import Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -16,11 +14,6 @@ agent_manager = AgentManager()
 
 
 def _resolve_agent(agent_id: str):
-    """Resolve an agent_id to an AgentProfile, lazy-loading custom agents on miss.
-
-    Built-in agents are served from the in-memory dict with zero DB calls.
-    Only misses for IDs prefixed with custom- trigger a refresh and retry.
-    """
     agent = agent_manager.agents.get(agent_id)
     if agent is not None:
         return agent
@@ -31,7 +24,6 @@ def _resolve_agent(agent_id: str):
 
 
 class InvestigationRequest(BaseModel):
-    """Request to start an investigation with an agent."""
     finding_id: str
     agent_id: Optional[str] = "investigator"
     additional_context: Optional[str] = None
@@ -39,13 +31,6 @@ class InvestigationRequest(BaseModel):
 
 @router.get("/agents")
 async def list_agents():
-    """Get list of all available SOC agents (built-ins + DB-backed customs).
-
-    Always refreshes the custom-agent side of the cache from the DB so
-    callers see rows created by other worker processes or external
-    tooling without having to restart. Built-ins are code-defined and
-    cached in-process.
-    """
     try:
         # Cheap best-effort refresh. Failures leave the existing cache in
         # place — you'd still get the built-in list back.
@@ -62,15 +47,6 @@ async def list_agents():
 
 @router.get("/agents/{agent_id}")
 async def get_agent(agent_id: str):
-    """
-    Get details for a specific agent.
-    
-    Args:
-        agent_id: The agent ID
-    
-    Returns:
-        Agent details
-    """
     try:
         agent = _resolve_agent(agent_id)
         if not agent:
@@ -96,15 +72,6 @@ async def get_agent(agent_id: str):
 
 @router.post("/agents/set-current")
 async def set_current_agent(agent_id: str):
-    """
-    Set the current active agent.
-    
-    Args:
-        agent_id: The agent ID to set as current
-    
-    Returns:
-        Success status
-    """
     try:
         success = agent_manager.set_current_agent(agent_id)
         if not success:
@@ -123,15 +90,6 @@ async def set_current_agent(agent_id: str):
 
 @router.post("/agents/investigate")
 async def start_investigation(request: InvestigationRequest):
-    """
-    Start an investigation on a finding with a specific agent.
-    
-    Args:
-        request: Investigation request with finding ID and agent
-    
-    Returns:
-        Investigation prompt and agent details
-    """
     from services.database_data_service import DatabaseDataService
     
     try:
@@ -185,7 +143,6 @@ Please conduct a thorough investigation of this finding. Use your available tool
 
 
 class AgentRunRequest(BaseModel):
-    """Request to run an agent task with Agent SDK."""
     finding_id: Optional[str] = None
     case_id: Optional[str] = None
     task: Optional[str] = None
@@ -195,18 +152,6 @@ class AgentRunRequest(BaseModel):
 
 @router.post("/agents/run")
 async def run_agent(request: AgentRunRequest):
-    """
-    Run an agent task using Claude Agent SDK.
-    
-    This endpoint leverages the Agent SDK for autonomous tool execution,
-    allowing the agent to investigate findings, cases, or perform custom tasks.
-    
-    Args:
-        request: Agent run request
-    
-    Returns:
-        Agent execution result with tool calls and analysis
-    """
     from services.database_data_service import DatabaseDataService
     from core.llm.harness.claude import ClaudeService
     

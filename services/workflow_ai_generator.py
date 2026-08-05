@@ -1,11 +1,3 @@
-"""
-AI-assisted workflow generator.
-
-Takes a natural-language description of a security scenario and produces a
-draft workflow definition (phases, agents, tools) by prompting Claude with
-context about the available agents, MCP tools, and existing workflow patterns.
-"""
-
 import json
 import logging
 import re
@@ -15,27 +7,11 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowAIGenerator:
-    """Generates draft workflow definitions from natural-language descriptions."""
 
     def __init__(self):
         self._mcp_tool_names_cache: Optional[List[str]] = None
 
     async def generate(self, description: str) -> Dict[str, Any]:
-        """
-        Generate a draft workflow from a natural-language description.
-
-        Args:
-            description: Plain-English scenario (e.g.,
-                "Investigate suspicious login and contain the account if malicious").
-
-        Returns:
-            {
-                "success": bool,
-                "draft": {...workflow dict...} | None,
-                "error": str | None,
-                "raw": str  # raw Claude response, for debugging
-            }
-        """
         if not description or not description.strip():
             return {
                 "success": False,
@@ -209,7 +185,6 @@ class WorkflowAIGenerator:
     # --- Response parsing --------------------------------------------------
 
     def _extract_json(self, text: str) -> Optional[Dict[str, Any]]:
-        """Extract the first valid JSON object from the response."""
         # Strip ```json ... ``` fences if present
         fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if fence:
@@ -225,7 +200,6 @@ class WorkflowAIGenerator:
             return None
 
     def _normalize_draft(self, draft: Dict[str, Any]) -> Dict[str, Any]:
-        """Fill in defaults and make the draft safe to save as-is."""
         phases = draft.get("phases") or []
         for idx, phase in enumerate(phases, start=1):
             phase.setdefault("phase_id", f"phase-{idx}")
@@ -251,7 +225,6 @@ _generator: Optional[WorkflowAIGenerator] = None
 
 
 def get_workflow_ai_generator() -> WorkflowAIGenerator:
-    """Get the singleton WorkflowAIGenerator instance."""
     global _generator
     if _generator is None:
         _generator = WorkflowAIGenerator()

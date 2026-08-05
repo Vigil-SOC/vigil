@@ -1,5 +1,3 @@
-"""Configuration API endpoints."""
-
 from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -26,13 +24,11 @@ logger = logging.getLogger(__name__)
 
 
 class ClaudeConfig(BaseModel):
-    """Claude API configuration."""
 
     api_key: str
 
 
 class S3Config(BaseModel):
-    """S3 configuration."""
 
     bucket_name: str
     region: str = "us-east-1"
@@ -47,20 +43,17 @@ class S3Config(BaseModel):
 
 
 class ThemeConfig(BaseModel):
-    """Theme configuration."""
 
     theme: str = "dark"  # dark or light
 
 
 class IntegrationsConfig(BaseModel):
-    """Integrations configuration."""
 
     enabled_integrations: list[str] = []
     integrations: dict = {}
 
 
 class GeneralConfig(BaseModel):
-    """General application settings."""
 
     auto_start_sync: bool = False
     show_notifications: bool = True
@@ -69,32 +62,21 @@ class GeneralConfig(BaseModel):
 
 
 class GitHubConfig(BaseModel):
-    """GitHub integration configuration."""
 
     token: str
 
 
 class PostgreSQLConfig(BaseModel):
-    """PostgreSQL database backend configuration."""
 
     connection_string: str
 
 
 class DemoModeConfig(BaseModel):
-    """Demo mode configuration."""
 
     enabled: bool = False
 
 
 class PlatformDatabaseProxyConfig(BaseModel):
-    """Proxy configuration in front of the platform metadata Postgres.
-
-    Persisted in the encrypted secrets store (DB-independent — read at
-    boot before the engine exists). All fields optional; ``proxy_type``
-    of ``"none"`` (the default) disables the feature.
-
-    Empty-string secrets on POST mean "leave existing value untouched".
-    """
 
     proxy_type: str = "none"  # none | pgbouncer | ssh_tunnel
     proxy_host: str = ""
@@ -108,12 +90,6 @@ class PlatformDatabaseProxyConfig(BaseModel):
 
 @router.get("/demo-mode")
 async def get_demo_mode():
-    """
-    Get demo mode configuration.
-
-    Returns:
-        Demo mode status
-    """
     try:
         from core.config import is_demo_mode
 
@@ -133,17 +109,6 @@ async def get_demo_mode():
 
 @router.post("/demo-mode")
 async def set_demo_mode(config: DemoModeConfig):
-    """
-    Set demo mode configuration.
-
-    Note: Setting via API updates the config file. Environment variable takes precedence.
-
-    Args:
-        config: Demo mode configuration
-
-    Returns:
-        Success status
-    """
     try:
         source_file = vigil_path("general_config.json")
         config_file = vigil_path("general_config.json", write=True)
@@ -173,12 +138,6 @@ async def set_demo_mode(config: DemoModeConfig):
 
 @router.post("/demo-mode/reset")
 async def reset_demo_data():
-    """
-    Reset demo data to regenerate sample findings and cases.
-
-    Returns:
-        Success status
-    """
     try:
         from core.config import is_demo_mode
 
@@ -205,12 +164,6 @@ async def reset_demo_data():
 
 @router.get("/claude")
 async def get_claude_config():
-    """
-    Get Claude API configuration status.
-
-    Returns:
-        Configuration status (without exposing the key)
-    """
     try:
         # Try new key names first, then legacy names
         api_key = (
@@ -233,15 +186,6 @@ async def get_claude_config():
 
 @router.post("/claude")
 async def set_claude_config(config: ClaudeConfig):
-    """
-    Set Claude API configuration.
-
-    Args:
-        config: Claude configuration
-
-    Returns:
-        Success status
-    """
     try:
         # Use standard environment variable name
         success = set_secret("CLAUDE_API_KEY", config.api_key)
@@ -293,12 +237,6 @@ async def set_claude_config(config: ClaudeConfig):
 
 @router.get("/s3")
 async def get_s3_config():
-    """
-    Get S3 configuration status.
-
-    Returns:
-        Configuration status
-    """
     try:
         # Try database first
         config_service = get_config_service()
@@ -341,15 +279,6 @@ async def get_s3_config():
 
 @router.post("/s3")
 async def set_s3_config(config: S3Config):
-    """
-    Set S3 configuration.
-
-    Args:
-        config: S3 configuration
-
-    Returns:
-        Success status
-    """
     try:
         bucket_name = config.bucket_name
         parquet_prefix = config.parquet_prefix
@@ -437,13 +366,6 @@ _PLATFORM_DB_SECRET_FIELDS = {"proxy_password", "ssh_key_passphrase"}
 
 @router.get("/platform-database")
 async def get_platform_database_config():
-    """Return the current proxy config in front of the platform DB.
-
-    Secret fields (proxy password, SSH key passphrase) are redacted.
-    A boolean ``has_*`` flag indicates whether a value is currently
-    stored, so the UI can show "set"/"not set" without exposing the
-    plaintext.
-    """
     try:
         result: Dict[str, Any] = {}
         for field, key in _PLATFORM_DB_PROXY_KEYS.items():
@@ -478,12 +400,6 @@ async def get_platform_database_config():
 
 @router.post("/platform-database")
 async def set_platform_database_config(config: PlatformDatabaseProxyConfig):
-    """Persist the platform-DB proxy config to the encrypted secrets
-    store. Takes effect on the next backend restart — the live engine
-    can't be hot-swapped safely.
-
-    Empty-string secrets mean "leave existing value untouched".
-    """
     try:
         proxy_type = (config.proxy_type or "none").strip().lower()
         if proxy_type not in ("none", "pgbouncer", "ssh_tunnel"):
@@ -542,12 +458,6 @@ async def set_platform_database_config(config: PlatformDatabaseProxyConfig):
 
 @router.post("/s3/test")
 def test_s3_connection():
-    """
-    Test S3 connection with current configuration.
-
-    Returns:
-        Connection test result
-    """
     try:
         from services.s3_service import S3Service
 
@@ -635,12 +545,6 @@ def test_s3_connection():
 
 @router.get("/theme")
 async def get_theme_config():
-    """
-    Get theme configuration.
-
-    Returns:
-        Theme configuration
-    """
     try:
         # Try database first
         config_service = get_config_service()
@@ -664,15 +568,6 @@ async def get_theme_config():
 
 @router.post("/theme")
 async def set_theme_config(config: ThemeConfig):
-    """
-    Set theme configuration.
-
-    Args:
-        config: Theme configuration
-
-    Returns:
-        Success status
-    """
     try:
         config_data = {"theme": config.theme}
 
@@ -705,8 +600,6 @@ async def set_theme_config(config: ThemeConfig):
 
 
 def _secrets_set_map(integrations: dict) -> dict:
-    """Per-integration ``{secret_field: bool}`` — booleans only, never the
-    values, so the wizard can show "saved" without the browser seeing a secret."""
     result: dict = {}
     for iid in integrations:
         fields = secret_fields_for(iid)
@@ -717,12 +610,6 @@ def _secrets_set_map(integrations: dict) -> dict:
 
 @router.get("/integrations")
 async def get_integrations_config():
-    """
-    Get integrations configuration.
-
-    Returns:
-        Configuration status and enabled integrations
-    """
     try:
         # Try database first
         config_service = get_config_service()
@@ -777,22 +664,6 @@ async def get_integrations_config():
 
 @router.post("/integrations")
 async def set_integrations_config(config: IntegrationsConfig):
-    """
-    Set integrations configuration.
-
-    Secret-typed fields (registered in ``services.integration_secrets``) are
-    routed to the encrypted secrets store via ``set_secret`` and stripped
-    from the dict that lands in the DB / JSON file. Empty strings are
-    treated as "keep existing secret" (matches the S3 endpoint convention)
-    so editing non-secret fields without re-typing the password doesn't
-    clobber stored credentials.
-
-    Args:
-        config: Integrations configuration
-
-    Returns:
-        Success status
-    """
     try:
         config_service = get_config_service(user_id="web_ui")
 
@@ -852,12 +723,6 @@ async def set_integrations_config(config: IntegrationsConfig):
 
 @router.get("/integrations/status")
 async def get_integrations_status():
-    """
-    Get status of all integrations.
-
-    Returns:
-        Status information for all integrations
-    """
     try:
         # Import here to avoid circular dependencies
         sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -874,15 +739,6 @@ async def get_integrations_status():
 
 @router.post("/integrations/{integration_id}/test")
 async def test_integration(integration_id: str):
-    """
-    Test an integration connection.
-
-    Args:
-        integration_id: Integration identifier
-
-    Returns:
-        Test result with success/failure and message
-    """
     try:
         # Import here to avoid circular dependencies
         sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -939,12 +795,6 @@ async def test_integration(integration_id: str):
 
 @router.get("/general")
 async def get_general_config():
-    """
-    Get general application settings.
-
-    Returns:
-        General configuration
-    """
     try:
         # Try database first
         config_service = get_config_service()
@@ -985,15 +835,6 @@ async def get_general_config():
 
 @router.post("/general")
 async def set_general_config(config: GeneralConfig):
-    """
-    Set general application settings.
-
-    Args:
-        config: General configuration
-
-    Returns:
-        Success status
-    """
     try:
         config_data = {
             "auto_start_sync": config.auto_start_sync,
@@ -1047,12 +888,6 @@ async def set_general_config(config: GeneralConfig):
 
 @router.get("/github")
 async def get_github_config():
-    """
-    Get GitHub integration configuration status.
-
-    Returns:
-        Configuration status (without exposing the token)
-    """
     try:
         token = get_secret("GITHUB_TOKEN")
         has_token = bool(token)
@@ -1068,15 +903,6 @@ async def get_github_config():
 
 @router.post("/github")
 async def set_github_config(config: GitHubConfig):
-    """
-    Set GitHub integration configuration.
-
-    Args:
-        config: GitHub configuration
-
-    Returns:
-        Success status
-    """
     try:
         success = set_secret("GITHUB_TOKEN", config.token)
         if success:
@@ -1090,12 +916,6 @@ async def set_github_config(config: GitHubConfig):
 
 @router.get("/postgresql")
 async def get_postgresql_config():
-    """
-    Get PostgreSQL database backend configuration status.
-
-    Returns:
-        Configuration status
-    """
     try:
         conn_str = get_secret("POSTGRESQL_CONNECTION_STRING")
         has_config = bool(conn_str)
@@ -1121,15 +941,6 @@ async def get_postgresql_config():
 
 @router.post("/postgresql")
 async def set_postgresql_config(config: PostgreSQLConfig):
-    """
-    Set PostgreSQL database backend configuration.
-
-    Args:
-        config: PostgreSQL configuration
-
-    Returns:
-        Success status
-    """
     try:
         success = set_secret("POSTGRESQL_CONNECTION_STRING", config.connection_string)
         if success:
@@ -1147,14 +958,6 @@ async def set_postgresql_config(config: PostgreSQLConfig):
 
 
 class AIOperationsSettingsConfig(BaseModel):
-    """Runtime cost/perf toggles introduced across GH #84 PR-C/PR-D/PR-F.
-
-    Persisted in ``system_config`` at key ``ai_operations.settings``.
-    Consumed via ``services.runtime_config.get_ai_operations_setting``
-    which layers DB → env var → default. Exposed in the Settings UI
-    (AI Config → AI Operations) so operators can flip values live
-    without restarting the backend / daemon / llm-worker.
-    """
 
     prompt_cache_enabled: bool = True
     history_window: int = 20
@@ -1170,7 +973,6 @@ AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()
 
 @router.get("/ai-operations")
 async def get_ai_operations_config():
-    """Return the current AI-operations toggles (defaults merged with DB overrides)."""
     try:
         config_service = get_config_service()
         value = config_service.get_system_config("ai_operations.settings")
@@ -1184,7 +986,6 @@ async def get_ai_operations_config():
 
 @router.post("/ai-operations")
 async def set_ai_operations_config(config: AIOperationsSettingsConfig):
-    """Persist the AI-operations toggles and invalidate the in-process cache."""
     try:
         config_data = config.model_dump()
         config_service = get_config_service(user_id="web_ui")
@@ -1218,7 +1019,6 @@ async def set_ai_operations_config(config: AIOperationsSettingsConfig):
 
 
 class OrchestratorSettingsConfig(BaseModel):
-    """Orchestrator configuration for autonomous investigations."""
 
     # Opt-in; also feeds ORCHESTRATOR_DEFAULTS. Matches GET /api/orchestrator/status,
     # which already defaults False.
@@ -1247,7 +1047,6 @@ ORCHESTRATOR_DEFAULTS = OrchestratorSettingsConfig().model_dump()
 
 @router.get("/orchestrator")
 async def get_orchestrator_config():
-    """Get orchestrator configuration."""
     try:
         config_service = get_config_service()
         config_value = config_service.get_system_config("orchestrator.settings")
@@ -1264,10 +1063,6 @@ async def get_orchestrator_config():
 
 @router.post("/orchestrator")
 async def set_orchestrator_config(config: OrchestratorSettingsConfig):
-    """Set orchestrator configuration. Persists settings AND syncs the
-    runtime enabled flag used by GET /api/orchestrator/status (which
-    NavigationRail uses to show/hide the Auto Ops tab).
-    """
     try:
         config_data = config.model_dump()
 
@@ -1311,13 +1106,6 @@ async def set_orchestrator_config(config: OrchestratorSettingsConfig):
 
 # ---- Darktrace webhook receiver config ----
 class DarktraceConfig(BaseModel):
-    """Darktrace webhook receiver configuration.
-
-    Non-secret fields live in ``system_config['darktrace.settings']``; the
-    HMAC shared secret is stored via the secrets manager under
-    ``DARKTRACE_WEBHOOK_SECRET``. Env vars are honoured as fallback so
-    existing deployments keep working.
-    """
 
     enabled: bool = False
     url: str = ""
@@ -1335,7 +1123,6 @@ DARKTRACE_DEFAULTS: Dict[str, Any] = {
 
 @router.get("/darktrace")
 async def get_darktrace_config():
-    """Return the current Darktrace webhook receiver config (without the secret)."""
     try:
         config_service = get_config_service()
         value = config_service.get_system_config(DARKTRACE_SETTINGS_KEY) or {}
@@ -1349,8 +1136,6 @@ async def get_darktrace_config():
 
 @router.post("/darktrace")
 async def set_darktrace_config(config: DarktraceConfig):
-    """Persist Darktrace config. The webhook_secret is stored separately via the
-    secrets manager; if omitted, the existing secret is preserved."""
     try:
         config_service = get_config_service(user_id="web_ui")
         settings = {
@@ -1403,11 +1188,6 @@ def _format_size(num_bytes: int) -> str:
 
 
 def _scan_palace(palace_path: Path) -> Dict[str, Any]:
-    """Walk the palace tree once and return size + last-modified.
-
-    Best-effort: any unreadable entry is skipped, not raised. Returns
-    ``palace_exists=False`` if the root doesn't exist.
-    """
     if not palace_path.exists():
         return {
             "palace_exists": False,
@@ -1454,12 +1234,6 @@ def _scan_palace(palace_path: Path) -> Dict[str, Any]:
 
 
 def _count_memories(palace_path: Path) -> Dict[str, Any]:
-    """Best-effort ChromaDB collection count.
-
-    Returns a dict with ``count`` (int|None) and ``source`` (one of
-    ``chromadb``, ``unavailable``). Never raises — a missing or
-    incompatible chromadb install just degrades to ``unavailable``.
-    """
     try:
         import chromadb  # type: ignore
     except Exception:
@@ -1482,15 +1256,6 @@ def _count_memories(palace_path: Path) -> Dict[str, Any]:
 
 @router.get("/mempalace/health")
 async def get_mempalace_health():
-    """Health snapshot for the mempalace memory store.
-
-    Aggregates MCP connection state with filesystem facts about the
-    palace directory so operators can sanity-check at a glance whether
-    memories are actually being persisted. Always returns 200 — failures
-    are surfaced via ``connected: false`` and ``error`` fields rather
-    than HTTP errors, so the panel can render even when mempalace is
-    completely down.
-    """
     import asyncio
 
     from services.mempalace_paths import (
@@ -1548,13 +1313,6 @@ async def get_mempalace_health():
 
 
 class _SecretsReinitRequest(BaseModel):
-    """Optional override for the reinit endpoint.
-
-    The running process's ``os.environ`` may have a stale
-    ``SECRETS_BACKEND`` from launch time. ``write_backend`` here lets an
-    admin force the rebuilt singleton onto a specific backend without
-    bouncing uvicorn.
-    """
 
     write_backend: Optional[str] = None
 
@@ -1566,13 +1324,6 @@ class _SecretsMigrateRequest(BaseModel):
 
 @router.get("/secrets/status")
 async def secrets_status() -> Dict[str, Any]:
-    """Report which backend the secrets manager is using and why.
-
-    Used by the Settings UI (and `curl` debugging) to answer "why are my
-    creds not landing in ~/.vigil/secrets.enc?". Includes the chosen
-    write backend, what was expected per ``SECRETS_BACKEND`` env, whether
-    cryptography imported, and where each backend lives on disk.
-    """
     from backend.secrets_manager import get_secrets_manager
 
     mgr = get_secrets_manager()
@@ -1583,18 +1334,6 @@ async def secrets_status() -> Dict[str, Any]:
 async def secrets_reinit(
     request: Optional[_SecretsReinitRequest] = None,
 ) -> Dict[str, Any]:
-    """Drop the cached secrets-manager singleton and rebuild it.
-
-    Useful when the long-running process picked the wrong write backend
-    on first init (e.g. ``SECRETS_BACKEND`` was stale in os.environ when
-    the very first ``set_secret`` call ran during startup). After this
-    call the manager re-evaluates backend availability fresh.
-
-    Pass ``{"write_backend": "encrypted"}`` to force a specific backend
-    regardless of what's currently in ``os.environ`` — useful when you
-    just edited ``.env`` to switch from dotenv to encrypted but haven't
-    bounced the process.
-    """
     from backend.secrets_manager import get_secrets_manager
 
     write_backend = request.write_backend if request else None
@@ -1609,16 +1348,6 @@ async def secrets_reinit(
 async def secrets_migrate_to_encrypted(
     request: Optional[_SecretsMigrateRequest] = None,
 ) -> Dict[str, Any]:
-    """Move secrets from the dotenv backend to ``~/.vigil/secrets.enc``.
-
-    Encrypted store is authoritative on conflicts: if a key exists in
-    both with different values, the dotenv entry is left in place and
-    the conflict is reported so an operator can resolve it manually.
-
-    Body is optional. Pass ``{"keys": ["FOO_BAR"]}`` to migrate only a
-    subset, or ``{"remove_from_dotenv": false}`` for a dry-copy that
-    leaves the source file alone.
-    """
     from backend.secrets_manager import get_secrets_manager
 
     mgr = get_secrets_manager()

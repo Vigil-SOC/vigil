@@ -1,5 +1,3 @@
-"""SOC Daemon - Main entry point and orchestration."""
-
 import asyncio
 import logging
 import signal
@@ -16,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 class SOCDaemon:
-    """Main daemon orchestrator for autonomous SOC operations."""
     
     def __init__(self, config: Optional[DaemonConfig] = None):
         self.config = config or DaemonConfig.from_env()
@@ -45,19 +42,16 @@ class SOCDaemon:
         logger.info("SOC Daemon initialized")
     
     def _setup_signal_handlers(self):
-        """Setup graceful shutdown handlers."""
         loop = asyncio.get_event_loop()
         
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self._handle_shutdown)
     
     def _handle_shutdown(self):
-        """Handle shutdown signal."""
         logger.info("Shutdown signal received")
         self._shutdown_event.set()
     
     async def _init_components(self):
-        """Initialize all daemon components."""
         logger.info("Initializing daemon components...")
         
         # Import here to avoid circular imports
@@ -99,7 +93,6 @@ class SOCDaemon:
         logger.info("All components initialized")
     
     async def run(self):
-        """Run the daemon."""
         logger.info("Starting SOC Daemon...")
         self._running = True
         
@@ -175,12 +168,10 @@ class SOCDaemon:
         logger.info("SOC Daemon shutdown complete")
     
     async def stop(self):
-        """Stop the daemon gracefully."""
         self._shutdown_event.set()
 
 
 def main():
-    """Entry point for the daemon."""
     config = DaemonConfig.from_env()
     daemon = SOCDaemon(config)
     

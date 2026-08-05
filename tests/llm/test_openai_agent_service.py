@@ -1,10 +1,3 @@
-"""Unit tests for the OpenAI-format agent loop (services/openai_agent_service.py).
-
-Covers the schema converter, loop-detection signature canonicalization, and the
-streaming tool loop (tool-call, error flag, malformed tool call) with a mocked
-AsyncOpenAI client — no network or DB required.
-"""
-
 from __future__ import annotations
 
 import sys
@@ -160,8 +153,6 @@ def _agent():
 
 
 async def _collect(agent, responses, provider):
-    """Drive agent.stream with a faked SDK client; dispatch runs through the
-    real LLMRouter so sanitize/header/conversion wiring is covered too."""
     events = []
     with patch("openai.AsyncOpenAI", _fake_openai_factory(responses)):
         async for ev in agent.stream(

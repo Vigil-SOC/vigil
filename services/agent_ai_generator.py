@@ -7,7 +7,6 @@ logger = logging.getLogger(__name__)
 
 
 class AgentAIGenerator:
-    """Generates / refines draft custom agent configurations from natural language."""
 
     def __init__(self) -> None:
         self._mcp_tool_names_cache: Optional[List[str]] = None
@@ -18,22 +17,6 @@ class AgentAIGenerator:
         current_draft: Optional[Dict[str, Any]] = None,
         feedback: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Generate or refine a draft agent config.
-
-        - First call: pass ``description`` only.
-        - Refinement: pass the prior ``current_draft`` plus ``feedback`` describing
-          the changes the user wants. ``description`` carries forward so the model
-          keeps the original intent in view.
-
-        Returns:
-            {
-                "success": bool,
-                "draft": {...agent config...} | None,
-                "error": str | None,
-                "raw": str,  # raw model response, for debugging
-            }
-        """
         if not description or not description.strip():
             return {
                 "success": False,
@@ -308,7 +291,6 @@ _generator: Optional[AgentAIGenerator] = None
 
 
 def get_agent_ai_generator() -> AgentAIGenerator:
-    """Return the singleton AgentAIGenerator instance."""
     global _generator
     if _generator is None:
         _generator = AgentAIGenerator()

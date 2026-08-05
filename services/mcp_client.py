@@ -1,5 +1,3 @@
-"""MCP client service for connecting to MCP servers and using their tools with persistent connections."""
-
 import asyncio
 import json
 import logging
@@ -35,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 
 class PersistentServerSession:
-    """Manages a persistent connection to an MCP server."""
     
     def __init__(self, server_name: str, server_params):
         self.server_name = server_name
@@ -49,7 +46,6 @@ class PersistentServerSession:
         self.lock = asyncio.Lock()
     
     async def connect(self) -> bool:
-        """Establish persistent connection to the server."""
         async with self.lock:
             if self.is_connected and self.session:
                 return True
@@ -76,12 +72,10 @@ class PersistentServerSession:
                 return False
     
     async def disconnect(self):
-        """Disconnect from the server."""
         async with self.lock:
             await self._cleanup()
     
     async def _cleanup(self):
-        """Internal cleanup method (must be called with lock held)."""
         try:
             if self.session_context:
                 try:
@@ -106,7 +100,6 @@ class PersistentServerSession:
             logger.debug(f"Error during cleanup of {self.server_name}: {e}")
     
     async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """Call a tool using the persistent session."""
         async with self.lock:
             if not self.is_connected or not self.session:
                 # Try to reconnect
@@ -139,12 +132,10 @@ class PersistentServerSession:
                 raise
     
     async def _reconnect_internal(self) -> bool:
-        """Internal reconnect (must be called with lock held)."""
         await self._cleanup()
         return await self._connect_internal()
     
     async def _connect_internal(self) -> bool:
-        """Internal connect (must be called with lock held)."""
         try:
             self.stdio_context = stdio_client(self.server_params)
             self.read_stream, self.write_stream = await self.stdio_context.__aenter__()
@@ -164,15 +155,8 @@ class PersistentServerSession:
 
 
 class MCPClient:
-    """Client for connecting to MCP servers and using their tools with persistent connections."""
     
     def __init__(self, mcp_service: MCPService):
-        """
-        Initialize MCP client with persistent connection support.
-
-        Args:
-            mcp_service: MCPService instance for managing server processes
-        """
         self.mcp_service = mcp_service
         self.persistent_sessions: Dict[str, PersistentServerSession] = {}
         self.tools_cache: Dict[str, List[Dict]] = {}
@@ -183,21 +167,6 @@ class MCPClient:
         self.last_missing_credentials: Dict[str, List[str]] = {}
     
     async def connect_to_server(self, server_name: str, persistent: bool = True) -> bool:
-        """
-        Connect to an MCP server, cache its tools, and optionally maintain persistent connection.
-
-        Only connects if the server is enabled in the MCP service. On failure, the
-        exception message is recorded on ``self.last_errors[server_name]`` so the
-        Settings → MCP UI can surface *why* a connection failed (missing binary,
-        credentials, package not installed) instead of a generic "Failed to connect".
-
-        Args:
-            server_name: Name of the server to connect to
-            persistent: If True, maintain persistent connection for reuse
-
-        Returns:
-            True if successful, False otherwise
-        """
         # Defensive init for deployments that upgraded without reinstantiating
         # the client — keeps the legacy __init__ compatible.
         if not hasattr(self, "last_errors"):
@@ -327,11 +296,9 @@ class MCPClient:
         return missing
 
     def get_missing_credentials(self, server_name: str) -> Optional[List[str]]:
-        """Return the list of unset required env vars from the last connect."""
         return getattr(self, "last_missing_credentials", {}).get(server_name)
 
     def get_last_error(self, server_name: str) -> Optional[str]:
-        """Return the most recent connect-failure reason for a server, if any."""
         return getattr(self, "last_errors", {}).get(server_name)
 
     # Per-server rate limit between auto-retry attempts. Prevents a
@@ -342,14 +309,6 @@ class MCPClient:
     _RETRY_MIN_INTERVAL_S = 15.0
 
     async def retry_dormant_if_ready(self) -> Dict[str, bool]:
-        """Re-attempt connect for any dormant server whose required env
-        vars have since resolved (e.g. user saved the credential via the
-        integration wizard). Safe to call from a read-path endpoint:
-        no-op when nothing's dormant or when creds are still missing.
-
-        Returns a dict ``{server_name: connected_bool}`` recording what
-        we actually tried this call — the common case is an empty dict.
-        """
         # Defensive init — mirrors connect_to_server's compat shim.
         if not hasattr(self, "_last_retry_at"):
             self._last_retry_at: Dict[str, float] = {}
@@ -400,15 +359,6 @@ class MCPClient:
         return attempted
 
     async def list_tools(self, server_name: Optional[str] = None) -> Dict[str, List[Dict]]:
-        """
-        List available tools from MCP servers.
-        
-        Args:
-            server_name: Optional server name to list tools from. If None, lists from all servers.
-            
-        Returns:
-            Dictionary mapping server names to lists of tool definitions
-        """
         if not MCP_AVAILABLE:
             return {}
         
@@ -434,18 +384,6 @@ class MCPClient:
         return tools
     
     async def call_tool(self, server_name: str, tool_name: str, arguments: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:
-        """
-        Call a tool on an MCP server using persistent connection with timeout.
-
-        Args:
-            server_name: Name of the server
-            tool_name: Name of the tool to call
-            arguments: Tool arguments
-            timeout: Timeout in seconds (default: 30)
-
-        Returns:
-            Tool result dictionary
-        """
         import json as _json
         import time as _time
 
@@ -537,12 +475,6 @@ class MCPClient:
             return {"error": True, "content": [{"type": "text", "text": f"Error: {str(e)}"}]}
     
     def get_tools_for_claude(self) -> List[Dict]:
-        """
-        Get all available tools formatted for Claude's tool use API.
-        
-        Returns:
-            List of tool definitions in Claude's format
-        """
         all_tools = []
         
         for server_name, tools in self.tools_cache.items():
@@ -558,15 +490,6 @@ class MCPClient:
         return all_tools
     
     async def disconnect_from_server(self, server_name: str) -> bool:
-        """
-        Disconnect from a specific MCP server.
-        
-        Args:
-            server_name: Name of the server to disconnect from
-            
-        Returns:
-            True if successful, False otherwise
-        """
         if server_name in self.persistent_sessions:
             try:
                 await self.persistent_sessions[server_name].disconnect()
@@ -579,15 +502,6 @@ class MCPClient:
         return True
     
     async def reconnect_to_server(self, server_name: str) -> bool:
-        """
-        Reconnect to a specific MCP server.
-        
-        Args:
-            server_name: Name of the server to reconnect to
-            
-        Returns:
-            True if successful, False otherwise
-        """
         # Disconnect if already connected
         await self.disconnect_from_server(server_name)
         
@@ -595,12 +509,6 @@ class MCPClient:
         return await self.connect_to_server(server_name, persistent=True)
     
     def get_connection_status(self) -> Dict[str, bool]:
-        """
-        Get connection status for all servers.
-        
-        Returns:
-            Dictionary mapping server names to connection status
-        """
         status = {}
         for server_name in self.mcp_service.list_servers():
             if server_name in self.persistent_sessions:
@@ -610,7 +518,6 @@ class MCPClient:
         return status
     
     async def close_all(self):
-        """Close all persistent MCP server connections and clear cache."""
         logger.info("Closing all MCP server connections...")
         
         # Disconnect all persistent sessions sequentially to avoid context issues
@@ -633,7 +540,6 @@ _mcp_client: Optional[MCPClient] = None
 
 
 def get_mcp_client() -> Optional[MCPClient]:
-    """Get or create the global MCP client instance."""
     global _mcp_client
     
     if not MCP_AVAILABLE:

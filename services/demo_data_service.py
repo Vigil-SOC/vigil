@@ -1,5 +1,3 @@
-"""Demo data service for Vigil SOC demo mode."""
-
 import random
 import uuid
 import logging
@@ -46,7 +44,6 @@ SEVERITY_WEIGHTS = [0.1, 0.25, 0.4, 0.25]
 
 
 class DemoDataService:
-    """Service that provides demo/sample data for demo mode."""
     
     _instance = None
     _findings: List[Dict] = []
@@ -169,7 +166,6 @@ class DemoDataService:
         }
     
     def _generate_demo_data(self, num_findings: int = 25, num_cases: int = 5):
-        """Generate demo findings and cases."""
         logger.info(f"Generating demo data: {num_findings} findings, {num_cases} cases")
         random.seed(42)  # Consistent demo data
         DemoDataService._findings = [self._generate_finding() for _ in range(num_findings)]
@@ -186,15 +182,6 @@ class DemoDataService:
         return None
     
     def get_nearest_neighbors(self, finding_id: str, limit: int = 10) -> Dict:
-        """Find similar findings using embedding-based cosine similarity.
-        
-        Args:
-            finding_id: Reference finding ID to find neighbors for
-            limit: Maximum number of neighbors to return
-            
-        Returns:
-            Dict with seed_finding and neighbors list
-        """
         seed = self.get_finding(finding_id)
         if not seed or 'embedding' not in seed:
             return {"error": f"Finding {finding_id} not found or has no embedding"}
@@ -272,7 +259,6 @@ class DemoDataService:
         return False
     
     def add_finding_to_case(self, case_id: str, finding_id: str) -> bool:
-        """Add a finding to an existing case."""
         for c in DemoDataService._cases:
             if c.get("case_id") == case_id:
                 if 'finding_ids' not in c:
@@ -291,7 +277,6 @@ class DemoDataService:
         return False
     
     def reset(self):
-        """Regenerate demo data."""
         DemoDataService._initialized = False
         self._generate_demo_data()
         DemoDataService._initialized = True

@@ -1,10 +1,3 @@
-"""Prompt assembly for SOC agents (Reorg R1 / #482).
-
-``BASE_PROMPT`` and the memory-palace block live here, separated from the
-agent records so the record data stays free of prompt-template text.
-"""
-
-
 # Memory-palace section is separate from BASE_PROMPT so we can omit it
 # entirely when the mempalace MCP server isn't connected (#129). Before
 # this split, agents were *always* told they had access to 14
@@ -55,15 +48,6 @@ Memory tool quick reference:
 
 
 def _memory_palace_section() -> str:
-    """Return the memory-palace prompt block, or '' if mempalace isn't
-    connected (#129).
-
-    Checked lazily at prompt-assembly time so a server that comes up or
-    goes down between agent invocations is reflected in the next
-    prompt. Falls back to the block when connection state can't be
-    determined — the worst case is an agent being told about tools
-    that don't work, which is the status quo we already tolerate.
-    """
     try:
         from services.mcp_client import get_mcp_client
 
@@ -129,13 +113,6 @@ Use MCP tools (server_tool format):
 def render_base_prompt(
     role: str, extra_principles: str = "", methodology: str = ""
 ) -> str:
-    """Render BASE_PROMPT with the given fragments. Shared by built-in + custom.
-
-    The memory-palace block is inserted at render time based on whether
-    the mempalace MCP server is currently connected (#129). This keeps
-    the agent's self-description honest: if the palace is dormant, the
-    prompt won't advertise tools the agent can't actually call.
-    """
     return BASE_PROMPT.format(
         role=role,
         extra_principles=extra_principles or "",

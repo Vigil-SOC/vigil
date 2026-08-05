@@ -1,10 +1,3 @@
-"""
-Detection Rules Service - Manages detection rule sources (git repos, local directories).
-
-Persists source metadata to ~/.vigil/detection_sources.json.
-Provides CRUD operations, git pull updates, and builds env vars for Security-Detections-MCP.
-"""
-
 import json
 import logging
 import os
@@ -74,7 +67,6 @@ FORMAT_ENV_VARS = {
 
 
 class DetectionRulesService:
-    """Service for managing detection rule sources."""
 
     def __init__(self):
         self.config_path = vigil_path("detection_sources.json")
@@ -84,7 +76,6 @@ class DetectionRulesService:
         self._load_config()
 
     def _load_config(self):
-        """Load sources from config file, or seed defaults on first run."""
         if self.config_path.exists():
             try:
                 with open(self.config_path, "r") as f:
@@ -100,7 +91,6 @@ class DetectionRulesService:
         self._seed_defaults()
 
     def _seed_defaults(self):
-        """Seed default sources based on existing repos on disk."""
         self.sources = []
         for default in DEFAULT_SOURCES:
             clone_dir = self.base_dir / default["clone_name"]
@@ -141,7 +131,6 @@ class DetectionRulesService:
             logger.error(f"Error saving detection sources config: {e}")
 
     def _count_rules(self, base_path: Path, fmt: str, subdirectory: str = "") -> int:
-        """Count rule files in a directory by format."""
         target = base_path / subdirectory if subdirectory else base_path
         if not target.exists():
             return 0
@@ -153,7 +142,6 @@ class DetectionRulesService:
         return count
 
     def _get_rules_path(self, source: Dict) -> str:
-        """Get the actual rules path for a source (base + subdirectory)."""
         base = Path(source["local_path"])
         subdir = source.get("subdirectory", "")
         if subdir:
@@ -161,7 +149,6 @@ class DetectionRulesService:
         return str(base)
 
     def _get_story_path(self, source: Dict) -> Optional[str]:
-        """Get the story path for a source (Splunk only)."""
         story_sub = source.get("story_subdirectory", "")
         if story_sub:
             return str(Path(source["local_path"]) / story_sub)
@@ -170,11 +157,9 @@ class DetectionRulesService:
     # --- Public API ---
 
     def list_sources(self) -> List[Dict[str, Any]]:
-        """Return all registered rule sources with metadata."""
         return self.sources
 
     def get_source(self, source_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single source by ID."""
         for source in self.sources:
             if source["id"] == source_id:
                 return source
@@ -190,18 +175,6 @@ class DetectionRulesService:
         subdirectory: str = "",
         story_subdirectory: str = "",
     ) -> Dict[str, Any]:
-        """
-        Add a new detection rule source.
-
-        Args:
-            name: Display name for the source
-            source_type: 'git' or 'local'
-            format: 'sigma', 'splunk', 'elastic', 'kql', or 'auto'
-            url: Git repository URL (required for type='git')
-            path: Local directory path (required for type='local')
-            subdirectory: Subdirectory within the repo/path containing rules
-            story_subdirectory: Subdirectory for Splunk stories (optional)
-        """
         source_id = str(uuid.uuid4())[:8]
 
         if source_type == "git":
@@ -267,7 +240,6 @@ class DetectionRulesService:
         return source
 
     def remove_source(self, source_id: str, delete_files: bool = False) -> bool:
-        """Remove a rule source by ID."""
         source = self.get_source(source_id)
         if not source:
             return False
@@ -288,7 +260,6 @@ class DetectionRulesService:
         return True
 
     def update_source(self, source_id: str) -> Dict[str, Any]:
-        """Update a single source (git pull or rescan)."""
         source = self.get_source(source_id)
         if not source:
             raise ValueError(f"Source not found: {source_id}")
@@ -313,7 +284,6 @@ class DetectionRulesService:
         return source
 
     def update_all(self) -> List[Dict[str, Any]]:
-        """Update all sources."""
         results = []
         for source in self.sources:
             try:
@@ -325,7 +295,6 @@ class DetectionRulesService:
         return results
 
     def get_stats(self) -> Dict[str, Any]:
-        """Get aggregate detection rule statistics."""
         total = 0
         by_format = defaultdict(int)
         by_source = []
@@ -349,12 +318,6 @@ class DetectionRulesService:
         }
 
     def get_mcp_env_vars(self) -> Dict[str, str]:
-        """
-        Build environment variable dict for Security-Detections-MCP.
-
-        Combines multiple paths per format with commas, matching the MCP server's
-        expected SIGMA_PATHS, SPLUNK_PATHS, ELASTIC_PATHS, KQL_PATHS, STORY_PATHS format.
-        """
         paths_by_format: Dict[str, List[str]] = defaultdict(list)
         story_paths: List[str] = []
 
@@ -386,7 +349,6 @@ class DetectionRulesService:
     # --- Git operations ---
 
     def _git_clone(self, url: str, target_path: str):
-        """Clone a git repository with shallow depth."""
         self.base_dir.mkdir(parents=True, exist_ok=True)
         logger.info(f"Cloning {url} to {target_path}...")
         result = subprocess.run(
@@ -400,7 +362,6 @@ class DetectionRulesService:
         logger.info(f"Successfully cloned {url}")
 
     def _git_pull(self, repo_path: str):
-        """Pull latest changes in a git repository."""
         logger.info(f"Pulling updates in {repo_path}...")
         result = subprocess.run(
             ["git", "pull", "--quiet"],
@@ -419,7 +380,6 @@ _detection_rules_service: Optional[DetectionRulesService] = None
 
 
 def get_detection_rules_service() -> DetectionRulesService:
-    """Get or create the global DetectionRulesService instance."""
     global _detection_rules_service
     if _detection_rules_service is None:
         _detection_rules_service = DetectionRulesService()

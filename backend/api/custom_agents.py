@@ -1,9 +1,3 @@
-"""Custom SOC Agent CRUD endpoints (Agent Builder).
-
-Built-in agents remain hardcoded in core/agents/builtins.py. This module only
-manages the DB-backed custom agents, prefixed with "custom-".
-"""
-
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -25,7 +19,6 @@ service = CustomAgentService()
 
 
 def _refresh_manager() -> None:
-    """Refresh the global AgentManager so changes are visible to /agents/* routes."""
     try:
         from backend.api.agents import agent_manager
 
@@ -35,7 +28,6 @@ def _refresh_manager() -> None:
 
 
 class CustomAgentCreate(BaseModel):
-    """Request body for creating a custom agent."""
 
     name: str = Field(..., min_length=1)
     role: str = Field(..., min_length=1)
@@ -58,7 +50,6 @@ class CustomAgentCreate(BaseModel):
 
 
 class CustomAgentUpdate(BaseModel):
-    """Partial update for an existing custom agent. All fields optional."""
 
     name: Optional[str] = None
     role: Optional[str] = None
@@ -81,18 +72,11 @@ class CustomAgentUpdate(BaseModel):
 
 
 class ForkAgentRequest(BaseModel):
-    """Optional payload when forking. `new_name` lets the UI set the copy's
-    name up front instead of taking the default "<source> (copy)"."""
 
     new_name: Optional[str] = None
 
 
 class GenerateAgentRequest(BaseModel):
-    """Request body for AI-assisted agent generation (issue #80 Phase 2).
-
-    First call: pass ``description`` only.
-    Refinement: also pass ``current_draft`` and ``feedback``.
-    """
 
     description: str = Field(..., min_length=1)
     current_draft: Optional[Dict[str, Any]] = None
@@ -100,7 +84,6 @@ class GenerateAgentRequest(BaseModel):
 
 
 def _with_effective_prompt(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Attach the rendered effective prompt to an agent row dict."""
     row = dict(row)
     row["effective_prompt"] = service.get_effective_prompt(row)
     return row
@@ -118,14 +101,6 @@ async def list_custom_agents() -> Dict[str, Any]:
 
 @router.get("/agents/custom/_meta/tools")
 async def list_available_tools() -> Dict[str, Any]:
-    """Return MCP tool names grouped by server prefix for the UI multiselect.
-
-    Sources, in order of preference:
-      1. Live MCP registry (populated when MCP servers connect at startup).
-      2. Persistent tools cache file at ``data/mcp_tools_cache.json`` written
-         on prior successful boots — covers the common dev case where not
-         every MCP server happens to be reachable right now.
-    """
     tools: List[str] = []
     try:
         from services.mcp_registry import get_mcp_registry
@@ -180,13 +155,6 @@ async def list_available_tools() -> Dict[str, Any]:
 
 @router.post("/agents/custom/generate")
 async def generate_custom_agent(payload: GenerateAgentRequest) -> Dict[str, Any]:
-    """
-    AI-assisted agent generation / refinement (issue #80 Phase 2).
-
-    Does NOT save. Frontend takes the returned draft, lets the user tweak it,
-    and POSTs to /agents/custom to create. Pass ``current_draft`` + ``feedback``
-    to iteratively refine a prior draft.
-    """
     try:
         from services.agent_ai_generator import get_agent_ai_generator
 
@@ -228,12 +196,6 @@ async def get_custom_agent(agent_id: str) -> Dict[str, Any]:
 async def fork_agent(
     source_agent_id: str, request: Optional[ForkAgentRequest] = None
 ) -> Dict[str, Any]:
-    """Fork any agent (built-in or custom) into a new editable custom copy.
-
-    Built-ins remain static templates — the source is never modified. The
-    new row is a standalone custom agent that can be edited or deleted
-    without affecting the source.
-    """
     try:
         from backend.api.agents import agent_manager, _resolve_agent
 

@@ -1,11 +1,3 @@
-"""MCP Server management API endpoints.
-
-Auth model: router-level ``get_current_active_user`` (applied in
-``backend/main.py``) guards every endpoint. State-changing endpoints
-additionally require ``integrations.write`` permission since enabling
-an MCP server can spawn subprocesses and surface tools to agents.
-"""
-
 import logging
 from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,7 +13,6 @@ router = APIRouter()
 
 
 def _require_mcp_admin(current_user: User) -> None:
-    """Raise 403 unless the user has ``integrations.write``."""
     if not AuthService.check_permission(current_user.user_id, "integrations.write"):
         raise HTTPException(
             status_code=403,
@@ -30,27 +21,11 @@ def _require_mcp_admin(current_user: User) -> None:
 
 
 def _validate_known_server(server_name: str) -> None:
-    """Reject server_name values that aren't in the registry.
-
-    Cuts off the path where an attacker sends an unknown server name to
-    fish for behavior differences (or to make the MCPClient spawn a
-    process for something the registry doesn't know about).
-    """
     if server_name not in mcp_service.list_servers():
         raise HTTPException(status_code=404, detail="Server not found")
 
 
 def _service() -> MCPService:
-    """Return the process-wide MCPService instance.
-
-    Both the API endpoints and the MCPClient used to wrap in their own
-    ``MCPService()`` — two instances, two cached ``_enabled_servers``
-    dicts, so ``set_server_enabled`` on A was never visible to
-    ``connect_to_server`` on B. Centralising through ``get_mcp_client()``
-    ensures a single source of truth. Falls back to a local instance
-    if the MCP SDK isn't installed so the introspection endpoints
-    still work.
-    """
     try:
         from services.mcp_client import get_mcp_client
 
@@ -65,7 +40,6 @@ def _service() -> MCPService:
 
 
 class _ServiceProxy:
-    """Back-compat alias so existing ``mcp_service.X`` call sites keep working."""
 
     def __getattr__(self, name):
         return getattr(_service(), name)
@@ -75,37 +49,23 @@ mcp_service = _ServiceProxy()
 
 
 class ServerControl(BaseModel):
-    """Server control request."""
 
     action: str  # start or stop
 
 
 class ServerEnabledRequest(BaseModel):
-    """Request body for enabling/disabling a server."""
 
     enabled: bool
 
 
 @router.get("/servers")
 async def list_servers():
-    """
-    Get list of all MCP servers.
-
-    Returns:
-        List of server names
-    """
     servers = mcp_service.list_servers()
     return {"servers": servers}
 
 
 @router.get("/servers/status")
 async def get_servers_status():
-    """
-    Get status of all MCP servers including enabled state.
-
-    Returns:
-        List of server status objects with enabled flag
-    """
     statuses_dict = mcp_service.get_all_statuses()
     enabled_dict = mcp_service.get_all_enabled_states()
     # Convert dict to list of objects for frontend
@@ -118,12 +78,6 @@ async def get_servers_status():
 
 @router.get("/servers/enabled")
 async def get_enabled_states():
-    """
-    Get enabled/disabled state for all MCP servers.
-
-    Returns:
-        Dictionary of server_name -> enabled boolean
-    """
     return {"enabled": mcp_service.get_all_enabled_states()}
 
 
@@ -133,18 +87,6 @@ async def set_server_enabled(
     request: ServerEnabledRequest,
     current_user: User = Depends(get_current_active_user),
 ):
-    """Enable or disable an MCP server and apply the change at runtime.
-
-    Transactional: persisting the enabled bit also triggers an actual
-    connect (on enable) or disconnect (on disable), so the UI toggle
-    becomes the single lever users need. Before this was wired, toggling
-    only changed persisted state — the server didn't actually come online
-    until the next backend restart.
-
-    The response carries ``connected`` and ``error`` so the UI can flip
-    the toggle back off and surface the real reason (e.g. missing creds,
-    bad binary) when the connect attempt fails.
-    """
     _require_mcp_admin(current_user)
     _validate_known_server(server_name)
 
@@ -221,12 +163,6 @@ async def set_server_enabled(
 
 @router.get("/connections/status")
 async def get_connections_status():
-    """
-    Get persistent connection status for all MCP servers.
-
-    Returns:
-        Connection status for each server
-    """
     from services.mcp_client import get_mcp_client
 
     mcp_client = get_mcp_client()
@@ -267,15 +203,6 @@ async def get_connections_status():
 
 @router.get("/servers/{server_name}/status")
 async def get_server_status(server_name: str):
-    """
-    Get status of a specific server.
-
-    Args:
-        server_name: Name of the server
-
-    Returns:
-        Server status
-    """
     status = mcp_service.get_server_status(server_name)
     if status is None:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -297,16 +224,6 @@ async def get_server_status(server_name: str):
 
 @router.get("/servers/{server_name}/logs")
 async def get_server_logs(server_name: str, lines: int = 100):
-    """
-    Get logs for a specific server.
-
-    Args:
-        server_name: Name of the server
-        lines: Number of log lines to retrieve
-
-    Returns:
-        Server logs
-    """
     logs = mcp_service.get_server_log(server_name, lines=lines)
 
     if logs == "":
@@ -332,11 +249,6 @@ async def test_server(
     server_name: str,
     current_user: User = Depends(get_current_active_user),
 ):
-    """Test if a server is responding.
-
-    Admin-gated because the underlying ``test_server`` call can spawn
-    a subprocess to probe a stdio MCP server.
-    """
     _require_mcp_admin(current_user)
     _validate_known_server(server_name)
     is_running = mcp_service.test_server(server_name)
@@ -352,17 +264,6 @@ async def test_server(
 async def reload_servers(
     current_user: User = Depends(get_current_active_user),
 ):
-    """Reload MCP server configurations from ``mcp-config.json`` and
-    the integration bridge, picking up newly enabled/disabled
-    integrations without restarting the backend.
-
-    Reinitialises the process-wide ``MCPService`` in place so both the
-    API and the ``MCPClient`` see the new catalog. Previously-enabled
-    servers are reconnected automatically; the old Popen-monitor path
-    is gone (#125), so there's nothing here analogous to "restart
-    running servers" — just enumerate new servers and let the enable
-    toggle drive connects.
-    """
     _require_mcp_admin(current_user)
     logger.info("User %s requested MCP server reload", current_user.user_id)
     try:

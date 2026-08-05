@@ -31,8 +31,6 @@ _APPROVAL_WAIT_TIMEOUT_S = 600.0
 
 
 class PendingApprovalError(Exception):
-    """Tool call blocked pending human approval; action_id is the queue row to
-    poll, or None when the request could not be created."""
 
     def __init__(self, message: str, action_id: Optional[str] = None):
         super().__init__(message)
@@ -47,7 +45,6 @@ def _truncate(text: str, max_chars: int = _MAX_TOOL_RESPONSE_CHARS) -> str:
 
 
 def _inter_iteration_delay(iteration: int) -> float:
-    """Exponential backoff matching ClaudeService: 500ms base, ramp after 15."""
     if iteration <= _BACKOFF_ITERATION_THRESHOLD:
         return _BASE_INTER_ITERATION_DELAY_S
     exp = iteration - _BACKOFF_ITERATION_THRESHOLD
@@ -56,13 +53,6 @@ def _inter_iteration_delay(iteration: int) -> float:
 
 
 def _canonical_args(raw: str) -> str:
-    """Canonicalize tool-call argument JSON for stable loop detection.
-
-    Parse and re-serialize with sorted keys so cosmetic streaming
-    differences (whitespace, key ordering) don't make a repeated call look
-    distinct and defeat the infinite-loop guard. Falls back to the stripped
-    raw string when the arguments aren't valid JSON.
-    """
     try:
         return json.dumps(
             json.loads(raw or "{}"), sort_keys=True, separators=(",", ":")
@@ -72,15 +62,6 @@ def _canonical_args(raw: str) -> str:
 
 
 class OpenAIAgentService:
-    """Streaming agent loop for OpenAI-compatible providers via Bifrost.
-
-    Mirrors ClaudeService.chat_stream capabilities:
-      - Multi-turn tool calling with streaming
-      - Infinite loop detection
-      - Context window management
-      - Per-iteration audit logging
-      - Agent-specific tool filtering
-    """
 
     def __init__(
         self,
@@ -103,7 +84,6 @@ class OpenAIAgentService:
         return tool_manager.load_backend_tools()
 
     def _refresh_skill_tools(self) -> None:
-        """Load DB-backed skill tools via the shared tool manager."""
         skill_tools, self._skill_tool_index = tool_manager.load_skill_tools()
         self._backend_tools.extend(skill_tools)
         self._backend_tool_names.update(t["name"] for t in skill_tools)
@@ -122,11 +102,9 @@ class OpenAIAgentService:
         return []
 
     def _filter_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Filter tools by recommended_tools list (agent-specific subset)."""
         return tool_manager.filter_tools_by_recommended(tools, self._recommended_tools)
 
     def _all_tools_openai_format(self) -> List[Dict[str, Any]]:
-        """Collect backend + MCP tools, filter, and convert to OpenAI format."""
         anthropic_tools = list(self._backend_tools) + self._get_mcp_tools()
         anthropic_tools = self._filter_tools(anthropic_tools)
         if not anthropic_tools:
@@ -134,11 +112,6 @@ class OpenAIAgentService:
         return anthropic_tools_to_openai(anthropic_tools)
 
     def tools_available(self) -> bool:
-        """True if any tool is exposed to the model after filtering.
-
-        Lets the router fall back to the no-tools stream path when the model
-        claims tool support but nothing is actually loadable.
-        """
         return bool(self._all_tools_openai_format())
 
     @staticmethod
@@ -146,11 +119,6 @@ class OpenAIAgentService:
         messages: List[Dict[str, Any]],
         window: int = _HISTORY_WINDOW_DEFAULT,
     ) -> List[Dict[str, Any]]:
-        """Enforce a sliding history window (configurable max turns).
-
-        Keeps the system message (if first) + the most recent `window * 2`
-        messages. Matches ClaudeService._apply_history_window behavior.
-        """
         if window <= 0:
             return messages
         max_msgs = window * 2
@@ -176,22 +144,6 @@ class OpenAIAgentService:
         agent_id: Optional[str] = None,
         history_window: int = _HISTORY_WINDOW_DEFAULT,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """Stream a multi-turn agentic conversation with tool calling.
-
-        Yields SSE-compatible event dicts matching the frontend protocol:
-            {"type": "text", "content": "..."}
-            {"type": "tool_processing", "tool_name": "...",
-             "tool_id": "..."}
-            {"type": "tool_result", "tool_name": "...",
-             "tool_id": "...", "result": "..."}
-            {"type": "error", "content": "..."}
-
-        Matches ClaudeService.chat_stream guardrails:
-            - 30 tool iterations max
-            - 300s wall-clock timeout
-            - Exponential inter-iteration backoff
-            - Infinite loop detection (3 repeated identical tool sets)
-        """
         # Stash attribution context for tool gating (approval requests) raised
         # deep in the loop without threading it through every call.
         self._session_id = session_id
@@ -503,14 +455,6 @@ class OpenAIAgentService:
         agent_id: Optional[str] = None,
         history_window: int = _HISTORY_WINDOW_DEFAULT,
     ) -> str:
-        """Run the agentic loop to completion and return the final text.
-
-        Non-streaming convenience for callers (the workflow engine) that want a
-        single string the way ``ClaudeService.chat`` returns one. Tool
-        processing/result events are consumed internally; only assistant text
-        is accumulated. A surfaced ``error`` event is raised so the caller can
-        fall back or report failure rather than silently returning "".
-        """
         parts: List[str] = []
         async for event in self.stream(
             provider=provider,
@@ -533,7 +477,6 @@ class OpenAIAgentService:
 
     @staticmethod
     def _detect_infinite_loop(history: deque) -> bool:
-        """Detect if the same tool call set repeats >= threshold times."""
         if len(history) < _LOOP_DETECT_THRESHOLD:
             return False
         recent = list(history)[-_LOOP_DETECT_THRESHOLD:]
@@ -542,9 +485,6 @@ class OpenAIAgentService:
     async def _execute_tool(
         self, tool_name: str, raw_arguments: str, *, approved: bool = False
     ) -> tuple[str, bool]:
-        """Dispatch a tool call to the backend or MCP layer, returning
-        ``(result_text, is_error)``. ``approved`` skips the approval gate (never
-        the forbidden check) to re-run a call an operator has cleared."""
         try:
             arguments = json.loads(raw_arguments) if raw_arguments else {}
         except json.JSONDecodeError:
@@ -573,8 +513,6 @@ class OpenAIAgentService:
     async def _request_approval(
         self, tool_name: str, arguments: Dict[str, Any]
     ) -> tuple[str, Optional[str]]:
-        """Queue a pending approval instead of executing the tool, returning the
-        message for the model and the action id to poll (None if not created)."""
         try:
             from services.approval_service import ActionType, get_approval_service
 
@@ -619,9 +557,6 @@ class OpenAIAgentService:
     async def _await_approval(
         self, action_id: str, *, timeout: float = _APPROVAL_WAIT_TIMEOUT_S
     ) -> tuple[str, str, float]:
-        """Poll the approval queue until an operator decides, returning
-        ``(decision, detail, waited_seconds)``. A vanished action reads as a
-        rejection so an uncleared action never executes."""
         from services.approval_service import ActionStatus, get_approval_service
 
         service = get_approval_service()
@@ -667,7 +602,6 @@ class OpenAIAgentService:
     def _mark_action_executed(
         action_id: Optional[str], result_text: str, is_error: bool
     ) -> None:
-        """Close out an approved action so the queue reflects what ran."""
         if not action_id:
             return
         try:
@@ -684,11 +618,6 @@ class OpenAIAgentService:
     async def _execute_backend_tool(
         self, tool_name: str, arguments: Dict[str, Any]
     ) -> tuple[str, bool]:
-        """Execute a backend tool via the shared dispatch (same as ClaudeService).
-
-        Delegates to ``tool_manager.execute_backend_tool`` so the tool-name ->
-        handler mapping stays identical across both agent loops.
-        """
         try:
             result, handled = await tool_manager.execute_backend_tool(
                 tool_name, arguments, skill_index=self._skill_tool_index
@@ -706,7 +635,6 @@ class OpenAIAgentService:
     async def _execute_mcp_tool(
         self, tool_name: str, arguments: Dict[str, Any]
     ) -> tuple[str, bool]:
-        """Execute an MCP tool via the shared MCP client."""
         try:
             from services.mcp_client import get_mcp_client
             from core.llm.security import wrap_tool_result
@@ -767,12 +695,6 @@ class OpenAIAgentService:
         input_tokens: int,
         output_tokens: int,
     ) -> float:
-        """USD cost for a single call via the shared pricing helper.
-
-        Uses the same ``compute_call_cost`` (model-registry pricing) the
-        Anthropic path uses, so OpenAI/Groq/Ollama spend lands in the same
-        analytics buckets. Returns 0.0 if pricing can't be resolved.
-        """
         try:
             from core.llm.cost.calls import compute_call_cost
 
@@ -801,7 +723,6 @@ class OpenAIAgentService:
         output_tokens: int = 0,
         cost_usd: float = 0.0,
     ) -> None:
-        """Persist an LLMInteractionLog row (non-fatal, fire-and-forget)."""
         try:
             from database.connection import get_db_session
             from database.models import LLMInteractionLog

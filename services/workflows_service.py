@@ -1,5 +1,3 @@
-"""Workflows service for discovering, parsing, and executing WORKFLOW.md workflow definitions."""
-
 import asyncio
 import logging
 import re
@@ -13,12 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_yaml_frontmatter(content: str) -> Dict[str, Any]:
-    """
-    Parse YAML frontmatter from a WORKFLOW.md file.
-
-    Uses simple regex parsing to avoid pyyaml dependency.
-    Handles strings, lists (both inline [...] and indented - item).
-    """
     # Match frontmatter block: --- ... --- followed by newline, EOF, or content
     match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
     if not match:
@@ -75,7 +67,6 @@ def _parse_yaml_frontmatter(content: str) -> Dict[str, Any]:
 
 
 def _get_frontmatter_end(content: str) -> int:
-    """Get the character index where frontmatter ends and body begins."""
     match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
     if match:
         return match.end()
@@ -83,7 +74,6 @@ def _get_frontmatter_end(content: str) -> int:
 
 
 class WorkflowDefinition:
-    """Represents a parsed workflow from a WORKFLOW.md file."""
 
     def __init__(
         self,
@@ -133,7 +123,6 @@ class WorkflowDefinition:
         return examples
 
     def to_dict(self, include_body: bool = False) -> Dict[str, Any]:
-        """Convert to JSON-serializable dictionary."""
         result = {
             "id": self.id,
             "name": self.name,
@@ -153,11 +142,6 @@ class WorkflowDefinition:
 
 
 def _custom_workflow_to_definition(wf: Dict[str, Any]) -> WorkflowDefinition:
-    """
-    Adapt a database-backed custom workflow dict into a WorkflowDefinition so
-    that existing execution code (build_execution_prompt, execute_workflow)
-    can consume it without changes.
-    """
     phases = wf.get("phases") or []
     agents: List[str] = []
     tools: List[str] = []
@@ -192,8 +176,6 @@ def _custom_workflow_to_definition(wf: Dict[str, Any]) -> WorkflowDefinition:
 def _render_custom_workflow_body(
     wf: Dict[str, Any], phases: List[Dict[str, Any]]
 ) -> str:
-    """Render a markdown body from structured phases, compatible with
-    build_execution_prompt()'s template."""
     lines: List[str] = []
     lines.append(f"# {wf.get('name', wf.get('workflow_id'))}")
     if wf.get("description"):
@@ -231,15 +213,8 @@ def _render_custom_workflow_body(
 
 
 class WorkflowsService:
-    """Service for discovering, parsing, and executing workflow definitions."""
 
     def __init__(self, workflows_dir: Optional[Path] = None):
-        """
-        Initialize workflows service.
-
-        Args:
-            workflows_dir: Directory containing workflow definitions (default: ./workflows)
-        """
         if workflows_dir is None:
             workflows_dir = Path(__file__).parent.parent / "workflows"
 
@@ -251,7 +226,6 @@ class WorkflowsService:
         self._load_workflows()
 
     def _load_workflows(self):
-        """Discover and parse all WORKFLOW.md files from the workflows directory."""
         self._cache.clear()
 
         if not self.workflows_dir.exists():
@@ -290,11 +264,9 @@ class WorkflowsService:
         logger.info(f"Loaded {len(self._cache)} workflows from {self.workflows_dir}")
 
     def reload(self):
-        """Force reload all workflows from disk."""
         self._load_workflows()
 
     def _get_custom_workflow(self, workflow_id: str) -> Optional[WorkflowDefinition]:
-        """Fetch a single custom workflow from the database by ID."""
         try:
             from services.custom_workflow_service import get_custom_workflow_service
 
@@ -307,7 +279,6 @@ class WorkflowsService:
         return _custom_workflow_to_definition(raw)
 
     def _list_custom_workflows(self) -> List[WorkflowDefinition]:
-        """List active custom workflows from the database."""
         try:
             from services.custom_workflow_service import get_custom_workflow_service
 
@@ -318,10 +289,6 @@ class WorkflowsService:
         return [_custom_workflow_to_definition(r) for r in rows]
 
     def list_workflows(self) -> List[Dict[str, Any]]:
-        """
-        Return metadata for all discovered workflows, merging file-based and
-        database-backed custom workflows. Custom workflows are listed first.
-        """
         custom = [
             wf.to_dict(include_body=False) for wf in self._list_custom_workflows()
         ]
@@ -329,7 +296,6 @@ class WorkflowsService:
         return custom + file_based
 
     def get_workflow(self, workflow_id: str) -> Optional[WorkflowDefinition]:
-        """Get a specific workflow by ID (custom workflows take precedence)."""
         custom = self._get_custom_workflow(workflow_id)
         if custom:
             return custom
@@ -338,7 +304,6 @@ class WorkflowsService:
     def get_workflow_dict(
         self, workflow_id: str, include_body: bool = True
     ) -> Optional[Dict[str, Any]]:
-        """Get a specific workflow as a dictionary."""
         workflow = self.get_workflow(workflow_id)
         if workflow:
             return workflow.to_dict(include_body=include_body)
@@ -350,20 +315,6 @@ class WorkflowsService:
         target_context: str,
         agent_profiles: Optional[Dict] = None,
     ) -> str:
-        """
-        Build a composite prompt that instructs Claude to execute a workflow.
-
-        Embeds the workflow's full instructions plus relevant agent methodologies
-        into a single prompt for ClaudeService.run_agent_task().
-
-        Args:
-            workflow: The workflow definition to execute
-            target_context: Context about the target (finding details, case details, etc.)
-            agent_profiles: Optional dict of agent_id -> AgentProfile for embedding methodologies
-
-        Returns:
-            Composite prompt string
-        """
         # Build agent methodology section
         agent_section = ""
         if agent_profiles:
@@ -431,21 +382,6 @@ For each phase:
         parameters: Dict[str, Any],
         triggered_by: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Execute a workflow as a playbook run.
-
-        Custom workflows with a structured ``phases`` list run phase-
-        by-phase so ``approval_required`` can actually block execution
-        (#128). File-based workflows without structured phases fall
-        back to the legacy one-shot composite prompt — there's nothing
-        to gate on.
-
-        Returns an execution result dict. If a phase pauses on
-        approval, the response shape is
-        ``{success: True, status: "paused", run_id,
-           pending_approval_action_id, paused_at_phase}`` and the caller
-        (or the Approvals UI) must call ``resume_workflow`` once a
-        decision is made.
-        """
         workflow = self.get_workflow(workflow_id)
         if not workflow:
             return {"success": False, "error": f"Workflow not found: {workflow_id}"}
@@ -466,13 +402,6 @@ For each phase:
         rejection_reason: Optional[str] = None,
         approved_by: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Resume a paused workflow run after an approval decision (#128).
-
-        Called from the approvals endpoint (or the workflow-run resume
-        endpoint). ``decision`` is ``"approved"`` or ``"rejected"``.
-        On approve, re-enters the phase loop at the paused phase. On
-        reject, finalises the run as ``cancelled``.
-        """
         from services.workflow_run_service import get_workflow_run_service
 
         if decision not in ("approved", "rejected"):
@@ -591,15 +520,6 @@ For each phase:
     # ------------------------------------------------------------------
 
     def _resolve_agent_provider(self, component: str):
-        """Resolve ``(provider_spec, model_id)`` for a workflow agent.
-
-        Uses the same ``ai_model_configs`` chain the daemon and Model
-        Assignment UI use (component → chat_default → default Anthropic).
-        Returns ``(None, model_id)`` when the resolved provider is Anthropic —
-        that path stays on ``ClaudeService.chat``. A non-Anthropic provider
-        returns its ``ProviderSpec`` so the caller runs the OpenAI agent loop.
-        Any failure degrades to ``(None, DEFAULT_MODEL)`` (legacy behavior).
-        """
         try:
             from core.llm.router.router import get_provider_spec
             from core.llm.providers.registry import get_registry
@@ -628,12 +548,6 @@ For each phase:
         session_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Run one workflow agent turn on the correct provider.
-
-        Anthropic → the existing ``ClaudeService.chat`` loop (unchanged).
-        Non-Anthropic → ``OpenAIAgentService`` (full multi-turn tool loop with
-        the same tier/approval gating), returning the final text like ``chat``.
-        """
         spec, model_id = self._resolve_agent_provider(component)
 
         if spec is None:
@@ -666,9 +580,6 @@ For each phase:
         parameters: Dict[str, Any],
         triggered_by: Optional[str],
     ) -> Dict[str, Any]:
-        """Legacy composite-prompt path for file-based workflows that
-        don't have structured phases. No approval gating possible —
-        there's no phase_id to attach an approval to."""
         from core.llm.harness.claude import ClaudeService
         from core.agents.manager import SOCAgentLibrary
         from services.workflow_run_service import get_workflow_run_service
@@ -786,7 +697,6 @@ For each phase:
         parameters: Dict[str, Any],
         triggered_by: Optional[str],
     ) -> Dict[str, Any]:
-        """Phase-by-phase execution path for custom workflows (#128)."""
         from core.llm.harness.claude import ClaudeService
         from services.workflow_run_service import get_workflow_run_service
 
@@ -838,9 +748,6 @@ For each phase:
         triggered_by: Optional[str],
         skill_tools_available: List[str],
     ) -> Dict[str, Any]:
-        """Shared phase-loop body used by both initial execute and
-        resume. Walks phases from ``start_index``; pauses or completes
-        the run as appropriate."""
         from services.approval_service import ActionType, get_approval_service
         from core.llm.harness.claude import ClaudeService
         from core.agents.manager import SOCAgentLibrary
@@ -1078,8 +985,6 @@ For each phase:
         workflow: "WorkflowDefinition",
         agent_profiles: Dict[str, Any],
     ) -> tuple[List[str], List[str]]:
-        """Collect workflow + agent + MCP + skill tools. Returns
-        ``(all_tools, skill_tool_names)``."""
         all_tools = list(workflow.tools_used)
         for agent_id in workflow.agents:
             profile = agent_profiles.get(agent_id)
@@ -1117,7 +1022,6 @@ For each phase:
         profile: Optional[Any],
         skill_tool_names: List[str],
     ) -> List[str]:
-        """Narrow the tool list to what this phase actually needs."""
         tools = list(phase.get("tools") or [])
         if profile and getattr(profile, "recommended_tools", None):
             for t in profile.recommended_tools:
@@ -1143,7 +1047,6 @@ For each phase:
         skill_tool_names: List[str],
         single_phase: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """System prompt shared by oneshot and per-phase execution."""
         skills_hint = ""
         if skill_tool_names:
             skills_hint = (
@@ -1190,8 +1093,6 @@ You have access to SOC tools and must ground every conclusion in tool output.
         target_context: str,
         prior_outputs: Dict[str, Any],
     ) -> str:
-        """Focused prompt for a single phase. Includes accumulated
-        outputs from prior phases so context carries forward."""
         lines: List[str] = [
             f"# Phase {phase.get('order', '?')}: {phase.get('name', '')}",
             "",
@@ -1223,14 +1124,12 @@ You have access to SOC tools and must ground every conclusion in tool output.
         return "\n".join(lines)
 
     def _combine_summary(self, phase_outputs: List[Dict[str, Any]]) -> str:
-        """Concatenate per-phase outputs into a single run summary."""
         parts: List[str] = []
         for p in phase_outputs:
             parts.append(f"### {p['phase_id']}\n{p.get('output', '')}")
         return "\n\n".join(parts)
 
     def _build_target_context(self, parameters: Dict[str, Any]) -> str:
-        """Build a context string from execution parameters."""
         parts = []
 
         finding_id = parameters.get("finding_id")
@@ -1314,7 +1213,6 @@ _workflows_service: Optional[WorkflowsService] = None
 
 
 def get_workflows_service() -> WorkflowsService:
-    """Get singleton WorkflowsService instance."""
     global _workflows_service
     if _workflows_service is None:
         _workflows_service = WorkflowsService()

@@ -1,11 +1,3 @@
-"""Tests for DatabaseDataService recovery from transient Postgres outages.
-
-Before the fix, a Postgres outage at backend startup would set
-`_use_json_fallback = True` permanently, trapping the singleton in
-JSON-file-fallback for the rest of the process lifetime even after
-Postgres came back. These tests verify the rate-limited auto-reconnect.
-"""
-
 from __future__ import annotations
 
 from unittest.mock import patch, MagicMock
@@ -14,7 +6,6 @@ from services.database_data_service import DatabaseDataService
 
 
 def _make_service_in_fallback() -> DatabaseDataService:
-    """Construct a service that failed its initial DB connection."""
     with patch(
         "services.database_data_service.init_database",
         side_effect=RuntimeError("postgres down"),
@@ -54,7 +45,6 @@ def test_db_available_rate_limits_reconnect_attempts():
 
 
 def test_db_available_short_circuits_when_already_connected():
-    """When already connected, reading the property must NOT touch init_database."""
     fake_manager = MagicMock()
     fake_manager.health_check.return_value = True
     with patch("services.database_data_service.init_database"), patch(

@@ -1,5 +1,3 @@
-"""Service to bridge frontend integration configs to MCP servers."""
-
 import json
 import logging
 import os
@@ -45,7 +43,6 @@ _PROXY_FORM_FIELDS = frozenset(
 
 
 class IntegrationBridgeService:
-    """Bridges integration configs to MCP server configurations."""
 
     # Map integration IDs (frontend) to MCP server names (backend)
     INTEGRATION_TO_SERVER_MAP = {
@@ -122,16 +119,9 @@ class IntegrationBridgeService:
     }
 
     def __init__(self):
-        """Initialize the integration bridge service."""
         self.config_path = vigil_path("integrations_config.json")
 
     def load_integration_config(self) -> Dict:
-        """
-        Load integration configuration from disk.
-
-        Returns:
-            Dictionary with 'enabled_integrations' and 'integrations' keys
-        """
         if not self.config_path.exists():
             logger.info("No integration config file found, using empty config")
             return {"enabled_integrations": [], "integrations": {}}
@@ -148,18 +138,6 @@ class IntegrationBridgeService:
             return {"enabled_integrations": [], "integrations": {}}
 
     def get_enabled_servers(self) -> Dict[str, Dict]:
-        """
-        Get MCP server configurations for all enabled integrations.
-
-        Returns:
-            Dict mapping server names to their configurations with env vars
-            Example: {
-                'virustotal-server': {
-                    'integration_id': 'virustotal',
-                    'env_vars': {'VIRUSTOTAL_API_KEY': 'xxx'}
-                }
-            }
-        """
         config = self.load_integration_config()
         enabled = config.get("enabled_integrations", [])
         integrations = config.get("integrations", {})
@@ -195,10 +173,6 @@ class IntegrationBridgeService:
         return servers
 
     def derive_remote_mcp_env(self) -> Dict[str, str]:
-        """Derive a ``<UPPER_ID>_MCP_URL`` env var from each configured
-        integration's ``connectorUrl`` so a static ``mcp-config.json`` entry
-        (e.g. ``${LOGLM_MCP_URL}``) resolves from one source of truth. An
-        explicit pre-existing env value wins. Returns the mapping applied."""
         config = self.load_integration_config()
         integrations = config.get("integrations", {})
         applied: Dict[str, str] = {}
@@ -229,16 +203,6 @@ class IntegrationBridgeService:
         return applied
 
     def _config_to_env_vars(self, integration_id: str, config: Dict) -> Dict[str, str]:
-        """
-        Convert integration configuration to environment variables.
-
-        Args:
-            integration_id: Integration identifier (e.g., 'virustotal')
-            config: Integration configuration dictionary
-
-        Returns:
-            Dictionary of environment variables with proper naming
-        """
         env_vars = {}
 
         # Add integration ID prefix for namespacing
@@ -275,18 +239,6 @@ class IntegrationBridgeService:
         return env_vars
 
     def _proxy_env_vars(self, integration_id: str, config: Dict) -> Dict[str, str]:
-        """Translate proxy_* form fields into env vars for the MCP child.
-
-        For ``http`` / ``socks5``: emits ``HTTPS_PROXY`` / ``ALL_PROXY``
-        (recognised by every common Python HTTP client).
-
-        For ``pgbouncer`` and ``ssh_tunnel``: returns ``{}`` here. Those
-        modes need host:port rewriting on URL-shaped fields, which is
-        more invasive than env injection — handled (or warned about) by
-        callers that actually open connections. Documented in the
-        accompanying plan as a v1 limitation for integration-side
-        tunneling.
-        """
         proxy_type = (config.get("proxy_type") or "none").strip().lower()
         if proxy_type in ("", "none"):
             return {}
@@ -318,41 +270,14 @@ class IntegrationBridgeService:
         return {}
 
     def is_integration_enabled(self, integration_id: str) -> bool:
-        """
-        Check if an integration is enabled.
-
-        Args:
-            integration_id: Integration identifier
-
-        Returns:
-            True if integration is enabled, False otherwise
-        """
         config = self.load_integration_config()
         return integration_id in config.get("enabled_integrations", [])
 
     def get_integration_config(self, integration_id: str) -> Optional[Dict]:
-        """
-        Get configuration for a specific integration.
-
-        Args:
-            integration_id: Integration identifier
-
-        Returns:
-            Integration configuration dictionary or None
-        """
         config = self.load_integration_config()
         return config.get("integrations", {}).get(integration_id)
 
     def get_integration_status(self, integration_id: str) -> Dict:
-        """
-        Get status information for an integration.
-
-        Args:
-            integration_id: Integration identifier
-
-        Returns:
-            Dictionary with status information
-        """
         config = self.load_integration_config()
 
         is_enabled = integration_id in config.get("enabled_integrations", [])
@@ -372,12 +297,6 @@ class IntegrationBridgeService:
         return status
 
     def get_all_integration_statuses(self) -> Dict[str, Dict]:
-        """
-        Get status information for all integrations.
-
-        Returns:
-            Dictionary mapping integration IDs to their status
-        """
         config = self.load_integration_config()
         all_integrations = set(self.INTEGRATION_TO_SERVER_MAP.keys())
         all_integrations.update(config.get("integrations", {}).keys())
@@ -389,15 +308,6 @@ class IntegrationBridgeService:
         return statuses
 
     def get_server_module_path(self, integration_id: str) -> Optional[str]:
-        """
-        Get the Python module path for an integration's MCP server.
-
-        Args:
-            integration_id: Integration identifier
-
-        Returns:
-            Module path string or None
-        """
         server_name = self.INTEGRATION_TO_SERVER_MAP.get(integration_id)
         if not server_name:
             return None
@@ -414,12 +324,6 @@ _bridge_service = None
 
 
 def get_integration_bridge() -> IntegrationBridgeService:
-    """
-    Get the global integration bridge service instance.
-
-    Returns:
-        IntegrationBridgeService instance
-    """
     global _bridge_service
     if _bridge_service is None:
         _bridge_service = IntegrationBridgeService()

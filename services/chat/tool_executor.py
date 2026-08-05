@@ -1,13 +1,3 @@
-"""Tool execution for the agentic chat loop.
-
-Handles three dispatch paths:
-- ``process_backend_tool_use``: calls Vigil's own DB/service tools (async)
-- ``process_mcp_tool_use``: calls external MCP server tools (async)
-- ``process_mixed_tool_use``: routes each tool call to the correct path
-
-``ToolExecutor`` is stateful only in ``skill_tool_index``, which ClaudeService
-refreshes before each request via ``_refresh_skill_tools``.
-"""
 from __future__ import annotations
 
 import json
@@ -30,8 +20,6 @@ class ToolExecutor:
     async def process_backend_tool_use(
         self, content: List, backend_tools: Optional[List] = None
     ) -> List[Dict]:
-        """Iterate Anthropic content blocks, dispatch each tool_use to the
-        appropriate backend handler, and return tool_result blocks."""
         tool_results: List[Dict] = []
         security_tools = None
 
@@ -173,7 +161,6 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     async def process_mcp_tool_use(self, content: List) -> List[Dict]:
-        """Call external MCP server tools and return tool_result blocks."""
         tool_results: List[Dict] = []
 
         for item in content:
@@ -271,7 +258,6 @@ class ToolExecutor:
         content: List,
         backend_tool_names: Optional[set] = None,
     ) -> List[Dict]:
-        """Route each tool call to the backend or MCP processor."""
         tool_results: List[Dict] = []
         backend_names = backend_tool_names or set()
 
@@ -298,7 +284,6 @@ class ToolExecutor:
 async def _dispatch_findings_tool(
     tool_name: str, arguments: Dict, data_service
 ) -> Any:
-    """Handle all findings/cases backend tool calls."""
     if tool_name == "list_findings":
         limit = arguments.get("limit", 20)
         offset = arguments.get("offset", 0)

@@ -15,12 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 def generate_run_id() -> str:
-    """Return a new run_id shaped ``wfr-YYYYMMDD-<uuid8>``."""
     return f"wfr-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
 
 
 class WorkflowRunService:
-    """Persist and query workflow execution history."""
 
     def begin_run(
         self,
@@ -33,12 +31,6 @@ class WorkflowRunService:
         triggered_by: Optional[str] = None,
         skill_tools_available: Optional[List[str]] = None,
     ) -> Optional[str]:
-        """Create a ``workflow_runs`` row with ``status='running'``.
-
-        Returns the new ``run_id`` on success, ``None`` if the DB
-        write fails (the workflow still executes — run history is
-        best-effort so a DB outage can't block operations).
-        """
         run_id = generate_run_id()
         try:
             db = get_db_manager()
@@ -64,9 +56,6 @@ class WorkflowRunService:
             return None
 
     def set_status(self, run_id: str, status: str) -> bool:
-        """Update only ``workflow_runs.status`` without touching terminal
-        fields. Used by the phase loop to flip running→paused when a
-        phase blocks on approval (#128)."""
         if status not in ("running", "paused"):
             logger.error("set_status: invalid non-terminal status %r", status)
             return False
@@ -90,8 +79,6 @@ class WorkflowRunService:
         result_summary: Optional[str] = None,
         error: Optional[str] = None,
     ) -> bool:
-        """Mark a run terminal. ``status`` must be one of the check-
-        constrained values: completed | failed | cancelled."""
         if status not in ("completed", "failed", "cancelled"):
             logger.error("finalize_run: invalid status %r", status)
             return False
@@ -129,8 +116,6 @@ class WorkflowRunService:
         limit: int = 50,
         offset: int = 0,
     ) -> List[Dict[str, Any]]:
-        """List runs, newest first. Does not include the (potentially
-        large) ``result_summary`` field — use ``get_run`` for detail."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -151,7 +136,6 @@ class WorkflowRunService:
             return []
 
     def get_run(self, run_id: str) -> Optional[Dict[str, Any]]:
-        """Get one run with the full ``result_summary`` attached."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -180,14 +164,6 @@ class WorkflowRunService:
         started_at: Optional[datetime] = None,
         finished_at: Optional[datetime] = None,
     ) -> bool:
-        """Insert or update a ``workflow_run_phases`` row.
-
-        The phase loop in ``WorkflowsService.execute_workflow`` calls
-        this at each state transition (pending → running → completed
-        / failed / pending_approval). ``upsert`` semantics keep the
-        call sites simple — they don't need to know whether a prior
-        row exists on retry/resume.
-        """
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -237,7 +213,6 @@ class WorkflowRunService:
             return False
 
     def list_phases(self, run_id: str) -> List[Dict[str, Any]]:
-        """Return all phase rows for a run, ordered by ``phase_order``."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -257,7 +232,6 @@ _service: Optional[WorkflowRunService] = None
 
 
 def get_workflow_run_service() -> WorkflowRunService:
-    """Process-wide singleton."""
     global _service
     if _service is None:
         _service = WorkflowRunService()

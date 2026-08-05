@@ -1,5 +1,3 @@
-"""Claude API service for Anthropic integration with Agent SDK support."""
-
 import asyncio
 import base64
 import json
@@ -91,7 +89,6 @@ from services.chat.tool_executor import ToolExecutor  # noqa: E402
 
 
 class ClaudeService:
-    """Service for interacting with Claude API with Agent SDK support."""
 
     SERVICE_NAME = "deeptempo-ai-soc"
     API_KEY_NAME = "claude_api_key"
@@ -105,19 +102,6 @@ class ClaudeService:
         use_backend_tools: bool = False,
         provider_api_key_ref: Optional[str] = None,
     ):
-        """
-        Initialize Claude service.
-
-        Args:
-            use_mcp_tools: Whether to enable MCP tool integration
-            enable_thinking: Whether to enable extended thinking (default: False)
-            thinking_budget: Token budget for extended thinking (default: 10000)
-            use_agent_sdk: Whether to use Claude Agent SDK for agentic workflows
-            use_backend_tools: Whether to use backend function calling (bypasses MCP)
-            provider_api_key_ref: Optional secret-manager key for a non-default
-                Anthropic provider row (GH #88). When set, _load_api_key reads
-                this secret first before the legacy CLAUDE_API_KEY fallback chain.
-        """
         self.client: Optional[Anthropic] = None
         self.async_client: Optional[AsyncAnthropic] = None
         self.api_key: Optional[str] = None
@@ -158,7 +142,6 @@ class ClaudeService:
             logger.info("Claude Agent SDK enabled for agentic workflows")
 
     def _get_default_system_prompt(self) -> str:
-        """Get default system prompt with Claude 4.5 best practices."""
         return """You are Claude, an AI assistant for security operations and analysis in the Vigil SOC platform.
 
 <default_to_action>
@@ -319,20 +302,6 @@ You have comprehensive tools to manage ALL aspects of cases during investigation
 Your goal is to help SOC analysts work more efficiently by leveraging all available tools and integrations to provide comprehensive, accurate, and actionable security analysis. When investigating, you should automatically build out cases with all relevant findings, activities, timeline entries, and MITRE mappings as the investigation progresses."""
 
     def _load_api_key(self) -> bool:
-        """Load API key from secure storage.
-
-        Resolution order:
-
-        1. ``provider_api_key_ref`` when explicitly passed at init (GH #88).
-        2. Legacy ``CLAUDE_API_KEY`` / ``ANTHROPIC_API_KEY`` env / secret names.
-        3. UI-saved Anthropic provider rows in ``llm_provider_configs``.
-
-        Step 3 was the missing piece behind the "Claude API not configured"
-        chat-drawer error reported when users configured Anthropic only
-        through Settings → AI / LLM Providers: that path writes the key to
-        ``llm_provider_<id>_api_key`` (see ``backend/api/llm_providers.py``)
-        — not to the legacy names this method used to check.
-        """
         try:
             # Use secrets manager with fallback to legacy names
             provider_key = (
@@ -376,12 +345,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             return False
 
     def _load_backend_tools(self):
-        """Load backend tools for Claude to use via function calling.
-
-        Also appends a tool per active DB-backed Skill so the model can
-        invoke user-created Skills directly (Issue #82 Phase 1 wiring).
-        Skill tool lookups happen via ``self._skill_tool_index`` set here.
-        """
         self.backend_tools = list(BACKEND_TOOLS)
         self._static_backend_tools_count = len(self.backend_tools)
         self._skill_tool_index = {}
@@ -390,15 +353,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             logger.debug(f"  - {tool['name']}: {tool['description'][:60]}...")
 
     def _refresh_skill_tools(self) -> int:
-        """Reload DB-backed skill tools in place.
-
-        The chat path calls this at the start of every request so skills
-        created after the (shared, worker-pool) ClaudeService booted are
-        still visible. Trims any previously-loaded skill tools first so
-        deletes and renames propagate cleanly. Cheap: one DB query.
-
-        Returns the number of skill tools loaded.
-        """
         # Reset to the static portion only.
         if hasattr(self, "_static_backend_tools_count"):
             self.backend_tools = self.backend_tools[: self._static_backend_tools_count]
@@ -421,7 +375,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             return 0
 
     async def _execute_backend_tool(self, tool_name: str, tool_input: dict):
-        """Execute a single backend tool by name. Used by the daemon agent runner."""
         from services.database_data_service import DatabaseDataService
 
         data_service = DatabaseDataService()
@@ -706,7 +659,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             return {"error": f"Unknown tool: {tool_name}"}
 
     def _load_mcp_tools(self):
-        """Load MCP tools for Claude to use from persistent cache."""
         # Clear existing tools to prevent duplicates
         self.mcp_tools = []
 
@@ -834,7 +786,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             self.mcp_tools = []
 
     def _populate_mcp_registry(self, tools_dict: Dict):
-        """Populate the MCP registry with discovered tools for dynamic tool discovery."""
         try:
             from services.mcp_client import get_mcp_client
             from services.mcp_registry import get_mcp_registry
@@ -879,16 +830,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             logger.debug(f"Could not populate MCP registry: {e}")
 
     def set_api_key(self, api_key: str, save: bool = True) -> bool:
-        """
-        Set the API key.
-
-        Args:
-            api_key: The Anthropic API key.
-            save: Whether to save the key securely.
-
-        Returns:
-            True if successful, False otherwise.
-        """
         if not api_key or not api_key.strip():
             return False
 
@@ -920,34 +861,11 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             return False
 
     def has_api_key(self) -> bool:
-        """Return True if this ClaudeService can call the Anthropic SDK.
-
-        Deliberately Anthropic-specific: every caller that gates on this
-        method goes on to invoke ``self.client`` / ``self.async_client``
-        (the Anthropic SDK). Reporting True for a non-Anthropic provider
-        would let those callers through and then crash with AttributeError
-        when ``self.client`` is None on an Ollama/OpenAI-only deployment.
-
-        Non-Anthropic routing is handled separately by the chat endpoints
-        in ``backend/api/claude.py``, which resolve the active provider via
-        ``get_default_provider_spec()`` and dispatch through ``LLMRouter``
-        without ever touching ClaudeService.
-        """
         return self.api_key is not None and self.client is not None
 
     def _extract_content_blocks(
         self, content, include_thinking: bool = False
     ) -> Union[str, List[Dict]]:
-        """
-        Extract content blocks from Claude's response.
-
-        Args:
-            content: Response content blocks
-            include_thinking: Whether to include thinking blocks in the output
-
-        Returns:
-            String (if only one text block) or list of content blocks
-        """
         blocks = []
 
         logger.debug(
@@ -996,7 +914,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
     @staticmethod
     def _serialize_response_blocks(content) -> List[Dict]:
-        """Convert Anthropic SDK content blocks to JSON-safe dicts."""
         if not content:
             return []
         out = []
@@ -1088,12 +1005,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
     @classmethod
     def _clean_blocks_for_resend(cls, content) -> List[Dict]:
-        """Convert response content blocks to Anthropic-spec dicts for replay.
-
-        Accepts SDK block objects or dicts. Drops non-spec keys (e.g. a
-        "caller" field injected by a proxy) per block type while preserving all
-        valid fields. Unknown block types are passed through untouched.
-        """
         out: List[Dict] = []
         for block in content or []:
             if isinstance(block, dict):
@@ -1114,7 +1025,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
     @staticmethod
     def _sanitize_messages_for_log(messages: List[Dict]) -> List[Dict]:
-        """Strip heavy image base64 payloads from messages before logging."""
         if not messages:
             return []
         sanitized = []
@@ -1150,11 +1060,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
     @staticmethod
     def _extract_prior_tool_results(messages: List[Dict]) -> List[Dict]:
-        """Return tool_result blocks from the most recent user message, if any.
-
-        Used to capture the "input" context for an iteration that consumed
-        tool results from the prior iteration's tool calls.
-        """
         if not messages:
             return []
         for msg in reversed(messages):
@@ -1197,11 +1102,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         error: Optional[str] = None,
         interaction_id: Optional[str] = None,
     ) -> None:
-        """Fire-and-forget insert of an LLMInteractionLog row.
-
-        Runs in the calling thread; failures are logged but never re-raised
-        so persistence can never break the request path.
-        """
         try:
             from database.connection import get_db_manager
             from database.models import LLMInteractionLog
@@ -1277,12 +1177,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             logger.warning(f"LLMInteractionLog persist failed (non-fatal): {exc}")
 
     def _strip_thinking_blocks(self, messages: List[Dict]) -> List[Dict]:
-        """
-        Strip thinking blocks from assistant messages when thinking is disabled.
-
-        This prevents errors when conversation history contains thinking blocks
-        but thinking mode is disabled for the current request.
-        """
         cleaned_messages = []
         for msg in messages:
             if msg.get("role") == "assistant":
@@ -1398,7 +1292,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
     def _fold_overflow_background(
         self, session_id: str, overflow: List[Dict], existing_summary: str
     ) -> None:
-        """Fold aged-out messages into the session summary in a daemon thread."""
         def _fold() -> None:
             try:
                 new_summary = ContextManager.fold_overflow(overflow, existing_summary)
@@ -1445,7 +1338,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         return ContextManager.truncate_tool_response(content, tool_name, max_tokens)
 
     async def _process_backend_tool_use(self, content: List) -> List[Dict]:
-        """Process tool use requests and call backend tools directly."""
         tool_results = []
 
         # Initialize tool instances lazily
@@ -1881,7 +1773,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         return tool_results
 
     async def _process_tool_use(self, content: List) -> List[Dict]:
-        """Process tool use requests and call MCP tools."""
         tool_results = []
 
         for item in content:
@@ -1982,20 +1873,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         return tool_results
 
     async def _process_mixed_tool_use(self, content: List) -> List[Dict]:
-        """
-        Routes each tool use request in `content` to the appropriate processor.
-        Backend tools (by name match against self.backend_tools) are handled by
-        _process_backend_tool_use(); all others are handled by _process_tool_use().
-
-        Note: If a backend tool and an MCP tool share the same name, backend takes
-        precedence since the backend name set is checked first.
-
-        Args:
-            content: List of tool use blocks from a Claude API response.
-
-        Returns:
-            Combined list of tool result dicts from both processors.
-        """
         tool_results = []
         # Build a set of backend tool names for O(1) lookup
         backend_tool_names = {tool.get("name") for tool in (self.backend_tools or [])}
@@ -2038,26 +1915,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         investigation_id: Optional[str] = None,
         recommended_tools: Optional[List[str]] = None,
     ) -> Optional[str]:
-        """
-        Send a chat message to Claude.
-
-        Args:
-            message: User message (string or list of content blocks for multimodal).
-            system_prompt: Optional system prompt (uses default if None).
-            context: Optional context messages (for conversation history).
-            model: Claude model to use.
-            images: Optional list of image content blocks (for vision).
-            prefill: Optional prefill text to shape Claude's response.
-            max_tokens: Maximum tokens for response (default: 4096).
-            enable_thinking: Override thinking setting for this request.
-            thinking_budget: Override thinking budget for this request.
-            session_id: Chat/session identifier for reasoning-trace persistence.
-            agent_id: Agent identifier (e.g. 'investigator') for reasoning-trace attribution.
-            investigation_id: Investigation identifier if this call is part of one.
-
-        Returns:
-            Claude's response text or None if error.
-        """
         if not self.has_api_key():
             raise ValueError(
                 "API key not configured. Please set your Anthropic API key."
@@ -2572,16 +2429,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
     def _build_user_content(
         self, message: Union[str, List[Dict]], images: Optional[List[Dict]] = None
     ) -> Union[str, List[Dict]]:
-        """
-        Build user content for API request, supporting text, images, or mixed content.
-
-        Args:
-            message: User message (string or list of content blocks).
-            images: Optional list of image content blocks.
-
-        Returns:
-            Content for user message (string or list of content blocks).
-        """
         # If message is already a list of content blocks, use it directly
         if isinstance(message, list):
             if images:
@@ -2601,15 +2448,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         return message
 
     def encode_image_base64(self, image_path: Union[str, Path]) -> str:
-        """
-        Encode an image file to base64.
-
-        Args:
-            image_path: Path to image file.
-
-        Returns:
-            Base64-encoded image string.
-        """
         image_path = Path(image_path)
         if not image_path.exists():
             raise FileNotFoundError(f"Image file not found: {image_path}")
@@ -2623,17 +2461,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         source_type: str = "auto",
         media_type: str = "image/jpeg",
     ) -> Dict:
-        """
-        Create an image content block for Claude API.
-
-        Args:
-            image_source: Image source (URL string, file path, or base64 bytes).
-            source_type: "url", "base64", or "auto" (auto-detect from source).
-            media_type: Media type (image/jpeg, image/png, image/gif, image/webp).
-
-        Returns:
-            Image content block dictionary.
-        """
         if source_type == "auto":
             if isinstance(image_source, str):
                 if image_source.startswith(("http://", "https://")):
@@ -2681,23 +2508,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         investigation_id: Optional[str] = None,
         recommended_tools: Optional[List[str]] = None,
     ) -> AsyncIterator[str]:
-        """
-        Send a chat message to Claude with streaming response.
-
-        Args:
-            message: User message (string or list of content blocks for multimodal).
-            system_prompt: Optional system prompt (uses default if None).
-            context: Optional context messages.
-            model: Claude model to use.
-            images: Optional list of image content blocks (for vision).
-            prefill: Optional prefill text to shape Claude's response.
-            max_tokens: Maximum tokens for response (default: 4096).
-            enable_thinking: Override thinking setting for this request.
-            thinking_budget: Override thinking budget for this request.
-
-        Yields:
-            Text chunks as they arrive.
-        """
         if not self.has_api_key():
             raise ValueError(
                 "API key not configured. Please set your Anthropic API key."
@@ -3082,15 +2892,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             raise
 
     def analyze_finding(self, finding: Dict) -> str:
-        """
-        Analyze a security finding using Claude.
-
-        Args:
-            finding: Finding dictionary.
-
-        Returns:
-            Analysis text.
-        """
         system_prompt = (
             "You are a security analyst helping to analyze security findings. "
             "Provide clear, actionable analysis of security findings including "
@@ -3108,15 +2909,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         )
 
     def correlate_findings(self, findings: List[Dict]) -> str:
-        """
-        Correlate multiple findings using Claude.
-
-        Args:
-            findings: List of finding dictionaries.
-
-        Returns:
-            Correlation analysis text.
-        """
         system_prompt = (
             "You are a security analyst correlating multiple security findings. "
             "Identify patterns, relationships, and potential attack campaigns. "
@@ -3136,16 +2928,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         )
 
     def generate_case_summary(self, case: Dict, findings: List[Dict]) -> str:
-        """
-        Generate a case summary using Claude.
-
-        Args:
-            case: Case dictionary.
-            findings: List of related findings.
-
-        Returns:
-            Case summary text.
-        """
         system_prompt = (
             "You are a security analyst creating case summaries. "
             "Provide clear, concise summaries of investigation cases including "
@@ -3178,28 +2960,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         related_events: List[Dict],
         finding_data: Optional[Dict] = None,
     ) -> Dict[str, Any]:
-        """
-        Generate comprehensive incident analysis for a timeline event.
-
-        This method provides AI-powered analysis for SOC analysts to quickly understand
-        security events in context.
-
-        Args:
-            event_data: The main event data
-            related_events: List of related events in the time window
-            finding_data: Optional associated finding data
-
-        Returns:
-            Dictionary with analysis fields:
-            - incident_summary: Plain language summary of what happened
-            - attack_narrative: Story of the attack based on event sequence
-            - entity_analysis: Explanation of entity relationships
-            - threat_assessment: Risk level and severity justification
-            - investigation_priorities: What to investigate next
-            - response_recommendations: Immediate recommended actions
-            - timeline_correlation: How this event fits in the timeline
-            - confidence_score: Confidence in the analysis (0.0-1.0)
-        """
         system_prompt = """You are an expert SOC analyst providing incident analysis for timeline events.
 
 Your analysis should help SOC analysts quickly understand:
@@ -3388,20 +3148,6 @@ Provide only the JSON, no additional text."""
         session_id: Optional[str] = None,
         model: str = DEFAULT_MODEL,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """
-        Run an agentic workflow using Claude Agent SDK with streaming.
-
-        Args:
-            prompt: The user prompt/task
-            system_prompt: Optional system prompt
-            allowed_tools: List of allowed tools (defaults to MCP tools + built-in)
-            max_turns: Maximum conversation turns for the agent
-            session_id: Optional session ID for conversation continuity
-            model: Claude model to use
-
-        Yields:
-            Message events from the agent
-        """
         if not AGENT_SDK_AVAILABLE:
             logger.warning("Agent SDK not available, falling back to standard chat")
             async for chunk in self.chat_stream(
@@ -3502,12 +3248,6 @@ Provide only the JSON, no additional text."""
             yield {"type": "error", "content": str(e)}
 
     def _get_agent_sdk_mcp_servers(self) -> List[Dict]:
-        """
-        Build MCP server configurations for the Agent SDK.
-
-        Only includes *enabled* servers. Reads from MCP registry (if available)
-        or falls back to the security-detections server with dynamic env vars.
-        """
         mcp_servers = []
 
         try:
@@ -3563,7 +3303,6 @@ Provide only the JSON, no additional text."""
         return mcp_servers
 
     async def _execute_mcp_tool(self, tool_name: str, arguments: Dict) -> str:
-        """Execute an MCP tool via the tool name, with response size guard."""
         parts = tool_name.split("_", 1)
         if len(parts) != 2:
             return f"Invalid MCP tool format: {tool_name}"
@@ -3595,17 +3334,6 @@ Provide only the JSON, no additional text."""
         agent_config: Optional[Dict] = None,
         session_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Run a complete agent task and return the final result.
-
-        Args:
-            task: The task description
-            agent_config: Optional agent configuration (system_prompt, tools, etc)
-            session_id: Optional session ID for continuity
-
-        Returns:
-            Dict with result and any tool outputs
-        """
         config = agent_config or {}
         system_prompt = config.get("system_prompt")
         allowed_tools = config.get("allowed_tools")
@@ -3650,18 +3378,14 @@ Provide only the JSON, no additional text."""
     def create_session(
         self, session_id: str, initial_context: Optional[List[Dict]] = None
     ) -> str:
-        """Create or reset a conversation session (delegates to SessionManager)."""
         return self._session_mgr.create(session_id, initial_context)
 
     def get_session(self, session_id: str) -> Optional[List[Dict]]:
-        """Get session history, restoring from MemPalace on L1 cache miss."""
         return self._session_mgr.get(session_id)
 
     def clear_session(self, session_id: str) -> bool:
-        """Clear a session (delegates to SessionManager)."""
         return self._session_mgr.clear(session_id)
 
     @staticmethod
     def is_agent_sdk_available() -> bool:
-        """Check if Agent SDK is available."""
         return AGENT_SDK_AVAILABLE

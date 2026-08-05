@@ -1,11 +1,3 @@
-"""Approvals API — list/approve/reject pending human-in-the-loop actions (#128).
-
-Workflow phase approvals surface here alongside any other pending
-action the ``ApprovalService`` is tracking (e.g. daemon-triggered
-containment actions). Approving a workflow-linked action auto-resumes
-the paused run; rejecting cancels it with the supplied reason.
-"""
-
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -42,7 +34,6 @@ class RejectRequest(BaseModel):
 
 
 def _pending_to_dict(action: Any) -> Dict[str, Any]:
-    """Normalise a ``PendingAction`` dataclass to a response dict."""
     return {
         "action_id": action.action_id,
         "action_type": action.action_type,
@@ -86,7 +77,6 @@ async def list_approvals(
     ),
     limit: int = Query(default=100, ge=1, le=500),
 ):
-    """List approval actions, newest first."""
     from services.approval_service import (
         ActionStatus,
         get_approval_service,
@@ -113,8 +103,6 @@ async def list_approvals(
 
 @router.get("/approvals/pending")
 async def list_pending_approvals() -> Dict[str, List[Dict[str, Any]]]:
-    """Shortcut: only actions with ``status=pending`` and
-    ``requires_approval=True``. Used by the AI Decisions approvals tab."""
     from services.approval_service import get_approval_service
 
     service = get_approval_service()
@@ -124,7 +112,6 @@ async def list_pending_approvals() -> Dict[str, List[Dict[str, Any]]]:
 
 @router.get("/approvals/{action_id}")
 async def get_approval(action_id: str):
-    """Fetch a single approval action."""
     from services.approval_service import get_approval_service
 
     action = get_approval_service().get_action(action_id)
@@ -135,11 +122,6 @@ async def get_approval(action_id: str):
 
 @router.post("/approvals/{action_id}/approve")
 async def approve_action(action_id: str, request: ApproveRequest):
-    """Approve a pending action.
-
-    If the action is linked to a paused workflow run, the run resumes
-    automatically and the resume result is included in the response.
-    """
     from services.approval_service import get_approval_service
     from services.workflows_service import get_workflows_service
 
@@ -171,11 +153,6 @@ async def approve_action(action_id: str, request: ApproveRequest):
 
 @router.post("/approvals/{action_id}/reject")
 async def reject_action(action_id: str, request: RejectRequest):
-    """Reject a pending action.
-
-    If the action is linked to a paused workflow run, the run is
-    cancelled with the supplied reason.
-    """
     from services.approval_service import get_approval_service
     from services.workflows_service import get_workflows_service
 

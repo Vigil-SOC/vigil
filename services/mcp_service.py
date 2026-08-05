@@ -1,5 +1,3 @@
-"""MCP service for managing MCP servers."""
-
 import subprocess
 import platform
 import logging
@@ -27,19 +25,6 @@ _PLACEHOLDER_BLACKLIST = {"workspaceFolder", "HOME", "PYTHONPATH"}
 
 
 def extract_required_env_vars(raw_env: Dict[str, str], raw_args: List[str]) -> List[str]:
-    """Collect every ``${VAR}`` placeholder referenced by a server config.
-
-    Scans the raw (pre-substitution) ``env`` values and ``args`` entries
-    from ``mcp-config.json``. Returns a deduplicated, sorted list of
-    placeholder names. These are treated as required by
-    ``mcp_client.connect_to_server`` — if any resolve to empty, the
-    server is considered dormant-by-design (not a connect failure).
-
-    Limitation (documented for follow-ups): this infers requirements
-    from the config file. A server whose process quietly needs a
-    credential that isn't referenced via ``${…}`` is invisible to us
-    and will fall through to the regular connect path.
-    """
     found: set[str] = set()
     for value in list((raw_env or {}).values()) + list(raw_args or []):
         if not isinstance(value, str):
@@ -53,7 +38,6 @@ def extract_required_env_vars(raw_env: Dict[str, str], raw_args: List[str]) -> L
 
 
 class MCPServer:
-    """Represents an MCP server process."""
 
     def __init__(
         self,
@@ -79,7 +63,6 @@ class MCPServer:
         self.required_env_vars: List[str] = list(required_env_vars or [])
     
     def start(self) -> bool:
-        """Start the MCP server."""
         if self.process is not None:
             logger.warning(f"Server {self.name} is already running")
             return False
@@ -110,7 +93,6 @@ class MCPServer:
             return False
     
     def stop(self) -> bool:
-        """Stop the MCP server."""
         if self.process is None:
             return True
         
@@ -133,7 +115,6 @@ class MCPServer:
             return False
     
     def is_running(self) -> bool:
-        """Check if the server is running."""
         # First check if we have a process object and it's still alive
         if self.process is not None:
             if self.process.poll() is None:
@@ -192,7 +173,6 @@ class MCPServer:
         return False
     
     def get_status(self) -> str:
-        """Get server status."""
         if self.server_type == "stdio":
             return "stdio (MCP integration)"
         if self.is_running():
@@ -200,25 +180,17 @@ class MCPServer:
         return self.status
     
     def get_log_path(self) -> Path:
-        """Get the log file path for this server."""
         # Keep hyphens as servers log to files with hyphens (e.g., deeptempo-findings.log)
         return Path(f"/tmp/{self.name}.log")
 
 
 class MCPService:
-    """Service for managing MCP servers."""
     
     # Path to persist enabled/disabled state for each MCP server
     _STATE_FILE = vigil_path("mcp_server_enabled.json")
     _STATE_WRITE_FILE = vigil_path("mcp_server_enabled.json", write=True)
     
     def __init__(self, project_root: Optional[Path] = None):
-        """
-        Initialize the MCP service.
-        
-        Args:
-            project_root: Optional project root path. Defaults to parent of services directory.
-        """
         if project_root is None:
             project_root = Path(__file__).parent.parent
         
@@ -241,7 +213,6 @@ class MCPService:
     # ---- Enabled / Disabled state persistence ----
     
     def _load_enabled_state(self) -> Dict[str, bool]:
-        """Load the enabled/disabled state from disk. Returns empty dict if no file."""
         try:
             if self._STATE_FILE.exists():
                 with open(self._STATE_FILE, "r") as f:
@@ -252,7 +223,6 @@ class MCPService:
         return {}
     
     def _save_enabled_state(self) -> None:
-        """Persist the enabled/disabled state to disk."""
         try:
             with open(self._STATE_WRITE_FILE, "w") as f:
                 json.dump({"enabled": self._enabled_servers}, f, indent=2)
@@ -263,18 +233,12 @@ class MCPService:
     _DEFAULT_ENABLED = {"deeptempo-findings", "tempo-flow", "security-detections", "approval", "attack-layer", "mempalace"}
 
     def is_server_enabled(self, server_name: str) -> bool:
-        """Check whether a server is enabled. Internal platform servers default to True; all others default to False."""
         return self._enabled_servers.get(
             server_name,
             server_name in self._DEFAULT_ENABLED,
         )
     
     def set_server_enabled(self, server_name: str, enabled: bool) -> bool:
-        """
-        Enable or disable a server and persist the change.
-        
-        Returns True if the server exists, False otherwise.
-        """
         if server_name not in self.servers:
             return False
         self._enabled_servers[server_name] = enabled
@@ -283,20 +247,9 @@ class MCPService:
         return True
     
     def get_all_enabled_states(self) -> Dict[str, bool]:
-        """Return a dict of server_name -> enabled for every known server."""
         return {name: self.is_server_enabled(name) for name in self.servers}
     
     def _substitute_env_vars(self, value: str) -> str:
-        """
-        Substitute environment variables in a string.
-        Supports ${VAR_NAME} and ${VAR_NAME:-default} formats.
-
-        Args:
-            value: String that may contain environment variable references
-
-        Returns:
-            String with environment variables substituted
-        """
         import re
 
         pattern = r'\$\{([^}:]+)(?::-((?:\$\{[^}]+\}|[^{}])*))?\}'
@@ -323,12 +276,6 @@ class MCPService:
         return value
     
     def _detect_server_type(self, args: List[str]) -> str:
-        """
-        Detect if a server is FastMCP or stdio-based by checking the module path.
-        
-        FastMCP servers: deeptempo_findings
-        Stdio servers: All others (designed for advanced MCP integration)
-        """
         for arg in args:
             # Check both old tools/ and new mcp-servers/servers/ paths
             if ("." in arg and arg.startswith("tools")) or "mcp-servers/servers/" in arg:
@@ -340,18 +287,9 @@ class MCPService:
         return "unknown"
     
     def reload_server_configs(self) -> None:
-        """Rebuild server configs so a connectorUrl saved after startup is
-        re-substituted into the init-time-cached spawn args."""
         self._initialize_servers()
 
     def _initialize_servers(self):
-        """
-        Initialize MCP server configurations from mcp-config.json.
-        
-        Loads server configurations dynamically from the mcp-config.json file
-        to ensure consistency with MCP integration workflows.
-        Also includes servers for enabled integrations.
-        """
         python_exe_str = str(self.python_exe)
         project_path_str = str(self.project_root)
 
@@ -498,11 +436,6 @@ class MCPService:
             self.servers[config["name"]] = server
     
     def _enrich_security_detections_env(self, config: Dict) -> Dict:
-        """
-        Enrich the security-detections MCP server config with dynamic env vars
-        from DetectionRulesService. This allows the MCP server to pick up
-        newly added/removed rule sources without manual config editing.
-        """
         try:
             from services.detection_rules_service import get_detection_rules_service
             
@@ -522,7 +455,6 @@ class MCPService:
         return config
     
     def _get_default_servers(self, python_exe_str: str, project_path_str: str) -> List[Dict]:
-        """Get default server configurations if mcp-config.json is not available."""
         return [
             {
                 "name": "deeptempo-findings",
@@ -542,14 +474,6 @@ class MCPService:
     # services.mcp_client.connect_to_server / disconnect_from_server.
 
     def stop_server(self, server_name: str) -> bool:
-        """Stop a Popen-managed server if one was spawned.
-
-        Kept for completeness: a stdio server never gets a Popen child via
-        this class (it's driven by the MCP SDK's ``stdio_client`` through
-        ``mcp_client``), so for the current config this is effectively a
-        no-op. Still called defensively from ``PUT /enabled`` when a
-        non-stdio ``running`` status is observed.
-        """
         if server_name not in self.servers:
             logger.error(f"Unknown server: {server_name}")
             return False
@@ -557,43 +481,18 @@ class MCPService:
 
 
     def get_server_status(self, server_name: str) -> Optional[str]:
-        """
-        Get the status of an MCP server.
-        
-        Args:
-            server_name: Name of the server.
-        
-        Returns:
-            Status string or None if server not found.
-        """
         if server_name not in self.servers:
             return None
         
         return self.servers[server_name].get_status()
     
     def get_all_statuses(self) -> Dict[str, str]:
-        """
-        Get status of all servers.
-        
-        Returns:
-            Dictionary mapping server names to status strings.
-        """
         statuses = {}
         for name, server in self.servers.items():
             statuses[name] = server.get_status()
         return statuses
     
     def get_server_log(self, server_name: str, lines: int = 100) -> str:
-        """
-        Get log content for a server.
-        
-        Args:
-            server_name: Name of the server.
-            lines: Number of lines to retrieve (from end).
-        
-        Returns:
-            Log content as string.
-        """
         if server_name not in self.servers:
             return ""
         
@@ -612,15 +511,6 @@ class MCPService:
             return f"Error reading log: {e}"
     
     def test_server(self, server_name: str) -> bool:
-        """
-        Test if a server is responding.
-        
-        Args:
-            server_name: Name of the server to test.
-        
-        Returns:
-            True if server appears to be running, False otherwise.
-        """
         if server_name not in self.servers:
             return False
         
@@ -628,11 +518,5 @@ class MCPService:
         return server.is_running()
     
     def list_servers(self) -> List[str]:
-        """
-        List all available servers.
-        
-        Returns:
-            List of server names.
-        """
         return list(self.servers.keys())
 

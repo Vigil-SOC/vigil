@@ -1,12 +1,3 @@
-"""Unit tests for the workflow_runs persistence layer (#127).
-
-These exercise ``WorkflowRunService`` against a real Postgres (the
-service's session lives on ``get_db_manager()``) so we're covering
-the SQL schema + the ORM model mapping in one pass. A DB must be
-reachable for these tests to run — CI has one; local runs skip
-cleanly if not.
-"""
-
 from __future__ import annotations
 
 import pytest
@@ -51,7 +42,6 @@ def service():
 
 @pytest.fixture
 def clean_runs():
-    """Delete all test runs before/after each test to keep DB tidy."""
     from database.connection import get_db_manager
     from sqlalchemy import text
 

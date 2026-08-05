@@ -1,10 +1,3 @@
-"""
-MCP Registry - Central registry for active MCP servers and their tools.
-
-Provides dynamic tool discovery so Claude can automatically use
-whatever MCP servers are currently active, without hardcoding.
-"""
-
 import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -13,13 +6,6 @@ logger = logging.getLogger(__name__)
 
 
 class MCPRegistry:
-    """
-    Central registry that tracks active MCP servers and their available tools.
-    
-    Used by ClaudeService and agents to dynamically discover what tools
-    are available at runtime, enabling automatic enrichment from active
-    MCP integrations (like security-detections, threat intel, etc.)
-    """
 
     def __init__(self):
         self._servers: Dict[str, Dict[str, Any]] = {}
@@ -27,14 +13,6 @@ class MCPRegistry:
         self._last_refresh: Optional[datetime] = None
 
     def register_server(self, name: str, config: Dict[str, Any], tools: Optional[List[Dict]] = None):
-        """
-        Register an MCP server and its tools.
-        
-        Args:
-            name: Server name (e.g., 'security-detections', 'deeptempo-findings')
-            config: Server config (command, args, env, etc.)
-            tools: List of tool definitions (name, description, input_schema)
-        """
         self._servers[name] = {
             "name": name,
             "config": config,
@@ -46,28 +24,19 @@ class MCPRegistry:
         logger.info(f"Registered MCP server: {name} ({len(tools or [])} tools)")
 
     def unregister_server(self, name: str):
-        """Remove a server from the registry."""
         self._servers.pop(name, None)
         self._tools_cache.pop(name, None)
         logger.info(f"Unregistered MCP server: {name}")
 
     def update_tools(self, name: str, tools: List[Dict]):
-        """Update the tools cache for a server."""
         self._tools_cache[name] = tools
         if name in self._servers:
             self._servers[name]["active"] = True
 
     def get_active_servers(self) -> List[str]:
-        """Get names of all active servers."""
         return [name for name, info in self._servers.items() if info.get("active", False)]
 
     def get_all_tools(self) -> List[Dict]:
-        """
-        Get all tools from all active servers, formatted for Claude API.
-        
-        Returns:
-            List of tool definitions with server-prefixed names.
-        """
         all_tools = []
         seen = set()
         
@@ -92,21 +61,12 @@ class MCPRegistry:
         return all_tools
 
     def get_tools_for_server(self, server_name: str) -> List[Dict]:
-        """Get tools for a specific server."""
         return self._tools_cache.get(server_name, [])
 
     def get_tool_names(self) -> List[str]:
-        """Get all tool names (server-prefixed) from active servers."""
         return [t["name"] for t in self.get_all_tools()]
 
     def get_agent_sdk_configs(self) -> List[Dict]:
-        """
-        Get MCP server configurations formatted for Agent SDK's 
-        ClaudeAgentOptions.mcp_servers parameter.
-        
-        Returns:
-            List of MCP server config dicts with name, command, args, env.
-        """
         configs = []
         for name in self.get_active_servers():
             server_info = self._servers.get(name, {})
@@ -121,12 +81,6 @@ class MCPRegistry:
         return configs
 
     async def refresh_from_mcp_client(self):
-        """
-        Refresh registry from the live MCP client connections.
-        
-        Queries each connected MCP server for its available tools and
-        updates the registry accordingly.
-        """
         try:
             from services.mcp_client import get_mcp_client
             from services.mcp_service import MCPService
@@ -180,7 +134,6 @@ class MCPRegistry:
             logger.error(f"Error refreshing MCP registry: {e}")
 
     def get_summary(self) -> Dict[str, Any]:
-        """Get a summary of the registry state."""
         return {
             "servers": len(self._servers),
             "active_servers": len(self.get_active_servers()),
@@ -202,7 +155,6 @@ _mcp_registry: Optional[MCPRegistry] = None
 
 
 def get_mcp_registry() -> MCPRegistry:
-    """Get or create the global MCP registry instance."""
     global _mcp_registry
     if _mcp_registry is None:
         _mcp_registry = MCPRegistry()

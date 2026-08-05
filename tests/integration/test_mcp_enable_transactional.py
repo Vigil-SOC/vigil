@@ -1,17 +1,3 @@
-"""API-contract integration tests for the transactional MCP enable toggle (#125).
-
-These tests verify that ``PUT /api/mcp/servers/{name}/enabled`` does more
-than persist a bit — it also triggers a connect/disconnect at runtime and
-returns the result in the response envelope. Without the transactional
-behavior, enabling a server was a no-op until the backend was restarted,
-which is the bug #125 exists to fix.
-
-The tests stub ``mcp_service`` and ``mcp_client`` so they don't spawn real
-MCP child processes or require credentials. See tests/integration/conftest.py
-for why DB-backed fixtures aren't available here; this is a contract check,
-not an end-to-end MCP spin-up.
-"""
-
 from __future__ import annotations
 
 import os
@@ -36,7 +22,6 @@ def client():
 
 @pytest.fixture
 def fake_server_known():
-    """Patch mcp_service so ``deeptempo-findings`` is a known, settable server."""
     from api import mcp as mcp_api
 
     # Make set_server_enabled succeed (server exists); status is the stdio
@@ -56,7 +41,6 @@ def fake_server_known():
 
 @pytest.mark.integration
 class TestEnableTransactional:
-    """PUT /enabled should connect-on-enable and disconnect-on-disable."""
 
     def test_enable_triggers_connect_and_reports_connected(
         self, client, fake_server_known
@@ -137,7 +121,6 @@ class TestEnableTransactional:
 
 @pytest.mark.integration
 class TestDeadEndpointsGone:
-    """The broken /start + /stop paths should no longer exist."""
 
     def test_start_endpoint_is_removed(self, client):
         r = client.post("/api/mcp/servers/deeptempo-findings/start")

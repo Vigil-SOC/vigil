@@ -1,15 +1,3 @@
-"""Master agent orchestrator for autonomous SOC operations.
-
-The orchestrator runs three loops:
-  1. Intake loop: picks up new findings/tasks and creates investigations
-  2. Supervision loop: monitors running agents, detects stuck/runaway ones
-  3. Review loop: evaluates completed investigations, approves or requests rework
-
-It does NOT maintain a persistent Claude conversation. It calls Claude
-only for judgment calls (skill selection for ambiguous cases, review evaluation).
-All routine operations are pure Python logic.
-"""
-
 import asyncio
 import json
 import logging
@@ -72,7 +60,6 @@ logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
-    """Master agent that manages autonomous SOC investigations."""
 
     def __init__(self, config: OrchestratorConfig):
         self.config = config
@@ -113,7 +100,6 @@ class Orchestrator:
         logger.info("Orchestrator DISABLED (graceful)")
 
     async def kill(self):
-        """Emergency stop: cancel all running agents immediately."""
         self._enabled = False
         await self.agent_runner.stop_all()
         logger.warning("Orchestrator KILLED - all agents stopped")
@@ -129,7 +115,6 @@ class Orchestrator:
                 logger.error(f"Orchestrator: Failed to init data service: {e}")
 
     async def run(self, shutdown_event: asyncio.Event):
-        """Main orchestrator entry point, called by SOCDaemon."""
         self._shutdown_event = shutdown_event
         self._init_services()
 
@@ -178,8 +163,6 @@ class Orchestrator:
         logger.info("Orchestrator shutdown complete")
 
     def _sync_enabled_from_db(self):
-        """Read the enabled state from the single ``orchestrator.settings``
-        SystemConfig row (set by the API/UI toggle or the Settings page)."""
         try:
             from database.connection import get_db_manager
             from database.models import SystemConfig
@@ -205,7 +188,6 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     async def _intake_loop(self, shutdown_event: asyncio.Event):
-        """Consume the investigation queue and create new investigations."""
         while not shutdown_event.is_set():
             try:
                 if not self._enabled:
@@ -231,7 +213,6 @@ class Orchestrator:
             await self._sleep(shutdown_event, self.config.loop_interval)
 
     async def _process_intake_item(self, item: Dict, shutdown_event: asyncio.Event):
-        """Process a single item from the investigation queue."""
         item_type = item.get("type")
 
         if item_type == "finding":
@@ -245,7 +226,6 @@ class Orchestrator:
     async def _create_investigation_for_finding(
         self, finding: Dict, shutdown_event: asyncio.Event
     ):
-        """Create an investigation for a finding, with dedup checks."""
         finding_id = finding.get("finding_id", "unknown")
         severity = (finding.get("severity") or "").lower()
 
@@ -288,7 +268,6 @@ class Orchestrator:
     async def _create_manual_investigation(
         self, item: Dict, shutdown_event: asyncio.Event
     ):
-        """Create an investigation from a manual request."""
         workflow_id = item.get("workflow_id", "incident-response")
         finding_ids = item.get("finding_ids", [])
         case_id = item.get("case_id")
@@ -321,7 +300,6 @@ class Orchestrator:
         hypothesis: Optional[str] = None,
         shutdown_event: Optional[asyncio.Event] = None,
     ):
-        """Core investigation creation logic."""
         inv_id = f"inv-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
         total_steps = count_steps(workflow_id)
 
@@ -427,7 +405,6 @@ class Orchestrator:
             logger.info(f"Agent pool full, {inv_id} queued for pickup")
 
     async def _pickup_queued_investigations(self, shutdown_event: asyncio.Event):
-        """Check database for investigations waiting to be assigned to agents."""
         if self.config.dry_run:
             return
 
@@ -454,7 +431,6 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     async def _supervision_loop(self, shutdown_event: asyncio.Event):
-        """Monitor running agents for stuck/runaway conditions."""
         while not shutdown_event.is_set():
             try:
                 if not self._enabled:
@@ -571,7 +547,6 @@ class Orchestrator:
             await self._sleep(shutdown_event, self.config.loop_interval // 2)
 
     def _track_hourly_cost(self):
-        """Track rolling hourly cost for budget enforcement."""
         now = datetime.utcnow()
         cutoff = now - timedelta(hours=1)
         self._hourly_costs = [c for c in self._hourly_costs if c["ts"] > cutoff]
@@ -588,7 +563,6 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     async def _review_loop(self, shutdown_event: asyncio.Event):
-        """Review completed investigations."""
         while not shutdown_event.is_set():
             try:
                 if not self._enabled:
@@ -612,7 +586,6 @@ class Orchestrator:
             await self._sleep(shutdown_event, self.config.loop_interval)
 
     async def _review_investigation(self, inv_id: str):
-        """Review a completed investigation's results."""
         review_md = self.workdir.read_file(inv_id, "review.md")
         state = self.workdir.read_state(inv_id)
         plan = self.workdir.read_file(inv_id, "plan.md")
@@ -711,7 +684,6 @@ class Orchestrator:
             )
 
     async def _create_approval_action(self, inv_id: str, action: Dict):
-        """Create an approval action for proposed response."""
         try:
             from services.approval_service import ActionType, get_approval_service
 
@@ -738,7 +710,6 @@ class Orchestrator:
             logger.error(f"Failed to create approval action: {e}")
 
     async def _maybe_trigger_case_review(self, case_id: str):
-        """Trigger a case-review agent if one hasn't already run for this case."""
         try:
             from database.connection import get_db_manager
             from database.models import Investigation as InvModel
@@ -832,15 +803,6 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     def _init_mempalace(self):
-        """Initialize MemPalace data directory for daemon persistence.
-
-        MemPalace is a core dependency (not user-toggleable) — investigation
-        summaries are always written as JSON files directly into the palace
-        data directory, and the MemPalace Searcher is used for cross-run
-        lookups. The legacy MEMPALACE_DAEMON_ENABLED env gate is honoured
-        only when explicitly set to "false" to allow emergency disable in
-        broken environments.
-        """
         if get_settings().mempalace_daemon_enabled is False:
             logger.warning(
                 "MemPalace daemon integration disabled via MEMPALACE_DAEMON_ENABLED=false "
@@ -861,7 +823,6 @@ class Orchestrator:
             return None
 
     def _persist_investigation_to_palace(self, inv_id: str, state: Dict) -> None:
-        """Store completed investigation summary as a JSON file in the palace data directory."""
         if not self._mp:
             return
         try:
@@ -888,7 +849,6 @@ class Orchestrator:
             logger.debug(f"MemPalace investigation persist failed: {e}")
 
     def _fetch_prior_palace_context(self, finding: Dict) -> str:
-        """Query MemPalace Searcher for prior intelligence on a finding's entity set."""
         if not self._mp:
             return ""
         try:
@@ -932,7 +892,6 @@ class Orchestrator:
         action: str,
         confidence: float = 1.0,
     ):
-        """Log a master agent decision to the AIDecisionLog table."""
         try:
             from database.connection import get_db_manager
             from database.models import AIDecisionLog, Investigation
@@ -978,7 +937,6 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     async def _check_cross_correlations(self, inv_id: str):
-        """Detect and link investigations that share IOCs."""
         if not hasattr(self, "_linked_pairs"):
             self._linked_pairs: set = set()
 
@@ -1074,7 +1032,6 @@ class Orchestrator:
         message: str,
         priority: str = "normal",
     ):
-        """Create a CaseNotification record for the investigation."""
         try:
             from database.connection import get_db_manager
             from database.models import CaseNotification, Investigation
@@ -1105,7 +1062,6 @@ class Orchestrator:
     async def _send_slack_for_notification(
         self, title: str, message: str, severity: str = "high"
     ):
-        """Optionally forward urgent notifications to Slack."""
         try:
             if get_settings().daemon_slack_enabled is not True:
                 return
@@ -1150,7 +1106,6 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     def _save_investigation(self, inv_record: Dict):
-        """Save a new investigation record to the database."""
         try:
             from database.connection import get_db_manager
             from database.models import Investigation
@@ -1182,7 +1137,6 @@ class Orchestrator:
             logger.error(f"Failed to save investigation to DB: {e}")
 
     def _get_investigations_by_status(self, status: str) -> List:
-        """Query investigations by status from the database."""
         try:
             from database.connection import get_db_manager
             from database.models import Investigation
@@ -1195,7 +1149,6 @@ class Orchestrator:
             return []
 
     def get_all_investigations(self, status: Optional[str] = None) -> List[Dict]:
-        """Get all investigations, optionally filtered by status."""
         try:
             from database.connection import get_db_manager
             from database.models import Investigation
@@ -1250,7 +1203,6 @@ class Orchestrator:
             logger.error(f"Failed to update investigation status: {e}")
 
     def get_cost_summary(self) -> Dict[str, Any]:
-        """Get cost breakdown across all investigations."""
         all_inv = self.get_all_investigations()
         total = sum(i.get("cost_usd", 0) for i in all_inv)
         active_cost = sum(
@@ -1270,11 +1222,6 @@ class Orchestrator:
         }
 
     async def purge_all_investigations(self) -> Dict[str, Any]:
-        """Stop all running agents, delete every investigation row, and wipe
-        the on-disk workdir tree. Used by the Settings UI's "Clear All
-        Investigations" button as a hard reset for the auto-investigate
-        subsystem.
-        """
         await self.agent_runner.stop_all()
 
         deleted = 0
@@ -1313,7 +1260,6 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     async def _sleep(self, shutdown_event: asyncio.Event, seconds: int):
-        """Sleep that respects shutdown events."""
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=seconds)
         except asyncio.TimeoutError:

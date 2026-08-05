@@ -1,5 +1,3 @@
-"""Unit tests for Claude service."""
-
 import asyncio
 import json
 import os
@@ -25,11 +23,9 @@ from tests.fixtures.claude_responses import (
 
 
 class TestClaudeServiceInitialization:
-    """Test ClaudeService initialization."""
     
     @patch('core.llm.harness.claude.get_secret')
     def test_init_default_config(self, mock_get_secret):
-        """Test initialization with default configuration."""
         mock_get_secret.return_value = "test-api-key-123"
         
         service = ClaudeService()
@@ -42,7 +38,6 @@ class TestClaudeServiceInitialization:
     
     @patch('core.llm.harness.claude.get_secret')
     def test_init_custom_config(self, mock_get_secret):
-        """Test initialization with custom configuration."""
         mock_get_secret.return_value = "test-api-key-123"
         
         service = ClaudeService(
@@ -59,7 +54,6 @@ class TestClaudeServiceInitialization:
     
     @patch('core.llm.harness.claude.get_secret')
     def test_init_no_api_key(self, mock_get_secret):
-        """Test initialization when API key is not available."""
         mock_get_secret.return_value = None
 
         service = ClaudeService()
@@ -71,16 +65,6 @@ class TestClaudeServiceInitialization:
     @patch('core.llm.router.router.discover_anthropic_api_key')
     @patch('core.llm.harness.claude.get_secret')
     def test_init_discovers_ui_saved_key(self, mock_get_secret, mock_discover):
-        """Issue #292: when neither CLAUDE_API_KEY nor ANTHROPIC_API_KEY
-        is set in secrets/env, ClaudeService falls back to looking up an
-        Anthropic provider row in llm_provider_configs (the UI-saved
-        path) and reads its api_key_ref from the secrets manager.
-
-        Before this fix, a user who configured Anthropic only through
-        Settings → AI / LLM Providers got "Claude API not configured" in
-        the chat drawer because _load_api_key only checked the legacy
-        env/secret names.
-        """
         # Legacy lookups all return None — simulates the user who only
         # added a provider through the UI and never touched .env.
         mock_get_secret.return_value = None
@@ -97,9 +81,6 @@ class TestClaudeServiceInitialization:
     def test_init_does_not_call_discovery_when_legacy_key_present(
         self, mock_get_secret, mock_discover
     ):
-        """If CLAUDE_API_KEY is already in the secrets chain, the
-        UI-provider fallback is skipped — no spurious DB lookups on the
-        hot path."""
         mock_get_secret.return_value = "sk-ant-legacy-env-key"
 
         service = ClaudeService()
@@ -113,7 +94,6 @@ class TestClaudeServiceInitialization:
 
     @patch('core.llm.harness.claude.get_secret')
     def test_load_mcp_tools_from_cache_file(self, mock_get_secret):
-        """_load_mcp_tools populates mcp_tools from a JSON cache file."""
         mock_get_secret.return_value = "test-api-key-123"
 
         cache_data = {
@@ -180,7 +160,6 @@ class TestClaudeServiceInitialization:
 
     @patch('core.llm.harness.claude.get_secret')
     def test_load_mcp_tools_cache_file_direct(self, mock_get_secret):
-        """_load_mcp_tools reads actual cache file path used by the service."""
         mock_get_secret.return_value = "test-api-key-123"
 
         cache_data = {
@@ -221,7 +200,6 @@ class TestClaudeServiceInitialization:
 
     @patch('core.llm.harness.claude.get_secret')
     def test_load_mcp_tools_fallback_to_in_memory_cache(self, mock_get_secret):
-        """Falls back to mcp_client.tools_cache when cache file is absent."""
         mock_get_secret.return_value = "test-api-key-123"
 
         mock_client = Mock()
@@ -259,7 +237,6 @@ class TestClaudeServiceInitialization:
 
     @patch('core.llm.harness.claude.get_secret')
     def test_load_mcp_tools_no_sources_available(self, mock_get_secret):
-        """Sets mcp_tools=[] without raising when no cache file and no client."""
         mock_get_secret.return_value = "test-api-key-123"
 
         project_root = Path(__file__).parent.parent.parent
@@ -283,7 +260,6 @@ class TestClaudeServiceInitialization:
 
     @patch('core.llm.harness.claude.get_secret')
     def test_load_mcp_tools_malformed_cache_file(self, mock_get_secret):
-        """Falls back to in-memory cache when cache file contains invalid JSON."""
         mock_get_secret.return_value = "test-api-key-123"
 
         mock_client = Mock()
@@ -322,7 +298,6 @@ class TestClaudeServiceInitialization:
 
     @patch('core.llm.harness.claude.get_secret')
     def test_no_event_loop_creation(self, mock_get_secret):
-        """_load_mcp_tools never calls asyncio.new_event_loop."""
         mock_get_secret.return_value = "test-api-key-123"
 
         project_root = Path(__file__).parent.parent.parent
@@ -363,7 +338,6 @@ class TestClaudeServiceInitialization:
                 cache_file.unlink()
 
     def test_startup_writes_cache_file(self):
-        """startup_event writes mcp_tools_cache.json with the correct structure."""
         project_root = Path(__file__).parent.parent.parent
         cache_file = project_root / "data" / "mcp_tools_cache.json"
 
@@ -415,11 +389,9 @@ class TestClaudeServiceInitialization:
 
 
 class TestClaudeServicePrompts:
-    """Test prompt building and management."""
     
     @patch('core.llm.harness.claude.get_secret')
     def test_default_system_prompt(self, mock_get_secret):
-        """Test that default system prompt is properly built."""
         mock_get_secret.return_value = "test-api-key-123"
         
         service = ClaudeService()
@@ -433,7 +405,6 @@ class TestClaudeServicePrompts:
     
     @patch('core.llm.harness.claude.get_secret')
     def test_system_prompt_includes_mcp_tools_section(self, mock_get_secret):
-        """Test that system prompt includes MCP tools documentation."""
         mock_get_secret.return_value = "test-api-key-123"
         
         service = ClaudeService(use_mcp_tools=True)
@@ -444,11 +415,9 @@ class TestClaudeServicePrompts:
 
 
 class TestClaudeServiceSessionManagement:
-    """Test session management for multi-turn conversations."""
     
     @patch('core.llm.harness.claude.get_secret')
     def test_create_session(self, mock_get_secret):
-        """Test creating a new session."""
         mock_get_secret.return_value = "test-api-key-123"
         
         service = ClaudeService()
@@ -462,7 +431,6 @@ class TestClaudeServiceSessionManagement:
     
     @patch('core.llm.harness.claude.get_secret')
     def test_clear_session(self, mock_get_secret):
-        """Test clearing a session."""
         mock_get_secret.return_value = "test-api-key-123"
         
         service = ClaudeService()
@@ -479,7 +447,6 @@ class TestClaudeServiceSessionManagement:
     
     @patch('core.llm.harness.claude.get_secret')
     def test_session_isolation(self, mock_get_secret):
-        """Test that sessions are isolated from each other."""
         mock_get_secret.return_value = "test-api-key-123"
         
         service = ClaudeService()
@@ -496,12 +463,10 @@ class TestClaudeServiceSessionManagement:
 
 
 class TestClaudeServiceAPIInteraction:
-    """Test API interaction (mocked)."""
     
     @patch('core.llm.harness.claude.get_secret')
     @patch('core.llm.harness.claude.Anthropic')
     def test_chat_basic_response(self, mock_anthropic, mock_get_secret):
-        """Test basic chat functionality with mocked API."""
         mock_get_secret.return_value = "test-api-key-123"
         
         # Setup mock client
@@ -538,7 +503,6 @@ class TestClaudeServiceAPIInteraction:
     @patch('core.llm.harness.claude.get_secret')
     @patch('core.llm.harness.claude.Anthropic')
     def test_chat_with_tool_use(self, mock_anthropic, mock_get_secret):
-        """Test chat with tool use response."""
         mock_get_secret.return_value = "test-api-key-123"
         
         # Setup mock client
@@ -572,11 +536,9 @@ class TestClaudeServiceAPIInteraction:
 
 
 class TestClaudeServiceErrorHandling:
-    """Test error handling for various API errors."""
     
     @patch('core.llm.harness.claude.get_secret')
     def test_missing_api_key_error(self, mock_get_secret):
-        """Test behavior when API key is missing."""
         mock_get_secret.return_value = None
         
         service = ClaudeService()
@@ -587,7 +549,6 @@ class TestClaudeServiceErrorHandling:
     @patch('core.llm.harness.claude.get_secret')
     @patch('core.llm.harness.claude.Anthropic')
     def test_rate_limit_error_handling(self, mock_anthropic, mock_get_secret):
-        """Test rate limit error handling."""
         mock_get_secret.return_value = "test-api-key-123"
         
         mock_client = Mock()
@@ -615,7 +576,6 @@ class TestClaudeServiceErrorHandling:
     @patch('core.llm.harness.claude.get_secret')
     @patch('core.llm.harness.claude.Anthropic')
     def test_authentication_error_handling(self, mock_anthropic, mock_get_secret):
-        """Test authentication error handling."""
         mock_get_secret.return_value = "invalid-api-key"
         
         mock_client = Mock()
@@ -642,11 +602,9 @@ class TestClaudeServiceErrorHandling:
 
 
 class TestClaudeServiceThinkingMode:
-    """Test extended thinking mode configuration."""
     
     @patch('core.llm.harness.claude.get_secret')
     def test_thinking_mode_enabled(self, mock_get_secret):
-        """Test that thinking mode can be enabled."""
         mock_get_secret.return_value = "test-api-key-123"
         
         service = ClaudeService(enable_thinking=True, thinking_budget=15000)
@@ -656,7 +614,6 @@ class TestClaudeServiceThinkingMode:
     
     @patch('core.llm.harness.claude.get_secret')
     def test_thinking_mode_disabled_by_default(self, mock_get_secret):
-        """Test that thinking mode is disabled by default."""
         mock_get_secret.return_value = "test-api-key-123"
         
         service = ClaudeService()
@@ -665,11 +622,9 @@ class TestClaudeServiceThinkingMode:
 
 
 class TestClaudeServiceMCPTools:
-    """Test MCP tool integration."""
 
     @patch('core.llm.harness.claude.get_secret')
     def test_mcp_tools_enabled(self, mock_get_secret):
-        """Test that MCP tools can be enabled."""
         mock_get_secret.return_value = "test-api-key-123"
 
         service = ClaudeService(use_mcp_tools=True)
@@ -678,7 +633,6 @@ class TestClaudeServiceMCPTools:
 
     @patch('core.llm.harness.claude.get_secret')
     def test_mcp_tools_disabled(self, mock_get_secret):
-        """Test that MCP tools can be disabled."""
         mock_get_secret.return_value = "test-api-key-123"
 
         service = ClaudeService(use_mcp_tools=False)
@@ -688,7 +642,6 @@ class TestClaudeServiceMCPTools:
 
 
 class TestDualToolLoading:
-    """Test that backend tools and MCP tools load independently and simultaneously."""
 
     @patch('core.llm.harness.claude.get_secret')
     @patch('core.llm.harness.claude.BACKEND_TOOLS_AVAILABLE', True)
@@ -696,7 +649,6 @@ class TestDualToolLoading:
         {'name': 'backend_tool_1', 'description': 'Backend tool', 'input_schema': {'type': 'object', 'properties': {}}},
     ])
     def test_both_tool_sets_load_when_both_flags_enabled(self, mock_get_secret):
-        """Both backend_tools and mcp_tools are populated when both flags are True."""
         mock_get_secret.return_value = "test-api-key-123"
 
         fake_mcp_tools = [
@@ -716,7 +668,6 @@ class TestDualToolLoading:
         {'name': 'backend_tool_2', 'description': 'Backend tool 2', 'input_schema': {'type': 'object', 'properties': {}}},
     ])
     def test_token_estimation_sums_both_tool_sets(self, mock_get_secret):
-        """Token estimation equals the sum of each tool set individually when both are loaded."""
         import json
         mock_get_secret.return_value = "test-api-key-123"
 
@@ -749,7 +700,6 @@ class TestDualToolLoading:
         {'name': 'backend_tool_1', 'description': 'Backend tool', 'input_schema': {'type': 'object', 'properties': {}}},
     ])
     def test_only_backend_tools_when_mcp_disabled(self, mock_get_secret):
-        """When only use_backend_tools=True, mcp_tools stays empty."""
         mock_get_secret.return_value = "test-api-key-123"
 
         service = ClaudeService(use_backend_tools=True, use_mcp_tools=False)
@@ -759,7 +709,6 @@ class TestDualToolLoading:
 
     @patch('core.llm.harness.claude.get_secret')
     def test_only_mcp_tools_when_backend_disabled(self, mock_get_secret):
-        """When only use_mcp_tools=True, backend_tools stays empty."""
         mock_get_secret.return_value = "test-api-key-123"
 
         fake_mcp_tools = [
@@ -774,10 +723,8 @@ class TestDualToolLoading:
 
 
 class TestProcessMixedToolUse:
-    """Tests for _process_mixed_tool_use() routing method."""
 
     def _make_service(self, backend_tools, mcp_tools):
-        """Create a ClaudeService with pre-populated tool lists (no real init)."""
         with patch('core.llm.harness.claude.get_secret', return_value="test-key"), \
              patch.object(ClaudeService, '_load_backend_tools', lambda self: None), \
              patch.object(ClaudeService, '_load_mcp_tools', lambda self: None):
@@ -787,7 +734,6 @@ class TestProcessMixedToolUse:
         return service
 
     def _make_tool_use_item(self, name, tool_id="toolu_1", input_data=None):
-        """Create a mock tool-use block (object format, as Claude API returns)."""
         item = Mock()
         item.type = "tool_use"
         item.name = name
@@ -797,7 +743,6 @@ class TestProcessMixedToolUse:
 
     @pytest.mark.asyncio
     async def test_mixed_content_dispatches_correctly(self):
-        """Backend-named tool goes to _process_backend_tool_use; others go to _process_tool_use."""
         backend_tools = [{'name': 'backend_op', 'description': 'b', 'input_schema': {}}]
         mcp_tools = [{'name': 'mcp_op', 'description': 'm', 'input_schema': {}}]
         service = self._make_service(backend_tools, mcp_tools)
@@ -823,7 +768,6 @@ class TestProcessMixedToolUse:
 
     @pytest.mark.asyncio
     async def test_backend_only_content_dispatches_to_backend_processor(self):
-        """All items with backend names go exclusively to _process_backend_tool_use."""
         backend_tools = [
             {'name': 'tool_a', 'description': 'a', 'input_schema': {}},
             {'name': 'tool_b', 'description': 'b', 'input_schema': {}},
@@ -848,7 +792,6 @@ class TestProcessMixedToolUse:
 
     @pytest.mark.asyncio
     async def test_mcp_only_content_dispatches_to_mcp_processor(self):
-        """All items with non-backend names go exclusively to _process_tool_use."""
         service = self._make_service(backend_tools=[], mcp_tools=[
             {'name': 'ext_search', 'description': 'search', 'input_schema': {}},
         ])
@@ -868,7 +811,6 @@ class TestProcessMixedToolUse:
 
     @pytest.mark.asyncio
     async def test_empty_content_returns_empty_list(self):
-        """Empty content list returns empty results without calling any processor."""
         service = self._make_service(backend_tools=[], mcp_tools=[])
 
         with patch.object(service, '_process_backend_tool_use') as mock_backend, \
@@ -881,7 +823,6 @@ class TestProcessMixedToolUse:
 
     @pytest.mark.asyncio
     async def test_dict_format_items_are_handled(self):
-        """Items in dict format (not object) are routed correctly."""
         backend_tools = [{'name': 'dict_tool', 'description': 'd', 'input_schema': {}}]
         service = self._make_service(backend_tools, mcp_tools=[])
 
@@ -901,7 +842,6 @@ class TestProcessMixedToolUse:
 
 
 class TestChatAndStreamCombinedTools:
-    """Tests verifying chat() and stream() pass combined tool lists to the Claude API."""
 
     BACKEND_TOOL = {'name': 'backend_op', 'description': 'Backend', 'input_schema': {'type': 'object', 'properties': {}}}
     MCP_TOOL = {'name': 'mcp_op', 'description': 'MCP', 'input_schema': {'type': 'object', 'properties': {}}}
@@ -917,7 +857,6 @@ class TestChatAndStreamCombinedTools:
 
     @patch('core.llm.harness.claude.Anthropic')
     def test_chat_passes_combined_tools_to_api(self, mock_anthropic):
-        """chat() passes both backend and MCP tools combined to the Claude API."""
         mock_client = Mock()
         mock_anthropic.return_value = mock_client
 
@@ -943,7 +882,6 @@ class TestChatAndStreamCombinedTools:
     @pytest.mark.asyncio
     @patch('core.llm.harness.claude.AsyncAnthropic')
     async def test_stream_passes_combined_tools_to_api(self, mock_async_anthropic):
-        """chat_stream() passes both backend and MCP tools combined to the Claude API."""
         from unittest.mock import AsyncMock
 
         # Build an async context manager mock for messages.stream(...)
@@ -988,10 +926,8 @@ class TestChatAndStreamCombinedTools:
 
 
 class TestTokenEstimationEdgeCases:
-    """Edge case tests for tool-token estimation with partial or empty tool sets."""
 
     def _make_service(self, backend_tools, mcp_tools, backend_enabled=True, mcp_enabled=True):
-        """Return a ClaudeService with pre-set tool lists (no external calls)."""
         with patch('core.llm.harness.claude.get_secret', return_value="test-key"), \
              patch.object(ClaudeService, '_load_backend_tools', lambda self: None), \
              patch.object(ClaudeService, '_load_mcp_tools', lambda self: None):
@@ -1004,14 +940,12 @@ class TestTokenEstimationEdgeCases:
         return service
 
     def _tool_tokens(self, service, max_context=180000):
-        """Compute the tool-token contribution via _needs_context_reduction."""
         _, _, available = service._needs_context_reduction(
             [], system_prompt=None, max_context_tokens=max_context
         )
         return max_context - available
 
     def test_token_estimation_empty_backend_only_counts_mcp(self):
-        """When backend_tools is empty but mcp_tools has items, only MCP tokens counted."""
         import json
         mcp_tools = [
             {'name': 'mcp_t', 'description': 'MCP tool', 'input_schema': {'type': 'object'}},
@@ -1024,7 +958,6 @@ class TestTokenEstimationEdgeCases:
         )
 
     def test_token_estimation_empty_mcp_only_counts_backend(self):
-        """When mcp_tools is empty but backend_tools has items, only backend tokens counted."""
         import json
         backend_tools = [
             {'name': 'backend_t', 'description': 'Backend tool', 'input_schema': {'type': 'object'}},
@@ -1037,7 +970,6 @@ class TestTokenEstimationEdgeCases:
         )
 
     def test_token_estimation_both_empty_contributes_zero(self):
-        """When both tool sets are empty lists, no tool tokens are counted."""
         service = self._make_service(backend_tools=[], mcp_tools=[])
         assert self._tool_tokens(service) == 0, (
             "tool_tokens should be 0 when both backend_tools and mcp_tools are empty"
@@ -1045,7 +977,6 @@ class TestTokenEstimationEdgeCases:
 
 
 class TestEmptyToolSetsPassNoneToApi:
-    """Verify that empty tool lists result in tools=None (not []) when calling the API."""
 
     BACKEND_TOOL = {'name': 'bt', 'description': 'B', 'input_schema': {'type': 'object', 'properties': {}}}
     MCP_TOOL = {'name': 'mt', 'description': 'M', 'input_schema': {'type': 'object', 'properties': {}}}
@@ -1061,7 +992,6 @@ class TestEmptyToolSetsPassNoneToApi:
 
     @patch('core.llm.harness.claude.Anthropic')
     def test_chat_does_not_pass_tools_when_both_sets_empty(self, mock_anthropic):
-        """chat() omits the 'tools' key entirely when both tool sets are empty."""
         mock_client = Mock()
         mock_anthropic.return_value = mock_client
 
@@ -1084,7 +1014,6 @@ class TestEmptyToolSetsPassNoneToApi:
 
 
 class TestProcessMixedToolUseEdgeCases:
-    """Edge-case tests for _process_mixed_tool_use routing."""
 
     def _make_service(self, backend_tools, mcp_tools):
         with patch('core.llm.harness.claude.get_secret', return_value="test-key"), \
@@ -1105,7 +1034,6 @@ class TestProcessMixedToolUseEdgeCases:
 
     @pytest.mark.asyncio
     async def test_tool_name_collision_backend_takes_precedence(self):
-        """When both backend and MCP tools share a name, the backend processor is called."""
         shared_name = 'shared_tool'
         backend_tools = [{'name': shared_name, 'description': 'backend version', 'input_schema': {}}]
         mcp_tools = [{'name': shared_name, 'description': 'mcp version', 'input_schema': {}}]
@@ -1126,7 +1054,6 @@ class TestProcessMixedToolUseEdgeCases:
 
     @pytest.mark.asyncio
     async def test_backend_processor_receives_single_element_list(self):
-        """Each backend tool-use item is wrapped in a one-element list before dispatch."""
         backend_tools = [{'name': 'tool_x', 'description': 'x', 'input_schema': {}}]
         service = self._make_service(backend_tools, mcp_tools=[])
 
@@ -1146,7 +1073,6 @@ class TestProcessMixedToolUseEdgeCases:
 
     @pytest.mark.asyncio
     async def test_mcp_processor_receives_single_element_list(self):
-        """Each MCP tool-use item is wrapped in a one-element list before dispatch."""
         service = self._make_service(backend_tools=[], mcp_tools=[
             {'name': 'remote_scan', 'description': 'scan', 'input_schema': {}}
         ])
@@ -1166,10 +1092,8 @@ class TestProcessMixedToolUseEdgeCases:
 
 
 class TestLoadMcpToolsCache:
-    """Tests for the file-based MCP tools cache in _load_mcp_tools()."""
 
     def _make_service_no_load(self):
-        """Create a ClaudeService without triggering real tool loading."""
         with patch('core.llm.harness.claude.get_secret', return_value="test-key"), \
              patch.object(ClaudeService, '_load_mcp_tools', lambda self: None), \
              patch.object(ClaudeService, '_load_backend_tools', lambda self: None):
@@ -1178,7 +1102,6 @@ class TestLoadMcpToolsCache:
         return service
 
     def test_fallback_to_in_memory_cache(self):
-        """Falls back to mcp_client.tools_cache when cache file does not exist."""
         service = self._make_service_no_load()
 
         mock_client = MagicMock()
@@ -1205,7 +1128,6 @@ class TestLoadMcpToolsCache:
         assert service.mcp_tools[0]["name"] == "jira_create_issue"
 
     def test_no_sources_available(self):
-        """Sets mcp_tools=[] and does not raise when both cache file and client are unavailable."""
         service = self._make_service_no_load()
 
         with patch('core.llm.harness.claude.REPO_ROOT') as mock_repo_root:
@@ -1219,7 +1141,6 @@ class TestLoadMcpToolsCache:
         assert service.mcp_tools == []
 
     def test_malformed_cache_file_falls_back_to_memory(self, tmp_path):
-        """Falls back to in-memory cache when the cache file contains invalid JSON."""
         cache_file = tmp_path / "mcp_tools_cache.json"
         cache_file.write_text("{not valid json}")
 
@@ -1258,7 +1179,6 @@ class TestLoadMcpToolsCache:
         assert service.mcp_tools[0]["name"] == "threat_intel_lookup_ip"
 
     def test_no_event_loop_creation(self):
-        """_load_mcp_tools never creates a new event loop."""
         service = self._make_service_no_load()
 
         with patch('core.llm.harness.claude.REPO_ROOT') as mock_repo_root:
@@ -1272,7 +1192,6 @@ class TestLoadMcpToolsCache:
                 mock_new_loop.assert_not_called()
 
     def test_tools_have_server_prefix_and_correct_schema(self):
-        """Tools loaded from in-memory cache retain server-name prefix and correct input_schema."""
         service = self._make_service_no_load()
 
         mock_client = MagicMock()
@@ -1307,7 +1226,6 @@ class TestLoadMcpToolsCache:
         assert "query" in tool["input_schema"]["properties"]
 
     def test_cache_file_load_with_real_file(self, tmp_path):
-        """_load_mcp_tools reads tools correctly from a real cache file on disk."""
         import json as _json
         cache_data = {
             "splunk": [
@@ -1351,7 +1269,6 @@ class TestLoadMcpToolsCache:
 
 
 class TestExecuteBackendTool:
-    """Tests for _execute_backend_tool MCP fallback and existing-tool paths."""
 
     def _make_service(self):
         with patch('core.llm.harness.claude.get_secret', return_value="test-api-key-123"):
@@ -1360,7 +1277,6 @@ class TestExecuteBackendTool:
 
     @pytest.mark.asyncio
     async def test_mcp_fallback_success(self):
-        """Unknown tool name triggers _execute_mcp_tool; result is wrapped in {'result': ...}."""
         service = self._make_service()
         with patch.object(service, '_execute_mcp_tool', new=AsyncMock(return_value="search results")):
             result = await service._execute_backend_tool("splunk_splunk_nl_search", {})
@@ -1368,7 +1284,6 @@ class TestExecuteBackendTool:
 
     @pytest.mark.asyncio
     async def test_mcp_fallback_exception(self):
-        """When _execute_mcp_tool raises, returns {'error': 'Unknown tool: <name>'} without propagating."""
         service = self._make_service()
         with patch.object(service, '_execute_mcp_tool', new=AsyncMock(side_effect=Exception("connection refused"))):
             result = await service._execute_backend_tool("splunk_splunk_nl_search", {})
@@ -1376,7 +1291,6 @@ class TestExecuteBackendTool:
 
     @pytest.mark.asyncio
     async def test_existing_tools_unchanged(self):
-        """Known backend tools (list_findings) return their correct result; _execute_mcp_tool is never called."""
         service = self._make_service()
         mock_findings = [{"finding_id": "f1", "severity": "high", "anomaly_score": 0.9,
                           "data_source": "splunk", "timestamp": "2026-01-01T00:00:00Z",
@@ -1393,7 +1307,6 @@ class TestExecuteBackendTool:
 
     @pytest.mark.asyncio
     async def test_daemon_callsite_awaits_directly(self):
-        """Daemon _execute_tool awaits _execute_backend_tool directly (not via asyncio.to_thread)."""
         service = self._make_service()
         call_record = []
 

@@ -1,5 +1,3 @@
-"""Service for checking integration compatibility and managing upgrades."""
-
 import re
 import sys
 import logging
@@ -21,7 +19,6 @@ _SAFE_PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class IntegrationCompatibilityService:
-    """Service for checking integration package compatibility with current Python version."""
 
     def __init__(self):
         self.python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -163,12 +160,6 @@ class IntegrationCompatibilityService:
         }
 
     def check_package_installed(self, package_name: str) -> Tuple[bool, Optional[str]]:
-        """
-        Check if a package is installed and return its version.
-
-        Returns:
-            (is_installed, version)
-        """
         if not package_name:
             return (True, None)  # API-only integration
 
@@ -181,12 +172,6 @@ class IntegrationCompatibilityService:
     def check_python_compatibility(
         self, integration_id: str
     ) -> Tuple[bool, Optional[str]]:
-        """
-        Check if current Python version is compatible with the integration.
-
-        Returns:
-            (is_compatible, reason)
-        """
         integration = self.integrations.get(integration_id, {})
 
         # Check Python minimum version requirement
@@ -211,12 +196,6 @@ class IntegrationCompatibilityService:
         return (True, None)
 
     def get_integration_status(self, integration_id: str) -> Dict:
-        """
-        Get complete status for an integration.
-
-        Returns:
-            Dictionary with status information
-        """
         integration = self.integrations.get(integration_id, {})
 
         if not integration:
@@ -284,19 +263,12 @@ class IntegrationCompatibilityService:
             }
 
     def get_all_statuses(self) -> Dict[str, Dict]:
-        """Get status for all integrations."""
         statuses = {}
         for integration_id in self.integrations.keys():
             statuses[integration_id] = self.get_integration_status(integration_id)
         return statuses
 
     def get_allowed_integration_ids(self) -> List[str]:
-        """Return integration IDs that have a known pip-installable package.
-
-        Drives the allowlist used by ``install_known_integration``; the
-        UI can also call this to render only the integrations that the
-        backend is willing to install.
-        """
         return [
             integration_id
             for integration_id, info in self.integrations.items()
@@ -304,14 +276,6 @@ class IntegrationCompatibilityService:
         ]
 
     def install_known_integration(self, integration_id: str) -> Tuple[bool, str]:
-        """Install the pinned package for a known integration ID.
-
-        The package name and minimum version come from the server-side
-        ``self.integrations`` map — the caller never supplies a package
-        spec directly. This closes the unauthenticated-pip-install RCE
-        from the 2026-05 disclosure: even an authenticated admin can't
-        ask pip to fetch arbitrary URLs/paths/VCS refs.
-        """
         info = self.integrations.get(integration_id)
         if not info or not info.get("package"):
             return (False, f"Unknown or non-installable integration: {integration_id}")
@@ -331,13 +295,6 @@ class IntegrationCompatibilityService:
         return self._run_pip_install(package_spec, label=integration_id)
 
     def _run_pip_install(self, package_spec: str, *, label: str) -> Tuple[bool, str]:
-        """Execute ``pip install --upgrade`` with the given spec.
-
-        Private helper — never accepts raw user input. Uses list-form
-        subprocess args so there's no shell, and pins the
-        executable to ``sys.executable`` so we install into the
-        current virtualenv rather than whatever ``pip`` is on PATH.
-        """
         try:
             result = subprocess.run(
                 [
@@ -367,11 +324,9 @@ class IntegrationCompatibilityService:
             return (False, f"Installation error: {str(e)}")
 
     def upgrade_known_integration(self, integration_id: str) -> Tuple[bool, str]:
-        """Upgrade the pinned package for a known integration."""
         return self.install_known_integration(integration_id)
 
     def uninstall_known_integration(self, integration_id: str) -> Tuple[bool, str]:
-        """Uninstall the package backing a known integration."""
         info = self.integrations.get(integration_id)
         if not info or not info.get("package"):
             return (False, f"Unknown or non-installable integration: {integration_id}")
@@ -405,7 +360,6 @@ class IntegrationCompatibilityService:
             return (False, f"Uninstallation error: {str(e)}")
 
     def get_system_info(self) -> Dict:
-        """Get system information."""
         return {
             "python_version": self.python_version,
             "python_major_minor": self.python_major_minor,
@@ -415,7 +369,6 @@ class IntegrationCompatibilityService:
         }
 
     def _get_pip_version(self) -> Optional[str]:
-        """Get pip version."""
         try:
             result = subprocess.run(
                 [sys.executable, "-m", "pip", "--version"],
@@ -438,7 +391,6 @@ _compatibility_service = None
 
 
 def get_compatibility_service() -> IntegrationCompatibilityService:
-    """Get singleton compatibility service instance."""
     global _compatibility_service
     if _compatibility_service is None:
         _compatibility_service = IntegrationCompatibilityService()

@@ -1,11 +1,3 @@
-"""Sub-agent runner for autonomous investigations.
-
-Manages the lifecycle of individual investigation agents. Each sub-agent
-runs in an async loop, reading its plan.md, executing steps via Claude
-with full MCP/backend tool access, and writing results back to its
-working directory.
-"""
-
 import asyncio
 import json
 import logging
@@ -23,14 +15,6 @@ from services.tool_manager import get_tool_tier as _get_tool_tier
 
 
 def _default_thinking_budget() -> int:
-    """Default extended-thinking budget for the autonomous runner (GH #84 PR-D).
-
-    The runner doesn't know which sub-agent is running and so can't consult
-    per-agent ``AgentProfile.thinking_budget`` values. It uses this
-    process-wide default (runtime-configurable via Settings UI, GH #84 PR-F)
-    instead. Per-agent overrides still apply when the caller has agent
-    context (e.g. ClaudeService.chat).
-    """
     from services.runtime_config import get_ai_operations_setting
 
     return get_ai_operations_setting("thinking_budget", 10000)
@@ -159,7 +143,6 @@ WORKDIR_TOOLS = [
 
 
 class AgentRunner:
-    """Manages the pool of running sub-agent tasks."""
 
     def __init__(self, config: OrchestratorConfig, workdir_mgr: WorkdirManager):
         self.config = config
@@ -225,14 +208,6 @@ class AgentRunner:
                 )
 
     def _plan_provider_is_anthropic(self) -> bool:
-        """True when the configured plan provider is Anthropic (or unset).
-
-        Non-Anthropic providers (Ollama/OpenAI/Groq) don't support extended
-        thinking, so the daemon disables it for them. Resolved once and cached;
-        an unresolvable provider_id defaults to Anthropic to preserve the
-        historical assumption. ``provider_id is None`` also means the default
-        Anthropic provider.
-        """
         cached = getattr(self, "_plan_is_anthropic_cache", "unset")
         if cached != "unset":
             return cached
@@ -253,7 +228,6 @@ class AgentRunner:
         return result
 
     async def _ensure_gateway(self):
-        """Lazily initialise the LLM gateway."""
         if self._llm_gateway is None:
             try:
                 from core.llm.gateway.gateway import get_llm_gateway
@@ -274,7 +248,6 @@ class AgentRunner:
     async def start_agent(
         self, investigation: Dict[str, Any], shutdown_event: asyncio.Event
     ):
-        """Start a sub-agent for an investigation."""
         inv_id = investigation["investigation_id"]
         if self.is_running(inv_id):
             logger.warning(f"Agent already running for {inv_id}")
@@ -288,7 +261,6 @@ class AgentRunner:
         logger.info(f"Started sub-agent for {inv_id}")
 
     async def stop_agent(self, investigation_id: str):
-        """Cancel a running agent task."""
         task = self._active_agents.get(investigation_id)
         if task and not task.done():
             task.cancel()
@@ -313,7 +285,6 @@ class AgentRunner:
     async def _run_agent(
         self, investigation: Dict[str, Any], shutdown_event: asyncio.Event
     ):
-        """The main sub-agent loop for a single investigation."""
         inv_id = investigation["investigation_id"]
         start_time = time.time()
         iteration = 0
@@ -632,15 +603,6 @@ class AgentRunner:
         prompt: str,
         total_cost: float,
     ) -> bool:
-        """Return True if the upcoming call's estimated upper bound would
-        push the investigation over its budget.
-
-        On True, marks the investigation failed and the caller should
-        ``break`` out of the agent loop. On False (including any error
-        during estimation) the caller proceeds — the post-hoc gate at
-        line 460 still catches actual overruns. Telemetry must never
-        block dispatch.
-        """
         try:
             from core.llm.cost.estimator import estimate_cost
         except Exception as e:
@@ -720,7 +682,6 @@ class AgentRunner:
         return True
 
     def _build_prompt(self, inv_id: str, plan: str, state: Dict, iteration: int) -> str:
-        """Build the Claude prompt from plan, context, and state."""
         context_md = self.workdir.read_file(inv_id, "context.md")
         if len(context_md) > self.config.context_max_chars:
             keep_head = 2000
@@ -822,13 +783,6 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         return "\n\n".join(s for s in sections if s)
 
     async def _call_claude(self, inv_id: str, prompt: str) -> Dict[str, Any]:
-        """Execute a Claude call with tools, handling tool use in a loop.
-
-        Each individual API call is routed through the LLM gateway / ARQ
-        queue, which enforces global rate limiting and runs the actual
-        Anthropic call inside the worker process.  Tool execution still
-        happens locally in this process.
-        """
         if self._llm_gateway is None:
             raise RuntimeError("LLM gateway not connected")
 
@@ -1018,7 +972,6 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         }
 
     async def _execute_tool(self, inv_id: str, tool_name: str, tool_input: Dict) -> str:
-        """Execute a tool call, routing between workdir tools, backend tools, and MCP tools."""
         try:
             if tool_name == "read_investigation_file":
                 return self.workdir.read_file(inv_id, tool_input["filename"])
@@ -1141,7 +1094,6 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
     async def _execute_external_tool(
         self, inv_id: str, tool_name: str, tool_input: Dict
     ) -> str:
-        """Route to backend or MCP tool execution, enforcing safety guardrails."""
         import time as _time
 
         tier = _get_tool_tier(tool_name)
@@ -1303,7 +1255,6 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
     async def _request_tool_approval(
         self, inv_id: str, tool_name: str, tool_input: Dict
     ) -> str:
-        """Create an approval request and put the agent into waiting_approval state."""
         try:
             from services.approval_service import ActionType, get_approval_service
 
@@ -1367,12 +1318,6 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
     async def _check_approval(
         self, inv_id: str, state: Dict, start_time: float
     ) -> Optional[bool]:
-        """Check if a pending approval has been resolved.
-
-        Returns True if approved and agent should continue, False if still
-        pending (caller should sleep and retry), None if the agent should stop
-        (timeout or fatal).
-        """
         pending = state.get("pending_approval", {})
         action_id = pending.get("action_id")
         if not action_id:
@@ -1472,7 +1417,6 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             return False
 
     async def _execute_approved_tool(self, tool_name: str, tool_input: Dict) -> str:
-        """Execute a tool that has already been approved, bypassing guardrails."""
         if self._claude_service and hasattr(
             self._claude_service, "_execute_backend_tool"
         ):
@@ -1522,15 +1466,6 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         )
 
     def _update_db_record(self, inv_id: str, updates: Dict[str, Any]):
-        """Update the Investigation record in the database.
-
-        Uses ``session_scope()`` (auto-commit + auto-close) so that heartbeats
-        and status writes can't silently leak connections or get swallowed
-        when the agent is making real progress. See issue #147 — the previous
-        raw ``get_session()`` + ``logger.debug`` pattern hid heartbeat failures
-        and let the supervisor mark healthy investigations as ``Stale: no
-        activity``.
-        """
         try:
             from database.connection import get_db_manager
             from database.models import Investigation
@@ -1559,11 +1494,6 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         details: Optional[Dict[str, Any]] = None,
         tokens_used: int = 0,
     ):
-        """Persist an event to the InvestigationLog DB table.
-
-        Fire-and-forget: failures are logged but never re-raised so that
-        audit logging can never break the agent loop. See sub-issue #193.
-        """
         try:
             from database.connection import get_db_manager
             from database.models import InvestigationLog

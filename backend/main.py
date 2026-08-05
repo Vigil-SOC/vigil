@@ -1,9 +1,3 @@
-"""
-FastAPI Backend for Vigil SOC Web Application
-
-Main application entry point for the REST API server.
-"""
-
 import json
 import logging
 import os
@@ -478,7 +472,6 @@ def _mcp_auto_connect_enabled() -> bool:
 
 
 async def _connect_external_services():
-    """Connect external startup integrations (skipped under TESTING)."""
     import asyncio
 
     try:
@@ -618,7 +611,6 @@ async def _connect_external_services():
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database, MCP tools and check integration compatibility on startup."""
     logger.info("=" * 60)
     logger.info("Starting Vigil SOC Backend")
     logger.info("=" * 60)
@@ -869,7 +861,6 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Clean up LLM gateway and MCP connections on shutdown."""
     logger.info("Shutting down LLM Gateway...")
     try:
         from core.llm.gateway.gateway import close_llm_gateway
@@ -906,14 +897,12 @@ async def shutdown_event():
 # Prometheus metrics endpoint
 @app.get("/metrics", include_in_schema=False)
 async def metrics():
-    """Expose Prometheus metrics for scraping."""
     return get_metrics_response()
 
 
 # Health check endpoint
 @app.get(f"{_CONTEXT_PATH}/api/health")
 async def health_check():
-    """Health check endpoint with storage backend info."""
     try:
         from services.database_data_service import DatabaseDataService
         from core.config import is_demo_mode
@@ -1017,7 +1006,6 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
 
     @app.get(f"{_CONTEXT_PATH}/{{full_path:path}}")
     async def serve_react_app(full_path: str):
-        """Serve React app for all non-API routes."""
         # Don't interfere with API routes
         if full_path.startswith("api/"):
             return {"error": "Not found"}, 404

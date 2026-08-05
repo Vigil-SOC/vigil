@@ -22,10 +22,6 @@ CASES_FILE = DATA_DIR / "cases.json"
 
 
 def _cosine_sim(a, b):
-    """Compute cosine similarity between two vectors.
-    
-    Returns None if the vectors have incompatible dimensions.
-    """
     a, b = np.array(a), np.array(b)
     if a.shape != b.shape:
         return None
@@ -81,12 +77,6 @@ class DatabaseDataService:
 
     @property
     def _db_available(self) -> bool:
-        """True when the Postgres connection is healthy.
-
-        If currently disconnected, transparently retries `_init_database`
-        at most once per `_RECONNECT_INTERVAL_SECONDS` so the service
-        recovers automatically when Postgres becomes reachable again.
-        """
         if self._db_connected:
             return True
         if self._demo_mode:
@@ -208,8 +198,6 @@ class DatabaseDataService:
     def get_findings_missing_enrichment(
         self, limit: int = 100, max_age_hours: Optional[int] = None
     ) -> List[Dict]:
-        """Findings stored but never enriched (ai_enrichment IS NULL). DB-only —
-        JSON-fallback daemons skip backfill."""
         if not self._db_available or not self._db_service:
             return []
         try:
@@ -277,15 +265,6 @@ class DatabaseDataService:
         return None
     
     def get_nearest_neighbors(self, finding_id: str, limit: int = 10) -> Dict:
-        """Find similar findings using embedding-based cosine similarity.
-        
-        Args:
-            finding_id: Reference finding ID to find neighbors for
-            limit: Maximum number of neighbors to return
-            
-        Returns:
-            Dict with seed_finding and neighbors list
-        """
         if self._demo_mode and self._demo_service:
             return self._demo_service.get_nearest_neighbors(finding_id, limit)
 
@@ -309,8 +288,6 @@ class DatabaseDataService:
         return self._nearest_neighbors_in_memory(finding_id, limit)
 
     def _nearest_neighbors_in_memory(self, finding_id: str, limit: int) -> Dict:
-        """Python cosine-similarity fallback for when the DB-side query can't run.
-        Mismatched-length embeddings are skipped (dimension-safe)."""
         # Get all findings (from DB or JSON fallback)
         if self._db_available:
             try:
@@ -529,14 +506,6 @@ class DatabaseDataService:
         return False
     
     def get_findings_by_case(self, case_id: str) -> List[Dict]:
-        """Get all findings associated with a case.
-        
-        Args:
-            case_id: ID of the case
-            
-        Returns:
-            List of finding dictionaries
-        """
         if self._demo_mode and self._demo_service:
             # Get case and extract finding IDs
             case = self._demo_service.get_case(case_id)
@@ -568,15 +537,6 @@ class DatabaseDataService:
         return []
     
     def add_finding_to_case(self, case_id: str, finding_id: str) -> bool:
-        """Add a finding to an existing case.
-        
-        Args:
-            case_id: The case ID
-            finding_id: The finding ID to add
-            
-        Returns:
-            True if successful, False otherwise
-        """
         if self._demo_mode and self._demo_service:
             return self._demo_service.add_finding_to_case(case_id, finding_id)
         
@@ -619,12 +579,6 @@ class DatabaseDataService:
             return False
     
     def _init_s3_service(self) -> bool:
-        """
-        Initialize S3 service from configuration.
-        
-        Returns:
-            True if S3 is configured and initialized, False otherwise
-        """
         try:
             # Load S3 config from database
             from database.config_service import get_config_service
@@ -698,18 +652,11 @@ class DatabaseDataService:
             return False
     
     def is_s3_configured(self) -> bool:
-        """Check if S3 is configured and available."""
         if self._s3_service is None:
             self._init_s3_service()
         return self._s3_service is not None
     
     def sync_from_s3(self) -> Tuple[bool, str, Dict]:
-        """
-        Sync findings and cases from S3 to local storage.
-        
-        Returns:
-            Tuple of (success, message, stats)
-        """
         if self._demo_mode:
             return False, "Cannot sync from S3 in demo mode", {}
         

@@ -1,5 +1,3 @@
-"""Workflows API endpoints for SOC workflow management and execution."""
-
 from typing import Any, Dict, List, Optional
 
 import logging
@@ -16,7 +14,6 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowExecuteRequest(BaseModel):
-    """Request to execute a workflow."""
 
     finding_id: Optional[str] = None
     case_id: Optional[str] = None
@@ -64,13 +61,11 @@ class WorkflowGenerateRequest(BaseModel):
 
 
 class WorkflowRunResumeRequest(BaseModel):
-    """Optional payload when manually resuming a paused run."""
 
     approved_by: Optional[str] = None
 
 
 class WorkflowRunCancelRequest(BaseModel):
-    """Payload when cancelling a paused / running run from the UI."""
 
     reason: str
     rejected_by: Optional[str] = None
@@ -83,12 +78,6 @@ class WorkflowRunCancelRequest(BaseModel):
 
 @router.get("/workflows")
 async def list_workflows():
-    """
-    List all available workflows (file-based + database-backed custom).
-
-    Returns:
-        { workflows: [...], count: int }
-    """
     try:
         from services.workflows_service import get_workflows_service
 
@@ -104,11 +93,6 @@ async def list_workflows():
 # Static routes MUST come before parameterized {workflow_id} routes
 @router.post("/workflows/reload")
 async def reload_workflows():
-    """
-    Force reload all file-based workflows from disk.
-
-    Does not affect database-backed custom workflows.
-    """
     try:
         from services.workflows_service import get_workflows_service
 
@@ -133,7 +117,6 @@ async def reload_workflows():
 
 @router.get("/workflows/custom")
 async def list_custom_workflows(active_only: bool = True):
-    """List database-backed custom workflows."""
     try:
         from services.custom_workflow_service import get_custom_workflow_service
 
@@ -146,7 +129,6 @@ async def list_custom_workflows(active_only: bool = True):
 
 @router.post("/workflows/custom", status_code=201)
 async def create_custom_workflow(payload: CustomWorkflowCreate):
-    """Create a new custom workflow."""
     try:
         from services.custom_workflow_service import get_custom_workflow_service
 
@@ -162,7 +144,6 @@ async def create_custom_workflow(payload: CustomWorkflowCreate):
 
 @router.get("/workflows/custom/{workflow_id}")
 async def get_custom_workflow(workflow_id: str):
-    """Fetch a single custom workflow."""
     try:
         from services.custom_workflow_service import get_custom_workflow_service
 
@@ -182,7 +163,6 @@ async def get_custom_workflow(workflow_id: str):
 
 @router.put("/workflows/custom/{workflow_id}")
 async def update_custom_workflow(workflow_id: str, payload: CustomWorkflowUpdate):
-    """Update an existing custom workflow. Increments version."""
     try:
         from services.custom_workflow_service import get_custom_workflow_service
 
@@ -206,7 +186,6 @@ async def update_custom_workflow(workflow_id: str, payload: CustomWorkflowUpdate
 
 @router.delete("/workflows/custom/{workflow_id}")
 async def delete_custom_workflow(workflow_id: str):
-    """Soft-delete a custom workflow (sets is_active=False)."""
     try:
         from services.custom_workflow_service import get_custom_workflow_service
 
@@ -231,11 +210,6 @@ async def delete_custom_workflow(workflow_id: str):
 
 @router.post("/workflows/generate")
 async def generate_workflow(payload: WorkflowGenerateRequest):
-    """
-    Generate a draft custom workflow from a natural-language description.
-
-    Does NOT save. Frontend can tweak the draft and POST to /workflows/custom.
-    """
     try:
         from services.workflow_ai_generator import get_workflow_ai_generator
 
@@ -261,9 +235,6 @@ async def generate_workflow(payload: WorkflowGenerateRequest):
 
 @router.get("/workflows/{workflow_id}")
 async def get_workflow(workflow_id: str):
-    """
-    Get full details for a specific workflow (custom or file-based).
-    """
     try:
         from services.workflows_service import get_workflows_service
 
@@ -284,12 +255,6 @@ async def get_workflow(workflow_id: str):
 
 @router.post("/workflows/{workflow_id}/execute")
 async def execute_workflow(workflow_id: str, request: WorkflowExecuteRequest):
-    """
-    Execute a workflow (custom or file-based).
-
-    Builds a composite prompt from the workflow definition and agent
-    methodologies, then executes it via ClaudeService.run_agent_task().
-    """
     try:
         from services.workflows_service import get_workflows_service
 
@@ -342,13 +307,6 @@ async def execute_workflow(workflow_id: str, request: WorkflowExecuteRequest):
 
 @router.get("/workflows/runs/{run_id}")
 async def get_workflow_run(run_id: str):
-    """Fetch a single workflow run by id.
-
-    Includes the full ``result_summary`` plus the list of phase rows
-    (``workflow_run_phases``) written by the phased execution loop
-    (#128). For one-shot runs with no phase rows, ``phases`` is just
-    an empty list.
-    """
     from services.workflow_run_service import get_workflow_run_service
 
     run_service = get_workflow_run_service()
@@ -361,12 +319,6 @@ async def get_workflow_run(run_id: str):
 
 @router.post("/workflows/runs/{run_id}/resume")
 async def resume_workflow_run(run_id: str, request: WorkflowRunResumeRequest):
-    """Resume a paused workflow run (#128).
-
-    Looks up the run's pending approval action, approves it, and
-    re-enters the phase loop. If there is no pending approval action
-    linked to the run, returns 409.
-    """
     from services.approval_service import (
         ActionStatus,
         get_approval_service,
@@ -407,11 +359,6 @@ async def resume_workflow_run(run_id: str, request: WorkflowRunResumeRequest):
 
 @router.post("/workflows/runs/{run_id}/cancel")
 async def cancel_workflow_run(run_id: str, request: WorkflowRunCancelRequest):
-    """Cancel a paused or running workflow run (#128).
-
-    Rejects any pending approval action on the run and finalises it
-    as ``cancelled`` with the supplied reason.
-    """
     from services.approval_service import (
         ActionStatus,
         get_approval_service,
@@ -471,11 +418,6 @@ async def list_workflow_runs(
     limit: int = 50,
     offset: int = 0,
 ):
-    """List past executions of ``workflow_id``, newest first.
-
-    Omits ``result_summary`` from each entry so the listing stays
-    light; use GET /workflows/runs/{run_id} for the full detail.
-    """
     from services.workflow_run_service import get_workflow_run_service
 
     # Light-touch bounds so a buggy caller can't ask for 10k rows.

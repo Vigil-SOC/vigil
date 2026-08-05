@@ -1,5 +1,3 @@
-"""Autonomous response service with approval workflow integration."""
-
 import asyncio
 import logging
 from typing import Dict, List, Optional, Tuple, Callable, Any
@@ -13,16 +11,13 @@ EscalationCallback = Callable[[Dict[str, Any], str, str], None]
 
 
 class AutonomousResponseService:
-    """Service for managing autonomous threat response with approval workflow."""
     
     def __init__(self):
-        """Initialize autonomous response service."""
         self.approval_service = None
         self._escalation_callbacks: List[EscalationCallback] = []
         self._load_services()
     
     def _load_services(self):
-        """Load required services."""
         try:
             from services.approval_service import get_approval_service, ActionType
             self.approval_service = get_approval_service()
@@ -31,18 +26,15 @@ class AutonomousResponseService:
             logger.error(f"Error loading services: {e}")
     
     def register_escalation_callback(self, callback: EscalationCallback):
-        """Register a callback for escalation events."""
         self._escalation_callbacks.append(callback)
         logger.info(f"Registered escalation callback: {callback.__name__}")
     
     def unregister_escalation_callback(self, callback: EscalationCallback):
-        """Unregister an escalation callback."""
         if callback in self._escalation_callbacks:
             self._escalation_callbacks.remove(callback)
             logger.info(f"Unregistered escalation callback: {callback.__name__}")
     
     def _trigger_escalation(self, data: Dict[str, Any], severity: str, action_type: str):
-        """Trigger all registered escalation callbacks."""
         for callback in self._escalation_callbacks:
             try:
                 callback(data, severity, action_type)
@@ -50,7 +42,6 @@ class AutonomousResponseService:
                 logger.error(f"Escalation callback error: {e}")
     
     async def escalate_to_slack(self, message: str, severity: str, channel: Optional[str] = None):
-        """Send escalation to Slack channel."""
         try:
             from core.config import get_integration_config
             import requests
@@ -98,7 +89,6 @@ class AutonomousResponseService:
             return False
     
     async def escalate_to_pagerduty(self, title: str, details: str, severity: str):
-        """Send escalation to PagerDuty."""
         try:
             from core.config import get_integration_config
             import requests
@@ -150,7 +140,6 @@ class AutonomousResponseService:
         severity: str,
         channels: Optional[List[str]] = None
     ):
-        """Escalate an action through configured channels."""
         channels = channels or ["slack", "pagerduty"]
         
         title = action_data.get("title", "Autonomous Response Action")
@@ -189,17 +178,6 @@ Please review and approve/reject in the SOC dashboard.
         crowdstrike_alert: Optional[Dict] = None,
         splunk_results: Optional[List[Dict]] = None
     ) -> Dict:
-        """
-        Correlate alerts from multiple sources and calculate confidence score.
-        
-        Args:
-            tempo_flow_alert: Alert from Tempo Flow
-            crowdstrike_alert: Alert from CrowdStrike
-            splunk_results: Results from Splunk queries
-        
-        Returns:
-            Correlation result with confidence score and reasoning
-        """
         confidence = 0.0
         evidence = []
         indicators = []
@@ -280,7 +258,6 @@ Please review and approve/reject in the SOC dashboard.
         }
     
     def _get_recommendation(self, confidence: float, indicators: List[str]) -> str:
-        """Get recommendation based on confidence and indicators."""
         if confidence >= 0.90:
             return "AUTO-ISOLATE: Confidence threshold met for automatic isolation"
         elif confidence >= 0.85:
@@ -299,20 +276,6 @@ Please review and approve/reject in the SOC dashboard.
         evidence: List[str],
         correlation_data: Dict
     ) -> Optional[Dict]:
-        """
-        Create an isolation action (auto-execute if confidence >= 0.90).
-        
-        Args:
-            ip_address: Target IP address
-            hostname: Target hostname (optional)
-            confidence: Confidence score (0.0-1.0)
-            reason: Reason for isolation
-            evidence: List of evidence IDs
-            correlation_data: Data from correlation analysis
-        
-        Returns:
-            Action result
-        """
         if not self.approval_service:
             logger.error("Approval service not available")
             return {"error": "Approval service not available"}
@@ -384,7 +347,6 @@ Please review and approve/reject in the SOC dashboard.
             return {"error": str(e)}
     
     def _determine_severity_from_confidence(self, confidence: float, correlation_data: Dict) -> str:
-        """Determine severity level from confidence and indicators."""
         indicators = correlation_data.get("indicators", [])
         
         # Critical indicators
@@ -410,12 +372,6 @@ Please review and approve/reject in the SOC dashboard.
         reason: str,
         confidence: float
     ) -> Dict:
-        """
-        Execute host isolation via CrowdStrike.
-        
-        In production, this would call the actual CrowdStrike API.
-        For now, it returns a mock result.
-        """
         logger.info(f"Executing isolation: {hostname or ip_address} (confidence: {confidence:.2%})")
         
         # Mock execution result
@@ -438,12 +394,6 @@ Please review and approve/reject in the SOC dashboard.
         }
     
     def execute_approved_actions(self) -> List[Dict]:
-        """
-        Execute all approved actions that haven't been executed yet.
-        
-        Returns:
-            List of execution results
-        """
         if not self.approval_service:
             return []
         
@@ -504,16 +454,6 @@ Please review and approve/reject in the SOC dashboard.
         finding_id: str,
         auto_execute: bool = True
     ) -> Dict:
-        """
-        Full investigation and response workflow for a finding.
-        
-        Args:
-            finding_id: Finding ID to investigate
-            auto_execute: Whether to auto-execute high-confidence actions
-        
-        Returns:
-            Investigation and response result
-        """
         try:
             # Load finding
             from services.database_data_service import DatabaseDataService
@@ -590,7 +530,6 @@ Please review and approve/reject in the SOC dashboard.
         mode: str = "block",
         correlation_data: Optional[Dict] = None,
     ) -> Optional[Dict]:
-        """Create a Cloudflare WAF IP block action (auto-execute if confidence high)."""
         return self._create_cloudflare_action(
             action_type=self.ActionType.WAF_BLOCK,
             title=f"Cloudflare WAF block: {ip}",
@@ -614,7 +553,6 @@ Please review and approve/reject in the SOC dashboard.
         rule_name: Optional[str] = None,
         correlation_data: Optional[Dict] = None,
     ) -> Optional[Dict]:
-        """Create a Cloudflare Zero Trust Gateway domain-block action."""
         return self._create_cloudflare_action(
             action_type=self.ActionType.GATEWAY_BLOCK,
             title=f"Cloudflare Gateway block: {domain}",
@@ -641,7 +579,6 @@ Please review and approve/reject in the SOC dashboard.
         evidence: List[str],
         correlation_data: Optional[Dict] = None,
     ) -> Optional[Dict]:
-        """Create a Cloudflare Access (Zero Trust) session revoke action."""
         return self._create_cloudflare_action(
             action_type=self.ActionType.ACCESS_REVOKE,
             title=f"Cloudflare Access revoke: {email}",
@@ -723,7 +660,6 @@ Please review and approve/reject in the SOC dashboard.
         reason: str,
         parameters: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Execute an approved Cloudflare action via the REST helpers in core/integrations/cloudflare/tool.py."""
         try:
             from core.config import get_integration_config, is_integration_enabled
         except Exception as e:  # noqa: BLE001
@@ -787,7 +723,6 @@ _autonomous_response_service: Optional[AutonomousResponseService] = None
 
 
 def get_autonomous_response_service() -> AutonomousResponseService:
-    """Get singleton AutonomousResponseService instance."""
     global _autonomous_response_service
     if _autonomous_response_service is None:
         _autonomous_response_service = AutonomousResponseService()

@@ -1,14 +1,3 @@
-"""Unit tests for phase-by-phase workflow execution + approval gating (#128).
-
-These exercise the full pause→approve/reject→resume state machine
-against a real Postgres. ``ClaudeService.chat`` is patched to return
-canned per-phase text so we don't spend API credits and tests stay
-deterministic.
-
-Skips cleanly if no DB is reachable — same pattern as
-``test_workflow_run_service.py``.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -51,7 +40,6 @@ pytestmark = [
 
 @pytest.fixture
 def clean_tables():
-    """Wipe the tables we touch before + after each test."""
     from database.connection import get_db_manager
     from sqlalchemy import text
 
@@ -81,7 +69,6 @@ def clean_tables():
 
 
 def _make_workflow(approval_on_phase_2: bool = True):
-    """Build an in-memory WorkflowDefinition with 2 phases."""
     from services.workflows_service import WorkflowDefinition
 
     phases: List[Dict[str, Any]] = [
@@ -127,8 +114,6 @@ def _make_workflow(approval_on_phase_2: bool = True):
 
 
 class _FakeClaudeService:
-    """Test double that skips the real Claude call but keeps the
-    interface ``WorkflowsService`` depends on."""
 
     def __init__(self, *args, **kwargs):
         pass
@@ -154,8 +139,6 @@ class _FakeClaudeService:
 
 class TestPhasedExecutionPauseResume:
     def _patched_service(self, workflow):
-        """Return a WorkflowsService wired so .get_workflow yields our
-        in-memory fixture and ClaudeService is the fake."""
         from services import workflows_service as ws
 
         svc = ws.WorkflowsService()

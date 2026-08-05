@@ -1,18 +1,3 @@
-"""Approval service for managing pending autonomous actions.
-
-Actions are persisted in the ``approval_actions`` table (#128). Prior
-to that migration, pending actions lived in ``data/pending_actions.json``
-— fine for the daemon's single-process loop but invisible to the API
-and with no FK into workflow runs. The DB move gives us a queryable,
-joinable surface that links workflow phase approvals back to the run
-they paused.
-
-Public API (``create_action``, ``approve_action``, ``reject_action``,
-``mark_executed``, ``mark_failed``, ``list_actions``, ``get_action``)
-is intentionally preserved so ``daemon/orchestrator.py`` (and any
-other existing callers) keep working.
-"""
-
 import logging
 from dataclasses import dataclass
 from datetime import datetime
@@ -33,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 class ActionType(Enum):
-    """Types of actions that can be approved."""
 
     ISOLATE_HOST = "isolate_host"
     BLOCK_IP = "block_ip"
@@ -49,7 +33,6 @@ class ActionType(Enum):
 
 
 class ActionStatus(Enum):
-    """Status of pending actions."""
 
     PENDING = "pending"
     APPROVED = "approved"
@@ -60,11 +43,6 @@ class ActionStatus(Enum):
 
 @dataclass
 class PendingAction:
-    """Represents a pending action awaiting approval.
-
-    Kept as a dataclass for API-stable serialisation; populated from
-    ``ApprovalAction`` ORM rows by ``_row_to_pending``.
-    """
 
     action_id: str
     action_type: str  # ActionType value
@@ -115,18 +93,8 @@ def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
 
 
 class ApprovalService:
-    """Service for managing approval workflow for autonomous actions."""
 
     def __init__(self, data_dir: Optional[Path] = None, dry_run: bool = False):
-        """
-        Initialize approval service.
-
-        Args:
-            data_dir: retained for backwards compatibility with callers
-                that previously passed a data directory; ignored now
-                that storage lives in Postgres.
-            dry_run: If True, don't execute actions, just log them
-        """
         self.dry_run = dry_run
         # data_dir retained as attribute so any caller introspecting
         # it doesn't break; no filesystem I/O is performed anymore.
@@ -138,7 +106,6 @@ class ApprovalService:
     # ------------------------------------------------------------------
 
     def _load_config(self):
-        """Load approval configuration from database."""
         try:
             config_service = get_config_service()
             config_value = config_service.get_system_config(
@@ -158,7 +125,6 @@ class ApprovalService:
             self.force_manual_approval = False
 
     def _save_config(self):
-        """Save approval configuration to database."""
         try:
             config_value = {"enabled": self.force_manual_approval}
             config_service = get_config_service(user_id="approval_service")
@@ -173,13 +139,11 @@ class ApprovalService:
             logger.error("Error saving approval config: %s", e)
 
     def set_force_manual_approval(self, force: bool):
-        """Set whether to force manual approval for all actions."""
         self.force_manual_approval = force
         self._save_config()
         logger.info("Force manual approval set to: %s", force)
 
     def get_force_manual_approval(self) -> bool:
-        """Get the current force manual approval setting."""
         return self.force_manual_approval
 
     def should_auto_approve(
@@ -188,7 +152,6 @@ class ApprovalService:
         threshold: float = 0.90,
         force_manual: bool = False,
     ) -> bool:
-        """Decide if an action should auto-approve based on confidence."""
         if force_manual or self.get_force_manual_approval():
             return False
         confidence = action.get("confidence", 0.0)
@@ -199,11 +162,9 @@ class ApprovalService:
         return False
 
     def needs_flag(self, confidence: float) -> bool:
-        """Check if an action needs a flag (confidence 0.85-0.89)."""
         return 0.85 <= confidence < 0.90
 
     def get_action_decision(self, action: Dict, threshold: float = 0.90) -> str:
-        """Get the decision for an action based on confidence."""
         confidence = action.get("confidence", 0.0)
         if confidence < 0.70:
             return "monitor_only"
@@ -213,7 +174,6 @@ class ApprovalService:
             return "auto_approve"
 
     def is_valid_action_type(self, action_type: str) -> bool:
-        """Check if an action type is valid."""
         try:
             ActionType(action_type)
             return True
@@ -221,7 +181,6 @@ class ApprovalService:
             return False
 
     def validate_action(self, action: Dict) -> tuple[bool, List[str]]:
-        """Validate an action payload."""
         errors = []
         required_fields = ["type", "target", "confidence"]
         for field in required_fields:
@@ -255,12 +214,6 @@ class ApprovalService:
         workflow_run_id: Optional[str] = None,
         workflow_phase_id: Optional[str] = None,
     ) -> PendingAction:
-        """Create a new pending action.
-
-        Workflow phase approvals pass ``workflow_run_id`` and
-        ``workflow_phase_id`` so the approvals UI / resume endpoint can
-        link back to the paused run.
-        """
         if self.force_manual_approval:
             requires_approval = True
         else:
@@ -308,7 +261,6 @@ class ApprovalService:
             raise
 
     def get_action(self, action_id: str) -> Optional[PendingAction]:
-        """Get a specific action by ID."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -326,7 +278,6 @@ class ApprovalService:
         workflow_run_id: Optional[str] = None,
         limit: int = 500,
     ) -> List[PendingAction]:
-        """List actions with optional filters, newest first."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -357,7 +308,6 @@ class ApprovalService:
         action_id: str,
         approved_by: str = "analyst",
     ) -> Optional[PendingAction]:
-        """Approve a pending action."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -389,7 +339,6 @@ class ApprovalService:
         reason: str,
         rejected_by: str = "analyst",
     ) -> Optional[PendingAction]:
-        """Reject a pending action."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -426,7 +375,6 @@ class ApprovalService:
         action_id: str,
         result: Dict,
     ) -> Optional[PendingAction]:
-        """Mark an action as executed."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -454,7 +402,6 @@ class ApprovalService:
         action_id: str,
         error: str,
     ) -> Optional[PendingAction]:
-        """Mark an action as failed."""
         try:
             db = get_db_manager()
             with db.session_scope() as session:
@@ -472,11 +419,9 @@ class ApprovalService:
             return None
 
     def get_pending_count(self) -> int:
-        """Get count of pending actions requiring approval."""
         return len(self.list_pending_approvals())
 
     def get_stats(self) -> Dict:
-        """Get statistics about actions."""
         actions = self.list_actions()
         return {
             "total": len(actions),
@@ -500,18 +445,15 @@ class ApprovalService:
         }
 
     def _count_by_type(self, actions: List[PendingAction]) -> Dict[str, int]:
-        """Count actions by type."""
         counts: Dict[str, int] = {}
         for action in actions:
             counts[action.action_type] = counts.get(action.action_type, 0) + 1
         return counts
 
     def list_pending_approvals(self) -> List[PendingAction]:
-        """List all pending actions requiring approval."""
         return self.list_actions(status=ActionStatus.PENDING, requires_approval=True)
 
     def get_audit_trail(self, action_id: str) -> List[Dict]:
-        """Get audit trail for a specific action."""
         action = self.get_action(action_id)
         if not action:
             return []
@@ -569,7 +511,6 @@ class ApprovalService:
         return trail
 
     def execute_action(self, action: Dict) -> Dict:
-        """Execute an action (with dry run support)."""
         if self.dry_run:
             logger.info(
                 "DRY RUN: Would execute %s on %s",
@@ -592,7 +533,6 @@ class ApprovalService:
         }
 
     def execute_approved_action(self, action_id: str) -> Dict:
-        """Execute an approved action by ID."""
         action = self.get_action(action_id)
         if not action:
             return {"error": f"Action {action_id} not found"}
@@ -616,7 +556,6 @@ class ApprovalService:
         return result
 
     def add_to_queue(self, action: Dict) -> str:
-        """Add an action to the approval queue (wraps create_action)."""
         is_valid, errors = self.validate_action(action)
         if not is_valid:
             raise ValueError(f"Invalid action: {', '.join(errors)}")
@@ -642,7 +581,6 @@ class ApprovalService:
         user: str,
         reasoning: Optional[str] = None,
     ) -> Dict:
-        """Log an approval decision."""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "action_type": action.get("type"),
@@ -668,7 +606,6 @@ class ApprovalService:
         result: Optional[Dict] = None,
         error: Optional[str] = None,
     ) -> Dict:
-        """Log action execution result."""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "action_id": action_id,
@@ -697,7 +634,6 @@ _approval_service: Optional[ApprovalService] = None
 
 
 def get_approval_service() -> ApprovalService:
-    """Get singleton ApprovalService instance."""
     global _approval_service
     if _approval_service is None:
         _approval_service = ApprovalService()

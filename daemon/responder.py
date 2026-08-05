@@ -1,5 +1,3 @@
-"""Autonomous response handler for the SOC daemon."""
-
 import asyncio
 import logging
 from datetime import datetime
@@ -11,7 +9,6 @@ logger = logging.getLogger(__name__)
 
 
 class AutonomousResponder:
-    """Handles autonomous response actions with escalation."""
     
     def __init__(self, response_config: ResponseConfig, escalation_config: EscalationConfig):
         self.response_config = response_config
@@ -32,7 +29,6 @@ class AutonomousResponder:
         }
     
     def _init_services(self):
-        """Initialize required services."""
         try:
             from services.autonomous_response_service import get_autonomous_response_service
             self._response_service = get_autonomous_response_service()
@@ -53,7 +49,6 @@ class AutonomousResponder:
             logger.error(f"Failed to initialize approval service: {e}")
     
     async def run(self, shutdown_event: asyncio.Event):
-        """Run the response handler loop."""
         logger.info("Autonomous responder starting...")
         self._init_services()
         
@@ -72,7 +67,6 @@ class AutonomousResponder:
         logger.info("Autonomous responder stopped")
     
     async def _response_worker(self, shutdown_event: asyncio.Event):
-        """Process response candidates from queue."""
         while not shutdown_event.is_set():
             try:
                 try:
@@ -93,7 +87,6 @@ class AutonomousResponder:
                 self.stats["errors"] += 1
     
     async def _approved_action_executor(self, shutdown_event: asyncio.Event):
-        """Periodically execute approved actions."""
         while not shutdown_event.is_set():
             try:
                 if self._response_service and self.response_config.auto_response_enabled:
@@ -118,7 +111,6 @@ class AutonomousResponder:
                 pass
     
     async def _evaluate_response(self, finding: Dict[str, Any]):
-        """Evaluate finding and determine response action."""
         finding_id = finding.get("finding_id", "unknown")
         self.stats["evaluated"] += 1
         
@@ -152,7 +144,6 @@ class AutonomousResponder:
             await self._create_response_action(finding, response_action, entity_context)
     
     def _determine_action(self, severity: str, confidence: float, recommended: str) -> Optional[str]:
-        """Determine what response action to take."""
         # High confidence + recommended isolation/block
         if confidence >= self.response_config.confidence_threshold:
             if recommended in ["isolate", "block"]:
@@ -169,14 +160,12 @@ class AutonomousResponder:
         return None
     
     def _should_escalate(self, severity: str, confidence: float) -> bool:
-        """Determine if finding should be escalated."""
         if not self.escalation_config.enabled:
             return False
         
         return severity in self.escalation_config.escalate_severities
     
     async def _escalate_finding(self, finding: Dict[str, Any], action: str):
-        """Escalate finding via configured channels."""
         finding_id = finding.get("finding_id")
         severity = finding.get("severity", "unknown")
         title = finding.get("title", "Security Alert")
@@ -195,7 +184,6 @@ class AutonomousResponder:
         logger.info(f"Escalated finding {finding_id} (severity: {severity})")
     
     def _build_escalation_message(self, finding: Dict[str, Any], action: str) -> str:
-        """Build escalation message."""
         entity_context = finding.get("entity_context", {})
         
         parts = [
@@ -221,7 +209,6 @@ class AutonomousResponder:
         return "\n".join(parts)
     
     async def _send_slack_alert(self, message: str, severity: str):
-        """Send alert to Slack."""
         try:
             from core.config import get_integration_config
             config = get_integration_config('slack')
@@ -266,7 +253,6 @@ class AutonomousResponder:
             logger.error(f"Slack escalation error: {e}")
     
     async def _send_pagerduty_alert(self, title: str, details: str, severity: str):
-        """Send alert to PagerDuty."""
         try:
             from core.config import get_integration_config
             config = get_integration_config('pagerduty')
@@ -311,7 +297,6 @@ class AutonomousResponder:
         action_type: str,
         entity_context: Dict[str, Any]
     ):
-        """Create a response action (pending or auto-approved)."""
         if not self._response_service:
             logger.warning("Response service not available")
             return
