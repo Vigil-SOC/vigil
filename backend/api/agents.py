@@ -1,9 +1,11 @@
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 import logging
 
+from backend.deps import provide_mcp_registry
 from services.defaults import DEFAULT_MODEL
+from services.mcp_registry import MCPRegistry
 from core.agents.manager import AgentManager, CUSTOM_AGENT_ID_PREFIX
 
 router = APIRouter()
@@ -151,7 +153,10 @@ class AgentRunRequest(BaseModel):
 
 
 @router.post("/agents/run")
-async def run_agent(request: AgentRunRequest):
+async def run_agent(
+    request: AgentRunRequest,
+    registry: MCPRegistry = Depends(provide_mcp_registry),
+):
     from services.database_data_service import DatabaseDataService
     from core.llm.harness.claude import ClaudeService
     
@@ -223,8 +228,6 @@ Use the get_case tool first to retrieve full details, then investigate all assoc
         # dynamically discovered MCP tools from the registry
         allowed_tools = list(agent.recommended_tools) if agent.recommended_tools else []
         try:
-            from services.mcp_registry import get_mcp_registry
-            registry = get_mcp_registry()
             mcp_tool_names = registry.get_tool_names()
             if mcp_tool_names:
                 allowed_tools.extend(mcp_tool_names)

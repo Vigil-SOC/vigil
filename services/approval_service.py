@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 
 class ActionType(Enum):
-
     ISOLATE_HOST = "isolate_host"
     BLOCK_IP = "block_ip"
     BLOCK_DOMAIN = "block_domain"
@@ -33,7 +32,6 @@ class ActionType(Enum):
 
 
 class ActionStatus(Enum):
-
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
@@ -43,7 +41,6 @@ class ActionStatus(Enum):
 
 @dataclass
 class PendingAction:
-
     action_id: str
     action_type: str  # ActionType value
     title: str
@@ -93,7 +90,6 @@ def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
 
 
 class ApprovalService:
-
     def __init__(self, data_dir: Optional[Path] = None, dry_run: bool = False):
         self.dry_run = dry_run
         # data_dir retained as attribute so any caller introspecting
@@ -628,13 +624,3 @@ class ApprovalService:
                 action_id,
             )
         return log_entry
-
-
-_approval_service: Optional[ApprovalService] = None
-
-
-def get_approval_service() -> ApprovalService:
-    global _approval_service
-    if _approval_service is None:
-        _approval_service = ApprovalService()
-    return _approval_service

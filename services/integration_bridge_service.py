@@ -43,7 +43,6 @@ _PROXY_FORM_FIELDS = frozenset(
 
 
 class IntegrationBridgeService:
-
     # Map integration IDs (frontend) to MCP server names (backend)
     INTEGRATION_TO_SERVER_MAP = {
         # Threat Intelligence
@@ -317,14 +316,3 @@ class IntegrationBridgeService:
         tool_name = server_name.replace("-server", "").replace("-", "_")
 
         return f"tools.{tool_name}"
-
-
-# Global instance
-_bridge_service = None
-
-
-def get_integration_bridge() -> IntegrationBridgeService:
-    global _bridge_service
-    if _bridge_service is None:
-        _bridge_service = IntegrationBridgeService()
-    return _bridge_service

@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from backend.deps import provide_mcp_client
 from backend.middleware.auth import get_current_active_user
 from backend.services.auth_service import AuthService
 from database.models import User
@@ -25,22 +26,22 @@ def _validate_known_server(server_name: str) -> None:
         raise HTTPException(status_code=404, detail="Server not found")
 
 
+# Returns the process-wide MCPService. Endpoints and the MCPClient each used to wrap
+# their own, so set_server_enabled on one was invisible to connect_to_server on the
+# other; resolving through the single client keeps one source of truth. Falls back to
+# a local instance when the MCP SDK isn't installed so introspection still works.
 def _service() -> MCPService:
-    try:
-        from services.mcp_client import get_mcp_client
+    from services.mcp_client import process_mcp_client
 
-        client = get_mcp_client()
-        if client is not None:
-            return client.mcp_service
-    except Exception:
-        pass
+    client = process_mcp_client()
+    if client is not None:
+        return client.mcp_service
     if not hasattr(_service, "_fallback"):
         _service._fallback = MCPService()  # type: ignore[attr-defined]
     return _service._fallback  # type: ignore[attr-defined]
 
 
 class _ServiceProxy:
-
     def __getattr__(self, name):
         return getattr(_service(), name)
 
@@ -49,12 +50,10 @@ mcp_service = _ServiceProxy()
 
 
 class ServerControl(BaseModel):
-
     action: str  # start or stop
 
 
 class ServerEnabledRequest(BaseModel):
-
     enabled: bool
 
 
@@ -86,6 +85,7 @@ async def set_server_enabled(
     server_name: str,
     request: ServerEnabledRequest,
     current_user: User = Depends(get_current_active_user),
+    mcp_client=Depends(provide_mcp_client),
 ):
     _require_mcp_admin(current_user)
     _validate_known_server(server_name)
@@ -104,13 +104,6 @@ async def set_server_enabled(
     connected: Optional[bool] = None
     error: Optional[str] = None
     missing_credentials: Optional[List[str]] = None
-
-    try:
-        from services.mcp_client import get_mcp_client
-
-        mcp_client = get_mcp_client()
-    except Exception:
-        mcp_client = None
 
     if request.enabled:
         # Try to bring the server online now. Failures (missing creds,
@@ -162,10 +155,7 @@ async def set_server_enabled(
 
 
 @router.get("/connections/status")
-async def get_connections_status():
-    from services.mcp_client import get_mcp_client
-
-    mcp_client = get_mcp_client()
+async def get_connections_status(mcp_client=Depends(provide_mcp_client)):
     if not mcp_client:
         return {"error": "MCP client not available", "connections": {}}
 
@@ -223,7 +213,11 @@ async def get_server_status(server_name: str):
 
 
 @router.get("/servers/{server_name}/logs")
-async def get_server_logs(server_name: str, lines: int = 100):
+async def get_server_logs(
+    server_name: str,
+    lines: int = 100,
+    mcp_client=Depends(provide_mcp_client),
+):
     logs = mcp_service.get_server_log(server_name, lines=lines)
 
     if logs == "":
@@ -233,9 +227,7 @@ async def get_server_logs(server_name: str, lines: int = 100):
     # actually tells the user why a server isn't reachable. The log file
     # itself only exists for servers started via the monitor path.
     try:
-        from services.mcp_client import get_mcp_client
-
-        last_err = get_mcp_client().get_last_error(server_name)
+        last_err = mcp_client.get_last_error(server_name)
         if last_err:
             logs = f"[last connect error] {last_err}\n\n{logs}"
     except Exception:

@@ -3,6 +3,8 @@ import logging
 from typing import Dict, List, Optional, Tuple, Callable, Any
 from datetime import datetime
 
+from services.approval_service import ActionType, ApprovalService
+
 logger = logging.getLogger(__name__)
 
 
@@ -10,21 +12,12 @@ logger = logging.getLogger(__name__)
 EscalationCallback = Callable[[Dict[str, Any], str, str], None]
 
 
+# Manages autonomous threat response, routing actions through the approval workflow.
 class AutonomousResponseService:
-    
-    def __init__(self):
-        self.approval_service = None
+    def __init__(self, approvals: Optional[ApprovalService] = None):
+        self.approval_service = approvals or ApprovalService()
         self._escalation_callbacks: List[EscalationCallback] = []
-        self._load_services()
-    
-    def _load_services(self):
-        try:
-            from services.approval_service import get_approval_service, ActionType
-            self.approval_service = get_approval_service()
-            self.ActionType = ActionType
-        except Exception as e:
-            logger.error(f"Error loading services: {e}")
-    
+
     def register_escalation_callback(self, callback: EscalationCallback):
         self._escalation_callbacks.append(callback)
         logger.info(f"Registered escalation callback: {callback.__name__}")
@@ -276,14 +269,10 @@ Please review and approve/reject in the SOC dashboard.
         evidence: List[str],
         correlation_data: Dict
     ) -> Optional[Dict]:
-        if not self.approval_service:
-            logger.error("Approval service not available")
-            return {"error": "Approval service not available"}
-        
         try:
             # Create pending action
             action = self.approval_service.create_action(
-                action_type=self.ActionType.ISOLATE_HOST,
+                action_type=ActionType.ISOLATE_HOST,
                 title=f"Isolate Host: {hostname or ip_address}",
                 description=f"Network isolation of compromised host based on correlated detections.\n\n"
                            f"Indicators: {', '.join(correlation_data.get('indicators', []))}\n"
@@ -394,9 +383,6 @@ Please review and approve/reject in the SOC dashboard.
         }
     
     def execute_approved_actions(self) -> List[Dict]:
-        if not self.approval_service:
-            return []
-        
         try:
             from services.approval_service import ActionStatus
             
@@ -531,7 +517,7 @@ Please review and approve/reject in the SOC dashboard.
         correlation_data: Optional[Dict] = None,
     ) -> Optional[Dict]:
         return self._create_cloudflare_action(
-            action_type=self.ActionType.WAF_BLOCK,
+            action_type=ActionType.WAF_BLOCK,
             title=f"Cloudflare WAF block: {ip}",
             description=(
                 "Add an IP Access Rule to block this IP across the Cloudflare account. "
@@ -554,7 +540,7 @@ Please review and approve/reject in the SOC dashboard.
         correlation_data: Optional[Dict] = None,
     ) -> Optional[Dict]:
         return self._create_cloudflare_action(
-            action_type=self.ActionType.GATEWAY_BLOCK,
+            action_type=ActionType.GATEWAY_BLOCK,
             title=f"Cloudflare Gateway block: {domain}",
             description=(
                 "Add a Zero Trust Gateway DNS+HTTP rule to block this domain for all "
@@ -580,7 +566,7 @@ Please review and approve/reject in the SOC dashboard.
         correlation_data: Optional[Dict] = None,
     ) -> Optional[Dict]:
         return self._create_cloudflare_action(
-            action_type=self.ActionType.ACCESS_REVOKE,
+            action_type=ActionType.ACCESS_REVOKE,
             title=f"Cloudflare Access revoke: {email}",
             description=(
                 "Revoke all active Cloudflare Zero Trust Access sessions for the given "
@@ -604,8 +590,6 @@ Please review and approve/reject in the SOC dashboard.
         evidence: List[str],
         parameters: Dict[str, Any],
     ) -> Optional[Dict]:
-        if not self.approval_service:
-            return {"error": "Approval service not available"}
         try:
             action = self.approval_service.create_action(
                 action_type=action_type,
@@ -718,13 +702,4 @@ Please review and approve/reject in the SOC dashboard.
             return {"success": False, "error": str(e)}
 
 
-# Singleton instance
-_autonomous_response_service: Optional[AutonomousResponseService] = None
-
-
-def get_autonomous_response_service() -> AutonomousResponseService:
-    global _autonomous_response_service
-    if _autonomous_response_service is None:
-        _autonomous_response_service = AutonomousResponseService()
-    return _autonomous_response_service
 

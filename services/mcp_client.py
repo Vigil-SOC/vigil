@@ -535,20 +535,24 @@ class MCPClient:
         logger.info("All MCP connections closed")
 
 
-# Global MCP client instance
-_mcp_client: Optional[MCPClient] = None
+# An MCPClient owns persistent stdio child processes that only its creator closes, so
+# exactly one may exist per process. The owner builds it and installs it here.
+_process_client: Optional[MCPClient] = None
 
 
-def get_mcp_client() -> Optional[MCPClient]:
-    global _mcp_client
-    
+def build_mcp_client() -> Optional[MCPClient]:
     if not MCP_AVAILABLE:
         logger.warning("MCP SDK not available. Install with: pip install mcp")
         return None
-    
-    if _mcp_client is None:
-        mcp_service = MCPService()
-        _mcp_client = MCPClient(mcp_service)
-    
-    return _mcp_client
+    return MCPClient(MCPService())
+
+
+def set_process_mcp_client(client: Optional[MCPClient]) -> None:
+    global _process_client
+    _process_client = client
+
+
+# None until an owner (the API lifespan, daemon startup) has installed a client.
+def process_mcp_client() -> Optional[MCPClient]:
+    return _process_client
 

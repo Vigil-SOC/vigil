@@ -43,23 +43,25 @@ SEVERITIES = ["critical", "high", "medium", "low"]
 SEVERITY_WEIGHTS = [0.1, 0.25, 0.4, 0.25]
 
 
+# Provides generated sample findings and cases for demo mode. State is class-level
+# and shared: the module-level DatabaseDataService instances in backend/api each
+# construct one, and demo edits must stay visible across all of them (#459).
 class DemoDataService:
-    
     _instance = None
     _findings: List[Dict] = []
     _cases: List[Dict] = []
     _initialized = False
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-    
+
     def __init__(self):
         if not DemoDataService._initialized:
             self._generate_demo_data()
             DemoDataService._initialized = True
-    
+
     def _generate_embedding(self, dim: int = 768) -> List[float]:
         vec = [random.gauss(0, 1) for _ in range(dim)]
         norm = sum(x**2 for x in vec) ** 0.5
@@ -280,12 +282,3 @@ class DemoDataService:
         DemoDataService._initialized = False
         self._generate_demo_data()
         DemoDataService._initialized = True
-
-
-_demo_service = None
-
-def get_demo_service() -> DemoDataService:
-    global _demo_service
-    if _demo_service is None:
-        _demo_service = DemoDataService()
-    return _demo_service

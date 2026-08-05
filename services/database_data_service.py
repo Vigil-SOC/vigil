@@ -35,7 +35,7 @@ class DatabaseDataService:
     # in JSON-file fallback for the rest of the process lifetime.
     _RECONNECT_INTERVAL_SECONDS = 10.0
 
-    def __init__(self, require_db: bool = False):
+    def __init__(self, require_db: bool = False, demo_data=None):
         self._db_service = None
         self._db_connected = False
         self._use_json_fallback = False
@@ -46,8 +46,9 @@ class DatabaseDataService:
 
         if self._demo_mode:
             logger.info("Demo mode enabled - using generated sample data")
-            from services.demo_data_service import get_demo_service
-            self._demo_service = get_demo_service()
+            from services.demo_data_service import DemoDataService
+
+            self._demo_service = demo_data or DemoDataService()
         else:
             self._init_database(require_db)
         DATA_DIR.mkdir(exist_ok=True)

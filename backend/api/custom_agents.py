@@ -1,9 +1,10 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
+from backend.deps import provide_agent_ai, provide_mcp_registry
 from backend.schemas.system_prompt import validate_system_prompt
 from backend.services.custom_agent_service import (
     CustomAgentAlreadyExists,
@@ -11,6 +12,8 @@ from backend.services.custom_agent_service import (
     CustomAgentService,
 )
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
+from services.agent_ai_generator import AgentAIGenerator
+from services.mcp_registry import MCPRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +31,6 @@ def _refresh_manager() -> None:
 
 
 class CustomAgentCreate(BaseModel):
-
     name: str = Field(..., min_length=1)
     role: str = Field(..., min_length=1)
     description: Optional[str] = None
@@ -50,7 +52,6 @@ class CustomAgentCreate(BaseModel):
 
 
 class CustomAgentUpdate(BaseModel):
-
     name: Optional[str] = None
     role: Optional[str] = None
     description: Optional[str] = None
@@ -72,12 +73,10 @@ class CustomAgentUpdate(BaseModel):
 
 
 class ForkAgentRequest(BaseModel):
-
     new_name: Optional[str] = None
 
 
 class GenerateAgentRequest(BaseModel):
-
     description: str = Field(..., min_length=1)
     current_draft: Optional[Dict[str, Any]] = None
     feedback: Optional[str] = None
@@ -100,12 +99,11 @@ async def list_custom_agents() -> Dict[str, Any]:
 
 
 @router.get("/agents/custom/_meta/tools")
-async def list_available_tools() -> Dict[str, Any]:
+async def list_available_tools(
+    registry: MCPRegistry = Depends(provide_mcp_registry),
+) -> Dict[str, Any]:
     tools: List[str] = []
     try:
-        from services.mcp_registry import get_mcp_registry
-
-        registry = get_mcp_registry()
         names = registry.get_tool_names() or []
         tools = sorted(set(names))
     except Exception as e:
@@ -154,11 +152,12 @@ async def list_available_tools() -> Dict[str, Any]:
 
 
 @router.post("/agents/custom/generate")
-async def generate_custom_agent(payload: GenerateAgentRequest) -> Dict[str, Any]:
+async def generate_custom_agent(
+    payload: GenerateAgentRequest,
+    generator: AgentAIGenerator = Depends(provide_agent_ai),
+) -> Dict[str, Any]:
     try:
-        from services.agent_ai_generator import get_agent_ai_generator
-
-        result = await get_agent_ai_generator().generate(
+        result = await generator.generate(
             description=payload.description,
             current_draft=payload.current_draft,
             feedback=payload.feedback,

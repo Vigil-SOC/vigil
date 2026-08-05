@@ -8,6 +8,7 @@ Complete guide to testing the Vigil platform.
 - [Test Infrastructure](#test-infrastructure)
 - [Running Tests](#running-tests)
 - [Writing Tests](#writing-tests)
+- [Substituting Services](#substituting-services)
 - [Coverage Requirements](#coverage-requirements)
 - [Best Practices](#best-practices)
 
@@ -340,6 +341,75 @@ pytest -m "not slow"
 # Only integration tests
 pytest -m integration
 ```
+
+---
+
+## Substituting Services
+
+Services are constructed once by whoever owns the process and injected from
+there. Nothing reaches for a module-global accessor, so a test never has to
+monkeypatch one — it supplies its own instance. Three rules:
+
+| Where | How the service arrives |
+|---|---|
+| `backend/main.py` lifespan | Constructs each service onto `app.state` (`_build_services`) |
+| FastAPI handlers | A `Depends` provider from `backend/deps.py` reads `request.app.state.<key>` |
+| Everything else (services, daemon, LLM harnesses) | A constructor keyword argument, defaulting to a locally-built instance |
+
+`tests/unit/test_no_ambient_state.py` enforces this: it fails on a new
+module-level service instantiation *and* on the lazy `global _x` accessor
+shape that #459 retired.
+
+### Overriding a service in an API test
+
+Use `app.dependency_overrides`, keyed on the provider function itself. The
+handler then talks to your stub and touches no database, LLM, or MCP process.
+Full worked example: `tests/unit/test_service_dependency_overrides.py`.
+
+```python
+from api.approvals import router as approvals_router
+from backend.deps import provide_approvals
+
+
+class StubApprovals:
+    def list_pending_approvals(self):
+        return []
+
+
+def test_pending_is_empty():
+    app = FastAPI()
+    app.include_router(approvals_router, prefix="/api")
+    app.dependency_overrides[provide_approvals] = lambda: StubApprovals()
+
+    resp = TestClient(app).get("/api/approvals/pending")
+    assert resp.json() == {"actions": []}
+```
+
+A bare `FastAPI()` like the one above runs no lifespan, so `app.state` holds
+nothing — the override *is* the wiring. If you instead build a `TestClient`
+over the real app as a context manager (`with TestClient(app) as c:`), the
+lifespan does run and populates `app.state`; overrides still win.
+
+### Overriding elsewhere
+
+Outside a request there is no `Depends`, so pass the instance in:
+
+```python
+svc = WorkflowsService(workflow_runs=WorkflowRunService(), approvals=ApprovalService())
+agent = OpenAIAgentService(approvals=stub_approvals)
+claude = ClaudeService(mcp_client=fake_client, mcp_registry=MCPRegistry())
+```
+
+### The one exception: MCPClient
+
+`MCPClient` owns persistent stdio child processes that only its creator closes,
+so exactly one may exist per process. The owner installs it
+(`set_process_mcp_client`) and `process_mcp_client()` returns it. Before any
+owner starts — which is the case in a plain unit test — it returns `None`, so
+importing the harness never spawns child processes. To supply a fake, pass
+`mcp_client=` to the constructor or override `provide_mcp_client`; only reach
+for `set_process_mcp_client` when the code under test resolves the process slot
+directly.
 
 ---
 

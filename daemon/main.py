@@ -38,6 +38,7 @@ class SOCDaemon:
         self._orchestrator = None
         self._llm_worker_manager = None
         self._metrics_server = None
+        self._mcp_client = None
         
         logger.info("SOC Daemon initialized")
     
@@ -63,13 +64,31 @@ class SOCDaemon:
         from daemon.orchestrator import Orchestrator
         from services.worker.manager import LLMWorkerManager
         from daemon.kafka_ingestor import KafkaIngestor
+        from services.approval_service import ApprovalService
+        from services.autonomous_response_service import AutonomousResponseService
+        from services.mcp_client import build_mcp_client, set_process_mcp_client
+
+        # The daemon owns its own copies: it is a separate process from the API, so
+        # nothing on the API's app.state is reachable from here.
+        self._mcp_client = build_mcp_client()
+        set_process_mcp_client(self._mcp_client)
+        approvals = ApprovalService()
 
         self._poller = DataPoller(self.config.polling)
         self._kafka_ingestor = KafkaIngestor(self.config.kafka)
         self._processor = FindingProcessor(self.config.processing)
-        self._responder = AutonomousResponder(self.config.response, self.config.escalation)
+        self._responder = AutonomousResponder(
+            self.config.response,
+            self.config.escalation,
+            response_service=AutonomousResponseService(approvals=approvals),
+            approvals=approvals,
+        )
         self._scheduler = TaskScheduler(self.config.scheduler)
-        self._orchestrator = Orchestrator(self.config.orchestrator)
+        self._orchestrator = Orchestrator(
+            self.config.orchestrator,
+            approvals=approvals,
+            mcp_client=self._mcp_client,
+        )
         self._llm_worker_manager = LLMWorkerManager()
 
         if self.config.metrics.enabled:

@@ -55,20 +55,34 @@ from daemon.plan_generator import (
 )
 from daemon.shared_intel import SharedIntelligence
 from daemon.workdir import WorkdirManager
+from services.approval_service import ApprovalService
 
 logger = logging.getLogger(__name__)
 
 
 class Orchestrator:
 
-    def __init__(self, config: OrchestratorConfig):
+    def __init__(
+        self,
+        config: OrchestratorConfig,
+        approvals: Optional[ApprovalService] = None,
+        mcp_client=None,
+    ):
         self.config = config
         self._enabled = config.enabled
         self._shutdown_event: Optional[asyncio.Event] = None
 
+        self._approvals = approvals or ApprovalService()
+        self._mcp_client = mcp_client
+
         self.workdir = WorkdirManager(config.workdir_base)
         self.shared_intel = SharedIntelligence()
-        self.agent_runner = AgentRunner(config, self.workdir)
+        self.agent_runner = AgentRunner(
+            config,
+            self.workdir,
+            approvals=self._approvals,
+            mcp_client=self._mcp_client,
+        )
 
         self.investigation_queue: asyncio.Queue = asyncio.Queue()
 
@@ -685,9 +699,9 @@ class Orchestrator:
 
     async def _create_approval_action(self, inv_id: str, action: Dict):
         try:
-            from services.approval_service import ActionType, get_approval_service
+            from services.approval_service import ActionType
 
-            service = get_approval_service()
+            service = self._approvals
 
             action_str = action.get("action", "unknown")
             try:
@@ -962,9 +976,7 @@ class Orchestrator:
 
             if case_a and case_b and case_a != case_b:
                 try:
-                    from services.mcp_client import get_mcp_client
-
-                    client = get_mcp_client()
+                    client = self._mcp_client
                     if client:
                         await client.call_tool(
                             "link_related_cases",

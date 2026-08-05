@@ -19,7 +19,6 @@ _SAFE_PACKAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 class IntegrationCompatibilityService:
-
     def __init__(self):
         self.python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         self.python_major_minor = f"{sys.version_info.major}.{sys.version_info.minor}"
@@ -384,14 +383,3 @@ class IntegrationCompatibilityService:
         except Exception:
             pass
         return None
-
-
-# Singleton instance
-_compatibility_service = None
-
-
-def get_compatibility_service() -> IntegrationCompatibilityService:
-    global _compatibility_service
-    if _compatibility_service is None:
-        _compatibility_service = IntegrationCompatibilityService()
-    return _compatibility_service

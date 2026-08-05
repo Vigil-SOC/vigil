@@ -7,6 +7,7 @@ os.environ.setdefault("DEV_MODE", "true")
 os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
 
 import pytest
+from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -18,6 +19,17 @@ def client():
 
     with TestClient(app) as c:
         yield c
+
+
+@contextmanager
+def _override_mcp_client(client, fake):
+    from backend.deps import provide_mcp_client
+
+    client.app.dependency_overrides[provide_mcp_client] = lambda: fake
+    try:
+        yield
+    finally:
+        client.app.dependency_overrides.pop(provide_mcp_client, None)
 
 
 @pytest.fixture
@@ -50,9 +62,7 @@ class TestEnableTransactional:
         fake_client.get_last_error = MagicMock(return_value=None)
         fake_client.disconnect_from_server = AsyncMock(return_value=True)
 
-        with patch(
-            "services.mcp_client.get_mcp_client", return_value=fake_client
-        ):
+        with _override_mcp_client(client, fake_client):
             r = client.put(
                 "/api/mcp/servers/deeptempo-findings/enabled",
                 json={"enabled": True},
@@ -79,9 +89,7 @@ class TestEnableTransactional:
         )
         fake_client.disconnect_from_server = AsyncMock(return_value=True)
 
-        with patch(
-            "services.mcp_client.get_mcp_client", return_value=fake_client
-        ):
+        with _override_mcp_client(client, fake_client):
             r = client.put(
                 "/api/mcp/servers/virustotal/enabled",
                 json={"enabled": True},
@@ -100,9 +108,7 @@ class TestEnableTransactional:
         fake_client.connect_to_server = AsyncMock(return_value=True)
         fake_client.disconnect_from_server = AsyncMock(return_value=True)
 
-        with patch(
-            "services.mcp_client.get_mcp_client", return_value=fake_client
-        ):
+        with _override_mcp_client(client, fake_client):
             r = client.put(
                 "/api/mcp/servers/deeptempo-findings/enabled",
                 json={"enabled": False},

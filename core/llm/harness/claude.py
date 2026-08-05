@@ -86,6 +86,9 @@ logger = logging.getLogger(__name__)
 from services.chat.session_manager import SessionManager  # noqa: E402
 from services.chat.context_manager import ContextManager  # noqa: E402
 from services.chat.tool_executor import ToolExecutor  # noqa: E402
+from services.detection_rules_service import DetectionRulesService  # noqa: E402
+from services.mcp_client import process_mcp_client  # noqa: E402
+from services.mcp_registry import MCPRegistry  # noqa: E402
 
 
 class ClaudeService:
@@ -101,7 +104,14 @@ class ClaudeService:
         use_agent_sdk: bool = True,
         use_backend_tools: bool = False,
         provider_api_key_ref: Optional[str] = None,
+        mcp_client=None,
+        mcp_registry: Optional[MCPRegistry] = None,
+        detection_rules: Optional[DetectionRulesService] = None,
     ):
+        self._mcp_client = mcp_client if mcp_client is not None else process_mcp_client()
+        self._mcp_registry = mcp_registry or MCPRegistry()
+        self._detection_rules = detection_rules or DetectionRulesService()
+
         self.client: Optional[Anthropic] = None
         self.async_client: Optional[AsyncAnthropic] = None
         self.api_key: Optional[str] = None
@@ -117,7 +127,7 @@ class ClaudeService:
         # Sub-modules — own session lifecycle, context reduction, and tool dispatch.
         self._session_mgr = SessionManager()
         self._context_mgr = ContextManager()
-        self._tool_executor = ToolExecutor()
+        self._tool_executor = ToolExecutor(mcp_client=self._mcp_client)
 
         # Default system prompt with Claude 4.5 best practices
         self.default_system_prompt = self._get_default_system_prompt()
@@ -681,9 +691,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                     tools_dict = {}
 
             # If cache file didn't yield tools, fall back to in-memory cache
-            from services.mcp_client import get_mcp_client
-
-            mcp_client = get_mcp_client()
+            mcp_client = self._mcp_client
             if not tools_dict:
                 if mcp_client and mcp_client.tools_cache:
                     tools_dict = mcp_client.tools_cache
@@ -787,11 +795,8 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
     def _populate_mcp_registry(self, tools_dict: Dict):
         try:
-            from services.mcp_client import get_mcp_client
-            from services.mcp_registry import get_mcp_registry
-
-            registry = get_mcp_registry()
-            mcp_client = get_mcp_client()
+            registry = self._mcp_registry
+            mcp_client = self._mcp_client
 
             for server_name, server_tools in tools_dict.items():
                 # Build tool list
@@ -1797,9 +1802,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                     # Try to find tool in any server by checking tool cache
                     server_name = None
                     actual_tool_name = tool_name
-                    from services.mcp_client import get_mcp_client
-
-                    mcp_client = get_mcp_client()
+                    mcp_client = self._mcp_client
                     if mcp_client:
                         # Check which server has this tool
                         for srv_name, tools in mcp_client.tools_cache.items():
@@ -1809,9 +1812,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
                 if server_name:
                     try:
-                        from services.mcp_client import get_mcp_client
-
-                        mcp_client = get_mcp_client()
+                        mcp_client = self._mcp_client
                         if mcp_client:
                             # Call tool with 30 second timeout
                             result = await mcp_client.call_tool(
@@ -3252,11 +3253,7 @@ Provide only the JSON, no additional text."""
 
         try:
             # Try the MCP registry first (Phase 3) - filter to enabled only
-            from services.mcp_registry import get_mcp_registry
-            from services.mcp_service import MCPService
-
-            registry = get_mcp_registry()
-            all_configs = registry.get_agent_sdk_configs()
+            all_configs = self._mcp_registry.get_agent_sdk_configs()
 
             # Filter to only enabled servers
             try:
@@ -3278,10 +3275,7 @@ Provide only the JSON, no additional text."""
 
         # Fallback: configure security-detections MCP server directly
         try:
-            from services.detection_rules_service import get_detection_rules_service
-
-            detection_service = get_detection_rules_service()
-            env_vars = detection_service.get_mcp_env_vars()
+            env_vars = self._detection_rules.get_mcp_env_vars()
 
             if env_vars:
                 mcp_servers.append(
@@ -3310,9 +3304,7 @@ Provide only the JSON, no additional text."""
         server_name, actual_tool_name = parts
 
         try:
-            from services.mcp_client import get_mcp_client
-
-            mcp_client = get_mcp_client()
+            mcp_client = self._mcp_client
             if mcp_client:
                 result = await mcp_client.call_tool(
                     server_name, actual_tool_name, arguments, timeout=30.0

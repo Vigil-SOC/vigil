@@ -80,12 +80,9 @@ class MCPRegistry:
                 })
         return configs
 
-    async def refresh_from_mcp_client(self):
+    # Queries each connected MCP server for its tools and updates the registry.
+    async def refresh_from_mcp_client(self, mcp_client):
         try:
-            from services.mcp_client import get_mcp_client
-            from services.mcp_service import MCPService
-            
-            mcp_client = get_mcp_client()
             if not mcp_client:
                 logger.warning("MCP client not available for registry refresh")
                 return
@@ -150,12 +147,3 @@ class MCPRegistry:
         }
 
 
-# Global singleton
-_mcp_registry: Optional[MCPRegistry] = None
-
-
-def get_mcp_registry() -> MCPRegistry:
-    global _mcp_registry
-    if _mcp_registry is None:
-        _mcp_registry = MCPRegistry()
-    return _mcp_registry

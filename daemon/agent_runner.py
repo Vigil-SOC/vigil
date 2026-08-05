@@ -21,6 +21,8 @@ def _default_thinking_budget() -> int:
 
 
 from daemon.config import OrchestratorConfig
+from services.approval_service import ApprovalService
+from services.mcp_registry import MCPRegistry
 from daemon.plan_generator import DEFAULT_STEPS, WORKFLOW_STEP_MAP
 from daemon.workdir import WorkdirManager
 
@@ -143,10 +145,19 @@ WORKDIR_TOOLS = [
 
 
 class AgentRunner:
-
-    def __init__(self, config: OrchestratorConfig, workdir_mgr: WorkdirManager):
+    def __init__(
+        self,
+        config: OrchestratorConfig,
+        workdir_mgr: WorkdirManager,
+        approvals: Optional[ApprovalService] = None,
+        mcp_client=None,
+        mcp_registry: Optional[MCPRegistry] = None,
+    ):
         self.config = config
         self.workdir = workdir_mgr
+        self._approvals = approvals or ApprovalService()
+        self._mcp_client = mcp_client
+        self._mcp_registry = mcp_registry or MCPRegistry()
         self._active_agents: Dict[str, asyncio.Task] = {}
         self._semaphore = asyncio.Semaphore(config.max_concurrent_agents)
         self._claude_service = None
@@ -173,6 +184,8 @@ class AgentRunner:
                     use_agent_sdk=False,
                     enable_thinking=True,
                     thinking_budget=_default_thinking_budget(),
+                    mcp_client=self._mcp_client,
+                    mcp_registry=self._mcp_registry,
                 )
                 logger.info("AgentRunner: Claude service initialized")
             except Exception as e:
@@ -799,10 +812,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             pass
 
         try:
-            from services.mcp_registry import get_mcp_registry
-
-            registry = get_mcp_registry()
-            mcp_schemas = registry.get_all_tools()
+            mcp_schemas = self._mcp_registry.get_all_tools()
             if mcp_schemas:
                 backend_names = {t["name"] for t in all_tools}
                 for tool in mcp_schemas:
@@ -1193,9 +1203,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 pass
 
         try:
-            from services.mcp_client import get_mcp_client
-
-            client = get_mcp_client()
+            client = self._mcp_client
             if client:
                 server_name = None
                 actual_tool_name = tool_name
@@ -1256,9 +1264,9 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         self, inv_id: str, tool_name: str, tool_input: Dict
     ) -> str:
         try:
-            from services.approval_service import ActionType, get_approval_service
+            from services.approval_service import ActionType
 
-            service = get_approval_service()
+            service = self._approvals
 
             try:
                 action_type = ActionType(tool_name)
@@ -1334,9 +1342,9 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             return None
 
         try:
-            from services.approval_service import ActionStatus, get_approval_service
+            from services.approval_service import ActionStatus
 
-            service = get_approval_service()
+            service = self._approvals
             action = service.get_action(action_id)
 
             if action is None:
@@ -1433,9 +1441,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             except Exception:
                 pass
         try:
-            from services.mcp_client import get_mcp_client
-
-            client = get_mcp_client()
+            client = self._mcp_client
             if client:
                 result = await client.call_tool(tool_name, tool_input)
                 if result is not None:

@@ -1,8 +1,12 @@
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+
+from backend.deps import provide_approvals, provide_workflows
+from services.approval_service import ApprovalService
+from services.workflows_service import WorkflowsService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -76,11 +80,9 @@ async def list_approvals(
         description="Restrict to approvals linked to this workflow run.",
     ),
     limit: int = Query(default=100, ge=1, le=500),
+    service: ApprovalService = Depends(provide_approvals),
 ):
-    from services.approval_service import (
-        ActionStatus,
-        get_approval_service,
-    )
+    from services.approval_service import ActionStatus
 
     status_enum: Optional[ActionStatus] = None
     if status:
@@ -89,7 +91,6 @@ async def list_approvals(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
-    service = get_approval_service()
     actions = service.list_actions(
         status=status_enum,
         workflow_run_id=workflow_run_id,
@@ -102,30 +103,31 @@ async def list_approvals(
 
 
 @router.get("/approvals/pending")
-async def list_pending_approvals() -> Dict[str, List[Dict[str, Any]]]:
-    from services.approval_service import get_approval_service
-
-    service = get_approval_service()
+async def list_pending_approvals(
+    service: ApprovalService = Depends(provide_approvals),
+) -> Dict[str, List[Dict[str, Any]]]:
     actions = service.list_pending_approvals()
     return {"actions": [_pending_to_dict(a) for a in actions]}
 
 
 @router.get("/approvals/{action_id}")
-async def get_approval(action_id: str):
-    from services.approval_service import get_approval_service
-
-    action = get_approval_service().get_action(action_id)
+async def get_approval(
+    action_id: str,
+    service: ApprovalService = Depends(provide_approvals),
+):
+    action = service.get_action(action_id)
     if action is None:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
     return _pending_to_dict(action)
 
 
 @router.post("/approvals/{action_id}/approve")
-async def approve_action(action_id: str, request: ApproveRequest):
-    from services.approval_service import get_approval_service
-    from services.workflows_service import get_workflows_service
-
-    service = get_approval_service()
+async def approve_action(
+    action_id: str,
+    request: ApproveRequest,
+    service: ApprovalService = Depends(provide_approvals),
+    workflows: WorkflowsService = Depends(provide_workflows),
+):
     action = service.get_action(action_id)
     if action is None:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
@@ -141,7 +143,7 @@ async def approve_action(action_id: str, request: ApproveRequest):
     }
 
     if updated.workflow_run_id:
-        resume = await get_workflows_service().resume_workflow(
+        resume = await workflows.resume_workflow(
             updated.workflow_run_id,
             "approved",
             approved_by=approved_by,
@@ -152,11 +154,12 @@ async def approve_action(action_id: str, request: ApproveRequest):
 
 
 @router.post("/approvals/{action_id}/reject")
-async def reject_action(action_id: str, request: RejectRequest):
-    from services.approval_service import get_approval_service
-    from services.workflows_service import get_workflows_service
-
-    service = get_approval_service()
+async def reject_action(
+    action_id: str,
+    request: RejectRequest,
+    service: ApprovalService = Depends(provide_approvals),
+    workflows: WorkflowsService = Depends(provide_workflows),
+):
     action = service.get_action(action_id)
     if action is None:
         raise HTTPException(status_code=404, detail=f"Approval not found: {action_id}")
@@ -174,7 +177,7 @@ async def reject_action(action_id: str, request: RejectRequest):
     }
 
     if updated.workflow_run_id:
-        resume = await get_workflows_service().resume_workflow(
+        resume = await workflows.resume_workflow(
             updated.workflow_run_id,
             "rejected",
             rejection_reason=request.reason,

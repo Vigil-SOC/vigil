@@ -5,7 +5,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from services.approval_service import ActionType, ApprovalService
+from services.custom_workflow_service import CustomWorkflowService
 from services.defaults import DEFAULT_MODEL
+from services.mcp_registry import MCPRegistry
+from services.workflow_run_service import WorkflowRunService
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +78,6 @@ def _get_frontmatter_end(content: str) -> int:
 
 
 class WorkflowDefinition:
-
     def __init__(
         self,
         workflow_id: str,
@@ -212,17 +215,28 @@ def _render_custom_workflow_body(
     return "\n".join(lines).strip()
 
 
+# Discovers, parses and executes workflow definitions, from WORKFLOW.md files on
+# disk and from database-backed custom workflows.
 class WorkflowsService:
-
-    def __init__(self, workflows_dir: Optional[Path] = None):
+    def __init__(
+        self,
+        workflows_dir: Optional[Path] = None,
+        approvals: Optional[ApprovalService] = None,
+        custom_workflows: Optional[CustomWorkflowService] = None,
+        mcp_registry: Optional[MCPRegistry] = None,
+        workflow_runs: Optional[WorkflowRunService] = None,
+    ):
         if workflows_dir is None:
             workflows_dir = Path(__file__).parent.parent / "workflows"
 
         self.workflows_dir = Path(workflows_dir)
+        self._approvals = approvals or ApprovalService()
+        self._custom_workflows = custom_workflows or CustomWorkflowService()
+        self._mcp_registry = mcp_registry or MCPRegistry()
+        self._workflow_runs = workflow_runs or WorkflowRunService()
         self._cache: Dict[str, WorkflowDefinition] = {}
         self._cache_loaded_at: Optional[datetime] = None
 
-        # Load workflows on init
         self._load_workflows()
 
     def _load_workflows(self):
@@ -268,9 +282,7 @@ class WorkflowsService:
 
     def _get_custom_workflow(self, workflow_id: str) -> Optional[WorkflowDefinition]:
         try:
-            from services.custom_workflow_service import get_custom_workflow_service
-
-            raw = get_custom_workflow_service().get(workflow_id)
+            raw = self._custom_workflows.get(workflow_id)
         except Exception as e:
             logger.debug(f"Custom workflow lookup failed for {workflow_id}: {e}")
             return None
@@ -280,9 +292,7 @@ class WorkflowsService:
 
     def _list_custom_workflows(self) -> List[WorkflowDefinition]:
         try:
-            from services.custom_workflow_service import get_custom_workflow_service
-
-            rows = get_custom_workflow_service().list(active_only=True)
+            rows = self._custom_workflows.list(active_only=True)
         except Exception as e:
             logger.debug(f"Custom workflow listing failed: {e}")
             return []
@@ -402,12 +412,10 @@ For each phase:
         rejection_reason: Optional[str] = None,
         approved_by: Optional[str] = None,
     ) -> Dict[str, Any]:
-        from services.workflow_run_service import get_workflow_run_service
-
         if decision not in ("approved", "rejected"):
             return {"success": False, "error": f"Invalid decision: {decision}"}
 
-        run_service = get_workflow_run_service()
+        run_service = self._workflow_runs
         run = run_service.get_run(run_id)
         if run is None:
             return {"success": False, "error": f"Run not found: {run_id}"}
@@ -562,7 +570,9 @@ For each phase:
 
         from core.llm.harness.openai import OpenAIAgentService
 
-        agent = OpenAIAgentService(recommended_tools=recommended_tools)
+        agent = OpenAIAgentService(
+            recommended_tools=recommended_tools, approvals=self._approvals
+        )
         return await agent.run(
             provider=spec,
             messages=[{"role": "user", "content": message}],
@@ -582,7 +592,6 @@ For each phase:
     ) -> Dict[str, Any]:
         from core.llm.harness.claude import ClaudeService
         from core.agents.manager import SOCAgentLibrary
-        from services.workflow_run_service import get_workflow_run_service
 
         target_context = self._build_target_context(parameters)
         all_agents = SOCAgentLibrary.get_all_agents()
@@ -604,6 +613,7 @@ For each phase:
             use_mcp_tools=True,
             use_agent_sdk=False,
             enable_thinking=True,
+            mcp_registry=self._mcp_registry,
         )
         # The oneshot composite call runs on the workflow-default assignment
         # (chat_default). Only require an Anthropic key when that resolves to
@@ -640,7 +650,7 @@ For each phase:
                 _est_err,
             )
 
-        run_service = get_workflow_run_service()
+        run_service = self._workflow_runs
         run_id = run_service.begin_run(
             workflow_id=workflow.id,
             workflow_name=workflow.name,
@@ -698,7 +708,6 @@ For each phase:
         triggered_by: Optional[str],
     ) -> Dict[str, Any]:
         from core.llm.harness.claude import ClaudeService
-        from services.workflow_run_service import get_workflow_run_service
 
         if not ClaudeService(
             use_backend_tools=False, use_mcp_tools=False, use_agent_sdk=False
@@ -708,7 +717,7 @@ For each phase:
         _, skill_tool_names = self._collect_tools(workflow, {})
 
         workflow_dict = workflow.to_dict(include_body=False)
-        run_service = get_workflow_run_service()
+        run_service = self._workflow_runs
         run_id = run_service.begin_run(
             workflow_id=workflow.id,
             workflow_name=workflow.name,
@@ -748,13 +757,11 @@ For each phase:
         triggered_by: Optional[str],
         skill_tools_available: List[str],
     ) -> Dict[str, Any]:
-        from services.approval_service import ActionType, get_approval_service
         from core.llm.harness.claude import ClaudeService
         from core.agents.manager import SOCAgentLibrary
-        from services.workflow_run_service import get_workflow_run_service
 
-        run_service = get_workflow_run_service()
-        approval_service = get_approval_service()
+        run_service = self._workflow_runs
+        approval_service = self._approvals
         all_agents = SOCAgentLibrary.get_all_agents()
         workflow_dict = workflow.to_dict(include_body=False)
 
@@ -765,6 +772,7 @@ For each phase:
             use_mcp_tools=True,
             use_agent_sdk=False,
             enable_thinking=True,
+            mcp_registry=self._mcp_registry,
         )
 
         phase_outputs: List[Dict[str, Any]] = []
@@ -993,10 +1001,7 @@ For each phase:
                     if tool not in all_tools:
                         all_tools.append(tool)
         try:
-            from services.mcp_registry import get_mcp_registry
-
-            registry = get_mcp_registry()
-            for name in registry.get_tool_names() or []:
+            for name in self._mcp_registry.get_tool_names() or []:
                 if name not in all_tools:
                     all_tools.append(name)
         except Exception as e:  # noqa: BLE001
@@ -1028,10 +1033,7 @@ For each phase:
                 if t not in tools:
                     tools.append(t)
         try:
-            from services.mcp_registry import get_mcp_registry
-
-            registry = get_mcp_registry()
-            for name in registry.get_tool_names() or []:
+            for name in self._mcp_registry.get_tool_names() or []:
                 if name not in tools:
                     tools.append(name)
         except Exception:  # noqa: BLE001
@@ -1206,14 +1208,3 @@ You have access to SOC tools and must ground every conclusion in tool output.
             )
 
         return "\n\n".join(parts)
-
-
-# Singleton instance
-_workflows_service: Optional[WorkflowsService] = None
-
-
-def get_workflows_service() -> WorkflowsService:
-    global _workflows_service
-    if _workflows_service is None:
-        _workflows_service = WorkflowsService()
-    return _workflows_service

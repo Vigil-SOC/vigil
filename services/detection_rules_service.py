@@ -373,14 +373,3 @@ class DetectionRulesService:
         if result.returncode != 0:
             raise RuntimeError(f"Git pull failed: {result.stderr.strip()}")
         logger.info(f"Successfully pulled updates in {repo_path}")
-
-
-# Global singleton
-_detection_rules_service: Optional[DetectionRulesService] = None
-
-
-def get_detection_rules_service() -> DetectionRulesService:
-    global _detection_rules_service
-    if _detection_rules_service is None:
-        _detection_rules_service = DetectionRulesService()
-    return _detection_rules_service

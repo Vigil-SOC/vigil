@@ -60,14 +60,8 @@ def test_db_available_short_circuits_when_already_connected():
 
 
 def test_demo_mode_never_attempts_reconnect():
-    with patch("services.database_data_service.is_demo_mode", return_value=True), patch(
-        "services.database_data_service.get_demo_service", create=True
-    ):
-        # Stub out the demo service factory used inside the constructor.
-        import services.database_data_service as mod
-
-        mod.get_demo_service = lambda: MagicMock()  # type: ignore[attr-defined]
-        svc = DatabaseDataService()
+    with patch("services.database_data_service.is_demo_mode", return_value=True):
+        svc = DatabaseDataService(demo_data=MagicMock())
 
     svc._last_reconnect_attempt = 0.0
     with patch("services.database_data_service.init_database") as fake_init:

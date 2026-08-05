@@ -47,11 +47,11 @@ Memory tool quick reference:
 """
 
 
-def _memory_palace_section() -> str:
+def _memory_palace_section(mcp_client=None) -> str:
     try:
-        from services.mcp_client import get_mcp_client
+        from services.mcp_client import process_mcp_client
 
-        client = get_mcp_client()
+        client = mcp_client if mcp_client is not None else process_mcp_client()
         if client is None:
             return _MEMORY_PALACE_BLOCK
         status = client.get_connection_status() or {}
@@ -111,11 +111,11 @@ Use MCP tools (server_tool format):
 
 
 def render_base_prompt(
-    role: str, extra_principles: str = "", methodology: str = ""
+    role: str, extra_principles: str = "", methodology: str = "", mcp_client=None
 ) -> str:
     return BASE_PROMPT.format(
         role=role,
         extra_principles=extra_principles or "",
         methodology=methodology or "",
-        memory_operations=_memory_palace_section(),
+        memory_operations=_memory_palace_section(mcp_client),
     )

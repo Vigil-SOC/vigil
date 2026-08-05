@@ -35,6 +35,22 @@ SINGLETON_ALLOWED = {
 }
 
 
+# Accessors that may keep caching one instance in a module global. The first two
+# are process-scoped resources (DatabaseManager owns the connection pool,
+# IngestionJobRegistry holds in-flight job state); the rest are config/secrets
+# channels and standalone MCP tool processes, not injectable services. The 13
+# service singletons #459 retired are deliberately absent — see
+# docs/TESTING_GUIDE.md before adding anything here.
+LAZY_SINGLETON_ALLOWED = {
+    ("database/connection.py", "get_db_manager"),
+    ("services/ingestion_jobs.py", "get_job_registry"),
+    ("backend/secrets_manager.py", "get_secrets_manager"),
+    ("database/config_service.py", "get_config_service"),
+    ("core/llm/providers/registry.py", "get_registry"),
+    ("core/integrations/elastic/tool.py", "get_elastic_service"),
+}
+
+
 SERVICE_SUFFIXES = ("Service", "Registry", "Manager", "Client")
 
 # Not a service: the FastAPI router and the SQLAlchemy/limiter primitives are
@@ -93,6 +109,31 @@ def _module_level_services(rel_path: Path):
                 yield node.lineno, target.id, callee
 
 
+def _lazy_singleton_accessors(rel_path: Path):
+    _, tree = _parse(rel_path)
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        declared = {
+            name
+            for stmt in ast.walk(node)
+            if isinstance(stmt, ast.Global)
+            for name in stmt.names
+        }
+        if not declared:
+            continue
+        for stmt in ast.walk(node):
+            if not isinstance(stmt, ast.Assign) or not isinstance(stmt.value, ast.Call):
+                continue
+            callee = _callee_name(stmt.value.func)
+            if not callee or not callee.endswith(SERVICE_SUFFIXES):
+                continue
+            if any(
+                isinstance(t, ast.Name) and t.id in declared for t in stmt.targets
+            ):
+                yield node.lineno, node.name, callee
+
+
 @pytest.mark.unit
 def test_no_raw_env_reads():
     violations = []
@@ -119,7 +160,26 @@ def test_no_module_level_service_instantiation():
                 continue
             violations.append(f"{rel_path}:{lineno}: {name} = {callee}(...)")
     assert not violations, (
-        "Module-level service instantiation found. Build the instance inside a "
-        "get_*() accessor so import order and test isolation stay predictable.\n"
+        "Module-level service instantiation found. Construct it in the "
+        "backend/main.py lifespan (onto app.state) and inject it with a "
+        "backend/deps.py provider instead, so tests can substitute a fake.\n"
         + "\n".join(violations)
+    )
+
+
+@pytest.mark.unit
+def test_no_lazy_singleton_accessors():
+    violations = []
+    for rel_path in _python_files():
+        for lineno, func, callee in _lazy_singleton_accessors(rel_path):
+            if (rel_path.as_posix(), func) in LAZY_SINGLETON_ALLOWED:
+                continue
+            violations.append(f"{rel_path}:{lineno}: {func}() caches {callee}(...)")
+    assert not violations, (
+        "Lazy module-global singleton accessor found — the shape #459 retired. "
+        "A module global wired to a real DB/LLM/MCP connection cannot be faked "
+        "in a test. Construct the service in the backend/main.py lifespan (or "
+        "the daemon's _init_components) and inject it: FastAPI handlers via a "
+        "backend/deps.py provider, everything else via a constructor keyword "
+        "argument. See docs/TESTING_GUIDE.md.\n" + "\n".join(violations)
     )

@@ -53,7 +53,6 @@ def _validate_agent_ids(phases: List[Dict[str, Any]]) -> None:
 
 
 class CustomWorkflowService:
-
     def create(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not payload.get("name"):
             raise ValueError("name is required")
@@ -145,13 +144,3 @@ class CustomWorkflowService:
             wf.updated_at = datetime.utcnow()
         logger.info(f"Soft-deleted custom workflow: {workflow_id}")
         return True
-
-
-_service: Optional[CustomWorkflowService] = None
-
-
-def get_custom_workflow_service() -> CustomWorkflowService:
-    global _service
-    if _service is None:
-        _service = CustomWorkflowService()
-    return _service

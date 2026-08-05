@@ -7,6 +7,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.deps import provide_mcp_client
+
 # Mirror backend/main.py's sys.path setup so intra-package imports resolve
 # without pulling in the entire backend/api/__init__.py chain.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -39,15 +41,18 @@ def client(palace_dir):
     config_mod = _load_config_module()
     app = FastAPI()
     app.include_router(config_mod.router, prefix="/api/config")
+    # This app has no lifespan, so app.state carries no services; override the
+    # provider instead. Default to "no client wired" and let tests swap it in.
+    app.dependency_overrides[provide_mcp_client] = lambda: None
     return TestClient(app)
 
 
+def _wire_mcp_client(client, fake):
+    client.app.dependency_overrides[provide_mcp_client] = lambda: fake
+
+
 @pytest.mark.unit
-def test_health_returns_shape_when_no_mcp_client(client, palace_dir, monkeypatch):
-    import services.mcp_client as mcp_client_mod
-
-    monkeypatch.setattr(mcp_client_mod, "get_mcp_client", lambda: None)
-
+def test_health_returns_shape_when_no_mcp_client(client, palace_dir):
     resp = client.get("/api/config/mempalace/health")
     assert resp.status_code == 200
     data = resp.json()
@@ -62,11 +67,7 @@ def test_health_returns_shape_when_no_mcp_client(client, palace_dir, monkeypatch
 
 
 @pytest.mark.unit
-def test_health_counts_closed_cases(client, palace_dir, monkeypatch):
-    import services.mcp_client as mcp_client_mod
-
-    monkeypatch.setattr(mcp_client_mod, "get_mcp_client", lambda: None)
-
+def test_health_counts_closed_cases(client, palace_dir):
     closed = palace_dir / "investigations" / "closed-cases"
     closed.mkdir(parents=True)
     for i in range(3):
@@ -85,9 +86,6 @@ def test_health_counts_closed_cases(client, palace_dir, monkeypatch):
 def test_health_handles_missing_palace(client, tmp_path, monkeypatch):
     missing = tmp_path / "does-not-exist-xyz"
     monkeypatch.setenv("MEMPALACE_PALACE_PATH", str(missing))
-    import services.mcp_client as mcp_client_mod
-
-    monkeypatch.setattr(mcp_client_mod, "get_mcp_client", lambda: None)
 
     resp = client.get("/api/config/mempalace/health")
     assert resp.status_code == 200
@@ -99,9 +97,7 @@ def test_health_handles_missing_palace(client, tmp_path, monkeypatch):
 
 
 @pytest.mark.unit
-def test_health_surfaces_mcp_error(client, palace_dir, monkeypatch):
-    import services.mcp_client as mcp_client_mod
-
+def test_health_surfaces_mcp_error(client, palace_dir):
     class FakeClient:
         def get_connection_status(self):
             return {"mempalace": False, "splunk": True}
@@ -109,7 +105,7 @@ def test_health_surfaces_mcp_error(client, palace_dir, monkeypatch):
         def get_last_error(self, name):
             return "stdio process exited with code 1" if name == "mempalace" else None
 
-    monkeypatch.setattr(mcp_client_mod, "get_mcp_client", lambda: FakeClient())
+    _wire_mcp_client(client, FakeClient())
 
     resp = client.get("/api/config/mempalace/health")
     data = resp.json()
@@ -118,9 +114,7 @@ def test_health_surfaces_mcp_error(client, palace_dir, monkeypatch):
 
 
 @pytest.mark.unit
-def test_health_connected_path(client, palace_dir, monkeypatch):
-    import services.mcp_client as mcp_client_mod
-
+def test_health_connected_path(client, palace_dir):
     class FakeClient:
         def get_connection_status(self):
             return {"mempalace": True}
@@ -128,7 +122,7 @@ def test_health_connected_path(client, palace_dir, monkeypatch):
         def get_last_error(self, name):
             return None
 
-    monkeypatch.setattr(mcp_client_mod, "get_mcp_client", lambda: FakeClient())
+    _wire_mcp_client(client, FakeClient())
 
     resp = client.get("/api/config/mempalace/health")
     data = resp.json()
