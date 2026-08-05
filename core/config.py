@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     db_pool_timeout: int = 30
     db_pool_recycle: int = 3600
     db_config_check_interval: float = 5.0
+    # Typed as str rather than bool deliberately: an unset variable and an
+    # explicitly empty one (DB_STRICT_SCHEMA=) must both mean "off", and pydantic
+    # raises on "" for a bool instead of coercing it. Which spellings count as
+    # true is decided at the read site in database/connection.py. See #562.
+    db_strict_schema: str = ""
 
     # Redis / queue. None means "no Redis configured" — the rate limiter falls back
     # to in-memory on None, so a default here would silently change its behavior.

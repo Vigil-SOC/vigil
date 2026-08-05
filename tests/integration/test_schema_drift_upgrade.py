@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import sessionmaker
 
+from core.config import get_settings
 from database.connection import (
     DatabaseManager,
     SchemaDriftError,
@@ -128,11 +129,32 @@ def drifted_manager(drifted_db):
 
 @pytest.fixture(autouse=True)
 def _reset_drift_state(monkeypatch):
-    """The startup check memoises; each test needs a clean slate."""
+    """The startup check memoises; each test needs a clean slate.
+
+    Two independent caches are involved. `reset_schema_drift_check()` clears the
+    drift verdict, and `get_settings.cache_clear()` clears the Settings object —
+    `get_settings` is `@lru_cache(maxsize=1)` (`core/config.py`), so a Settings
+    instance built by any earlier fixture would otherwise pin the value of
+    DB_STRICT_SCHEMA for the rest of the session.
+    """
     monkeypatch.delenv("DB_STRICT_SCHEMA", raising=False)
+    get_settings.cache_clear()
     reset_schema_drift_check()
     yield
     reset_schema_drift_check()
+    get_settings.cache_clear()
+
+
+def _set_strict(monkeypatch, value):
+    """Set DB_STRICT_SCHEMA so that `check_schema_drift` will actually see it.
+
+    Setting the variable alone is not enough: `DatabaseManager()` reads pool
+    settings through `get_settings()`, which populates the lru_cache before the
+    test body runs, so the patched value would be invisible. Dropping the cache
+    after the patch is what makes the read happen against the patched env.
+    """
+    monkeypatch.setenv("DB_STRICT_SCHEMA", value)
+    get_settings.cache_clear()
 
 
 def _columns(engine, table):
@@ -218,7 +240,7 @@ def test_serving_continues_by_default(drifted_manager):
 
 
 def test_strict_mode_refuses_to_start(drifted_manager, monkeypatch):
-    monkeypatch.setenv("DB_STRICT_SCHEMA", "true")
+    _set_strict(monkeypatch, "true")
 
     with pytest.raises(SchemaDriftError) as excinfo:
         check_schema_drift(db_manager=drifted_manager)
@@ -230,14 +252,14 @@ def test_strict_mode_refuses_to_start(drifted_manager, monkeypatch):
 def test_strict_mode_accepts_common_truthy_spellings(
     drifted_manager, monkeypatch, value
 ):
-    monkeypatch.setenv("DB_STRICT_SCHEMA", value)
+    _set_strict(monkeypatch, value)
     with pytest.raises(SchemaDriftError):
         check_schema_drift(db_manager=drifted_manager)
 
 
 @pytest.mark.parametrize("value", ["", "0", "false", "no"])
 def test_strict_mode_off_for_falsey_spellings(drifted_manager, monkeypatch, value):
-    monkeypatch.setenv("DB_STRICT_SCHEMA", value)
+    _set_strict(monkeypatch, value)
     check_schema_drift(db_manager=drifted_manager)  # must not raise
 
 

@@ -838,7 +838,7 @@ def check_schema_drift(
         return _schema_drift_report
 
     manager = db_manager if db_manager is not None else get_db_manager()
-    strict = os.getenv("DB_STRICT_SCHEMA", "").strip().lower() in _TRUTHY
+    strict = get_settings().db_strict_schema.strip().lower() in _TRUTHY
 
     try:
         report = manager.schema_report()
