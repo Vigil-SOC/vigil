@@ -24,9 +24,19 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.ext.mutable import MutableList
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from pgvector.sqlalchemy import Vector
 import uuid
+
+# Collection columns that are appended to in place (``obj.col.append(...)``) must
+# be declared with ``MutableList.as_mutable(JSONB)``. A plain JSONB column gives
+# SQLAlchemy no way to observe an in-place mutation, so the attribute never
+# becomes dirty, no UPDATE is emitted, and the append is silently discarded on
+# commit — see issue #543, where case auto-assignment and escalation events were
+# being lost exactly this way. Wrapping makes the next ``.append()`` anyone
+# writes correct by default rather than correct-if-they-remembered.
+MutableJSONBList = MutableList.as_mutable(JSONB)
 
 # Fixed width for the findings vector column; sources of other dimensions
 # (LogLM 512) are zero-padded/truncated to this before storage.
@@ -199,22 +209,26 @@ class Case(Base):
     assignee: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     # Tags (array of strings)
-    tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=True, default=[])
+    tags: Mapped[List[str]] = mapped_column(ARRAY(String), nullable=True, default=list)
 
     # Notes (JSONB array)
-    notes: Mapped[List[dict]] = mapped_column(JSONB, nullable=True, default=[])
+    notes: Mapped[List[dict]] = mapped_column(
+        MutableJSONBList, nullable=True, default=list
+    )
 
     # Timeline events (JSONB array)
-    timeline: Mapped[List[dict]] = mapped_column(JSONB, nullable=False, default=[])
+    timeline: Mapped[List[dict]] = mapped_column(
+        MutableJSONBList, nullable=False, default=list
+    )
 
     # Activities (JSONB array)
     activities: Mapped[Optional[List[dict]]] = mapped_column(
-        JSONB, nullable=True, default=[]
+        MutableJSONBList, nullable=True, default=list
     )
 
     # Resolution steps (JSONB array)
     resolution_steps: Mapped[Optional[List[dict]]] = mapped_column(
-        JSONB, nullable=True, default=[]
+        MutableJSONBList, nullable=True, default=list
     )
 
     # MITRE ATT&CK techniques
@@ -535,7 +549,7 @@ class UserPreference(Base):
     user_id: Mapped[str] = mapped_column(String(100), primary_key=True)
 
     # Preferences as flexible JSONB
-    preferences: Mapped[dict] = mapped_column(JSONB, nullable=False, default={})
+    preferences: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     # User metadata
     display_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
@@ -586,7 +600,7 @@ class IntegrationConfig(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     # Configuration (non-sensitive only)
-    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default={})
+    config: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     # Metadata
     integration_name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
@@ -1120,9 +1134,11 @@ class CaseEvidence(Base):
     collected_by: Mapped[str] = mapped_column(String(100), nullable=False)
     collected_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
-    # Chain of custody (JSONB array of custody entries)
+    # Chain of custody (JSONB array of custody entries). Mutable-tracked: an
+    # append that silently vanished would be a hole in an evidence audit trail.
+    # #549 moves this to its own table, which removes the exposure entirely.
     chain_of_custody: Mapped[List[dict]] = mapped_column(
-        JSONB, nullable=False, default=[]
+        MutableJSONBList, nullable=False, default=list
     )
 
     # Analysis results
@@ -1388,7 +1404,7 @@ class CaseTemplate(Base):
 
     # Task templates (JSONB array)
     task_templates: Mapped[List[dict]] = mapped_column(
-        JSONB, nullable=False, default=[]
+        JSONB, nullable=False, default=list
     )
 
     # Playbook steps (JSONB array)
@@ -1871,7 +1887,9 @@ class User(Base):
     # MFA
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     mfa_secret: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    mfa_recovery_codes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    mfa_recovery_codes: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
 
     # Session tracking
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -1947,7 +1965,7 @@ class Role(Base):
     description: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Permissions (JSONB for flexibility)
-    permissions: Mapped[dict] = mapped_column(JSONB, nullable=False, default={})
+    permissions: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
     # System role flag (cannot be deleted/modified)
     is_system_role: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -1997,7 +2015,9 @@ class Investigation(Base):
     workflow_id: Mapped[str] = mapped_column(String(50), nullable=False)
 
     trigger_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    trigger_ids: Mapped[List[dict]] = mapped_column(JSONB, nullable=False, default=[])
+    trigger_ids: Mapped[List[dict]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
 
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
 
@@ -2094,7 +2114,7 @@ class InvestigationLog(Base):
         DateTime, nullable=False, default=datetime.utcnow, server_default="now()"
     )
     event_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default={})
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     tokens_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     __table_args__ = (
