@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import json
 import asyncio
-from services.claude_service import ClaudeService
 from services.database_data_service import DatabaseDataService
+from services.llm_router import LLMRouter, get_default_provider_spec
 
 
 def print_section(title: str):
@@ -41,16 +41,16 @@ async def demo_case_building():
     print_section("Chat-Driven Case Management Demo")
     
     # Initialize services
-    claude = ClaudeService(use_mcp_tools=True)
     data_service = DatabaseDataService()
-    
-    # Check if Claude is configured
-    if not claude.has_api_key():
-        print("❌ Claude API key not configured. Please set CLAUDE_API_KEY.")
-        print("   Use: python3 backend/api/config.py set claude api_key YOUR_KEY")
+
+    # Check that an LLM provider is configured (#413 4d-1: provider-agnostic
+    # dispatch through LLMRouter — no ClaudeService construction here).
+    if get_default_provider_spec() is None:
+        print("❌ No LLM provider configured.")
+        print("   Add one in Settings → AI / LLM Providers, then retry.")
         return
-    
-    print("✅ Claude API configured")
+
+    print("✅ LLM provider configured")
     print("✅ MCP tools loaded")
     print(f"✅ Using data backend: {data_service.get_backend_info()['backend']}")
     
@@ -78,10 +78,11 @@ and add this finding to it?"""
     print("Claude: Processing...")
     
     try:
-        response1 = claude.chat(
+        response1 = await LLMRouter().chat(
             message=prompt1,
             model="claude-sonnet-4-20250514",
-            max_tokens=4096
+            max_tokens=4096,
+            service_config={"use_mcp_tools": True},
         )
         print_result("Claude's Response", response1)
     except Exception as e:
@@ -109,10 +110,11 @@ case {case_id} and note that they're part of the same campaign?"""
         print("Claude: Processing...")
         
         try:
-            response2 = claude.chat(
+            response2 = await LLMRouter().chat(
                 message=prompt2,
                 model="claude-sonnet-4-20250514",
-                max_tokens=4096
+                max_tokens=4096,
+                service_config={"use_mcp_tools": True},
             )
             print_result("Claude's Response", response2)
         except Exception as e:
@@ -132,10 +134,11 @@ Also tag these MITRE techniques."""
     print("Claude: Processing...")
     
     try:
-        response3 = claude.chat(
+        response3 = await LLMRouter().chat(
             message=prompt3,
             model="claude-sonnet-4-20250514",
-            max_tokens=4096
+            max_tokens=4096,
+            service_config={"use_mcp_tools": True},
         )
         print_result("Claude's Response", response3)
     except Exception as e:
@@ -155,10 +158,11 @@ Can you log these as resolution steps?"""
     print("Claude: Processing...")
     
     try:
-        response4 = claude.chat(
+        response4 = await LLMRouter().chat(
             message=prompt4,
             model="claude-sonnet-4-20250514",
-            max_tokens=4096
+            max_tokens=4096,
+            service_config={"use_mcp_tools": True},
         )
         print_result("Claude's Response", response4)
     except Exception as e:

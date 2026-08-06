@@ -58,15 +58,30 @@ def test_client(mock_llm_gateway):
 
 @pytest.fixture
 def mock_claude_service(mock_llm_gateway):
-    """Mock the ClaudeService to avoid actual API calls."""
-    # backend/main.py adds backend_dir to sys.path, so the module is registered
-    # as 'api.claude' (not 'backend.api.claude') at runtime.
-    with patch('api.claude.ClaudeService') as mock_service_class:
+    """Make the Claude endpoints see a configured provider + stub Agent-SDK
+    dispatch, without touching the real ClaudeService.
 
-        mock_service = Mock()
-        mock_service_class.return_value = mock_service
-        mock_service.has_api_key.return_value = True
-        yield mock_service
+    Post-#413 the endpoints no longer construct ClaudeService directly: they
+    gate on ``anthropic_api_key_available()`` and dispatch through ``LLMRouter``
+    (a plain chat goes to the mocked LLM gateway; an Agent-SDK task goes to
+    ``LLMRouter.run_agent_task``). So we patch the gate True and stub
+    ``LLMRouter.run_agent_task``. The yielded handle keeps the legacy
+    ``.has_api_key`` / ``.run_agent_task`` attributes the tests reference.
+    """
+    # Force "no non-Anthropic provider configured" so the endpoints take the
+    # Anthropic/gateway path (through the mocked LLM gateway) deterministically,
+    # independent of whatever provider a local/CI DB happens to have. This is
+    # the path these tests were written for (see the gateway mock above).
+    with patch("api.claude._select_active_provider", return_value=None), patch(
+        "services.llm_router.anthropic_api_key_available", return_value=True
+    ), patch(
+        "services.llm_router.LLMRouter.run_agent_task", new_callable=AsyncMock
+    ) as mock_run_agent_task:
+        mock_run_agent_task.return_value = MOCK_AGENT_RESPONSE
+        handle = Mock()
+        handle.has_api_key.return_value = True
+        handle.run_agent_task = mock_run_agent_task
+        yield handle
 
 
 class TestChatEndpoint:
@@ -122,12 +137,12 @@ class TestChatEndpoint:
 
     def test_chat_endpoint_no_api_key(self, test_client, mock_llm_gateway):
         """Test chat request when API key is not configured."""
-        with patch('api.claude.ClaudeService') as mock_service_class:
-
-            mock_service = Mock()
-            mock_service_class.return_value = mock_service
-            mock_service.has_api_key.return_value = False
-
+        # Post-#413 the no-provider gate is anthropic_api_key_available(), not
+        # ClaudeService.has_api_key(). Force no non-Anthropic provider (so the
+        # gate applies) + the gate False, to exercise the 503 path.
+        with patch("api.claude._select_active_provider", return_value=None), patch(
+            "services.llm_router.anthropic_api_key_available", return_value=False
+        ):
             response = test_client.post(
                 "/api/claude/chat",
                 json={
@@ -195,10 +210,9 @@ class TestAgentTaskEndpoint:
 
     def test_agent_task_success(self, test_client, mock_claude_service):
         """Test successful agent task request."""
-        mock_claude_service.use_agent_sdk = True
-        mock_claude_service.run_agent_task = AsyncMock(
-            return_value=MOCK_AGENT_RESPONSE
-        )
+        # /agent/task now dispatches through LLMRouter.run_agent_task, which the
+        # fixture already stubs to return MOCK_AGENT_RESPONSE.
+        mock_claude_service.run_agent_task.return_value = MOCK_AGENT_RESPONSE
 
         response = test_client.post(
             "/api/claude/agent/task",

@@ -42,6 +42,13 @@ interface ChatAgent {
   color?: string
 }
 type Role = 'user' | 'vigil' | 'error'
+/** A tool the backend is holding pending human approval (#413 PR3e). Shown
+ *  live while the stream is paused; not persisted onto the finished message,
+ *  since by completion the operator has already approved/rejected it. */
+interface ApprovalNotice {
+  tool: string
+  actionId?: string
+}
 interface ChatMsg {
   role: Role
   text: string
@@ -205,6 +212,83 @@ function safeJson(v: unknown): string {
   }
 }
 
+/* Raised when the backend emits a typed `budget_exceeded` error event so the
+   send() catch can render a budget banner instead of a generic error bubble. */
+class BudgetError extends Error {
+  tier?: string
+  constructor(tier: string | undefined, message: string) {
+    super(message)
+    this.name = 'BudgetError'
+    this.tier = tier
+  }
+}
+
+/* Banner shown when an LLM budget/rate-limit tier is hit (#413 PR3e-3). */
+function BudgetBanner({
+  tier,
+  message,
+  onDismiss,
+}: {
+  tier?: string
+  message?: string
+  onDismiss: () => void
+}) {
+  // A 429 is a rate limit, not a budget overage — word it accordingly.
+  const isRateLimit = tier === 'rate_limit'
+  const heading = isRateLimit
+    ? 'LLM rate limit reached'
+    : `LLM budget exceeded${tier ? ` (${tier})` : ''}`
+  const fallback = isRateLimit
+    ? 'Too many requests right now — retry shortly.'
+    : 'Requests are paused until the budget resets or is raised.'
+  return (
+    <div className="budget-banner" role="alert">
+      <Icon name="alert" size={15} />
+      <span>
+        <strong>{heading}.</strong> {message || fallback}
+      </span>
+      <button type="button" className="btn ghost" onClick={onDismiss} aria-label="Dismiss">
+        ✕
+      </button>
+    </div>
+  )
+}
+
+/* Inline notice shown when the agent paused on a requires_approval tool.
+   Deep-links to the existing Pending Approvals queue (Decisions screen) where
+   the operator approves/rejects; the backend loop resumes on their decision.
+   Uses onNavigate for in-app routing when provided (SocConsole passes `go`),
+   else falls back to a plain /decisions link so the dock works standalone. */
+function ApprovalPanel({
+  approvals,
+  onNavigate,
+}: {
+  approvals: ApprovalNotice[]
+  onNavigate?: (screen: string) => void
+}) {
+  if (!approvals.length) return null
+  const tools = Array.from(new Set(approvals.map((a) => a.tool)))
+  return (
+    <div className="approval-notice" role="status">
+      <Icon name="shield" size={15} />
+      <span>
+        {tools.length === 1
+          ? `“${tools[0]}” needs approval before it can run.`
+          : `${tools.length} tools need approval before they can run.`}
+      </span>
+      {onNavigate ? (
+        <button type="button" className="btn ghost" onClick={() => onNavigate('decisions')}>
+          Review in Pending Approvals
+        </button>
+      ) : (
+        <a className="btn ghost" href="/decisions">
+          Review in Pending Approvals
+        </a>
+      )}
+    </div>
+  )
+}
+
 function VigilMessage({ text, thinking, ms }: { text: string; thinking?: string; ms?: number }) {
   const [open, setOpen] = useState(false)
   return (
@@ -235,6 +319,7 @@ export default function Chat({
   onWidthCommit,
   onResizeStateChange,
   onSeedConsumed,
+  onNavigate,
 }: {
   open: boolean
   onClose: () => void
@@ -248,12 +333,19 @@ export default function Chat({
   onWidthCommit?: (width: number) => void
   onResizeStateChange?: (resizing: boolean) => void
   onSeedConsumed?: () => void
+  /** In-app screen navigation (SocConsole passes its `go`) for deep-links such
+   *  as the Pending Approvals queue. Omitted in standalone renders/tests. */
+  onNavigate?: (screen: string) => void
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState('')
   const [loading, setLoading] = useState(false)
   const [streamText, setStreamText] = useState('')
   const [streamThinking, setStreamThinking] = useState('')
+  // Tools the in-flight turn has paused on, awaiting approval (#413 PR3e).
+  const [streamApprovals, setStreamApprovals] = useState<ApprovalNotice[]>([])
+  // Set when a turn is blocked by an LLM budget/rate-limit tier (#413 PR3e-3).
+  const [budgetNotice, setBudgetNotice] = useState<{ tier?: string; message?: string } | null>(null)
   const [isThinking, setIsThinking] = useState(false)
   // true between a `tool_processing` event and the next `text` chunk — the
   // backend is executing MCP tools, mirroring the classic drawer's indicator
@@ -571,6 +663,8 @@ export default function Chat({
     setLoading(true)
     setStreamText('')
     setStreamThinking('')
+    setStreamApprovals([])
+    setBudgetNotice(null)
     setIsThinking(false)
     setIsProcessingTools(false)
     const start = Date.now()
@@ -616,14 +710,36 @@ export default function Chat({
               error?: string
               windowed_messages?: number
               remaining_messages?: number
+              tool_name?: string
+              action_id?: string
+              code?: string
+              tier?: string
             }
             try {
               ev = JSON.parse(data)
             } catch {
               continue
             }
-            if (ev.error) throw new Error(ev.error)
-            if (ev.type === 'thinking_start') {
+            if (ev.type === 'error' && ev.code === 'budget_exceeded') {
+              // Typed budget block (#413 3e-3): stop the stream and surface a
+              // budget banner rather than a generic error bubble. Pass the raw
+              // content (may be empty) so the banner picks tier-aware wording.
+              throw new BudgetError(ev.tier, ev.content || '')
+            }
+            if (ev.error || ev.type === 'error')
+              throw new Error(ev.error || ev.content || 'stream error')
+            if (ev.type === 'approval_required') {
+              // A requires_approval tool paused the run; surface the live
+              // notice (with a deep-link to the queue) and keep reading — the
+              // backend holds the stream open until an operator decides
+              // (#413 PR3e). Live-only: the panel shows while `loading`, then
+              // clears when the turn completes (the decision is already made).
+              setIsProcessingTools(false)
+              setStreamApprovals((prev) => [
+                ...prev,
+                { tool: ev.tool_name || 'tool', actionId: ev.action_id },
+              ])
+            } else if (ev.type === 'thinking_start') {
               setIsThinking(true)
               curThinking = ''
             } else if (ev.type === 'thinking') {
@@ -651,7 +767,15 @@ export default function Chat({
         }
       }
       const ms = Date.now() - start
-      setMessages((m) => [...m, { role: 'vigil', text: curText || '_(no response)_', thinking: curThinking || undefined, ms }])
+      setMessages((m) => [
+        ...m,
+        {
+          role: 'vigil',
+          text: curText || '_(no response)_',
+          thinking: curThinking || undefined,
+          ms,
+        },
+      ])
       // Fire a desktop notification on completion, matching the classic
       // drawer (which notifies when an investigation-seeded thread finishes).
       // Gated inside notificationService by the `show_notifications` setting +
@@ -681,7 +805,10 @@ export default function Chat({
         .catch(() => {})
     } catch (e) {
       const err = e as { name?: string; message?: string }
-      if (err?.name !== 'AbortError') {
+      if (e instanceof BudgetError) {
+        // Budget/rate-limit block — show the banner, not an error bubble.
+        setBudgetNotice({ tier: e.tier, message: e.message })
+      } else if (err?.name !== 'AbortError') {
         setMessages((m) => [...m, { role: 'error', text: `Could not reach Vigil: ${err?.message || e}. Is the backend running?` }])
       }
     } finally {
@@ -721,6 +848,7 @@ export default function Chat({
     if (loading) return
     archiveCurrent()
     setMessages([])
+    setBudgetNotice(null)
     sessionRef.current = newSessionId()
     currentKeyRef.current = null
     setSessionSummary(null)
@@ -740,6 +868,7 @@ export default function Chat({
       const res = await conversationsApi.get(id)
       const detail = res.data as ConversationDetail
       setMessages(toChatMsgs(detail.messages || []))
+      setBudgetNotice(null)
       sessionRef.current = id
       currentKeyRef.current = key ?? null
       setSessionSummary(null)
@@ -1041,7 +1170,17 @@ export default function Chat({
             </div>
             {isThinking && streamThinking && <div className="thinking-body">{streamThinking}</div>}
             {streamText && <div className="body"><Markdown>{streamText}</Markdown></div>}
+            {streamApprovals.length > 0 && (
+              <ApprovalPanel approvals={streamApprovals} onNavigate={onNavigate} />
+            )}
           </div>
+        )}
+        {budgetNotice && (
+          <BudgetBanner
+            tier={budgetNotice.tier}
+            message={budgetNotice.message}
+            onDismiss={() => setBudgetNotice(null)}
+          />
         )}
       </div>
 

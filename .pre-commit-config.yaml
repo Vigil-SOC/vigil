@@ -4,3 +4,16 @@ repos:
     hooks:
       - id: black
         args: [--line-length=88]
+
+  # Enforce the #413 LLM-provider boundary: services.claude_service is
+  # importable only through services.llm_router (see .importlinter). Uses the
+  # locally-installed import-linter (pip install -r requirements-dev.txt) so the
+  # hook, CI, and local runs all use the same version.
+  - repo: local
+    hooks:
+      - id: lint-imports
+        name: import-linter (#413 ClaudeService boundary)
+        entry: lint-imports
+        language: system
+        pass_filenames: false
+        always_run: true

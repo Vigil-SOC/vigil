@@ -154,36 +154,42 @@ class SkillService:
         an answer, and re-invoke with the accumulated conversation_history.
         """
         try:
-            from services.claude_service import ClaudeService
+            # #413: route through LLMRouter (provider-agnostic) rather than
+            # ClaudeService directly. No MCP tools for skill generation. A
+            # missing/keyless provider raises ValueError, caught below.
+            from services.llm_router import LLMRouter
 
-            claude = ClaudeService(use_mcp_tools=False)
-            if not claude.has_api_key():
-                return {
-                    "success": False,
-                    "error": (
-                        "Claude API is not configured. "
-                        "Please configure it in Settings."
-                    ),
-                }
-
+            router = LLMRouter()
             system_prompt = self._system_prompt()
 
-            if conversation_history:
-                last_message = conversation_history[-1]["content"]
-                context = (
-                    conversation_history[:-1] if len(conversation_history) > 1 else None
-                )
-                response = claude.chat(
-                    message=last_message,
-                    context=context,
-                    system_prompt=system_prompt,
-                )
-            else:
-                initial = self._initial_user_prompt(description, category)
-                response = claude.chat(
-                    message=initial,
-                    system_prompt=system_prompt,
-                )
+            # Tight try around only the LLM call: a missing/keyless provider
+            # raises ValueError — a normal misconfiguration, returned cleanly
+            # (warning, no traceback). Keeping it narrow avoids swallowing
+            # ValueErrors from the parsing stage below.
+            try:
+                if conversation_history:
+                    last_message = conversation_history[-1]["content"]
+                    context = (
+                        conversation_history[:-1]
+                        if len(conversation_history) > 1
+                        else None
+                    )
+                    response = await router.chat(
+                        message=last_message,
+                        context=context,
+                        system_prompt=system_prompt,
+                        service_config={"use_mcp_tools": False},
+                    )
+                else:
+                    initial = self._initial_user_prompt(description, category)
+                    response = await router.chat(
+                        message=initial,
+                        system_prompt=system_prompt,
+                        service_config={"use_mcp_tools": False},
+                    )
+            except ValueError as e:
+                logger.warning("Skill generation: no usable provider (%s)", e)
+                return {"success": False, "error": str(e)}
 
             if response is None:
                 return {"success": False, "error": "Claude returned no response."}

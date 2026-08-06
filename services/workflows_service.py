@@ -1,6 +1,5 @@
 """Workflows service for discovering, parsing, and executing WORKFLOW.md workflow definitions."""
 
-import asyncio
 import logging
 import re
 from datetime import datetime
@@ -619,7 +618,6 @@ For each phase:
     async def _run_agent_turn(
         self,
         *,
-        claude_service,
         component: str,
         message: str,
         system_prompt: Optional[str],
@@ -628,36 +626,36 @@ For each phase:
         session_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> Optional[str]:
-        """Run one workflow agent turn on the correct provider.
+        """Run one workflow agent turn on the correct provider via LLMRouter.
 
-        Anthropic → the existing ``ClaudeService.chat`` loop (unchanged).
-        Non-Anthropic → ``OpenAIAgentService`` (full multi-turn tool loop with
-        the same tier/approval gating), returning the final text like ``chat``.
+        Delegates to ``LLMRouter.run_agent_chat`` (#413 4d-2), which absorbs the
+        provider branch this method used to hold: Anthropic (``spec is None``) →
+        ``ClaudeService.chat`` tool loop; non-Anthropic → ``OpenAIAgentService``
+        multi-turn loop. ``_resolve_agent_provider`` returns ``None`` for
+        Anthropic, which is exactly the signal ``run_agent_chat`` expects — so no
+        default-provider resolution happens for the Anthropic case.
         """
         spec, model_id = self._resolve_agent_provider(component)
 
-        if spec is None:
-            return await asyncio.to_thread(
-                claude_service.chat,
-                message=message,
-                system_prompt=system_prompt,
-                model=model_id,
-                max_tokens=max_tokens,
-                recommended_tools=recommended_tools,
-            )
+        from services.llm_router import LLMRouter
 
-        from services.openai_agent_service import OpenAIAgentService
-
-        agent = OpenAIAgentService(recommended_tools=recommended_tools)
-        return await agent.run(
+        return await LLMRouter().run_agent_chat(
+            message,
             provider=spec,
-            messages=[{"role": "user", "content": message}],
-            system_prompt=system_prompt,
             model=model_id,
+            system_prompt=system_prompt,
+            recommended_tools=recommended_tools,
             max_tokens=max_tokens,
-            enable_tools=True,
             session_id=session_id,
             agent_id=agent_id,
+            # Mirror the workflow-engine ClaudeService construction for the
+            # Anthropic path (backend + MCP tools, no Agent SDK, thinking on).
+            service_config={
+                "use_backend_tools": True,
+                "use_mcp_tools": True,
+                "use_agent_sdk": False,
+                "enable_thinking": True,
+            },
         )
 
     async def _execute_oneshot(
@@ -669,7 +667,7 @@ For each phase:
         """Legacy composite-prompt path for file-based workflows that
         don't have structured phases. No approval gating possible —
         there's no phase_id to attach an approval to."""
-        from services.claude_service import ClaudeService
+        from services.llm_router import anthropic_api_key_available
         from services.soc_agents import SOCAgentLibrary
         from services.workflow_run_service import get_workflow_run_service
 
@@ -688,17 +686,13 @@ For each phase:
         all_tools, skill_tool_names = self._collect_tools(workflow, agent_profiles)
         system_prompt = self._build_system_prompt(workflow, skill_tool_names)
 
-        claude_service = ClaudeService(
-            use_backend_tools=True,
-            use_mcp_tools=True,
-            use_agent_sdk=False,
-            enable_thinking=True,
-        )
         # The oneshot composite call runs on the workflow-default assignment
         # (chat_default). Only require an Anthropic key when that resolves to
         # Anthropic — a non-Anthropic provider carries its own Bifrost key.
+        # (#413 4d-2: gate via the router helper, no ClaudeService construction;
+        # dispatch goes through LLMRouter.run_agent_chat in _run_agent_turn.)
         oneshot_provider, oneshot_model = self._resolve_agent_provider("chat_default")
-        if oneshot_provider is None and not claude_service.has_api_key():
+        if oneshot_provider is None and not anthropic_api_key_available():
             return {"success": False, "error": "Claude API not configured"}
 
         workflow_dict = workflow.to_dict(include_body=False)
@@ -742,7 +736,6 @@ For each phase:
 
         try:
             response_text = await self._run_agent_turn(
-                claude_service=claude_service,
                 component="chat_default",
                 message=prompt,
                 system_prompt=system_prompt,
@@ -787,12 +780,14 @@ For each phase:
         triggered_by: Optional[str],
     ) -> Dict[str, Any]:
         """Phase-by-phase execution path for custom workflows (#128)."""
-        from services.claude_service import ClaudeService
+        from services.llm_router import anthropic_api_key_available
         from services.workflow_run_service import get_workflow_run_service
 
-        if not ClaudeService(
-            use_backend_tools=False, use_mcp_tools=False, use_agent_sdk=False
-        ).has_api_key():
+        # #413 4d-2: preserve the existing Anthropic-key gate without
+        # constructing ClaudeService (per-phase dispatch runs through
+        # LLMRouter.run_agent_chat in _run_agent_turn, which routes each phase
+        # to its resolved provider).
+        if not anthropic_api_key_available():
             return {"success": False, "error": "Claude API not configured"}
 
         _, skill_tool_names = self._collect_tools(workflow, {})
@@ -842,7 +837,6 @@ For each phase:
         resume. Walks phases from ``start_index``; pauses or completes
         the run as appropriate."""
         from services.approval_service import ActionType, get_approval_service
-        from services.claude_service import ClaudeService
         from services.soc_agents import SOCAgentLibrary
         from services.workflow_run_service import get_workflow_run_service
 
@@ -852,13 +846,6 @@ For each phase:
         workflow_dict = workflow.to_dict(include_body=False)
 
         target_context = self._build_target_context(parameters)
-
-        claude_service = ClaudeService(
-            use_backend_tools=True,
-            use_mcp_tools=True,
-            use_agent_sdk=False,
-            enable_thinking=True,
-        )
 
         phase_outputs: List[Dict[str, Any]] = []
         last_response_text = ""
@@ -985,7 +972,6 @@ For each phase:
 
             try:
                 response_text = await self._run_agent_turn(
-                    claude_service=claude_service,
                     component=phase_component,
                     message=phase_prompt,
                     system_prompt=system_prompt,

@@ -213,3 +213,30 @@ See [DETECTION_ENGINEERING.md](DETECTION_ENGINEERING.md) for detailed tool descr
 4. **End with Reporter** - Document findings
 5. **Use thinking agents** - For complex analysis (Investigator, Hunter, Forensics)
 6. **Use fast agents** - For quick decisions (Triage, Responder)
+
+## LLM Plumbing (developer note)
+
+Every agent above runs on whatever LLM **provider** is configured (Anthropic,
+OpenAI, or a local Ollama model via Bifrost) — not just Anthropic. That works
+because **`services/llm_router.py` (`LLMRouter`) is the single entry point for
+all LLM calls.** Feature code must dispatch through `LLMRouter` (e.g.
+`chat`, `dispatch`, `dispatch_stream`, `run_agent_chat`, `run_agent_task`); it
+must **not** import `services.claude_service.ClaudeService` directly.
+`ClaudeService` (Anthropic SDK) and `OpenAIAgentService` are internal engines
+that only `LLMRouter` may import.
+
+This boundary is enforced by an [import-linter](../.importlinter) contract — a
+**blocking** `import-contract` CI job plus a `lint-imports` pre-commit hook.
+Run it locally:
+
+```bash
+pip install -r requirements-dev.txt
+lint-imports
+```
+
+Two plumbing modules keep the import under a temporary, tracked exemption:
+`daemon/agent_runner.py` ([#449](https://github.com/Vigil-SOC/vigil/issues/449))
+and `services/llm_worker.py`
+([#450](https://github.com/Vigil-SOC/vigil/issues/450)). Rationale + the full
+decision are in
+[docs/adr/0001-llmrouter-sole-llm-entry-point.md](adr/0001-llmrouter-sole-llm-entry-point.md).

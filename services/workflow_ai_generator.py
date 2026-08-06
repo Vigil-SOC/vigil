@@ -44,27 +44,28 @@ class WorkflowAIGenerator:
                 "raw": "",
             }
 
-        from services.claude_service import ClaudeService
-
-        claude = ClaudeService(use_backend_tools=False, use_mcp_tools=False)
-        if not claude.has_api_key():
-            return {
-                "success": False,
-                "draft": None,
-                "error": "Claude API is not configured.",
-                "raw": "",
-            }
+        from services.llm_router import LLMRouter
 
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(description)
 
         try:
-            raw = claude.chat(
+            # #413: route through LLMRouter (provider-agnostic) instead of
+            # ClaudeService directly, so generation runs on whatever provider is
+            # configured. No tools needed for this one-shot text generation.
+            raw = await LLMRouter().chat(
                 message=user_prompt,
                 system_prompt=system_prompt,
                 max_tokens=4096,
                 enable_thinking=False,
+                service_config={"use_backend_tools": False, "use_mcp_tools": False},
             )
+        except ValueError as e:
+            # No usable provider configured (e.g. the Anthropic path with no
+            # key) — a normal misconfiguration, not a crash. Log at warning
+            # (no traceback) so it stays observable without alarming noise.
+            logger.warning("Workflow generation: no usable provider (%s)", e)
+            return {"success": False, "draft": None, "error": str(e), "raw": ""}
         except Exception as e:
             logger.exception("Workflow generation call failed")
             return {"success": False, "draft": None, "error": str(e), "raw": ""}

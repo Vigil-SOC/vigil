@@ -42,27 +42,27 @@ class AgentAIGenerator:
                 "raw": "",
             }
 
-        from services.claude_service import ClaudeService
-
-        claude = ClaudeService(use_backend_tools=False, use_mcp_tools=False)
-        if not claude.has_api_key():
-            return {
-                "success": False,
-                "draft": None,
-                "error": "Claude API is not configured.",
-                "raw": "",
-            }
+        from services.llm_router import LLMRouter
 
         system_prompt = self._build_system_prompt()
         user_prompt = self._build_user_prompt(description, current_draft, feedback)
 
         try:
-            raw = claude.chat(
+            # #413: route through LLMRouter (provider-agnostic) instead of
+            # ClaudeService directly. No tools needed for one-shot generation.
+            raw = await LLMRouter().chat(
                 message=user_prompt,
                 system_prompt=system_prompt,
                 max_tokens=4096,
                 enable_thinking=False,
+                service_config={"use_backend_tools": False, "use_mcp_tools": False},
             )
+        except ValueError as e:
+            # No usable provider configured (e.g. the Anthropic path with no
+            # key) — a normal misconfiguration, not a crash. Log at warning
+            # (no traceback) so it stays observable without alarming noise.
+            logger.warning("Agent generation: no usable provider (%s)", e)
+            return {"success": False, "draft": None, "error": str(e), "raw": ""}
         except Exception as e:
             logger.exception("Agent generation call failed")
             return {"success": False, "draft": None, "error": str(e), "raw": ""}
@@ -116,8 +116,7 @@ class AgentAIGenerator:
             "icon": "Single uppercase letter (e.g. 'P')",
             "color": "Hex color like '#8e44ad'",
             "role": (
-                "Short role phrase for BASE_PROMPT "
-                "(e.g. 'phishing specialist')"
+                "Short role phrase for BASE_PROMPT " "(e.g. 'phishing specialist')"
             ),
             "extra_principles": (
                 "Bullet list of additional principles, one per line prefixed "
@@ -167,7 +166,7 @@ class AgentAIGenerator:
                 (
                     "## Requirements\n"
                     "- `role` is a short noun phrase. It renders as "
-                    "\"You are a SOC {role} in the Vigil SOC platform.\"\n"
+                    '"You are a SOC {role} in the Vigil SOC platform."\n'
                     "- `extra_principles` is added AFTER Vigil's baseline "
                     "principles. Use '- ' bullets, one per line.\n"
                     "- `methodology` is a numbered step list (1., 2., 3., ...) "

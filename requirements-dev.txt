@@ -1,0 +1,6 @@
+# Development / CI-only tooling (not required at runtime).
+# Install with:  pip install -r requirements-dev.txt
+
+# Enforces the #413 LLM-provider import boundary (see .importlinter).
+# Upper-bounded so a future major (3.x) can't silently change contract semantics.
+import-linter>=2.13,<3

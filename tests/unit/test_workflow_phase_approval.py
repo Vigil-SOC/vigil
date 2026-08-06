@@ -169,7 +169,9 @@ class TestPhasedExecutionPauseResume:
         workflow = _make_workflow(approval_on_phase_2=True)
         svc = self._patched_service(workflow)
 
-        with patch.object(cs_module, "ClaudeService", _FakeClaudeService):
+        with patch.object(cs_module, "ClaudeService", _FakeClaudeService), patch(
+            "services.llm_router.anthropic_api_key_available", return_value=True
+        ):
             result = asyncio.run(
                 svc.execute_workflow(
                     workflow.id,
@@ -200,7 +202,9 @@ class TestPhasedExecutionPauseResume:
         workflow = _make_workflow(approval_on_phase_2=True)
         svc = self._patched_service(workflow)
 
-        with patch.object(cs_module, "ClaudeService", _FakeClaudeService):
+        with patch.object(cs_module, "ClaudeService", _FakeClaudeService), patch(
+            "services.llm_router.anthropic_api_key_available", return_value=True
+        ):
             paused = asyncio.run(
                 svc.execute_workflow(workflow.id, parameters={}, triggered_by="pytest")
             )
@@ -233,7 +237,9 @@ class TestPhasedExecutionPauseResume:
         workflow = _make_workflow(approval_on_phase_2=True)
         svc = self._patched_service(workflow)
 
-        with patch.object(cs_module, "ClaudeService", _FakeClaudeService):
+        with patch.object(cs_module, "ClaudeService", _FakeClaudeService), patch(
+            "services.llm_router.anthropic_api_key_available", return_value=True
+        ):
             paused = asyncio.run(
                 svc.execute_workflow(workflow.id, parameters={}, triggered_by="pytest")
             )
@@ -271,7 +277,9 @@ class TestPhasedExecutionPauseResume:
         workflow = _make_workflow(approval_on_phase_2=False)
         svc = self._patched_service(workflow)
 
-        with patch.object(cs_module, "ClaudeService", _FakeClaudeService):
+        with patch.object(cs_module, "ClaudeService", _FakeClaudeService), patch(
+            "services.llm_router.anthropic_api_key_available", return_value=True
+        ):
             result = asyncio.run(
                 svc.execute_workflow(workflow.id, parameters={}, triggered_by="pytest")
             )

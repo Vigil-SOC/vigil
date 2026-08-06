@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import Chat from './Chat'
+import { streamFetch } from '../../services/api'
 
 vi.mock('./useConversations', () => ({
   useConversations: () => ({ items: [], phase: 'ready', error: null, reload: vi.fn() }),
@@ -101,5 +102,119 @@ describe('Vigil Assistant resize controls', () => {
 
     expect(onWidthChange).toHaveBeenCalledWith(470)
     expect(onWidthCommit).toHaveBeenCalledWith(470)
+  })
+})
+
+/** SSE Response-like whose body emits `payloads` then HOLDS the stream open
+ *  (never resolves) — mirrors the backend pausing on a requires_approval tool,
+ *  so the live approval panel (gated behind `loading`) stays mounted to assert. */
+function heldSseResponse(payloads: object[]) {
+  const text = payloads.map((p) => `data: ${JSON.stringify(p)}\n`).join('\n') + '\n'
+  const chunk = new TextEncoder().encode(text)
+  let sent = false
+  return {
+    ok: true,
+    body: {
+      getReader() {
+        return {
+          read() {
+            if (sent) return new Promise(() => undefined) // hold open
+            sent = true
+            return Promise.resolve({ done: false, value: chunk })
+          },
+        }
+      },
+    },
+  } as unknown as Response
+}
+
+function sendPrompt(text: string) {
+  const textarea = screen.getByPlaceholderText(/Ask Vigil/i)
+  fireEvent.change(textarea, { target: { value: text } })
+  fireEvent.keyDown(textarea, { key: 'Enter' })
+}
+
+describe('tool-approval notice (#413 PR3e)', () => {
+  it('shows a live approval notice and deep-links to the queue in-app', async () => {
+    vi.mocked(streamFetch).mockResolvedValue(
+      heldSseResponse([
+        { type: 'approval_required', tool_name: 'isolate_host', action_id: 'ACT-1' },
+      ]),
+    )
+    const onNavigate = vi.fn()
+    render(<Chat open onClose={vi.fn()} onNavigate={onNavigate} />)
+    sendPrompt('isolate that host')
+
+    // Notice appears WHILE the stream is held (not after completion).
+    const notice = await screen.findByText(/needs approval/i)
+    expect(notice.textContent).toMatch(/isolate_host/)
+
+    fireEvent.click(screen.getByRole('button', { name: /Pending Approvals/i }))
+    expect(onNavigate).toHaveBeenCalledWith('decisions')
+  })
+
+  it('falls back to a /decisions link when onNavigate is absent', async () => {
+    vi.mocked(streamFetch).mockResolvedValue(
+      heldSseResponse([
+        { type: 'approval_required', tool_name: 'isolate_host', action_id: 'ACT-2' },
+      ]),
+    )
+    render(<Chat open onClose={vi.fn()} />)
+    sendPrompt('isolate that host')
+
+    await screen.findByText(/needs approval/i)
+    // No in-app navigator → a plain anchor to the Decisions route.
+    const link = screen.getByRole('link', { name: /Pending Approvals/i })
+    expect(link).toHaveAttribute('href', '/decisions')
+  })
+
+  it('summarizes when several tools pause in one turn', async () => {
+    vi.mocked(streamFetch).mockResolvedValue(
+      heldSseResponse([
+        { type: 'approval_required', tool_name: 'isolate_host', action_id: 'A1' },
+        { type: 'approval_required', tool_name: 'block_ip', action_id: 'A2' },
+      ]),
+    )
+    render(<Chat open onClose={vi.fn()} onNavigate={vi.fn()} />)
+    sendPrompt('contain the threat')
+
+    expect(await screen.findByText(/2 tools need approval/i)).toBeInTheDocument()
+  })
+})
+
+describe('budget banner (#413 PR3e-3)', () => {
+  it('renders a budget banner on a typed budget_exceeded error event', async () => {
+    vi.mocked(streamFetch).mockResolvedValue(
+      heldSseResponse([
+        {
+          type: 'error',
+          code: 'budget_exceeded',
+          tier: 'virtual_key',
+          content: 'Over budget',
+        },
+      ]),
+    )
+    render(<Chat open onClose={vi.fn()} onNavigate={vi.fn()} />)
+    sendPrompt('run an expensive analysis')
+
+    const banner = await screen.findByRole('alert')
+    expect(banner.textContent).toMatch(/budget exceeded/i)
+    expect(banner.textContent).toMatch(/virtual_key/)
+    // Not surfaced as the generic connectivity error bubble.
+    expect(screen.queryByText(/Could not reach Vigil/i)).not.toBeInTheDocument()
+  })
+
+  it('words a rate_limit (429) block as a rate limit, not a budget overage', async () => {
+    vi.mocked(streamFetch).mockResolvedValue(
+      heldSseResponse([
+        { type: 'error', code: 'budget_exceeded', tier: 'rate_limit', content: '' },
+      ]),
+    )
+    render(<Chat open onClose={vi.fn()} onNavigate={vi.fn()} />)
+    sendPrompt('go')
+
+    const banner = await screen.findByRole('alert')
+    expect(banner.textContent).toMatch(/rate limit/i)
+    expect(banner.textContent).not.toMatch(/budget exceeded/i)
   })
 })

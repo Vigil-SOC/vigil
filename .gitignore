@@ -249,3 +249,6 @@ claude_analysis_*.txt
 .mcp.json
 index.scip
 slop.toml
+
+# Generated knowledge-graph output (graphify) — ~20MB, never committed
+graphify-out/

@@ -1,0 +1,41 @@
+# Import-linter contract enforcing the #413 LLM-provider boundary.
+#
+# Rule: services.claude_service (the Anthropic SDK engine) may be imported ONLY
+# by services.llm_router (LLMRouter — the sole LLM entry point). Every other
+# module must dispatch through LLMRouter.
+#
+# Temporary, tracked exemptions (see ignore_imports below):
+#   - daemon.agent_runner  -> #449 (imports ClaudeService only for 4 non-dispatch
+#                             helper borrowings; its LLM entry is already LLMGateway)
+#   - services.llm_worker  -> #450 (raw multi-turn loop borrows .client +
+#                             _persist_interaction; already router-first)
+#
+# Run locally with:  lint-imports
+[importlinter]
+root_packages =
+    backend
+    services
+    daemon
+    database
+    core
+    tools
+    scripts
+
+[importlinter:contract:claude-service-boundary]
+name = ClaudeService is reachable only through LLMRouter (#413)
+type = forbidden
+source_modules =
+    backend
+    services
+    daemon
+    database
+    core
+    tools
+    scripts
+forbidden_modules =
+    services.claude_service
+# Allowed importer (the sole LLM entry point) + temporary tracked exemptions.
+ignore_imports =
+    services.llm_router -> services.claude_service
+    daemon.agent_runner -> services.claude_service
+    services.llm_worker -> services.claude_service

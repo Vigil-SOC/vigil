@@ -5,19 +5,26 @@ drives the Claude Agent SDK. That path sees MCP tools only — our
 ``backend_tools`` layer (where ``skill_<slug>`` tools live) was
 invisible, so workflows couldn't invoke user-authored skills.
 
-The fix: ``execute_workflow`` now calls ``ClaudeService.chat`` as an
-internal engine primitive. That entry point refreshes skill tools at
-the top of every invocation. These tests lock in the contract that
-skill tool names actually reach the executor + are mentioned in the
-system prompt.
+The fix: ``execute_workflow`` drives ``ClaudeService.chat`` as an internal
+engine primitive (skill tools refresh at the top of every invocation). As of
+#413 4d-2 that dispatch is routed through ``LLMRouter.run_agent_chat`` — for the
+Anthropic path (``_resolve_agent_provider`` returns ``None``) the router
+constructs the same ``ClaudeService(use_backend_tools=True, use_agent_sdk=False,
+…)`` and calls ``.chat``, so these tests still pin the construction + the
+skill-tool threading contract, now with the gate + provider resolution mocked so
+the oneshot path reaches the router deterministically without touching the DB.
 """
 
 from __future__ import annotations
 
+from contextlib import ExitStack
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from services.workflows_service import WorkflowDefinition, WorkflowsService
+
+pytestmark = pytest.mark.unit
 
 
 def _make_workflow(agents=("investigator",), tools=("list_findings",)):
@@ -45,6 +52,32 @@ def _fake_claude_service(response_text: str = "done"):
     return svc
 
 
+def _common_patches(stack: ExitStack):
+    """Patch the Anthropic-key gate + provider resolution + run service so the
+    oneshot path reaches ``run_agent_chat``'s Anthropic branch deterministically
+    and without a live DB. ``_resolve_agent_provider`` returning ``None`` is the
+    signal that keeps dispatch on ``ClaudeService.chat`` (vs the OpenAI loop)."""
+    stack.enter_context(
+        patch("services.llm_router.anthropic_api_key_available", return_value=True)
+    )
+    stack.enter_context(
+        patch.object(
+            WorkflowsService,
+            "_resolve_agent_provider",
+            return_value=(None, "claude-x"),
+        )
+    )
+    run_svc = MagicMock()
+    run_svc.begin_run.return_value = "run-1"
+    run_svc.list_phases.return_value = []
+    stack.enter_context(
+        patch(
+            "services.workflow_run_service.get_workflow_run_service",
+            return_value=run_svc,
+        )
+    )
+
+
 @pytest.mark.asyncio
 async def test_execute_workflow_includes_skill_tools_in_allowed_list(monkeypatch):
     """Skill tool names from skill_tools_bridge should be threaded
@@ -52,28 +85,30 @@ async def test_execute_workflow_includes_skill_tools_in_allowed_list(monkeypatch
 
     service = WorkflowsService()
     workflow = _make_workflow()
-
-    monkeypatch.setattr(
-        WorkflowsService, "get_workflow", lambda self, wid: workflow
-    )
+    monkeypatch.setattr(WorkflowsService, "get_workflow", lambda self, wid: workflow)
 
     fake = _fake_claude_service()
 
-    with patch(
-        "services.claude_service.ClaudeService", return_value=fake
-    ), patch(
-        "services.skill_tools_bridge.list_active_skill_tools",
-        return_value=(
-            [
-                {
-                    "name": "skill_cookie_recipe_generator",
-                    "description": "test",
-                    "input_schema": {"type": "object"},
-                }
-            ],
-            {},
-        ),
-    ):
+    with ExitStack() as stack:
+        _common_patches(stack)
+        stack.enter_context(
+            patch("services.claude_service.ClaudeService", return_value=fake)
+        )
+        stack.enter_context(
+            patch(
+                "services.skill_tools_bridge.list_active_skill_tools",
+                return_value=(
+                    [
+                        {
+                            "name": "skill_cookie_recipe_generator",
+                            "description": "test",
+                            "input_schema": {"type": "object"},
+                        }
+                    ],
+                    {},
+                ),
+            )
+        )
         result = await service.execute_workflow("wf-test", {})
 
     assert result["success"] is True
@@ -99,17 +134,20 @@ async def test_execute_workflow_no_skills_still_runs(monkeypatch):
 
     service = WorkflowsService()
     workflow = _make_workflow()
-    monkeypatch.setattr(
-        WorkflowsService, "get_workflow", lambda self, wid: workflow
-    )
+    monkeypatch.setattr(WorkflowsService, "get_workflow", lambda self, wid: workflow)
 
     fake = _fake_claude_service()
-    with patch(
-        "services.claude_service.ClaudeService", return_value=fake
-    ), patch(
-        "services.skill_tools_bridge.list_active_skill_tools",
-        return_value=([], {}),
-    ):
+    with ExitStack() as stack:
+        _common_patches(stack)
+        stack.enter_context(
+            patch("services.claude_service.ClaudeService", return_value=fake)
+        )
+        stack.enter_context(
+            patch(
+                "services.skill_tools_bridge.list_active_skill_tools",
+                return_value=([], {}),
+            )
+        )
         result = await service.execute_workflow("wf-test", {})
 
     assert result["success"] is True
@@ -121,13 +159,12 @@ async def test_execute_workflow_no_skills_still_runs(monkeypatch):
 @pytest.mark.asyncio
 async def test_execute_workflow_does_not_use_agent_sdk(monkeypatch):
     """Regression guard for #126: workflows must not take the Agent SDK
-    path, because that branch never sees backend_tools + skills."""
+    path, because that branch never sees backend_tools + skills. The router's
+    Anthropic path constructs ClaudeService with use_agent_sdk=False."""
 
     service = WorkflowsService()
     workflow = _make_workflow()
-    monkeypatch.setattr(
-        WorkflowsService, "get_workflow", lambda self, wid: workflow
-    )
+    monkeypatch.setattr(WorkflowsService, "get_workflow", lambda self, wid: workflow)
 
     calls = []
 
@@ -135,12 +172,17 @@ async def test_execute_workflow_does_not_use_agent_sdk(monkeypatch):
         calls.append(kwargs)
         return _fake_claude_service()
 
-    with patch(
-        "services.claude_service.ClaudeService", side_effect=_record_svc
-    ), patch(
-        "services.skill_tools_bridge.list_active_skill_tools",
-        return_value=([], {}),
-    ):
+    with ExitStack() as stack:
+        _common_patches(stack)
+        stack.enter_context(
+            patch("services.claude_service.ClaudeService", side_effect=_record_svc)
+        )
+        stack.enter_context(
+            patch(
+                "services.skill_tools_bridge.list_active_skill_tools",
+                return_value=([], {}),
+            )
+        )
         await service.execute_workflow("wf-test", {})
 
     assert len(calls) == 1
@@ -156,20 +198,23 @@ async def test_execute_workflow_surfaces_chat_exception_as_error(monkeypatch):
 
     service = WorkflowsService()
     workflow = _make_workflow()
-    monkeypatch.setattr(
-        WorkflowsService, "get_workflow", lambda self, wid: workflow
-    )
+    monkeypatch.setattr(WorkflowsService, "get_workflow", lambda self, wid: workflow)
 
     svc = MagicMock()
     svc.has_api_key.return_value = True
     svc.chat = MagicMock(side_effect=RuntimeError("boom"))
 
-    with patch(
-        "services.claude_service.ClaudeService", return_value=svc
-    ), patch(
-        "services.skill_tools_bridge.list_active_skill_tools",
-        return_value=([], {}),
-    ):
+    with ExitStack() as stack:
+        _common_patches(stack)
+        stack.enter_context(
+            patch("services.claude_service.ClaudeService", return_value=svc)
+        )
+        stack.enter_context(
+            patch(
+                "services.skill_tools_bridge.list_active_skill_tools",
+                return_value=([], {}),
+            )
+        )
         result = await service.execute_workflow("wf-test", {})
 
     assert result["success"] is False

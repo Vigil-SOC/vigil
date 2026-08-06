@@ -508,9 +508,13 @@ def _sync_claude_raw(
     import uuid as _uuid
 
     _interaction_id = str(_uuid.uuid4())
+    # Shared header builder so the budget virtual-key header (x-bf-vk) rides
+    # along with the interaction id (R8) instead of being dropped here.
+    from services.llm_router import _bifrost_headers
+
     kwargs["extra_headers"] = {
         **(kwargs.get("extra_headers") or {}),
-        "x-bf-lh-vigil-interaction-id": _interaction_id,
+        **_bifrost_headers(_interaction_id),
     }
 
     _raw_started = _time.monotonic()

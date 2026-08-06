@@ -1,26 +1,18 @@
 """Claude API endpoints for chat, streaming, and Agent SDK workflows."""
 
-from typing import List, Optional, Dict, Union, Any, Tuple
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    WebSocket,
-    WebSocketDisconnect,
-    File,
-    UploadFile,
-)
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, field_validator
 import asyncio
+import base64
 import json
 import logging
-import base64
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, field_validator
 
 from backend.middleware.auth import get_current_user
 from backend.schemas.system_prompt import validate_system_prompt
 from database.models import User
-from services.claude_service import ClaudeService
 from services.defaults import DEFAULT_MODEL
 from services.model_registry import get_registry
 from api._meta import Auth, RouterMeta
@@ -101,6 +93,8 @@ def _persist_chat_turn(
         )
     except Exception as exc:  # noqa: BLE001 — fail-open, never break the chat
         logger.warning("chat history write-through failed (non-fatal): %s", exc)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -228,10 +222,7 @@ def _select_active_provider(provider_id: Optional[str]):
     Returns a ``ProviderSpec`` or ``None``. Lookups are wrapped so a transient
     DB error degrades to the ClaudeService/Anthropic path rather than 500-ing.
     """
-    from services.llm_router import (
-        get_default_provider_spec,
-        get_provider_spec,
-    )
+    from services.llm_router import get_default_provider_spec, get_provider_spec
 
     provider = None
     if provider_id:
@@ -340,9 +331,10 @@ async def chat(request: ChatRequest):
     Returns:
         Claude's response
     """
-    from services.soc_agents import AgentManager
-    import uuid
     import time
+    import uuid
+
+    from services.soc_agents import AgentManager
 
     # Generate unique request ID for tracking
     request_id = str(uuid.uuid4())[:8]
@@ -415,15 +407,14 @@ async def chat(request: ChatRequest):
         and getattr(active_provider, "provider_type", None) != "anthropic"
     )
 
-    claude_service = None
+    from services.llm_router import agent_sdk_available, anthropic_api_key_available
+
     if not use_router:
-        claude_service = ClaudeService(
-            use_backend_tools=True,
-            enable_thinking=enable_thinking,
-            thinking_budget=thinking_budget,
-            use_agent_sdk=request.use_agent_sdk,
-        )
-        if not claude_service.has_api_key():
+        # Anthropic (or no positively-identified non-Anthropic provider):
+        # preserve the 503 no-provider gate without constructing ClaudeService
+        # (#413 4c-2). This gate covers both the Agent SDK branch and the
+        # standard-chat gateway branch below.
+        if not anthropic_api_key_available():
             _raise_no_provider()
     else:
         request.model = _router_model(active_provider, request.model)
@@ -506,7 +497,7 @@ async def chat(request: ChatRequest):
                 interaction_id=request_id,
             )
             response = result.get("content", "")
-        elif request.use_agent_sdk and claude_service.use_agent_sdk:
+        elif request.use_agent_sdk and agent_sdk_available():
             # Extract text from current message for agent query
             if isinstance(current_message, list):
                 prompt = " ".join(
@@ -519,12 +510,22 @@ async def chat(request: ChatRequest):
             else:
                 prompt = current_message
 
-            result = await claude_service.run_agent_task(
+            # SDK dispatch through LLMRouter (#413 4c-2). The old guard
+            # `request.use_agent_sdk and claude_service.use_agent_sdk` reduces
+            # to `request.use_agent_sdk and AGENT_SDK_AVAILABLE`, which
+            # `agent_sdk_available()` reproduces exactly — behaviour-preserving.
+            from services.llm_router import LLMRouter
+
+            result = await LLMRouter().run_agent_task(
                 task=prompt,
                 agent_config={
                     "system_prompt": system_prompt,
                     "allowed_tools": allowed_tools,
                     "model": request.model,
+                    # Mirror the old ClaudeService(use_backend_tools=True) ctor;
+                    # use_mcp_tools defaults True in both, and thinking is a
+                    # no-op on the Agent SDK path.
+                    "use_backend_tools": True,
                 },
             )
 
@@ -654,8 +655,8 @@ async def chat_stream(
     Returns:
         Streaming response
     """
-    import uuid
     import time
+    import uuid
 
     # Generate unique request ID for tracking
     request_id = str(uuid.uuid4())[:8]
@@ -739,16 +740,20 @@ async def chat_stream(
         and getattr(active_provider, "provider_type", None) != "anthropic"
     )
 
-    claude_service = None
+    from services.llm_router import anthropic_api_key_available
+
     if not use_router:
-        claude_service = ClaudeService(
-            use_backend_tools=True,
-            enable_thinking=enable_thinking,
-            thinking_budget=thinking_budget,
-        )
-        if not claude_service.has_api_key():
+        # H1 carry-over: keep the 503 no-provider gate on the Anthropic key
+        # without constructing ClaudeService — the Anthropic stream now runs
+        # through LLMRouter.dispatch_stream below (#413 4c-3). dispatch_stream's
+        # Anthropic path has no key check of its own, so this gate is what
+        # prevents an Ollama-less / key-less deployment from failing mid-stream.
+        if not anthropic_api_key_available():
             _raise_no_provider()
     else:
+        # Idempotent pre-transform so the write-through history records the
+        # provider-resolved model; dispatch_stream re-applies _router_model
+        # internally (a non-``claude-`` result is a no-op on re-application).
         request.model = _router_model(active_provider, request.model)
 
     async def generate():
@@ -836,99 +841,7 @@ async def chat_stream(
             # Use all previous messages as context (if any)
             context = messages[:-1] if len(messages) > 1 else None
 
-            # Non-Anthropic path — stream via LLMRouter / Bifrost's OpenAI
-            # surface. No tools here, so use the no-tools guardrail prompt.
-            if use_router and active_provider is not None:
-                # Non-Anthropic path. A model that supports tool calling runs the
-                # full agentic loop (OpenAIAgentService, multi-turn + tools);
-                # anything else falls back to a plain no-tools router stream.
-                # Both branches preserve history tracking below.
-                model_id = request.model or active_provider.default_model
-                enable_agent_tools = False
-                try:
-                    from services.model_registry import ModelRegistry
-
-                    model_info = ModelRegistry().get_model_info(
-                        active_provider.provider_id,
-                        active_provider.provider_type,
-                        model_id,
-                    )
-                    enable_agent_tools = bool(
-                        getattr(model_info, "supports_tools", False)
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.debug("model tool-support lookup failed: %s", exc)
-
-                agent = None
-                if enable_agent_tools:
-                    from services.openai_agent_service import OpenAIAgentService
-
-                    agent = OpenAIAgentService(recommended_tools=recommended_tools)
-                    # Claims tool support but nothing loadable — fall back to the
-                    # no-tools stream rather than send an empty tools=[] that some
-                    # providers reject.
-                    if not agent.tools_available():
-                        logger.info(
-                            "Model %s supports tools but none available; "
-                            "using no-tools router stream",
-                            model_id,
-                        )
-                        agent = None
-                        enable_agent_tools = False
-
-                text_chunks = 0
-                total_text_length = 0
-                logger.info(
-                    f"🚀 [RequestID: {request_id}] Starting router stream "
-                    f"({active_provider.provider_type}, tools={enable_agent_tools}) "
-                    f"with {len(messages)} messages"
-                )
-
-                if enable_agent_tools and agent is not None:
-                    # Always include the tool-use guardrail. When an agent
-                    # supplies its own system prompt, prepend the guardrail so
-                    # the tool/anti-fabrication instructions are never dropped.
-                    agent_system_prompt = (
-                        f"{ROUTER_AGENT_TOOLS_SYSTEM_PROMPT}\n\n{system_prompt}"
-                        if system_prompt
-                        else ROUTER_AGENT_TOOLS_SYSTEM_PROMPT
-                    )
-                    async for chunk in agent.stream(
-                        provider=active_provider,
-                        messages=messages,
-                        system_prompt=agent_system_prompt,
-                        model=model_id,
-                        max_tokens=max_tokens,
-                        enable_tools=True,
-                        session_id=request.session_id,
-                        agent_id=request.agent_id,
-                    ):
-                        text_chunks += 1
-                        total_text_length += len(chunk.get("content", ""))
-                        history_assistant_parts.append(chunk.get("content", ""))
-                        yield f"data: {json.dumps(chunk)}\n\n"
-                else:
-                    from services.llm_router import LLMRouter
-
-                    async for chunk in LLMRouter().dispatch_openai_stream(
-                        provider=active_provider,
-                        messages=messages,
-                        system_prompt=ROUTER_NO_TOOLS_SYSTEM_PROMPT,
-                        model=model_id,
-                        max_tokens=max_tokens,
-                        interaction_id=request_id,
-                    ):
-                        text_chunks += 1
-                        total_text_length += len(chunk.get("content", ""))
-                        history_assistant_parts.append(chunk.get("content", ""))
-                        yield f"data: {json.dumps(chunk)}\n\n"
-                history_reached_end = True
-                elapsed_time = time.time() - start_time
-                logger.info(
-                    f"✅ [RequestID: {request_id}] Router stream complete in {elapsed_time:.2f}s — "
-                    f"{text_chunks} chunks ({total_text_length} chars)"
-                )
-                return
+            from services.llm_router import LLMRouter
 
             logger.info(
                 f"🚀 [RequestID: {request_id}] Starting stream with {len(messages)} messages, context={len(context) if context else 0}"
@@ -940,10 +853,21 @@ async def chat_stream(
             total_text_length = 0
             total_thinking_length = 0
 
-            assert claude_service is not None
-            async for chunk in claude_service.chat_stream(
-                message=current_message,
-                context=context,
+            # Unified provider-aware streaming (#413 4c-3): dispatch_stream
+            # absorbs the three provider branches that used to live here
+            # (tool-capable non-Anthropic → OpenAIAgentService loop;
+            # non-Anthropic no-tools → dispatch_openai_stream; Anthropic / no
+            # active provider → ClaudeService.chat_stream) and yields the SSE
+            # event dicts verbatim. Post-3b both provider paths emit the same
+            # agent_loop event vocabulary, so this one type-based accumulation
+            # block handles history for all of them: text/thinking carry real
+            # output; tool_processing/tool_result carry no "content" (the old
+            # router-path append-all was already a no-op for those). The full
+            # validated `messages` go in; the Anthropic engine splits the
+            # trailing user turn off internally, exactly as before.
+            async for chunk in LLMRouter().dispatch_stream(
+                provider=active_provider,
+                messages=messages,
                 system_prompt=system_prompt,
                 model=request.model,
                 max_tokens=max_tokens,
@@ -951,6 +875,8 @@ async def chat_stream(
                 thinking_budget=thinking_budget,
                 session_id=request.session_id,
                 agent_id=request.agent_id,
+                recommended_tools=recommended_tools,
+                interaction_id=request_id,
             ):
                 chunk_count += 1
                 # Handle both dict (new format with thinking) and string (backward compat)
@@ -1032,9 +958,7 @@ async def chat_stream(
                         complete=history_reached_end,
                     )
                 except Exception as exc:  # noqa: BLE001 — fail-open
-                    logger.warning(
-                        "chat history persist failed (non-fatal): %s", exc
-                    )
+                    logger.warning("chat history persist failed (non-fatal): %s", exc)
 
     return StreamingResponse(
         generate(),
@@ -1044,81 +968,6 @@ async def chat_stream(
             "Connection": "keep-alive",
         },
     )
-
-
-@router.websocket("/ws/chat")
-async def websocket_chat(websocket: WebSocket):
-    """
-    WebSocket endpoint for bidirectional chat with Claude.
-
-    This allows for streaming responses and real-time interaction.
-    """
-    await websocket.accept()
-
-    claude_service = ClaudeService(use_backend_tools=True)
-
-    # Check if API key is configured (works for both implementations)
-    if not claude_service.has_api_key():
-        await websocket.send_json({"error": NO_PROVIDER_DETAIL})
-        await websocket.close()
-        return
-
-    try:
-        while True:
-            # Receive message from client
-            data = await websocket.receive_json()
-
-            messages = data.get("messages", [])
-            system_prompt = data.get("system_prompt")
-            # GH #89: resolve via ai_model_configs when caller omits model.
-            model = data.get("model") or _resolve_model_for_request(
-                None, data.get("agent_id")
-            )
-            max_tokens = data.get("max_tokens", 4096)
-            enable_thinking = data.get("enable_thinking", False)
-            thinking_budget = data.get("thinking_budget", 10000)
-
-            # Update thinking settings if needed
-            if enable_thinking != claude_service.enable_thinking:
-                claude_service.enable_thinking = enable_thinking
-                claude_service.thinking_budget = thinking_budget
-
-            # Stream response back to client
-            try:
-                # Split messages into context and current message
-                if len(messages) == 0:
-                    await websocket.send_json({"error": "No messages provided"})
-                    continue
-
-                # Get the last message as the current message
-                current_message = messages[-1]["content"]
-
-                # Use all previous messages as context (if any)
-                context = messages[:-1] if len(messages) > 1 else None
-
-                async for chunk in claude_service.chat_stream(
-                    message=current_message,
-                    context=context,
-                    system_prompt=system_prompt,
-                    model=model,
-                    max_tokens=max_tokens,
-                ):
-                    # Handle both dict (new format with thinking) and string (backward compat)
-                    if isinstance(chunk, dict):
-                        await websocket.send_json(chunk)
-                    else:
-                        # Old format - plain text string
-                        await websocket.send_json({"type": "text", "content": chunk})
-
-            except Exception as e:
-                logger.error(f"Error in chat stream: {e}")
-                await websocket.send_json({"error": str(e)})
-
-    except WebSocketDisconnect:
-        logger.info("WebSocket disconnected")
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
-        await websocket.close()
 
 
 @router.get("/models")
@@ -1223,9 +1072,12 @@ async def summarize_conversation(request: SummarizeRequest):
     """
     import asyncio
 
-    claude_service = ClaudeService(use_backend_tools=False, enable_thinking=False)
+    # #413: this endpoint dispatches through the LLM gateway (below); it only
+    # needs to know a provider is configured, so check availability via the
+    # router instead of constructing a ClaudeService.
+    from services.llm_router import anthropic_api_key_available
 
-    if not claude_service.has_api_key():
+    if not anthropic_api_key_available():
         _raise_no_provider()
 
     # Build a flat text representation of the conversation
@@ -1315,9 +1167,12 @@ Provide a structured summary that captures all essential context for continuing 
 @router.get("/sdk-status")
 async def get_sdk_status():
     """Check availability of Claude Agent SDK."""
+    # #413: both are capability probes resolvable without a ClaudeService.
+    from services.llm_router import agent_sdk_available, anthropic_api_key_available
+
     return {
-        "agent_sdk_available": ClaudeService.is_agent_sdk_available(),
-        "anthropic_available": ClaudeService(use_backend_tools=True).has_api_key(),
+        "agent_sdk_available": agent_sdk_available(),
+        "anthropic_available": anthropic_api_key_available(),
     }
 
 
@@ -1354,19 +1209,25 @@ async def run_agent_task(request: AgentTaskRequest):
     # GH #89: resolve model via ai_model_configs if caller didn't specify one.
     request.model = _resolve_model_for_request(request.model, request.agent_id)
 
-    claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
+    # Agent SDK is Anthropic-only, so keep the 503 no-provider gate on the
+    # Anthropic key without constructing ClaudeService (#413 4c-2). Router's
+    # _build_agent_sdk_engine reproduces the old
+    # ClaudeService(use_backend_tools=True, use_mcp_tools=True default,
+    # use_agent_sdk=True) construction; pass use_backend_tools explicitly.
+    from services.llm_router import LLMRouter, anthropic_api_key_available
 
-    if not claude_service.has_api_key():
+    if not anthropic_api_key_available():
         _raise_no_provider()
 
     try:
-        result = await claude_service.run_agent_task(
+        result = await LLMRouter().run_agent_task(
             task=request.task,
             agent_config={
                 "system_prompt": system_prompt,
                 "allowed_tools": allowed_tools,
                 "max_turns": max_turns,
                 "model": request.model,
+                "use_backend_tools": True,
             },
             session_id=request.session_id,
         )
@@ -1416,20 +1277,23 @@ async def stream_agent_task(request: AgentTaskRequest):
     # GH #89: resolve model via ai_model_configs if caller didn't specify one.
     request.model = _resolve_model_for_request(request.model, request.agent_id)
 
-    claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
+    # Agent SDK is Anthropic-only; keep the 503 no-provider gate on the
+    # Anthropic key without constructing ClaudeService (#413 4c-2).
+    from services.llm_router import LLMRouter, anthropic_api_key_available
 
-    if not claude_service.has_api_key():
+    if not anthropic_api_key_available():
         _raise_no_provider()
 
     async def generate():
         try:
-            async for event in claude_service.agent_query(
+            async for event in LLMRouter().run_agent_stream(
                 prompt=request.task,
                 system_prompt=system_prompt,
                 allowed_tools=allowed_tools,
                 max_turns=request.max_turns,
                 session_id=request.session_id,
                 model=request.model,
+                agent_config={"use_backend_tools": True},
             ):
                 yield f"data: {json.dumps(event)}\n\n"
         except Exception as e:
@@ -1444,85 +1308,6 @@ async def stream_agent_task(request: AgentTaskRequest):
             "Connection": "keep-alive",
         },
     )
-
-
-@router.websocket("/ws/agent")
-async def websocket_agent(websocket: WebSocket):
-    """
-    WebSocket endpoint for interactive agent sessions.
-
-    Supports bidirectional communication for multi-turn agent workflows
-    with real-time streaming of tool calls and results.
-    """
-    await websocket.accept()
-
-    claude_service = ClaudeService(use_backend_tools=True, use_agent_sdk=True)
-
-    if not claude_service.has_api_key():
-        await websocket.send_json({"type": "error", "content": NO_PROVIDER_DETAIL})
-        await websocket.close()
-        return
-
-    session_id = None
-
-    try:
-        while True:
-            data = await websocket.receive_json()
-
-            task = data.get("task", "")
-            system_prompt = data.get("system_prompt")
-            allowed_tools = data.get("allowed_tools")
-            max_turns = data.get("max_turns", 10)
-            model = data.get("model", DEFAULT_MODEL)
-            agent_id = data.get("agent_id")
-
-            # Handle session management
-            if data.get("action") == "new_session":
-                session_id = f"ws-{id(websocket)}-{hash(task)}"
-                claude_service.create_session(session_id)
-                await websocket.send_json({"type": "session", "session_id": session_id})
-                continue
-            elif data.get("action") == "clear_session":
-                if session_id:
-                    claude_service.clear_session(session_id)
-                await websocket.send_json({"type": "session_cleared"})
-                continue
-
-            # Apply agent config
-            if agent_id:
-                from services.soc_agents import AgentManager
-
-                agent_manager = AgentManager()
-                agent = agent_manager.agents.get(agent_id)
-                if agent:
-                    system_prompt = system_prompt or agent.system_prompt
-                    if not allowed_tools:
-                        allowed_tools = agent.recommended_tools
-
-            try:
-                async for event in claude_service.agent_query(
-                    prompt=task,
-                    system_prompt=system_prompt,
-                    allowed_tools=allowed_tools,
-                    max_turns=max_turns,
-                    session_id=session_id,
-                    model=model,
-                ):
-                    await websocket.send_json(event)
-
-                await websocket.send_json({"type": "complete"})
-
-            except Exception as e:
-                logger.error(f"Agent execution error: {e}")
-                await websocket.send_json({"type": "error", "content": str(e)})
-
-    except WebSocketDisconnect:
-        logger.info("Agent WebSocket disconnected")
-        if session_id:
-            claude_service.clear_session(session_id)
-    except Exception as e:
-        logger.error(f"Agent WebSocket error: {e}")
-        await websocket.close()
 
 
 @router.post("/upload-file")
@@ -1598,10 +1383,11 @@ async def analyze_finding(finding_id: str, context: Optional[str] = None):
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
 
-    claude_service = ClaudeService(use_backend_tools=True)
+    # #413: dispatches through the LLM gateway (below); only needs to confirm a
+    # provider is configured — check via the router, not a ClaudeService.
+    from services.llm_router import anthropic_api_key_available
 
-    # Check if API key is configured (works for both implementations)
-    if not claude_service.has_api_key():
+    if not anthropic_api_key_available():
         _raise_no_provider()
 
     # Construct analysis prompt
@@ -1662,9 +1448,10 @@ async def generate_chat_report(request: ChatReportRequest):
     Returns:
         Report file information
     """
-    from services.report_service import ReportService, REPORTLAB_AVAILABLE
-    from pathlib import Path
     from datetime import datetime
+    from pathlib import Path
+
+    from services.report_service import REPORTLAB_AVAILABLE, ReportService
 
     if not REPORTLAB_AVAILABLE:
         raise HTTPException(

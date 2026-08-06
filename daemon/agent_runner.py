@@ -21,6 +21,7 @@ from services.soc_agents import ORCHESTRATOR_ACTOR
 # interactive OpenAI agent, workflows) shares one policy. Aliased to the
 # historical name so call sites — and the test that patches
 # ``daemon.agent_runner._get_tool_tier`` — stay unchanged.
+from services.tool_manager import execute_backend_tool
 from services.tool_manager import get_tool_tier as _get_tool_tier
 
 
@@ -1196,6 +1197,68 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
         return "Investigation marked as complete. Awaiting master agent review."
 
+    async def _dispatch_mcp_tool(
+        self, tool_name: str, tool_input: Dict
+    ) -> Optional[str]:
+        """Resolve and execute an MCP tool via the daemon's MCP client.
+
+        Returns the tool result as a (truncated) string, or ``None`` when no
+        connected server provides the tool or the call fails. Shared by the
+        guarded (``_execute_external_tool``) and approved
+        (``_execute_approved_tool``) paths so both resolve the server the same
+        way and use the 3-arg ``MCPClient.call_tool`` signature. See #393.
+        """
+        try:
+            from services.mcp_client import get_mcp_client
+
+            client = get_mcp_client()
+            if not client:
+                return None
+
+            server_name = None
+            actual_tool_name = tool_name
+            if "_" in tool_name:
+                prefix, suffix = tool_name.split("_", 1)
+                if prefix in (client.tools_cache or {}):
+                    server_name = prefix
+                    actual_tool_name = suffix
+            if server_name is None:
+                for srv_name, tools in (client.tools_cache or {}).items():
+                    if any(t["name"] == tool_name for t in tools):
+                        server_name = srv_name
+                        actual_tool_name = tool_name
+                        break
+            if not server_name:
+                return None
+
+            result = await client.call_tool(
+                server_name, actual_tool_name, tool_input
+            )
+            if result is None:
+                return None
+
+            _r = (
+                json.dumps(result, default=str)
+                if not isinstance(result, str)
+                else result
+            )
+            # Preserve the prior path's truncation of large vendor payloads
+            # (applied by ClaudeService before the #393 consolidation) so the
+            # autonomous loop's context/cost guards still hold.
+            if self._claude_service is not None and hasattr(
+                self._claude_service, "_truncate_tool_response"
+            ):
+                try:
+                    _r = self._claude_service._truncate_tool_response(
+                        _r, tool_name=actual_tool_name
+                    )
+                except Exception:
+                    pass
+            return _r
+        except Exception as e:
+            logger.debug(f"MCP tool {tool_name} call failed: {e}")
+            return None
+
     async def _execute_external_tool(
         self, inv_id: str, tool_name: str, tool_input: Dict
     ) -> str:
@@ -1270,81 +1333,50 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 "services.tool_manager if it changes state; not logged again."
             )
 
-        if self._claude_service and hasattr(
-            self._claude_service, "_execute_backend_tool"
-        ):
-            try:
-                result = await self._claude_service._execute_backend_tool(
-                    tool_name, tool_input
+        # Built-in backend tools route through the shared dispatch table
+        # (services.tool_manager); a miss (handled=False) falls through to the
+        # daemon's own MCP client below. See #393.
+        try:
+            result, handled = await execute_backend_tool(
+                tool_name,
+                tool_input,
+                skill_index=getattr(self._claude_service, "_skill_tool_index", None),
+            )
+            if handled and result is not None:
+                _r = (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
                 )
-                if result is not None:
-                    _r = (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
+                try:
+                    if _tool_span is not None:
+                        _tool_span.set_attribute("vigil.tool.success", True)
+                        _tool_span.set_attribute("vigil.tool.output_size", len(_r))
+                        _tool_span.set_attribute(
+                            "vigil.tool.duration_ms",
+                            round((_time.monotonic() - _t0) * 1000, 1),
+                        )
+                        _tool_span.end()
+                except Exception:
+                    pass
+                return _r
+        except Exception:
+            pass
+
+        mcp_r = await self._dispatch_mcp_tool(tool_name, tool_input)
+        if mcp_r is not None:
+            try:
+                if _tool_span is not None:
+                    _tool_span.set_attribute("vigil.tool.success", True)
+                    _tool_span.set_attribute("vigil.tool.output_size", len(mcp_r))
+                    _tool_span.set_attribute(
+                        "vigil.tool.duration_ms",
+                        round((_time.monotonic() - _t0) * 1000, 1),
                     )
-                    try:
-                        if _tool_span is not None:
-                            _tool_span.set_attribute("vigil.tool.success", True)
-                            _tool_span.set_attribute("vigil.tool.output_size", len(_r))
-                            _tool_span.set_attribute(
-                                "vigil.tool.duration_ms",
-                                round((_time.monotonic() - _t0) * 1000, 1),
-                            )
-                            _tool_span.end()
-                    except Exception:
-                        pass
-                    return _r
+                    _tool_span.end()
             except Exception:
                 pass
-
-        try:
-            from services.mcp_client import get_mcp_client
-
-            client = get_mcp_client()
-            if client:
-                server_name = None
-                actual_tool_name = tool_name
-
-                if "_" in tool_name:
-                    prefix, suffix = tool_name.split("_", 1)
-                    if prefix in (client.tools_cache or {}):
-                        server_name = prefix
-                        actual_tool_name = suffix
-
-                if server_name is None:
-                    for srv_name, tools in (client.tools_cache or {}).items():
-                        if any(t["name"] == tool_name for t in tools):
-                            server_name = srv_name
-                            actual_tool_name = tool_name
-                            break
-
-                if server_name:
-                    result = await client.call_tool(
-                        server_name, actual_tool_name, tool_input
-                    )
-                    if result is not None:
-                        _r = (
-                            json.dumps(result, default=str)
-                            if not isinstance(result, str)
-                            else result
-                        )
-                        try:
-                            if _tool_span is not None:
-                                _tool_span.set_attribute("vigil.tool.success", True)
-                                _tool_span.set_attribute(
-                                    "vigil.tool.output_size", len(_r)
-                                )
-                                _tool_span.set_attribute(
-                                    "vigil.tool.duration_ms",
-                                    round((_time.monotonic() - _t0) * 1000, 1),
-                                )
-                                _tool_span.end()
-                        except Exception:
-                            pass
-                        return _r
-        except Exception as e:
-            logger.debug(f"MCP tool {tool_name} call failed: {e}")
+            return mcp_r
 
         _result_str = f"Tool '{tool_name}' not found or unavailable"
         try:
@@ -1531,35 +1563,25 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
 
     async def _execute_approved_tool(self, tool_name: str, tool_input: Dict) -> str:
         """Execute a tool that has already been approved, bypassing guardrails."""
-        if self._claude_service and hasattr(
-            self._claude_service, "_execute_backend_tool"
-        ):
-            try:
-                result = await self._claude_service._execute_backend_tool(
-                    tool_name, tool_input
-                )
-                if result is not None:
-                    return (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
-            except Exception:
-                pass
+        # Built-in backend tools route through the shared dispatch table (#393);
+        # a miss (handled=False) falls through to the MCP client below.
         try:
-            from services.mcp_client import get_mcp_client
-
-            client = get_mcp_client()
-            if client:
-                result = await client.call_tool(tool_name, tool_input)
-                if result is not None:
-                    return (
-                        json.dumps(result, default=str)
-                        if not isinstance(result, str)
-                        else result
-                    )
-        except Exception as e:
-            logger.debug(f"Approved tool {tool_name} failed: {e}")
+            result, handled = await execute_backend_tool(
+                tool_name,
+                tool_input,
+                skill_index=getattr(self._claude_service, "_skill_tool_index", None),
+            )
+            if handled and result is not None:
+                return (
+                    json.dumps(result, default=str)
+                    if not isinstance(result, str)
+                    else result
+                )
+        except Exception:
+            pass
+        mcp_r = await self._dispatch_mcp_tool(tool_name, tool_input)
+        if mcp_r is not None:
+            return mcp_r
         return f"Tool '{tool_name}' execution failed"
 
     def _mark_failed(self, inv_id: str, reason: str):

@@ -2461,6 +2461,52 @@
       color: var(--accent-2);
    }
 
+   /* Tool-approval notice (#413 PR3e) — shown when a requires_approval tool
+      pauses the turn; deep-links to the Pending Approvals queue. */
+   .approval-notice {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 8px 0;
+      padding: 8px 10px;
+      font-size: 12.5px;
+      border: 1px solid var(--high);
+      background: var(--high-dim);
+      border-radius: 8px;
+      color: var(--high);
+   }
+
+   .approval-notice > span {
+      flex: 1 1 auto;
+   }
+
+   .approval-notice .btn.ghost {
+      flex: 0 0 auto;
+   }
+
+   /* Budget/rate-limit block banner (#413 PR3e-3). */
+   .budget-banner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0;
+      padding: 8px 10px;
+      font-size: 12.5px;
+      border: 1px solid var(--crit);
+      background: var(--crit-dim);
+      border-radius: 8px;
+      color: var(--crit);
+   }
+
+   .budget-banner > span {
+      flex: 1 1 auto;
+   }
+
+   .budget-banner .btn.ghost {
+      flex: 0 0 auto;
+   }
+
    .vigil-status .vs-dots {
       display: inline-flex;
       gap: 3px;

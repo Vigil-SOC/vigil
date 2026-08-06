@@ -126,11 +126,22 @@ class TaskScheduler:
             logger.error(f"Failed to initialize database service: {e}")
         
         try:
-            from services.claude_service import ClaudeService
-            self._claude_service = ClaudeService()
-            logger.info("Claude service initialized for scheduler")
+            # Provider-agnostic LLM availability probe (#413 4d-1): report the
+            # "claude" health component healthy when an LLM provider is
+            # configured, without constructing ClaudeService. The old
+            # ClaudeService() construction succeeded regardless of key, so this
+            # is a strictly more meaningful signal (healthy == a provider is
+            # actually usable).
+            from services.llm_router import (anthropic_api_key_available,
+                                             get_default_provider_spec)
+
+            self._claude_service = bool(
+                get_default_provider_spec() is not None
+                or anthropic_api_key_available()
+            )
+            logger.info("LLM availability probed for scheduler")
         except Exception as e:
-            logger.warning(f"Failed to initialize Claude service: {e}")
+            logger.warning(f"Failed to probe LLM availability: {e}")
     
     async def run(self, shutdown_event: asyncio.Event):
         """Run the scheduler loop."""

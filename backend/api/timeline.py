@@ -546,15 +546,19 @@ async def get_event_visualization(
                         "name": tech
                     })
         
-        # Generate AI analysis if requested
+        # Generate AI analysis if requested. Provider-agnostic (#413 4c-4):
+        # run on whichever provider is configured as the default, gated on any
+        # provider being configured (not the old Anthropic-only has_api_key).
         ai_analysis = None
         if include_ai_analysis and finding_data:
             try:
-                from services.claude_service import ClaudeService
-                claude_service = ClaudeService(use_backend_tools=True, use_mcp_tools=False)
-                
-                if claude_service.has_api_key():
-                    ai_analysis = await claude_service.generate_event_analysis(
+                from services.llm_router import get_default_provider_spec
+                from services.timeline_analysis_service import (
+                    generate_event_analysis,
+                )
+
+                if get_default_provider_spec() is not None:
+                    ai_analysis = await generate_event_analysis(
                         event_data.model_dump(),
                         [e.model_dump() for e in related_events],
                         finding_data

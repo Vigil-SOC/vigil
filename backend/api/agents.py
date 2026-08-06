@@ -220,8 +220,7 @@ async def run_agent(request: AgentRunRequest):
         Agent execution result with tool calls and analysis
     """
     from services.database_data_service import DatabaseDataService
-    from services.claude_service import ClaudeService
-    
+
     try:
         agent = _resolve_agent(request.agent_id)
         if not agent:
@@ -274,18 +273,17 @@ Use the get_case tool first to retrieve full details, then investigate all assoc
         if not task:
             raise HTTPException(status_code=400, detail="No task, finding_id, or case_id provided")
         
-        claude_service = ClaudeService(
-            use_backend_tools=True,
-            use_mcp_tools=True,  # Enable MCP tools for dynamic enrichment
-            use_agent_sdk=request.use_agent_sdk,
-            enable_thinking=agent.enable_thinking
-        )
-        
-        if not claude_service.has_api_key():
+        # Agent SDK dispatch through LLMRouter (#413 4c-2). Keep the 503
+        # no-provider gate on the Anthropic key (Agent SDK is Anthropic-only)
+        # without constructing ClaudeService. The engine's construction flags
+        # are threaded via agent_config below.
+        from services.llm_router import anthropic_api_key_available
+
+        if not anthropic_api_key_available():
             from backend.api.claude import NO_PROVIDER_DETAIL
 
             raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
-        
+
         # Build allowed tools: combine agent's recommended tools with
         # dynamically discovered MCP tools from the registry
         allowed_tools = list(agent.recommended_tools) if agent.recommended_tools else []
@@ -299,13 +297,21 @@ Use the get_case tool first to retrieve full details, then investigate all assoc
         except Exception as e:
             logger.debug(f"Could not get MCP tools from registry: {e}")
         
-        result = await claude_service.run_agent_task(
+        from services.llm_router import LLMRouter
+
+        result = await LLMRouter().run_agent_task(
             task=task,
             agent_config={
                 "system_prompt": agent.system_prompt,
                 "allowed_tools": allowed_tools if allowed_tools else None,
                 "max_turns": 15,
-                "model": DEFAULT_MODEL
+                "model": DEFAULT_MODEL,
+                # Mirror the old ClaudeService construction (use_mcp_tools=True
+                # for dynamic enrichment; use_backend_tools=True). thinking is a
+                # no-op on the Agent SDK path but forwarded for fidelity.
+                "use_backend_tools": True,
+                "use_mcp_tools": True,
+                "enable_thinking": agent.enable_thinking,
             }
         )
         
