@@ -143,7 +143,7 @@ encrypted at `~/.vigil/secrets.enc` — see [docs/STATE.md](docs/STATE.md).
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `DEV_MODE` | Bypass all authentication | `true` |
+| `DEV_MODE` | Bypass all authentication | `false` when unset; `env.example` ships `true` |
 | `DATABASE_URL` | PostgreSQL connection | auto-set by docker-compose |
 | `REDIS_URL` | ARQ job queue | `redis://localhost:6379/0` |
 | `BIFROST_URL` | LLM gateway address | `http://bifrost:8080` |
@@ -315,7 +315,14 @@ two filenames that are reserved and must never be reused.
 
 ### Authentication
 
-- `DEV_MODE=true` (default) bypasses all auth — use for local development
+- `DEV_MODE=true` bypasses all auth — use for local development
+- **Unset means `false`.** The default lives in one place since #520 —
+  `dev_mode: bool = False` in `core/config.py` — so anywhere without a `.env`
+  (CI, containers, production) enforces auth. `env.example` ships
+  `DEV_MODE=true` and `setup_dev.sh` copies it, which is why a local checkout
+  behaves as though `true` were the default. Tests that lean on a developer's
+  `.env` — e.g. for `JWT_SECRET_KEY`, which is required once `DEV_MODE` is off —
+  will fail in CI; set what you need explicitly
 - Production uses JWT tokens via `backend/api/auth.py` + `backend/middleware/`
 - RBAC is implemented in `database/init/06_auth_tables.sql`
 
