@@ -129,7 +129,23 @@ jobs:
           TESTING: "true"
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
           ANTHROPIC_API_KEY: ${{ secrets.CLAUDEAPI }}
-      
+
+      # tests/security/ is path-scoped out of the unit and integration jobs, so
+      # until now nothing ran it on a pull request — only nightly.yml, i.e. after
+      # merge. Its own step (rather than widening the path above) keeps a security
+      # failure legible instead of buried in ~1000 unit tests.
+      #
+      # DEV_MODE and JWT_SECRET_KEY must be explicit: backend/middleware/auth.py
+      # defaults DEV_MODE to false, and with no .env in CI an unset JWT_SECRET_KEY
+      # makes _load_jwt_secret() raise. --no-cov keeps this step from overwriting
+      # the coverage.xml the Codecov step below uploads.
+      - name: Run security tests
+        run: pytest tests/security/ -v --no-cov
+        env:
+          TESTING: "true"
+          DEV_MODE: "false"
+          JWT_SECRET_KEY: "ci-only-not-a-real-secret"
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
