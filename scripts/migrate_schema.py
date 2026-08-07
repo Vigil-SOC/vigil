@@ -187,7 +187,7 @@ def seed_default_roles(conn):
     for role_id, name, description, permissions, is_system in roles:
         conn.execute(text("""
             INSERT INTO roles (role_id, name, description, permissions, is_system_role, created_at, updated_at)
-            VALUES (:role_id, :name, :desc, :perms::jsonb, :is_sys, now(), now())
+            VALUES (:role_id, :name, :desc, CAST(:perms AS jsonb), :is_sys, now(), now())
             ON CONFLICT (role_id) DO NOTHING
         """), {"role_id": role_id, "name": name, "desc": description,
                "perms": permissions, "is_sys": is_system})
