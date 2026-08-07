@@ -14,6 +14,23 @@ from database.connection import get_db_session
 
 logger = logging.getLogger(__name__)
 
+# The notification types a watcher can switch off via
+# ``case_watchers.notification_preferences``. This is the whole vocabulary:
+# ``notify_watchers`` reads the column with ``prefs.get(notification_type, True)``,
+# so a key outside this set is stored but never consulted — it looks like a
+# suppression switch and silently is not one. Register a type here when you add
+# a ``notify_watchers`` call site. See #553.
+#
+# Types delivered by calling ``create_notification`` directly (``case_assigned``,
+# ``comment_mention``, ``stale_case``) never reach this lookup and so are
+# deliberately absent.
+WATCHER_NOTIFICATION_TYPES = frozenset(
+    {
+        "new_comment",  # services/case_collaboration_service.py
+        "sla_warning",  # notify_sla_warning, below
+    }
+)
+
 
 class CaseNotificationService:
     """Service for managing case notifications."""
@@ -233,6 +250,18 @@ class CaseNotificationService:
         Returns:
             Number of notifications created
         """
+        if notification_type not in WATCHER_NOTIFICATION_TYPES:
+            # Warn rather than raise: the new_comment call site runs inside
+            # add_comment's try/except, which rolls back and returns None, so
+            # raising would turn a registration slip into a silently dropped
+            # comment. Fail open — send, matching the absent-key default.
+            logger.warning(
+                "notify_watchers called with unregistered notification type %r; "
+                "watcher preferences cannot suppress it. Add it to "
+                "WATCHER_NOTIFICATION_TYPES.",
+                notification_type,
+            )
+
         should_close_session = session is None
         if session is None:
             session = get_db_session()

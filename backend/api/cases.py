@@ -2,13 +2,14 @@
 
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from datetime import datetime
 from pathlib import Path
 
 from backend.middleware.auth import get_current_user
 from backend.services.auth_service import AuthService
 from database.models import User
+from services.case_notification_service import WATCHER_NOTIFICATION_TYPES
 from services.database_data_service import DatabaseDataService
 from services.report_service import ReportService, REPORTLAB_AVAILABLE
 from api._meta import Auth, RouterMeta
@@ -659,7 +660,24 @@ async def delete_comment(case_id: str, comment_id: int):
 class WatcherAdd(BaseModel):
     """Add watcher to case."""
     user_id: str
-    notification_preferences: Optional[Dict] = None
+    # Keys are restricted to WATCHER_NOTIFICATION_TYPES: notify_watchers reads
+    # this map with ``prefs.get(notification_type, True)``, so any other key is
+    # stored and never consulted. Accepting one silently told the caller they
+    # had suppressed a notification they will still receive. See #553.
+    notification_preferences: Optional[Dict[str, bool]] = None
+
+    @field_validator("notification_preferences")
+    @classmethod
+    def _known_notification_types(
+        cls, v: Optional[Dict[str, bool]]
+    ) -> Optional[Dict[str, bool]]:
+        unknown = sorted(set(v or {}) - WATCHER_NOTIFICATION_TYPES)
+        if unknown:
+            raise ValueError(
+                f"unknown notification types: {unknown}; "
+                f"known types: {sorted(WATCHER_NOTIFICATION_TYPES)}"
+            )
+        return v
 
 
 @router.post("/{case_id}/watchers")
