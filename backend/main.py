@@ -622,7 +622,7 @@ async def health_check():
         service = DatabaseDataService()
         backend_info = service.get_backend_info()
 
-        return {
+        payload = {
             "status": "healthy",
             "version": __version__,
             "demo_mode": is_demo_mode(),
@@ -632,6 +632,21 @@ async def health_check():
                 "demo_mode": backend_info.get("demo_mode", False),
             },
         }
+
+        # Surface the schema verdict recorded at startup. This reads a cached
+        # value on purpose — schema_report() walks every mapped table, and
+        # re-inspecting per request would put blocking I/O on the event loop.
+        from database.connection import get_schema_drift_report
+
+        drift = get_schema_drift_report()
+        if drift is not None:
+            payload["schema"] = {
+                "state": drift["state"],
+                "missing_columns": drift["missing_columns"],
+                "missing_tables": drift["missing_tables"],
+            }
+
+        return payload
     except Exception as e:
         logger.error(f"Health check error: {e}")
         return {

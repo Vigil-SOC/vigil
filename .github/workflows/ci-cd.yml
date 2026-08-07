@@ -190,6 +190,10 @@ jobs:
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
       POSTGRES_DB: deeptempo_test
+      # Fail the build if the schema is behind the models. CI provisions from
+      # empty, so drift here means a provisioning bug, not a stale deployment
+      # (#562).
+      DB_STRICT_SCHEMA: "true"
 
     steps:
       - uses: actions/checkout@v5

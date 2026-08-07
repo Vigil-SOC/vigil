@@ -84,6 +84,36 @@ Same drill — copy the updated file to `helm/vigil/files/database-init/`
 so the chart bundle stays in sync. The `diff -r` lint check will fail
 otherwise.
 
+## What this path does *not* cover
+
+These files are not the whole schema. Several tables are created only by
+`Base.metadata.create_all()` at app startup and have **no `CREATE TABLE`
+anywhere in this directory or the chart bundle**:
+
+| Table | Created by |
+|---|---|
+| `cases`, `findings`, `case_evidence`, `case_tasks`, `case_watchers`, `investigations` | `create_all` only |
+| `users`, `roles` | `06_auth_tables.sql` |
+| `skills`, `custom_agents`, `workflow_runs`, `custom_workflows` | `07_*`, `08_*`, `12_*` |
+
+**Do not write an `ALTER TABLE` in a numbered file here for a table in the
+first row.** The dbInit Job runs before the app has ever started, so the
+table does not exist yet and the statement hard-fails.
+
+Note that `grep`-ing for a table name is misleading: `cases` and `findings`
+appear in 9–10 files in this directory, but every hit is a string literal —
+SLA descriptions in `05_case_management_extended.sql`, permission JSON keys
+in `06_auth_tables.sql`. None of them is DDL.
+
+Adding a *column* to any table in the first row is the harder case, because
+`create_all` is `checkfirst=True`: it creates missing tables and never alters
+existing ones, so the column never reaches a database provisioned by an
+earlier release. Startup reports this at ERROR and exposes it under `schema`
+in `/api/health` (`DB_STRICT_SCHEMA=true` makes it fatal), but reporting is
+not fixing — see [#562](https://github.com/Vigil-SOC/vigil/issues/562) for
+what each deploy path actually does today, and
+`tests/integration/test_schema_drift_upgrade.py`, which pins that behaviour.
+
 ## Why this isn't automated
 
 A pre-commit hook or `make` target that auto-syncs the bundle would
