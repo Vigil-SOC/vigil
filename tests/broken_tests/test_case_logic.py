@@ -11,9 +11,9 @@ from unittest.mock import Mock, patch
 pytestmark = pytest.mark.skip(reason="CaseWorkflowService, CaseSLAService, CaseMetricsService don't exist - needs rewrite")
 
 # These services don't exist - case logic handled differently
-# from services.case_workflow_service import CaseWorkflowService
-# from services.case_sla_service import CaseSLAService
-# from services.case_metrics_service import CaseMetricsService
+# from core.cases.case_workflow_service import CaseWorkflowService
+# from core.cases.case_sla_service import CaseSLAService
+# from core.cases.case_metrics_service import CaseMetricsService
 
 
 class TestCaseStatusTransitions:
@@ -386,7 +386,7 @@ class TestCaseWorkflowIntegration:
         assert CaseSLAService.is_sla_breached(created_at, priority) is False
         
         # Simulate time passing
-        with patch('services.case_sla_service.datetime') as mock_datetime:
+        with patch('core.cases.case_sla_service.datetime') as mock_datetime:
             mock_datetime.utcnow.return_value = created_at + timedelta(hours=5)
             
             # Should now be breached (critical SLA is 4 hours)

@@ -4,7 +4,7 @@ Reality check: Bifrost v1.4.23's caching layer is ``semantic_cache``, a
 plugin that requires a vector store + embedding provider — not the
 simple exact-hash cache this repo's PR-B originally planned around. It's
 configured through the Bifrost UI at http://localhost:8080 rather than
-the (now-rejected) ``cache`` block in ``docker/bifrost/config.json``.
+the (now-rejected) ``cache`` block in ``infra/docker/bifrost/config.json``.
 
 This script is diagnostic only. It hits Bifrost's local API and
 reports:
@@ -98,7 +98,7 @@ def main() -> int:
     print("     5. Re-run this script to confirm is_cache_connected=true.")
     print()
     print("   Note: Bifrost v1.4.23 rejects a top-level 'cache' block in")
-    print("   docker/bifrost/config.json — settings live in the SQLite")
+    print("   infra/docker/bifrost/config.json — settings live in the SQLite")
     print("   store backing the UI. Expect that gap to close in a future")
     print("   Bifrost release.")
     return 0

@@ -168,7 +168,7 @@ BIFROST_URL="http://bifrost:8080"
 All backend API endpoints use:
 
 ```python
-from services.claude_service import ClaudeService
+from core.llm.harness.claude import ClaudeService
 
 claude_service = ClaudeService(
     use_backend_tools=True,   # ✅ Backend tools
@@ -186,10 +186,10 @@ cd docker && docker-compose up -d postgres
 
 # Terminal 2: Backend
 source venv/bin/activate
-uvicorn backend.main:app --host 127.0.0.1 --port 6987 --reload
+uvicorn services.api.main:app --host 127.0.0.1 --port 6987 --reload
 
 # Terminal 3: Frontend
-cd frontend && npm run dev
+cd clients/web && npm run dev
 ```
 
 ### Production (Docker)
@@ -296,7 +296,7 @@ Web UI → Backend → Claude Agent SDK → Backend Tools → Services
 
 ```python
 # Check tool initialization
-from services.claude_service import ClaudeService
+from core.llm.harness.claude import ClaudeService
 claude = ClaudeService(use_backend_tools=True)
 print(f"Loaded: {len(claude.backend_tools)} tools")
 # Should show: 19
@@ -327,7 +327,7 @@ echo $POSTGRESQL_CONNECTION_STRING
 
 ### Adding New Tools
 
-1. **Define tool schema** in `backend/schemas/tool_schemas.py`:
+1. **Define tool schema** in `core/llm/tool_schemas.py`:
 
 ```python
 {
@@ -345,7 +345,7 @@ echo $POSTGRESQL_CONNECTION_STRING
 
 2. **Implement tool** in appropriate service
 
-3. **Route tool** in `services/claude_service.py` → `_process_backend_tool_use()`:
+3. **Route tool** in `core/llm/harness/claude.py` → `_process_backend_tool_use()`:
 
 ```python
 elif tool_name == 'my_new_tool':
@@ -378,7 +378,7 @@ pytest tests/unit/
 - [Backend Tools Guide](BACKEND_TOOLS.md) - Detailed tool documentation
 - [Detection Engineering](DETECTION_ENGINEERING.md) - Detection rule usage
 - [Integrations](INTEGRATIONS.md) - Backend tool integration overview
-- [API Reference](../backend/main.py) - FastAPI documentation
+- [API Reference](../services/api/main.py) - FastAPI documentation
 
 ## Support
 

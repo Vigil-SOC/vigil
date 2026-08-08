@@ -3,7 +3,7 @@
 Focus: the handler must read-modify-write `entity_context` so that a push
 from VStrike does not clobber pre-existing keys (src_ip, hostname, etc).
 
-The tests patch `backend.api.vstrike.data_service` with an in-memory fake
+The tests patch `services.api.routers.vstrike.data_service` with an in-memory fake
 so no DB / Redis is required.
 """
 
@@ -18,10 +18,9 @@ from unittest.mock import patch
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-# backend/main.py adds both the repo root and `backend/` to sys.path at
-# runtime so that imports written as `from api.findings import ...` resolve.
-# Mirror that here for standalone pytest runs.
-for _p in (ROOT, ROOT / "backend"):
+# services/api/main.py adds the repo root to sys.path at runtime so `core.*`
+# and `services.*` resolve. Mirror that here for standalone pytest runs.
+for _p in (ROOT,):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
@@ -128,16 +127,16 @@ def fake_service():
 def _invoke_ingest(fake_service: _FakeDataService, payload: Dict[str, Any]):
     """Call the handler with `data_service` patched to the fake.
 
-    Patches both the imported reference in `backend.api.vstrike` and the
-    one used by `services.case_automation_service.cluster_findings_by_attack_path`.
+    Patches both the imported reference in `services.api.routers.vstrike` and the
+    one used by `core.cases.case_automation_service.cluster_findings_by_attack_path`.
     """
-    from backend.api import vstrike as vstrike_module
-    from backend.schemas.vstrike import VStrikePushRequest
+    from services.api.routers import vstrike as vstrike_module
+    from core.integrations.vstrike.schemas import VStrikePushRequest
 
     req = VStrikePushRequest(**payload)
 
     with patch.object(vstrike_module, "data_service", fake_service), patch(
-        "services.database_data_service.DatabaseDataService",
+        "core.storage.database_data_service.DatabaseDataService",
         return_value=fake_service,
     ):
         response = vstrike_module.ingest_findings(req)
@@ -233,7 +232,7 @@ def test_mitre_fields_propagate_on_update(fake_service):
 
 def test_auth_bypass_in_dev_mode():
     """verify_inbound_key returns without error when DEV_MODE=true."""
-    from backend.api.vstrike import verify_inbound_key
+    from services.api.routers.vstrike import verify_inbound_key
 
     os.environ["DEV_MODE"] = "true"
     # No Authorization header → should still pass (no exception)
@@ -244,7 +243,7 @@ def test_auth_requires_token_when_dev_mode_off(monkeypatch):
     """verify_inbound_key rejects missing token when DEV_MODE is off and a key is configured."""
     from fastapi import HTTPException
 
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     monkeypatch.setenv("DEV_MODE", "false")
     monkeypatch.setattr(
@@ -258,7 +257,7 @@ def test_auth_requires_token_when_dev_mode_off(monkeypatch):
 def test_auth_rejects_wrong_token(monkeypatch):
     from fastapi import HTTPException
 
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     monkeypatch.setenv("DEV_MODE", "false")
     monkeypatch.setattr(
@@ -270,7 +269,7 @@ def test_auth_rejects_wrong_token(monkeypatch):
 
 
 def test_auth_accepts_correct_token(monkeypatch):
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     monkeypatch.setenv("DEV_MODE", "false")
     monkeypatch.setattr(

@@ -20,7 +20,7 @@ This script ensures that default admin credentials are inserted into PostgreSQL,
 1. **Start Docker** (if using Docker Desktop)
 2. **Start PostgreSQL** (from the repo root):
    ```bash
-   docker compose -f docker/docker-compose.yml up -d postgres
+   docker compose -f infra/docker/docker-compose.yml up -d postgres
    ```
 
 ### Run the Initialization Script
@@ -92,7 +92,7 @@ The script:
 **Solution**: 
 ```bash
 # Start Docker Desktop first, then:
-docker compose -f docker/docker-compose.yml up -d postgres
+docker compose -f infra/docker/docker-compose.yml up -d postgres
 ```
 
 ### "Authentication verification failed"

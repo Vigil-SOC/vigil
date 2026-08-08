@@ -245,7 +245,7 @@ async def probe_logging_metadata() -> bool:
                 _fail(
                     "logging metadata: GET /api/logs returned 404 — "
                     "the logging plugin is off. Set client.enable_logging "
-                    "and configure logs_store in docker/bifrost/config.json."
+                    "and configure logs_store in infra/docker/bifrost/config.json."
                 )
                 return False
             if r.status_code >= 400:

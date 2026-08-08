@@ -1,14 +1,7 @@
-import sys
-from pathlib import Path
 from typing import Optional
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
-for _path in (_REPO_ROOT, _REPO_ROOT / "backend"):
-    if str(_path) not in sys.path:
-        sys.path.insert(0, str(_path))
-
-from backend import secrets_manager as _secrets_manager  # noqa: E402
-from backend.secrets_manager import SecretsManager, get_secrets_manager  # noqa: E402
+from core import secrets_manager as _secrets_manager
+from core.secrets_manager import SecretsManager, get_secrets_manager
 
 __all__ = [
     "SecretsManager",

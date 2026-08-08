@@ -1,0 +1,116 @@
+# docker/Dockerfile.backend
+# =============================================================================
+# Multi-stage build: React SPA → Python FastAPI backend
+#
+# Final image runs:  uvicorn services.api.main:app --host 0.0.0.0 --port 6987
+# Serves static SPA at /app/clients/web/build  (via FastAPI StaticFiles mount)
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: build the React frontend
+# ---------------------------------------------------------------------------
+# Pin to the build host's arch: the output is arch-independent static assets,
+# and running esbuild under QEMU (cross-arch build) crashes it (write EPIPE).
+FROM --platform=$BUILDPLATFORM node:20-slim AS web-builder
+
+WORKDIR /build/web
+
+# Install deps before copying source so layer is cached on package.json changes
+COPY clients/web/package*.json ./
+RUN npm ci --prefer-offline
+
+COPY clients/web/ .
+RUN npm run build
+# Output: /build/web/build
+
+# ---------------------------------------------------------------------------
+# Stage 2: install Python dependencies
+# (separate stage so dep layer is cached independently of app code)
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS python-deps
+
+WORKDIR /install
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# requirements.txt pins the submodules as editable installs (`-e ./<dir>`)
+# for local development. In the image we install them as regular packages
+# from the copied source, so the runtime stage needs only /usr/local and no
+# editable source tree (an `-e` install writes a .pth pointing at the build
+# path, which won't exist in the runtime stage). Keep this COPY list in sync
+# with the `-e ./` lines in requirements.txt: deeptempo-core, mcp-servers,
+# mempalace.
+COPY requirements.txt .
+COPY deeptempo-core/ ./deeptempo-core/
+COPY mcp-servers/    ./mcp-servers/
+COPY mempalace/      ./mempalace/
+RUN grep -vE '^[[:space:]]*-e[[:space:]]+\./' requirements.txt > requirements.runtime.txt \
+    && pip install --no-cache-dir --prefix=/install/deps \
+         -r requirements.runtime.txt \
+         ./deeptempo-core ./mcp-servers ./mempalace
+
+# ---------------------------------------------------------------------------
+# Stage 3: runtime image
+# ---------------------------------------------------------------------------
+FROM python:3.11-slim AS runtime
+
+ARG VIGIL_VERSION=dev
+LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
+
+# Runtime system deps only
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libpq5 \
+      curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Non-root user
+RUN groupadd -r vigil && useradd -r -g vigil -d /app -s /sbin/nologin vigil
+
+WORKDIR /app
+
+# Installed Python packages from the deps stage
+COPY --from=python-deps /install/deps /usr/local
+
+# Application source — copy each top-level package separately so
+# modifying one doesn't bust the cache for all the others.
+COPY --chown=vigil:vigil core/        ./core/
+COPY --chown=vigil:vigil services/    ./services/
+COPY --chown=vigil:vigil tools/       ./tools/
+# Schema init SQL: source moved to infra/database/init (R6). Keep the in-image
+# path /app/database/init stable so desktop packaging (`docker cp
+# <cid>:/app/database/init`) and the initdb mount are unaffected.
+COPY --chown=vigil:vigil infra/database/init/ ./database/init/
+COPY --chown=vigil:vigil data/        ./data/
+COPY --chown=vigil:vigil mcp-servers/ ./mcp-servers/
+COPY --chown=vigil:vigil mempalace/   ./mempalace/
+COPY --chown=vigil:vigil VERSION      ./VERSION
+COPY --chown=vigil:vigil setup.cfg    ./setup.cfg
+
+# Built SPA — served by FastAPI StaticFiles (or nginx sidecar)
+COPY --from=web-builder --chown=vigil:vigil /build/web/build ./clients/web/build/
+
+# Writable dirs the app needs at runtime
+RUN mkdir -p /app/data/investigations /app/data/mempalace \
+    && chown -R vigil:vigil /app/data
+
+# Bake version into the image so `backend.__version__` resolves at import time
+# (core/version.py reads VERSION from disk)
+RUN echo "${VIGIL_VERSION}" > /app/VERSION
+
+USER vigil
+
+ENV PYTHONPATH=/app \
+    PYTHONUNBUFFERED=1 \
+    PORT=6987
+
+EXPOSE 6987
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://localhost:6987/api/health || exit 1
+
+CMD ["python", "-m", "uvicorn", "services.api.main:app", \
+     "--host", "0.0.0.0", "--port", "6987", \
+     "--workers", "2"]

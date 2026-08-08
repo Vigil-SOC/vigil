@@ -16,7 +16,7 @@ creation_rules:
       age1your-public-key-here-generated-with-age-keygen
 
   # Encrypt helm values files that end in -secrets.yaml
-  - path_regex: helm/.*-secrets\.ya?ml$
+  - path_regex: infra/helm/.*-secrets\.ya?ml$
     age: >-
       age1your-public-key-here-generated-with-age-keygen
 

@@ -1,6 +1,6 @@
 # Deploying Vigil SOC on Kubernetes
 
-Vigil ships with a Helm chart under [`helm/vigil/`](../helm/vigil/) that
+Vigil ships with a Helm chart under [`infra/helm/vigil/`](../infra/helm/vigil/) that
 installs the backend, autonomous daemon, LLM worker, Postgres, and Redis as
 a single release.
 
@@ -24,7 +24,7 @@ For local testing, [kind](https://kind.sigs.k8s.io/) or
 
 ```bash
 # Production-ish install with in-chart Postgres + Redis
-helm install vigil ./helm/vigil \
+helm install vigil ./infra/helm/vigil \
   --namespace vigil --create-namespace \
   --set secrets.anthropicApiKey="$ANTHROPIC_API_KEY" \
   --set secrets.postgresPassword="$(openssl rand -hex 24)" \
@@ -34,8 +34,8 @@ helm install vigil ./helm/vigil \
 
 ```bash
 # Development install — auth bypassed, smaller resource requests
-helm install vigil ./helm/vigil \
-  -f ./helm/vigil/values-dev.yaml \
+helm install vigil ./infra/helm/vigil \
+  -f ./infra/helm/vigil/values-dev.yaml \
   --namespace vigil --create-namespace \
   --set secrets.anthropicApiKey="$ANTHROPIC_API_KEY"
 ```
@@ -149,23 +149,23 @@ On every `helm install` / `helm upgrade`, a Kubernetes Job:
    already recorded in the marker table
 4. Terminates (TTL = 600s)
 
-The SQL files themselves are copies of `database/init/*.sql`, bundled under
-`helm/vigil/files/database-init/` because Helm can only read from inside the
+The SQL files themselves are copies of `infra/database/init/*.sql`, bundled under
+`infra/helm/vigil/files/database-init/` because Helm can only read from inside the
 chart directory. The `helm-chart.yml` CI workflow fails the build if these
 copies drift from the source.
 
 To add a new init SQL file:
 
 ```bash
-cp database/init/NEW.sql helm/vigil/files/database-init/
-# Then edit helm/vigil/values.yaml and add "NEW.sql" to dbInit.sqlFiles in
+cp infra/database/init/NEW.sql infra/helm/vigil/files/database-init/
+# Then edit infra/helm/vigil/values.yaml and add "NEW.sql" to dbInit.sqlFiles in
 # the correct execution order.
 ```
 
 ## Upgrades
 
 ```bash
-helm upgrade vigil ./helm/vigil -n vigil --reuse-values --wait
+helm upgrade vigil ./infra/helm/vigil -n vigil --reuse-values --wait
 ```
 
 The chart's default image tag resolves to `Chart.AppVersion`, which
@@ -176,7 +176,7 @@ different tag than the chart's `appVersion` (for example, to deploy a
 `:latest` build for testing):
 
 ```bash
-helm upgrade vigil ./helm/vigil -n vigil --reuse-values --wait \
+helm upgrade vigil ./infra/helm/vigil -n vigil --reuse-values --wait \
   --set backend.image.tag=latest \
   --set daemon.image.tag=latest
 ```
@@ -195,10 +195,10 @@ thing.
 >
 > ```bash
 > # Helm 3.14+ — reset to new defaults, then layer user overrides on top
-> helm upgrade vigil ./helm/vigil -n vigil --reset-then-reuse-values --wait
+> helm upgrade vigil ./infra/helm/vigil -n vigil --reset-then-reuse-values --wait
 >
 > # Or pass an explicit values file so the new defaults aren't lost
-> helm upgrade vigil ./helm/vigil -n vigil -f my-values.yaml --wait
+> helm upgrade vigil ./infra/helm/vigil -n vigil -f my-values.yaml --wait
 > ```
 >
 > Subsequent upgrades that don't touch `dbInit.sqlFiles` can go back to
@@ -264,7 +264,7 @@ optional subchart. Requires `helm dependency update` once:
 
 ```bash
 helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
-helm dependency update helm/vigil
+helm dependency update infra/helm/vigil
 ```
 
 Then enable:
@@ -341,7 +341,7 @@ Bitnami is opt-in because it adds ~2MB of subchart assets and requires
 
 ```bash
 helm repo add bitnami https://charts.bitnami.com/bitnami
-helm dependency update helm/vigil
+helm dependency update infra/helm/vigil
 ```
 
 Then enable in values:
@@ -414,6 +414,6 @@ hangs, the daemon is actually unhealthy (check Anthropic API key, DB
 connectivity).
 
 **SPA shows a blank page** — the SPA is bundled into the backend image via
-a multi-stage build in `docker/Dockerfile.backend`. If you're using a
+a multi-stage build in `infra/docker/Dockerfile.backend`. If you're using a
 custom build of the backend, make sure the multi-stage build step ran and
-copied `frontend/build/` into the final image.
+copied `clients/web/build/` into the final image.

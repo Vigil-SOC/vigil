@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import json
 import asyncio
-from services.claude_service import ClaudeService
-from services.database_data_service import DatabaseDataService
+from core.llm.harness.claude import ClaudeService
+from core.storage.database_data_service import DatabaseDataService
 
 
 def print_section(title: str):

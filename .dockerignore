@@ -60,9 +60,9 @@ logs/
 *.pid
 
 # Frontend (not needed in backend image)
-frontend/node_modules/
-frontend/build/
-frontend/dist/
+clients/web/node_modules/
+clients/web/build/
+clients/web/dist/
 
 # Database
 *.db

@@ -95,7 +95,7 @@ rely on Bifrost reading `env.ANTHROPIC_API_KEY` from its docker env
 anymore — that was the old flow and caused the "key lost on restart"
 problem. Instead:
 
-- On backend startup, `services.bifrost_admin.sync_all_provider_keys()`
+- On backend startup, `core.llm.bifrost.admin.sync_all_provider_keys()`
   pushes every key in the secrets manager to Bifrost via its admin API
   (`PUT /api/providers/{name}`).
 - On provider create/update/delete in the UI, the corresponding endpoint
@@ -105,7 +105,7 @@ problem. Instead:
 So the flow is: **UI → secrets_manager → bifrost_admin → Bifrost** in
 one synchronous chain. No container restart needed to rotate a key.
 
-The seed `docker/bifrost/config.json` still references `env.*` for
+The seed `infra/docker/bifrost/config.json` still references `env.*` for
 first-boot provider/model definitions, but the actual key *values* are
 overwritten at runtime.
 
@@ -129,8 +129,8 @@ sessions can reuse the work. It's shipped as a git submodule at
 `MEMPALACE_PALACE_PATH` in `.env` if you need to relocate (shared NAS,
 different user, etc.). All three consumers — the MCP server
 (`mcp-config.json`), the daemon (`daemon/orchestrator.py`), and the
-web service (`services/claude_service.py`) — resolve the path through
-`services.mempalace_paths.get_palace_path()`, so the default can't
+web service (`core/llm/harness/claude.py`) — resolve the path through
+`core.platform.mempalace_paths.get_palace_path()`, so the default can't
 drift again.
 
 **Structure:**

@@ -15,27 +15,27 @@
       "extra-files": [
         {
           "type": "json",
-          "path": "frontend/package.json",
+          "path": "clients/web/package.json",
           "jsonpath": "$.version"
         },
         {
           "type": "json",
-          "path": "frontend/package-lock.json",
+          "path": "clients/web/package-lock.json",
           "jsonpath": "$.version"
         },
         {
           "type": "json",
-          "path": "frontend/package-lock.json",
+          "path": "clients/web/package-lock.json",
           "jsonpath": "$.packages[''].version"
         },
         {
           "type": "yaml",
-          "path": "helm/vigil/Chart.yaml",
+          "path": "infra/helm/vigil/Chart.yaml",
           "jsonpath": "$.appVersion"
         },
         {
           "type": "yaml",
-          "path": "helm/vigil/Chart.yaml",
+          "path": "infra/helm/vigil/Chart.yaml",
           "jsonpath": "$.version"
         }
       ]

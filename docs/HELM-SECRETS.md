@@ -78,7 +78,7 @@ brew install kubeseal   # or download from github.com/bitnami-labs/sealed-secret
    kubectl apply -f vigil-sealed-secret.yaml
    # The controller creates the vigil-secrets Secret automatically.
 
-   helm install vigil ./helm/vigil \
+   helm install vigil ./infra/helm/vigil \
      -n vigil --create-namespace \
      --set secrets.existingSecret=vigil-secrets
    ```
@@ -152,7 +152,7 @@ creation_rules:
    export SOPS_AGE_KEY_FILE=~/.sops/vigil.txt
    sops -d secrets/vigil-secrets.yaml | kubectl apply -f -
 
-   helm install vigil ./helm/vigil \
+   helm install vigil ./infra/helm/vigil \
      -n vigil --create-namespace \
      --set secrets.existingSecret=vigil-secrets
    ```
@@ -173,12 +173,12 @@ sops-encrypted values file:
 helm plugin install https://github.com/jkroepke/helm-secrets
 
 # Encrypted values file
-sops -e -i helm/vigil/values-prod-secrets.yaml
+sops -e -i infra/helm/vigil/values-prod-secrets.yaml
 
 # Install
-helm secrets install vigil ./helm/vigil \
+helm secrets install vigil ./infra/helm/vigil \
   -n vigil --create-namespace \
-  -f helm/vigil/values-prod-secrets.yaml
+  -f infra/helm/vigil/values-prod-secrets.yaml
 ```
 
 This lets you use `secrets.anthropicApiKey: ...` directly (not `existingSecret`)

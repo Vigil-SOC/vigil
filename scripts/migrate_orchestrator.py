@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from database.connection import init_database, get_db_manager
+from core.storage.connection import init_database, get_db_manager
 
 
 def main():

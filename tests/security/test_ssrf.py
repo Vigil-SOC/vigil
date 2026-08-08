@@ -1,6 +1,6 @@
 """Regression tests for FIN-005 — SSRF via LLM provider discovery.
 
-Covers the ``services.url_safety.validate_provider_url`` gate that all
+Covers the ``core.platform.url_safety.validate_provider_url`` gate that all
 provider-discovery / provider-test paths now run through.
 """
 
@@ -13,9 +13,8 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / "backend"))
 
-from services.url_safety import (  # noqa: E402
+from core.platform.url_safety import (  # noqa: E402
     DEFAULT_ALLOWED_PROVIDER_HOSTS,
     UrlSafetyError,
     validate_provider_url,

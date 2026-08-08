@@ -85,8 +85,8 @@ python3 scripts/init_schema.py || { echo "Schema init failed."; exit 1; }
 python3 scripts/seed_reference_data.py || true
 
 # --- Frontend deps ---
-if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend" ] && [ ! -d "frontend/node_modules" ]; then
-    (cd frontend && npm install)
+if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web" ] && [ ! -d "clients/web/node_modules" ]; then
+    (cd clients/web && npm install)
 fi
 
 # --- Launch ---
@@ -110,10 +110,10 @@ print_ready() {
 }
 
 start_frontend() {
-    if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
+    if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web/node_modules" ]; then
         local host="$BIND_HOST"; [ "$host" = "0.0.0.0" ] && host="127.0.0.1"
         wait_for_url "http://${host}:6987/api/health" 60 || true
-        (cd frontend && npm run dev) &
+        (cd clients/web && npm run dev) &
         FRONTEND_PID=$!
     fi
 }
@@ -125,16 +125,16 @@ if [ "$DAEMON" -eq 0 ]; then
         [ -n "${BACKEND_PID:-}" ] && kill $BACKEND_PID 2>/dev/null
         [ -n "${WORKER_PID:-}" ] && kill $WORKER_PID 2>/dev/null
         [ -n "${FRONTEND_PID:-}" ] && kill $FRONTEND_PID 2>/dev/null
-        pkill -f "uvicorn backend.main:app" 2>/dev/null
+        pkill -f "uvicorn services.api.main:app" 2>/dev/null
         exit 0
     }
     trap cleanup INT TERM EXIT
 
-    uvicorn backend.main:app --host "$BIND_HOST" --port 6987 --reload \
+    uvicorn services.api.main:app --host "$BIND_HOST" --port 6987 --reload \
         --reload-dir backend --reload-dir services --reload-dir database &
     BACKEND_PID=$!
 
-    python3 -m services.run_llm_worker &
+    python3 -m services.worker &
     WORKER_PID=$!
 
     start_frontend
@@ -150,11 +150,11 @@ if [ "$DAEMON" -eq 0 ]; then
 else
     # Daemon
     mkdir -p logs
-    [ "$(pgrep -f 'uvicorn backend.main:app' | wc -l)" -gt 0 ] && {
+    [ "$(pgrep -f 'uvicorn services.api.main:app' | wc -l)" -gt 0 ] && {
         echo "Backend already running. Use ./shutdown_all.sh to stop."; exit 1;
     }
 
-    nohup uvicorn backend.main:app --host "$BIND_HOST" --port 6987 --reload \
+    nohup uvicorn services.api.main:app --host "$BIND_HOST" --port 6987 --reload \
         --reload-dir backend --reload-dir services --reload-dir database \
         > logs/backend.log 2>&1 &
     BACKEND_PID=$!
@@ -169,16 +169,16 @@ else
         exit 1
     fi
 
-    nohup "${PWD}/venv/bin/python" daemon/main.py > logs/daemon.log 2>&1 &
+    nohup "${PWD}/venv/bin/python" services/daemon/main.py > logs/daemon.log 2>&1 &
     echo $! > logs/daemon.pid
 
-    if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "frontend/node_modules" ]; then
-        # Absolute log dir: the `cd frontend` only applies inside the
+    if [ "$SKIP_FRONTEND" -eq 0 ] && [ -d "clients/web/node_modules" ]; then
+        # Absolute log dir: the `cd clients/web` only applies inside the
         # backgrounded (&) job, not the subsequent `echo`, which still runs
         # from the repo root — so a relative ../logs there pointed above the
         # repo and failed. Anchor both writes to the repo-root logs dir.
         logs_dir="${PWD}/logs"
-        (cd frontend && nohup npm run dev > "${logs_dir}/frontend.log" 2>&1 &
+        (cd clients/web && nohup npm run dev > "${logs_dir}/frontend.log" 2>&1 &
          echo $! > "${logs_dir}/frontend.pid")
     fi
 

@@ -214,10 +214,10 @@ def _do_init(service_name: str) -> None:
     sentry_dsn = get_settings().sentry_dsn
     if sentry_dsn:
         try:
-            from backend.monitoring import SentrySpanProcessor
+            from core.platform.monitoring import SentrySpanProcessor
             tracer_provider.add_span_processor(SentrySpanProcessor())
         except Exception:
-            pass  # backend.monitoring may not be importable in daemon context
+            pass  # core.platform.monitoring may not be importable in daemon context
 
     trace.set_tracer_provider(tracer_provider)
     _tracer_provider = tracer_provider

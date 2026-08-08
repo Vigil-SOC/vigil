@@ -50,7 +50,7 @@ async def test_bifrost_chat_completion_via_ollama():
     Requires a running Ollama with the model named in OLLAMA_SMOKE_MODEL
     (defaults to llama3.1:8b — kept small so the smoke test stays quick).
     """
-    from services.llm_router import LLMRouter, ProviderSpec
+    from core.llm.router.router import LLMRouter, ProviderSpec
 
     model = os.getenv("OLLAMA_SMOKE_MODEL", "llama3.1:8b")
     spec = ProviderSpec(

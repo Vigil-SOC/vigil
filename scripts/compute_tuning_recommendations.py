@@ -5,7 +5,7 @@ PR-D shipped with best-guess defaults for four cost/perf toggles:
   * ``CLAUDE_HISTORY_WINDOW`` (20 turns)
   * ``TOOL_RESPONSE_BUDGET_DEFAULT`` (8000 tokens)
   * ``CLAUDE_THINKING_BUDGET`` (10000 tokens, daemon-wide)
-  * per-agent ``thinking_budget`` values in ``services/soc_agents.py``
+  * per-agent ``thinking_budget`` values in ``core/agents/builtins.py``
 
 PR-E's completion criterion was "re-tune defaults using two weeks of
 post-merge data." This script is the tooling side of that: point it at
@@ -14,7 +14,7 @@ recommendations (p50 / p95 / max of the relevant distributions).
 
 Operators run this periodically — say, monthly — and apply the
 recommendations through Settings → AI Config → AI Operations (PR-F) or
-by editing ``services/soc_agents.py`` for per-agent thinking budgets.
+by editing ``core/agents/builtins.py`` for per-agent thinking budgets.
 
 Usage::
 
@@ -36,7 +36,6 @@ from typing import Dict, Iterable, List
 
 _REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO))
-sys.path.insert(0, str(_REPO / "backend"))
 
 
 def _p95(values: List[int]) -> int:
@@ -50,8 +49,8 @@ def _p95(values: List[int]) -> int:
 def _fetch_rows(days: int) -> List[Dict]:
     """Pull the last ``days`` of LLMInteractionLog rows. Returns simple
     dicts so the caller doesn't need SQLAlchemy loaded."""
-    from database.connection import get_session
-    from database.models import LLMInteractionLog
+    from core.storage.connection import get_session
+    from core.storage.models import LLMInteractionLog
 
     cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
     with get_session() as session:
@@ -268,7 +267,7 @@ def main() -> int:
                 f"{stats['max']:>8}"
                 f"  {stats['recommended_thinking_budget']:>12}"
             )
-        print("\n  Apply via services/soc_agents.py → agent config → thinking_budget field.")
+        print("\n  Apply via core/agents/builtins.py → agent config → thinking_budget field.")
 
     def _print_block(title: str, payload: Dict):
         print(f"\n## {title}")
@@ -290,7 +289,7 @@ def main() -> int:
 
     print()
     print("Apply non-agent recommendations via Settings → AI Config → AI Operations.")
-    print("Per-agent thinking_budget edits land in services/soc_agents.py.")
+    print("Per-agent thinking_budget edits land in core/agents/builtins.py.")
     return 0
 
 

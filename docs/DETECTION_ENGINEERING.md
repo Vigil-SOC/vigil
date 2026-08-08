@@ -540,7 +540,7 @@ find ~/security-detections/security_content/detections -name "*.yml" | wc -l
 
 ### Tools Not Loading
 
-1. Restart the backend server (`uvicorn backend.main:app --reload`)
+1. Restart the backend server (`uvicorn services.api.main:app --reload`)
 2. Check MCP server status via API: `GET /api/mcp/servers/status`
 3. Verify configuration with test script:
    ```bash

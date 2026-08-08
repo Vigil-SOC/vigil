@@ -50,7 +50,7 @@ pip install -r requirements.txt
 ### Frontend Setup
 
 ```bash
-cd frontend
+cd clients/web
 npm install
 
 # Test dependencies include:
@@ -78,7 +78,7 @@ pytest tests/unit/
 pytest tests/integration/
 
 # Run with coverage
-pytest --cov=backend --cov=services --cov=daemon --cov-report=html
+pytest --cov=services --cov=core --cov-report=html
 
 # Run specific test file
 pytest tests/unit/test_auth.py
@@ -99,7 +99,7 @@ pytest -n auto
 ### Frontend Tests
 
 ```bash
-cd frontend
+cd clients/web
 
 # Run all tests
 npm test
@@ -201,7 +201,7 @@ class TestCaseAPI:
 
 ### Frontend Test Example
 
-**File**: `frontend/src/components/CaseList.test.tsx`
+**File**: `clients/web/src/components/CaseList.test.tsx`
 
 ```typescript
 import { describe, it, expect, vi } from 'vitest'
@@ -353,7 +353,7 @@ def test_claude_enrichment(mocker):
     mock_response = {
         "content": [{"type": "text", "text": "Test response"}]
     }
-    mocker.patch('services.claude_service.anthropic.Anthropic')
+    mocker.patch('core.llm.harness.claude.anthropic.Anthropic')
     
     result = ClaudeService.enrich_finding({"id": "test"})
     assert result is not None

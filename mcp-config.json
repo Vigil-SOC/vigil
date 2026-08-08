@@ -113,7 +113,7 @@
 
     "splunk-selfhosted": {
       "command": "python3",
-      "args": ["tools/splunk.py"],
+      "args": ["core/integrations/splunk/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
         "_setup_note": "Self-hosted Splunk via REST API. Set SPLUNK_URL (e.g., https://splunk.example.com:8089), SPLUNK_USERNAME, and SPLUNK_PASSWORD in .env. Port 8089 uses HTTPS by default."
@@ -122,7 +122,7 @@
 
     "elastic": {
       "command": "python3",
-      "args": ["tools/elastic.py"],
+      "args": ["core/integrations/elastic/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
         "_setup_note": "Elastic Security via Elasticsearch REST API. Set ELASTIC_HOST (e.g., https://elasticsearch.example.com:9200), ELASTIC_API_KEY or ELASTIC_USERNAME/ELASTIC_PASSWORD, and optionally ELASTIC_KIBANA_URL in .env."
@@ -252,7 +252,7 @@
 
     "slack": {
       "command": "python3",
-      "args": ["tools/slack.py"],
+      "args": ["core/integrations/slack/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
         "_note": "Kept as custom tool. Slack Platform MCP Server (official, in development) focuses on app development, not SOC alerting. Monitor for slack_send_alert support."
@@ -269,7 +269,7 @@
 
     "vstrike": {
       "command": "python3",
-      "args": ["tools/vstrike.py"],
+      "args": ["core/integrations/vstrike/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
         "_setup_note": "CloudCurrent VStrike network topology fusion layer. Set VSTRIKE_BASE_URL and VSTRIKE_API_KEY in .env, or configure in Settings > Integrations.",
@@ -281,7 +281,7 @@
 
     "microsoft-defender": {
       "command": "python3",
-      "args": ["tools/microsoft_defender.py"],
+      "args": ["core/integrations/microsoft_defender/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
         "_note": "Partially covered by Microsoft Sentinel MCP (shared Defender data lake). Evaluate if azure-sentinel entry above can replace this."
@@ -345,7 +345,7 @@
 
     "cloudflare": {
       "command": "python3",
-      "args": ["tools/cloudflare.py"],
+      "args": ["core/integrations/cloudflare/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
         "_setup_note": "Cloudflare WAF, Zero Trust Gateway, and Access response actions plus read-only IP/domain threat lookups. Configure api_token (and optional account_id, zone_id) in Settings → Integrations. Tools are no-ops until the integration is enabled.",

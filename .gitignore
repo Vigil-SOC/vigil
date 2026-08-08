@@ -8,7 +8,6 @@ __pycache__/
 node_modules/
 # Distribution / packaging
 .Python
-desktop/
 build/
 develop-eggs/
 dist/
@@ -195,21 +194,21 @@ logs/
 config.json
 *_config.json
 !mcp-config.json
-!docker/bifrost/config.json
+!infra/docker/bifrost/config.json
 
 # Node.js / React
-frontend/node_modules/
-frontend/build/
-frontend/dist/
-frontend/.env
-frontend/.env.local
-frontend/.env.development
-frontend/.env.development.local
-frontend/.env.test.local
-frontend/.env.production.local
-frontend/npm-debug.log*
-frontend/yarn-debug.log*
-frontend/yarn-error.log*
+clients/web/node_modules/
+clients/web/build/
+clients/web/dist/
+clients/web/.env
+clients/web/.env.local
+clients/web/.env.development
+clients/web/.env.development.local
+clients/web/.env.test.local
+clients/web/.env.production.local
+clients/web/npm-debug.log*
+clients/web/yarn-debug.log*
+clients/web/yarn-error.log*
 
 # Build artifacts
 *.pyd

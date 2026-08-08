@@ -1,0 +1,50 @@
+; Layering contracts for the clients/ + services/ + core/ + infra/ structure
+; (epic #481). CONTEXT.md states these rules in prose; this file is what makes
+; them true. They were agreed at R5 and had accumulated 20 counterexamples by
+; R9, which is the argument for a gate rather than a convention.
+;
+; Run locally with:  lint-imports
+
+[importlinter]
+root_packages =
+    core
+    services
+
+[importlinter:contract:deployables]
+name = core is a library: it must not import the deployables
+type = forbidden
+source_modules =
+    core
+forbidden_modules =
+    services
+
+[importlinter:contract:tiers]
+name = the shared-infrastructure tier must not import a capability domain
+type = forbidden
+source_modules =
+    core.storage
+    core.platform
+forbidden_modules =
+    core.agents
+    core.auth
+    core.cases
+    core.chat
+    core.detections
+    core.federation
+    core.findings
+    core.ingestion
+    core.integrations
+    core.llm
+    core.reporting
+    core.response
+    core.skills
+    core.threat_intel
+    core.workflows
+
+[importlinter:contract:ingestion]
+name = Federation drives Ingestion, never the reverse
+type = forbidden
+source_modules =
+    core.ingestion
+forbidden_modules =
+    core.federation

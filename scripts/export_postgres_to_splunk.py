@@ -19,8 +19,8 @@ import urllib3
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from database.connection import get_db_manager
-from database.models import Finding, Case
+from core.storage.connection import get_db_manager
+from core.storage.models import Finding, Case
 from sqlalchemy import func
 
 # Disable SSL warnings for self-signed certificates

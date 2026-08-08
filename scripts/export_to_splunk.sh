@@ -66,8 +66,8 @@ fi
 # Show what will be exported
 echo -e "${GREEN}Checking database...${NC}"
 DB_INFO=$($PYTHON -c "
-from database.connection import get_db_manager
-from database.models import Finding, Case
+from core.storage.connection import get_db_manager
+from core.storage.models import Finding, Case
 from sqlalchemy import func
 
 db_manager = get_db_manager()

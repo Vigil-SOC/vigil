@@ -152,7 +152,7 @@ Vigil uses **GitHub Actions** for CI/CD with three main workflows:
 
 **Backend**:
 ```bash
-pytest tests/unit/ -v --cov=backend --cov=services --cov=daemon
+pytest tests/unit/ tests/security/ -v --cov=services --cov=core
 ```
 
 **Frontend**:
@@ -184,7 +184,7 @@ pytest tests/integration/ -v --cov
 
 **Python (Bandit)**:
 ```bash
-bandit -r backend/ services/ daemon/ -f json -o bandit-report.json
+bandit -r services/ core/ -f json -o bandit-report.json
 ```
 
 **NPM**:
@@ -204,7 +204,7 @@ npm audit --audit-level=moderate
 FROM python:3.10-slim
 COPY . /app
 RUN pip install -r requirements.txt
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0"]
+CMD ["uvicorn", "services.api.main:app", "--host", "0.0.0.0"]
 ```
 
 **Daemon Image**:
@@ -427,7 +427,7 @@ docker-compose up -d --force-recreate
   uses: actions/setup-node@v5
   with:
     cache: 'npm'
-    cache-dependency-path: frontend/package-lock.json
+    cache-dependency-path: clients/web/package-lock.json
 ```
 
 ### Parallel Execution

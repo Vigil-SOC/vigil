@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 pytestmark = pytest.mark.skip(reason="IngestionService methods don't exist - needs rewrite for current API")
 
 # IngestionService doesn't exist - needs to be replaced with current ingestion logic
-# from services.ingestion_service import IngestionService
+# from core.ingestion.ingestion_service import IngestionService
 
 
 class TestSeverityNormalization:
@@ -227,7 +227,7 @@ class TestMITREMapping:
 class TestEmbeddingGeneration:
     """Test finding embedding generation for similarity search."""
     
-    @patch('services.ingestion_service.embedding_model')
+    @patch('core.ingestion.ingestion_service.embedding_model')
     def test_generate_embedding(self, mock_model):
         """Test generating embedding vector for finding."""
         mock_model.encode.return_value = [0.1, 0.2, 0.3, 0.4, 0.5]
@@ -287,7 +287,7 @@ class TestFindingEnrichment:
             }
         }
         
-        with patch('services.ingestion_service.threat_intel') as mock_ti:
+        with patch('core.ingestion.ingestion_service.threat_intel') as mock_ti:
             mock_ti.check_ip.return_value = {"reputation": "malicious", "score": 95}
             
             enriched = IngestionService.enrich_with_threat_intel(finding)

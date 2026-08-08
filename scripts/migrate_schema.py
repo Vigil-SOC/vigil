@@ -3,7 +3,7 @@
 Schema migration script for Vigil SOC.
 
 Brings an existing database up to date with the current SQLAlchemy models
-defined in database/models.py. Safe to run multiple times (idempotent).
+defined in core/storage/models.py. Safe to run multiple times (idempotent).
 
 Usage:
     python scripts/migrate_schema.py
@@ -145,7 +145,7 @@ def create_llm_interaction_vk_index(conn):
 
 @migration("Create any missing tables from models")
 def create_missing_tables(conn):
-    from database.models import Base
+    from core.storage.models import Base
     engine = conn.engine if hasattr(conn, 'engine') else conn
     inspector = inspect(engine)
     existing = set(inspector.get_table_names())

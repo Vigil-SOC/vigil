@@ -1,0 +1,756 @@
+"""VStrike (CloudCurrent) integration API.
+
+Endpoints:
+  - POST /findings           Receive VStrike-enriched findings (push)
+  - GET  /health             Outbound reachability check
+  - GET  /topology/asset/{id}  Proxy to VStrike topology lookup
+
+Inbound push is authenticated with a Bearer API key stored via the secrets
+manager under `VSTRIKE_INBOUND_API_KEY`. When `DEV_MODE=true` the auth check
+is bypassed (matches the rest of the Vigil codebase).
+"""
+
+from __future__ import annotations
+
+import logging
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Header, HTTPException
+from pydantic import BaseModel
+
+from core.integrations.vstrike.schemas import (
+    VStrikeFindingResult,
+    VStrikeHealthResponse,
+    VStrikePushRequest,
+    VStrikePushResponse,
+)
+from services.api.middleware.auth import get_current_active_user
+from core.storage.database_data_service import DatabaseDataService
+from core.integrations.vstrike.client import VStrikeToolNotImplemented, get_vstrike_service
+from core.routing import Auth, RouterMeta
+from core.config import get_settings
+from core.secrets import get_secret
+
+
+class VStrikeLoadNetworkRequest(BaseModel):
+    network_id: str
+
+
+class VStrikeKillchainStep(BaseModel):
+    node_id: str
+    timestamp: str
+    technique: Optional[str] = None
+    label: Optional[str] = None
+    dwell_ms: Optional[int] = None
+
+
+class VStrikeKillchainReplayRequest(BaseModel):
+    network_id: str
+    steps: list[VStrikeKillchainStep]
+    loop: bool = False
+    auto_play: bool = True
+
+
+def _ui_service_or_503():
+    """Resolve the VStrike service for UI routes, raising 503 if unavailable.
+
+    Returns a service that is guaranteed to have UI (username/password)
+    credentials configured. The 503 body is structured so the frontend can
+    distinguish "credentials missing" from a transport failure.
+    """
+    service = get_vstrike_service()
+    if service is None or not service.has_ui_credentials:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": (
+                    "VStrike UI credentials not configured. Set "
+                    "VSTRIKE_USERNAME and VSTRIKE_PASSWORD or configure "
+                    "the integration in Settings."
+                ),
+                "missing": ["username", "password"],
+            },
+        )
+    return service
+
+
+router = APIRouter()
+
+ROUTER_META = RouterMeta(
+    prefix="/api/integrations/vstrike",
+    tags=["vstrike"],
+    auth=Auth.ROUTER_MANAGED,
+    reason=(
+        "Inbound /findings uses its own bearer API key; every management, UI "
+        "and proxy route hangs off the nested authenticated_router, which "
+        "carries its own dependency."
+    ),
+)
+authenticated_router = APIRouter(dependencies=[Depends(get_current_active_user)])
+logger = logging.getLogger(__name__)
+data_service = DatabaseDataService()
+
+
+def _is_dev_mode() -> bool:
+    return get_settings().dev_mode
+
+
+def _expected_inbound_key() -> Optional[str]:
+    try:
+        return get_secret("VSTRIKE_INBOUND_API_KEY") or None
+    except Exception as e:
+        logger.debug("Could not read VSTRIKE_INBOUND_API_KEY from secrets: %s", e)
+        return None
+
+
+def verify_inbound_key(
+    authorization: Optional[str] = Header(default=None),
+) -> None:
+    """Bearer-token dependency for the inbound push endpoint.
+
+    Bypassed when `DEV_MODE=true`. Returns 401 otherwise when the header is
+    missing or the token does not match the configured key. Returns 503 if
+    no key is configured and DEV_MODE is off (we refuse to run open).
+    """
+    if _is_dev_mode():
+        return
+
+    expected = _expected_inbound_key()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "VStrike inbound API key not configured. Set "
+                "VSTRIKE_INBOUND_API_KEY or enable DEV_MODE."
+            ),
+        )
+
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token")
+
+    token = authorization.split(" ", 1)[1].strip()
+    if token != expected:
+        raise HTTPException(status_code=401, detail="Invalid bearer token")
+
+
+@router.post("/findings", response_model=VStrikePushResponse)
+def ingest_findings(
+    request: VStrikePushRequest,
+    _auth: None = Depends(verify_inbound_key),
+) -> VStrikePushResponse:
+    """Receive a batch of VStrike-enriched findings.
+
+    For each finding:
+      - If it exists in Vigil, merge VStrike enrichment into
+        `entity_context["vstrike"]` (read-modify-write to avoid clobbering
+        other keys) and update MITRE fields if supplied.
+      - Otherwise, create it with `data_source="vstrike"` if enough fields
+        are present (timestamp + anomaly_score); fail the finding otherwise.
+
+    When `auto_cluster_cases` is true, upserted findings are grouped into
+    cases keyed by `(segment, attack_path[0] or asset_id)`.
+    """
+    results: list[VStrikeFindingResult] = []
+    updated = 0
+    created = 0
+    failed = 0
+    upserted_ids: list[str] = []
+
+    for item in request.findings:
+        try:
+            enrichment_dict = item.vstrike_enrichment.model_dump(mode="json")
+            existing = data_service.get_finding(item.finding_id)
+            if existing is not None:
+                existing_ctx = existing.get("entity_context") or {}
+                if not isinstance(existing_ctx, dict):
+                    existing_ctx = {}
+                merged_ctx = dict(existing_ctx)
+                if item.entity_context_extra:
+                    merged_ctx.update(item.entity_context_extra)
+                merged_ctx["vstrike"] = enrichment_dict
+
+                updates: dict = {"entity_context": merged_ctx}
+                if item.mitre_predictions is not None:
+                    updates["mitre_predictions"] = item.mitre_predictions
+                if item.predicted_techniques is not None:
+                    updates["predicted_techniques"] = item.predicted_techniques
+                if item.severity is not None:
+                    updates["severity"] = item.severity
+                if item.description is not None:
+                    updates["description"] = item.description
+
+                success = data_service.update_finding(item.finding_id, **updates)
+                if success:
+                    updated += 1
+                    upserted_ids.append(item.finding_id)
+                    results.append(
+                        VStrikeFindingResult(
+                            finding_id=item.finding_id, status="updated"
+                        )
+                    )
+                else:
+                    failed += 1
+                    results.append(
+                        VStrikeFindingResult(
+                            finding_id=item.finding_id,
+                            status="failed",
+                            error="update_finding returned False",
+                        )
+                    )
+                continue
+
+            # Create path: require minimum fields for a useful record
+            if item.timestamp is None or item.anomaly_score is None:
+                failed += 1
+                results.append(
+                    VStrikeFindingResult(
+                        finding_id=item.finding_id,
+                        status="failed",
+                        error=(
+                            "Finding not found and insufficient fields to "
+                            "create (timestamp and anomaly_score required)"
+                        ),
+                    )
+                )
+                continue
+
+            new_ctx: dict = dict(item.entity_context_extra or {})
+            new_ctx["vstrike"] = enrichment_dict
+            finding_data = {
+                "finding_id": item.finding_id,
+                "timestamp": item.timestamp,
+                "anomaly_score": float(item.anomaly_score),
+                "data_source": "vstrike",
+                "entity_context": new_ctx,
+                "severity": item.severity,
+                "description": item.description,
+                "mitre_predictions": item.mitre_predictions or {},
+            }
+            if item.predicted_techniques is not None:
+                finding_data["predicted_techniques"] = item.predicted_techniques
+
+            created_finding = data_service.create_finding(finding_data)
+            if created_finding:
+                created += 1
+                upserted_ids.append(item.finding_id)
+                results.append(
+                    VStrikeFindingResult(finding_id=item.finding_id, status="created")
+                )
+            else:
+                failed += 1
+                results.append(
+                    VStrikeFindingResult(
+                        finding_id=item.finding_id,
+                        status="failed",
+                        error="create_finding returned None",
+                    )
+                )
+        except Exception as e:
+            failed += 1
+            logger.exception("VStrike ingest failed for %s", item.finding_id)
+            results.append(
+                VStrikeFindingResult(
+                    finding_id=item.finding_id,
+                    status="failed",
+                    error=str(e),
+                )
+            )
+
+    case_ids: list[str] = []
+    if request.auto_cluster_cases and upserted_ids:
+        try:
+            from core.cases.case_automation_service import (
+                cluster_findings_by_attack_path,
+            )
+
+            case_ids = cluster_findings_by_attack_path(upserted_ids)
+        except Exception as e:
+            logger.exception("VStrike auto-cluster failed: %s", e)
+
+    logger.info(
+        "VStrike batch %s: received=%d updated=%d created=%d failed=%d cases=%d",
+        request.batch_id,
+        len(request.findings),
+        updated,
+        created,
+        failed,
+        len(case_ids),
+    )
+
+    return VStrikePushResponse(
+        batch_id=request.batch_id,
+        received=len(request.findings),
+        updated=updated,
+        created=created,
+        failed=failed,
+        results=results,
+        case_ids=case_ids,
+    )
+
+
+@authenticated_router.get("/health", response_model=VStrikeHealthResponse)
+async def health_check() -> VStrikeHealthResponse:
+    """Check outbound connectivity to the configured VStrike server."""
+    service = get_vstrike_service()
+    if service is None:
+        return VStrikeHealthResponse(
+            configured=False,
+            reachable=False,
+            base_url=None,
+            message=(
+                "VStrike not configured. Set VSTRIKE_BASE_URL + VSTRIKE_API_KEY "
+                "or configure the integration in Settings."
+            ),
+        )
+    success, message = service.test_connection()
+    return VStrikeHealthResponse(
+        configured=True,
+        reachable=success,
+        base_url=service.base_url,
+        message=message,
+    )
+
+
+@authenticated_router.get("/topology/asset/{asset_id}")
+async def get_asset_topology(asset_id: str) -> dict:
+    """Proxy to VStrike asset-topology lookup (outbound)."""
+    service = get_vstrike_service()
+    if service is None:
+        raise HTTPException(status_code=503, detail="VStrike not configured")
+    topology = service.get_asset_topology(asset_id)
+    if topology is None:
+        raise HTTPException(
+            status_code=502,
+            detail=f"VStrike did not return topology for asset {asset_id}",
+        )
+    return {
+        "asset_id": asset_id,
+        "topology": topology,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@authenticated_router.get("/topology/asset/{asset_id}/adjacent")
+async def list_adjacent_assets(asset_id: str) -> dict:
+    """Proxy to VStrike adjacent-assets lookup."""
+    service = get_vstrike_service()
+    if service is None:
+        raise HTTPException(status_code=503, detail="VStrike not configured")
+    adjacent = service.list_adjacent(asset_id)
+    if adjacent is None:
+        raise HTTPException(
+            status_code=502,
+            detail=f"VStrike did not return adjacency for asset {asset_id}",
+        )
+    return {"asset_id": asset_id, "adjacent": adjacent}
+
+
+@authenticated_router.get("/topology/asset/{asset_id}/blast-radius")
+async def get_blast_radius(asset_id: str) -> dict:
+    """Proxy to VStrike blast-radius lookup."""
+    service = get_vstrike_service()
+    if service is None:
+        raise HTTPException(status_code=503, detail="VStrike not configured")
+    blast = service.get_blast_radius(asset_id)
+    if blast is None:
+        raise HTTPException(
+            status_code=502,
+            detail=f"VStrike did not return blast radius for asset {asset_id}",
+        )
+    return {"asset_id": asset_id, "blast_radius": blast}
+
+
+# ---------------------------------------------------------------------------
+# UI control plane (iframe auto-login + remote network selection)
+# ---------------------------------------------------------------------------
+
+
+@authenticated_router.post("/ui/iframe-token")
+async def ui_iframe_token() -> dict:
+    """Return a short-lived auto-login token + the iframe URL.
+
+    Used by the VStrikeIframe frontend component to render
+    `<iframe src=iframe_url>`. The token comes from VStrike's `ui-login-token`
+    MCP tool and is meant to be one-shot.
+    """
+    service = _ui_service_or_503()
+    try:
+        token = service.get_ui_login_token()
+    except Exception as e:
+        logger.error("VStrike ui-login-token failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {
+        "token": token,
+        "iframe_url": f"{service.base_url}/login?token={token}",
+    }
+
+
+@authenticated_router.get("/ui/networks")
+async def ui_list_networks() -> dict:
+    """List networks visible to the configured VStrike account."""
+    service = _ui_service_or_503()
+    try:
+        networks = service.list_networks()
+    except Exception as e:
+        logger.error("VStrike network-list failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"networks": networks}
+
+
+@authenticated_router.post("/ui/load-network")
+async def ui_load_network(request: VStrikeLoadNetworkRequest) -> dict:
+    """Tell VStrike to load a network into the active iframe.
+
+    VStrike pushes the actual UI command via its own WebSocket; this endpoint
+    only triggers that push.
+    """
+    service = _ui_service_or_503()
+    try:
+        result = service.load_network_in_ui(request.network_id)
+    except Exception as e:
+        logger.error("VStrike ui-network-load failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+@authenticated_router.post("/ui/killchain-replay")
+async def ui_killchain_replay(request: VStrikeKillchainReplayRequest) -> dict:
+    """Walk a kill-chain through the active VStrike iframe session.
+
+    Returns 501 when VStrike's MCP server hasn't shipped the
+    ``ui-killchain-replay`` tool yet — the frontend surfaces that as a
+    "VStrike server needs an upgrade" notice rather than a generic error.
+    """
+    service = _ui_service_or_503()
+    steps = [step.model_dump(exclude_none=True) for step in request.steps]
+    try:
+        result = service.killchain_replay_in_ui(
+            request.network_id,
+            steps,
+            loop=request.loop,
+            auto_play=request.auto_play,
+        )
+    except VStrikeToolNotImplemented as e:
+        logger.info("VStrike killchain-replay unavailable: %s", e)
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-killchain-replay failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+# ---------------------------------------------------------------------------
+# Data-plane proxies (node search, drift, storylines, legends)
+# ---------------------------------------------------------------------------
+
+
+class VStrikeNodeSearchRequest(BaseModel):
+    query: str
+    network_id: Optional[str] = None
+    limit: int = 50
+
+
+@authenticated_router.post("/nodes/search")
+async def node_search(request: VStrikeNodeSearchRequest) -> dict:
+    """Omni-search across nodes in the VStrike network."""
+    service = _ui_service_or_503()
+    try:
+        results = service.node_search(
+            request.query, network_id=request.network_id, limit=request.limit
+        )
+    except Exception as e:
+        logger.error("VStrike node-search failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"query": request.query, "results": results or []}
+
+
+class VStrikeNodeDriftRequest(BaseModel):
+    node_id: str
+    network_id: Optional[str] = None
+
+
+@authenticated_router.post("/nodes/drift")
+async def node_drift(request: VStrikeNodeDriftRequest) -> dict:
+    """Return end-node state changes for the supplied node."""
+    service = _ui_service_or_503()
+    try:
+        drift = service.node_drift_get(request.node_id, network_id=request.network_id)
+    except Exception as e:
+        logger.error("VStrike node-drift-get failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"node_id": request.node_id, "drift": drift or []}
+
+
+@authenticated_router.get("/storylines")
+async def list_storylines(network_id: Optional[str] = None) -> dict:
+    """List storylines available for the network."""
+    service = _ui_service_or_503()
+    try:
+        storylines = service.storyline_list(network_id=network_id)
+    except Exception as e:
+        logger.error("VStrike storyline-list failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"network_id": network_id, "storylines": storylines or []}
+
+
+class VStrikeStorylineEventsRequest(BaseModel):
+    storyline_id: str
+    network_id: Optional[str] = None
+
+
+@authenticated_router.post("/storylines/events")
+async def storyline_events(request: VStrikeStorylineEventsRequest) -> dict:
+    """List events in a storyline along with their properties."""
+    service = _ui_service_or_503()
+    try:
+        events = service.storyline_events_get(
+            request.storyline_id, network_id=request.network_id
+        )
+    except Exception as e:
+        logger.error("VStrike storyline-events-get failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"storyline_id": request.storyline_id, "events": events or []}
+
+
+@authenticated_router.get("/legend-runs")
+async def list_legend_runs(network_id: Optional[str] = None) -> dict:
+    """List legend runs available for the network."""
+    service = _ui_service_or_503()
+    try:
+        runs = service.legend_run_list(network_id=network_id)
+    except Exception as e:
+        logger.error("VStrike legend-run-list failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"network_id": network_id, "legend_runs": runs or []}
+
+
+class VStrikeLegendRunResultsRequest(BaseModel):
+    legend_run_id: str
+    network_id: Optional[str] = None
+
+
+@authenticated_router.post("/legend-runs/results")
+async def legend_run_results(request: VStrikeLegendRunResultsRequest) -> dict:
+    """Return results for the specified legend run."""
+    service = _ui_service_or_503()
+    try:
+        results = service.legend_run_results_get(
+            request.legend_run_id, network_id=request.network_id
+        )
+    except Exception as e:
+        logger.error("VStrike legend-run-results-get failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"legend_run_id": request.legend_run_id, "results": results}
+
+
+# ---------------------------------------------------------------------------
+# UI control plane (camera, storyline, VCR playback)
+# ---------------------------------------------------------------------------
+
+
+class VStrikeCameraNodeRequest(BaseModel):
+    node_ids: list[str]
+    network_id: Optional[str] = None
+
+
+@authenticated_router.post("/ui/camera-node")
+async def ui_camera_node(request: VStrikeCameraNodeRequest) -> dict:
+    """Move the camera to focus on the provided nodes."""
+    service = _ui_service_or_503()
+    try:
+        result = service.ui_camera_node(request.node_ids, network_id=request.network_id)
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-camera-node failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+class VStrikeCameraPositionRequest(BaseModel):
+    position: dict[str, float]
+    rotation: Optional[dict[str, float]] = None
+    network_id: Optional[str] = None
+
+
+@authenticated_router.post("/ui/camera-position")
+async def ui_camera_position(request: VStrikeCameraPositionRequest) -> dict:
+    """Set the camera position and rotation explicitly."""
+    service = _ui_service_or_503()
+    try:
+        result = service.ui_camera_position(
+            request.position,
+            rotation=request.rotation,
+            network_id=request.network_id,
+        )
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-camera-position failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+class VStrikeStorylineApplyRequest(BaseModel):
+    storyline_id: str
+    network_id: Optional[str] = None
+
+
+@authenticated_router.post("/ui/storyline-apply")
+async def ui_storyline_apply(request: VStrikeStorylineApplyRequest) -> dict:
+    """Apply the specified storyline to the active network view."""
+    service = _ui_service_or_503()
+    try:
+        result = service.ui_storyline_apply(
+            request.storyline_id, network_id=request.network_id
+        )
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-storyline-apply failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+class VStrikeStorylineModeRequest(BaseModel):
+    mode: str
+    network_id: Optional[str] = None
+
+
+@authenticated_router.post("/ui/storyline-mode")
+async def ui_storyline_mode(request: VStrikeStorylineModeRequest) -> dict:
+    """Set the timeslice mode for the VCR controls and reset frame counters."""
+    service = _ui_service_or_503()
+    try:
+        result = service.ui_storyline_mode(request.mode, network_id=request.network_id)
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-storyline-mode failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+@authenticated_router.post("/ui/storyline-forward")
+async def ui_storyline_forward(network_id: Optional[str] = None) -> dict:
+    """Step forward in the storyline timeline."""
+    service = _ui_service_or_503()
+    try:
+        result = service.ui_storyline_forward(network_id=network_id)
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-storyline-forward failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+@authenticated_router.post("/ui/storyline-backward")
+async def ui_storyline_backward(network_id: Optional[str] = None) -> dict:
+    """Step backward in the storyline timeline."""
+    service = _ui_service_or_503()
+    try:
+        result = service.ui_storyline_backward(network_id=network_id)
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-storyline-backward failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+# ---------------------------------------------------------------------------
+# Net-new VStrike tools: network-graph-get, ui-legend-apply, ui-rightpanel-focus
+#
+# Input shapes are defensive: known fields are typed, unknown fields pass
+# through verbatim (model_config extra="allow") so corrections from VStrike
+# engineering don't require a route refactor.
+# ---------------------------------------------------------------------------
+
+
+class _PassthroughModel(BaseModel):
+    model_config = {"extra": "allow"}
+
+
+def _passthrough_extras(model: _PassthroughModel, known: set[str]) -> dict:
+    """Return any unknown keys the client sent, ready to splat as **kwargs."""
+    return {k: v for k, v in model.model_dump().items() if k not in known}
+
+
+class VStrikeNetworkGraphRequest(_PassthroughModel):
+    network_id: Optional[str] = None
+
+
+@authenticated_router.post("/network-graph")
+async def network_graph(request: VStrikeNetworkGraphRequest) -> dict:
+    """Fetch the active network graph: {label, nodes, edges, bbox}."""
+    service = _ui_service_or_503()
+    extras = _passthrough_extras(request, {"network_id"})
+    try:
+        graph = service.network_graph_get(network_id=request.network_id, **extras)
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike network-graph-get failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    if graph is None:
+        raise HTTPException(status_code=502, detail="VStrike returned no graph data")
+    return {"network_id": request.network_id, "graph": graph}
+
+
+class VStrikeLegendApplyRequest(_PassthroughModel):
+    legend_run_id: str
+    network_id: Optional[str] = None
+
+
+@authenticated_router.post("/ui/legend-apply")
+async def ui_legend_apply(request: VStrikeLegendApplyRequest) -> dict:
+    """Apply a legend run inside the active VStrike iframe session."""
+    service = _ui_service_or_503()
+    extras = _passthrough_extras(request, {"legend_run_id", "network_id"})
+    try:
+        result = service.ui_legend_apply(
+            request.legend_run_id,
+            network_id=request.network_id,
+            **extras,
+        )
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-legend-apply failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+class VStrikeRightpanelFocusRequest(_PassthroughModel):
+    """No declared fields. VStrike confirmed the tool takes no parameters.
+
+    The passthrough model is preserved so a future schema bump on VStrike's
+    end can be exercised by simply including the new fields in the request
+    body; they'll forward verbatim to the MCP call.
+    """
+
+
+@authenticated_router.post("/ui/rightpanel-focus")
+async def ui_rightpanel_focus(
+    request: VStrikeRightpanelFocusRequest = VStrikeRightpanelFocusRequest(),
+) -> dict:
+    """Open the right-hand details panel in the VStrike iframe.
+
+    Takes no parameters; the panel opens for whatever node is currently
+    selected in the session.
+    """
+    service = _ui_service_or_503()
+    extras = _passthrough_extras(request, set())
+    try:
+        result = service.ui_rightpanel_focus(**extras)
+    except VStrikeToolNotImplemented as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    except Exception as e:
+        logger.error("VStrike ui-rightpanel-focus failed: %s", e)
+        raise HTTPException(status_code=502, detail=str(e))
+    return {"ok": True, "result": result}
+
+
+router.include_router(authenticated_router)

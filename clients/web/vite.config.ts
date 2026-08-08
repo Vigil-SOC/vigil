@@ -1,0 +1,97 @@
+import { defineConfig, loadEnv } from 'vite'
+import react from '@vitejs/plugin-react'
+import { fileURLToPath } from 'url'
+import { dirname, resolve } from 'path'
+
+// Get __dirname equivalent in ES modules
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
+
+// https://vitejs.dev/config/
+export default defineConfig(({ mode }) => {
+  // Load env from repo root (two levels up: clients/web → repo root)
+  const env = loadEnv(mode, resolve(__dirname, '..', '..'), '')
+  
+  // Frontend auth bypass. An explicit VITE_DEV_MODE wins (the desktop app sets
+  // it false so its login/bootstrap flow is real); otherwise inherit root .env
+  // DEV_MODE for terminal dev. loadEnv('' prefix) also surfaces process.env, so
+  // read that first for the explicit override.
+  const explicit = process.env.VITE_DEV_MODE ?? env.VITE_DEV_MODE
+  const devMode =
+    explicit === 'true' || explicit === 'false'
+      ? explicit
+      : env.DEV_MODE === 'true'
+        ? 'true'
+        : 'false'
+
+  // Context path (sub-path) the app is served under. Empty = root. In prod the
+  // backend injects <meta name="vigil-base-path"> into index.html and the bundle
+  // uses relative asset URLs (base './'); in dev we set base to the context
+  // path and inject the same meta tag so basePath.ts resolves identically.
+  const contextPath = process.env.VIGIL_CONTEXT_PATH || env.VIGIL_CONTEXT_PATH || ''
+  const isDev = mode === 'development'
+  const base = isDev && contextPath ? `${contextPath}/` : './'
+
+  // Injected as a runtime <meta> so the dev SPA's trust gate reads the same
+  // origins the backend uses for the CSP + SSRF guard (mirrors base-path).
+  const extensionAllowlist =
+    process.env.EXTENSION_CONNECTOR_ALLOWLIST || env.EXTENSION_CONNECTOR_ALLOWLIST || ''
+
+  return {
+    base,
+    plugins: [
+      {
+        name: 'inject-runtime-config',
+        transformIndexHtml(html) {
+          const tags: string[] = []
+          if (contextPath)
+            tags.push(`<meta name="vigil-base-path" content="${contextPath}">`)
+          if (extensionAllowlist)
+            tags.push(
+              `<meta name="vigil-extension-allowlist" content="${extensionAllowlist}">`,
+            )
+          if (!tags.length) return html
+          return html.replace('<head>', `<head>\n    ${tags.join('\n    ')}`)
+        },
+      },
+      react(),
+    ],
+    server: {
+      port: 6988,
+      host: '127.0.0.1', // Use IPv4 explicitly
+      proxy: {
+        // Dev proxy must match the context-path-prefixed API calls.
+        [`${contextPath}/api`]: {
+          target: 'http://127.0.0.1:6987', // Use IPv4 explicitly instead of localhost
+          changeOrigin: true,
+        },
+      },
+    },
+    resolve: {
+      // Dedupe React so pre-bundled deps share one instance. Without this,
+      // react-router-dom gets its own React copy and hook calls throw
+      // "Cannot read properties of null (reading 'useRef')".
+      dedupe: ['react', 'react-dom'],
+    },
+    optimizeDeps: {
+      // One esbuild optimize pass so React lives in ONE shared chunk instead
+      // of being duplicated per dep.
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react/jsx-runtime',
+        'react/jsx-dev-runtime',
+        'react-router-dom',
+      ],
+    },
+    build: {
+      outDir: 'build',
+    },
+    define: {
+      // Make DEV_MODE from root .env available as VITE_DEV_MODE in frontend
+      'import.meta.env.VITE_DEV_MODE': JSON.stringify(devMode),
+    },
+  }
+})
+

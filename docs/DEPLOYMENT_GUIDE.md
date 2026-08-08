@@ -357,7 +357,7 @@ server {
     
     # Frontend
     location / {
-        root /opt/vigil/frontend/build;
+        root /opt/vigil/clients/web/build;
         try_files $uri $uri/ /index.html;
     }
 }

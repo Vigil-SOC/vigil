@@ -1,0 +1,414 @@
+"""MCP server exposing VStrike (CloudCurrent) topology lookups as tools.
+
+Read-only surface. Writes (quarantine, isolate) are intentionally not
+exposed in this server — they require the approval workflow.
+
+Tools:
+  - vstrike_get_asset_topology
+  - vstrike_list_adjacent_assets
+  - vstrike_get_blast_radius
+  - vstrike_get_segment_findings
+  - vstrike_node_search
+  - vstrike_node_drift_get
+  - vstrike_storyline_list
+  - vstrike_storyline_events_get
+  - vstrike_legend_run_list
+  - vstrike_legend_run_results_get
+  - vstrike_network_graph_get
+  - vstrike_ui_legend_apply
+  - vstrike_ui_rightpanel_focus
+"""
+
+import asyncio
+import json
+import logging
+
+import mcp.server.stdio
+import mcp.types as types
+from mcp.server import NotificationOptions, Server
+from mcp.server.models import InitializationOptions
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
+logger = logging.getLogger(__name__)
+server = Server("vstrike")
+
+
+def _result(data) -> list[types.TextContent]:
+    return [
+        types.TextContent(type="text", text=json.dumps(data, indent=2, default=str))
+    ]
+
+
+def _get_service():
+    try:
+        from core.integrations.vstrike.client import get_vstrike_service
+
+        return get_vstrike_service()
+    except Exception as e:
+        logger.error("Failed to load VStrike service: %s", e)
+        return None
+
+
+@server.list_tools()
+async def handle_list_tools():
+    return [
+        types.Tool(
+            name="vstrike_get_asset_topology",
+            description=(
+                "Return full topology info for a VStrike asset: segment, "
+                "site, criticality, neighbors."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"asset_id": {"type": "string"}},
+                "required": ["asset_id"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_list_adjacent_assets",
+            description=(
+                "List one-hop neighbors of an asset. Each neighbor may "
+                "include a MITRE ATT&CK technique if the edge represents "
+                "an observed or inferred attack-path step."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"asset_id": {"type": "string"}},
+                "required": ["asset_id"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_get_blast_radius",
+            description=(
+                "Return blast-radius info for an asset (count of reachable "
+                "assets plus a sample)."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {"asset_id": {"type": "string"}},
+                "required": ["asset_id"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_get_segment_findings",
+            description=("List VStrike-enriched findings for a given network segment."),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "segment": {"type": "string"},
+                    "limit": {"type": "integer", "default": 100},
+                },
+                "required": ["segment"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_node_search",
+            description=(
+                "Omni-search across nodes in the active VStrike network. "
+                "Returns the nodes that caused the match."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "network_id": {"type": "string"},
+                    "limit": {"type": "integer", "default": 50},
+                },
+                "required": ["query"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_node_drift_get",
+            description=(
+                "Returns the list of end-node state changes in order for the "
+                "supplied node and what source identified each change."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "node_id": {"type": "string"},
+                    "network_id": {"type": "string"},
+                },
+                "required": ["node_id"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_storyline_list",
+            description=("List the storylines available for the network."),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "network_id": {"type": "string"},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="vstrike_storyline_events_get",
+            description=(
+                "List the events in the storylines along with their properties."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "storyline_id": {"type": "string"},
+                    "network_id": {"type": "string"},
+                },
+                "required": ["storyline_id"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_legend_run_list",
+            description=("List the legend runs available for the network."),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "network_id": {"type": "string"},
+                },
+                "required": [],
+            },
+        ),
+        types.Tool(
+            name="vstrike_legend_run_results_get",
+            description=("Returns the results for the legend provided."),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "legend_run_id": {"type": "string"},
+                    "network_id": {"type": "string"},
+                },
+                "required": ["legend_run_id"],
+            },
+        ),
+        types.Tool(
+            name="vstrike_network_graph_get",
+            description=(
+                "Fetch the active VStrike network graph as "
+                "{label, nodes, edges, bbox}. Use this when you need the "
+                "full topology of a network for layout, blast-radius, or "
+                "path-finding reasoning rather than a single-asset lookup."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "network_id": {"type": "string"},
+                },
+                "additionalProperties": True,
+            },
+        ),
+        types.Tool(
+            name="vstrike_ui_legend_apply",
+            description=(
+                "Apply a legend run to the active VStrike iframe session. "
+                "Re-colors / re-labels nodes per the legend. Returns once "
+                "VStrike has accepted the request."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "legend_run_id": {"type": "string"},
+                    "network_id": {"type": "string"},
+                },
+                "required": ["legend_run_id"],
+                "additionalProperties": True,
+            },
+        ),
+        types.Tool(
+            name="vstrike_ui_rightpanel_focus",
+            description=(
+                "Open the right-hand details panel in the VStrike iframe. "
+                "Takes no parameters; the panel opens for whatever node is "
+                "currently selected in the active session. Pair with "
+                "vstrike_ui_camera_node or other selection tools first if "
+                "you want the panel to target a specific node."
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": True,
+            },
+        ),
+    ]
+
+
+@server.call_tool()
+async def handle_call_tool(name: str, arguments: dict | None):
+    args = arguments or {}
+    service = _get_service()
+    if service is None:
+        return _result(
+            {
+                "error": "VStrike not configured",
+                "message": (
+                    "Set VSTRIKE_BASE_URL + VSTRIKE_API_KEY or configure the "
+                    "integration in Settings > Integrations."
+                ),
+            }
+        )
+
+    if name == "vstrike_get_asset_topology":
+        asset_id = args.get("asset_id")
+        if not asset_id:
+            return _result({"error": "asset_id required"})
+        topology = service.get_asset_topology(asset_id)
+        if topology is None:
+            return _result({"error": f"No topology returned for {asset_id}"})
+        return _result({"asset_id": asset_id, "topology": topology})
+
+    if name == "vstrike_list_adjacent_assets":
+        asset_id = args.get("asset_id")
+        if not asset_id:
+            return _result({"error": "asset_id required"})
+        adjacent = service.list_adjacent(asset_id)
+        if adjacent is None:
+            return _result({"error": f"No adjacency returned for {asset_id}"})
+        return _result({"asset_id": asset_id, "adjacent": adjacent})
+
+    if name == "vstrike_get_blast_radius":
+        asset_id = args.get("asset_id")
+        if not asset_id:
+            return _result({"error": "asset_id required"})
+        blast = service.get_blast_radius(asset_id)
+        if blast is None:
+            return _result({"error": f"No blast radius returned for {asset_id}"})
+        return _result({"asset_id": asset_id, "blast_radius": blast})
+
+    if name == "vstrike_get_segment_findings":
+        segment = args.get("segment")
+        if not segment:
+            return _result({"error": "segment required"})
+        limit = int(args.get("limit", 100))
+        findings = service.find_findings_by_segment(segment, limit=limit)
+        if findings is None:
+            return _result({"error": f"Failed to fetch findings for segment {segment}"})
+        return _result(
+            {"segment": segment, "count": len(findings), "findings": findings}
+        )
+
+    if name == "vstrike_node_search":
+        query = args.get("query")
+        if not query:
+            return _result({"error": "query required"})
+        network_id = args.get("network_id")
+        limit = int(args.get("limit", 50))
+        result = service.node_search(query, network_id=network_id, limit=limit)
+        if result is None:
+            return _result({"error": f"Node search failed for query {query}"})
+        return _result({"query": query, "network_id": network_id, "results": result})
+
+    if name == "vstrike_node_drift_get":
+        node_id = args.get("node_id")
+        if not node_id:
+            return _result({"error": "node_id required"})
+        network_id = args.get("network_id")
+        result = service.node_drift_get(node_id, network_id=network_id)
+        if result is None:
+            return _result({"error": f"Node drift failed for {node_id}"})
+        return _result({"node_id": node_id, "network_id": network_id, "drift": result})
+
+    if name == "vstrike_storyline_list":
+        network_id = args.get("network_id")
+        result = service.storyline_list(network_id=network_id)
+        if result is None:
+            return _result({"error": "Storyline list failed"})
+        return _result({"network_id": network_id, "storylines": result})
+
+    if name == "vstrike_storyline_events_get":
+        storyline_id = args.get("storyline_id")
+        if not storyline_id:
+            return _result({"error": "storyline_id required"})
+        network_id = args.get("network_id")
+        result = service.storyline_events_get(storyline_id, network_id=network_id)
+        if result is None:
+            return _result({"error": f"Storyline events failed for {storyline_id}"})
+        return _result(
+            {"storyline_id": storyline_id, "network_id": network_id, "events": result}
+        )
+
+    if name == "vstrike_legend_run_list":
+        network_id = args.get("network_id")
+        result = service.legend_run_list(network_id=network_id)
+        if result is None:
+            return _result({"error": "Legend run list failed"})
+        return _result({"network_id": network_id, "legend_runs": result})
+
+    if name == "vstrike_legend_run_results_get":
+        legend_run_id = args.get("legend_run_id")
+        if not legend_run_id:
+            return _result({"error": "legend_run_id required"})
+        network_id = args.get("network_id")
+        result = service.legend_run_results_get(legend_run_id, network_id=network_id)
+        if result is None:
+            return _result({"error": f"Legend run results failed for {legend_run_id}"})
+        return _result(
+            {
+                "legend_run_id": legend_run_id,
+                "network_id": network_id,
+                "results": result,
+            }
+        )
+
+    if name == "vstrike_network_graph_get":
+        network_id = args.get("network_id")
+        extra = {k: v for k, v in args.items() if k != "network_id"}
+        graph = service.network_graph_get(network_id=network_id, **extra)
+        if graph is None:
+            return _result({"error": "Failed to fetch network graph from VStrike"})
+        return _result({"network_id": network_id, "graph": graph})
+
+    if name == "vstrike_ui_legend_apply":
+        legend_run_id = args.get("legend_run_id")
+        if not legend_run_id:
+            return _result({"error": "legend_run_id required"})
+        network_id = args.get("network_id")
+        extra = {
+            k: v for k, v in args.items() if k not in {"legend_run_id", "network_id"}
+        }
+        try:
+            result = service.ui_legend_apply(
+                legend_run_id, network_id=network_id, **extra
+            )
+        except RuntimeError as e:
+            return _result({"error": f"VStrike ui-legend-apply failed: {e}"})
+        return _result(
+            {
+                "legend_run_id": legend_run_id,
+                "network_id": network_id,
+                "result": result,
+            }
+        )
+
+    if name == "vstrike_ui_rightpanel_focus":
+        try:
+            result = service.ui_rightpanel_focus(**args)
+        except RuntimeError as e:
+            return _result({"error": f"VStrike ui-rightpanel-focus failed: {e}"})
+        return _result({"result": result})
+
+    return _result({"error": f"Unknown tool: {name}"})
+
+
+async def main():
+    async with mcp.server.stdio.stdio_server() as (read, write):
+        await server.run(
+            read,
+            write,
+            InitializationOptions(
+                server_name="vstrike",
+                server_version="0.1.0",
+                capabilities=server.get_capabilities(
+                    notification_options=NotificationOptions(),
+                    experimental_capabilities={},
+                ),
+            ),
+        )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

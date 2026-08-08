@@ -20,17 +20,17 @@ Vigil follows [Semantic Versioning](https://semver.org/).
 | File                          | Field                              | Managed by release-please     |
 |-------------------------------|------------------------------------|-------------------------------|
 | `VERSION`                     | (whole file)                       | yes                           |
-| `helm/vigil/Chart.yaml`       | `appVersion`                       | yes                           |
-| `helm/vigil/Chart.yaml`       | `version`                          | yes (lockstep with appVersion)|
-| `frontend/package.json`       | `version`                          | yes                           |
-| `frontend/package-lock.json`  | `version` (root + `packages['']`)  | yes                           |
+| `infra/helm/vigil/Chart.yaml`       | `appVersion`                       | yes                           |
+| `infra/helm/vigil/Chart.yaml`       | `version`                          | yes (lockstep with appVersion)|
+| `clients/web/package.json`       | `version`                          | yes                           |
+| `clients/web/package-lock.json`  | `version` (root + `packages['']`)  | yes                           |
 
 See "Chart version vs appVersion" below for why both chart fields are
 bumped together.
 
 The Python backend reads `VERSION` directly at import time (see
-`backend/__init__.py`), so the FastAPI app version, the
-`backend.__version__` attribute, and the `/health` endpoint's `version`
+`core/version.py`), so the FastAPI app version, the
+`core.version.__version__` attribute, and the `/health` endpoint's `version`
 field all stay in sync with `VERSION` automatically. No release-please
 configuration is needed for the backend.
 
@@ -57,8 +57,8 @@ automated.
      contribute to version selection
 3. It opens (or updates) a single **release PR** titled
    `chore(main): release X.Y.Z`. The PR bumps `VERSION`,
-   `Chart.yaml` `appVersion` and `version`, `frontend/package.json`
-   `version`, `frontend/package-lock.json` (both `$.version` and
+   `Chart.yaml` `appVersion` and `version`, `clients/web/package.json`
+   `version`, `clients/web/package-lock.json` (both `$.version` and
    `$.packages[''].version`), and updates `CHANGELOG.md`.
 4. The release PR stays open and accumulates more commits as they merge.
    This is the grouping mechanism — every commit since the last release
@@ -125,7 +125,7 @@ can produce semantically-equivalent but byte-different output).
 | Any release-please release          | bumps        | bumps           |
 
 If you ever need a chart-only fix between app releases (e.g. a Helm
-template hotfix with no app code change), edit `helm/vigil/Chart.yaml`'s
+template hotfix with no app code change), edit `infra/helm/vigil/Chart.yaml`'s
 `version` manually in a separate PR outside the release-please flow. This
 is the escape hatch, not the default path.
 
@@ -155,10 +155,10 @@ that overwrites it.
 1. Open a PR bumping the version to the new release (e.g. `0.2.0`) in
    all of the following:
    - `VERSION`
-   - `helm/vigil/Chart.yaml` `appVersion`
-   - `helm/vigil/Chart.yaml` `version` (lockstep with `appVersion`)
-   - `frontend/package.json` `version`
-   - `frontend/package-lock.json` — both `$.version` and
+   - `infra/helm/vigil/Chart.yaml` `appVersion`
+   - `infra/helm/vigil/Chart.yaml` `version` (lockstep with `appVersion`)
+   - `clients/web/package.json` `version`
+   - `clients/web/package-lock.json` — both `$.version` and
      `$.packages[''].version`
    - `.github/.release-please-manifest.json` — set the `"."` entry to
      the new version

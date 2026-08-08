@@ -73,7 +73,7 @@ minor version bumps may include breaking changes to agent prompts, workflow
 schemas, and MCP integration interfaces. Patch bumps are always backward
 compatible. See [`RELEASING.md`](RELEASING.md) for the full release process.
 
-The Helm chart at `helm/vigil/` has two version fields: `appVersion`
+The Helm chart at `infra/helm/vigil/` has two version fields: `appVersion`
 (the Vigil release the chart deploys) and chart `version` (the chart
 packaging version). release-please bumps **both in lockstep** on every
 release. See [`RELEASING.md`](RELEASING.md) for the rationale and the
@@ -113,14 +113,14 @@ Contributions are welcome across all areas:
 
 ```
 vigil/
-├── workflows/       # Multi-agent workflow definitions (WORKFLOW.md files)
+├── core/            # Shared library: capability domains + storage/platform tier
+│   └── workflows/definitions/   # Multi-agent workflow definitions (WORKFLOW.md files)
+├── services/        # Deployables only: api (FastAPI + Agent SDK), daemon
+│                    #   (headless autonomous SOC), worker (ARQ llm-worker)
+├── clients/web/     # React web client
 ├── contrib/         # Community development tools (not runtime)
 ├── mcp-servers/     # MCP server implementations
-├── backend/         # FastAPI backend + Agent SDK
-├── frontend/        # React + MUI frontend
-├── services/        # Business logic
-├── daemon/          # Headless autonomous SOC
-├── database/        # PostgreSQL models
+├── infra/           # Docker Compose, Helm chart, DB init SQL
 ├── data/            # Schemas, registry, taxonomy
 ├── docs/            # Documentation
 └── tests/           # Test suite
@@ -128,9 +128,12 @@ vigil/
 
 ### Style
 
-- Python: follow existing patterns in `backend/`. Use type hints.
-- TypeScript/React: follow existing patterns in `frontend/`.
-- Workflows: follow the format of existing `workflows/*/WORKFLOW.md` files.
+- Python: follow existing patterns in `core/`. Use type hints. `core/` must not
+  import `services/`, and `core/storage` + `core/platform` must not import a
+  capability domain — `.importlinter` gates both; run `lint-imports` locally.
+- TypeScript/React: follow existing patterns in `clients/web/`.
+- Workflows: follow the format of existing
+  `core/workflows/definitions/*/WORKFLOW.md` files.
 - MCP servers: follow the patterns in `mcp-servers/`.
 
 ### Testing

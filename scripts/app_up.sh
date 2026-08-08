@@ -57,7 +57,7 @@ VENV_UVICORN="$REPO_ROOT/venv/bin/uvicorn"
 [ -x "$VENV_UVICORN" ] || VENV_UVICORN="$(command -v uvicorn)"
 
 # Rebuild the SPA if the source is newer than the built bundle. The backend
-# serves frontend/build at :6987; without this, a stale build (e.g. from before
+# serves clients/web/build at :6987; without this, a stale build (e.g. from before
 # the last pull) is shown in the window even though the source moved on.
 step frontend start
 REBUILT_FRONTEND=0
@@ -65,17 +65,17 @@ REBUILT_FRONTEND=0
 # missing so a bundle baked with DEV_MODE=true (which mocks a signed-in user and
 # skips the login/bootstrap the desktop app exists to show) is replaced even
 # when it is newer than src and the mtime check alone would pass it.
-AUTH_MARKER="$REPO_ROOT/frontend/build/.vigil-real-auth"
-if [ -d "$REPO_ROOT/frontend" ]; then
-    if [ ! -f "$REPO_ROOT/frontend/build/index.html" ] || \
+AUTH_MARKER="$REPO_ROOT/clients/web/build/.vigil-real-auth"
+if [ -d "$REPO_ROOT/clients/web" ]; then
+    if [ ! -f "$REPO_ROOT/clients/web/build/index.html" ] || \
        [ ! -f "$AUTH_MARKER" ] || \
-       [ -n "$(find "$REPO_ROOT/frontend/src" -type f -newer "$REPO_ROOT/frontend/build/index.html" -print -quit 2>/dev/null)" ]; then
+       [ -n "$(find "$REPO_ROOT/clients/web/src" -type f -newer "$REPO_ROOT/clients/web/build/index.html" -print -quit 2>/dev/null)" ]; then
         echo "SPA build is stale; rebuilding…" >&2
         ensure_npm_on_path || { step frontend fail; exit 1; }
         # Clean first so a prior build's orphaned chunks (e.g. a DEV_MODE=true
         # bundle) can't linger beside the fresh output.
-        rm -rf "$REPO_ROOT/frontend/build"
-        (cd "$REPO_ROOT/frontend" && npm run build) >&2 || { step frontend fail; exit 1; }
+        rm -rf "$REPO_ROOT/clients/web/build"
+        (cd "$REPO_ROOT/clients/web" && npm run build) >&2 || { step frontend fail; exit 1; }
         touch "$AUTH_MARKER"
         REBUILT_FRONTEND=1
     fi
@@ -97,19 +97,19 @@ step backend start
 # The backend caches index.html in memory, so a reused backend would keep
 # serving the old asset hashes after a rebuild (blank window). Restart it if we
 # just rebuilt the SPA.
-if [ "$REBUILT_FRONTEND" = "1" ] && [ -n "$(pgrep -f 'uvicorn backend.main:app')" ]; then
+if [ "$REBUILT_FRONTEND" = "1" ] && [ -n "$(pgrep -f 'uvicorn services.api.main:app')" ]; then
     echo "SPA rebuilt; restarting backend to serve the fresh bundle." >&2
-    pkill -f 'uvicorn backend.main:app' 2>/dev/null || true
+    pkill -f 'uvicorn services.api.main:app' 2>/dev/null || true
     sleep 2
 fi
-if [ -n "$(pgrep -f 'uvicorn backend.main:app')" ]; then
+if [ -n "$(pgrep -f 'uvicorn services.api.main:app')" ]; then
     echo "Backend already running; reusing it." >&2
 else
     mkdir -p "$REPO_ROOT/logs"
     cd "$REPO_ROOT"
     # Fully detach the daemon: stdin from /dev/null and disown so this script
     # doesn't wait4() the backgrounded uvicorn and can return once it's healthy.
-    nohup "$VENV_UVICORN" backend.main:app --host "$BIND_HOST" --port 6987 \
+    nohup "$VENV_UVICORN" services.api.main:app --host "$BIND_HOST" --port 6987 \
         </dev/null > "$REPO_ROOT/logs/backend.log" 2>&1 &
     BACKEND_PID=$!
     echo "$BACKEND_PID" > "$REPO_ROOT/logs/backend.pid"

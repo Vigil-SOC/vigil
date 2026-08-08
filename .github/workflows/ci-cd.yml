@@ -39,23 +39,28 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flake8 black isort mypy
+          pip install flake8 black isort mypy import-linter
 
       - name: Run flake8
-        run: flake8 backend/ services/ daemon/ database/ core/ --max-line-length=120 --exclude=venv,__pycache__
+        run: flake8 services/ core/ --max-line-length=120 --exclude=venv,__pycache__
         continue-on-error: true
       
       - name: Run black
-        run: black --check backend/ services/ daemon/ database/ core/ --exclude=venv
+        run: black --check services/ core/ --exclude=venv
         continue-on-error: true
       
       - name: Run isort
-        run: isort --check-only backend/ services/ daemon/ database/ core/
+        run: isort --check-only services/ core/
         continue-on-error: true
       
       - name: Run mypy
-        run: mypy backend/ services/ --ignore-missing-imports
+        run: mypy services/ core/ --ignore-missing-imports
         continue-on-error: true
+
+      # The layering contracts in .importlinter (epic #481). Deliberately no
+      # continue-on-error: the rest of this job is advisory, this one gates.
+      - name: Run import-linter
+        run: lint-imports
 
   lint-frontend:
     name: Lint Frontend
@@ -69,14 +74,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: clients/web/package-lock.json
       
       - name: Install dependencies
-        working-directory: frontend
+        working-directory: clients/web
         run: npm ci
       
       - name: Run ESLint
-        working-directory: frontend
+        working-directory: clients/web
         run: npm run lint
         continue-on-error: true
 
@@ -90,7 +95,7 @@ jobs:
       - name: Run hadolint
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: docker/Dockerfile.backend
+          dockerfile: infra/docker/Dockerfile.backend
           ignore: DL3008,DL3009
         continue-on-error: true
 
@@ -124,7 +129,12 @@ jobs:
           # This step also carries the #415 ratchets (test_no_ambient_state,
           # test_settings_env_example): no continue-on-error here, unlike the lint
           # job, so a new raw env read or env.example drift fails the pipeline.
-          pytest tests/unit/ -m "not external_service" -v --cov=backend --cov=services --cov=daemon --cov-report=xml --cov-report=term
+          # tests/security/ used to run only in nightly, where its one red
+          # test was mistaken for a real auth bypass; it was the fixture not
+          # forcing DEV_MODE off for routers that read settings live. Fixed,
+          # so all 84 gate here.
+          pytest tests/unit/ tests/security/ -m "not external_service" -v \
+            --cov=services --cov=core --cov-report=xml --cov-report=term
         env:
           TESTING: "true"
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
@@ -150,14 +160,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: clients/web/package-lock.json
       
       - name: Install dependencies
-        working-directory: frontend
+        working-directory: clients/web
         run: npm ci
       
       - name: Run unit tests
-        working-directory: frontend
+        working-directory: clients/web
         run: npm run test:run
 
   # ============================================================================
@@ -214,11 +224,11 @@ jobs:
 
       - name: Initialize schema
         run: |
-          python -c "from database.connection import init_database; init_database()"
+          python -c "from core.storage.connection import init_database; init_database()"
 
       - name: Run integration tests
         run: |
-          pytest tests/integration/ -v --cov=backend --cov-report=xml
+          pytest tests/integration/ -v --cov=services --cov=core --cov-report=xml
         env:
           CLAUDE_API_KEY: ${{ secrets.CLAUDEAPI }}
           ANTHROPIC_API_KEY: ${{ secrets.CLAUDEAPI }}
@@ -282,7 +292,7 @@ jobs:
 
       - name: Initialize schema
         run: |
-          python -c "from database.connection import init_database; init_database()"
+          python -c "from core.storage.connection import init_database; init_database()"
 
       - name: Run DB-backed unit tests
         run: |
@@ -311,7 +321,7 @@ jobs:
         run: pip install bandit[toml]
       
       - name: Run Bandit
-        run: bandit -r backend/ services/ daemon/ -f json -o bandit-report.json || true
+        run: bandit -r backend/ services/ -f json -o bandit-report.json || true
       
       - name: Upload Bandit results
         uses: actions/upload-artifact@v5
@@ -333,7 +343,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       
       - name: Run npm audit
-        working-directory: frontend
+        working-directory: clients/web
         run: npm audit --audit-level=moderate || true
         continue-on-error: true
 
@@ -377,7 +387,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: docker/Dockerfile.backend
+          file: infra/docker/Dockerfile.backend
           push: true
           tags: ${{ steps.meta-backend.outputs.tags }}
           labels: ${{ steps.meta-backend.outputs.labels }}
@@ -397,7 +407,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: docker/Dockerfile.daemon
+          file: infra/docker/Dockerfile.daemon
           push: true
           tags: ${{ steps.meta-daemon.outputs.tags }}
           labels: ${{ steps.meta-daemon.outputs.labels }}
@@ -424,14 +434,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: clients/web/package-lock.json
       
       - name: Install dependencies
-        working-directory: frontend
+        working-directory: clients/web
         run: npm ci
       
       - name: Build frontend
-        working-directory: frontend
+        working-directory: clients/web
         run: npm run build
       
       - name: Upload build artifacts
@@ -439,7 +449,7 @@ jobs:
         uses: actions/upload-artifact@v5
         with:
           name: frontend-build
-          path: frontend/build/
+          path: clients/web/build/
           retention-days: 7
 
   # ============================================================================

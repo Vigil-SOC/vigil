@@ -1,0 +1,760 @@
+# Default values for the Vigil SOC Helm chart.
+# This is a YAML-formatted file.
+# See docs/HELM.md for a full reference of all values.
+
+# -----------------------------------------------------------------------------
+# Global
+# -----------------------------------------------------------------------------
+global:
+  # Container registry where Vigil images live. Set in release.yml.
+  imageRegistry: ghcr.io
+  # Image repo namespace. Images resolve to <registry>/<namespace>-<component>
+  # e.g. ghcr.io/vigil-soc/vigil-backend
+  imageNamespace: vigil-soc/vigil
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+# Override chart name or fullname if the release name collides with something.
+nameOverride: ""
+fullnameOverride: ""
+
+# Common labels applied to every resource.
+commonLabels: {}
+
+# -----------------------------------------------------------------------------
+# Backend API (FastAPI, serves REST API + bundled SPA)
+# -----------------------------------------------------------------------------
+backend:
+  replicaCount: 2
+  image:
+    # Final image ref: {{ global.imageRegistry }}/{{ global.imageNamespace }}-backend:{{ tag }}
+    repository: ""   # empty → auto-derive from global.imageNamespace + "-backend"
+    tag: ""          # empty → fall back to .Chart.AppVersion
+    pullPolicy: ""   # empty → inherit global.imagePullPolicy
+  service:
+    type: ClusterIP
+    port: 6987
+  # Resource requests/limits tuned for a small prod deploy; scale up for real workloads.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  # CPU-based HPA. For queue-depth-based scaling, see follow-up issues.
+  autoscaling:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Extra env merged on top of the shared ConfigMap/Secret. Useful for overrides.
+  extraEnv: []
+  # Backend-specific feature flags written into the ConfigMap.
+  env:
+    BIND_HOST: "0.0.0.0"
+
+# -----------------------------------------------------------------------------
+# SOC Daemon (autonomous orchestrator, singleton)
+# -----------------------------------------------------------------------------
+daemon:
+  enabled: true
+  image:
+    repository: ""   # empty → auto-derive from global.imageNamespace + "-daemon"
+    tag: ""
+    pullPolicy: ""
+  # Ports (explicit; matches env.example defaults)
+  ports:
+    webhook: 8081
+    metrics: 9090   # Prometheus /metrics (OTEL PrometheusReader, only when OTEL enabled)
+    health: 9091    # always-on /health and /status
+  service:
+    type: ClusterIP
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  persistence:
+    # Daemon writes investigation artifacts under ORCHESTRATOR_WORKDIR (data/investigations).
+    # Enabled by default so singleton restarts don't lose in-flight state.
+    enabled: true
+    size: 10Gi
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+    mountPath: /app/data/investigations
+  podAnnotations: {}
+  podLabels: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  extraEnv: []
+
+# -----------------------------------------------------------------------------
+# LLM Worker (ARQ worker, processes Claude requests off Redis queue)
+# -----------------------------------------------------------------------------
+llmWorker:
+  enabled: true
+  replicaCount: 2
+  # Shares the backend image — command is overridden to run services.worker.
+  image:
+    repository: ""   # inherits backend.image.repository when empty
+    tag: ""
+    pullPolicy: ""
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+  autoscaling:
+    # CPU-based HPA (classic). Mutually exclusive with keda.enabled.
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 70
+    # KEDA ScaledObject (issue #116) — scales on actual Redis queue depth.
+    # Requires KEDA installed in the cluster (https://keda.sh).
+    keda:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 20
+      # Seconds of zero queue activity before scaling down. Keep high to avoid
+      # thrash when the queue is bursty.
+      cooldownPeriod: 300
+      # How often KEDA polls Redis for the queue depth.
+      pollingInterval: 15
+      # ARQ default queue name for the Vigil llm-worker (see core/llm/gateway/gateway.py).
+      queueName: "arq:llm"
+      # KEDA scales one replica per listLength items queued.
+      listLength: "5"
+      # Only used when redis.enabled=false AND redis.bitnami.enabled=false.
+      # host:port form without scheme or password.
+      redisAddress: ""
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  extraEnv: []
+
+# -----------------------------------------------------------------------------
+# In-chart Postgres (set postgresql.enabled=false to use an external DB)
+# -----------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  image:
+    repository: pgvector/pgvector
+    tag: "pg16"
+    pullPolicy: IfNotPresent
+  auth:
+    database: deeptempo_soc
+    username: deeptempo
+    # Password sourced from secrets.postgresPassword unless existingSecret is set.
+    existingSecret: ""        # name of a pre-created Secret containing POSTGRES_PASSWORD
+    existingSecretKey: POSTGRES_PASSWORD
+  service:
+    port: 5432
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+  # External Postgres (used when postgresql.enabled=false)
+  external:
+    host: ""
+    port: 5432
+    database: deeptempo_soc
+    username: deeptempo
+    # Either set .existingSecret + .existingSecretKey OR provide password via secrets.postgresPassword.
+    existingSecret: ""
+    existingSecretKey: POSTGRES_PASSWORD
+    # If true, append ?sslmode=require to the DATABASE_URL.
+    sslRequired: false
+
+  # Bitnami postgresql subchart (issue #114). When enabled, the MVP in-chart
+  # StatefulSet above is suppressed and all Bitnami values below are passed
+  # through to the subchart (alias: bitnamiPostgresql in Chart.yaml).
+  #
+  # Prerequisites (ONE-TIME):
+  #   helm dependency update infra/helm/vigil
+  #
+  # See https://artifacthub.io/packages/helm/bitnami/postgresql for the full
+  # value schema — anything you add here flows through unchanged.
+  bitnami:
+    enabled: false
+    # If set, overrides the subchart's default service/secret name
+    # (<release>-postgresql). Rarely needed.
+    fullnameOverride: ""
+    auth:
+      database: deeptempo_soc
+      username: deeptempo
+      # Leave empty to let the subchart generate a password into its Secret.
+      # Set to a pre-created Secret name to reuse externally-managed credentials.
+      existingSecret: ""
+      # Key within the user's existingSecret holding the non-superuser password.
+      secretKeys:
+        userPasswordKey: password
+    primary:
+      service:
+        ports:
+          postgresql: 5432
+      persistence:
+        size: 50Gi
+    # Additional Bitnami values can be set here or via --set / -f overrides.
+
+# -----------------------------------------------------------------------------
+# In-chart Redis (set redis.enabled=false to use an external Redis)
+# -----------------------------------------------------------------------------
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  service:
+    port: 6379
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClassName: ""
+    accessModes:
+      - ReadWriteOnce
+  # Match docker-compose defaults: AOF on, 512MB cap, LRU eviction.
+  args:
+    - --appendonly
+    - "yes"
+    - --maxmemory
+    - 512mb
+    - --maxmemory-policy
+    - allkeys-lru
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 768Mi
+  external:
+    # Full Redis URL (e.g. redis://:password@redis.example.com:6379/0).
+    # If set, this wins over in-chart Redis.
+    url: ""
+    existingSecret: ""
+    existingSecretKey: REDIS_URL
+
+  # Bitnami redis subchart (issue #114). When enabled, suppresses the MVP
+  # in-chart Redis and routes REDIS_URL at the subchart's -master service.
+  #
+  # Prerequisites (ONE-TIME):
+  #   helm dependency update infra/helm/vigil
+  #
+  # See https://artifacthub.io/packages/helm/bitnami/redis
+  bitnami:
+    enabled: false
+    fullnameOverride: ""   # default: <release>-redis, with service <release>-redis-master
+    architecture: standalone   # "replication" for HA
+    auth:
+      enabled: true
+      # Leave empty to let the subchart generate a password.
+      existingSecret: ""
+      existingSecretPasswordKey: redis-password
+    master:
+      persistence:
+        size: 5Gi
+
+# -----------------------------------------------------------------------------
+# Database init Job
+# -----------------------------------------------------------------------------
+# Runs the SQL files under infra/database/init/ in an explicit order to avoid the
+# 003_* filename collision. Uses helm hooks to run on install + upgrade.
+dbInit:
+  enabled: true
+  image:
+    # Uses the same image as Postgres so psql is available.
+    repository: pgvector/pgvector
+    tag: "pg16"
+    pullPolicy: IfNotPresent
+  # Explicit ordering — files added under infra/database/init/ will NOT auto-run.
+  # Update this list when new init SQL lands.
+  sqlFiles:
+    - 01_init_schema.sql
+    - 04_config_tables.sql
+    - 05_case_management_extended.sql
+    - 06_auth_tables.sql
+    - 07_custom_agents.sql
+    - 07_skills.sql
+    - 08_custom_workflows.sql
+    - 09_llm_providers.sql
+    - 10_ai_model_configs.sql
+    - 11_custom_agent_component_category.sql
+    - 12_workflow_runs.sql
+    - 13_approval_actions.sql
+    - 14_threat_indicators.sql
+    - 15_federation.sql
+    - 16_llm_budgets.sql
+    - 17_loglm_setup.sql
+    - 18_agent_decision_ids.sql
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -----------------------------------------------------------------------------
+# Ingress
+# -----------------------------------------------------------------------------
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+    # nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: vigil.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: vigil-tls
+    #   hosts:
+    #     - vigil.example.com
+
+# -----------------------------------------------------------------------------
+# Service account
+# -----------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: false
+
+# -----------------------------------------------------------------------------
+# Pod security
+# -----------------------------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+# -----------------------------------------------------------------------------
+# Secrets (plain values — skipped if existingSecret is set)
+# -----------------------------------------------------------------------------
+# Reference a pre-created secret instead of templating values here.
+# The secret must define keys matching env vars (ANTHROPIC_API_KEY, POSTGRES_PASSWORD, …).
+secrets:
+  existingSecret: ""
+
+  # ExternalSecrets Operator (issue #113) — declares an ExternalSecret that
+  # materializes the K8s Secret from an external store (AWS SM, Vault, etc).
+  # When enabled, the plain secret.yaml template is skipped.
+  externalSecret:
+    enabled: false
+    refreshInterval: 1h
+    # SecretStore or ClusterSecretStore reference
+    secretStoreRef:
+      name: ""
+      kind: ClusterSecretStore
+    # Either .data (explicit per-key mapping) or .dataFrom (pull the whole
+    # remote secret and use every key as-is).
+    # .data example:
+    #   data:
+    #     ANTHROPIC_API_KEY:
+    #       remoteRef:
+    #         key: vigil/prod/anthropic-api-key
+    #     POSTGRES_PASSWORD:
+    #       remoteRef:
+    #         key: vigil/prod/postgres
+    #         property: password
+    data: {}
+    # .dataFrom example:
+    #   dataFrom:
+    #     - extract:
+    #         key: vigil/prod/all-secrets
+    dataFrom: []
+
+  # Required (at least one of these must be set for the backend to do useful work).
+  anthropicApiKey: ""
+
+  # DB. Used by dbInit and DATABASE_URL assembly.
+  postgresPassword: "change-me-before-production"
+
+  # Required when DEV_MODE=false (see env.example). Generate with:
+  #   python -c "import secrets; print(secrets.token_urlsafe(64))"
+  jwtSecretKey: ""
+
+  # Optional data-source integrations.
+  splunkPassword: ""
+  crowdstrikeClientId: ""
+  crowdstrikeClientSecret: ""
+  elasticApiKey: ""
+  elasticPassword: ""
+  timesketchPassword: ""
+  criblPassword: ""
+  darktraceWebhookSecret: ""
+  vstrikeApiKey: ""
+  vstrikeInboundApiKey: ""
+
+  # Optional threat-intel.
+  virustotalApiKey: ""
+  shodanApiKey: ""
+  alienvaultOtxApiKey: ""
+  joeSandboxApiKey: ""
+  capeSandboxApiKey: ""
+
+  # Notifications.
+  slackBotToken: ""
+  pagerdutyRoutingKey: ""
+  teamsWebhookUrl: ""
+
+  # Cloud.
+  awsAccessKeyId: ""
+  awsSecretAccessKey: ""
+  githubToken: ""
+
+  # Email.
+  smtpPassword: ""
+
+  # Kafka SASL (optional).
+  kafkaSaslPassword: ""
+
+  # Multi-provider LLM (issue #88 / post-merge additions)
+  openaiApiKey: ""
+
+# -----------------------------------------------------------------------------
+# Non-secret config (rendered into a ConfigMap)
+# -----------------------------------------------------------------------------
+config:
+  # Development Mode — MUST be false in production.
+  DEV_MODE: "false"
+
+  # Secrets / auth policy
+  SECRETS_BACKEND: "dotenv"
+  ENABLE_KEYRING: "false"
+  AUTH_LOCKOUT_THRESHOLD: "5"
+  AUTH_LOCKOUT_DURATION_MINUTES: "15"
+  AUTH_MIN_PASSWORD_LENGTH: "12"
+  AUTH_PASSWORD_HISTORY_LIMIT: "5"
+  PASSWORD_RESET_TTL_SECONDS: "3600"
+  VIGIL_FRONTEND_URL: ""
+
+  # Email backend
+  VIGIL_EMAIL_BACKEND: "console"
+  SMTP_HOST: ""
+  SMTP_PORT: "587"
+  SMTP_USER: ""
+  SMTP_TLS: "true"
+  SMTP_FROM: "noreply@vigil.local"
+
+  # HTTP security headers + CORS
+  VIGIL_CORS_ORIGINS: ""
+  VIGIL_HSTS_ENABLED: "true"
+  VIGIL_HSTS_MAX_AGE: "31536000"
+  VIGIL_FRAME_OPTIONS_ENABLED: "true"
+  VIGIL_CONTENT_TYPE_OPTIONS_ENABLED: "true"
+  VIGIL_REFERRER_POLICY_ENABLED: "true"
+  VIGIL_CSP_ENABLED: "true"
+  VIGIL_CSP_POLICY: ""
+
+  # CSRF
+  VIGIL_CSRF_ENABLED: "true"
+  VIGIL_CSRF_REPORT_ONLY: "true"
+  VIGIL_CSRF_EXEMPT_PATHS: "/api/webhooks/,/api/ingest/"
+
+  # Auth cookies
+  VIGIL_COOKIE_SECURE: "true"
+  VIGIL_COOKIE_SAMESITE: "strict"
+
+  # MemPalace
+  MEMPALACE_PALACE_PATH: "/app/data/mempalace/palace"
+  MEMPALACE_DAEMON_ENABLED: "false"
+
+  # Integrations — non-secret URLs/usernames
+  SPLUNK_URL: ""
+  SPLUNK_USERNAME: ""
+  CROWDSTRIKE_BASE_URL: "https://api.crowdstrike.com"
+  ELASTIC_HOST: ""
+  ELASTIC_KIBANA_URL: ""
+  ELASTIC_USERNAME: ""
+  ELASTIC_VERIFY_SSL: "true"
+  ELASTIC_INDEX_PATTERN: ".alerts-security.alerts-default"
+  TIMESKETCH_URL: ""
+  TIMESKETCH_USERNAME: ""
+  CRIBL_URL: ""
+  CRIBL_USERNAME: ""
+  CRIBL_WORKER_GROUP: "default"
+  DARKTRACE_ENABLED: "false"
+  DARKTRACE_URL: ""
+  DARKTRACE_MAX_BODY_KB: "1024"
+  VSTRIKE_BASE_URL: ""
+  VSTRIKE_VERIFY_SSL: "true"
+
+  # Sandbox
+  JOE_SANDBOX_ENABLED: "false"
+  JOE_SANDBOX_URL: "https://jbxcloud.joesecurity.org/api"
+  CAPE_SANDBOX_ENABLED: "false"
+  CAPE_SANDBOX_URL: ""
+  HYBRID_ANALYSIS_ENABLED: "false"
+  ANYRUN_ENABLED: "false"
+  SANDBOX_AUTO_SUBMIT: "false"
+  SANDBOX_MAX_FILE_SIZE_MB: "100"
+  SANDBOX_ALLOWED_FILE_TYPES: "exe,dll,doc,docx,xls,xlsx,pdf,js,vbs,ps1,bat,msi"
+  SANDBOX_ANALYSIS_TIMEOUT: "300"
+  SANDBOX_POLL_INTERVAL: "60"
+
+  # Notifications non-secret
+  SLACK_DEFAULT_CHANNEL: "#soc-alerts"
+
+  # AWS region (non-secret)
+  AWS_REGION: "us-east-1"
+
+  # Daemon behaviour
+  DAEMON_SPLUNK_POLL_INTERVAL: "300"
+  DAEMON_CROWDSTRIKE_POLL_INTERVAL: "60"
+  DAEMON_WEBHOOK_ENABLED: "true"
+  DAEMON_WEBHOOK_PORT: "8081"
+  DAEMON_AUTO_TRIAGE: "true"
+  DAEMON_AUTO_ENRICH: "true"
+  DAEMON_BATCH_SIZE: "10"
+  DAEMON_AUTO_RESPONSE: "true"
+  DAEMON_CONFIDENCE_THRESHOLD: "0.90"
+  DAEMON_FORCE_APPROVAL: "false"
+  DAEMON_DRY_RUN: "false"
+  DAEMON_ESCALATION_ENABLED: "true"
+  DAEMON_ESCALATE_SEVERITIES: "critical,high"
+  DAEMON_SLACK_ENABLED: "true"
+  DAEMON_SLACK_CHANNEL: "#soc-alerts"
+  DAEMON_PAGERDUTY_ENABLED: "false"
+  DAEMON_THREAT_HUNT_ENABLED: "true"
+  DAEMON_THREAT_HUNT_INTERVAL: "86400"
+  DAEMON_CLEANUP_RETENTION_DAYS: "90"
+  DAEMON_METRICS_ENABLED: "true"
+  DAEMON_METRICS_PORT: "9090"
+  DAEMON_HEALTH_PORT: "9091"
+  DAEMON_LOG_LEVEL: "INFO"
+
+  # Autonomous orchestrator
+  ORCHESTRATOR_ENABLED: "false"
+  ORCHESTRATOR_LOOP_INTERVAL: "60"
+  ORCHESTRATOR_MAX_CONCURRENT_AGENTS: "3"
+  ORCHESTRATOR_MAX_ITERATIONS: "50"
+  ORCHESTRATOR_MAX_COST: "5.0"
+  ORCHESTRATOR_MAX_RUNTIME: "3600"
+  ORCHESTRATOR_MAX_HOURLY_COST: "20.0"
+  ORCHESTRATOR_MAX_DAILY_COST: "100.0"
+  ORCHESTRATOR_STALE_THRESHOLD: "300"
+  ORCHESTRATOR_WORKDIR: "/app/data/investigations"
+  ORCHESTRATOR_AUTO_ASSIGN: "true"
+  ORCHESTRATOR_AUTO_SEVERITIES: "critical,high"
+  ORCHESTRATOR_DRY_RUN: "false"
+  ORCHESTRATOR_DEDUP_WINDOW: "30"
+  ORCHESTRATOR_AGENT_LOOP_DELAY: "2"
+  ORCHESTRATOR_CONTEXT_MAX_CHARS: "10000"
+  ORCHESTRATOR_PLAN_MODEL: "claude-sonnet-4-5-20250929"
+  ORCHESTRATOR_REVIEW_MODEL: "claude-sonnet-4-5-20250929"
+
+  # OTEL — disabled by default; turn on when an OTEL collector is reachable.
+  VIGIL_OTEL_ENABLED: "false"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
+  OTEL_TRACES_SAMPLER: "parentbased_always_on"
+  VIGIL_OTEL_LOG_LLM_CONTENT: "false"
+
+  # Kafka — disabled by default
+  KAFKA_ENABLED: "false"
+  KAFKA_BOOTSTRAP_SERVERS: ""
+  KAFKA_CONSUMER_GROUP: "vigil-soc"
+  KAFKA_TOPICS: ""
+  KAFKA_AUTO_OFFSET_RESET: "latest"
+  KAFKA_SECURITY_PROTOCOL: "PLAINTEXT"
+  KAFKA_SASL_MECHANISM: ""
+  KAFKA_SASL_USERNAME: ""
+  KAFKA_SSL_CA_LOCATION: ""
+  KAFKA_MAX_POLL_RECORDS: "500"
+  KAFKA_SESSION_TIMEOUT_MS: "30000"
+
+  # Python
+  PYTHONUNBUFFERED: "1"
+
+  # Multi-provider LLM (non-secret defaults; per-provider config is stored
+  # per-row in llm_provider_configs after first boot).
+  BIFROST_ENABLED: "false"
+  BIFROST_URL: "http://bifrost:8080"
+  OLLAMA_URL: "http://ollama:11434"
+  OPENAI_ENABLED: "false"
+  OPENAI_BASE_URL: "https://api.openai.com/v1"
+  OPENAI_ORGANIZATION: ""
+  DEFAULT_LLM_PROVIDER: "anthropic"
+
+# Additional ad-hoc env entries merged into every pod. Useful for site-specific
+# settings that don't warrant a top-level config key.
+extraConfig: {}
+
+# -----------------------------------------------------------------------------
+# Observability (issue #112, #115)
+# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# OTEL Collector subchart (issue #115)
+# -----------------------------------------------------------------------------
+# Optional, provides an in-cluster OTLP endpoint so backend + daemon don't
+# need external observability infra. Values here are passed through to the
+# upstream open-telemetry/opentelemetry-collector chart (aliased as otelCollector).
+#
+# Prerequisites (ONE-TIME):
+#   helm repo add open-telemetry https://open-telemetry.github.io/opentelemetry-helm-charts
+#   helm dependency update infra/helm/vigil
+#
+# When enabled, the chart auto-rewrites OTEL_EXPORTER_OTLP_ENDPOINT in the
+# app ConfigMap to the in-cluster Collector service. You still need to flip
+# config.VIGIL_OTEL_ENABLED=true to actually emit telemetry.
+otelCollector:
+  enabled: false
+  mode: deployment
+  replicaCount: 1
+  # Upstream chart requires image.repository to be set explicitly.
+  image:
+    repository: otel/opentelemetry-collector-contrib
+  # Default pipeline dumps everything to stdout for debugging — swap in
+  # Jaeger / Prometheus / Datadog exporters once the collector is producing data.
+  config:
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:4317
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      batch: {}
+    exporters:
+      debug:
+        verbosity: basic
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+        metrics:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+        logs:
+          receivers: [otlp]
+          processors: [batch]
+          exporters: [debug]
+
+observability:
+  # Prometheus Operator ServiceMonitor — requires the monitoring.coreos.com
+  # CRD to be installed on the cluster (Prometheus Operator / kube-prometheus-stack).
+  # Daemon must also have config.VIGIL_OTEL_ENABLED=true to actually serve
+  # metrics; otherwise scrapes will fail with connection refused.
+  serviceMonitor:
+    enabled: false
+    # Namespace to deploy the ServiceMonitor into. Empty = Release namespace.
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    # Extra labels applied to the ServiceMonitor — set these to match your
+    # Prometheus instance's serviceMonitorSelector. Common pattern for
+    # kube-prometheus-stack: release: kube-prometheus-stack
+    labels: {}
+    relabelings: []
+    metricRelabelings: []
+
+# -----------------------------------------------------------------------------
+# NetworkPolicies (issue #111)
+# -----------------------------------------------------------------------------
+# Off by default — flipping to true on an existing cluster may break traffic
+# that was previously implicitly allowed. Plan the rollout.
+networkPolicies:
+  enabled: false
+  # Namespace selector used to allow ingress traffic from the ingress
+  # controller's namespace. Defaults match a common nginx-ingress install;
+  # adjust if your controller runs elsewhere or lives in the same namespace.
+  ingressControllerNamespaceSelector:
+    kubernetes.io/metadata.name: ingress-nginx
+  daemon:
+    # CIDRs allowed to POST to the daemon's webhook port. Empty list means
+    # cluster-internal only. Add your SIEM/EDR outbound IPs here to let them
+    # push findings.
+    webhookAllowFrom: []
+
+# -----------------------------------------------------------------------------
+# Development utilities (issue #117) — off by default, not for production
+# -----------------------------------------------------------------------------
+splunk:
+  enabled: false
+  image:
+    repository: splunk/splunk
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  auth:
+    # Pre-created Secret with key SPLUNK_PASSWORD — overrides .password
+    existingSecret: ""
+    password: "changeme123"
+  # Optional HEC token (empty = Splunk generates one)
+  hecToken: ""
+  persistence:
+    size: 50Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+
+pgadmin:
+  enabled: false
+  image:
+    repository: dpage/pgadmin4
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  auth:
+    email: "admin@vigil.local"
+    existingSecret: ""
+    password: "admin"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# -----------------------------------------------------------------------------
+# Tests (helm test)
+# -----------------------------------------------------------------------------
+tests:
+  image:
+    repository: curlimages/curl
+    tag: "8.10.1"

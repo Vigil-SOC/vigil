@@ -4,7 +4,7 @@ Initialize Vigil SOC database schema.
 
 Calls ``init_database(create_tables=True)`` which runs
 ``Base.metadata.create_all()`` against the configured PostgreSQL database.
-All ORM models are imported inside ``database/connection.py`` so every
+All ORM models are imported inside ``core/storage/connection.py`` so every
 ``__tablename__`` is registered with ``Base.metadata`` before creation.
 
 This script is idempotent (``CREATE TABLE IF NOT EXISTS`` semantics) and
@@ -22,7 +22,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from database.connection import init_database, get_db_manager  # noqa: E402
+from core.storage.connection import init_database, get_db_manager  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,

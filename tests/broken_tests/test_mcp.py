@@ -11,13 +11,13 @@ import json
 pytestmark = pytest.mark.skip(reason="MCPService methods don't exist - needs rewrite for current MCP integration")
 
 # MCPService doesn't exist - MCP integration is handled differently
-# from services.mcp_service import MCPService
+# from core.integrations.mcp.service import MCPService
 
 
 class TestMCPToolDiscovery:
     """Test MCP tool discovery and listing."""
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_list_available_tools(self, mock_client):
         """Test listing available MCP tools."""
         mock_client.return_value.list_tools.return_value = [
@@ -32,7 +32,7 @@ class TestMCPToolDiscovery:
         assert len(tools) == 3
         assert any(t["name"] == "virustotal" for t in tools)
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_get_tool_info(self, mock_client):
         """Test getting detailed tool information."""
         mock_client.return_value.get_tool.return_value = {
@@ -73,7 +73,7 @@ class TestMCPToolDiscovery:
 class TestToolExecution:
     """Test MCP tool execution."""
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_execute_tool(self, mock_client):
         """Test executing an MCP tool."""
         mock_client.return_value.call_tool.return_value = {
@@ -97,7 +97,7 @@ class TestToolExecution:
         assert result["result"]["positives"] == 5
         mock_client.return_value.call_tool.assert_called_once()
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_execute_tool_with_timeout(self, mock_client):
         """Test tool execution with timeout."""
         mock_client.return_value.call_tool.return_value = {"result": "success"}
@@ -112,7 +112,7 @@ class TestToolExecution:
         
         assert result["result"] == "success"
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_execute_tool_error(self, mock_client):
         """Test handling tool execution errors."""
         mock_client.return_value.call_tool.side_effect = Exception("API Error")
@@ -215,7 +215,7 @@ class TestParameterValidation:
 class TestToolChaining:
     """Test chaining multiple MCP tools."""
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_chain_tools(self, mock_client):
         """Test chaining tool executions."""
         # First tool returns IOCs
@@ -239,7 +239,7 @@ class TestToolChaining:
         
         assert len(enriched) == 2
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_conditional_tool_execution(self, mock_client):
         """Test conditional tool execution based on results."""
         mock_client.return_value.call_tool.side_effect = [
@@ -262,7 +262,7 @@ class TestAsyncToolExecution:
     """Test asynchronous tool execution."""
     
     @pytest.mark.asyncio
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     async def test_execute_tool_async(self, mock_client):
         """Test async tool execution."""
         mock_client.return_value.call_tool_async.return_value = {
@@ -279,7 +279,7 @@ class TestAsyncToolExecution:
         assert result["result"] == "success"
     
     @pytest.mark.asyncio
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     async def test_parallel_tool_execution(self, mock_client):
         """Test executing multiple tools in parallel."""
         mock_client.return_value.call_tool_async.side_effect = [
@@ -332,7 +332,7 @@ class TestToolConfiguration:
             "api_key": "test-key"
         }
         
-        with patch('services.mcp_service.MCPClient') as mock_client:
+        with patch('core.integrations.mcp.service.MCPClient') as mock_client:
             mock_client.return_value.connect.return_value = True
             
             connected = service.connect_to_server("virustotal", server_config)
@@ -384,7 +384,7 @@ class TestToolResults:
 class TestErrorHandling:
     """Test error handling in MCP tool execution."""
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_handle_tool_not_found(self, mock_client):
         """Test handling tool not found error."""
         mock_client.return_value.call_tool.side_effect = Exception("Tool not found")
@@ -396,7 +396,7 @@ class TestErrorHandling:
         
         assert "not found" in str(exc_info.value).lower()
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_handle_api_rate_limit(self, mock_client):
         """Test handling API rate limit errors."""
         mock_client.return_value.call_tool.side_effect = Exception("Rate limit exceeded")
@@ -414,7 +414,7 @@ class TestErrorHandling:
         assert result["status"] == "error"
         assert "rate limit" in result["error"].lower()
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_handle_timeout(self, mock_client):
         """Test handling tool execution timeout."""
         import asyncio
@@ -470,7 +470,7 @@ class TestToolCaching:
             # Should be expired
             assert cached is None
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_use_cache_when_available(self, mock_client):
         """Test using cache instead of calling tool."""
         service = MCPService(enable_cache=True)
@@ -492,8 +492,8 @@ class TestToolCaching:
 class TestToolIntegrationWithAI:
     """Test integration of MCP tools with AI analysis."""
     
-    @patch('services.mcp_service.ClaudeService')
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.ClaudeService')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_ai_tool_selection(self, mock_mcp, mock_claude):
         """Test AI selecting appropriate tools for analysis."""
         mock_claude.return_value.select_tools.return_value = [
@@ -514,8 +514,8 @@ class TestToolIntegrationWithAI:
         assert "virustotal" in selected_tools
         assert "shodan" in selected_tools
     
-    @patch('services.mcp_service.ClaudeService')
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.ClaudeService')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_ai_interprets_tool_results(self, mock_mcp, mock_claude):
         """Test AI interpreting tool results."""
         tool_results = {
@@ -542,7 +542,7 @@ class TestToolIntegrationWithAI:
 class TestMCPEndToEnd:
     """End-to-end MCP integration tests."""
     
-    @patch('services.mcp_service.MCPClient')
+    @patch('core.integrations.mcp.service.MCPClient')
     def test_full_enrichment_workflow(self, mock_client):
         """Test complete enrichment workflow using MCP tools."""
         # Setup mock responses

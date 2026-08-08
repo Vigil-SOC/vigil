@@ -30,9 +30,9 @@ install_python_deps
 echo "Python dependencies installed."
 
 # Frontend
-if command -v npm &>/dev/null && [ -d "$REPO_ROOT/frontend" ]; then
-    if [ ! -d "$REPO_ROOT/frontend/node_modules" ]; then
-        (cd "$REPO_ROOT/frontend" && npm install)
+if command -v npm &>/dev/null && [ -d "$REPO_ROOT/clients/web" ]; then
+    if [ ! -d "$REPO_ROOT/clients/web/node_modules" ]; then
+        (cd "$REPO_ROOT/clients/web" && npm install)
     fi
     echo "Frontend dependencies installed."
 fi

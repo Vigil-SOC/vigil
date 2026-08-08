@@ -37,10 +37,10 @@ install_python_deps >&2
 step deps ok
 
 step frontend-deps start
-if ensure_npm_on_path && [ -d "$REPO_ROOT/frontend" ]; then
-    if [ ! -d "$REPO_ROOT/frontend/node_modules" ]; then
-        (cd "$REPO_ROOT/frontend" && npm ci --prefer-offline) >&2 \
-            || (cd "$REPO_ROOT/frontend" && npm install) >&2
+if ensure_npm_on_path && [ -d "$REPO_ROOT/clients/web" ]; then
+    if [ ! -d "$REPO_ROOT/clients/web/node_modules" ]; then
+        (cd "$REPO_ROOT/clients/web" && npm ci --prefer-offline) >&2 \
+            || (cd "$REPO_ROOT/clients/web" && npm install) >&2
     fi
     step frontend-deps ok
 else

@@ -1,0 +1,61 @@
+{{- if and .Values.llmWorker.enabled .Values.llmWorker.autoscaling.keda.enabled }}
+{{- /*
+KEDA ScaledObject for llm-worker. Scales the Deployment based on the
+depth of the ARQ Redis list (queue_name "arq:llm", see core/llm/gateway/gateway.py:27).
+
+Mutually exclusive with the CPU HPA: when keda.enabled=true, the CPU HPA
+template is suppressed — KEDA manages its own HPA under the hood.
+
+Prerequisite: KEDA installed in the cluster
+  (https://keda.sh/docs/latest/deploy/).
+*/ -}}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "vigil.llmWorker.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "llm-worker") | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "vigil.llmWorker.fullname" . }}
+  minReplicaCount: {{ .Values.llmWorker.autoscaling.keda.minReplicas | default 2 }}
+  maxReplicaCount: {{ .Values.llmWorker.autoscaling.keda.maxReplicas | default 20 }}
+  cooldownPeriod: {{ .Values.llmWorker.autoscaling.keda.cooldownPeriod | default 300 }}
+  pollingInterval: {{ .Values.llmWorker.autoscaling.keda.pollingInterval | default 15 }}
+  triggers:
+    - type: redis
+      metadata:
+        {{- if .Values.redis.bitnami.enabled }}
+        address: "{{ .Values.redis.bitnami.fullnameOverride | default (printf "%s-redis-master" .Release.Name) }}:6379"
+        {{- else if .Values.redis.enabled }}
+        address: "{{ include "vigil.redis.fullname" . }}:{{ .Values.redis.service.port }}"
+        {{- else }}
+        # External Redis — extract host:port from redis.external.url or set
+        # llmWorker.autoscaling.keda.redisAddress explicitly.
+        address: {{ .Values.llmWorker.autoscaling.keda.redisAddress | quote }}
+        {{- end }}
+        listName: {{ .Values.llmWorker.autoscaling.keda.queueName | default "arq:llm" | quote }}
+        listLength: {{ .Values.llmWorker.autoscaling.keda.listLength | default "5" | quote }}
+      {{- if and .Values.redis.bitnami.enabled .Values.redis.bitnami.auth.enabled }}
+      authenticationRef:
+        name: {{ include "vigil.llmWorker.fullname" . }}-keda-auth
+      {{- end }}
+{{- if and .Values.redis.bitnami.enabled .Values.redis.bitnami.auth.enabled }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "vigil.llmWorker.fullname" . }}-keda-auth
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "vigil.componentLabels" (dict "context" . "component" "llm-worker") | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: password
+      name: {{ include "vigil.redis.bitnami.passwordSecret" . }}
+      key: {{ include "vigil.redis.bitnami.passwordSecretKey" . }}
+{{- end }}
+{{- end }}

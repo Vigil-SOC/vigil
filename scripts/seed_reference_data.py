@@ -2,7 +2,7 @@
 """Seed reference data (roles, SLA policies, case templates, …) after the
 schema exists.
 
-``database/init/*.sql`` is mounted at the Postgres initdb step, which runs
+``infra/database/init/*.sql`` is mounted at the Postgres initdb step, which runs
 *before* the backend's ``create_all`` builds the tables the data-only files
 target — so initdb aborts partway (ON_ERROR_STOP) and the seed rows never land.
 Re-applying the same files here, after ``init_schema.py``, gets the roles the
@@ -25,7 +25,7 @@ project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
 from sqlalchemy import text  # noqa: E402
-from database.connection import init_database, get_db_manager  # noqa: E402
+from core.storage.connection import init_database, get_db_manager  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 logger = logging.getLogger("seed_reference_data")

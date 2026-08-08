@@ -22,7 +22,7 @@ import pytest
 from fastapi import HTTPException
 
 ROOT = Path(__file__).resolve().parents[2]
-for _p in (ROOT, ROOT / "backend"):
+for _p in (ROOT,):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
@@ -48,7 +48,7 @@ def _mock_ui_service(**overrides):
 
 
 def test_iframe_token_returns_token_and_url():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_service(base_url="https://vstrike.net", ui_login_token="tok-abc")
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -60,7 +60,7 @@ def test_iframe_token_returns_token_and_url():
 
 
 def test_iframe_token_503_when_ui_credentials_missing():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_service(has_ui_credentials=False)
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -75,7 +75,7 @@ def test_iframe_token_503_when_ui_credentials_missing():
 
 
 def test_iframe_token_503_when_service_not_configured():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     with patch.object(vstrike_module, "get_vstrike_service", return_value=None):
         with pytest.raises(HTTPException) as exc_info:
@@ -85,7 +85,7 @@ def test_iframe_token_503_when_service_not_configured():
 
 
 def test_iframe_token_502_when_upstream_fails():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_service()
     svc.get_ui_login_token.side_effect = RuntimeError("upstream blew up")
@@ -103,7 +103,7 @@ def test_iframe_token_502_when_upstream_fails():
 
 
 def test_list_networks_returns_payload():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     networks = [
         {"id": "n-1", "name": "Prod"},
@@ -117,7 +117,7 @@ def test_list_networks_returns_payload():
 
 
 def test_list_networks_503_without_ui_credentials():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_service(has_ui_credentials=False)
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -133,8 +133,8 @@ def test_list_networks_503_without_ui_credentials():
 
 
 def test_load_network_calls_service_with_network_id():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeLoadNetworkRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeLoadNetworkRequest
 
     svc = _mock_ui_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -149,8 +149,8 @@ def test_load_network_calls_service_with_network_id():
 
 
 def test_load_network_502_when_upstream_fails():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeLoadNetworkRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeLoadNetworkRequest
 
     svc = _mock_ui_service()
     svc.load_network_in_ui.side_effect = RuntimeError("connection refused")
@@ -172,7 +172,7 @@ def test_load_network_502_when_upstream_fails():
 
 
 def _make_killchain_request(**overrides):
-    from backend.api.vstrike import (
+    from services.api.routers.vstrike import (
         VStrikeKillchainReplayRequest,
         VStrikeKillchainStep,
     )
@@ -201,7 +201,7 @@ def _make_killchain_request(**overrides):
 
 
 def test_killchain_replay_passes_steps_to_service():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_service()
     svc.killchain_replay_in_ui.return_value = {"ok": True, "queued": 2}
@@ -223,8 +223,8 @@ def test_killchain_replay_passes_steps_to_service():
 
 
 def test_killchain_replay_501_when_tool_not_implemented():
-    from backend.api import vstrike as vstrike_module
-    from services.vstrike_service import VStrikeToolNotImplemented
+    from services.api.routers import vstrike as vstrike_module
+    from core.integrations.vstrike.client import VStrikeToolNotImplemented
 
     svc = _mock_ui_service()
     svc.killchain_replay_in_ui.side_effect = VStrikeToolNotImplemented(
@@ -239,7 +239,7 @@ def test_killchain_replay_501_when_tool_not_implemented():
 
 
 def test_killchain_replay_502_on_other_runtime_errors():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_service()
     svc.killchain_replay_in_ui.side_effect = RuntimeError("transport failed")
@@ -252,7 +252,7 @@ def test_killchain_replay_502_on_other_runtime_errors():
 
 
 def test_killchain_replay_503_without_ui_credentials():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_service(has_ui_credentials=False)
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -291,8 +291,8 @@ def _mock_data_service(**overrides):
 
 
 def test_node_search_returns_results():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeNodeSearchRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeNodeSearchRequest
 
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -308,8 +308,8 @@ def test_node_search_returns_results():
 
 
 def test_node_search_503_without_ui_credentials():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeNodeSearchRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeNodeSearchRequest
 
     svc = _mock_data_service(has_ui_credentials=False)
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -320,8 +320,8 @@ def test_node_search_503_without_ui_credentials():
 
 
 def test_node_drift_returns_drift():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeNodeDriftRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeNodeDriftRequest
 
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -337,7 +337,7 @@ def test_node_drift_returns_drift():
 
 
 def test_list_storylines_returns_storylines():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -348,8 +348,8 @@ def test_list_storylines_returns_storylines():
 
 
 def test_storyline_events_returns_events():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeStorylineEventsRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeStorylineEventsRequest
 
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -365,7 +365,7 @@ def test_storyline_events_returns_events():
 
 
 def test_list_legend_runs_returns_runs():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -376,8 +376,8 @@ def test_list_legend_runs_returns_runs():
 
 
 def test_legend_run_results_returns_results():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeLegendRunResultsRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeLegendRunResultsRequest
 
     svc = _mock_data_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -413,8 +413,8 @@ def _mock_ui_control_service(**overrides):
 
 
 def test_ui_camera_node_calls_service():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeCameraNodeRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeCameraNodeRequest
 
     svc = _mock_ui_control_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -429,8 +429,8 @@ def test_ui_camera_node_calls_service():
 
 
 def test_ui_camera_position_calls_service():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeCameraPositionRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeCameraPositionRequest
 
     svc = _mock_ui_control_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -453,8 +453,8 @@ def test_ui_camera_position_calls_service():
 
 
 def test_ui_storyline_apply_calls_service():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeStorylineApplyRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeStorylineApplyRequest
 
     svc = _mock_ui_control_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -469,8 +469,8 @@ def test_ui_storyline_apply_calls_service():
 
 
 def test_ui_storyline_mode_calls_service():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeStorylineModeRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeStorylineModeRequest
 
     svc = _mock_ui_control_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -485,7 +485,7 @@ def test_ui_storyline_mode_calls_service():
 
 
 def test_ui_storyline_forward_calls_service():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_control_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -496,7 +496,7 @@ def test_ui_storyline_forward_calls_service():
 
 
 def test_ui_storyline_backward_calls_service():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_control_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -507,9 +507,9 @@ def test_ui_storyline_backward_calls_service():
 
 
 def test_ui_camera_node_501_when_tool_not_implemented():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeCameraNodeRequest
-    from services.vstrike_service import VStrikeToolNotImplemented
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeCameraNodeRequest
+    from core.integrations.vstrike.client import VStrikeToolNotImplemented
 
     svc = _mock_ui_control_service()
     svc.ui_camera_node.side_effect = VStrikeToolNotImplemented(
@@ -525,7 +525,7 @@ def test_ui_camera_node_501_when_tool_not_implemented():
 
 
 def test_ui_storyline_forward_502_on_runtime_error():
-    from backend.api import vstrike as vstrike_module
+    from services.api.routers import vstrike as vstrike_module
 
     svc = _mock_ui_control_service()
     svc.ui_storyline_forward.side_effect = RuntimeError("websocket closed")
@@ -561,8 +561,8 @@ def _mock_new_tools_service(**overrides):
 
 
 def test_network_graph_returns_graph():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeNetworkGraphRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeNetworkGraphRequest
 
     svc = _mock_new_tools_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -576,8 +576,8 @@ def test_network_graph_returns_graph():
 
 
 def test_network_graph_502_when_upstream_empty():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeNetworkGraphRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeNetworkGraphRequest
 
     svc = _mock_new_tools_service()
     svc.network_graph_get.return_value = None
@@ -593,8 +593,8 @@ def test_network_graph_502_when_upstream_empty():
 
 def test_network_graph_forwards_passthrough_fields():
     """`extra="allow"` on the request model lets unknown keys ride along."""
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeNetworkGraphRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeNetworkGraphRequest
 
     svc = _mock_new_tools_service()
     req = VStrikeNetworkGraphRequest.model_validate(
@@ -610,8 +610,8 @@ def test_network_graph_forwards_passthrough_fields():
 
 
 def test_network_graph_503_without_ui_credentials():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeNetworkGraphRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeNetworkGraphRequest
 
     svc = _mock_new_tools_service(has_ui_credentials=False)
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -625,8 +625,8 @@ def test_network_graph_503_without_ui_credentials():
 
 
 def test_ui_legend_apply_calls_service():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeLegendApplyRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeLegendApplyRequest
 
     svc = _mock_new_tools_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -641,9 +641,9 @@ def test_ui_legend_apply_calls_service():
 
 
 def test_ui_legend_apply_501_when_tool_not_implemented():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeLegendApplyRequest
-    from services.vstrike_service import VStrikeToolNotImplemented
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeLegendApplyRequest
+    from core.integrations.vstrike.client import VStrikeToolNotImplemented
 
     svc = _mock_new_tools_service()
     svc.ui_legend_apply.side_effect = VStrikeToolNotImplemented(
@@ -660,8 +660,8 @@ def test_ui_legend_apply_501_when_tool_not_implemented():
 
 
 def test_ui_legend_apply_502_on_runtime_error():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeLegendApplyRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeLegendApplyRequest
 
     svc = _mock_new_tools_service()
     svc.ui_legend_apply.side_effect = RuntimeError("upstream boom")
@@ -676,8 +676,8 @@ def test_ui_legend_apply_502_on_runtime_error():
 
 
 def test_ui_rightpanel_focus_calls_service_with_no_args():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeRightpanelFocusRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeRightpanelFocusRequest
 
     svc = _mock_new_tools_service()
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):
@@ -691,8 +691,8 @@ def test_ui_rightpanel_focus_calls_service_with_no_args():
 
 def test_ui_rightpanel_focus_forwards_passthrough_fields():
     """Unknown body fields ride through for forward compatibility."""
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeRightpanelFocusRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeRightpanelFocusRequest
 
     svc = _mock_new_tools_service()
     req = VStrikeRightpanelFocusRequest.model_validate({"future_field": "x"})
@@ -703,8 +703,8 @@ def test_ui_rightpanel_focus_forwards_passthrough_fields():
 
 
 def test_ui_rightpanel_focus_503_without_ui_credentials():
-    from backend.api import vstrike as vstrike_module
-    from backend.api.vstrike import VStrikeRightpanelFocusRequest
+    from services.api.routers import vstrike as vstrike_module
+    from services.api.routers.vstrike import VStrikeRightpanelFocusRequest
 
     svc = _mock_new_tools_service(has_ui_credentials=False)
     with patch.object(vstrike_module, "get_vstrike_service", return_value=svc):

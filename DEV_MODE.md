@@ -126,7 +126,7 @@ echo "DEV_MODE=true" >> .env
 docker-compose restart soc-api
 
 # Restart frontend (if running)
-cd frontend
+cd clients/web
 npm run dev
 ```
 
@@ -249,7 +249,7 @@ echo "DEV_MODE=true" >> .env
 ./start.sh
 # OR
 docker-compose restart soc-api
-cd frontend && npm run dev
+cd clients/web && npm run dev
 ```
 
 ### Problem: API Returns 401 Unauthorized
@@ -284,14 +284,14 @@ This means DEV_MODE is not being read by the frontend.
 
 **If not showing:**
 ```bash
-# Make sure DEV_MODE=true is in root .env (not frontend/.env.development)
+# Make sure DEV_MODE=true is in root .env (not clients/web/.env.development)
 cat .env | grep DEV_MODE
 
 # If missing, add it
 echo "DEV_MODE=true" >> .env
 
 # Restart frontend dev server (it will read from root .env via Vite)
-cd frontend
+cd clients/web
 npm run dev
 ```
 
@@ -311,7 +311,7 @@ DEV_MODE=false
 # OR
 docker-compose restart soc-api
 
-cd frontend
+cd clients/web
 npm run dev
 ```
 
@@ -412,7 +412,7 @@ Use it:
 echo "DEV_MODE=true" >> .env
 
 # 2. Start frontend
-cd frontend
+cd clients/web
 npm run dev
 
 # 3. Develop UI
@@ -435,7 +435,7 @@ npm run dev
 echo "DEV_MODE=true" >> .env
 
 # 2. Start API
-uvicorn backend.main:app --reload
+uvicorn services.api.main:app --reload
 
 # 3. Test endpoints with curl (no auth needed)
 curl http://localhost:6987/api/cases
@@ -443,7 +443,7 @@ curl http://localhost:6987/api/cases
 
 # 4. When done, disable for testing
 sed -i 's/DEV_MODE=true/DEV_MODE=false/' .env
-uvicorn backend.main:app --reload
+uvicorn services.api.main:app --reload
 
 # 5. Test with real auth
 curl -H "Authorization: Bearer $TOKEN" \
@@ -460,7 +460,7 @@ echo "DEV_MODE=true" >> .env
 ./start.sh
 # OR
 docker-compose up -d
-cd frontend && npm run dev
+cd clients/web && npm run dev
 
 # 3. Develop freely without auth barriers
 # - Backend auth bypassed

@@ -2,7 +2,7 @@
 # Reset the first-access setup state so the onboarding wizard (/setup) starts fresh.
 #
 # Each onboarding step derives "ready" live from backend state (see
-# frontend/src/setup/setupSteps.ts) — there is no persisted "done" flag — so
+# clients/web/src/setup/setupSteps.ts) — there is no persisted "done" flag — so
 # clearing the underlying state is all it takes to redo the wizard.
 #
 # Usage:
@@ -92,7 +92,7 @@ except Exception:
 try:
     from sqlalchemy import text
 
-    from database.connection import get_db_manager
+    from core.storage.connection import get_db_manager
 
     m = get_db_manager()
     if m._engine is None:
@@ -177,7 +177,7 @@ echo
 
 # --- reset actions --------------------------------------------------------
 # Clear assignments BEFORE deleting providers: ai_model_configs.provider_id is a
-# FK to llm_provider_configs with ON DELETE RESTRICT (database/init/10_ai_model_configs.sql),
+# FK to llm_provider_configs with ON DELETE RESTRICT (infra/database/init/10_ai_model_configs.sql),
 # so deleting a provider an assignment still points at 500s. Order matters here.
 if [ "$do_assignments" = true ]; then
   comps=$(get /ai/config | python3 -c "import sys,json;[print(k) for k in json.load(sys.stdin).get('assignments',{})]")
@@ -194,7 +194,7 @@ if [ "$do_providers" = true ]; then
   # Postgres, then re-issue the delete (which now passes the guard and still runs
   # the FK cascade + Bifrost key reconcile). If the DB can't be reached we fall
   # back to deactivating it: the wizard gate is `is_active && is_default`
-  # (frontend/src/setup/setupSteps.ts), so an inactive provider re-fires it too.
+  # (clients/web/src/setup/setupSteps.ts), so an inactive provider re-fires it too.
   ids=$(get /llm/providers/ | python3 -c "import sys,json;rows=json.load(sys.stdin);[print(p['provider_id']) for p in sorted(rows,key=lambda p:bool(p.get('is_default')))]")
   if [ -z "$ids" ]; then echo "  providers: already empty"; else
     while read -r id; do

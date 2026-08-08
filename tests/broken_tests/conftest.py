@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 # NOTE: Imports commented out to prevent DB connection on collection
 # These need to be updated to match current project structure
 # from deeptempo_core.database.models import Base, User, Finding, Case, Role
-# from backend.main import app
+# from services.api.main import app
 
 # Placeholder imports to prevent errors
 Base = None
@@ -81,7 +81,7 @@ def test_client(test_db_session) -> TestClient:
     #         pass
     # 
     # # Override database dependency
-    # from database.connection import get_db
+    # from core.storage.connection import get_db
     # app.dependency_overrides[get_db] = override_get_db
     # 
     # client = TestClient(app)
@@ -141,7 +141,7 @@ def sample_admin_role(test_db_session) -> Role:
 @pytest.fixture
 def sample_user(test_db_session, sample_role) -> User:
     """Create a sample user for testing."""
-    from backend.services.auth_service import AuthService
+    from core.auth.auth_service import AuthService
     
     user = User(
         id="user-123",
@@ -161,7 +161,7 @@ def sample_user(test_db_session, sample_role) -> User:
 @pytest.fixture
 def sample_admin_user(test_db_session, sample_admin_role) -> User:
     """Create a sample admin user for testing."""
-    from backend.services.auth_service import AuthService
+    from core.auth.auth_service import AuthService
     
     user = User(
         id="admin-123",
@@ -181,7 +181,7 @@ def sample_admin_user(test_db_session, sample_admin_role) -> User:
 @pytest.fixture
 def auth_token(sample_user) -> str:
     """Generate a valid JWT token for testing."""
-    from backend.services.auth_service import AuthService
+    from core.auth.auth_service import AuthService
     
     token = AuthService.create_access_token(
         data={"sub": sample_user.id, "role": sample_user.role_id}
@@ -192,7 +192,7 @@ def auth_token(sample_user) -> str:
 @pytest.fixture
 def admin_auth_token(sample_admin_user) -> str:
     """Generate a valid admin JWT token for testing."""
-    from backend.services.auth_service import AuthService
+    from core.auth.auth_service import AuthService
     
     token = AuthService.create_access_token(
         data={"sub": sample_admin_user.id, "role": sample_admin_user.role_id}

@@ -31,7 +31,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from backend.secrets_manager import (  # noqa: E402
+from core.secrets_manager import (  # noqa: E402
     DotEnvBackend,
     EncryptedFileBackend,
     EnvironmentBackend,

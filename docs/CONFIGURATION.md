@@ -86,7 +86,7 @@ services:
 ```ini
 [Service]
 EnvironmentFile=/opt/vigil/.env
-ExecStart=/opt/vigil/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 6987
+ExecStart=/opt/vigil/venv/bin/uvicorn services.api.main:app --host 0.0.0.0 --port 6987
 ```
 
 ### Kubernetes

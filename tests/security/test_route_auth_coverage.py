@@ -19,7 +19,6 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / "backend"))
 
 pytestmark = pytest.mark.unit
 
@@ -68,8 +67,8 @@ def _walk_dependants(dependant, auth_deps):
 def test_every_api_route_requires_auth_or_is_explicitly_public():
     # Import lazily so a broken main.py shows as a test failure rather
     # than a collection error.
-    from backend.main import app, PUBLIC_API_PATHS
-    from backend.middleware.auth import get_current_active_user, get_current_user
+    from services.api.main import app, PUBLIC_API_PATHS
+    from services.api.middleware.auth import get_current_active_user, get_current_user
 
     auth_deps = {get_current_active_user, get_current_user}
 

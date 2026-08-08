@@ -19,8 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from services.database_data_service import DatabaseDataService
-from services.ingestion_service import MITRE_TACTIC_MAP
+from core.storage.database_data_service import DatabaseDataService
+from core.ingestion.ingestion_service import MITRE_TACTIC_MAP
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

@@ -2,7 +2,7 @@
 
 Calls `tools/list` against the live VStrike MCP endpoint and diffs the
 returned catalog against the tool names we actually invoke via
-`services/vstrike_service.py:_call_mcp_tool(...)`. Anything upstream
+`core/integrations/vstrike/client.py:_call_mcp_tool(...)`. Anything upstream
 exposes that we don't call ends up in the `MISSING WRAPPERS:` section.
 
 Usage::
@@ -18,6 +18,8 @@ Non-zero → transport / auth / parse failure.
 
 from __future__ import annotations
 
+import inspect
+
 import os
 import re
 import sys
@@ -28,10 +30,12 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from services.vstrike_service import VStrikeService  # noqa: E402
+from core.integrations.vstrike.client import VStrikeService  # noqa: E402
 
 
-SERVICE_FILE = REPO_ROOT / "services" / "vstrike_service.py"
+# Resolve the client's source file from the imported class so this probe
+# follows the module if it moves.
+SERVICE_FILE = Path(inspect.getfile(VStrikeService))
 CALL_PATTERN = re.compile(r'_call_mcp_tool\(\s*"([a-z][a-z0-9\-]*)"')
 
 

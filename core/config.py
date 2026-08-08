@@ -34,14 +34,14 @@ def vigil_path(*parts: str, write: bool = False) -> Path:
     return target
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class Settings(BaseSettings):
     # Anchored to the repo so the same .env loads regardless of working directory.
     # Real env vars still win, keeping container and Helm injection authoritative.
     model_config = SettingsConfigDict(
-        env_file=_REPO_ROOT / ".env",
+        env_file=REPO_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,

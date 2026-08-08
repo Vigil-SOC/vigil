@@ -1,7 +1,7 @@
 """End-to-end check that the unauthenticated endpoints called out in
 the 2026-05 disclosure now return 401 instead of 200.
 
-Runs against the real FastAPI app from ``backend.main`` with
+Runs against the real FastAPI app from ``services.api.main`` with
 ``DEV_MODE=false`` forced (otherwise the auth middleware would short-
 circuit to a mock admin user and the test would silently no-op).
 
@@ -21,15 +21,15 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / "backend"))
 
 # Pre-import at collection time so ``sys.modules`` is locked in before
 # anything else runs.
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-not-for-prod")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from backend import main as backend_main  # noqa: E402
-from backend.middleware import auth as auth_module  # noqa: E402
+from services.api import main as backend_main  # noqa: E402
+from core.config import get_settings  # noqa: E402
+from services.api.middleware import auth as auth_module  # noqa: E402
 
 pytestmark = pytest.mark.unit
 
@@ -38,16 +38,35 @@ pytestmark = pytest.mark.unit
 def app():
     """Build a TestClient with auth force-enabled regardless of DEV_MODE.
 
-    Patches the module-level ``DEV_MODE`` on the already-imported
-    ``backend.middleware.auth`` so ``get_current_user`` takes the real
-    validation path. Restores the previous value on teardown.
+    Two places have to be forced, not one. ``services.api.middleware.auth``
+    reads a module-level ``DEV_MODE`` captured at import, so patching the
+    attribute is enough there. Routers that carry their own dev-mode bypass
+    — the VStrike inbound receiver is the current one — instead call
+    ``get_settings().dev_mode`` live, and tests/conftest.py sets
+    ``DEV_MODE=true`` for the whole session so routers can be imported at
+    all. Patching only the middleware left those routers short-circuiting
+    their own gate, so the endpoint answered 200 and looked unauthenticated
+    when it was really just in dev mode.
+
+    It has to be the environment rather than the cached Settings object:
+    conftest's autouse fixture calls ``get_settings.cache_clear()`` around
+    every test, and function-scoped autouse runs after this module-scoped
+    fixture, so a patched instance is discarded before the request runs.
     """
     prev = auth_module.DEV_MODE
     auth_module.DEV_MODE = False
+    prev_env = os.environ.get("DEV_MODE")
+    os.environ["DEV_MODE"] = "false"
+    get_settings.cache_clear()
     try:
         yield TestClient(backend_main.app)
     finally:
         auth_module.DEV_MODE = prev
+        if prev_env is None:
+            os.environ.pop("DEV_MODE", None)
+        else:
+            os.environ["DEV_MODE"] = prev_env
+        get_settings.cache_clear()
 
 
 # Each tuple: HTTP method, URL path, optional JSON body.
@@ -217,7 +236,7 @@ def test_authenticated_non_admin_is_rejected(method, path, body, monkeypatch):
     / ``settings.write`` gates the disclosure's fixes added on top of
     router-level auth.
     """
-    from database.models import User
+    from core.storage.models import User
 
     fake_user = User(
         user_id="non-admin",
@@ -241,7 +260,7 @@ def test_authenticated_non_admin_is_rejected(method, path, body, monkeypatch):
     )
     # And that AuthService.check_permission returns False (no admin).
     monkeypatch.setattr(
-        "backend.services.auth_service.AuthService.check_permission",
+        "core.auth.auth_service.AuthService.check_permission",
         lambda user_id, permission, session=None: False,
     )
 

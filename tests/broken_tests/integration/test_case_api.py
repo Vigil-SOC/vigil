@@ -317,7 +317,7 @@ class TestCaseResolution:
 class TestCaseReports:
     """Test case report generation."""
     
-    @patch('services.report_service.ReportService.generate_pdf')
+    @patch('core.reporting.report_service.ReportService.generate_pdf')
     def test_generate_case_report(self, mock_generate_pdf, test_client, auth_headers, sample_case):
         """Test generating case PDF report."""
         mock_generate_pdf.return_value = b"PDF_CONTENT"

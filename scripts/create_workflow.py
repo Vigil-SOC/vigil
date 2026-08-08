@@ -13,10 +13,10 @@ from pathlib import Path
 
 # Resolve repo root relative to this script
 REPO_ROOT = Path(__file__).resolve().parent.parent
-WORKFLOWS_DIR = REPO_ROOT / "workflows"
+WORKFLOWS_DIR = REPO_ROOT / "core" / "workflows" / "definitions"
 
 sys.path.insert(0, str(REPO_ROOT))
-from services.soc_agents import AgentId  # noqa: E402
+from core.agents.builtins import AgentId  # noqa: E402
 
 AVAILABLE_AGENTS = [a.value for a in AgentId]
 

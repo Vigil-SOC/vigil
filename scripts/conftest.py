@@ -21,7 +21,7 @@ def initialize_db():
     get_db_session() succeeds and returns a MagicMock session, satisfying
     the "Database not initialized" check without making any network calls.
     """
-    from database.connection import get_db_manager
+    from core.storage.connection import get_db_manager
 
     mock_session = MagicMock()
     # Make query(...).filter(...).all() return an empty list by default
