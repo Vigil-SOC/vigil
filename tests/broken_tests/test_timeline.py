@@ -4,7 +4,7 @@ Tests event creation, chronological ordering, filtering, and aggregation.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 # Skip all tests until TimelineService API is documented
@@ -81,12 +81,12 @@ class TestEventCreation:
         """Test automatic timestamp assignment."""
         service = TimelineService()
         
-        before = datetime.utcnow()
+        before = datetime.now(timezone.utc)
         event = service.create_event(
             event_type="case_updated",
             case_id="case-001"
         )
-        after = datetime.utcnow()
+        after = datetime.now(timezone.utc)
         
         event_time = datetime.fromisoformat(event["timestamp"])
         assert before <= event_time <= after

@@ -5,7 +5,7 @@ files that sub-agents consume and modify during execution.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -145,7 +145,7 @@ def generate_plan(
         f"case_id: {case_id or 'pending'}",
         f"workflow: {workflow_id}",
         f"priority: {primary.get('severity', 'medium')}",
-        f"created: {datetime.utcnow().isoformat()}Z",
+        f"created: {datetime.now(timezone.utc).isoformat()}Z",
         "status: planning",
         f"current_step: 1",
         "---",
@@ -213,7 +213,7 @@ def generate_case_review_plan(
         f"case_id: {case_id}",
         "workflow: case-review",
         f"priority: {priority}",
-        f"created: {datetime.utcnow().isoformat()}Z",
+        f"created: {datetime.now(timezone.utc).isoformat()}Z",
         "status: planning",
         "current_step: 1",
         "---",
@@ -322,7 +322,7 @@ def generate_initial_state(
         "current_step": 1,
         "total_steps": total_steps,
         "trigger_finding_ids": [f.get("finding_id") for f in findings if f.get("finding_id")],
-        "created_at": datetime.utcnow().isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
         "completed_steps": [],
         "discovered_iocs": {},
         "discovered_entities": {},

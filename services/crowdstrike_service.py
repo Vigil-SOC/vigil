@@ -3,7 +3,7 @@
 import logging
 import requests
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ class CrowdStrikeService:
     def _ensure_authenticated(self) -> bool:
         """Ensure we have a valid access token."""
         if self.access_token and self.token_expiry:
-            if datetime.utcnow() < self.token_expiry:
+            if datetime.now(timezone.utc) < self.token_expiry:
                 return True
         return self._authenticate()
     
@@ -44,7 +44,7 @@ class CrowdStrikeService:
                 data = response.json()
                 self.access_token = data.get("access_token")
                 expires_in = data.get("expires_in", 1800)
-                self.token_expiry = datetime.utcnow() + timedelta(seconds=expires_in - 60)
+                self.token_expiry = datetime.now(timezone.utc) + timedelta(seconds=expires_in - 60)
                 self.session.headers.update({
                     "Authorization": f"Bearer {self.access_token}"
                 })

@@ -13,7 +13,7 @@ import argparse
 import json
 import requests
 from typing import List, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
 import urllib3
 
 # Add parent directory to path for imports
@@ -167,7 +167,7 @@ class PostgresToSplunkExporter:
         
         # HEC format
         hec_event = {
-            "time": finding.timestamp.timestamp() if finding.timestamp else datetime.utcnow().timestamp(),
+            "time": finding.timestamp.timestamp() if finding.timestamp else datetime.now(timezone.utc).timestamp(),
             "sourcetype": "deeptempo:finding",
             "source": "postgresql_export",
             "host": "deeptempo-soc",
@@ -224,7 +224,7 @@ class PostgresToSplunkExporter:
         
         # HEC format
         hec_event = {
-            "time": case.created_at.timestamp() if case.created_at else datetime.utcnow().timestamp(),
+            "time": case.created_at.timestamp() if case.created_at else datetime.now(timezone.utc).timestamp(),
             "sourcetype": "deeptempo:case",
             "source": "postgresql_export",
             "host": "deeptempo-soc",

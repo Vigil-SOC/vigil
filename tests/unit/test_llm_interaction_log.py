@@ -6,7 +6,7 @@ Covers:
 - ClaudeService._persist_interaction graceful failure when DB is unavailable
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 class TestLLMInteractionLogModel:
@@ -29,7 +29,7 @@ class TestLLMInteractionLogModel:
             session_id="session-1",
             agent_id="investigator",
             investigation_id=None,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             model="claude-sonnet-4-5",
             request_messages=[{"role": "user", "content": "hi"}],
             thinking_enabled=True,
@@ -71,7 +71,7 @@ class TestLLMInteractionLogModel:
             session_id="session-1",
             agent_id=None,
             investigation_id=None,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
             model="claude-sonnet-4-5",
             request_messages=[{"role": "user", "content": "hi"}],
             thinking_enabled=False,

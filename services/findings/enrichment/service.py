@@ -15,7 +15,7 @@ rather than fixed here, so any regression stays bisectable:
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from services.findings.enrichment.errors import (
@@ -269,7 +269,7 @@ async def enrich(
     # Analysts can compare the rendered fields against the local model's
     # exact output without having to regenerate the enrichment.
     enrichment["raw_response"] = response
-    enrichment["generated_at"] = datetime.utcnow().isoformat() + "Z"
+    enrichment["generated_at"] = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
     enrichment["model"] = model_id
     enrichment["provider_id"] = provider.provider_id
     enrichment["provider_type"] = provider.provider_type

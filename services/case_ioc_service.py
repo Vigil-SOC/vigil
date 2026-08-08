@@ -6,7 +6,7 @@ Handles IOC tracking, enrichment, deduplication, and export.
 
 import logging
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -81,8 +81,8 @@ class CaseIOCService:
                     threat_level=threat_level,
                     confidence=confidence,
                     source=source,
-                    first_seen=first_seen or datetime.utcnow(),
-                    last_seen=last_seen or datetime.utcnow(),
+                    first_seen=first_seen or datetime.now(timezone.utc),
+                    last_seen=last_seen or datetime.now(timezone.utc),
                     tags=tags or [],
                     context=context,
                     is_active=True,
@@ -263,11 +263,11 @@ class CaseIOCService:
                 stix_obj = {
                     'type': 'indicator',
                     'id': f'indicator--{ioc.ioc_id}',
-                    'created': ioc.created_at.isoformat() + 'Z',
-                    'modified': ioc.updated_at.isoformat() + 'Z',
+                    'created': ioc.created_at.isoformat().replace('+00:00', 'Z'),
+                    'modified': ioc.updated_at.isoformat().replace('+00:00', 'Z'),
                     'pattern': f'[{stix_type}:value = \'{ioc.value}\']',
                     'pattern_type': 'stix',
-                    'valid_from': (ioc.first_seen.isoformat() + 'Z') if ioc.first_seen else datetime.utcnow().isoformat() + 'Z'
+                    'valid_from': (ioc.first_seen.isoformat().replace('+00:00', 'Z')) if ioc.first_seen else datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
                 }
 
                 if ioc.threat_level:

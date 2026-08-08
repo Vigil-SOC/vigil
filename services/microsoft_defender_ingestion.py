@@ -6,7 +6,7 @@ Fetches security alerts from Microsoft Defender and converts them to findings.
 
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 import requests
 
@@ -86,9 +86,9 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
             
             # Set time range
             if not start_time:
-                start_time = datetime.utcnow() - timedelta(hours=24)
+                start_time = datetime.now(timezone.utc) - timedelta(hours=24)
             if not end_time:
-                end_time = datetime.utcnow()
+                end_time = datetime.now(timezone.utc)
             
             # Build API request
             api_url = "https://api.securitycenter.microsoft.com/api/alerts"
@@ -173,7 +173,7 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
                 "description": alert.get('description', ''),
                 "severity": self.normalize_severity(alert.get('severity')),
                 "data_source": "microsoft_defender",
-                "timestamp": alert.get('alertCreationTime', datetime.utcnow().isoformat()),
+                "timestamp": alert.get('alertCreationTime', datetime.now(timezone.utc).isoformat()),
                 "raw_data": alert,
                 "metadata": {
                     "alert_id": alert.get('id'),

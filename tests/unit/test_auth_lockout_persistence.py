@@ -7,7 +7,7 @@ transaction it would be discarded, the threshold would never trip, and the
 brute-force lockout would silently stop working.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 import pytest
@@ -83,8 +83,8 @@ def test_threshold_locks_the_account_durably(own_session, caller_session, monkey
 
     assert own_user.failed_login_count == 3
     assert own_user.locked_until is not None
-    assert own_user.locked_until > datetime.utcnow()
-    assert own_user.locked_until <= datetime.utcnow() + timedelta(
+    assert own_user.locked_until > datetime.now(timezone.utc)
+    assert own_user.locked_until <= datetime.now(timezone.utc) + timedelta(
         minutes=auth_module.LOCKOUT_DURATION_MINUTES
     )
     own_session.commit.assert_called_once()

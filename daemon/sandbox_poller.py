@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import requests
@@ -111,7 +111,7 @@ class SandboxPoller:
                     reports[report_key] = {
                         "sandbox": sandbox_name,
                         "task_id": task_id,
-                        "fetched_at": datetime.utcnow().isoformat(),
+                        "fetched_at": datetime.now(timezone.utc).isoformat(),
                         "report": report,
                     }
                     sub["status"] = "reported"
@@ -258,4 +258,4 @@ class SandboxPoller:
             submitted = datetime.fromisoformat(ts)
         except ValueError:
             return False
-        return datetime.utcnow() - submitted > timedelta(seconds=self._timeout_seconds)
+        return datetime.now(timezone.utc) - submitted > timedelta(seconds=self._timeout_seconds)

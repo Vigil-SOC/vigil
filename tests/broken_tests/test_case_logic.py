@@ -4,7 +4,7 @@ Tests case status transitions, priority calculation, SLA calculations, and metri
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 # Skip all tests until case services are documented
@@ -116,7 +116,7 @@ class TestSLACalculations:
     
     def test_calculate_sla_deadline_critical(self):
         """Test SLA deadline calculation for critical priority."""
-        created_at = datetime.utcnow()
+        created_at = datetime.now(timezone.utc)
         priority = "critical"
         
         deadline = CaseSLAService.calculate_sla_deadline(created_at, priority)
@@ -126,7 +126,7 @@ class TestSLACalculations:
     
     def test_calculate_sla_deadline_high(self):
         """Test SLA deadline calculation for high priority."""
-        created_at = datetime.utcnow()
+        created_at = datetime.now(timezone.utc)
         priority = "high"
         
         deadline = CaseSLAService.calculate_sla_deadline(created_at, priority)
@@ -136,7 +136,7 @@ class TestSLACalculations:
     
     def test_check_sla_breach_not_breached(self):
         """Test SLA breach check for case within SLA."""
-        created_at = datetime.utcnow() - timedelta(hours=2)
+        created_at = datetime.now(timezone.utc) - timedelta(hours=2)
         priority = "critical"  # 4-hour SLA
         
         is_breached = CaseSLAService.is_sla_breached(created_at, priority)
@@ -145,7 +145,7 @@ class TestSLACalculations:
     
     def test_check_sla_breach_breached(self):
         """Test SLA breach check for case beyond SLA."""
-        created_at = datetime.utcnow() - timedelta(hours=5)
+        created_at = datetime.now(timezone.utc) - timedelta(hours=5)
         priority = "critical"  # 4-hour SLA
         
         is_breached = CaseSLAService.is_sla_breached(created_at, priority)
@@ -154,8 +154,8 @@ class TestSLACalculations:
     
     def test_calculate_time_to_resolve(self):
         """Test time to resolution calculation."""
-        created_at = datetime.utcnow() - timedelta(hours=3, minutes=30)
-        resolved_at = datetime.utcnow()
+        created_at = datetime.now(timezone.utc) - timedelta(hours=3, minutes=30)
+        resolved_at = datetime.now(timezone.utc)
         
         time_to_resolve = CaseSLAService.calculate_time_to_resolve(
             created_at, resolved_at
@@ -166,7 +166,7 @@ class TestSLACalculations:
     
     def test_get_sla_remaining_time(self):
         """Test calculating remaining time until SLA breach."""
-        created_at = datetime.utcnow() - timedelta(hours=2)
+        created_at = datetime.now(timezone.utc) - timedelta(hours=2)
         priority = "critical"  # 4-hour SLA
         
         remaining = CaseSLAService.get_remaining_time(created_at, priority)
@@ -355,7 +355,7 @@ class TestCaseWorkflowIntegration:
             "id": "case-123",
             "status": "open",
             "priority": "high",
-            "created_at": datetime.utcnow()
+            "created_at": datetime.now(timezone.utc)
         }
         
         # Validate initial state
@@ -375,7 +375,7 @@ class TestCaseWorkflowIntegration:
     
     def test_sla_tracking_workflow(self):
         """Test SLA tracking throughout case lifecycle."""
-        created_at = datetime.utcnow()
+        created_at = datetime.now(timezone.utc)
         priority = "critical"
         
         # Calculate deadline
@@ -387,7 +387,7 @@ class TestCaseWorkflowIntegration:
         
         # Simulate time passing
         with patch('services.case_sla_service.datetime') as mock_datetime:
-            mock_datetime.utcnow.return_value = created_at + timedelta(hours=5)
+            mock_datetime.now.return_value = created_at + timedelta(hours=5)
             
             # Should now be breached (critical SLA is 4 hours)
             assert CaseSLAService.is_sla_breached(created_at, priority) is True

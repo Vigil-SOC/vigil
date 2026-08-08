@@ -15,7 +15,7 @@ DAEMON_HEALTH_PORT (default 9091) exposing /health and /status.
 import asyncio
 import logging
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from aiohttp import web
@@ -40,7 +40,7 @@ class DaemonMetrics:
     """
 
     def __init__(self):
-        self._start_time = datetime.utcnow()
+        self._start_time = datetime.now(timezone.utc)
 
         # In-memory shadow counters (used by get_summary / get_poll_count /
         # get_total_processed which must return values synchronously).
@@ -140,7 +140,7 @@ class DaemonMetrics:
 
     def get_summary(self) -> Dict[str, Any]:
         """Get summary of all metrics (used for /status display only)."""
-        uptime = (datetime.utcnow() - self._start_time).total_seconds()
+        uptime = (datetime.now(timezone.utc) - self._start_time).total_seconds()
         total_polls = sum(self._poll_counts.values())
 
         poll_stats = {}
@@ -177,7 +177,7 @@ class DaemonMetrics:
         self._events_counts.clear()
         self._processing_count = 0
         self._processing_durations.clear()
-        self._start_time = datetime.utcnow()
+        self._start_time = datetime.now(timezone.utc)
         logger.info("Metrics reset")
 
 
@@ -196,7 +196,7 @@ class MetricsServer:
 
     def __init__(self, config: MetricsConfig):
         self.config = config
-        self._start_time = datetime.utcnow()
+        self._start_time = datetime.now(timezone.utc)
 
         # Component references (set externally)
         self.poller = None
@@ -232,8 +232,8 @@ class MetricsServer:
         """Handle health check request."""
         health: Dict[str, Any] = {
             "status": "healthy",
-            "timestamp": datetime.utcnow().isoformat(),
-            "uptime_seconds": (datetime.utcnow() - self._start_time).total_seconds(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "uptime_seconds": (datetime.now(timezone.utc) - self._start_time).total_seconds(),
         }
 
         components = {}
@@ -282,7 +282,7 @@ class MetricsServer:
         status = {
             "daemon": {
                 "start_time": self._start_time.isoformat(),
-                "uptime_seconds": (datetime.utcnow() - self._start_time).total_seconds(),
+                "uptime_seconds": (datetime.now(timezone.utc) - self._start_time).total_seconds(),
             },
             "poller": metrics.get("poller", {}),
             "kafka": metrics.get("kafka", {}),

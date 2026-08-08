@@ -10,7 +10,7 @@ Findings in this codebase carry MITRE data in two shapes:
   iter_techniques below for the dispatching).
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Iterable, Optional
 
 
@@ -21,7 +21,7 @@ def get_time_range(time_range: str) -> tuple[datetime, datetime]:
     `backend/api/` modules can both depend on it without forming a cycle
     through `backend/api/__init__.py`.
     """
-    end_time = datetime.utcnow()
+    end_time = datetime.now(timezone.utc)
 
     if time_range == "24h":
         start_time = end_time - timedelta(hours=24)

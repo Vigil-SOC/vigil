@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from services.elastic_service import ElasticService
@@ -77,7 +77,7 @@ class ElasticEnrichmentService:
     ) -> Dict[str, Any]:
         """Query Elasticsearch for each indicator type."""
         enrichment: Dict[str, Any] = {
-            "query_time": datetime.utcnow().isoformat(),
+            "query_time": datetime.now(timezone.utc).isoformat(),
             "lookback_hours": hours,
             "results": {},
             "summary": {},

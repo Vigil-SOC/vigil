@@ -6,7 +6,7 @@ Handles SLA monitoring, auto-assignment, escalation, and periodic tasks.
 
 import logging
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List
 
 from services.unit_of_work import unit_of_work
@@ -71,7 +71,7 @@ class CaseAutomationService:
                     CaseSLA.is_paused == False
                 ).all()
 
-                current_time = datetime.utcnow()
+                current_time = datetime.now(timezone.utc)
 
                 for sla in active_slas:
                     # Get SLA status
@@ -148,7 +148,7 @@ class CaseAutomationService:
         try:
             with unit_of_work() as session:
                 # Define stale threshold (7 days)
-                stale_threshold = datetime.utcnow() - timedelta(days=7)
+                stale_threshold = datetime.now(timezone.utc) - timedelta(days=7)
 
                 # Find cases not updated recently
                 stale_cases = session.query(Case).filter(
@@ -178,7 +178,7 @@ class CaseAutomationService:
         while self.running:
             try:
                 # Calculate time until next 9 AM
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 next_run = now.replace(hour=9, minute=0, second=0, microsecond=0)
                 if now.hour >= 9:
                     next_run += timedelta(days=1)
@@ -199,7 +199,7 @@ class CaseAutomationService:
         try:
             with unit_of_work() as session:
                 # Get metrics for last 24 hours
-                yesterday = datetime.utcnow() - timedelta(days=1)
+                yesterday = datetime.now(timezone.utc) - timedelta(days=1)
                 metrics = self.metrics_service.get_dashboard_metrics(
                     start_date=yesterday,
                     session=session

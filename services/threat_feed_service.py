@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,7 @@ def fetch_taxii_collection(
             return []
         params: Dict[str, Any] = {}
         if since:
-            params["added_after"] = since.isoformat() + "Z"
+            params["added_after"] = since.isoformat().replace('+00:00', 'Z')
         envelope = collection.get_objects(**params) if params else collection.get_objects()
     except Exception as e:  # noqa: BLE001
         logger.error("TAXII fetch failed (%s/%s): %s", server_url, collection_id, e)
@@ -225,7 +225,7 @@ def upsert_indicators(indicators: List[NormalizedIndicator]) -> Dict[str, int]:
     inserted = 0
     updated = 0
     skipped = 0
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     with db.session_scope() as session:
         for ind in indicators:
             try:

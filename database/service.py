@@ -6,7 +6,7 @@ Provides high-level database operations for cases, findings, and related entitie
 
 import logging
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select, func, or_, and_
 
 from database.models import (
@@ -298,7 +298,7 @@ class DatabaseService:
             with self.db_manager.session_scope() as session:
                 query = select(Finding).where(Finding.ai_enrichment.is_(None))
                 if max_age_hours:
-                    cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+                    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
                     query = query.where(Finding.timestamp >= cutoff)
                 query = query.order_by(Finding.timestamp.asc()).limit(limit)
                 return FindingSchema.dump_many(session.execute(query).scalars().all())
@@ -374,7 +374,7 @@ class DatabaseService:
                     if hasattr(finding, key):
                         setattr(finding, key, value)
                 
-                finding.updated_at = datetime.utcnow()
+                finding.updated_at = datetime.now(timezone.utc)
                 session.flush()
                 logger.info(f"Updated finding: {finding_id}")
                 return True
@@ -430,7 +430,7 @@ class DatabaseService:
         try:
             with self.db_manager.session_scope() as session:
                 # Create case
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 case = Case(
                     case_id=case_id,
                     title=title,
@@ -440,7 +440,7 @@ class DatabaseService:
                     assignee=kwargs.get('assignee'),
                     tags=kwargs.get('tags', []),
                     notes=kwargs.get('notes', []),
-                    timeline=kwargs.get('timeline', [{'timestamp': now.isoformat() + 'Z', 'event': 'Case created'}]),
+                    timeline=kwargs.get('timeline', [{'timestamp': now.isoformat().replace('+00:00', 'Z'), 'event': 'Case created'}]),
                     activities=kwargs.get('activities', []),
                     resolution_steps=kwargs.get('resolution_steps', []),
                     mitre_techniques=kwargs.get('mitre_techniques'),
@@ -558,7 +558,7 @@ class DatabaseService:
                     if hasattr(case, key):
                         setattr(case, key, value)
 
-                case.updated_at = datetime.utcnow()
+                case.updated_at = datetime.now(timezone.utc)
                 session.flush()
                 logger.info(f"Updated case: {case_id}")
                 return True
@@ -612,7 +612,7 @@ class DatabaseService:
                 
                 if finding not in case.findings:
                     case.findings.append(finding)
-                    case.updated_at = datetime.utcnow()
+                    case.updated_at = datetime.now(timezone.utc)
                     session.flush()
                     logger.info(f"Added finding {finding_id} to case {case_id}")
                 
@@ -643,7 +643,7 @@ class DatabaseService:
                 
                 if finding in case.findings:
                     case.findings.remove(finding)
-                    case.updated_at = datetime.utcnow()
+                    case.updated_at = datetime.now(timezone.utc)
                     session.flush()
                     logger.info(f"Removed finding {finding_id} from case {case_id}")
                 
@@ -702,7 +702,7 @@ class DatabaseService:
                     case_id=case_id,
                     workflow_id=workflow_id,
                     decision_metadata=decision_metadata,
-                    timestamp=datetime.utcnow()
+                    timestamp=datetime.now(timezone.utc)
                 )
                 
                 session.add(decision)
@@ -762,7 +762,7 @@ class DatabaseService:
                 decision.action_appropriateness = action_appropriateness
                 decision.actual_outcome = actual_outcome
                 decision.time_saved_minutes = time_saved_minutes
-                decision.feedback_timestamp = datetime.utcnow()
+                decision.feedback_timestamp = datetime.now(timezone.utc)
                 
                 session.flush()
                 
@@ -861,7 +861,7 @@ class DatabaseService:
             from datetime import timedelta
             
             with self.db_manager.session_scope() as session:
-                since = datetime.utcnow() - timedelta(days=days)
+                since = datetime.now(timezone.utc) - timedelta(days=days)
                 
                 query = session.query(AIDecisionLog).filter(
                     AIDecisionLog.timestamp >= since

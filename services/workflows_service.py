@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -545,7 +545,7 @@ For each phase:
                 status="failed",
                 approval_state="rejected",
                 error=reason,
-                finished_at=datetime.utcnow(),
+                finished_at=datetime.now(timezone.utc),
             )
             run_service.finalize_run(
                 run_id, status="cancelled", error=f"Rejected: {reason}"
@@ -980,7 +980,7 @@ For each phase:
                 agent_id=agent_id,
                 status="running",
                 input_context=phase_input_context,
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             )
 
             try:
@@ -1004,7 +1004,7 @@ For each phase:
                     "Workflow phase %s failed for run %s", phase_id, run_id
                 )
 
-            finished = datetime.utcnow()
+            finished = datetime.now(timezone.utc)
             if phase_ok:
                 output = {"text": response_text or ""}
                 run_service.upsert_phase(

@@ -18,7 +18,7 @@ but return ``None``/``False`` for not-found-or-not-owned.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import func, select
@@ -166,7 +166,7 @@ def append_message(
             session.add(msg)
 
             conv.message_count = int(conv.message_count or 0) + 1
-            conv.last_message_at = datetime.utcnow()
+            conv.last_message_at = datetime.now(timezone.utc)
             if model:
                 conv.model = model
             session.flush()
@@ -320,7 +320,7 @@ def bulk_import(user_id: Optional[str], conversations: List[dict]) -> dict:
                             cost_usd=float(m.get("cost_usd") or 0.0),
                         )
                     )
-                    last_at = datetime.utcnow()
+                    last_at = datetime.now(timezone.utc)
                 if last_at is not None:
                     conv.last_message_at = last_at
             imported += 1

@@ -272,13 +272,13 @@ Provide ONLY the JSON array, no other text."""
             insights = []
             for i, insight in enumerate(insights_raw):
                 insights.append({
-                    "id": f"insight-{datetime.utcnow().timestamp()}-{i}",
+                    "id": f"insight-{datetime.now(timezone.utc).timestamp()}-{i}",
                     "type": insight.get("type", "info"),
                     "title": insight.get("title", "Insight"),
                     "description": insight.get("description", ""),
                     "confidence": insight.get("confidence", 0.7),
                     "actionable": insight.get("actionable", False),
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
             
             return insights
@@ -294,12 +294,12 @@ Provide ONLY the JSON array, no other text."""
     def _get_fallback_insights(self, metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate fallback insights when AI service is unavailable."""
         insights = []
-        timestamp = datetime.utcnow().isoformat()
+        timestamp = datetime.now(timezone.utc).isoformat()
         
         # Findings trend insight
         if abs(metrics['findingsChange']) > 20:
             insights.append({
-                "id": f"fallback-findings-{datetime.utcnow().timestamp()}",
+                "id": f"fallback-findings-{datetime.now(timezone.utc).timestamp()}",
                 "type": "warning" if metrics['findingsChange'] > 0 else "info",
                 "title": f"Findings {'increased' if metrics['findingsChange'] > 0 else 'decreased'} significantly",
                 "description": f"Findings changed by {metrics['findingsChange']:+.1f}% compared to previous period.",
@@ -311,7 +311,7 @@ Provide ONLY the JSON array, no other text."""
         # Response time insight
         if metrics['avgResponseTime'] > 60:
             insights.append({
-                "id": f"fallback-response-{datetime.utcnow().timestamp()}",
+                "id": f"fallback-response-{datetime.now(timezone.utc).timestamp()}",
                 "type": "warning",
                 "title": "Response time exceeds target",
                 "description": f"Average response time is {metrics['avgResponseTime']} minutes. Consider workload optimization.",
@@ -323,7 +323,7 @@ Provide ONLY the JSON array, no other text."""
         # False positive insight
         if metrics['falsePositiveRate'] > 30:
             insights.append({
-                "id": f"fallback-fp-{datetime.utcnow().timestamp()}",
+                "id": f"fallback-fp-{datetime.now(timezone.utc).timestamp()}",
                 "type": "recommendation",
                 "title": "High false positive rate detected",
                 "description": f"False positive rate is {metrics['falsePositiveRate']}%. Review detection rules for tuning.",
@@ -335,7 +335,7 @@ Provide ONLY the JSON array, no other text."""
         # Positive performance insight
         if metrics['responseTimeChange'] < -10:
             insights.append({
-                "id": f"fallback-performance-{datetime.utcnow().timestamp()}",
+                "id": f"fallback-performance-{datetime.now(timezone.utc).timestamp()}",
                 "type": "info",
                 "title": "Response time improvement",
                 "description": f"Response time improved by {abs(metrics['responseTimeChange']):.1f}%. Great work!",
@@ -345,7 +345,7 @@ Provide ONLY the JSON array, no other text."""
             })
         
         return insights if insights else [{
-            "id": f"fallback-default-{datetime.utcnow().timestamp()}",
+            "id": f"fallback-default-{datetime.now(timezone.utc).timestamp()}",
             "type": "info",
             "title": "SOC operations stable",
             "description": "All metrics are within normal ranges. Continue monitoring for changes.",

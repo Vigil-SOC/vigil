@@ -6,7 +6,7 @@ Fetches security incidents from Microsoft Sentinel (Azure Sentinel) and converts
 
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uuid
 
 from services.siem_ingestion_service import SIEMIngestionService
@@ -69,9 +69,9 @@ class AzureSentinelIngestion(SIEMIngestionService):
             
             # Set time range
             if not start_time:
-                start_time = datetime.utcnow() - timedelta(hours=24)
+                start_time = datetime.now(timezone.utc) - timedelta(hours=24)
             if not end_time:
-                end_time = datetime.utcnow()
+                end_time = datetime.now(timezone.utc)
             
             # Fetch incidents
             incidents = []
@@ -138,7 +138,7 @@ class AzureSentinelIngestion(SIEMIngestionService):
                 "description": alert.get('description', ''),
                 "severity": self.normalize_severity(alert.get('severity')),
                 "data_source": "azure_sentinel",
-                "timestamp": alert.get('created_time', datetime.utcnow().isoformat()),
+                "timestamp": alert.get('created_time', datetime.now(timezone.utc).isoformat()),
                 "raw_data": alert,
                 "metadata": {
                     "incident_id": alert.get('id'),

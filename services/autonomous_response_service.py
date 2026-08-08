@@ -2,7 +2,7 @@
 
 import logging
 from typing import Dict, List, Optional, Callable, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 from services.soc_agents import AgentId
 
@@ -81,7 +81,7 @@ class AutonomousResponseService:
                         "title": f"🚨 SOC Alert - {severity.upper()}",
                         "text": message,
                         "footer": "AI-SOC Autonomous Response",
-                        "ts": datetime.utcnow().timestamp()
+                        "ts": datetime.now(timezone.utc).timestamp()
                     }]
                 },
                 timeout=30

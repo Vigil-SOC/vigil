@@ -18,7 +18,7 @@ import logging
 import tempfile
 from pathlib import Path
 from typing import List, Dict, Any, Union
-from datetime import datetime
+from datetime import datetime, timezone
 from io import StringIO
 
 from services.source_evidence import (
@@ -154,7 +154,7 @@ class IngestionService:
             return timestamp_value
         
         if not timestamp_value:
-            return datetime.utcnow()
+            return datetime.now(timezone.utc)
         
         # If it's a Unix timestamp (int or float)
         if isinstance(timestamp_value, (int, float)):
@@ -183,7 +183,7 @@ class IngestionService:
                 continue
         
         logger.warning(f"Could not parse timestamp: {timestamp_value}, using current time")
-        return datetime.utcnow()
+        return datetime.now(timezone.utc)
     
     def ingest_finding(self, finding_data: Dict[str, Any]) -> bool:
         """
@@ -624,7 +624,7 @@ class IngestionService:
             'embedding': embedding,
             'mitre_predictions': mitre_predictions,
             'anomaly_score': float(row.get('anomaly_score', 0.0)),
-            'timestamp': row.get('timestamp', datetime.utcnow().isoformat()),
+            'timestamp': row.get('timestamp', datetime.now(timezone.utc).isoformat()),
             'data_source': row.get('data_source', 'csv_import'),
             'entity_context': entity_context,
             'evidence_links': None,
@@ -645,7 +645,7 @@ class IngestionService:
 
         # Parse event_start as timestamp
         event_start_str = row.get('event_start', '')
-        event_ts = self.parse_timestamp(event_start_str) if event_start_str else datetime.utcnow()
+        event_ts = self.parse_timestamp(event_start_str) if event_start_str else datetime.now(timezone.utc)
 
         # sequence_id + attack_id keeps the same sequence distinct across
         # attack clusters; content identity covers rows carrying neither.
@@ -832,7 +832,7 @@ class IngestionService:
         if event_start_ms is not None:
             event_ts = datetime.utcfromtimestamp(int(event_start_ms) / 1000.0)
         else:
-            event_ts = datetime.utcnow()
+            event_ts = datetime.now(timezone.utc)
 
         unique_key = sequence_id or self._identity_fallback(
             row, PARQUET_IDENTITY_COLUMNS, 'sequence_id'
@@ -936,7 +936,7 @@ class IngestionService:
     ) -> Dict[str, Any]:
         """Unscored finding shell for a schema with no known column layout."""
         timestamp = _first_present(row, ENTITY_FIELD_ALIASES['timestamp'])
-        event_ts = self.parse_timestamp(timestamp) if timestamp is not None else datetime.utcnow()
+        event_ts = self.parse_timestamp(timestamp) if timestamp is not None else datetime.now(timezone.utc)
 
         unique_key = row_identity_key(row, tuple(sorted(row.keys())))
         id_hash = hashlib.sha256(unique_key.encode()).hexdigest()[:ID_HASH_WIDTH]

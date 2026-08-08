@@ -442,7 +442,7 @@ async def _dispatch_findings_tool(
         return {"success": success, "case_id": case_id}
 
     if tool_name == "add_resolution_step":
-        from datetime import datetime as _dt
+        from datetime import datetime as _dt, timezone as _tz
 
         case = data_service.get_case(arguments["case_id"])
         if not case:
@@ -450,7 +450,7 @@ async def _dispatch_findings_tool(
         res_steps = case.get("resolution_steps", [])
         res_steps.append(
             {
-                "timestamp": _dt.utcnow().isoformat() + "Z",
+                "timestamp": _dt.now(_tz.utc).isoformat().replace('+00:00', 'Z'),
                 "description": arguments["description"],
                 "action_taken": arguments["action_taken"],
                 "result": arguments.get("result"),

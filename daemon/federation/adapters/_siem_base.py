@@ -11,7 +11,7 @@ factory module.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Dict, Optional
 
 from core.config import is_integration_enabled
@@ -78,7 +78,7 @@ class SIEMIngestionAdapter:
         start_time = parse_cursor_since(cursor) or since
         if start_time is None:
             # First run: small window so we don't backfill on enable.
-            start_time = datetime.utcnow() - timedelta(minutes=1)
+            start_time = datetime.now(timezone.utc) - timedelta(minutes=1)
 
         try:
             alerts = await svc.fetch_alerts(start_time=start_time, limit=max_items)
