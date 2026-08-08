@@ -18,7 +18,7 @@ delete the legacy loops in a follow-up.
 import asyncio
 import hmac
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -245,7 +245,7 @@ class DataPoller:
         while not shutdown_event.is_set():
             try:
                 await self._poll_splunk()
-                self._splunk_state.last_poll_time = datetime.utcnow()
+                self._splunk_state.last_poll_time = datetime.now(timezone.utc)
             except Exception as e:
                 logger.error(f"Splunk polling error: {e}")
                 self.stats["errors"] += 1
@@ -353,7 +353,7 @@ class DataPoller:
         return {
             'finding_id': finding_id,
             'data_source': 'splunk',
-            'timestamp': event.get('_time') or datetime.utcnow().isoformat(),
+            'timestamp': event.get('_time') or datetime.now(timezone.utc).isoformat(),
             'severity': severity,
             'status': 'new',
             'title': event.get('search_name') or event.get('rule_name') or 'Splunk Alert',
@@ -372,7 +372,7 @@ class DataPoller:
         while not shutdown_event.is_set():
             try:
                 await self._poll_crowdstrike()
-                self._crowdstrike_state.last_poll_time = datetime.utcnow()
+                self._crowdstrike_state.last_poll_time = datetime.now(timezone.utc)
             except Exception as e:
                 logger.error(f"CrowdStrike polling error: {e}")
                 self.stats["errors"] += 1
@@ -399,7 +399,7 @@ class DataPoller:
         try:
             # Get recent detections
             lookback_minutes = max(self.config.crowdstrike_interval // 60 + 1, 5)
-            since = datetime.utcnow() - timedelta(minutes=lookback_minutes)
+            since = datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)
             
             detections = self._crowdstrike_service.get_detections(
                 filter_query=f"created_timestamp:>='{since.isoformat()}Z'",
@@ -461,7 +461,7 @@ class DataPoller:
         return {
             'finding_id': finding_id,
             'data_source': 'crowdstrike',
-            'timestamp': detection.get('created_timestamp') or datetime.utcnow().isoformat(),
+            'timestamp': detection.get('created_timestamp') or datetime.now(timezone.utc).isoformat(),
             'severity': severity,
             'status': 'new',
             'title': detection.get('scenario') or 'CrowdStrike Detection',
@@ -569,7 +569,7 @@ class DataPoller:
                 "type": "finding",
                 "source": source,
                 "data": finding,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.now(timezone.utc).isoformat()
             })
             logger.debug(f"Enqueued finding {finding.get('finding_id')} from {source}")
         else:
@@ -590,7 +590,7 @@ class DataPoller:
         while not shutdown_event.is_set():
             try:
                 await self._poll_azure_sentinel()
-                self._azure_sentinel_state.last_poll_time = datetime.utcnow()
+                self._azure_sentinel_state.last_poll_time = datetime.now(timezone.utc)
             except Exception as e:
                 logger.error(f"Azure Sentinel polling error: {e}")
                 self.stats["errors"] += 1
@@ -633,7 +633,7 @@ class DataPoller:
         while not shutdown_event.is_set():
             try:
                 await self._poll_aws_security_hub()
-                self._aws_security_hub_state.last_poll_time = datetime.utcnow()
+                self._aws_security_hub_state.last_poll_time = datetime.now(timezone.utc)
             except Exception as e:
                 logger.error(f"AWS Security Hub polling error: {e}")
                 self.stats["errors"] += 1
@@ -676,7 +676,7 @@ class DataPoller:
         while not shutdown_event.is_set():
             try:
                 await self._poll_microsoft_defender()
-                self._microsoft_defender_state.last_poll_time = datetime.utcnow()
+                self._microsoft_defender_state.last_poll_time = datetime.now(timezone.utc)
             except Exception as e:
                 logger.error(f"Microsoft Defender polling error: {e}")
                 self.stats["errors"] += 1
@@ -719,7 +719,7 @@ class DataPoller:
         while not shutdown_event.is_set():
             try:
                 await self._poll_elastic()
-                self._elastic_state.last_poll_time = datetime.utcnow()
+                self._elastic_state.last_poll_time = datetime.now(timezone.utc)
             except Exception as e:
                 logger.error(f"Elastic Security polling error: {e}")
                 self.stats["errors"] += 1
@@ -742,7 +742,7 @@ class DataPoller:
 
         try:
             lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
-            start_time = datetime.utcnow() - timedelta(minutes=lookback_minutes)
+            start_time = datetime.now(timezone.utc) - timedelta(minutes=lookback_minutes)
 
             alerts = await self._elastic_service.fetch_alerts(
                 start_time=start_time, limit=100

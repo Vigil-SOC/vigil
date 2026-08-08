@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 from core.config import get_integration_config, is_integration_enabled
@@ -70,7 +70,7 @@ class CrowdStrikeAdapter:
         cutoff = parse_cursor_since(cursor) or since
         if cutoff is None:
             # First run: small window, no backfill.
-            cutoff = datetime.utcnow() - timedelta(minutes=1)
+            cutoff = datetime.now(timezone.utc) - timedelta(minutes=1)
 
         try:
             detections = svc.get_detections(
@@ -118,7 +118,7 @@ def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]
         "finding_id": finding_id,
         "data_source": "crowdstrike",
         "external_id": external_id,
-        "timestamp": detection.get("created_timestamp") or datetime.utcnow().isoformat(),
+        "timestamp": detection.get("created_timestamp") or datetime.now(timezone.utc).isoformat(),
         "severity": severity,
         "status": "new",
         "title": detection.get("scenario") or "CrowdStrike Detection",

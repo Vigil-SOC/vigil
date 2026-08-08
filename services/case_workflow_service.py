@@ -6,7 +6,7 @@ and task automation.
 """
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
@@ -60,7 +60,7 @@ class CaseWorkflowService:
         try:
             with unit_of_work(session) as session:
                 # Generate template ID
-                timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
                 template_id = f"template-{template_type}-{timestamp}"
 
                 template = CaseTemplate(
@@ -173,7 +173,7 @@ class CaseWorkflowService:
                     return None
 
                 # Generate case ID
-                timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S')
+                timestamp = datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')
                 case_id = f"case-{timestamp}"
 
                 # Create case
@@ -191,7 +191,7 @@ class CaseWorkflowService:
                     ),
                     notes=[],
                     timeline=[{
-                        'timestamp': datetime.utcnow().isoformat(),
+                        'timestamp': datetime.now(timezone.utc).isoformat(),
                         'event': f'Case created from template: {template.name}'
                     }],
                     activities=[],
@@ -292,7 +292,7 @@ class CaseWorkflowService:
                 # Update case
                 case.assignee = escalated_to
                 case.timeline.append({
-                    'timestamp': datetime.utcnow().isoformat(),
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
                     'event': f'Escalated to {escalated_to}: {reason}'
                 })
 

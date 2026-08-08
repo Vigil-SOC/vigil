@@ -11,7 +11,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from services.soc_agents import ORCHESTRATOR_ACTOR
@@ -602,7 +602,7 @@ class AgentRunner:
                         "input_tokens": total_input_tokens,
                         "output_tokens": total_output_tokens,
                         "cost_usd": round(total_cost, 4),
-                        "last_activity_at": datetime.utcnow().isoformat(),
+                        "last_activity_at": datetime.now(timezone.utc).isoformat(),
                         "current_step": refreshed.get("current_step", 0),
                     },
                 )
@@ -1026,7 +1026,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
             # this, supervisor's stale_threshold (default 300s) can fire while
             # a long multi-turn iteration is healthy. See issue #147.
             self._update_db_record(
-                inv_id, {"last_activity_at": datetime.utcnow().isoformat()}
+                inv_id, {"last_activity_at": datetime.now(timezone.utc).isoformat()}
             )
 
             stop_reason = response.get("stop_reason", "end_turn")
@@ -1054,7 +1054,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 # above. A burst of slow MCP calls inside one iteration must
                 # not look like staleness to the supervisor (issue #147).
                 self._update_db_record(
-                    inv_id, {"last_activity_at": datetime.utcnow().isoformat()}
+                    inv_id, {"last_activity_at": datetime.now(timezone.utc).isoformat()}
                 )
                 tool_results.append(
                     {
@@ -1140,7 +1140,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 state["current_step"] = step_num + 1
         elif status == "in_progress":
             state["current_step"] = step_num
-        state["last_update"] = datetime.utcnow().isoformat()
+        state["last_update"] = datetime.now(timezone.utc).isoformat()
         self.workdir.write_state(inv_id, state)
 
         return f"Step {step_num} updated to [{status}]"
@@ -1154,14 +1154,14 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         state["current_step"] = state.get("total_steps", state.get("current_step", 0))
         state["summary"] = summary
         state["proposed_actions"] = proposed
-        state["completed_at"] = datetime.utcnow().isoformat()
+        state["completed_at"] = datetime.now(timezone.utc).isoformat()
         self.workdir.write_state(inv_id, state)
 
         review = [
             "# Investigation Review",
             "",
             f"**Investigation:** {inv_id}",
-            f"**Completed:** {datetime.utcnow().isoformat()}",
+            f"**Completed:** {datetime.now(timezone.utc).isoformat()}",
             "",
             "## Summary",
             summary,
@@ -1187,7 +1187,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 "status": "review_submitted",
                 "summary": summary,
                 "proposed_actions": proposed,
-                "completed_at": datetime.utcnow().isoformat(),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
                 "current_step": state.get("total_steps", state.get("current_step", 0)),
                 "current_activity": "Complete",
             },
@@ -1392,7 +1392,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
                 "action_id": action_id,
                 "tool_name": tool_name,
                 "tool_input": tool_input,
-                "requested_at": datetime.utcnow().isoformat(),
+                "requested_at": datetime.now(timezone.utc).isoformat(),
             }
             self.workdir.write_state(inv_id, state)
 
@@ -1565,7 +1565,7 @@ Do NOT repeat tool calls you've already made unless checking for updates."""
         state = self.workdir.read_state(inv_id)
         state["status"] = "failed"
         state["failure_reason"] = reason
-        state["failed_at"] = datetime.utcnow().isoformat()
+        state["failed_at"] = datetime.now(timezone.utc).isoformat()
         self.workdir.write_state(inv_id, state)
         self.workdir.append_log(inv_id, {"event": "failed", "reason": reason})
         self._log_investigation_event(inv_id, "failed", {"reason": reason})

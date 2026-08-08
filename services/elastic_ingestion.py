@@ -6,7 +6,7 @@ Fetches detection alerts via the Kibana Detections API and converts them to find
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from services.siem_ingestion_service import SIEMIngestionService
@@ -63,7 +63,7 @@ class ElasticIngestion(SIEMIngestionService):
                 return []
 
             if not start_time:
-                start_time = datetime.utcnow() - timedelta(hours=24)
+                start_time = datetime.now(timezone.utc) - timedelta(hours=24)
 
             time_filter: Dict[str, Any] = {
                 "bool": {
@@ -71,9 +71,9 @@ class ElasticIngestion(SIEMIngestionService):
                         {
                             "range": {
                                 "@timestamp": {
-                                    "gte": start_time.isoformat() + "Z",
+                                    "gte": start_time.isoformat().replace('+00:00', 'Z'),
                                     **(
-                                        {"lte": end_time.isoformat() + "Z"}
+                                        {"lte": end_time.isoformat().replace('+00:00', 'Z')}
                                         if end_time
                                         else {}
                                     ),
@@ -175,7 +175,7 @@ class ElasticIngestion(SIEMIngestionService):
             return {
                 "finding_id": finding_id,
                 "data_source": "elastic",
-                "timestamp": source.get("@timestamp", datetime.utcnow().isoformat()),
+                "timestamp": source.get("@timestamp", datetime.now(timezone.utc).isoformat()),
                 "severity": severity,
                 "status": "new",
                 "title": title,

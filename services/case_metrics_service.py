@@ -5,7 +5,7 @@ Handles MTTD, MTTR, MTTA, SLA compliance, and analyst performance metrics.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -199,7 +199,7 @@ class CaseMetricsService:
             )
 
             # Cases opened per day (last 30 days)
-            thirty_days_ago = datetime.utcnow() - timedelta(days=30)
+            thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
             recent_cases = session.query(Case).filter(
                 Case.created_at >= thirty_days_ago
             ).all()
@@ -314,7 +314,7 @@ class CaseMetricsService:
             Dictionary with velocity data
         """
         with unit_of_work(session) as session:
-            start_date = datetime.utcnow() - timedelta(days=days)
+            start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
             # Cases opened
             opened_cases = session.query(Case).filter(

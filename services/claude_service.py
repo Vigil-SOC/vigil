@@ -570,11 +570,11 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             if not case:
                 return {"error": f"Case {tool_input['case_id']} not found"}
             resolution_steps = case.get("resolution_steps", [])
-            from datetime import datetime as _dt
+            from datetime import datetime as _dt, timezone as _tz
 
             resolution_steps.append(
                 {
-                    "timestamp": _dt.utcnow().isoformat() + "Z",
+                    "timestamp": _dt.now(_tz.utc).isoformat().replace('+00:00', 'Z'),
                     "description": tool_input["description"],
                     "action_taken": tool_input["action_taken"],
                     "result": tool_input.get("result"),
@@ -1622,12 +1622,12 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                                     "error": f"Case {arguments['case_id']} not found"
                                 }
                             else:
-                                from datetime import datetime as _dt
+                                from datetime import datetime as _dt, timezone as _tz
 
                                 res_steps = case.get("resolution_steps", [])
                                 res_steps.append(
                                     {
-                                        "timestamp": _dt.utcnow().isoformat() + "Z",
+                                        "timestamp": _dt.now(_tz.utc).isoformat().replace('+00:00', 'Z'),
                                         "description": arguments["description"],
                                         "action_taken": arguments["action_taken"],
                                         "result": arguments.get("result"),

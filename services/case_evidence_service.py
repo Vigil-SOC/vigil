@@ -6,7 +6,7 @@ Handles file storage, chain of custody, and evidence tracking.
 
 import logging
 import hashlib
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
@@ -100,7 +100,7 @@ class CaseEvidenceService:
 
                 # Initialize chain of custody
                 chain_of_custody = [{
-                    'timestamp': datetime.utcnow().isoformat(),
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
                     'action': 'collected',
                     'user': collected_by,
                     'notes': 'Evidence collected and added to case'
@@ -117,7 +117,7 @@ class CaseEvidenceService:
                     file_hash_sha256=file_hash_sha256,
                     source=source,
                     collected_by=collected_by,
-                    collected_at=datetime.utcnow(),
+                    collected_at=datetime.now(timezone.utc),
                     chain_of_custody=chain_of_custody,
                     tags=tags or []
                 )
@@ -164,7 +164,7 @@ class CaseEvidenceService:
 
                 # Add new entry to chain of custody
                 entry = {
-                    'timestamp': datetime.utcnow().isoformat(),
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
                     'action': action,
                     'user': user,
                     'notes': notes or ''

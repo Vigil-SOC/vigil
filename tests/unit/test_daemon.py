@@ -4,7 +4,7 @@ Tests polling, processing, auto-response, and escalation logic.
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 
 from daemon.poller import DataPoller
@@ -26,7 +26,7 @@ class TestPollingLogic:
         
         next_poll = poller.calculate_next_poll(interval)
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expected = now + timedelta(seconds=interval)
         
         # Allow 1 second tolerance
@@ -38,7 +38,7 @@ class TestPollingLogic:
         from daemon.config import PollingConfig
         config = PollingConfig()
         poller = DataPoller(config)
-        last_poll = datetime.utcnow() - timedelta(seconds=400)
+        last_poll = datetime.now(timezone.utc) - timedelta(seconds=400)
         interval = 300  # 5 minutes
         
         should_poll = poller.should_poll(last_poll, interval)
@@ -51,7 +51,7 @@ class TestPollingLogic:
         from daemon.config import PollingConfig
         config = PollingConfig()
         poller = DataPoller(config)
-        last_poll = datetime.utcnow() - timedelta(seconds=100)
+        last_poll = datetime.now(timezone.utc) - timedelta(seconds=100)
         interval = 300  # 5 minutes
         
         should_poll = poller.should_poll(last_poll, interval)
@@ -433,7 +433,7 @@ class TestScheduledTasks:
         scheduler = TaskScheduler()
         
         retention_days = 90
-        cutoff_date = datetime.utcnow() - timedelta(days=retention_days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
         
         # Test cleanup logic
         result = scheduler.cleanup_old_data(retention_days)

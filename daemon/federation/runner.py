@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from core.config import DEFAULT_REDIS_URL, get_settings
@@ -203,7 +203,7 @@ class FederationRunner:
                 "type": "finding",
                 "source": source_id,
                 "data": finding,
-                "timestamp": datetime.utcnow().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
             }
         )
 

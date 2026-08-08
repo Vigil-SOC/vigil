@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 from daemon.config import ResponseConfig, EscalationConfig
@@ -251,7 +251,7 @@ class AutonomousResponder:
                         "title": f"🚨 SOC Alert - {severity.upper()}",
                         "text": message,
                         "footer": "AI-SOC Daemon",
-                        "ts": datetime.utcnow().timestamp()
+                        "ts": datetime.now(timezone.utc).timestamp()
                     }]
                 },
                 timeout=30

@@ -7,7 +7,7 @@ Registered as a scheduled task by `daemon/scheduler.py` when the
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 from core.config import get_settings
 
@@ -103,7 +103,7 @@ class ThreatFeedPoller:
                 total_seen += len(indicators)
                 total_inserted += counts.get("inserted", 0)
                 total_updated += counts.get("updated", 0)
-                _last_polled[key] = datetime.utcnow() - timedelta(seconds=60)
+                _last_polled[key] = datetime.now(timezone.utc) - timedelta(seconds=60)
             except Exception as e:  # noqa: BLE001
                 logger.error("Cloudforce One poll failed for %s: %s", cid, e)
                 errors += 1

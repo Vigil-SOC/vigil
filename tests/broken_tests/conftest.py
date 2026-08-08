@@ -5,7 +5,7 @@ This file provides common fixtures used across unit and integration tests.
 
 import os
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator, Generator
 from unittest.mock import MagicMock
 
@@ -150,7 +150,7 @@ def sample_user(test_db_session, sample_role) -> User:
         password_hash=AuthService.hash_password("testpassword123"),
         role_id=sample_role.id,
         is_active=True,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     test_db_session.add(user)
     test_db_session.commit()
@@ -170,7 +170,7 @@ def sample_admin_user(test_db_session, sample_admin_role) -> User:
         password_hash=AuthService.hash_password("adminpassword123"),
         role_id=sample_admin_role.id,
         is_active=True,
-        created_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
     )
     test_db_session.add(user)
     test_db_session.commit()
@@ -227,8 +227,8 @@ def sample_finding(test_db_session) -> Finding:
         source="splunk",
         external_id="splunk-evt-001",
         raw_data={"src_ip": "10.0.1.5", "dst_ip": "185.220.101.5", "port": 443},
-        timestamp=datetime.utcnow(),
-        created_at=datetime.utcnow(),
+        timestamp=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
         mitre_techniques=["T1071.001", "T1573.001"],
     )
     test_db_session.add(finding)
@@ -248,8 +248,8 @@ def sample_case(test_db_session, sample_user) -> Case:
         priority="high",
         severity="high",
         assignee_id=sample_user.id,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
     )
     test_db_session.add(case)
     test_db_session.commit()
@@ -272,8 +272,8 @@ def multiple_findings(test_db_session) -> list[Finding]:
             severity=severities[i % len(severities)],
             source=sources[i % len(sources)],
             external_id=f"ext-{i}",
-            timestamp=datetime.utcnow() - timedelta(hours=i),
-            created_at=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc) - timedelta(hours=i),
+            created_at=datetime.now(timezone.utc),
         )
         test_db_session.add(finding)
         findings.append(finding)

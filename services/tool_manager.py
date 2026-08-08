@@ -473,7 +473,7 @@ def _execute_findings_case_tool(
         return {"success": success, "case_id": case_id}, True
 
     if tool_name == "add_resolution_step":
-        from datetime import datetime as _dt
+        from datetime import datetime as _dt, timezone as _tz
 
         case = data_service.get_case(args["case_id"])
         if not case:
@@ -481,7 +481,7 @@ def _execute_findings_case_tool(
         steps = case.get("resolution_steps", [])
         steps.append(
             {
-                "timestamp": _dt.utcnow().isoformat() + "Z",
+                "timestamp": _dt.now(_tz.utc).isoformat().replace('+00:00', 'Z'),
                 "description": args["description"],
                 "action_taken": args["action_taken"],
                 "result": args.get("result"),

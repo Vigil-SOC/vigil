@@ -3,7 +3,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, timezone
 
 from backend.dependencies import UnitOfWorkSession
 from database.models import SLAPolicy
@@ -268,7 +268,7 @@ async def update_sla_policy(
             
             policy.is_default = data.is_default
         
-        policy.updated_at = datetime.utcnow()
+        policy.updated_at = datetime.now(timezone.utc)
         # Flush so the read-back sees server defaults; the request's
         # unit of work commits.
         session.flush()
@@ -360,7 +360,7 @@ async def set_default_policy(policy_id: str, session: UnitOfWorkSession):
         
         # Set this as default
         policy.is_default = True
-        policy.updated_at = datetime.utcnow()
+        policy.updated_at = datetime.now(timezone.utc)
         # Flush so the read-back sees server defaults; the request's
         # unit of work commits.
         session.flush()

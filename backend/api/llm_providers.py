@@ -20,6 +20,7 @@ from sqlalchemy import delete as sa_delete, update
 from sqlalchemy.orm import Session
 from api._meta import Auth, RouterMeta
 
+from datetime import timezone
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from secrets_manager import delete_secret, get_secret, set_secret  # noqa: E402
 
@@ -594,7 +595,7 @@ async def test_provider(
         organization=(row.config or {}).get("organization"),
     )
 
-    row.last_test_at = datetime.utcnow()
+    row.last_test_at = datetime.now(timezone.utc)
     row.last_test_success = success
     row.last_error = None if success else error
 

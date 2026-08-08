@@ -72,7 +72,7 @@ class _FakeSession:
         import datetime
 
         if hasattr(row, "updated_at") and row.updated_at is None:
-            row.updated_at = datetime.datetime.utcnow()
+            row.updated_at = datetime.datetime.now(datetime.timezone.utc)
 
 
 @pytest.fixture()

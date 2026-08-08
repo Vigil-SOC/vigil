@@ -6,7 +6,7 @@ tables are created on startup via create_all().
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 
 # Marker applied to classes that require a live database session.
@@ -254,7 +254,7 @@ class TestCaseModel:
         assert case.status == "resolved"
 
         case.status = "closed"
-        case.closed_at = datetime.utcnow()
+        case.closed_at = datetime.now(timezone.utc)
         db_session.commit()
         assert case.status == "closed"
         assert case.closed_at is not None
@@ -511,20 +511,20 @@ class TestModelQueries:
             priority="critical",
             status="open",
             severity="critical",
-            created_at=datetime.utcnow() - timedelta(hours=5),
+            created_at=datetime.now(timezone.utc) - timedelta(hours=5),
         )
         new_case = Case(
             title="New Case",
             priority="critical",
             status="open",
             severity="critical",
-            created_at=datetime.utcnow() - timedelta(minutes=10),
+            created_at=datetime.now(timezone.utc) - timedelta(minutes=10),
         )
 
         db_session.add_all([old_case, new_case])
         db_session.commit()
 
-        threshold = datetime.utcnow() - timedelta(hours=4)
+        threshold = datetime.now(timezone.utc) - timedelta(hours=4)
         breached = (
             db_session.query(Case)
             .filter(Case.created_at < threshold)

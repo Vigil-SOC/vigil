@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, List, Any, Callable
 from dataclasses import dataclass
 
@@ -142,13 +142,13 @@ class TaskScheduler:
             if task.run_on_start and task.enabled:
                 try:
                     await task.func()
-                    task.last_run = datetime.utcnow()
+                    task.last_run = datetime.now(timezone.utc)
                 except Exception as e:
                     logger.error(f"Startup task {task.name} failed: {e}")
         
         # Main scheduling loop
         while not shutdown_event.is_set():
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             
             for task in self._tasks:
                 if not task.enabled:
@@ -205,7 +205,7 @@ class TaskScheduler:
         
         # Generate threat hunt summary
         summary = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "findings_analyzed": len(findings),
             "patterns_detected": analysis.get("patterns", []),
             "iocs_found": len(iocs),
@@ -312,7 +312,7 @@ class TaskScheduler:
         cases = self._data_service.get_cases()
         
         # Calculate time range (last week)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         week_ago = now - timedelta(days=7)
         
         # Filter to recent findings
@@ -377,7 +377,7 @@ class TaskScheduler:
         self.stats["cleanups_run"] += 1
         
         # Calculate cutoff date
-        cutoff = datetime.utcnow() - timedelta(days=self.config.cleanup_retention_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self.config.cleanup_retention_days)
         
         # For now, just log what would be cleaned
         # In production, would delete old findings/processed events
@@ -418,7 +418,7 @@ class TaskScheduler:
         logger.info("Running health check...")
         
         health = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "status": "healthy",
             "components": {}
         }

@@ -3,7 +3,7 @@
 import json
 import logging
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -99,7 +99,7 @@ class WorkdirManager:
     
     
     def append_log(self, investigation_id: str, event: Dict[str, Any]):
-        event.setdefault("ts", datetime.utcnow().isoformat())
+        event.setdefault("ts", datetime.now(timezone.utc).isoformat())
         event.setdefault("vigil.investigation.id", investigation_id)
         # Embed current OTEL trace context so log lines are correlatable in Jaeger/Grafana
         try:

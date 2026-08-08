@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 
@@ -27,4 +27,4 @@ def parse_cursor_since(cursor: Dict[str, Any]) -> Optional[datetime]:
 
 def fresh_cursor() -> Dict[str, Any]:
     """Cursor value to persist after a successful fetch."""
-    return {"last_poll_at": datetime.utcnow().isoformat()}
+    return {"last_poll_at": datetime.now(timezone.utc).isoformat()}

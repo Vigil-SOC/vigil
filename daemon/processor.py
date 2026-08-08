@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, List, Any
 
 from daemon.config import ProcessingConfig
@@ -583,7 +583,7 @@ REASONING: [Brief explanation]
 
         # Add triage metadata
         finding["ai_triage"] = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
             "result": triage_result,
         }
 
@@ -644,7 +644,7 @@ REASONING: [Brief explanation]
         # enriched_at is always stamped as an "attempt" marker (it is one of
         # _AI_ANALYSIS_KEYS): a clean finding with no hits must still leave the
         # backfill's `ai_enrichment IS NULL` set, or it re-queues every sweep.
-        finding["enriched_at"] = datetime.utcnow().isoformat()
+        finding["enriched_at"] = datetime.now(timezone.utc).isoformat()
         if enrichment:
             finding["enrichment"] = enrichment
 
@@ -798,7 +798,7 @@ REASONING: [Brief explanation]
                 {
                     "type": "response_candidate",
                     "finding": finding,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )
             self.stats["queued_for_response"] += 1
@@ -811,7 +811,7 @@ REASONING: [Brief explanation]
                 {
                     "type": "finding",
                     "data": finding,
-                    "timestamp": datetime.utcnow().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                 }
             )
             self.stats["queued_for_investigation"] += 1
