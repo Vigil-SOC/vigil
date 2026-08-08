@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/Vigil-SOC/vigil/compare/v0.4.0...v0.5.0) (2026-08-08)
+
+
+### Features
+
+* **config:** typed Settings object; retire the 215 raw env reads ([#520](https://github.com/Vigil-SOC/vigil/issues/520)) ([5a6550b](https://github.com/Vigil-SOC/vigil/commit/5a6550b32aa8254e81f7eeae287b169664313784))
+
+
+### Bug Fixes
+
+* **api:** offload blocking I/O off the event loop ([#518](https://github.com/Vigil-SOC/vigil/issues/518)) ([cf2cfbb](https://github.com/Vigil-SOC/vigil/commit/cf2cfbb1eee23537f3df8724e7f7e020234c6998))
+* **integrations:** hyphenated Integration IDs so cloud SIEM pollers start ([#555](https://github.com/Vigil-SOC/vigil/issues/555)) ([#583](https://github.com/Vigil-SOC/vigil/issues/583)) ([de748b6](https://github.com/Vigil-SOC/vigil/commit/de748b66b2dab7ec1ada9679ace91ada75dee52c))
+
 ## [0.4.0](https://github.com/Vigil-SOC/vigil/compare/v0.3.0...v0.4.0) (2026-07-30)
 
 
