@@ -160,6 +160,68 @@ jobs:
         working-directory: frontend
         run: npm run test:run
 
+  # The agent layer is a second Node package with its own manifest, so it needs
+  # its own job -- the frontend job above is scoped to frontend/. Node 20 rather
+  # than NODE_VERSION because ai/package.json requires it.
+  test-agent-layer:
+    name: Unit Tests - Agent Layer
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: agent_test
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    env:
+      DATABASE_URL: postgres://test:test@localhost:5432/agent_test
+      REDIS_URL: redis://localhost:6379/0
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ai/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ai
+        run: npm ci
+
+      - name: Apply agent-layer schema
+        run: |
+          PGPASSWORD=test psql -h localhost -p 5432 -U test -d agent_test \
+            -f database/init/19_agent_ledger.sql
+          PGPASSWORD=test psql -h localhost -p 5432 -U test -d agent_test \
+            -f database/init/20_model_rates.sql
+
+      - name: Typecheck
+        working-directory: ai
+        run: npm run typecheck
+
+      - name: Run unit tests
+        working-directory: ai
+        run: npm test
+
   # ============================================================================
   # Integration Tests
   # ============================================================================
@@ -181,6 +243,17 @@ jobs:
           --health-retries 5
         ports:
           - 5432:5432
+      # The walking-skeleton test enqueues onto BullMQ and spawns the TypeScript
+      # worker, so this job needs Redis and Node as well as Postgres.
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
     env:
       TESTING: "true"
       DEV_MODE: "true"
@@ -190,6 +263,8 @@ jobs:
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
       POSTGRES_DB: deeptempo_test
+      DATABASE_URL: postgresql://test:test@localhost:5432/deeptempo_test
+      REDIS_URL: redis://localhost:6379/0
 
     steps:
       - uses: actions/checkout@v5
@@ -201,6 +276,17 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: 'pip'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ai/package-lock.json
+
+      - name: Install agent-layer dependencies
+        working-directory: ai
+        run: npm ci
 
       - name: Install dependencies
         run: |

@@ -179,6 +179,15 @@ Spend moving to its own event kind means the hunt workflow's existing
 `cost_usd` fields on decision and dispatch records go away in #596. That is a
 re-homing cost paid once, and it is what makes a run re-priceable.
 
+Two BullMQ libraries now sit on one queue, and nothing enforces that they
+agree. They are separately versioned lines — 3.x on PyPI, 5.x on npm — so
+there is no matching version number to keep them in step, only a shared key
+layout and a shared set of Lua scripts. Both are therefore exact pins, both are
+excluded from automated dependency updates, and the walking skeleton's
+integration test is the only thing that would catch a divergence, which is why
+it runs in CI rather than only locally. The Python package is additionally
+classified alpha.
+
 The harness/workflow split in the event-kind set is drawn from one workflow, so
 ADR-0002's warning applies here too: expect the line between domain-free and
 workflow kinds to move once, when `chat` or `investigate` lands.
