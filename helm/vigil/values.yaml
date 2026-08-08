@@ -311,6 +311,8 @@ dbInit:
     - 16_llm_budgets.sql
     - 17_loglm_setup.sql
     - 18_agent_decision_ids.sql
+    - 19_agent_ledger.sql
+    - 20_model_rates.sql
   resources:
     requests:
       cpu: 50m

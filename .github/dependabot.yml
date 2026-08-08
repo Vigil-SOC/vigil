@@ -1,0 +1,98 @@
+# Dependency updates arrive as reviewable PRs rather than as a manual sweep
+# nobody schedules. Nothing here bumps anything on its own: every update is a
+# PR that has to pass the same CI gate as any other change.
+#
+# Grouped by ecosystem and limited per ecosystem, because the failure mode of
+# an ungrouped config on a repo this size is thirty open PRs nobody reads.
+# Major versions are deliberately left to a human: TypeScript, BullMQ and the
+# React line all have majors that need a migration rather than a bump.
+
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      python-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # The Python and Node BullMQ libraries share a key layout and a set of Lua
+      # scripts. Moving one without the other risks the cross-language seam, and
+      # only the walking-skeleton integration test would catch it, so this pair
+      # is bumped by hand and together.
+      - dependency-name: bullmq
+    labels:
+      - "type:tech-debt"
+      - "area:infrastructure"
+
+  - package-ecosystem: npm
+    directory: /ai
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      agent-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      - dependency-name: bullmq
+      # Tracks the Node version the worker runs on, not the newest release.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+    labels:
+      - "type:tech-debt"
+      - "area:agents"
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      frontend-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "type:tech-debt"
+      - "area:frontend"
+
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    groups:
+      desktop-minor-and-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    labels:
+      - "type:tech-debt"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns: ["*"]
+    labels:
+      - "area:infrastructure"
+
+  - package-ecosystem: docker
+    directory: /docker
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels:
+      - "area:infrastructure"
