@@ -6,7 +6,7 @@ import { buildDigest, salienceFloor } from "../ai/digest.js";
 import { buildEntityGraph, entitiesOf, fromText } from "../ai/entities.js";
 import { renderDigest } from "../ai/llm.js";
 import { HuntController, MAX_EXPANSIONS, startHunt } from "../ai/loop.js";
-import { Ledger, newId } from "../ai/ledger.js";
+import { Ledger, newId, snapshots } from "../ai/ledger.js";
 import { ScriptedDecisionProvider, ScriptedWorkerDispatcher } from "../ai/scripted.js";
 import { buildSpec, DEFAULT_DIGEST, type DigestPolicy } from "../ai/spec.js";
 import type { Decision, EvidenceRecord, Salience, WorkerEvidence } from "../ai/types.js";
@@ -181,20 +181,11 @@ describe("resurfacing", () => {
 
     ledger.append({
       kind: "decision",
+      digest_presented: baseline,
       decision: {
         decision_id: newId("dec"),
         iteration: 1,
-        digest_presented: {
-          ...baseline,
-          recent_evidence: [...seen].map((evidence_id) => ({
-            evidence_id,
-            source_system: "duckdb",
-            summary: "",
-            salience: "routine" as Salience,
-            why_notable: "",
-            instruction_like: false,
-          })),
-        },
+        presented_evidence_ids: [...seen],
         decision: { action: "INVESTIGATE", rationale: "x" },
         model_id: "scripted",
         prompt_version: "v0",
@@ -384,7 +375,7 @@ describe("EXPAND", () => {
     // Two model calls, one iteration: the EXPAND cost is charged, not the turn.
     expect(result.cost_usd).toBe(1);
 
-    const digest = ledger.projection.decisions.at(-1)!.digest_presented;
+    const digest = snapshots(ledger.log).at(-1)!;
     expect(digest.expansions).toHaveLength(1);
     expect(digest.expansions[0]!.payload).toContain("45.77.53.176");
     expect(renderDigest(digest)).toContain("## Expanded payloads");
@@ -436,7 +427,7 @@ describe("EXPAND", () => {
     ]);
     await new HuntController(ledger, provider).advanceIteration();
 
-    const digest = ledger.projection.decisions.at(-1)!.digest_presented;
+    const digest = snapshots(ledger.log).at(-1)!;
     expect(digest.expansions.length).toBeLessThan(ids.length);
     expect(digest.expansions.every((e) => JSON.parse(e.payload) !== undefined)).toBe(true);
     expect(digest.notes.join(" ")).toMatch(/Too large to expand/);
@@ -464,7 +455,7 @@ describe("EXPAND", () => {
       ]),
     ).advanceIteration();
 
-    const rendered = renderDigest(ledger.projection.decisions.at(-1)!.digest_presented);
+    const rendered = renderDigest(snapshots(ledger.log).at(-1)!);
     expect(rendered.match(/<\/vigil:evidence>/g)).toHaveLength(
       rendered.match(/<vigil:evidence /g)!.length,
     );

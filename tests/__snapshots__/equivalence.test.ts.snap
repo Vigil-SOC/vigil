@@ -1,0 +1,297 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`fold equivalence over historical runs > covers every historical run file 1`] = `
+[
+  "hunt-0ff994280690.jsonl",
+  "hunt-403d0c29bba5.jsonl",
+  "hunt-462b6e9d6d56.jsonl",
+  "hunt-95700aa89ce9.jsonl",
+  "hunt-9a87fff30644.jsonl",
+  "hunt-b8ba4410ae0f.jsonl",
+  "hunt-dee628c23120.jsonl",
+  "hunt-edd70b7bed8c.jsonl",
+  "hunt-f34a1b93ef43.jsonl",
+  "hunt-ff7ffca4760f.jsonl",
+]
+`;
+
+exports[`fold equivalence over historical runs > hunt-0ff994280690.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [],
+  "events": 8,
+  "inexact": 0,
+  "projection": "97515b3359ad36f8a103f84e13eaa9d6c8ec48fd7bbb1867b3fac78e9f30fa51",
+  "reproduced": 0,
+}
+`;
+
+exports[`fold equivalence over historical runs > hunt-9a87fff30644.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [],
+  "events": 6,
+  "inexact": 0,
+  "projection": "1634a74e3547055e2f6939024e523d95e11c30b87052a2d3b153e53d2c877d30",
+  "reproduced": 0,
+}
+`;
+
+exports[`fold equivalence over historical runs > hunt-403d0c29bba5.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [],
+  "events": 6,
+  "inexact": 0,
+  "projection": "3e57813e9b3f70c75f5ebaa39ebfb1f02928e1cb9c2d9670a2054667ffb3455e",
+  "reproduced": 0,
+}
+`;
+
+exports[`fold equivalence over historical runs > hunt-462b6e9d6d56.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-31c3e385d6af",
+      "exact": false,
+      "iteration": 1,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-28806bb3",
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-297f1b25224f",
+      "exact": false,
+      "iteration": 2,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-28806bb3",
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-4b15ecd535d8",
+      "exact": false,
+      "iteration": 3,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-aef015ce",
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-b98668ed5c61",
+      "exact": false,
+      "iteration": 4,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-aef015ce",
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-7ac299b79a56",
+      "exact": false,
+      "iteration": 5,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-aef015ce",
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-663310d5c713",
+      "exact": false,
+      "iteration": 6,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-28806bb3",
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-541c5dfbfd04",
+      "exact": false,
+      "iteration": 7,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-28806bb3",
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-2acbe3868232",
+      "exact": false,
+      "iteration": 8,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-aef015ce",
+    },
+  ],
+  "events": 409,
+  "inexact": 8,
+  "projection": "a16884c630254c52c8069a0fa5e88c1e00f67b636541e2f91ddb8d67692bd70f",
+  "reproduced": 0,
+}
+`;
+
+exports[`fold equivalence over historical runs > hunt-95700aa89ce9.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [],
+  "events": 3,
+  "inexact": 0,
+  "projection": "6eec2c2ffb9aaa1cedd34562702fc03ce8d0d2f4f15f892352af800f0d26059c",
+  "reproduced": 0,
+}
+`;
+
+exports[`fold equivalence over historical runs > hunt-b8ba4410ae0f.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-592ee8497a1d",
+      "exact": true,
+      "iteration": 1,
+      "mismatch": null,
+      "target": "h-3431400b",
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-954b28fd4c4b",
+      "exact": true,
+      "iteration": 2,
+      "mismatch": null,
+      "target": "h-3431400b",
+    },
+    {
+      "action": "VALIDATE",
+      "decision_id": "dec-1823ec4f5797",
+      "exact": true,
+      "iteration": 3,
+      "mismatch": null,
+      "target": "h-3431400b",
+    },
+    {
+      "action": "HANDOFF_IR",
+      "decision_id": "dec-2adbb926b558",
+      "exact": true,
+      "iteration": 4,
+      "mismatch": null,
+      "target": "h-3431400b",
+    },
+    {
+      "action": "CONCLUDE",
+      "decision_id": "dec-976794b45613",
+      "exact": true,
+      "iteration": 5,
+      "mismatch": null,
+      "target": "h-3431400b",
+    },
+  ],
+  "events": 57,
+  "inexact": 0,
+  "projection": "3c57c5b5df21c0847122e491963a56323545915254eb72adfdeaa8e66ab1ee0c",
+  "reproduced": 5,
+}
+`;
+
+exports[`fold equivalence over historical runs > hunt-dee628c23120.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-799a99220986",
+      "exact": true,
+      "iteration": 1,
+      "mismatch": null,
+      "target": null,
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-025d1f9715ea",
+      "exact": true,
+      "iteration": 2,
+      "mismatch": null,
+      "target": "h-8c8ce6b4",
+    },
+    {
+      "action": "STALLED",
+      "decision_id": "dec-e0b532faca38",
+      "exact": true,
+      "iteration": 3,
+      "mismatch": null,
+      "target": null,
+    },
+  ],
+  "events": 48,
+  "inexact": 0,
+  "projection": "61e51fbd4102c8724ed076b27adfc45d2ce99fbbb28715ae6edd767a7458253f",
+  "reproduced": 3,
+}
+`;
+
+exports[`fold equivalence over historical runs > hunt-edd70b7bed8c.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-3dc801806399",
+      "exact": true,
+      "iteration": 1,
+      "mismatch": null,
+      "target": null,
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-88b7f1a08ab0",
+      "exact": true,
+      "iteration": 2,
+      "mismatch": null,
+      "target": null,
+    },
+    {
+      "action": "CONCLUDE",
+      "decision_id": "dec-69cace1f1a5b",
+      "exact": true,
+      "iteration": 3,
+      "mismatch": null,
+      "target": null,
+    },
+    {
+      "action": "VALIDATE",
+      "decision_id": "dec-371418c293b1",
+      "exact": true,
+      "iteration": 4,
+      "mismatch": null,
+      "target": "h-29203764",
+    },
+  ],
+  "events": 35,
+  "inexact": 0,
+  "projection": "c9ab49ee41ffe84986c0fa46a50013aee81522f679ccd4a2f629b4676117031b",
+  "reproduced": 4,
+}
+`;
+
+exports[`fold equivalence over historical runs > hunt-f34a1b93ef43.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [],
+  "events": 5,
+  "inexact": 0,
+  "projection": "26221da1a92a12223231e742583fa25d7b2827d36afcc535d9118adb5a184923",
+  "reproduced": 0,
+}
+`;
+
+exports[`fold equivalence over historical runs > hunt-ff7ffca4760f.jsonl folds and replays as recorded 1`] = `
+{
+  "decisions": [
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-ac2527fdda36",
+      "exact": false,
+      "iteration": 1,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-44a7fe1c",
+    },
+    {
+      "action": "INVESTIGATE",
+      "decision_id": "dec-4d8b8c6c7eec",
+      "exact": false,
+      "iteration": 2,
+      "mismatch": "rebuilt digest differs from the one presented",
+      "target": "h-44a7fe1c",
+    },
+  ],
+  "events": 91,
+  "inexact": 2,
+  "projection": "1771701aeb4ec31b3e03235caffc9f68733b4d8d9b7a36ae65ed8f2ccb2d544e",
+  "reproduced": 0,
+}
+`;

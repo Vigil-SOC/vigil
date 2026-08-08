@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { drain, inboxPath, steer } from "../ai/inbox.js";
 import { Lease, LeaseHeld } from "../ai/lease.js";
-import { Ledger, newId } from "../ai/ledger.js";
+import { Ledger, newId, snapshots } from "../ai/ledger.js";
 import { HuntController, resumeHunt, startHunt } from "../ai/loop.js";
 import { ScriptedDecisionProvider, ScriptedWorkerDispatcher } from "../ai/scripted.js";
 import { buildSpec } from "../ai/spec.js";
@@ -149,7 +149,7 @@ describe("steering", () => {
     steer(ledger.path, "note", "pivot to DNS if this stalls");
 
     await controllerFor(ledger, [INVESTIGATE]).advanceIteration();
-    const digest = ledger.projection.decisions[0]!.digest_presented;
+    const digest = snapshots(ledger.log)[0]!;
     expect(digest.directives).toEqual([expect.stringContaining("pivot to DNS if this stalls")]);
     expect(ledger.projection.directives).toHaveLength(1);
   });

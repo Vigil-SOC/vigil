@@ -161,6 +161,37 @@ describe("llm_output", () => {
     expect(result.rejected[0]).toContain("NOPE");
   });
 
+  // Both gateway surfaces report the cached share under their own key, and a
+  // re-prompt is a second billed call: totalling only the accepted one would
+  // under-report exactly the turns the caching work is measured against.
+  it("totals tokens across every billed turn, from either surface", async () => {
+    let call = 0;
+    const client = clientOf(async () => {
+      call += 1;
+      const usage =
+        call === 1
+          ? { prompt_tokens: 100, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 60 } }
+          : { prompt_tokens: 40, completion_tokens: 8, cache_read_input_tokens: 10, cache_creation_input_tokens: 30 };
+      return {
+        ...completion({ role: "assistant", content: call === 1 ? '{"action":"NOPE"}' : '{"action":"CONCLUDE"}' }),
+        usage,
+      } as unknown as OpenAI.Chat.ChatCompletion;
+    });
+
+    const result = await llm_output<{ action: string }>({
+      client,
+      model: "openai/gpt-4o",
+      messages: [{ role: "user", content: "go" }],
+      schema: SCHEMA,
+      limiter: limiter(),
+      rates: { input: 1, output: 1 },
+    });
+
+    expect(result.tokens).toEqual({ input: 140, output: 28, cache_read: 70, cache_write: 30 });
+    // cache_read is a share of input, not an addition, so cost still prices input.
+    expect(result.cost_usd).toBeCloseTo(168 / 1_000_000);
+  });
+
   it("gives up rather than returning something off-schema", async () => {
     const client = clientOf(async () => completion({ role: "assistant", content: "not json at all" }));
     await expect(

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildDigest } from "../ai/digest.js";
 import { steer } from "../ai/inbox.js";
-import { Ledger, newId } from "../ai/ledger.js";
+import { Ledger, newId, snapshots } from "../ai/ledger.js";
 import {
   HuntController,
   InvalidDecision,
@@ -85,7 +85,7 @@ describe("controller", () => {
     expect(result.hunt_status).toBe("terminal");
     expect(result.hunt_outcome).toBe("completed");
     expect(ledger.projection.decisions).toHaveLength(1);
-    expect(ledger.projection.decisions[0]!.digest_presented.iteration).toBe(1);
+    expect(snapshots(ledger.log)[0]!.iteration).toBe(1);
     expect(ledger.projection.hunt.cost_usd).toBe(0.25);
   });
 
@@ -189,7 +189,7 @@ describe("bounded re-prompt", () => {
 
     // The digest persisted with the accepted decision is the one that produced
     // it, so the rejection the model was shown is on the record too.
-    expect(record.digest_presented.notes.join(" ")).toMatch(/previous emission was rejected/);
+    expect(snapshots(ledger.log)[0]!.notes.join(" ")).toMatch(/previous emission was rejected/);
     expect(provider.seenDigests).toHaveLength(2);
     expect(provider.seenDigests[0]!.notes.join(" ")).not.toMatch(/previous emission was rejected/);
   });

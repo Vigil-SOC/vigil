@@ -70,8 +70,8 @@ export function replay(log: readonly LedgerEvent[]): ReplayReport {
       cost_usd: record.cost_usd,
       exact,
       rebuilt,
-      recorded: record.digest_presented,
-      mismatch: differs(rebuilt, record.digest_presented),
+      recorded: event.digest_presented,
+      mismatch: differs(rebuilt, event.digest_presented),
     });
   }
 

@@ -6,6 +6,7 @@ import type { HuntReport } from "./report.js";
 import {
   SCHEMA_VERSION,
   type DecisionRecord,
+  type Digest,
   type Directive,
   type DispatchRecord,
   type EvidenceLink,
@@ -25,7 +26,9 @@ export type LedgerBody =
   | { kind: "evidence"; evidence: EvidenceRecord }
   | { kind: "link"; link: EvidenceLink }
   | { kind: "dispatch"; dispatch: DispatchRecord }
-  | { kind: "decision"; decision: DecisionRecord }
+  // The digest sits beside the record, not inside it: it is the snapshot, read by
+  // replay and never by the fold, and this is the payload/snapshot split on disk.
+  | { kind: "decision"; decision: DecisionRecord; digest_presented: Digest }
   | { kind: "directive"; directive: Directive }
   | { kind: "checkpoint"; checkpoint: Checkpoint }
   | { kind: "resolution"; resolution: Resolution }
@@ -59,6 +62,37 @@ export function newId(prefix: string, bytes = 6): string {
 
 export class LedgerError extends Error {}
 
+// Ledgers written before the split carry the digest inside the decision record.
+// Hoisting it on read is the same move the store makes between its payload and
+// snapshot columns, so one reader serves both shapes.
+function hoistSnapshot(event: LedgerEvent): LedgerEvent {
+  if (event.kind !== "decision") return event;
+  const legacy = event.decision as DecisionRecord & { digest_presented?: Digest };
+  if (legacy.digest_presented === undefined) {
+    // Neither shape carries one, so the file is damaged: say so here rather than
+    // letting replay fault on it several folds later.
+    if (event.digest_presented === undefined) {
+      throw new LedgerError(`decision at seq ${event.seq} carries no digest`);
+    }
+    return event;
+  }
+  const { digest_presented, ...decision } = legacy;
+  const ids = digest_presented.recent_evidence.map((record) => record.evidence_id);
+  return { ...event, digest_presented, decision: { ...decision, presented_evidence_ids: ids } };
+}
+
+// The snapshot side of the log, in decision order. Nothing in the fold calls it.
+export function snapshots(log: readonly LedgerEvent[]): Digest[] {
+  return log.flatMap((event) => (event.kind === "decision" ? [event.digest_presented] : []));
+}
+
+export function parseLog(text: string): LedgerEvent[] {
+  return text
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => hoistSnapshot(JSON.parse(line) as LedgerEvent));
+}
+
 // Append-only JSONL. Every mutation is an event; the projection is a fold and
 // is never written back, so the file on disk is the whole audit trail.
 export class Ledger {
@@ -81,10 +115,7 @@ export class Ledger {
   static open(path: string): Ledger {
     if (!existsSync(path)) throw new LedgerError(`no such ledger: ${path}`);
     const ledger = new Ledger(path);
-    ledger.events = readFileSync(path, "utf8")
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as LedgerEvent);
+    ledger.events = parseLog(readFileSync(path, "utf8"));
     return ledger;
   }
 

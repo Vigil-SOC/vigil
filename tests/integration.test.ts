@@ -8,7 +8,7 @@ import { LlmDecisionProvider, LlmWorkerDispatcher, resetEmitMode } from "../ai/l
 import { HuntController, startHunt } from "../ai/loop.js";
 import { buildSpec } from "../ai/spec.js";
 import { buildTools, closeTools, type Tool } from "../ai/tools.js";
-import { Ledger } from "../ai/ledger.js";
+import { Ledger, snapshots } from "../ai/ledger.js";
 import { replay } from "../ai/replay.js";
 
 type Body = OpenAI.Chat.ChatCompletionCreateParamsNonStreaming;
@@ -152,7 +152,7 @@ describe.skipIf(!existsSync(DATABASE))("hunt end to end (stubbed gateway, real e
     // The digest the lead saw is on the record, and the file replays to the same state.
     const decisions = ledger.projection.decisions;
     expect(decisions).toHaveLength(2);
-    expect(decisions[1]!.digest_presented.recent_evidence[0]!.summary).toContain("45.77.53.176");
+    expect(snapshots(ledger.log)[1]!.recent_evidence[0]!.summary).toContain("45.77.53.176");
     expect(Ledger.open(ledger.path).projection).toEqual(ledger.projection);
 
     // And every digest rebuilds from the prefix behind it — the determinism the

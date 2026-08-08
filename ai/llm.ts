@@ -6,16 +6,19 @@ import { estimateTokens, Limiter, statusOf } from "./limiter.js";
 import type { DecisionProvider, DisconfirmationCritic, WorkerDispatcher } from "./ports.js";
 import type { HuntSpec, Rates, RoleSpec } from "./spec.js";
 import { toOpenAITools, type Tool } from "./tools.js";
-import type {
-  Decision,
-  DecisionResult,
-  Digest,
-  DispatchRequest,
-  DispatchResult,
-  NullCheckInput,
-  NullCheckResult,
-  Salience,
-  ToolCall,
+import {
+  addTokens,
+  NO_TOKENS,
+  type Decision,
+  type DecisionResult,
+  type Digest,
+  type DispatchRequest,
+  type DispatchResult,
+  type NullCheckInput,
+  type NullCheckResult,
+  type Salience,
+  type TokenCounts,
+  type ToolCall,
 } from "./types.js";
 
 const MAX_TOOL_TURNS = 12;
@@ -44,6 +47,7 @@ export class LlmError extends Error {
   constructor(
     message: string,
     readonly cost_usd = 0,
+    readonly tokens: TokenCounts = NO_TOKENS,
   ) {
     super(message);
   }
@@ -66,6 +70,19 @@ export function createClient(): OpenAI {
 // silently misattributed number.
 export function costOf(rates: Rates, inputTokens: number, outputTokens: number): number {
   return (inputTokens * rates.input + outputTokens * rates.output) / 1_000_000;
+}
+
+// Two surfaces, one shape: the OpenAI route reports the cached share under
+// prompt_tokens_details, the Anthropic route under its own keys. Neither reports
+// a cache write on the OpenAI shape, so it stays zero until the gateway does.
+function tokensOf(usage: OpenAI.CompletionUsage | undefined): TokenCounts {
+  const anthropic = usage as (typeof usage & { cache_read_input_tokens?: number; cache_creation_input_tokens?: number }) | undefined;
+  return {
+    input: usage?.prompt_tokens ?? 0,
+    output: usage?.completion_tokens ?? 0,
+    cache_read: usage?.prompt_tokens_details?.cached_tokens ?? anthropic?.cache_read_input_tokens ?? 0,
+    cache_write: anthropic?.cache_creation_input_tokens ?? 0,
+  };
 }
 
 // Evidence is attacker-controlled text. It never reaches the system prompt, and
@@ -221,6 +238,7 @@ export interface LlmResult<T> {
   value: T;
   model: string;
   cost_usd: number;
+  tokens: TokenCounts;
   rejected: string[];
   // Every tool invocation and what it returned: the raw substrate behind the
   // role's answer, so the ledger holds the data and not only the prose.
@@ -250,6 +268,7 @@ export async function llm_output<T>(options: LlmOptions): Promise<LlmResult<T>> 
   const messages = [...options.messages];
   const executed: ToolCall[] = [];
   let cost = 0;
+  let tokens = NO_TOKENS;
 
   const call = async (body: Parameters<typeof client.chat.completions.create>[0]) => {
     // Before the limiter, not only inside the request: a call still queued
@@ -262,7 +281,8 @@ export async function llm_output<T>(options: LlmOptions): Promise<LlmResult<T>> 
         options.signal ? { signal: options.signal } : {},
       ),
     );
-    if (!("choices" in response)) throw new LlmError("streaming responses are not supported", cost);
+    if (!("choices" in response)) throw new LlmError("streaming responses are not supported", cost, tokens);
+    tokens = addTokens(tokens, tokensOf(response.usage));
     cost += costOf(rates, response.usage?.prompt_tokens ?? 0, response.usage?.completion_tokens ?? 0);
     return response;
   };
@@ -270,7 +290,7 @@ export async function llm_output<T>(options: LlmOptions): Promise<LlmResult<T>> 
   for (let turn = 0; turn < MAX_TOOL_TURNS && tools.length > 0; turn += 1) {
     const response = await call({ model, messages, tools: toOpenAITools(tools) });
     const message = response.choices[0]?.message;
-    if (message === undefined) throw new LlmError("model returned no message", cost);
+    if (message === undefined) throw new LlmError("model returned no message", cost, tokens);
 
     const calls = message.tool_calls ?? [];
     if (calls.length === 0) break;
@@ -299,7 +319,7 @@ export async function llm_output<T>(options: LlmOptions): Promise<LlmResult<T>> 
     ], schema);
     const parsed = tryParse(content);
     if (parsed !== undefined && validate(parsed)) {
-      return { value: parsed as T, model, cost_usd: cost, rejected, calls: executed };
+      return { value: parsed as T, model, cost_usd: cost, tokens, rejected, calls: executed };
     }
 
     const reason = parsed === undefined ? "response was not valid JSON" : formatErrors(validate);
@@ -311,7 +331,7 @@ export async function llm_output<T>(options: LlmOptions): Promise<LlmResult<T>> 
     messages.push({ role: "user", content: `That emission was rejected — ${reason}. Emit a valid decision.` });
   }
 
-  throw new LlmError(`model never emitted a valid decision: ${rejected.join(" | ")}`, cost);
+  throw new LlmError(`model never emitted a valid decision: ${rejected.join(" | ")}`, cost, tokens);
 }
 
 export const EMIT_TOOL = "emit_decision";
@@ -444,6 +464,7 @@ export class LlmDecisionProvider implements DecisionProvider {
       model_id: result.model,
       prompt_version: promptVersion("lead", this.role),
       cost_usd: result.cost_usd,
+      tokens: result.tokens,
       rejected_attempts: result.rejected,
     };
   }
@@ -491,6 +512,7 @@ export class LlmDisconfirmationCritic implements DisconfirmationCritic {
       strongest_benign_explanation: result.value.benign_explanation,
       rationale: result.value.rationale,
       cost_usd: result.cost_usd,
+      tokens: result.tokens,
       model_id: result.model,
       prompt_version: promptVersion("critic", this.role),
     };
@@ -578,6 +600,7 @@ export class LlmWorkerDispatcher implements WorkerDispatcher {
       failed: false,
       failure_reason: "",
       cost_usd: result.cost_usd,
+      tokens: result.tokens,
       calls: result.calls,
     };
   }

@@ -41,7 +41,9 @@ import {
 } from "./strength.js";
 import {
   ACTIONS_REQUIRING_CITATION,
+  addTokens,
   DECISION_ACTIONS,
+  NO_TOKENS,
   OUTCOME_PRECEDENCE,
   type Budgets,
   type Decision,
@@ -61,6 +63,7 @@ import {
   type NullCheckInput,
   type NullCheckResult,
   type OpenQuestion,
+  type TokenCounts,
   type WorkerEvidence,
 } from "./types.js";
 
@@ -116,18 +119,24 @@ interface NullCheckAttempt {
   result: NullCheckResult | null;
   blocked: string;
   cost_usd: number;
+  tokens: TokenCounts;
   // Exactly what the critic was shown. A later verdict must not rest on an
   // argument that never saw half the evidence now on the record.
   argued: string[];
 }
 
-const NO_NULL_CHECK: NullCheckAttempt = { result: null, blocked: "", cost_usd: 0, argued: [] };
+const NO_NULL_CHECK: NullCheckAttempt = { result: null, blocked: "", cost_usd: 0, tokens: NO_TOKENS, argued: [] };
 
 // A call that died mid-way still spent. Duck-typed rather than reaching into the
 // LLM module, so the controller stays free of it.
 function spentBefore(error: unknown): number {
   const cost = (error as { cost_usd?: unknown }).cost_usd;
   return typeof cost === "number" ? cost : 0;
+}
+
+function tokensBefore(error: unknown): TokenCounts {
+  const tokens = (error as { tokens?: TokenCounts }).tokens;
+  return tokens === undefined ? NO_TOKENS : tokens;
 }
 
 // Raw payloads, not digest summaries: the critic argues against what was
@@ -250,6 +259,12 @@ function validateFocus(decision: Decision, projection: Projection): void {
 }
 
 // The violation goes back to the Hunt Lead as a digest note, which is where the
+// What the lead was shown, kept on the decision record so resurfacing can ask
+// what it has already seen without loading a single digest snapshot.
+function presentedEvidenceIds(digest: Digest): string[] {
+  return digest.recent_evidence.map((record) => record.evidence_id);
+}
+
 // digest already carries controller-side observations, so the re-ask needs no
 // change to the DecisionProvider port.
 function withRejection(digest: Digest, reason: string): Digest {
@@ -413,6 +428,7 @@ export class HuntController {
     // would under-report spend by up to the attempt bound, which both hides
     // cost-per-verdict and lets a hunt overrun max_cost_usd.
     let spent = 0;
+    let burned = NO_TOKENS;
     let presented = digest;
     let attempts = 0;
     let expansions = 0;
@@ -424,6 +440,7 @@ export class HuntController {
       const result = await this.provider.decide(presented);
       rejected.push(...(result.rejected_attempts ?? []));
       spent += result.cost_usd;
+      burned = addTokens(burned, result.tokens ?? NO_TOKENS);
       attribution = { model_id: result.model_id, prompt_version: result.prompt_version };
 
       try {
@@ -459,6 +476,7 @@ export class HuntController {
         result: {
           ...result,
           cost_usd: spent,
+          tokens: burned,
           ...(rejected.length > 0 ? { rejected_attempts: rejected } : {}),
         },
       };
@@ -468,7 +486,7 @@ export class HuntController {
     // presented a digest and was billed for emissions. Journaling it before the
     // throw is what keeps the ledger the whole audit trail, and charging it is
     // what stops a hunt resuming its way past max_cost_usd one stall at a time.
-    this.recordStall(presented, digestSeq, rejected, spent, attribution);
+    this.recordStall(presented, digestSeq, rejected, { cost_usd: spent, tokens: burned }, attribution);
 
     throw new InvalidDecision(
       `the Hunt Lead emitted nothing valid in ${MAX_DECISION_ATTEMPTS} attempts ` +
@@ -485,11 +503,12 @@ export class HuntController {
     presented: Digest,
     digestSeq: number,
     rejected: readonly string[],
-    spent: number,
+    burn: { cost_usd: number; tokens: TokenCounts },
     attribution: { model_id: string; prompt_version: string },
   ): void {
     this.ledger.append({
       kind: "decision",
+      digest_presented: presented,
       decision: {
         ...attribution,
         decision: {
@@ -500,9 +519,10 @@ export class HuntController {
         },
         decision_id: newId("dec"),
         iteration: presented.iteration,
-        digest_presented: presented,
+        presented_evidence_ids: presentedEvidenceIds(presented),
         digest_seq: digestSeq,
-        cost_usd: spent,
+        cost_usd: burn.cost_usd,
+        tokens: burn.tokens,
         rejected_attempts: [...rejected],
         created_at: new Date().toISOString(),
       },
@@ -510,7 +530,7 @@ export class HuntController {
 
     const hunt = this.ledger.projection.hunt;
     this.ledger.patch("hunt", hunt.hunt_id, {
-      cost_usd: Number((hunt.cost_usd + spent).toFixed(6)),
+      cost_usd: Number((hunt.cost_usd + burn.cost_usd).toFixed(6)),
     });
     // The iteration counter deliberately does not advance: a resume retries this
     // iteration. So only the cost arm of the budget can newly trip here.
@@ -1308,6 +1328,7 @@ export class HuntController {
                 // whatever wording the client threw on the way down.
                 failure_reason: halt.signal.aborted ? CANCELLED_ON_ABORT : (error as Error).message,
                 cost_usd: spentBefore(error),
+                tokens: tokensBefore(error),
               };
             }
           })(),
@@ -1348,7 +1369,7 @@ export class HuntController {
     const argued = input.evidence.map((linked) => linked.record.evidence_id);
     try {
       const result = await this.critic.argueNull(input);
-      return { result, blocked: "", cost_usd: result.cost_usd, argued };
+      return { result, blocked: "", cost_usd: result.cost_usd, tokens: result.tokens ?? NO_TOKENS, argued };
     } catch (error) {
       // A critic that cannot run fails closed. An unavailable argument is not a
       // won one, and the hunt keeps going with the hypothesis still open — but
@@ -1357,6 +1378,7 @@ export class HuntController {
         result: null,
         blocked: `the disconfirmation critic failed (${(error as Error).message}), so it stays active`,
         cost_usd: spentBefore(error),
+        tokens: tokensBefore(error),
         argued: [],
       };
     }
@@ -1385,6 +1407,7 @@ export class HuntController {
             model_id: nullCheck.model_id,
             prompt_version: nullCheck.prompt_version,
             cost_usd: nullCheck.cost_usd,
+            tokens: attempt.tokens,
           },
           salience: "notable",
           why_notable: nullCheck.rationale,
@@ -1528,11 +1551,12 @@ export class HuntController {
     const decisionId = newId("dec");
     this.ledger.append({
       kind: "decision",
+      digest_presented: digest,
       decision: {
         ...result,
         decision_id: decisionId,
         iteration,
-        digest_presented: digest,
+        presented_evidence_ids: presentedEvidenceIds(digest),
         digest_seq: digestSeq,
         created_at: new Date().toISOString(),
       },
@@ -1703,6 +1727,7 @@ export class HuntController {
       status: result.failed ? "failed" : "complete",
       failure_reason: result.failed ? result.failure_reason : null,
       cost_usd: result.cost_usd,
+      tokens: result.tokens ?? NO_TOKENS,
       calls: result.calls ?? [],
     });
     // A gap record is a fact about visibility, not a finding, so it counts as

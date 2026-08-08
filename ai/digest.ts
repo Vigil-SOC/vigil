@@ -321,11 +321,7 @@ export function buildDigest(projection: Projection, iteration: number, policy: D
   );
   for (const record of ordered.slice(-policy.evidence_window)) kept.add(record.evidence_id);
 
-  const seen = new Set(
-    projection.decisions.flatMap((decision) =>
-      decision.digest_presented.recent_evidence.map((record) => record.evidence_id),
-    ),
-  );
+  const seen = new Set(projection.decisions.flatMap((decision) => decision.presented_evidence_ids));
   const candidates = ordered.filter((record) => !kept.has(record.evidence_id));
   for (const record of sample(candidates, policy.resurface, rng(`${hunt.seed}:${iteration}`), seen)) {
     kept.add(record.evidence_id);

@@ -305,6 +305,7 @@ export interface DispatchRecord {
   // What the worker spent and what it ran. Both land on the completion patch,
   // since the row is journaled before the worker starts.
   cost_usd: number;
+  tokens?: TokenCounts;
   calls: ToolCall[];
 }
 
@@ -328,11 +329,33 @@ export interface Focus {
   hypothesis: string | null;
 }
 
+// What cost_usd was priced from, kept so a run can be re-priced and the caching
+// work measured. cache_read is the cached share of input, not an addition to it.
+export interface TokenCounts {
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+}
+
+export const NO_TOKENS: TokenCounts = Object.freeze({ input: 0, output: 0, cache_read: 0, cache_write: 0 });
+
+export function addTokens(left: TokenCounts, right: TokenCounts): TokenCounts {
+  return {
+    input: left.input + right.input,
+    output: left.output + right.output,
+    cache_read: left.cache_read + right.cache_read,
+    cache_write: left.cache_write + right.cache_write,
+  };
+}
+
 export interface DecisionResult {
   decision: Decision;
   model_id: string;
   prompt_version: string;
   cost_usd: number;
+  // Absent on ledgers written before token counts were journaled.
+  tokens?: TokenCounts;
   // Emissions the controller rejected before accepting one, kept so re-prompts stay visible.
   rejected_attempts?: string[];
 }
@@ -340,7 +363,9 @@ export interface DecisionResult {
 export interface DecisionRecord extends DecisionResult {
   decision_id: string;
   iteration: number;
-  digest_presented: Digest;
+  // The digest itself is the snapshot and belongs to replay alone; these ids are
+  // the only part of it the fold's consumers read, so they stay on the record.
+  presented_evidence_ids: string[];
   // Events on the ledger when the digest was built, so replay folds exactly
   // log[0..digest_seq). The decision is journaled after its own dispatches are,
   // which is why its seq is not that boundary. Absent on pre-replay ledgers.
@@ -440,6 +465,7 @@ export interface DispatchResult {
   // Required, including on the failure path: a worker that burned tokens and
   // then died still spent them, and hunt.cost_usd is the budget counter.
   cost_usd: number;
+  tokens?: TokenCounts;
   calls?: ToolCall[];
 }
 
@@ -465,6 +491,7 @@ export interface NullCheckResult {
   strongest_benign_explanation: string;
   rationale: string;
   cost_usd: number;
+  tokens?: TokenCounts;
   model_id: string;
   prompt_version: string;
 }

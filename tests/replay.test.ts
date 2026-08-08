@@ -55,8 +55,7 @@ describe("replay", () => {
     const ledger = await hunt([INVESTIGATE, INVESTIGATE]);
     const tampered = ledger.log.map((event): LedgerEvent => {
       if (event.kind !== "decision" || event.decision.iteration !== 2) return event;
-      const digest = { ...event.decision.digest_presented, hunt_name: "not what was presented" };
-      return { ...event, decision: { ...event.decision, digest_presented: digest } };
+      return { ...event, digest_presented: { ...event.digest_presented, hunt_name: "not what was presented" } };
     });
 
     const report = replay(tampered);
@@ -71,10 +70,10 @@ describe("replay", () => {
     const carried = ledger.log.map((event): LedgerEvent => {
       if (event.kind !== "decision") return event;
       const digest = {
-        ...event.decision.digest_presented,
-        notes: [...event.decision.digest_presented.notes, "Your previous emission was rejected: bad."],
+        ...event.digest_presented,
+        notes: [...event.digest_presented.notes, "Your previous emission was rejected: bad."],
       };
-      return { ...event, decision: { ...event.decision, digest_presented: digest } };
+      return { ...event, digest_presented: digest };
     });
 
     expect(replay(carried).reproduced).toBe(1);
