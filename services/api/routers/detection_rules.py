@@ -6,6 +6,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from core.routing import Auth, RouterMeta
 
+from core.detections.detection_rules_service import get_detection_rules_service
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -36,14 +38,9 @@ async def list_sources():
     Returns:
         List of sources with metadata (name, format, rule count, status, etc.)
     """
-    try:
-        from core.detections.detection_rules_service import get_detection_rules_service
-        service = get_detection_rules_service()
-        sources = service.list_sources()
-        return {"sources": sources, "count": len(sources)}
-    except Exception as e:
-        logger.error(f"Error listing detection sources: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_detection_rules_service()
+    sources = service.list_sources()
+    return {"sources": sources, "count": len(sources)}
 
 
 @router.get("/sources/{source_id}")
@@ -57,18 +54,11 @@ async def get_source(source_id: str):
     Returns:
         Source details
     """
-    try:
-        from core.detections.detection_rules_service import get_detection_rules_service
-        service = get_detection_rules_service()
-        source = service.get_source(source_id)
-        if not source:
-            raise HTTPException(status_code=404, detail=f"Source not found: {source_id}")
-        return source
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting source: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_detection_rules_service()
+    source = service.get_source(source_id)
+    if not source:
+        raise HTTPException(status_code=404, detail=f"Source not found: {source_id}")
+    return source
 
 
 @router.post("/sources")
@@ -114,18 +104,11 @@ async def remove_source(source_id: str, delete_files: bool = False):
     Returns:
         Success status
     """
-    try:
-        from core.detections.detection_rules_service import get_detection_rules_service
-        service = get_detection_rules_service()
-        success = service.remove_source(source_id, delete_files=delete_files)
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Source not found: {source_id}")
-        return {"success": True}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error removing source: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_detection_rules_service()
+    success = service.remove_source(source_id, delete_files=delete_files)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Source not found: {source_id}")
+    return {"success": True}
 
 
 @router.post("/sources/{source_id}/update")
@@ -163,18 +146,13 @@ async def update_all_sources():
     Returns:
         Results for each source update
     """
-    try:
-        from core.detections.detection_rules_service import get_detection_rules_service
-        service = get_detection_rules_service()
-        results = service.update_all()
-        
-        # After updating all, restart the security-detections MCP server
-        await _restart_security_detections_mcp()
-        
-        return {"success": True, "results": results}
-    except Exception as e:
-        logger.error(f"Error updating all sources: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_detection_rules_service()
+    results = service.update_all()
+    
+    # After updating all, restart the security-detections MCP server
+    await _restart_security_detections_mcp()
+    
+    return {"success": True, "results": results}
 
 
 @router.get("/stats")
@@ -185,14 +163,9 @@ async def get_stats():
     Returns:
         Statistics including total rules, breakdown by format, and per-source counts
     """
-    try:
-        from core.detections.detection_rules_service import get_detection_rules_service
-        service = get_detection_rules_service()
-        stats = service.get_stats()
-        return stats
-    except Exception as e:
-        logger.error(f"Error getting stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_detection_rules_service()
+    stats = service.get_stats()
+    return stats
 
 
 @router.get("/mcp-env")
@@ -203,14 +176,9 @@ async def get_mcp_env():
     Returns:
         Dictionary of environment variable names to their values
     """
-    try:
-        from core.detections.detection_rules_service import get_detection_rules_service
-        service = get_detection_rules_service()
-        env_vars = service.get_mcp_env_vars()
-        return {"env_vars": env_vars}
-    except Exception as e:
-        logger.error(f"Error getting MCP env vars: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_detection_rules_service()
+    env_vars = service.get_mcp_env_vars()
+    return {"env_vars": env_vars}
 
 
 @router.post("/reload")
@@ -222,31 +190,26 @@ async def reload_service():
     Returns:
         Success status with updated stats
     """
-    try:
-        from core.detections.detection_rules_service import get_detection_rules_service
-        service = get_detection_rules_service()
-        
-        # Re-read config
-        service._load_config()
-        
-        # Rescan all sources
-        for source in service.sources:
-            from pathlib import Path
-            source["rule_count"] = service._count_rules(
-                Path(source["local_path"]), source["format"], source.get("subdirectory", "")
-            )
-            if Path(source["local_path"]).exists():
-                source["status"] = "ready"
-        service._save_config()
-        
-        # Restart the MCP server
-        await _restart_security_detections_mcp()
-        
-        stats = service.get_stats()
-        return {"success": True, "stats": stats}
-    except Exception as e:
-        logger.error(f"Error reloading service: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_detection_rules_service()
+    
+    # Re-read config
+    service._load_config()
+    
+    # Rescan all sources
+    for source in service.sources:
+        from pathlib import Path
+        source["rule_count"] = service._count_rules(
+            Path(source["local_path"]), source["format"], source.get("subdirectory", "")
+        )
+        if Path(source["local_path"]).exists():
+            source["status"] = "ready"
+    service._save_config()
+    
+    # Restart the MCP server
+    await _restart_security_detections_mcp()
+    
+    stats = service.get_stats()
+    return {"success": True, "stats": stats}
 
 
 async def _restart_security_detections_mcp():

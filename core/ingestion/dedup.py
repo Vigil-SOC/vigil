@@ -21,11 +21,10 @@ import logging
 import time
 from typing import Optional
 
-from core.config import get_settings
+from core.config import DEFAULT_REDIS_URL, get_settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 DEFAULT_MAX_SIZE = 10_000
 DEFAULT_TTL_SECONDS = 86_400  # 24h
 

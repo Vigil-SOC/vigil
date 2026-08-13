@@ -394,14 +394,10 @@ async def get_or_generate_enrichment(finding_id: str, force_regenerate: bool = Q
 @router.delete("/all")
 def clear_all_findings(session: UnitOfWorkSession):
     """Delete all findings from the database."""
-    try:
-        from core.storage.models import Finding
+    from core.storage.models import Finding
 
-        count = session.query(Finding).count()
-        session.query(Finding).delete()
+    count = session.query(Finding).count()
+    session.query(Finding).delete()
 
-        logger.info(f"Cleared {count} findings")
-        return {"success": True, "deleted": count, "message": f"Deleted {count} findings"}
-    except Exception as e:
-        logger.error(f"Error clearing findings: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to clear findings: {str(e)}")
+    logger.info(f"Cleared {count} findings")
+    return {"success": True, "deleted": count, "message": f"Deleted {count} findings"}

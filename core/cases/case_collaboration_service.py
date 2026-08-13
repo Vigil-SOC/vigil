@@ -12,6 +12,7 @@ from sqlalchemy import and_
 from core.storage.models import CaseComment, CaseWatcher
 from core.cases.case_notification_service import CaseNotificationService
 from core.storage.unit_of_work import unit_of_work
+from core.exceptions import default_on_error
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class CaseCollaborationService:
         """Initialize the collaboration service."""
         self.notification_service = CaseNotificationService()
 
+    @default_on_error(None)
     def add_comment(
         self,
         case_id: str,
@@ -44,50 +46,47 @@ class CaseCollaborationService:
         Returns:
             Created CaseComment or None
         """
-        try:
-            with unit_of_work(session) as session:
-                # Extract mentions from content
-                mentions = self.notification_service.extract_mentions(content)
+        with unit_of_work(session) as session:
+            # Extract mentions from content
+            mentions = self.notification_service.extract_mentions(content)
 
-                comment = CaseComment(
-                    case_id=case_id,
-                    parent_comment_id=parent_comment_id,
-                    author=author,
-                    content=content,
-                    mentions=mentions,
-                    is_edited=False,
-                    is_deleted=False
-                )
+            comment = CaseComment(
+                case_id=case_id,
+                parent_comment_id=parent_comment_id,
+                author=author,
+                content=content,
+                mentions=mentions,
+                is_edited=False,
+                is_deleted=False
+            )
 
-                session.add(comment)
+            session.add(comment)
 
-                # Send notifications for mentions
-                for mentioned_user in mentions:
-                    if mentioned_user != author:  # Don't notify self
-                        self.notification_service.notify_comment_mention(
-                            case_id=case_id,
-                            mentioned_user=mentioned_user,
-                            comment_author=author,
-                            comment_content=content,
-                            session=session
-                        )
+            # Send notifications for mentions
+            for mentioned_user in mentions:
+                if mentioned_user != author:  # Don't notify self
+                    self.notification_service.notify_comment_mention(
+                        case_id=case_id,
+                        mentioned_user=mentioned_user,
+                        comment_author=author,
+                        comment_content=content,
+                        session=session
+                    )
 
-                # Notify watchers
-                self.notification_service.notify_watchers(
-                    case_id=case_id,
-                    notification_type='new_comment',
-                    title='New Comment',
-                    message=f'{author} added a comment',
-                    session=session
-                )
+            # Notify watchers
+            self.notification_service.notify_watchers(
+                case_id=case_id,
+                notification_type='new_comment',
+                title='New Comment',
+                message=f'{author} added a comment',
+                session=session
+            )
 
-                logger.info(f"Added comment to case {case_id} by {author}")
-                return comment
+            logger.info(f"Added comment to case {case_id} by {author}")
+            return comment
 
-        except Exception as e:
-            logger.error(f"Error adding comment: {e}")
-            return None
 
+    @default_on_error(False)
     def update_comment(
         self,
         comment_id: int,
@@ -105,28 +104,25 @@ class CaseCollaborationService:
         Returns:
             True if successful
         """
-        try:
-            with unit_of_work(session) as session:
-                comment = session.query(CaseComment).filter(
-                    CaseComment.comment_id == comment_id
-                ).first()
+        with unit_of_work(session) as session:
+            comment = session.query(CaseComment).filter(
+                CaseComment.comment_id == comment_id
+            ).first()
 
-                if not comment:
-                    return False
+            if not comment:
+                return False
 
-                comment.content = new_content
-                comment.is_edited = True
+            comment.content = new_content
+            comment.is_edited = True
 
-                # Update mentions
-                mentions = self.notification_service.extract_mentions(new_content)
-                comment.mentions = mentions
+            # Update mentions
+            mentions = self.notification_service.extract_mentions(new_content)
+            comment.mentions = mentions
 
-                return True
+            return True
 
-        except Exception as e:
-            logger.error(f"Error updating comment: {e}")
-            return False
 
+    @default_on_error(False)
     def delete_comment(
         self,
         comment_id: int,
@@ -144,26 +140,22 @@ class CaseCollaborationService:
         Returns:
             True if successful
         """
-        try:
-            with unit_of_work(session) as session:
-                comment = session.query(CaseComment).filter(
-                    CaseComment.comment_id == comment_id
-                ).first()
+        with unit_of_work(session) as session:
+            comment = session.query(CaseComment).filter(
+                CaseComment.comment_id == comment_id
+            ).first()
 
-                if not comment:
-                    return False
+            if not comment:
+                return False
 
-                if soft_delete:
-                    comment.is_deleted = True
-                    comment.content = "[deleted]"
-                else:
-                    session.delete(comment)
+            if soft_delete:
+                comment.is_deleted = True
+                comment.content = "[deleted]"
+            else:
+                session.delete(comment)
 
-                return True
+            return True
 
-        except Exception as e:
-            logger.error(f"Error deleting comment: {e}")
-            return False
 
     def get_case_comments(
         self,
@@ -192,6 +184,7 @@ class CaseCollaborationService:
 
             return query.order_by(CaseComment.created_at.asc()).all()
 
+    @default_on_error(None)
     def add_watcher(
         self,
         case_id: str,
@@ -211,35 +204,32 @@ class CaseCollaborationService:
         Returns:
             Created CaseWatcher or None
         """
-        try:
-            with unit_of_work(session) as session:
-                # Check if already watching
-                existing = session.query(CaseWatcher).filter(
-                    and_(
-                        CaseWatcher.case_id == case_id,
-                        CaseWatcher.user_id == user_id
-                    )
-                ).first()
-
-                if existing:
-                    logger.info(f"User {user_id} already watching case {case_id}")
-                    return existing
-
-                watcher = CaseWatcher(
-                    case_id=case_id,
-                    user_id=user_id,
-                    notification_preferences=notification_preferences or {}
+        with unit_of_work(session) as session:
+            # Check if already watching
+            existing = session.query(CaseWatcher).filter(
+                and_(
+                    CaseWatcher.case_id == case_id,
+                    CaseWatcher.user_id == user_id
                 )
+            ).first()
 
-                session.add(watcher)
+            if existing:
+                logger.info(f"User {user_id} already watching case {case_id}")
+                return existing
 
-                logger.info(f"Added watcher {user_id} to case {case_id}")
-                return watcher
+            watcher = CaseWatcher(
+                case_id=case_id,
+                user_id=user_id,
+                notification_preferences=notification_preferences or {}
+            )
 
-        except Exception as e:
-            logger.error(f"Error adding watcher: {e}")
-            return None
+            session.add(watcher)
 
+            logger.info(f"Added watcher {user_id} to case {case_id}")
+            return watcher
+
+
+    @default_on_error(False)
     def remove_watcher(
         self,
         case_id: str,
@@ -257,26 +247,22 @@ class CaseCollaborationService:
         Returns:
             True if successful
         """
-        try:
-            with unit_of_work(session) as session:
-                watcher = session.query(CaseWatcher).filter(
-                    and_(
-                        CaseWatcher.case_id == case_id,
-                        CaseWatcher.user_id == user_id
-                    )
-                ).first()
+        with unit_of_work(session) as session:
+            watcher = session.query(CaseWatcher).filter(
+                and_(
+                    CaseWatcher.case_id == case_id,
+                    CaseWatcher.user_id == user_id
+                )
+            ).first()
 
-                if not watcher:
-                    return False
+            if not watcher:
+                return False
 
-                session.delete(watcher)
+            session.delete(watcher)
 
-                logger.info(f"Removed watcher {user_id} from case {case_id}")
-                return True
+            logger.info(f"Removed watcher {user_id} from case {case_id}")
+            return True
 
-        except Exception as e:
-            logger.error(f"Error removing watcher: {e}")
-            return False
 
     def get_case_watchers(
         self,

@@ -10,6 +10,8 @@ from core.agents.builtins import DEFAULT_AGENT_ID
 from core.agents.manager import AgentManager, CUSTOM_AGENT_ID_PREFIX
 from core.routing import Auth, RouterMeta
 
+from core.storage.database_data_service import DatabaseDataService
+
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
@@ -54,18 +56,14 @@ async def list_agents():
     tooling without having to restart. Built-ins are code-defined and
     cached in-process.
     """
-    try:
-        # Cheap best-effort refresh. Failures leave the existing cache in
-        # place — you'd still get the built-in list back.
-        agent_manager.refresh_custom_agents()
-        agents = agent_manager.get_agent_list()
-        return {
-            "agents": agents,
-            "current_agent": agent_manager.current_agent_id
-        }
-    except Exception as e:
-        logger.error(f"Error listing agents: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    # Cheap best-effort refresh. Failures leave the existing cache in
+    # place — you'd still get the built-in list back.
+    agent_manager.refresh_custom_agents()
+    agents = agent_manager.get_agent_list()
+    return {
+        "agents": agents,
+        "current_agent": agent_manager.current_agent_id
+    }
 
 
 @router.get("/agents/{agent_id}")
@@ -79,27 +77,21 @@ async def get_agent(agent_id: str):
     Returns:
         Agent details
     """
-    try:
-        agent = _resolve_agent(agent_id)
-        if not agent:
-            raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+    agent = _resolve_agent(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
 
-        return {
-            "id": agent.id,
-            "name": agent.name,
-            "description": agent.description,
-            "icon": agent.icon,
-            "color": agent.color,
-            "specialization": agent.specialization,
-            "recommended_tools": agent.recommended_tools,
-            "max_tokens": agent.max_tokens,
-            "enable_thinking": agent.enable_thinking
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting agent: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "description": agent.description,
+        "icon": agent.icon,
+        "color": agent.color,
+        "specialization": agent.specialization,
+        "recommended_tools": agent.recommended_tools,
+        "max_tokens": agent.max_tokens,
+        "enable_thinking": agent.enable_thinking
+    }
 
 
 @router.post("/agents/set-current")
@@ -113,20 +105,14 @@ async def set_current_agent(agent_id: str):
     Returns:
         Success status
     """
-    try:
-        success = agent_manager.set_current_agent(agent_id)
-        if not success:
-            raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
-        
-        return {
-            "success": True,
-            "current_agent": agent_manager.current_agent_id
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error setting current agent: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    success = agent_manager.set_current_agent(agent_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
+    
+    return {
+        "success": True,
+        "current_agent": agent_manager.current_agent_id
+    }
 
 
 @router.post("/agents/investigate")
@@ -140,7 +126,6 @@ async def start_investigation(request: InvestigationRequest):
     Returns:
         Investigation prompt and agent details
     """
-    from core.storage.database_data_service import DatabaseDataService
     
     try:
         # Get the finding
@@ -215,7 +200,6 @@ async def run_agent(request: AgentRunRequest):
     Returns:
         Agent execution result with tool calls and analysis
     """
-    from core.storage.database_data_service import DatabaseDataService
     from core.llm.harness.claude import ClaudeService
     
     try:

@@ -13,6 +13,8 @@ from services.api.middleware.auth import get_current_active_user, require_settin
 from core.storage.models import User
 from core.routing import Auth, RouterMeta
 
+from core.storage.connection import get_db_manager
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
@@ -179,7 +181,6 @@ def reconnect_database(current_user: User = Depends(get_current_active_user)):
     """
     require_settings_admin(current_user)
 
-    from core.storage.connection import get_db_manager
 
     with _RETARGET_LOCK:
         db_manager = get_db_manager()
@@ -295,7 +296,6 @@ def init_schema(current_user: User = Depends(get_current_active_user)):
     """
     require_settings_admin(current_user)
 
-    from core.storage.connection import get_db_manager
 
     db_manager = get_db_manager()
     before = db_manager.schema_report()
@@ -313,11 +313,7 @@ def init_schema(current_user: User = Depends(get_current_active_user)):
     if before["state"] == "unknown":
         raise HTTPException(status_code=409, detail="Cannot inspect the target schema.")
 
-    try:
-        db_manager.create_tables()
-    except Exception as e:
-        logger.error("Schema init failed: %s", e)
-        raise HTTPException(status_code=500, detail=f"Schema init failed: {e}")
+    db_manager.create_tables()
     logger.info("Provisioned Vigil schema into empty database")
     return {"success": True, "message": "Schema created", **db_manager.schema_report()}
 

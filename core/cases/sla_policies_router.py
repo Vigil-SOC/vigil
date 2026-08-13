@@ -5,7 +5,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from datetime import datetime
 
-from core.storage.models import SLAPolicy
+from core.storage.models import Case, CaseSLA, SLAPolicy
+
 from core.storage.schemas import CaseSchema, SLAPolicySchema
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 
@@ -115,79 +116,73 @@ async def create_sla_policy(data: SLAPolicyCreate, session: UnitOfWorkSession):
     Returns:
         Created SLA policy
     """
-    try:
-        # Check if policy ID already exists
-        existing = session.query(SLAPolicy).filter(
-            SLAPolicy.policy_id == data.policy_id
-        ).first()
-        
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Policy with ID {data.policy_id} already exists"
-            )
-        
-        # Validate priority level
-        valid_priorities = ["critical", "high", "medium", "low"]
-        if data.priority_level not in valid_priorities:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid priority level. Must be one of: {valid_priorities}"
-            )
-        
-        # Validate time values
-        if data.response_time_hours <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Response time must be greater than 0"
-            )
-        
-        if data.resolution_time_hours <= 0:
-            raise HTTPException(
-                status_code=400,
-                detail="Resolution time must be greater than 0"
-            )
-        
-        if data.response_time_hours >= data.resolution_time_hours:
-            raise HTTPException(
-                status_code=400,
-                detail="Response time must be less than resolution time"
-            )
-        
-        # If setting as default, unset other defaults for this priority
-        if data.is_default:
-            session.query(SLAPolicy).filter(
-                SLAPolicy.priority_level == data.priority_level,
-                SLAPolicy.is_default == True
-            ).update({"is_default": False})
-        
-        # Create policy
-        policy = SLAPolicy(
-            policy_id=data.policy_id,
-            name=data.name,
-            description=data.description,
-            priority_level=data.priority_level,
-            response_time_hours=data.response_time_hours,
-            resolution_time_hours=data.resolution_time_hours,
-            business_hours_only=data.business_hours_only,
-            escalation_rules=data.escalation_rules,
-            notification_thresholds=data.notification_thresholds or [75, 90, 100],
-            is_active=data.is_active,
-            is_default=data.is_default
-        )
-        
-        session.add(policy)
-        # Flush so the read-back sees server defaults; the request's
-        # unit of work commits.
-        session.flush()
-        session.refresh(policy)
-        
-        return SLAPolicySchema.dump(policy)
+    # Check if policy ID already exists
+    existing = session.query(SLAPolicy).filter(
+        SLAPolicy.policy_id == data.policy_id
+    ).first()
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create policy: {str(e)}")
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Policy with ID {data.policy_id} already exists"
+        )
+    
+    # Validate priority level
+    valid_priorities = ["critical", "high", "medium", "low"]
+    if data.priority_level not in valid_priorities:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid priority level. Must be one of: {valid_priorities}"
+        )
+    
+    # Validate time values
+    if data.response_time_hours <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Response time must be greater than 0"
+        )
+    
+    if data.resolution_time_hours <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Resolution time must be greater than 0"
+        )
+    
+    if data.response_time_hours >= data.resolution_time_hours:
+        raise HTTPException(
+            status_code=400,
+            detail="Response time must be less than resolution time"
+        )
+    
+    # If setting as default, unset other defaults for this priority
+    if data.is_default:
+        session.query(SLAPolicy).filter(
+            SLAPolicy.priority_level == data.priority_level,
+            SLAPolicy.is_default == True
+        ).update({"is_default": False})
+    
+    # Create policy
+    policy = SLAPolicy(
+        policy_id=data.policy_id,
+        name=data.name,
+        description=data.description,
+        priority_level=data.priority_level,
+        response_time_hours=data.response_time_hours,
+        resolution_time_hours=data.resolution_time_hours,
+        business_hours_only=data.business_hours_only,
+        escalation_rules=data.escalation_rules,
+        notification_thresholds=data.notification_thresholds or [75, 90, 100],
+        is_active=data.is_active,
+        is_default=data.is_default
+    )
+    
+    session.add(policy)
+    # Flush so the read-back sees server defaults; the request's
+    # unit of work commits.
+    session.flush()
+    session.refresh(policy)
+    
+    return SLAPolicySchema.dump(policy)
 
 
 @router.put("/{policy_id}")
@@ -206,79 +201,73 @@ async def update_sla_policy(
     Returns:
         Updated SLA policy
     """
-    try:
-        policy = session.query(SLAPolicy).filter(
-            SLAPolicy.policy_id == policy_id
-        ).first()
-        
-        if not policy:
-            raise HTTPException(status_code=404, detail="SLA policy not found")
-        
-        # Update fields if provided
-        if data.name is not None:
-            policy.name = data.name
-        
-        if data.description is not None:
-            policy.description = data.description
-        
-        if data.response_time_hours is not None:
-            if data.response_time_hours <= 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Response time must be greater than 0"
-                )
-            policy.response_time_hours = data.response_time_hours
-        
-        if data.resolution_time_hours is not None:
-            if data.resolution_time_hours <= 0:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Resolution time must be greater than 0"
-                )
-            policy.resolution_time_hours = data.resolution_time_hours
-        
-        # Validate response < resolution after updates
-        if policy.response_time_hours >= policy.resolution_time_hours:
+    policy = session.query(SLAPolicy).filter(
+        SLAPolicy.policy_id == policy_id
+    ).first()
+    
+    if not policy:
+        raise HTTPException(status_code=404, detail="SLA policy not found")
+    
+    # Update fields if provided
+    if data.name is not None:
+        policy.name = data.name
+    
+    if data.description is not None:
+        policy.description = data.description
+    
+    if data.response_time_hours is not None:
+        if data.response_time_hours <= 0:
             raise HTTPException(
                 status_code=400,
-                detail="Response time must be less than resolution time"
+                detail="Response time must be greater than 0"
             )
-        
-        if data.business_hours_only is not None:
-            policy.business_hours_only = data.business_hours_only
-        
-        if data.escalation_rules is not None:
-            policy.escalation_rules = data.escalation_rules
-        
-        if data.notification_thresholds is not None:
-            policy.notification_thresholds = data.notification_thresholds
-        
-        if data.is_active is not None:
-            policy.is_active = data.is_active
-        
-        if data.is_default is not None:
-            # If setting as default, unset other defaults for this priority
-            if data.is_default and not policy.is_default:
-                session.query(SLAPolicy).filter(
-                    SLAPolicy.priority_level == policy.priority_level,
-                    SLAPolicy.policy_id != policy_id,
-                    SLAPolicy.is_default == True
-                ).update({"is_default": False})
-            
-            policy.is_default = data.is_default
-        
-        policy.updated_at = datetime.utcnow()
-        # Flush so the read-back sees server defaults; the request's
-        # unit of work commits.
-        session.flush()
-        session.refresh(policy)
-        
-        return SLAPolicySchema.dump(policy)
+        policy.response_time_hours = data.response_time_hours
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to update policy: {str(e)}")
+    if data.resolution_time_hours is not None:
+        if data.resolution_time_hours <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Resolution time must be greater than 0"
+            )
+        policy.resolution_time_hours = data.resolution_time_hours
+    
+    # Validate response < resolution after updates
+    if policy.response_time_hours >= policy.resolution_time_hours:
+        raise HTTPException(
+            status_code=400,
+            detail="Response time must be less than resolution time"
+        )
+    
+    if data.business_hours_only is not None:
+        policy.business_hours_only = data.business_hours_only
+    
+    if data.escalation_rules is not None:
+        policy.escalation_rules = data.escalation_rules
+    
+    if data.notification_thresholds is not None:
+        policy.notification_thresholds = data.notification_thresholds
+    
+    if data.is_active is not None:
+        policy.is_active = data.is_active
+    
+    if data.is_default is not None:
+        # If setting as default, unset other defaults for this priority
+        if data.is_default and not policy.is_default:
+            session.query(SLAPolicy).filter(
+                SLAPolicy.priority_level == policy.priority_level,
+                SLAPolicy.policy_id != policy_id,
+                SLAPolicy.is_default == True
+            ).update({"is_default": False})
+        
+        policy.is_default = data.is_default
+    
+    policy.updated_at = datetime.utcnow()
+    # Flush so the read-back sees server defaults; the request's
+    # unit of work commits.
+    session.flush()
+    session.refresh(policy)
+    
+    return SLAPolicySchema.dump(policy)
 
 
 @router.delete("/{policy_id}")
@@ -297,38 +286,31 @@ async def delete_sla_policy(
     Returns:
         Success message
     """
-    try:
-        policy = session.query(SLAPolicy).filter(
-            SLAPolicy.policy_id == policy_id
-        ).first()
-        
-        if not policy:
-            raise HTTPException(status_code=404, detail="SLA policy not found")
-        
-        # Check if policy is in use
-        from core.storage.models import CaseSLA
-        
-        in_use = session.query(CaseSLA).filter(
-            CaseSLA.sla_policy_id == policy_id
-        ).count()
-        
-        if in_use > 0 and not force:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot delete policy that is in use by {in_use} case(s). Use force=true to delete anyway."
-            )
-        
-        session.delete(policy)
-        
-        return {
-            "success": True,
-            "message": f"SLA policy {policy_id} deleted successfully"
-        }
+    policy = session.query(SLAPolicy).filter(
+        SLAPolicy.policy_id == policy_id
+    ).first()
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to delete policy: {str(e)}")
+    if not policy:
+        raise HTTPException(status_code=404, detail="SLA policy not found")
+    
+    # Check if policy is in use
+    
+    in_use = session.query(CaseSLA).filter(
+        CaseSLA.sla_policy_id == policy_id
+    ).count()
+    
+    if in_use > 0 and not force:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete policy that is in use by {in_use} case(s). Use force=true to delete anyway."
+        )
+    
+    session.delete(policy)
+    
+    return {
+        "success": True,
+        "message": f"SLA policy {policy_id} deleted successfully"
+    }
 
 
 @router.post("/{policy_id}/set-default")
@@ -342,35 +324,29 @@ async def set_default_policy(policy_id: str, session: UnitOfWorkSession):
     Returns:
         Updated policy
     """
-    try:
-        policy = session.query(SLAPolicy).filter(
-            SLAPolicy.policy_id == policy_id
-        ).first()
-        
-        if not policy:
-            raise HTTPException(status_code=404, detail="SLA policy not found")
-        
-        # Unset other defaults for this priority
-        session.query(SLAPolicy).filter(
-            SLAPolicy.priority_level == policy.priority_level,
-            SLAPolicy.policy_id != policy_id,
-            SLAPolicy.is_default == True
-        ).update({"is_default": False})
-        
-        # Set this as default
-        policy.is_default = True
-        policy.updated_at = datetime.utcnow()
-        # Flush so the read-back sees server defaults; the request's
-        # unit of work commits.
-        session.flush()
-        session.refresh(policy)
-        
-        return SLAPolicySchema.dump(policy)
+    policy = session.query(SLAPolicy).filter(
+        SLAPolicy.policy_id == policy_id
+    ).first()
     
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to set default policy: {str(e)}")
+    if not policy:
+        raise HTTPException(status_code=404, detail="SLA policy not found")
+    
+    # Unset other defaults for this priority
+    session.query(SLAPolicy).filter(
+        SLAPolicy.priority_level == policy.priority_level,
+        SLAPolicy.policy_id != policy_id,
+        SLAPolicy.is_default == True
+    ).update({"is_default": False})
+    
+    # Set this as default
+    policy.is_default = True
+    policy.updated_at = datetime.utcnow()
+    # Flush so the read-back sees server defaults; the request's
+    # unit of work commits.
+    session.flush()
+    session.refresh(policy)
+    
+    return SLAPolicySchema.dump(policy)
 
 
 @router.get("/{policy_id}/usage")
@@ -391,7 +367,6 @@ async def get_policy_usage(policy_id: str, session: UnitOfWorkSession):
     if not policy:
         raise HTTPException(status_code=404, detail="SLA policy not found")
 
-    from core.storage.models import CaseSLA, Case
     from sqlalchemy import func
 
     # Total cases using this policy
@@ -454,7 +429,6 @@ async def get_policy_cases(
     if not policy:
         raise HTTPException(status_code=404, detail="SLA policy not found")
 
-    from core.storage.models import CaseSLA, Case
 
     query = session.query(Case).join(CaseSLA).filter(
         CaseSLA.sla_policy_id == policy_id

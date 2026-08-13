@@ -402,6 +402,19 @@ shutdown_telemetry = shutdown
 # Structured JSON logging with OTEL trace correlation (#59)
 # ---------------------------------------------------------------------------
 
+def current_trace_ids() -> tuple[str, str]:
+    """Hex (trace_id, span_id) of the active OTEL span, or empty strings."""
+    try:
+        from opentelemetry import trace
+
+        ctx = trace.get_current_span().get_span_context()
+        if ctx and ctx.is_valid:
+            return format(ctx.trace_id, "032x"), format(ctx.span_id, "016x")
+    except Exception:
+        pass
+    return "", ""
+
+
 def _install_json_logging() -> None:
     """
     Replace the root logger's handlers with structured JSON output.
@@ -413,18 +426,7 @@ def _install_json_logging() -> None:
 
     class _OTELJsonFormatter(logging.Formatter):
         def format(self, record: logging.LogRecord) -> str:
-            trace_id = ""
-            span_id = ""
-            try:
-                from opentelemetry import trace
-
-                span = trace.get_current_span()
-                ctx = span.get_span_context()
-                if ctx and ctx.is_valid:
-                    trace_id = format(ctx.trace_id, "032x")
-                    span_id = format(ctx.span_id, "016x")
-            except Exception:
-                pass
+            trace_id, span_id = current_trace_ids()
 
             entry: dict = {
                 "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S.%f"),

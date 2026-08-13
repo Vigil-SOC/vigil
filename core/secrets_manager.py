@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
 from core.config import vigil_path
+from core.exceptions import default_on_error
 
 logger = logging.getLogger(__name__)
 
@@ -80,26 +81,20 @@ class EnvironmentBackend(SecretsBackend):
             logger.debug(f"Found secret '{key}' in environment variables")
         return value
 
+    @default_on_error(False)
     def set(self, key: str, value: str) -> bool:
         """Set environment variable (only for current process)."""
-        try:
-            os.environ[key] = value
-            logger.info(f"Set secret '{key}' in environment (process only)")
-            return True
-        except Exception as e:
-            logger.error(f"Error setting environment variable '{key}': {e}")
-            return False
+        os.environ[key] = value
+        logger.info(f"Set secret '{key}' in environment (process only)")
+        return True
 
+    @default_on_error(False)
     def delete(self, key: str) -> bool:
         """Delete environment variable."""
-        try:
-            if key in os.environ:
-                del os.environ[key]
-                logger.info(f"Deleted secret '{key}' from environment")
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting environment variable '{key}': {e}")
-            return False
+        if key in os.environ:
+            del os.environ[key]
+            logger.info(f"Deleted secret '{key}' from environment")
+        return True
 
     def is_available(self) -> bool:
         """Environment variables are always available."""
@@ -138,53 +133,47 @@ class DotEnvBackend(SecretsBackend):
             logger.debug(f"Found secret '{key}' in .env file")
         return value
 
+    @default_on_error(False)
     def set(self, key: str, value: str) -> bool:
         """Set secret in .env file."""
-        try:
-            # Update cache
-            self._cache[key] = value
+        # Update cache
+        self._cache[key] = value
 
-            # Create directory if needed
-            self.env_file.parent.mkdir(parents=True, exist_ok=True)
+        # Create directory if needed
+        self.env_file.parent.mkdir(parents=True, exist_ok=True)
 
-            # Write all secrets to file
+        # Write all secrets to file
+        with open(self.env_file, "w") as f:
+            f.write("# Vigil SOC Secrets\n")
+            f.write(
+                "# This file contains sensitive credentials - keep it secure!\n\n"
+            )
+            for k, v in self._cache.items():
+                # Escape quotes in value
+                escaped_value = v.replace('"', '\\"')
+                f.write(f'{k}="{escaped_value}"\n')
+
+        # Set restrictive permissions (owner read/write only)
+        os.chmod(self.env_file, 0o600)
+
+        logger.info(f"Set secret '{key}' in .env file")
+        return True
+
+    @default_on_error(False)
+    def delete(self, key: str) -> bool:
+        """Delete secret from .env file."""
+        if key in self._cache:
+            del self._cache[key]
+
+            # Rewrite file without this secret
             with open(self.env_file, "w") as f:
-                f.write("# Vigil SOC Secrets\n")
-                f.write(
-                    "# This file contains sensitive credentials - keep it secure!\n\n"
-                )
+                f.write("# Vigil SOC Secrets\n\n")
                 for k, v in self._cache.items():
-                    # Escape quotes in value
                     escaped_value = v.replace('"', '\\"')
                     f.write(f'{k}="{escaped_value}"\n')
 
-            # Set restrictive permissions (owner read/write only)
-            os.chmod(self.env_file, 0o600)
-
-            logger.info(f"Set secret '{key}' in .env file")
-            return True
-        except Exception as e:
-            logger.error(f"Error setting secret in .env file: {e}")
-            return False
-
-    def delete(self, key: str) -> bool:
-        """Delete secret from .env file."""
-        try:
-            if key in self._cache:
-                del self._cache[key]
-
-                # Rewrite file without this secret
-                with open(self.env_file, "w") as f:
-                    f.write("# Vigil SOC Secrets\n\n")
-                    for k, v in self._cache.items():
-                        escaped_value = v.replace('"', '\\"')
-                        f.write(f'{k}="{escaped_value}"\n')
-
-                logger.info(f"Deleted secret '{key}' from .env file")
-            return True
-        except Exception as e:
-            logger.error(f"Error deleting secret from .env file: {e}")
-            return False
+            logger.info(f"Deleted secret '{key}' from .env file")
+        return True
 
     def is_available(self) -> bool:
         """Check if .env file backend is available."""
@@ -416,22 +405,19 @@ class EncryptedFileBackend(SecretsBackend):
             self._cache_mtime = current_mtime
         return self._cache
 
+    @default_on_error(False)
     def _write_cache(self) -> bool:
-        try:
-            self._ensure_dir()
-            plaintext = json.dumps(self._cache or {}, sort_keys=True).encode("utf-8")
-            blob = self._get_fernet().encrypt(plaintext)
-            tmp = self.secrets_path.with_suffix(".tmp")
-            tmp.write_bytes(blob)
-            os.chmod(tmp, 0o600)
-            os.replace(tmp, self.secrets_path)
-            # Keep our mtime tracker in sync so we don't needlessly
-            # re-read the file we just wrote.
-            self._cache_mtime = self._current_mtime()
-            return True
-        except Exception as e:
-            logger.error(f"Error writing encrypted secrets: {e}")
-            return False
+        self._ensure_dir()
+        plaintext = json.dumps(self._cache or {}, sort_keys=True).encode("utf-8")
+        blob = self._get_fernet().encrypt(plaintext)
+        tmp = self.secrets_path.with_suffix(".tmp")
+        tmp.write_bytes(blob)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.secrets_path)
+        # Keep our mtime tracker in sync so we don't needlessly
+        # re-read the file we just wrote.
+        self._cache_mtime = self._current_mtime()
+        return True
 
     def get(self, key: str) -> Optional[str]:
         if not self._crypto_ok:

@@ -1,7 +1,8 @@
 """Polls pending sandbox submissions and correlates completed reports.
 
 The daemon's enrichment step (``daemon/processor.py``) records
-``finding.enrichment.sandbox_submissions`` with task IDs per sandbox. Those
+``finding.ai_enrichment.enrichment.sandbox_submissions`` with task IDs per
+sandbox — the payload is nested one level inside the column. Those
 tasks take minutes to complete — so a separate poller checks them on a
 cadence, pulls the report when ready, and writes it back to the finding
 plus (if the finding is tied to a case) the case as evidence + IOCs.
@@ -19,7 +20,8 @@ from typing import Any, Dict, Optional
 
 import httpx
 
-from core.config import get_settings
+from core.config import get_integration_config, get_settings
+
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -66,7 +68,10 @@ class SandboxPoller:
         stats = {"checked": 0, "completed": 0, "expired": 0, "errors": 0}
 
         for finding in findings or []:
-            enrichment = finding.get("enrichment") or {}
+            # processor.py nests its enrichment payload under the ai_enrichment
+            # column: ai_enrichment["enrichment"]["sandbox_submissions"].
+            ai_enrichment = finding.get("ai_enrichment") or {}
+            enrichment = ai_enrichment.get("enrichment") or {}
             pending = enrichment.get("sandbox_submissions") or {}
             reports = enrichment.get("sandbox_reports") or {}
             if not pending:
@@ -136,14 +141,18 @@ class SandboxPoller:
             if updated:
                 enrichment["sandbox_submissions"] = pending
                 enrichment["sandbox_reports"] = reports
-                try:
-                    await asyncio.to_thread(
-                        self._data_service.update_finding,
+                # Merge back into the column the payload came from; writing a
+                # bare `enrichment=` kwarg is dropped as an unknown field.
+                persisted = await asyncio.to_thread(
+                    self._data_service.update_finding,
+                    finding.get("finding_id"),
+                    ai_enrichment={**ai_enrichment, "enrichment": enrichment},
+                )
+                if not persisted:
+                    logger.error(
+                        "Failed to persist sandbox reports on finding %s",
                         finding.get("finding_id"),
-                        enrichment=enrichment,
                     )
-                except Exception as e:
-                    logger.error(f"Failed to persist sandbox updates on finding: {e}")
                     stats["errors"] += 1
 
         return stats
@@ -195,8 +204,6 @@ class SandboxPoller:
         return None
 
     async def _fetch_hybrid(self, task_id: str) -> Optional[Dict[str, Any]]:
-        from core.config import get_integration_config
-
         cfg = get_integration_config("hybrid_analysis") or {}
         api_key = cfg.get("api_key") or get_secret("HYBRID_ANALYSIS_API_KEY") or ""
         if not api_key:
@@ -216,8 +223,6 @@ class SandboxPoller:
         return None
 
     async def _fetch_anyrun(self, task_id: str) -> Optional[Dict[str, Any]]:
-        from core.config import get_integration_config
-
         cfg = get_integration_config("anyrun") or {}
         api_key = cfg.get("api_key") or get_secret("ANYRUN_API_KEY") or ""
         if not api_key:

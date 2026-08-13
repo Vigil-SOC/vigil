@@ -48,7 +48,7 @@ def test_status_route_returns_backend_state():
 
     mgr = MagicMock()
     mgr.get_backend_status.return_value = _fake_status()
-    with patch("core.secrets_manager.get_secrets_manager", return_value=mgr):
+    with patch("services.api.routers.config.get_secrets_manager", return_value=mgr):
         result = asyncio.run(config_module.secrets_status())
     assert result["write_backend"] == "encrypted"
     assert result["cryptography_available"] is True
@@ -60,7 +60,7 @@ def test_reinit_route_force_reloads_singleton():
     mgr = MagicMock()
     mgr.get_backend_status.return_value = _fake_status(write_backend="encrypted")
     with patch(
-        "core.secrets_manager.get_secrets_manager", return_value=mgr
+        "services.api.routers.config.get_secrets_manager", return_value=mgr
     ) as mock_get:
         result = asyncio.run(config_module.secrets_reinit())
     # No body → no override; force_reload must still be True.
@@ -78,7 +78,7 @@ def test_reinit_route_accepts_write_backend_override():
     mgr = MagicMock()
     mgr.get_backend_status.return_value = _fake_status(write_backend="encrypted")
     with patch(
-        "core.secrets_manager.get_secrets_manager", return_value=mgr
+        "services.api.routers.config.get_secrets_manager", return_value=mgr
     ) as mock_get:
         asyncio.run(
             config_module.secrets_reinit(
@@ -101,7 +101,7 @@ def test_migrate_route_routes_to_secrets_manager_helper():
         "encrypted_available": True,
         "dotenv_path": "/tmp/.env",
     }
-    with patch("core.secrets_manager.get_secrets_manager", return_value=mgr):
+    with patch("services.api.routers.config.get_secrets_manager", return_value=mgr):
         result = asyncio.run(
             config_module.secrets_migrate_to_encrypted(
                 _SecretsMigrateRequest(keys=["FOO"], remove_from_dotenv=False)
@@ -127,7 +127,7 @@ def test_migrate_route_defaults_when_body_omitted():
         "encrypted_available": True,
         "dotenv_path": "/tmp/.env",
     }
-    with patch("core.secrets_manager.get_secrets_manager", return_value=mgr):
+    with patch("services.api.routers.config.get_secrets_manager", return_value=mgr):
         asyncio.run(config_module.secrets_migrate_to_encrypted(None))
 
     mgr.migrate_dotenv_secrets_to_encrypted.assert_called_once_with(

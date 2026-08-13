@@ -14,7 +14,6 @@ from typing import Dict, Optional
 from unittest.mock import patch
 
 import pytest
-
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -25,11 +24,10 @@ os.environ.setdefault("DEV_MODE", "true")
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from services.api.routers.llm_providers import router as llm_providers_router
-from services.api.middleware.auth import get_current_active_user
-from core.storage.models import LLMProviderConfig, User
 from core.routing import request_unit_of_work
-
+from core.storage.models import LLMProviderConfig, User
+from services.api.middleware.auth import get_current_active_user
+from services.api.routers.llm_providers import router as llm_providers_router
 
 pytestmark = pytest.mark.unit
 
@@ -154,9 +152,16 @@ def secrets_store():
         store.pop(key, None)
         return True
 
-    with patch("services.api.routers.llm_providers.set_secret", side_effect=fake_set), patch(
+    # provider_service reads secrets too, when picking a surviving sibling's key.
+    with patch(
+        "services.api.routers.llm_providers.set_secret", side_effect=fake_set
+    ), patch(
         "services.api.routers.llm_providers.get_secret", side_effect=fake_get
-    ), patch("services.api.routers.llm_providers.delete_secret", side_effect=fake_delete):
+    ), patch(
+        "services.api.routers.llm_providers.delete_secret", side_effect=fake_delete
+    ), patch(
+        "core.llm.providers.provider_service.get_secret", side_effect=fake_get
+    ):
         yield store
 
 
@@ -279,7 +284,13 @@ def bifrost_pushes():
         calls.append((provider_type, value))
         return True
 
-    with patch("services.api.routers.llm_providers.push_provider_key", side_effect=fake_push):
+    # Two bound names: the router pushes directly on create/rotate, and
+    # provider_service pushes when reconciling the shared per-type key.
+    with patch(
+        "services.api.routers.llm_providers.push_provider_key", side_effect=fake_push
+    ), patch(
+        "core.llm.providers.provider_service.push_provider_key", side_effect=fake_push
+    ):
         yield calls
 
 

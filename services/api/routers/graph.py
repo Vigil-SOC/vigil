@@ -8,6 +8,8 @@ import logging
 from core.storage.database_data_service import DatabaseDataService
 from core.routing import Auth, RouterMeta
 
+from core.findings.graph_builder_service import GraphBuilderService
+
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
@@ -66,43 +68,37 @@ async def get_entity_graph(
     Returns:
         Graph data with nodes and links
     """
-    try:
-        data_service = DatabaseDataService()
-        findings = []
-        
-        # Get findings based on filters
-        if finding_ids:
-            ids = [fid.strip() for fid in finding_ids.split(',')]
-            for fid in ids:
-                finding = data_service.get_finding(fid)
-                if finding:
-                    findings.append(finding)
-        elif case_id:
-            findings = data_service.get_findings_by_case(case_id)
-        elif cluster_id:
-            all_findings = data_service.get_findings(limit=limit * 2)
-            findings = [f for f in all_findings if f.get('cluster_id') == cluster_id][:limit]
-        else:
-            # Get recent findings
-            findings = data_service.get_findings(limit=limit)
-        
-        if not findings:
-            return GraphData(nodes=[], links=[], metadata={"message": "No findings found"})
-        
-        # Build graph from findings
-        from core.findings.graph_builder_service import GraphBuilderService
-        graph_builder = GraphBuilderService()
-        graph_data = graph_builder.build_entity_graph(findings)
-        
-        return GraphData(
-            nodes=[GraphNode(**node) for node in graph_data['nodes']],
-            links=[GraphLink(**link) for link in graph_data['links']],
-            metadata=graph_data.get('metadata', {})
-        )
-        
-    except Exception as e:
-        logger.error(f"Error building entity graph: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    data_service = DatabaseDataService()
+    findings = []
+    
+    # Get findings based on filters
+    if finding_ids:
+        ids = [fid.strip() for fid in finding_ids.split(',')]
+        for fid in ids:
+            finding = data_service.get_finding(fid)
+            if finding:
+                findings.append(finding)
+    elif case_id:
+        findings = data_service.get_findings_by_case(case_id)
+    elif cluster_id:
+        all_findings = data_service.get_findings(limit=limit * 2)
+        findings = [f for f in all_findings if f.get('cluster_id') == cluster_id][:limit]
+    else:
+        # Get recent findings
+        findings = data_service.get_findings(limit=limit)
+    
+    if not findings:
+        return GraphData(nodes=[], links=[], metadata={"message": "No findings found"})
+    
+    # Build graph from findings
+    graph_builder = GraphBuilderService()
+    graph_data = graph_builder.build_entity_graph(findings)
+    
+    return GraphData(
+        nodes=[GraphNode(**node) for node in graph_data['nodes']],
+        links=[GraphLink(**link) for link in graph_data['links']],
+        metadata=graph_data.get('metadata', {})
+    )
 
 
 @router.get("/attack-path/{case_id}", response_model=GraphData)
@@ -119,35 +115,27 @@ async def get_attack_path(case_id: str):
     Returns:
         Graph data showing attack progression
     """
-    try:
-        data_service = DatabaseDataService()
-        case = data_service.get_case(case_id)
-        
-        if not case:
-            raise HTTPException(status_code=404, detail="Case not found")
-        
-        # Get findings for the case
-        findings = data_service.get_findings_by_case(case_id)
-        
-        if not findings:
-            return GraphData(nodes=[], links=[], metadata={"message": "No findings in case"})
-        
-        # Build attack path graph
-        from core.findings.graph_builder_service import GraphBuilderService
-        graph_builder = GraphBuilderService()
-        graph_data = graph_builder.build_attack_path(findings, case)
-        
-        return GraphData(
-            nodes=[GraphNode(**node) for node in graph_data['nodes']],
-            links=[GraphLink(**link) for link in graph_data['links']],
-            metadata=graph_data.get('metadata', {})
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error building attack path: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    data_service = DatabaseDataService()
+    case = data_service.get_case(case_id)
+    
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+    
+    # Get findings for the case
+    findings = data_service.get_findings_by_case(case_id)
+    
+    if not findings:
+        return GraphData(nodes=[], links=[], metadata={"message": "No findings in case"})
+    
+    # Build attack path graph
+    graph_builder = GraphBuilderService()
+    graph_data = graph_builder.build_attack_path(findings, case)
+    
+    return GraphData(
+        nodes=[GraphNode(**node) for node in graph_data['nodes']],
+        links=[GraphLink(**link) for link in graph_data['links']],
+        metadata=graph_data.get('metadata', {})
+    )
 
 
 @router.get("/cluster/{cluster_id}", response_model=GraphData)
@@ -163,32 +151,24 @@ async def get_cluster_graph(cluster_id: str):
     Returns:
         Graph data for the cluster
     """
-    try:
-        data_service = DatabaseDataService()
-        
-        # Get findings in cluster
-        all_findings = data_service.get_findings(limit=10000)
-        findings = [f for f in all_findings if f.get('cluster_id') == cluster_id]
-        
-        if not findings:
-            raise HTTPException(status_code=404, detail="Cluster not found or has no findings")
-        
-        # Build cluster graph
-        from core.findings.graph_builder_service import GraphBuilderService
-        graph_builder = GraphBuilderService()
-        graph_data = graph_builder.build_cluster_graph(findings, cluster_id)
-        
-        return GraphData(
-            nodes=[GraphNode(**node) for node in graph_data['nodes']],
-            links=[GraphLink(**link) for link in graph_data['links']],
-            metadata=graph_data.get('metadata', {})
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error building cluster graph: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    data_service = DatabaseDataService()
+    
+    # Get findings in cluster
+    all_findings = data_service.get_findings(limit=10000)
+    findings = [f for f in all_findings if f.get('cluster_id') == cluster_id]
+    
+    if not findings:
+        raise HTTPException(status_code=404, detail="Cluster not found or has no findings")
+    
+    # Build cluster graph
+    graph_builder = GraphBuilderService()
+    graph_data = graph_builder.build_cluster_graph(findings, cluster_id)
+    
+    return GraphData(
+        nodes=[GraphNode(**node) for node in graph_data['nodes']],
+        links=[GraphLink(**link) for link in graph_data['links']],
+        metadata=graph_data.get('metadata', {})
+    )
 
 
 @router.get("/technique/{technique_id}", response_model=GraphData)
@@ -206,41 +186,35 @@ async def get_technique_graph(
     Returns:
         Graph data for the technique
     """
-    try:
-        data_service = DatabaseDataService()
-        
-        # Get findings with this technique
-        all_findings = data_service.get_findings(limit=limit * 2)
-        findings = []
-        
-        for finding in all_findings:
-            mitre_predictions = finding.get('mitre_predictions', {})
-            if technique_id in mitre_predictions:
-                findings.append(finding)
-                if len(findings) >= limit:
-                    break
-        
-        if not findings:
-            return GraphData(
-                nodes=[],
-                links=[],
-                metadata={"message": f"No findings with technique {technique_id}"}
-            )
-        
-        # Build technique graph
-        from core.findings.graph_builder_service import GraphBuilderService
-        graph_builder = GraphBuilderService()
-        graph_data = graph_builder.build_technique_graph(findings, technique_id)
-        
+    data_service = DatabaseDataService()
+    
+    # Get findings with this technique
+    all_findings = data_service.get_findings(limit=limit * 2)
+    findings = []
+    
+    for finding in all_findings:
+        mitre_predictions = finding.get('mitre_predictions', {})
+        if technique_id in mitre_predictions:
+            findings.append(finding)
+            if len(findings) >= limit:
+                break
+    
+    if not findings:
         return GraphData(
-            nodes=[GraphNode(**node) for node in graph_data['nodes']],
-            links=[GraphLink(**link) for link in graph_data['links']],
-            metadata=graph_data.get('metadata', {})
+            nodes=[],
+            links=[],
+            metadata={"message": f"No findings with technique {technique_id}"}
         )
-        
-    except Exception as e:
-        logger.error(f"Error building technique graph: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    
+    # Build technique graph
+    graph_builder = GraphBuilderService()
+    graph_data = graph_builder.build_technique_graph(findings, technique_id)
+    
+    return GraphData(
+        nodes=[GraphNode(**node) for node in graph_data['nodes']],
+        links=[GraphLink(**link) for link in graph_data['links']],
+        metadata=graph_data.get('metadata', {})
+    )
 
 
 @router.get("/summary", response_model=Dict[str, Any])
@@ -256,41 +230,35 @@ async def get_graph_summary(
     Returns:
         Summary statistics
     """
-    try:
-        data_service = DatabaseDataService()
-        findings = data_service.get_findings(limit=limit)
-        
-        # Build graph and calculate metrics
-        from core.findings.graph_builder_service import GraphBuilderService
-        graph_builder = GraphBuilderService()
-        graph_data = graph_builder.build_entity_graph(findings)
-        
-        # Calculate summary metrics
-        nodes_by_type = {}
-        for node in graph_data['nodes']:
-            node_type = node['type']
-            nodes_by_type[node_type] = nodes_by_type.get(node_type, 0) + 1
-        
-        # Find most connected nodes
-        node_connections = {}
-        for link in graph_data['links']:
-            node_connections[link['source']] = node_connections.get(link['source'], 0) + 1
-            node_connections[link['target']] = node_connections.get(link['target'], 0) + 1
-        
-        top_nodes = sorted(node_connections.items(), key=lambda x: x[1], reverse=True)[:10]
-        
-        return {
-            "total_nodes": len(graph_data['nodes']),
-            "total_links": len(graph_data['links']),
-            "nodes_by_type": nodes_by_type,
-            "top_connected_nodes": [
-                {"id": node_id, "connections": count}
-                for node_id, count in top_nodes
-            ],
-            "findings_analyzed": len(findings)
-        }
-        
-    except Exception as e:
-        logger.error(f"Error getting graph summary: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    data_service = DatabaseDataService()
+    findings = data_service.get_findings(limit=limit)
+    
+    # Build graph and calculate metrics
+    graph_builder = GraphBuilderService()
+    graph_data = graph_builder.build_entity_graph(findings)
+    
+    # Calculate summary metrics
+    nodes_by_type = {}
+    for node in graph_data['nodes']:
+        node_type = node['type']
+        nodes_by_type[node_type] = nodes_by_type.get(node_type, 0) + 1
+    
+    # Find most connected nodes
+    node_connections = {}
+    for link in graph_data['links']:
+        node_connections[link['source']] = node_connections.get(link['source'], 0) + 1
+        node_connections[link['target']] = node_connections.get(link['target'], 0) + 1
+    
+    top_nodes = sorted(node_connections.items(), key=lambda x: x[1], reverse=True)[:10]
+    
+    return {
+        "total_nodes": len(graph_data['nodes']),
+        "total_links": len(graph_data['links']),
+        "nodes_by_type": nodes_by_type,
+        "top_connected_nodes": [
+            {"id": node_id, "connections": count}
+            for node_id, count in top_nodes
+        ],
+        "findings_analyzed": len(findings)
+    }
 

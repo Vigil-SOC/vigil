@@ -101,30 +101,25 @@ async def create_ai_decision(request: CreateAIDecisionRequest):
     This endpoint should be called by AI agents whenever they make a decision
     that could benefit from human review and feedback.
     """
-    try:
-        db_service = DatabaseService()
-        
-        decision = db_service.create_ai_decision(
-            decision_id=request.decision_id,
-            agent_id=request.agent_id,
-            decision_type=request.decision_type,
-            confidence_score=request.confidence_score,
-            reasoning=request.reasoning,
-            recommended_action=request.recommended_action,
-            finding_id=request.finding_id,
-            case_id=request.case_id,
-            workflow_id=request.workflow_id,
-            decision_metadata=request.decision_metadata
-        )
-        
-        if not decision:
-            raise HTTPException(status_code=500, detail="Failed to create AI decision log")
-        
-        return AIDecisionResponse(**AIDecisionLogSchema.dump(decision))
-        
-    except Exception as e:
-        logger.error(f"Error creating AI decision: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    db_service = DatabaseService()
+    
+    decision = db_service.create_ai_decision(
+        decision_id=request.decision_id,
+        agent_id=request.agent_id,
+        decision_type=request.decision_type,
+        confidence_score=request.confidence_score,
+        reasoning=request.reasoning,
+        recommended_action=request.recommended_action,
+        finding_id=request.finding_id,
+        case_id=request.case_id,
+        workflow_id=request.workflow_id,
+        decision_metadata=request.decision_metadata
+    )
+    
+    if not decision:
+        raise HTTPException(status_code=500, detail="Failed to create AI decision log")
+    
+    return AIDecisionResponse(**AIDecisionLogSchema.dump(decision))
 
 
 @router.post("/decisions/{decision_id}/feedback", response_model=AIDecisionResponse)
@@ -135,31 +130,24 @@ async def submit_feedback(decision_id: str, request: SubmitFeedbackRequest):
     This allows SOC analysts to grade AI decisions and provide feedback
     for continuous improvement.
     """
-    try:
-        db_service = DatabaseService()
-        
-        decision = db_service.submit_ai_decision_feedback(
-            decision_id=decision_id,
-            human_reviewer=request.human_reviewer,
-            human_decision=request.human_decision,
-            feedback_comment=request.feedback_comment,
-            accuracy_grade=request.accuracy_grade,
-            reasoning_grade=request.reasoning_grade,
-            action_appropriateness=request.action_appropriateness,
-            actual_outcome=request.actual_outcome,
-            time_saved_minutes=request.time_saved_minutes
-        )
-        
-        if not decision:
-            raise HTTPException(status_code=404, detail=f"AI decision not found: {decision_id}")
-        
-        return AIDecisionResponse(**AIDecisionLogSchema.dump(decision))
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error submitting feedback: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    db_service = DatabaseService()
+    
+    decision = db_service.submit_ai_decision_feedback(
+        decision_id=decision_id,
+        human_reviewer=request.human_reviewer,
+        human_decision=request.human_decision,
+        feedback_comment=request.feedback_comment,
+        accuracy_grade=request.accuracy_grade,
+        reasoning_grade=request.reasoning_grade,
+        action_appropriateness=request.action_appropriateness,
+        actual_outcome=request.actual_outcome,
+        time_saved_minutes=request.time_saved_minutes
+    )
+    
+    if not decision:
+        raise HTTPException(status_code=404, detail=f"AI decision not found: {decision_id}")
+    
+    return AIDecisionResponse(**AIDecisionLogSchema.dump(decision))
 
 
 @router.get("/decisions/stats", response_model=AIDecisionStatsResponse)
@@ -172,15 +160,10 @@ async def get_ai_decision_stats(
 
     Provides metrics on AI accuracy, agreement rates, and time saved.
     """
-    try:
-        db_service = DatabaseService()
-        stats = db_service.get_ai_decision_stats(agent_id=agent_id, days=days)
+    db_service = DatabaseService()
+    stats = db_service.get_ai_decision_stats(agent_id=agent_id, days=days)
 
-        return AIDecisionStatsResponse(**stats)
-
-    except Exception as e:
-        logger.error(f"Error getting AI decision stats: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return AIDecisionStatsResponse(**stats)
 
 
 @router.get("/decisions/pending-feedback")
@@ -193,22 +176,17 @@ async def get_pending_feedback_decisions(
     Returns decisions ordered by confidence (lowest first) since
     low-confidence decisions benefit most from feedback.
     """
-    try:
-        db_service = DatabaseService()
+    db_service = DatabaseService()
 
-        decisions = db_service.list_ai_decisions(
-            has_feedback=False,
-            limit=limit
-        )
+    decisions = db_service.list_ai_decisions(
+        has_feedback=False,
+        limit=limit
+    )
 
-        # Sort by confidence score (lowest first)
-        decisions_sorted = sorted(decisions, key=lambda d: d.confidence_score)
+    # Sort by confidence score (lowest first)
+    decisions_sorted = sorted(decisions, key=lambda d: d.confidence_score)
 
-        return [AIDecisionResponse(**AIDecisionLogSchema.dump(d)) for d in decisions_sorted]
-
-    except Exception as e:
-        logger.error(f"Error getting pending feedback decisions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return [AIDecisionResponse(**AIDecisionLogSchema.dump(d)) for d in decisions_sorted]
 
 
 @router.get("/decisions", response_model=List[AIDecisionResponse])
@@ -226,43 +204,31 @@ async def list_ai_decisions(
 
     Use this to review decisions that need feedback or analyze past decisions.
     """
-    try:
-        db_service = DatabaseService()
+    db_service = DatabaseService()
 
-        decisions = db_service.list_ai_decisions(
-            agent_id=agent_id,
-            finding_id=finding_id,
-            case_id=case_id,
-            has_feedback=has_feedback,
-            limit=limit,
-            offset=offset
-        )
+    decisions = db_service.list_ai_decisions(
+        agent_id=agent_id,
+        finding_id=finding_id,
+        case_id=case_id,
+        has_feedback=has_feedback,
+        limit=limit,
+        offset=offset
+    )
 
-        if workflow_id:
-            decisions = [d for d in decisions if d.workflow_id == workflow_id]
+    if workflow_id:
+        decisions = [d for d in decisions if d.workflow_id == workflow_id]
 
-        return [AIDecisionResponse(**AIDecisionLogSchema.dump(d)) for d in decisions]
-
-    except Exception as e:
-        logger.error(f"Error listing AI decisions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return [AIDecisionResponse(**AIDecisionLogSchema.dump(d)) for d in decisions]
 
 
 @router.get("/decisions/{decision_id}", response_model=AIDecisionResponse)
 async def get_ai_decision(decision_id: str):
     """Get a specific AI decision by ID."""
-    try:
-        db_service = DatabaseService()
-        decision = db_service.get_ai_decision(decision_id)
+    db_service = DatabaseService()
+    decision = db_service.get_ai_decision(decision_id)
 
-        if not decision:
-            raise HTTPException(status_code=404, detail=f"AI decision not found: {decision_id}")
+    if not decision:
+        raise HTTPException(status_code=404, detail=f"AI decision not found: {decision_id}")
 
-        return AIDecisionResponse(**AIDecisionLogSchema.dump(decision))
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting AI decision: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return AIDecisionResponse(**AIDecisionLogSchema.dump(decision))
 

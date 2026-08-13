@@ -5,28 +5,12 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from arq.connections import RedisSettings
-
 from core.config import get_settings
-from core.llm.gateway.gateway import QUEUE_NAME, RedisSessionStore
+from core.llm.gateway.gateway import QUEUE_NAME, RedisSessionStore, _redis_settings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 MAX_CONCURRENT_LLM_CALLS = get_settings().llm_max_concurrent
-
-
-def _redis_settings() -> RedisSettings:
-    url = get_settings().redis_url or DEFAULT_REDIS_URL
-    from urllib.parse import urlparse
-
-    parsed = urlparse(url)
-    return RedisSettings(
-        host=parsed.hostname or "localhost",
-        port=parsed.port or 6379,
-        database=int(parsed.path.lstrip("/") or 0),
-        password=parsed.password,
-    )
 
 
 async def llm_call(

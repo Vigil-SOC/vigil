@@ -176,15 +176,10 @@ async def ingest_from_string(
     if format not in ['json', 'csv', 'jsonl']:
         raise HTTPException(status_code=400, detail="format must be 'json', 'csv', or 'jsonl'")
 
-    try:
-        ingestion_service = IngestionService()
-        stats = ingestion_service.ingest_from_string(data, format=format, data_type=data_type)
-        success, message = summarize_stats(stats)
-        return IngestionStats(**stats, success=success, message=message)
-
-    except Exception as e:
-        logger.error(f"Error ingesting string data: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+    ingestion_service = IngestionService()
+    stats = ingestion_service.ingest_from_string(data, format=format, data_type=data_type)
+    success, message = summarize_stats(stats)
+    return IngestionStats(**stats, success=success, message=message)
 
 
 @router.get("/formats")
@@ -327,33 +322,26 @@ def sync_from_s3():
     Returns:
         Sync status and statistics
     """
-    try:
-        data_service = DatabaseDataService()
-        
-        # Check if S3 is configured
-        if not data_service.is_s3_configured():
-            raise HTTPException(
-                status_code=400,
-                detail="S3 is not configured. Please configure S3 in Settings first."
-            )
-        
-        # Perform sync
-        logger.info("Starting S3 sync via API endpoint")
-        success, message, stats = data_service.sync_from_s3()
-        
-        return {
-            "success": success,
-            "message": message,
-            "findings_synced": stats.get("findings_synced", 0),
-            "cases_synced": stats.get("cases_synced", 0),
-            "errors": stats.get("errors", [])
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error syncing from S3: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"S3 sync failed: {str(e)}")
+    data_service = DatabaseDataService()
+    
+    # Check if S3 is configured
+    if not data_service.is_s3_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="S3 is not configured. Please configure S3 in Settings first."
+        )
+    
+    # Perform sync
+    logger.info("Starting S3 sync via API endpoint")
+    success, message, stats = data_service.sync_from_s3()
+    
+    return {
+        "success": success,
+        "message": message,
+        "findings_synced": stats.get("findings_synced", 0),
+        "cases_synced": stats.get("cases_synced", 0),
+        "errors": stats.get("errors", [])
+    }
 
 
 @router.post("/sync-s3-folder", response_model=IngestionStats)
@@ -378,62 +366,55 @@ def sync_s3_folder(prefix: Optional[str] = Query(None)):
     Returns:
         Ingestion statistics
     """
-    try:
-        data_service = DatabaseDataService()
+    data_service = DatabaseDataService()
 
-        if not data_service.is_s3_configured():
-            raise HTTPException(
-                status_code=400,
-                detail="S3 is not configured. Please configure S3 in Settings first."
-            )
-
-        if prefix is None:
-            from core.storage.config_service import get_config_service
-            config_service = get_config_service()
-            s3_config = config_service.get_integration_config('s3') or {}
-            prefix = s3_config.get('parquet_prefix', '')
-
-        logger.info(f"Starting S3 folder sync with prefix='{prefix}'")
-
-        ingestion_service = IngestionService()
-        stats = ingestion_service.ingest_s3_folder(
-            s3_service=data_service._s3_service,
-            prefix=prefix
+    if not data_service.is_s3_configured():
+        raise HTTPException(
+            status_code=400,
+            detail="S3 is not configured. Please configure S3 in Settings first."
         )
 
-        success, summary = summarize_stats(stats)
+    if prefix is None:
+        from core.storage.config_service import get_config_service
+        config_service = get_config_service()
+        s3_config = config_service.get_integration_config('s3') or {}
+        prefix = s3_config.get('parquet_prefix', '')
 
-        prefix = []
-        fp = stats.get('files_processed', 0)
-        fs = stats.get('files_skipped', 0)
-        if fp > 0:
-            prefix.append(f"Processed {fp} file(s)")
-        if fs > 0:
-            prefix.append(f"Skipped {fs} unsupported file(s)")
+    logger.info(f"Starting S3 folder sync with prefix='{prefix}'")
 
-        if not prefix and summary == "No data imported":
-            message = "No supported files found or no data imported"
-        else:
-            message = ". ".join(prefix + [summary])
+    ingestion_service = IngestionService()
+    stats = ingestion_service.ingest_s3_folder(
+        s3_service=data_service._s3_service,
+        prefix=prefix
+    )
 
-        return IngestionStats(
-            findings_total=stats.get('findings_total', 0),
-            findings_imported=stats.get('findings_imported', 0),
-            findings_skipped=stats.get('findings_skipped', 0),
-            findings_errors=stats.get('findings_errors', 0),
-            cases_total=stats.get('cases_total', 0),
-            cases_imported=stats.get('cases_imported', 0),
-            cases_skipped=stats.get('cases_skipped', 0),
-            cases_errors=stats.get('cases_errors', 0),
-            success=success,
-            message=message
-        )
+    success, summary = summarize_stats(stats)
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error syncing folder from S3: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"S3 folder sync failed: {str(e)}")
+    prefix = []
+    fp = stats.get('files_processed', 0)
+    fs = stats.get('files_skipped', 0)
+    if fp > 0:
+        prefix.append(f"Processed {fp} file(s)")
+    if fs > 0:
+        prefix.append(f"Skipped {fs} unsupported file(s)")
+
+    if not prefix and summary == "No data imported":
+        message = "No supported files found or no data imported"
+    else:
+        message = ". ".join(prefix + [summary])
+
+    return IngestionStats(
+        findings_total=stats.get('findings_total', 0),
+        findings_imported=stats.get('findings_imported', 0),
+        findings_skipped=stats.get('findings_skipped', 0),
+        findings_errors=stats.get('findings_errors', 0),
+        cases_total=stats.get('cases_total', 0),
+        cases_imported=stats.get('cases_imported', 0),
+        cases_skipped=stats.get('cases_skipped', 0),
+        cases_errors=stats.get('cases_errors', 0),
+        success=success,
+        message=message
+    )
 
 
 def _get_s3_service():
@@ -497,22 +478,15 @@ def list_s3_files(prefix: Optional[str] = Query("")):
     Returns:
         List of files with key, size, and last_modified
     """
-    try:
-        s3 = _get_s3_service()
-        if s3 is None:
-            raise HTTPException(
-                status_code=400,
-                detail="S3 is not configured. Please configure S3 in Settings first."
-            )
+    s3 = _get_s3_service()
+    if s3 is None:
+        raise HTTPException(
+            status_code=400,
+            detail="S3 is not configured. Please configure S3 in Settings first."
+        )
 
-        files = s3.list_files_detailed(prefix=prefix or "")
-        return {"files": files, "count": len(files), "prefix": prefix or ""}
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error listing S3 files: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to list S3 files: {str(e)}")
+    files = s3.list_files_detailed(prefix=prefix or "")
+    return {"files": files, "count": len(files), "prefix": prefix or ""}
 
 
 class S3FileIngestRequest(BaseModel):
@@ -541,50 +515,43 @@ def ingest_s3_file(request: S3FileIngestRequest):
             detail=f"Unsupported file extension '{ext}'. Supported: {', '.join(EXTENSION_FORMATS.keys())}"
         )
 
-    try:
-        s3 = _get_s3_service()
-        if s3 is None:
-            raise HTTPException(
-                status_code=400,
-                detail="S3 is not configured. Please configure S3 in Settings first."
-            )
-
-        content = s3.get_file(key)
-        if content is None:
-            raise HTTPException(status_code=404, detail=f"Failed to download '{key}' from S3")
-
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-                tmp.write(content)
-                tmp_path = Path(tmp.name)
-
-            ingestion_service = IngestionService()
-            stats = ingestion_service._ingest_file_by_format(tmp_path, fmt)
-        finally:
-            if tmp_path and tmp_path.exists():
-                tmp_path.unlink()
-
-        success, message = summarize_stats(stats)
-
-        return IngestionStats(
-            findings_total=stats.get('findings_total', 0),
-            findings_imported=stats.get('findings_imported', 0),
-            findings_skipped=stats.get('findings_skipped', 0),
-            findings_errors=stats.get('findings_errors', 0),
-            cases_total=stats.get('cases_total', 0),
-            cases_imported=stats.get('cases_imported', 0),
-            cases_skipped=stats.get('cases_skipped', 0),
-            cases_errors=stats.get('cases_errors', 0),
-            success=success,
-            message=message,
+    s3 = _get_s3_service()
+    if s3 is None:
+        raise HTTPException(
+            status_code=400,
+            detail="S3 is not configured. Please configure S3 in Settings first."
         )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error ingesting S3 file '{key}': {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"S3 file ingestion failed: {str(e)}")
+    content = s3.get_file(key)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"Failed to download '{key}' from S3")
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+            tmp.write(content)
+            tmp_path = Path(tmp.name)
+
+        ingestion_service = IngestionService()
+        stats = ingestion_service._ingest_file_by_format(tmp_path, fmt)
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink()
+
+    success, message = summarize_stats(stats)
+
+    return IngestionStats(
+        findings_total=stats.get('findings_total', 0),
+        findings_imported=stats.get('findings_imported', 0),
+        findings_skipped=stats.get('findings_skipped', 0),
+        findings_errors=stats.get('findings_errors', 0),
+        cases_total=stats.get('cases_total', 0),
+        cases_imported=stats.get('cases_imported', 0),
+        cases_skipped=stats.get('cases_skipped', 0),
+        cases_errors=stats.get('cases_errors', 0),
+        success=success,
+        message=message,
+    )
 
 
 @router.get("/s3-status")

@@ -9,16 +9,15 @@ context about the available agents, MCP tools, and existing workflow patterns.
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
+
+from core.integrations.mcp.registry import get_mcp_tool_names
 
 logger = logging.getLogger(__name__)
 
 
 class WorkflowAIGenerator:
     """Generates draft workflow definitions from natural-language descriptions."""
-
-    def __init__(self):
-        self._mcp_tool_names_cache: Optional[List[str]] = None
 
     async def generate(self, description: str) -> Dict[str, Any]:
         """
@@ -162,27 +161,13 @@ class WorkflowAIGenerator:
         return "\n".join(lines)
 
     def _tools_context(self) -> str:
-        tool_names = self._get_mcp_tool_names()
+        tool_names = get_mcp_tool_names()
         if not tool_names:
             return (
                 "(MCP registry unavailable; use tool names from the existing "
                 "workflow patterns)"
             )
         return ", ".join(sorted(tool_names)[:80])
-
-    def _get_mcp_tool_names(self) -> List[str]:
-        if self._mcp_tool_names_cache is not None:
-            return self._mcp_tool_names_cache
-        try:
-            from core.integrations.mcp.registry import get_mcp_registry
-
-            registry = get_mcp_registry()
-            names = list(registry.get_tool_names() or [])
-        except Exception as e:
-            logger.debug(f"MCP registry unavailable: {e}")
-            names = []
-        self._mcp_tool_names_cache = names
-        return names
 
     def _exemplars_context(self) -> str:
         try:

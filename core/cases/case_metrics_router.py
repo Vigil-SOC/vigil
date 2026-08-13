@@ -8,6 +8,9 @@ from core.storage.schemas import CaseMetricsSchema
 from core.cases.case_metrics_service import CaseMetricsService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 
+from core.cases.case_sla_service import CaseSLAService
+from core.storage.models import Case, CaseMetrics
+
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
@@ -52,7 +55,6 @@ async def get_sla_compliance(
     Returns:
         SLA compliance statistics
     """
-    from core.cases.case_sla_service import CaseSLAService
     sla_service = CaseSLAService()
     report = sla_service.get_sla_compliance_report(start_date, end_date)
     return report
@@ -99,7 +101,6 @@ async def get_mttr(
     Returns:
         MTTR metrics by priority and trend data
     """
-    from core.storage.models import Case, CaseMetrics
     from collections import defaultdict
     
     query = session.query(Case).filter(
@@ -209,7 +210,6 @@ async def get_breached_cases():
     Returns:
         List of breached cases
     """
-    from core.cases.case_sla_service import CaseSLAService
     sla_service = CaseSLAService()
     breached = sla_service.get_breached_cases()
     return {"breached_cases": breached}
@@ -259,7 +259,6 @@ async def get_mttd(
     Returns:
         MTTD metrics by priority
     """
-    from core.storage.models import Case, CaseMetrics
     
     query = session.query(Case)
 
@@ -322,7 +321,6 @@ async def get_by_priority(
     Returns:
         Case counts broken down by priority
     """
-    from core.storage.models import Case
     
     query = session.query(Case)
 
@@ -375,7 +373,6 @@ async def get_by_status(
     Returns:
         Case counts broken down by status
     """
-    from core.storage.models import Case
     
     query = session.query(Case)
 
@@ -420,7 +417,6 @@ async def get_all_analyst_performance(
     Returns:
         Performance metrics for all analysts
     """
-    from core.storage.models import Case, CaseMetrics
     
     query = session.query(Case)
 

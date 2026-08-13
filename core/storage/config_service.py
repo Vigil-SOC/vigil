@@ -13,6 +13,7 @@ from core.storage.connection import get_db_manager
 from core.storage.models import SystemConfig, IntegrationConfig, ConfigAuditLog
 from core.storage.schemas import IntegrationConfigSchema
 from sqlalchemy.orm import Session
+from core.exceptions import default_on_error
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class ConfigService:
             logger.error(f"Error getting system config '{key}': {e}")
             return default
     
+    @default_on_error(False)
     def set_system_config(
         self, 
         key: str, 
@@ -94,48 +96,44 @@ class ConfigService:
         Returns:
             True if successful
         """
-        try:
-            with get_session() as session:
-                config = session.query(SystemConfig).filter_by(key=key).first()
-                
-                old_value = None
-                action = 'create'
-                
-                if config:
-                    old_value = config.value
-                    config.value = value
-                    config.updated_by = self.user_id
-                    if description:
-                        config.description = description
-                    action = 'update'
-                else:
-                    config = SystemConfig(
-                        key=key,
-                        value=value,
-                        description=description,
-                        config_type=config_type,
-                        updated_by=self.user_id
-                    )
-                    session.add(config)
-                
-                # Create audit log
-                self._create_audit_log(
-                    session, 
+        with get_session() as session:
+            config = session.query(SystemConfig).filter_by(key=key).first()
+            
+            old_value = None
+            action = 'create'
+            
+            if config:
+                old_value = config.value
+                config.value = value
+                config.updated_by = self.user_id
+                if description:
+                    config.description = description
+                action = 'update'
+            else:
+                config = SystemConfig(
+                    key=key,
+                    value=value,
+                    description=description,
                     config_type=config_type,
-                    config_key=key,
-                    action=action,
-                    old_value=old_value,
-                    new_value=value,
-                    change_reason=change_reason
+                    updated_by=self.user_id
                 )
+                session.add(config)
+            
+            # Create audit log
+            self._create_audit_log(
+                session, 
+                config_type=config_type,
+                config_key=key,
+                action=action,
+                old_value=old_value,
+                new_value=value,
+                change_reason=change_reason
+            )
+            
+            session.commit()
+            logger.info(f"System config '{key}' {action}d by {self.user_id}")
+            return True
                 
-                session.commit()
-                logger.info(f"System config '{key}' {action}d by {self.user_id}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Error setting system config '{key}': {e}")
-            return False
     
     
     
@@ -150,6 +148,7 @@ class ConfigService:
     # Integration Configuration Methods
     # =========================================================================
     
+    @default_on_error(None)
     def get_integration_config(self, integration_id: str) -> Optional[Dict[str, Any]]:
         """
         Get integration configuration.
@@ -160,21 +159,18 @@ class ConfigService:
         Returns:
             Integration configuration or None
         """
-        try:
-            with get_session() as session:
-                integration = session.query(IntegrationConfig).filter_by(
-                    integration_id=integration_id
-                ).first()
-                
-                if integration:
-                    return IntegrationConfigSchema.dump(integration)
-                
-                return None
-                
-        except Exception as e:
-            logger.error(f"Error getting integration config '{integration_id}': {e}")
+        with get_session() as session:
+            integration = session.query(IntegrationConfig).filter_by(
+                integration_id=integration_id
+            ).first()
+            
+            if integration:
+                return IntegrationConfigSchema.dump(integration)
+            
             return None
+                
     
+    @default_on_error(False)
     def set_integration_config(
         self,
         integration_id: str,
@@ -200,60 +196,57 @@ class ConfigService:
         Returns:
             True if successful
         """
-        try:
-            with get_session() as session:
-                integration = session.query(IntegrationConfig).filter_by(
-                    integration_id=integration_id
-                ).first()
-                
-                old_value = None
-                action = 'create'
-                
-                if integration:
-                    old_value = integration.config
-                    integration.config = config
-                    integration.enabled = enabled
-                    integration.updated_by = self.user_id
-                    if integration_name:
-                        integration.integration_name = integration_name
-                    if integration_type:
-                        integration.integration_type = integration_type
-                    if description:
-                        integration.description = description
-                    action = 'update'
-                else:
-                    integration = IntegrationConfig(
-                        integration_id=integration_id,
-                        enabled=enabled,
-                        config=config,
-                        integration_name=integration_name,
-                        integration_type=integration_type,
-                        description=description,
-                        updated_by=self.user_id
-                    )
-                    session.add(integration)
-                
-                # Create audit log
-                self._create_audit_log(
-                    session,
-                    config_type='integration',
-                    config_key=integration_id,
-                    action=action,
-                    old_value=old_value,
-                    new_value=config,
-                    change_reason=change_reason
+        with get_session() as session:
+            integration = session.query(IntegrationConfig).filter_by(
+                integration_id=integration_id
+            ).first()
+            
+            old_value = None
+            action = 'create'
+            
+            if integration:
+                old_value = integration.config
+                integration.config = config
+                integration.enabled = enabled
+                integration.updated_by = self.user_id
+                if integration_name:
+                    integration.integration_name = integration_name
+                if integration_type:
+                    integration.integration_type = integration_type
+                if description:
+                    integration.description = description
+                action = 'update'
+            else:
+                integration = IntegrationConfig(
+                    integration_id=integration_id,
+                    enabled=enabled,
+                    config=config,
+                    integration_name=integration_name,
+                    integration_type=integration_type,
+                    description=description,
+                    updated_by=self.user_id
                 )
+                session.add(integration)
+            
+            # Create audit log
+            self._create_audit_log(
+                session,
+                config_type='integration',
+                config_key=integration_id,
+                action=action,
+                old_value=old_value,
+                new_value=config,
+                change_reason=change_reason
+            )
+            
+            session.commit()
+            logger.info(f"Integration '{integration_id}' {action}d by {self.user_id}")
+            return True
                 
-                session.commit()
-                logger.info(f"Integration '{integration_id}' {action}d by {self.user_id}")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Error setting integration config '{integration_id}': {e}")
-            return False
     
     
     
+    @default_on_error(list)
     def list_integrations(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
         """
         List all integrations.
@@ -264,32 +257,25 @@ class ConfigService:
         Returns:
             List of integration configuration dictionaries
         """
-        try:
-            with get_session() as session:
-                query = session.query(IntegrationConfig)
+        with get_session() as session:
+            query = session.query(IntegrationConfig)
+            
+            if enabled_only:
+                query = query.filter_by(enabled=True)
+            
+            integrations = query.all()
+            return IntegrationConfigSchema.dump_many(integrations)
                 
-                if enabled_only:
-                    query = query.filter_by(enabled=True)
-                
-                integrations = query.all()
-                return IntegrationConfigSchema.dump_many(integrations)
-                
-        except Exception as e:
-            logger.error(f"Error listing integrations: {e}")
-            return []
     
 
+    @default_on_error(set)
     def get_disabled_integration_ids(self) -> Set[str]:
         """Registered-but-disabled integration IDs. Sources with no config row
         (webhook, flow) are never disabled. On DB error return empty (fail open)
         so a lookup blip can't silently drop ingestion."""
-        try:
-            with get_session() as session:
-                integrations = session.query(IntegrationConfig).filter_by(enabled=False).all()
-                return {i.integration_id for i in integrations}
-        except Exception as e:
-            logger.error(f"Error getting disabled integrations: {e}")
-            return set()
+        with get_session() as session:
+            integrations = session.query(IntegrationConfig).filter_by(enabled=False).all()
+            return {i.integration_id for i in integrations}
     
     # =========================================================================
     # Audit Methods
@@ -305,20 +291,23 @@ class ConfigService:
         new_value: Optional[Dict[str, Any]],
         change_reason: Optional[str] = None
     ):
-        """Create an audit log entry."""
-        try:
-            audit_entry = ConfigAuditLog(
+        """Create an audit log entry.
+
+        Deliberately unguarded: the entry joins the caller's transaction, so a
+        failure here rolls the config change back with it. Swallowing it would
+        let a config change commit with no audit record.
+        """
+        session.add(
+            ConfigAuditLog(
                 config_type=config_type,
                 config_key=config_key,
                 action=action,
                 old_value=old_value,
                 new_value=new_value,
                 changed_by=self.user_id,
-                change_reason=change_reason
+                change_reason=change_reason,
             )
-            session.add(audit_entry)
-        except Exception as e:
-            logger.error(f"Error creating audit log: {e}")
+        )
     
     def record_audit(
         self,

@@ -24,6 +24,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from core.routing import Auth, RouterMeta
 
+from core.llm.cost.budget import get_active_vk, get_settings, set_settings
+
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
@@ -55,7 +57,6 @@ class BudgetSettingsUpdate(BaseModel):
 @router.get("/analytics/budget", response_model=BudgetSettingsResponse)
 async def get_budget_settings() -> Dict[str, Any]:
     """Return the persisted Bifrost VK + budget config."""
-    from core.llm.cost.budget import get_settings
 
     return get_settings()
 
@@ -69,7 +70,6 @@ async def put_budget_settings(payload: BudgetSettingsUpdate) -> Dict[str, Any]:
     ``LLM_BUDGET_UNLIMITED=true`` is set, the dispatch ignores the VK
     regardless of what's stored here.
     """
-    from core.llm.cost.budget import set_settings
 
     try:
         return set_settings(
@@ -88,7 +88,6 @@ async def put_budget_settings(payload: BudgetSettingsUpdate) -> Dict[str, Any]:
 async def get_budget_quota() -> Dict[str, Any]:
     """Live spend/quota for the configured VK, proxied from Bifrost."""
     from core.llm.bifrost.costs import get_vk_quota
-    from core.llm.cost.budget import get_active_vk
 
     vk = get_active_vk()
     if not vk:

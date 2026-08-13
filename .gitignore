@@ -247,4 +247,10 @@ claude_analysis_*.txt
 # Local tooling artifacts / personal MCP config
 .mcp.json
 index.scip
+index.scip.stamp
 slop.toml
+.zed/
+
+# Bifrost's local gateway state (81MB of SQLite) and agent run logs
+bifrost/
+runs/

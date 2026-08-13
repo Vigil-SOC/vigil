@@ -26,7 +26,8 @@ from typing import Optional
 
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from core.config import DEFAULT_REDIS_URL, get_settings
+from core.config import get_settings
+from core.redis_client import get_async_redis
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,7 @@ def _ttl_seconds() -> int:
 def _get_serializer() -> URLSafeTimedSerializer:
     # Import lazily so tests can stub JWT_SECRET_KEY via env before auth_service loads.
     from core.auth.auth_service import JWT_SECRET_KEY
+
     return URLSafeTimedSerializer(JWT_SECRET_KEY, salt=RESET_TOKEN_PURPOSE)
 
 
@@ -57,21 +59,8 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-_reset_redis_client = None
-
-
 def _redis_client():
-    global _reset_redis_client
-    if _reset_redis_client is not None:
-        return _reset_redis_client
-    try:
-        from redis import asyncio as redis_asyncio
-    except Exception as exc:
-        logger.warning("redis.asyncio unavailable: %s — reset single-use check disabled", exc)
-        return None
-    url = get_settings().redis_url or DEFAULT_REDIS_URL
-    _reset_redis_client = redis_asyncio.from_url(url, decode_responses=True)
-    return _reset_redis_client
+    return get_async_redis("reset single-use check")
 
 
 def generate_reset_token(user_id: str) -> str:

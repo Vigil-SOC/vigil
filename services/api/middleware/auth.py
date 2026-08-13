@@ -5,18 +5,18 @@ Provides middleware for FastAPI to validate JWT tokens and check permissions.
 Supports DEV_MODE for bypassing authentication during development.
 """
 
-from core.routing import UnitOfWorkSession
 import logging
 from typing import Optional
-from fastapi import HTTPException, Header, Depends, Request, status
+
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.token_blacklist import is_token_revoked
-from core.storage.models import User
-
 from core.config import get_settings
+from core.routing import UnitOfWorkSession
+from core.storage.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,9 @@ def _get_dev_user(session: Session) -> User:
 
         # If no admin, create a mock user object (won't be persisted)
         if _dev_user is None:
-            from core.storage.models import Role
             import uuid
+
+            from core.storage.models import Role
 
             # Try to get admin role
             admin_role = session.query(Role).filter(Role.name == "admin").first()
@@ -186,14 +187,24 @@ async def get_current_active_user(
     return current_user
 
 
-def require_settings_admin(current_user: User) -> None:
-    """Raise 403 unless the user may change system settings.
+def _require_permission(current_user: User, permission: str) -> None:
+    """Raise 403 unless the user holds ``permission``.
 
     A plain call, not a decorator: the callers are sync route handlers, so a
     decorator that awaits the endpoint would not work for them.
     """
-    if not AuthService.check_permission(current_user.user_id, "settings.write"):
+    if not AuthService.check_permission(current_user.user_id, permission):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: settings.write required",
+            detail=f"Permission denied: {permission} required",
         )
+
+
+def require_settings_admin(current_user: User) -> None:
+    """Raise 403 unless the user may change system settings."""
+    _require_permission(current_user, "settings.write")
+
+
+def require_integrations_admin(current_user: User) -> None:
+    """Raise 403 unless the user may change integrations or MCP servers."""
+    _require_permission(current_user, "integrations.write")

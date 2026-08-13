@@ -4,8 +4,8 @@ import json
 import logging
 import os
 from typing import Dict, Optional
-from core.config import vigil_path
 
+from core.config import vigil_path
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
@@ -241,7 +241,6 @@ class IntegrationBridgeService:
         """
         env_vars = {}
 
-        # Add integration ID prefix for namespacing
         # Convert kebab-case to UPPER_SNAKE_CASE
         prefix = integration_id.upper().replace("-", "_")
 
@@ -261,7 +260,6 @@ class IntegrationBridgeService:
             if isinstance(field_value, bool):
                 field_value = "true" if field_value else "false"
 
-            # Convert field name to env var name
             env_name = self.FIELD_TO_ENV_MAP.get(field_name, field_name.upper())
 
             # Add prefix and set value
@@ -292,8 +290,8 @@ class IntegrationBridgeService:
             return {}
 
         try:
-            from core.storage.db_proxy import ProxyConfig, child_env_for_proxy
             from core.integrations.integration_secrets import secret_fields_for
+            from core.storage.db_proxy import ProxyConfig, child_env_for_proxy
         except ImportError:  # pragma: no cover - defensive
             return {}
 

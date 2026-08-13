@@ -5,10 +5,10 @@ from __future__ import annotations
 from core.federation.adapters._siem_base import SIEMIngestionAdapter
 from core.federation.contract import FederationAdapter, register_adapter
 
+from core.integrations.microsoft_defender.ingestion import MicrosoftDefenderIngestion
 
 def _factory() -> FederationAdapter:
     def make_service():
-        from core.integrations.microsoft_defender.ingestion import MicrosoftDefenderIngestion
 
         return MicrosoftDefenderIngestion()
 

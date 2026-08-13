@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 from sqlalchemy import select, func, or_, and_
 
+from core.exceptions import default_on_error
 from core.storage.models import (
     Case,
     Finding,
@@ -44,6 +45,7 @@ class DatabaseService:
     
     # ========== Finding Operations ==========
     
+    @default_on_error(None)
     def create_finding(
         self,
         finding_id: str,
@@ -69,31 +71,27 @@ class DatabaseService:
         Returns:
             Created Finding object or None if failed
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                finding = Finding(
-                    finding_id=finding_id,
-                    embedding=_normalize_embedding(embedding),
-                    mitre_predictions=mitre_predictions,
-                    anomaly_score=anomaly_score,
-                    timestamp=timestamp,
-                    data_source=data_source,
-                    external_id=kwargs.get('external_id'),
-                    description=kwargs.get('description'),
-                    entity_context=kwargs.get('entity_context'),
-                    evidence_links=kwargs.get('evidence_links'),
-                    cluster_id=kwargs.get('cluster_id'),
-                    severity=kwargs.get('severity'),
-                    status=kwargs.get('status', 'new')
-                )
-                session.add(finding)
-                session.flush()
-                session.refresh(finding)
-                logger.info(f"Created finding: {finding_id}")
-                return finding
-        except Exception as e:
-            logger.error(f"Error creating finding {finding_id}: {e}")
-            return None
+        with self.db_manager.session_scope() as session:
+            finding = Finding(
+                finding_id=finding_id,
+                embedding=_normalize_embedding(embedding),
+                mitre_predictions=mitre_predictions,
+                anomaly_score=anomaly_score,
+                timestamp=timestamp,
+                data_source=data_source,
+                external_id=kwargs.get('external_id'),
+                description=kwargs.get('description'),
+                entity_context=kwargs.get('entity_context'),
+                evidence_links=kwargs.get('evidence_links'),
+                cluster_id=kwargs.get('cluster_id'),
+                severity=kwargs.get('severity'),
+                status=kwargs.get('status', 'new')
+            )
+            session.add(finding)
+            session.flush()
+            session.refresh(finding)
+            logger.info(f"Created finding: {finding_id}")
+            return finding
 
     def bulk_create_findings(self, rows: List[Dict[str, Any]]) -> Dict[str, int]:
         """Dedup + insert many findings in one transaction; per-row create_finding
@@ -134,6 +132,7 @@ class DatabaseService:
             logger.error(f"Error bulk-creating findings: {e}")
             return {'imported': 0, 'skipped': 0, 'errors': len(rows)}
 
+    @default_on_error(None)
     def get_finding(self, finding_id: str) -> Optional[Finding]:
         """
         Get a finding by ID.
@@ -144,17 +143,14 @@ class DatabaseService:
         Returns:
             Finding object or None if not found
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                finding = session.get(Finding, finding_id)
-                if finding:
-                    # Detach from session to avoid lazy loading issues
-                    session.expunge(finding)
-                return finding
-        except Exception as e:
-            logger.error(f"Error getting finding {finding_id}: {e}")
-            return None
+        with self.db_manager.session_scope() as session:
+            finding = session.get(Finding, finding_id)
+            if finding:
+                # Detach from session to avoid lazy loading issues
+                session.expunge(finding)
+            return finding
     
+    @default_on_error(list)
     def get_findings(
         self,
         severity: Optional[str] = None,
@@ -186,59 +182,56 @@ class DatabaseService:
         Returns:
             List of Finding objects
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                query = select(Finding)
-                
-                filters = []
-                if severity:
-                    filters.append(Finding.severity == severity)
-                if data_source:
-                    filters.append(Finding.data_source == data_source)
-                if cluster_id is not None:
-                    filters.append(Finding.cluster_id == cluster_id)
-                if min_anomaly_score is not None:
-                    filters.append(Finding.anomaly_score >= min_anomaly_score)
-                if status:
-                    filters.append(Finding.status == status)
-                if search_query:
-                    from sqlalchemy import cast, String
-                    search_clauses = [
-                        Finding.finding_id.ilike(f"%{search_query}%"),
-                        cast(Finding.entity_context, String).ilike(f"%{search_query}%"),
-                    ]
-                    if hasattr(Finding, 'description'):
-                        search_clauses.append(Finding.description.ilike(f"%{search_query}%"))
-                    filters.append(or_(*search_clauses))
-                
-                if filters:
-                    query = query.where(and_(*filters))
-                
-                sort_column_map = {
-                    "timestamp": Finding.timestamp,
-                    "anomaly_score": Finding.anomaly_score,
-                    "severity": Finding.severity,
-                    "data_source": Finding.data_source,
-                    "status": Finding.status,
-                }
-                sort_col = sort_column_map.get(sort_by, Finding.timestamp)
-                if sort_order == "asc":
-                    query = query.order_by(sort_col.asc())
-                else:
-                    query = query.order_by(sort_col.desc())
+        with self.db_manager.session_scope() as session:
+            query = select(Finding)
+            
+            filters = []
+            if severity:
+                filters.append(Finding.severity == severity)
+            if data_source:
+                filters.append(Finding.data_source == data_source)
+            if cluster_id is not None:
+                filters.append(Finding.cluster_id == cluster_id)
+            if min_anomaly_score is not None:
+                filters.append(Finding.anomaly_score >= min_anomaly_score)
+            if status:
+                filters.append(Finding.status == status)
+            if search_query:
+                from sqlalchemy import cast, String
+                search_clauses = [
+                    Finding.finding_id.ilike(f"%{search_query}%"),
+                    cast(Finding.entity_context, String).ilike(f"%{search_query}%"),
+                ]
+                if hasattr(Finding, 'description'):
+                    search_clauses.append(Finding.description.ilike(f"%{search_query}%"))
+                filters.append(or_(*search_clauses))
+            
+            if filters:
+                query = query.where(and_(*filters))
+            
+            sort_column_map = {
+                "timestamp": Finding.timestamp,
+                "anomaly_score": Finding.anomaly_score,
+                "severity": Finding.severity,
+                "data_source": Finding.data_source,
+                "status": Finding.status,
+            }
+            sort_col = sort_column_map.get(sort_by, Finding.timestamp)
+            if sort_order == "asc":
+                query = query.order_by(sort_col.asc())
+            else:
+                query = query.order_by(sort_col.desc())
 
-                query = query.limit(limit).offset(offset)
-                
-                findings = session.execute(query).scalars().all()
-                
-                for finding in findings:
-                    session.expunge(finding)
-                
-                return findings
-        except Exception as e:
-            logger.error(f"Error getting findings: {e}")
-            return []
+            query = query.limit(limit).offset(offset)
+            
+            findings = session.execute(query).scalars().all()
+            
+            for finding in findings:
+                session.expunge(finding)
+            
+            return findings
     
+    @default_on_error(None)
     def find_similar_findings(
         self,
         finding_id: str,
@@ -250,43 +243,37 @@ class DatabaseService:
         ``None`` when the query can't run (e.g. pgvector unavailable) so the caller
         can fall back. ``same_source`` restricts to the seed's own data_source,
         avoiding comparison across distinct embedding model spaces."""
-        try:
-            with self.db_manager.session_scope() as session:
-                seed = session.get(Finding, finding_id)
-                if seed is None or seed.embedding is None:
-                    return []
-                distance = Finding.embedding.cosine_distance(seed.embedding)
-                query = select(Finding, distance.label("distance")).where(
-                    Finding.finding_id != finding_id
-                )
-                if same_source and seed.data_source:
-                    query = query.where(Finding.data_source == seed.data_source)
-                query = query.order_by(distance).limit(limit)
-
-                neighbors: List[Dict[str, Any]] = []
-                for finding, dist in session.execute(query).all():
-                    # pgvector cosine distance is in [0, 2]; similarity = 1 - d
-                    similarity = 1.0 - float(dist) if dist is not None else None
-                    neighbors.append(
-                        {
-                            "finding_id": finding.finding_id,
-                            "similarity": (
-                                round(similarity, 4) if similarity is not None else None
-                            ),
-                            "cluster_id": finding.cluster_id,
-                            "severity": finding.severity,
-                            "data_source": finding.data_source,
-                            "anomaly_score": float(finding.anomaly_score or 0),
-                        }
-                    )
-                return neighbors
-        except Exception as e:
-            logger.warning(
-                f"pgvector similarity query failed for {finding_id}, "
-                f"caller should fall back: {e}"
+        with self.db_manager.session_scope() as session:
+            seed = session.get(Finding, finding_id)
+            if seed is None or seed.embedding is None:
+                return []
+            distance = Finding.embedding.cosine_distance(seed.embedding)
+            query = select(Finding, distance.label("distance")).where(
+                Finding.finding_id != finding_id
             )
-            return None
+            if same_source and seed.data_source:
+                query = query.where(Finding.data_source == seed.data_source)
+            query = query.order_by(distance).limit(limit)
 
+            neighbors: List[Dict[str, Any]] = []
+            for finding, dist in session.execute(query).all():
+                # pgvector cosine distance is in [0, 2]; similarity = 1 - d
+                similarity = 1.0 - float(dist) if dist is not None else None
+                neighbors.append(
+                    {
+                        "finding_id": finding.finding_id,
+                        "similarity": (
+                            round(similarity, 4) if similarity is not None else None
+                        ),
+                        "cluster_id": finding.cluster_id,
+                        "severity": finding.severity,
+                        "data_source": finding.data_source,
+                        "anomaly_score": float(finding.anomaly_score or 0),
+                    }
+                )
+            return neighbors
+
+    @default_on_error(list)
     def get_findings_missing_enrichment(
         self, limit: int = 100, max_age_hours: Optional[int] = None
     ) -> List[Dict[str, Any]]:
@@ -294,18 +281,15 @@ class DatabaseService:
         Returns dicts (to_dict inside the session) so callers get detached-safe data.
         ``max_age_hours`` bounds the working set so ancient, un-enrichable findings
         aren't retried forever."""
-        try:
-            with self.db_manager.session_scope() as session:
-                query = select(Finding).where(Finding.ai_enrichment.is_(None))
-                if max_age_hours:
-                    cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
-                    query = query.where(Finding.timestamp >= cutoff)
-                query = query.order_by(Finding.timestamp.asc()).limit(limit)
-                return FindingSchema.dump_many(session.execute(query).scalars().all())
-        except Exception as e:
-            logger.error(f"Error getting findings missing enrichment: {e}")
-            return []
+        with self.db_manager.session_scope() as session:
+            query = select(Finding).where(Finding.ai_enrichment.is_(None))
+            if max_age_hours:
+                cutoff = datetime.utcnow() - timedelta(hours=max_age_hours)
+                query = query.where(Finding.timestamp >= cutoff)
+            query = query.order_by(Finding.timestamp.asc()).limit(limit)
+            return FindingSchema.dump_many(session.execute(query).scalars().all())
 
+    @default_on_error(0)
     def count_findings(
         self,
         severity: Optional[str] = None,
@@ -318,39 +302,36 @@ class DatabaseService:
         """
         Count findings matching the given filters without loading rows.
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                query = select(func.count()).select_from(Finding)
+        with self.db_manager.session_scope() as session:
+            query = select(func.count()).select_from(Finding)
 
-                filters = []
-                if severity:
-                    filters.append(Finding.severity == severity)
-                if data_source:
-                    filters.append(Finding.data_source == data_source)
-                if cluster_id is not None:
-                    filters.append(Finding.cluster_id == cluster_id)
-                if min_anomaly_score is not None:
-                    filters.append(Finding.anomaly_score >= min_anomaly_score)
-                if status:
-                    filters.append(Finding.status == status)
-                if search_query:
-                    from sqlalchemy import cast, String
-                    filters.append(
-                        or_(
-                            Finding.finding_id.ilike(f"%{search_query}%"),
-                            Finding.description.ilike(f"%{search_query}%") if hasattr(Finding, 'description') else Finding.finding_id.ilike(f"%{search_query}%"),
-                            cast(Finding.entity_context, String).ilike(f"%{search_query}%"),
-                        )
+            filters = []
+            if severity:
+                filters.append(Finding.severity == severity)
+            if data_source:
+                filters.append(Finding.data_source == data_source)
+            if cluster_id is not None:
+                filters.append(Finding.cluster_id == cluster_id)
+            if min_anomaly_score is not None:
+                filters.append(Finding.anomaly_score >= min_anomaly_score)
+            if status:
+                filters.append(Finding.status == status)
+            if search_query:
+                from sqlalchemy import cast, String
+                filters.append(
+                    or_(
+                        Finding.finding_id.ilike(f"%{search_query}%"),
+                        Finding.description.ilike(f"%{search_query}%") if hasattr(Finding, 'description') else Finding.finding_id.ilike(f"%{search_query}%"),
+                        cast(Finding.entity_context, String).ilike(f"%{search_query}%"),
                     )
+                )
 
-                if filters:
-                    query = query.where(and_(*filters))
+            if filters:
+                query = query.where(and_(*filters))
 
-                return session.execute(query).scalar() or 0
-        except Exception as e:
-            logger.error(f"Error counting findings: {e}")
-            return 0
+            return session.execute(query).scalar() or 0
 
+    @default_on_error(False)
     def update_finding(self, finding_id: str, **updates) -> bool:
         """
         Update a finding.
@@ -362,26 +343,31 @@ class DatabaseService:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                finding = session.get(Finding, finding_id)
-                if not finding:
-                    logger.warning(f"Finding not found: {finding_id}")
-                    return False
-                
-                # Update allowed fields
-                for key, value in updates.items():
-                    if hasattr(finding, key):
-                        setattr(finding, key, value)
-                
-                finding.updated_at = datetime.utcnow()
-                session.flush()
-                logger.info(f"Updated finding: {finding_id}")
-                return True
-        except Exception as e:
-            logger.error(f"Error updating finding {finding_id}: {e}")
-            return False
+        with self.db_manager.session_scope() as session:
+            finding = session.get(Finding, finding_id)
+            if not finding:
+                logger.warning(f"Finding not found: {finding_id}")
+                return False
+            
+            # Unknown keys are skipped rather than rejected: the S3 sync path
+            # passes whole external finding dicts. Say which, or a typo'd column
+            # name is a silent no-op that still reports success.
+            dropped = [k for k in updates if not hasattr(finding, k)]
+            if dropped:
+                logger.warning(
+                    "update_finding(%s): ignoring unknown field(s) %s",
+                    finding_id, ", ".join(sorted(dropped)),
+                )
+            for key, value in updates.items():
+                if hasattr(finding, key):
+                    setattr(finding, key, value)
+            
+            finding.updated_at = datetime.utcnow()
+            session.flush()
+            logger.info(f"Updated finding: {finding_id}")
+            return True
     
+    @default_on_error(False)
     def delete_finding(self, finding_id: str) -> bool:
         """
         Delete a finding.
@@ -392,22 +378,19 @@ class DatabaseService:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                finding = session.get(Finding, finding_id)
-                if not finding:
-                    logger.warning(f"Finding not found: {finding_id}")
-                    return False
-                
-                session.delete(finding)
-                logger.info(f"Deleted finding: {finding_id}")
-                return True
-        except Exception as e:
-            logger.error(f"Error deleting finding {finding_id}: {e}")
-            return False
+        with self.db_manager.session_scope() as session:
+            finding = session.get(Finding, finding_id)
+            if not finding:
+                logger.warning(f"Finding not found: {finding_id}")
+                return False
+            
+            session.delete(finding)
+            logger.info(f"Deleted finding: {finding_id}")
+            return True
     
     # ========== Case Operations ==========
     
+    @default_on_error(None)
     def create_case(
         self,
         case_id: str,
@@ -427,42 +410,39 @@ class DatabaseService:
         Returns:
             Created Case object or None if failed
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                # Create case
-                now = datetime.utcnow()
-                case = Case(
-                    case_id=case_id,
-                    title=title,
-                    description=kwargs.get('description', ''),
-                    status=kwargs.get('status', 'new'),
-                    priority=kwargs.get('priority', 'medium'),
-                    assignee=kwargs.get('assignee'),
-                    tags=kwargs.get('tags', []),
-                    notes=kwargs.get('notes', []),
-                    timeline=kwargs.get('timeline', [{'timestamp': now.isoformat() + 'Z', 'event': 'Case created'}]),
-                    activities=kwargs.get('activities', []),
-                    resolution_steps=kwargs.get('resolution_steps', []),
-                    mitre_techniques=kwargs.get('mitre_techniques'),
-                )
-                session.add(case)
+        with self.db_manager.session_scope() as session:
+            # Create case
+            now = datetime.utcnow()
+            case = Case(
+                case_id=case_id,
+                title=title,
+                description=kwargs.get('description', ''),
+                status=kwargs.get('status', 'new'),
+                priority=kwargs.get('priority', 'medium'),
+                assignee=kwargs.get('assignee'),
+                tags=kwargs.get('tags', []),
+                notes=kwargs.get('notes', []),
+                timeline=kwargs.get('timeline', [{'timestamp': now.isoformat() + 'Z', 'event': 'Case created'}]),
+                activities=kwargs.get('activities', []),
+                resolution_steps=kwargs.get('resolution_steps', []),
+                mitre_techniques=kwargs.get('mitre_techniques'),
+            )
+            session.add(case)
+            session.flush()
+            
+            # Link findings
+            if finding_ids:
+                findings = session.execute(
+                    select(Finding).where(Finding.finding_id.in_(finding_ids))
+                ).scalars().all()
+                case.findings.extend(findings)
                 session.flush()
-                
-                # Link findings
-                if finding_ids:
-                    findings = session.execute(
-                        select(Finding).where(Finding.finding_id.in_(finding_ids))
-                    ).scalars().all()
-                    case.findings.extend(findings)
-                    session.flush()
-                
-                session.refresh(case)
-                logger.info(f"Created case: {case_id} with {len(finding_ids)} findings")
-                return case
-        except Exception as e:
-            logger.error(f"Error creating case {case_id}: {e}")
-            return None
+            
+            session.refresh(case)
+            logger.info(f"Created case: {case_id} with {len(finding_ids)} findings")
+            return case
     
+    @default_on_error(None)
     def get_case(self, case_id: str, include_findings: bool = False) -> Optional[Case]:
         """
         Get a case by ID.
@@ -474,19 +454,16 @@ class DatabaseService:
         Returns:
             Case object or None if not found
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                case = session.get(Case, case_id)
-                if case:
-                    # Force load findings if needed
-                    if include_findings:
-                        _ = case.findings  # Trigger lazy load
-                    session.expunge(case)
-                return case
-        except Exception as e:
-            logger.error(f"Error getting case {case_id}: {e}")
-            return None
+        with self.db_manager.session_scope() as session:
+            case = session.get(Case, case_id)
+            if case:
+                # Force load findings if needed
+                if include_findings:
+                    _ = case.findings  # Trigger lazy load
+                session.expunge(case)
+            return case
     
+    @default_on_error(list)
     def get_cases(
         self,
         status: Optional[str] = None,
@@ -508,26 +485,23 @@ class DatabaseService:
         Returns:
             List of Case objects
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                cases = CaseRepository(session).find(
-                    status=status,
-                    priority=priority,
-                    assignee=assignee,
-                    limit=limit,
-                    offset=offset,
-                    order_by="created_at",
-                )
+        with self.db_manager.session_scope() as session:
+            cases = CaseRepository(session).find(
+                status=status,
+                priority=priority,
+                assignee=assignee,
+                limit=limit,
+                offset=offset,
+                order_by="created_at",
+            )
 
-                # Detach from session
-                for case in cases:
-                    session.expunge(case)
+            # Detach from session
+            for case in cases:
+                session.expunge(case)
 
-                return cases
-        except Exception as e:
-            logger.error(f"Error getting cases: {e}")
-            return []
+            return cases
     
+    @default_on_error(False)
     def update_case(self, case_id: str, **updates) -> bool:
         """
         Update a case.
@@ -539,33 +513,30 @@ class DatabaseService:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                case = session.get(Case, case_id)
-                if not case:
-                    logger.warning(f"Case not found: {case_id}")
-                    return False
+        with self.db_manager.session_scope() as session:
+            case = session.get(Case, case_id)
+            if not case:
+                logger.warning(f"Case not found: {case_id}")
+                return False
 
-                # ``finding_ids`` maps to the ``findings`` relationship, not a
-                # column, so the generic setattr loop below would drop it.
-                if "finding_ids" in updates:
-                    CaseRepository(session).set_findings(
-                        case, updates.pop("finding_ids") or []
-                    )
+            # ``finding_ids`` maps to the ``findings`` relationship, not a
+            # column, so the generic setattr loop below would drop it.
+            if "finding_ids" in updates:
+                CaseRepository(session).set_findings(
+                    case, updates.pop("finding_ids") or []
+                )
 
-                # Update remaining mapped fields
-                for key, value in updates.items():
-                    if hasattr(case, key):
-                        setattr(case, key, value)
+            # Update remaining mapped fields
+            for key, value in updates.items():
+                if hasattr(case, key):
+                    setattr(case, key, value)
 
-                case.updated_at = datetime.utcnow()
-                session.flush()
-                logger.info(f"Updated case: {case_id}")
-                return True
-        except Exception as e:
-            logger.error(f"Error updating case {case_id}: {e}")
-            return False
+            case.updated_at = datetime.utcnow()
+            session.flush()
+            logger.info(f"Updated case: {case_id}")
+            return True
     
+    @default_on_error(False)
     def delete_case(self, case_id: str) -> bool:
         """
         Delete a case.
@@ -576,20 +547,17 @@ class DatabaseService:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                case = session.get(Case, case_id)
-                if not case:
-                    logger.warning(f"Case not found: {case_id}")
-                    return False
-                
-                session.delete(case)
-                logger.info(f"Deleted case: {case_id}")
-                return True
-        except Exception as e:
-            logger.error(f"Error deleting case {case_id}: {e}")
-            return False
+        with self.db_manager.session_scope() as session:
+            case = session.get(Case, case_id)
+            if not case:
+                logger.warning(f"Case not found: {case_id}")
+                return False
+            
+            session.delete(case)
+            logger.info(f"Deleted case: {case_id}")
+            return True
     
+    @default_on_error(False)
     def add_finding_to_case(self, case_id: str, finding_id: str) -> bool:
         """
         Add a finding to a case.
@@ -601,26 +569,23 @@ class DatabaseService:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                case = session.get(Case, case_id)
-                finding = session.get(Finding, finding_id)
-                
-                if not case or not finding:
-                    logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
-                    return False
-                
-                if finding not in case.findings:
-                    case.findings.append(finding)
-                    case.updated_at = datetime.utcnow()
-                    session.flush()
-                    logger.info(f"Added finding {finding_id} to case {case_id}")
-                
-                return True
-        except Exception as e:
-            logger.error(f"Error adding finding to case: {e}")
-            return False
+        with self.db_manager.session_scope() as session:
+            case = session.get(Case, case_id)
+            finding = session.get(Finding, finding_id)
+            
+            if not case or not finding:
+                logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
+                return False
+            
+            if finding not in case.findings:
+                case.findings.append(finding)
+                case.updated_at = datetime.utcnow()
+                session.flush()
+                logger.info(f"Added finding {finding_id} to case {case_id}")
+            
+            return True
     
+    @default_on_error(False)
     def remove_finding_from_case(self, case_id: str, finding_id: str) -> bool:
         """
         Remove a finding from a case.
@@ -632,25 +597,21 @@ class DatabaseService:
         Returns:
             True if successful, False otherwise
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                case = session.get(Case, case_id)
-                finding = session.get(Finding, finding_id)
-                
-                if not case or not finding:
-                    logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
-                    return False
-                
-                if finding in case.findings:
-                    case.findings.remove(finding)
-                    case.updated_at = datetime.utcnow()
-                    session.flush()
-                    logger.info(f"Removed finding {finding_id} from case {case_id}")
-                
-                return True
-        except Exception as e:
-            logger.error(f"Error removing finding from case: {e}")
-            return False
+        with self.db_manager.session_scope() as session:
+            case = session.get(Case, case_id)
+            finding = session.get(Finding, finding_id)
+            
+            if not case or not finding:
+                logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
+                return False
+            
+            if finding in case.findings:
+                case.findings.remove(finding)
+                case.updated_at = datetime.utcnow()
+                session.flush()
+                logger.info(f"Removed finding {finding_id} from case {case_id}")
+            
+            return True
     
     # ========== Statistics ==========
     
@@ -658,6 +619,7 @@ class DatabaseService:
     
     # ========== AI Decision Log Operations ==========
     
+    @default_on_error(None)
     def create_ai_decision(
         self,
         decision_id: str,
@@ -689,31 +651,28 @@ class DatabaseService:
         Returns:
             Created AIDecisionLog or None if failed
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                decision = AIDecisionLog(
-                    decision_id=decision_id,
-                    agent_id=agent_id,
-                    decision_type=decision_type,
-                    confidence_score=confidence_score,
-                    reasoning=reasoning,
-                    recommended_action=recommended_action,
-                    finding_id=finding_id,
-                    case_id=case_id,
-                    workflow_id=workflow_id,
-                    decision_metadata=decision_metadata,
-                    timestamp=datetime.utcnow()
-                )
-                
-                session.add(decision)
-                session.flush()
-                
-                logger.info(f"Created AI decision log: {decision_id} by {agent_id}")
-                return decision
-        except Exception as e:
-            logger.error(f"Error creating AI decision log: {e}")
-            return None
+        with self.db_manager.session_scope() as session:
+            decision = AIDecisionLog(
+                decision_id=decision_id,
+                agent_id=agent_id,
+                decision_type=decision_type,
+                confidence_score=confidence_score,
+                reasoning=reasoning,
+                recommended_action=recommended_action,
+                finding_id=finding_id,
+                case_id=case_id,
+                workflow_id=workflow_id,
+                decision_metadata=decision_metadata,
+                timestamp=datetime.utcnow()
+            )
+            
+            session.add(decision)
+            session.flush()
+            
+            logger.info(f"Created AI decision log: {decision_id} by {agent_id}")
+            return decision
     
+    @default_on_error(None)
     def submit_ai_decision_feedback(
         self,
         decision_id: str,
@@ -743,35 +702,32 @@ class DatabaseService:
         Returns:
             Updated AIDecisionLog or None if failed
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                decision = session.query(AIDecisionLog).filter(
-                    AIDecisionLog.decision_id == decision_id
-                ).first()
-                
-                if not decision:
-                    logger.error(f"AI decision not found: {decision_id}")
-                    return None
-                
-                # Update feedback fields
-                decision.human_reviewer = human_reviewer
-                decision.human_decision = human_decision
-                decision.feedback_comment = feedback_comment
-                decision.accuracy_grade = accuracy_grade
-                decision.reasoning_grade = reasoning_grade
-                decision.action_appropriateness = action_appropriateness
-                decision.actual_outcome = actual_outcome
-                decision.time_saved_minutes = time_saved_minutes
-                decision.feedback_timestamp = datetime.utcnow()
-                
-                session.flush()
-                
-                logger.info(f"Updated AI decision feedback: {decision_id} by {human_reviewer}")
-                return decision
-        except Exception as e:
-            logger.error(f"Error submitting AI decision feedback: {e}")
-            return None
+        with self.db_manager.session_scope() as session:
+            decision = session.query(AIDecisionLog).filter(
+                AIDecisionLog.decision_id == decision_id
+            ).first()
+            
+            if not decision:
+                logger.error(f"AI decision not found: {decision_id}")
+                return None
+            
+            # Update feedback fields
+            decision.human_reviewer = human_reviewer
+            decision.human_decision = human_decision
+            decision.feedback_comment = feedback_comment
+            decision.accuracy_grade = accuracy_grade
+            decision.reasoning_grade = reasoning_grade
+            decision.action_appropriateness = action_appropriateness
+            decision.actual_outcome = actual_outcome
+            decision.time_saved_minutes = time_saved_minutes
+            decision.feedback_timestamp = datetime.utcnow()
+            
+            session.flush()
+            
+            logger.info(f"Updated AI decision feedback: {decision_id} by {human_reviewer}")
+            return decision
     
+    @default_on_error(None)
     def get_ai_decision(self, decision_id: str) -> Optional[AIDecisionLog]:
         """
         Get an AI decision by ID.
@@ -782,15 +738,12 @@ class DatabaseService:
         Returns:
             AIDecisionLog or None if not found
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                return session.query(AIDecisionLog).filter(
-                    AIDecisionLog.decision_id == decision_id
-                ).first()
-        except Exception as e:
-            logger.error(f"Error getting AI decision: {e}")
-            return None
+        with self.db_manager.session_scope() as session:
+            return session.query(AIDecisionLog).filter(
+                AIDecisionLog.decision_id == decision_id
+            ).first()
     
+    @default_on_error(list)
     def list_ai_decisions(
         self,
         agent_id: Optional[str] = None,
@@ -814,33 +767,29 @@ class DatabaseService:
         Returns:
             List of AIDecisionLog objects
         """
-        try:
-            with self.db_manager.session_scope() as session:
-                query = session.query(AIDecisionLog)
-                
-                if agent_id:
-                    query = query.filter(AIDecisionLog.agent_id == agent_id)
-                
-                if finding_id:
-                    query = query.filter(AIDecisionLog.finding_id == finding_id)
-                
-                if case_id:
-                    query = query.filter(AIDecisionLog.case_id == case_id)
-                
-                if has_feedback is not None:
-                    if has_feedback:
-                        query = query.filter(AIDecisionLog.human_decision.isnot(None))
-                    else:
-                        query = query.filter(AIDecisionLog.human_decision.is_(None))
-                
-                decisions = query.order_by(
-                    AIDecisionLog.timestamp.desc()
-                ).limit(limit).offset(offset).all()
-                
-                return decisions
-        except Exception as e:
-            logger.error(f"Error listing AI decisions: {e}")
-            return []
+        with self.db_manager.session_scope() as session:
+            query = session.query(AIDecisionLog)
+            
+            if agent_id:
+                query = query.filter(AIDecisionLog.agent_id == agent_id)
+            
+            if finding_id:
+                query = query.filter(AIDecisionLog.finding_id == finding_id)
+            
+            if case_id:
+                query = query.filter(AIDecisionLog.case_id == case_id)
+            
+            if has_feedback is not None:
+                if has_feedback:
+                    query = query.filter(AIDecisionLog.human_decision.isnot(None))
+                else:
+                    query = query.filter(AIDecisionLog.human_decision.is_(None))
+            
+            decisions = query.order_by(
+                AIDecisionLog.timestamp.desc()
+            ).limit(limit).offset(offset).all()
+            
+            return decisions
     
     def get_ai_decision_stats(
         self,

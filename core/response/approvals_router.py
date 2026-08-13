@@ -13,6 +13,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from core.routing import Auth, RouterMeta
 
+from core.response.approval_service import ActionStatus, get_approval_service
+from core.workflows.workflows_service import get_workflows_service
+
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
@@ -94,10 +97,6 @@ async def list_approvals(
     limit: int = Query(default=100, ge=1, le=500),
 ):
     """List approval actions, newest first."""
-    from core.response.approval_service import (
-        ActionStatus,
-        get_approval_service,
-    )
 
     status_enum: Optional[ActionStatus] = None
     if status:
@@ -122,7 +121,6 @@ async def list_approvals(
 async def list_pending_approvals() -> Dict[str, List[Dict[str, Any]]]:
     """Shortcut: only actions with ``status=pending`` and
     ``requires_approval=True``. Used by the AI Decisions approvals tab."""
-    from core.response.approval_service import get_approval_service
 
     service = get_approval_service()
     actions = service.list_pending_approvals()
@@ -132,7 +130,6 @@ async def list_pending_approvals() -> Dict[str, List[Dict[str, Any]]]:
 @router.get("/approvals/{action_id}")
 async def get_approval(action_id: str):
     """Fetch a single approval action."""
-    from core.response.approval_service import get_approval_service
 
     action = get_approval_service().get_action(action_id)
     if action is None:
@@ -147,8 +144,6 @@ async def approve_action(action_id: str, request: ApproveRequest):
     If the action is linked to a paused workflow run, the run resumes
     automatically and the resume result is included in the response.
     """
-    from core.response.approval_service import get_approval_service
-    from core.workflows.workflows_service import get_workflows_service
 
     service = get_approval_service()
     action = service.get_action(action_id)
@@ -183,8 +178,6 @@ async def reject_action(action_id: str, request: RejectRequest):
     If the action is linked to a paused workflow run, the run is
     cancelled with the supplied reason.
     """
-    from core.response.approval_service import get_approval_service
-    from core.workflows.workflows_service import get_workflows_service
 
     service = get_approval_service()
     action = service.get_action(action_id)

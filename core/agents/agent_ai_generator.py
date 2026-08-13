@@ -3,14 +3,13 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from core.integrations.mcp.registry import get_mcp_tool_names
+
 logger = logging.getLogger(__name__)
 
 
 class AgentAIGenerator:
     """Generates / refines draft custom agent configurations from natural language."""
-
-    def __init__(self) -> None:
-        self._mcp_tool_names_cache: Optional[List[str]] = None
 
     async def generate(
         self,
@@ -116,8 +115,7 @@ class AgentAIGenerator:
             "icon": "Single uppercase letter (e.g. 'P')",
             "color": "Hex color like '#8e44ad'",
             "role": (
-                "Short role phrase for BASE_PROMPT "
-                "(e.g. 'phishing specialist')"
+                "Short role phrase for BASE_PROMPT " "(e.g. 'phishing specialist')"
             ),
             "extra_principles": (
                 "Bullet list of additional principles, one per line prefixed "
@@ -167,7 +165,7 @@ class AgentAIGenerator:
                 (
                     "## Requirements\n"
                     "- `role` is a short noun phrase. It renders as "
-                    "\"You are a SOC {role} in the Vigil SOC platform.\"\n"
+                    '"You are a SOC {role} in the Vigil SOC platform."\n'
                     "- `extra_principles` is added AFTER Vigil's baseline "
                     "principles. Use '- ' bullets, one per line.\n"
                     "- `methodology` is a numbered step list (1., 2., 3., ...) "
@@ -209,7 +207,7 @@ class AgentAIGenerator:
         return "\n".join(lines) or "(no existing agents)"
 
     def _tools_context(self) -> str:
-        tool_names = self._get_mcp_tool_names()
+        tool_names = get_mcp_tool_names()
         if not tool_names:
             return (
                 "(MCP registry unavailable; leave `recommended_tools` empty "
@@ -224,20 +222,6 @@ class AgentAIGenerator:
         for server, names in grouped.items():
             lines.append(f"- **{server}**: {', '.join(names)}")
         return "\n".join(lines)
-
-    def _get_mcp_tool_names(self) -> List[str]:
-        if self._mcp_tool_names_cache is not None:
-            return self._mcp_tool_names_cache
-        try:
-            from core.integrations.mcp.registry import get_mcp_registry
-
-            registry = get_mcp_registry()
-            names = list(registry.get_tool_names() or [])
-        except Exception as e:
-            logger.debug(f"MCP registry unavailable: {e}")
-            names = []
-        self._mcp_tool_names_cache = names
-        return names
 
     def _base_prompt_shape(self) -> str:
         return (

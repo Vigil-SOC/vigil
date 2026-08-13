@@ -8,14 +8,17 @@ an MCP server can spawn subprocesses and surface tools to agents.
 
 import logging
 from typing import Dict, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from services.api.middleware.auth import get_current_active_user
-from core.auth.auth_service import AuthService
-from core.storage.models import User
 from core.integrations.mcp.service import MCPService
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import (
+    get_current_active_user,
+    require_integrations_admin,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -25,15 +28,6 @@ ROUTER_META = RouterMeta(
     tags=["mcp"],
     auth=Auth.REQUIRED,
 )
-
-
-def _require_mcp_admin(current_user: User) -> None:
-    """Raise 403 unless the user has ``integrations.write``."""
-    if not AuthService.check_permission(current_user.user_id, "integrations.write"):
-        raise HTTPException(
-            status_code=403,
-            detail="Permission denied: integrations.write required",
-        )
 
 
 def _validate_known_server(server_name: str) -> None:
@@ -146,7 +140,7 @@ async def set_server_enabled(
     the toggle back off and surface the real reason (e.g. missing creds,
     bad binary) when the connect attempt fails.
     """
-    _require_mcp_admin(current_user)
+    require_integrations_admin(current_user)
     _validate_known_server(server_name)
 
     success = mcp_service.set_server_enabled(server_name, request.enabled)
@@ -338,7 +332,7 @@ async def test_server(
     Admin-gated because the underlying ``test_server`` call can spawn
     a subprocess to probe a stdio MCP server.
     """
-    _require_mcp_admin(current_user)
+    require_integrations_admin(current_user)
     _validate_known_server(server_name)
     is_running = mcp_service.test_server(server_name)
 
@@ -364,25 +358,19 @@ async def reload_servers(
     running servers" — just enumerate new servers and let the enable
     toggle drive connects.
     """
-    _require_mcp_admin(current_user)
+    require_integrations_admin(current_user)
     logger.info("User %s requested MCP server reload", current_user.user_id)
-    try:
-        svc = _service()
-        # Reinitialise servers dict in place so the MCPClient's reference
-        # to this same instance keeps seeing the new catalog.
-        svc.servers.clear()
-        svc._initialize_servers()
+    svc = _service()
+    # Reinitialise servers dict in place so the MCPClient's reference
+    # to this same instance keeps seeing the new catalog.
+    svc.servers.clear()
+    svc._initialize_servers()
 
-        new_servers = list(svc.servers.keys())
+    new_servers = list(svc.servers.keys())
 
-        return {
-            "success": True,
-            "message": "MCP servers reloaded successfully",
-            "total_servers": len(new_servers),
-            "servers": new_servers,
-        }
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to reload MCP servers: {str(e)}"
-        )
+    return {
+        "success": True,
+        "message": "MCP servers reloaded successfully",
+        "total_servers": len(new_servers),
+        "servers": new_servers,
+    }

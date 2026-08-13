@@ -23,11 +23,10 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from core.config import get_settings
+from core.redis_client import get_async_redis
 
 logger = logging.getLogger(__name__)
 
-
-DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 
 _JTI_PREFIX = "blacklist:jti:"
 _USER_CUTOFF_PREFIX = "user_revoked_before:"
@@ -37,22 +36,9 @@ _USER_CUTOFF_PREFIX = "user_revoked_before:"
 _FAIL_OPEN = get_settings().revocation_fail_open
 
 
-_client = None
-
-
 def _get_client():
-    """Lazily build a redis.asyncio client. Returns None if redis isn't installed."""
-    global _client
-    if _client is not None:
-        return _client
-    try:
-        from redis import asyncio as redis_asyncio  # type: ignore
-    except Exception as exc:
-        logger.warning("redis.asyncio unavailable: %s — token revocation disabled", exc)
-        return None
-    url = get_settings().redis_url or DEFAULT_REDIS_URL
-    _client = redis_asyncio.from_url(url, decode_responses=True)
-    return _client
+    """The shared redis.asyncio client, or None if redis isn't installed."""
+    return get_async_redis("token revocation")
 
 
 def _now_ts() -> int:

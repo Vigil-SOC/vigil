@@ -7,6 +7,7 @@ from typing import Optional, Dict, List, Any, Callable
 from dataclasses import dataclass
 
 from core.config import get_settings
+from core.storage.connection import get_db_manager
 from services.daemon.config import SchedulerConfig
 
 logger = logging.getLogger(__name__)
@@ -423,28 +424,24 @@ class TaskScheduler:
             "components": {}
         }
         
-        # Check database
-        try:
-            if self._data_service:
-                findings = self._data_service.get_findings()
-                health["components"]["database"] = {
-                    "status": "healthy",
-                    "findings_count": len(findings) if findings else 0
-                }
-            else:
-                health["components"]["database"] = {"status": "unavailable"}
-        except Exception as e:
-            health["components"]["database"] = {"status": "error", "error": str(e)}
+        # Probe the connection rather than counting findings: get_findings
+        # returns [] on failure, so a dead database looked like an empty one.
+        if not self._data_service:
+            health["components"]["database"] = {"status": "unavailable"}
+        elif get_db_manager().health_check():
+            findings = self._data_service.get_findings()
+            health["components"]["database"] = {
+                "status": "healthy",
+                "findings_count": len(findings),
+            }
+        else:
+            health["components"]["database"] = {"status": "error"}
             health["status"] = "degraded"
-        
-        # Check Claude service
-        try:
-            if self._claude_service:
-                health["components"]["claude"] = {"status": "healthy"}
-            else:
-                health["components"]["claude"] = {"status": "unavailable"}
-        except Exception as e:
-            health["components"]["claude"] = {"status": "error", "error": str(e)}
+
+        # Presence only — constructing the service is what would have failed.
+        health["components"]["claude"] = {
+            "status": "healthy" if self._claude_service else "unavailable"
+        }
         
         logger.info(f"Health check: {health['status']}")
         return health

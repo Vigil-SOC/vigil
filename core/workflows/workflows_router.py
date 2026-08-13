@@ -7,6 +7,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from core.routing import Auth, RouterMeta
 
+from core.response.approval_service import ActionStatus, get_approval_service
+from core.workflows.custom_workflow_service import get_custom_workflow_service
+from core.workflows.workflow_run_service import get_workflow_run_service
+from core.workflows.workflows_service import get_workflows_service
+
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
@@ -96,16 +101,11 @@ async def list_workflows():
     Returns:
         { workflows: [...], count: int }
     """
-    try:
-        from core.workflows.workflows_service import get_workflows_service
 
-        service = get_workflows_service()
-        workflows = service.list_workflows()
+    service = get_workflows_service()
+    workflows = service.list_workflows()
 
-        return {"workflows": workflows, "count": len(workflows)}
-    except Exception as e:
-        logger.error(f"Error listing workflows: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"workflows": workflows, "count": len(workflows)}
 
 
 # Static routes MUST come before parameterized {workflow_id} routes
@@ -116,21 +116,16 @@ async def reload_workflows():
 
     Does not affect database-backed custom workflows.
     """
-    try:
-        from core.workflows.workflows_service import get_workflows_service
 
-        service = get_workflows_service()
-        service.reload()
-        workflows = service.list_workflows()
+    service = get_workflows_service()
+    service.reload()
+    workflows = service.list_workflows()
 
-        return {
-            "success": True,
-            "message": f"Reloaded workflows (total={len(workflows)})",
-            "count": len(workflows),
-        }
-    except Exception as e:
-        logger.error(f"Error reloading workflows: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "success": True,
+        "message": f"Reloaded workflows (total={len(workflows)})",
+        "count": len(workflows),
+    }
 
 
 # -----------------------------------------------------------------------------
@@ -141,14 +136,9 @@ async def reload_workflows():
 @router.get("/workflows/custom")
 async def list_custom_workflows(active_only: bool = True):
     """List database-backed custom workflows."""
-    try:
-        from core.workflows.custom_workflow_service import get_custom_workflow_service
 
-        rows = get_custom_workflow_service().list(active_only=active_only)
-        return {"workflows": rows, "count": len(rows)}
-    except Exception as e:
-        logger.error(f"Error listing custom workflows: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    rows = get_custom_workflow_service().list(active_only=active_only)
+    return {"workflows": rows, "count": len(rows)}
 
 
 @router.post("/workflows/custom", status_code=201)
@@ -170,21 +160,14 @@ async def create_custom_workflow(payload: CustomWorkflowCreate):
 @router.get("/workflows/custom/{workflow_id}")
 async def get_custom_workflow(workflow_id: str):
     """Fetch a single custom workflow."""
-    try:
-        from core.workflows.custom_workflow_service import get_custom_workflow_service
 
-        wf = get_custom_workflow_service().get(workflow_id)
-        if not wf:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Custom workflow not found: {workflow_id}",
-            )
-        return wf
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error fetching custom workflow")
-        raise HTTPException(status_code=500, detail=str(e))
+    wf = get_custom_workflow_service().get(workflow_id)
+    if not wf:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Custom workflow not found: {workflow_id}",
+        )
+    return wf
 
 
 @router.put("/workflows/custom/{workflow_id}")
@@ -214,21 +197,14 @@ async def update_custom_workflow(workflow_id: str, payload: CustomWorkflowUpdate
 @router.delete("/workflows/custom/{workflow_id}")
 async def delete_custom_workflow(workflow_id: str):
     """Soft-delete a custom workflow (sets is_active=False)."""
-    try:
-        from core.workflows.custom_workflow_service import get_custom_workflow_service
 
-        ok = get_custom_workflow_service().delete(workflow_id)
-        if not ok:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Custom workflow not found: {workflow_id}",
-            )
-        return {"success": True, "workflow_id": workflow_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error deleting custom workflow")
-        raise HTTPException(status_code=500, detail=str(e))
+    ok = get_custom_workflow_service().delete(workflow_id)
+    if not ok:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Custom workflow not found: {workflow_id}",
+        )
+    return {"success": True, "workflow_id": workflow_id}
 
 
 # -----------------------------------------------------------------------------
@@ -243,21 +219,15 @@ async def generate_workflow(payload: WorkflowGenerateRequest):
 
     Does NOT save. Frontend can tweak the draft and POST to /workflows/custom.
     """
-    try:
-        from core.workflows.workflow_ai_generator import get_workflow_ai_generator
+    from core.workflows.workflow_ai_generator import get_workflow_ai_generator
 
-        result = await get_workflow_ai_generator().generate(payload.description)
-        if not result.get("success"):
-            raise HTTPException(
-                status_code=502,
-                detail=result.get("error") or "Workflow generation failed",
-            )
-        return {"draft": result["draft"]}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Error generating workflow")
-        raise HTTPException(status_code=500, detail=str(e))
+    result = await get_workflow_ai_generator().generate(payload.description)
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=502,
+            detail=result.get("error") or "Workflow generation failed",
+        )
+    return {"draft": result["draft"]}
 
 
 # -----------------------------------------------------------------------------
@@ -271,22 +241,15 @@ async def get_workflow(workflow_id: str):
     """
     Get full details for a specific workflow (custom or file-based).
     """
-    try:
-        from core.workflows.workflows_service import get_workflows_service
 
-        service = get_workflows_service()
-        workflow = service.get_workflow_dict(workflow_id, include_body=True)
-        if not workflow:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Workflow not found: {workflow_id}",
-            )
-        return workflow
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting workflow {workflow_id}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    service = get_workflows_service()
+    workflow = service.get_workflow_dict(workflow_id, include_body=True)
+    if not workflow:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workflow not found: {workflow_id}",
+        )
+    return workflow
 
 
 @router.post("/workflows/{workflow_id}/execute")
@@ -356,7 +319,6 @@ async def get_workflow_run(run_id: str):
     (#128). For one-shot runs with no phase rows, ``phases`` is just
     an empty list.
     """
-    from core.workflows.workflow_run_service import get_workflow_run_service
 
     run_service = get_workflow_run_service()
     row = run_service.get_run(run_id)
@@ -374,12 +336,6 @@ async def resume_workflow_run(run_id: str, request: WorkflowRunResumeRequest):
     re-enters the phase loop. If there is no pending approval action
     linked to the run, returns 409.
     """
-    from core.response.approval_service import (
-        ActionStatus,
-        get_approval_service,
-    )
-    from core.workflows.workflow_run_service import get_workflow_run_service
-    from core.workflows.workflows_service import get_workflows_service
 
     run_service = get_workflow_run_service()
     run = run_service.get_run(run_id)
@@ -419,12 +375,6 @@ async def cancel_workflow_run(run_id: str, request: WorkflowRunCancelRequest):
     Rejects any pending approval action on the run and finalises it
     as ``cancelled`` with the supplied reason.
     """
-    from core.response.approval_service import (
-        ActionStatus,
-        get_approval_service,
-    )
-    from core.workflows.workflow_run_service import get_workflow_run_service
-    from core.workflows.workflows_service import get_workflows_service
 
     run_service = get_workflow_run_service()
     run = run_service.get_run(run_id)
@@ -483,7 +433,6 @@ async def list_workflow_runs(
     Omits ``result_summary`` from each entry so the listing stays
     light; use GET /workflows/runs/{run_id} for the full detail.
     """
-    from core.workflows.workflow_run_service import get_workflow_run_service
 
     # Light-touch bounds so a buggy caller can't ask for 10k rows.
     limit = max(1, min(limit, 200))

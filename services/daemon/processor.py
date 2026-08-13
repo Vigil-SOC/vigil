@@ -76,6 +76,10 @@ class FindingProcessor:
         try:
             from core.llm.security import scan_for_injection
         except Exception:  # noqa: BLE001 — daemon must never crash on a hook
+            logger.warning(
+                "Prompt-injection scanning unavailable; findings reach the triage "
+                "prompt unscanned", exc_info=True,
+            )
             return
 
         finding_id = finding.get("finding_id") or "unknown"
@@ -444,10 +448,13 @@ class FindingProcessor:
 
         if not updates:
             return
-        try:
-            self._data_service.update_finding(finding_id, **updates)
-        except Exception as e:
-            logger.error(f"Failed to update finding: {e}")
+        # update_finding reports failure by returning False rather than raising.
+        if not self._data_service.update_finding(finding_id, **updates):
+            logger.error(
+                "Failed to persist triage result for %s; the enrichment backfill "
+                "will re-queue it", finding_id,
+            )
+            self.stats["errors"] += 1
 
     async def _triage_finding(self, finding: Dict[str, Any]) -> Dict[str, Any]:
         """Use AI to triage and classify finding."""

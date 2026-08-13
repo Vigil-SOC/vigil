@@ -36,6 +36,8 @@ from typing import Any, Dict, List, Optional
 
 from core.secrets import get_secret
 
+from core.llm.providers.registry import get_registry
+
 logger = logging.getLogger(__name__)
 
 
@@ -150,7 +152,6 @@ async def estimate_anthropic(
     Routes through Bifrost via ``core.llm.providers.clients.create_async_anthropic_client``
     so the count_tokens call obeys the single-routing-path policy.
     """
-    from core.llm.providers.registry import get_registry
 
     registry = get_registry()
     in_rate, out_rate = registry.get_cost_rates(model_id, "anthropic")
@@ -212,7 +213,6 @@ def estimate_openai(
 
     Synchronous — no network calls. Cheap to use in a hot path.
     """
-    from core.llm.providers.registry import get_registry
 
     registry = get_registry()
     in_rate, out_rate = registry.get_cost_rates(model_id, "openai")

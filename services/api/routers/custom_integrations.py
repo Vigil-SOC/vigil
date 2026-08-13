@@ -6,17 +6,21 @@ only — the previous query-string-based shape allowed traversal payloads
 to be smuggled through ``--url-query`` (see 2026-05 disclosure).
 """
 
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from pydantic import BaseModel
 import logging
-from core.routing import Auth, RouterMeta
-from services.api.middleware.auth import get_current_active_user
-from core.auth.auth_service import AuthService
-from core.storage.models import User
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
+
 from core.integrations.custom_integration_service import (
     CustomIntegrationService,
     InvalidIntegrationIdError,
+)
+from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import (
+    get_current_active_user,
+    require_integrations_admin,
 )
 
 router = APIRouter()
@@ -27,15 +31,6 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 logger = logging.getLogger(__name__)
-
-
-def _require_integrations_admin(current_user: User) -> None:
-    """Raise 403 unless the user has ``integrations.write``."""
-    if not AuthService.check_permission(current_user.user_id, "integrations.write"):
-        raise HTTPException(
-            status_code=403,
-            detail="Permission denied: integrations.write required",
-        )
 
 
 class CustomIntegrationRequest(BaseModel):
@@ -67,39 +62,30 @@ async def generate_custom_integration(
     current_user: User = Depends(get_current_active_user),
 ):
     """Generate a custom integration from API/MCP documentation using Claude AI."""
-    _require_integrations_admin(current_user)
-    try:
-        service = CustomIntegrationService()
+    require_integrations_admin(current_user)
+    service = CustomIntegrationService()
 
-        # If there's a user response, add it to the conversation
-        conversation_history = request.conversation_history or []
-        if request.user_response:
-            conversation_history.append(
-                {"role": "user", "content": request.user_response}
-            )
+    # If there's a user response, add it to the conversation
+    conversation_history = request.conversation_history or []
+    if request.user_response:
+        conversation_history.append({"role": "user", "content": request.user_response})
 
-        # Generate the integration
-        result = await service.generate_integration(
-            documentation=request.documentation,
-            integration_name=request.integration_name,
-            category=request.category,
-            conversation_history=conversation_history if conversation_history else None,
+    # Generate the integration
+    result = await service.generate_integration(
+        documentation=request.documentation,
+        integration_name=request.integration_name,
+        category=request.category,
+        conversation_history=conversation_history if conversation_history else None,
+    )
+
+    if not result["success"]:
+        raise HTTPException(
+            status_code=500,
+            detail=result.get("error", "Failed to generate integration"),
         )
 
-        if not result["success"]:
-            raise HTTPException(
-                status_code=500,
-                detail=result.get("error", "Failed to generate integration"),
-            )
-
-        # Return the result as-is (let FastAPI handle the dict -> JSON conversion)
-        return result
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating custom integration: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    # Return the result as-is (let FastAPI handle the dict -> JSON conversion)
+    return result
 
 
 @router.post("/generate/upload")
@@ -110,45 +96,38 @@ async def generate_from_file(
     current_user: User = Depends(get_current_active_user),
 ):
     """Generate a custom integration from an uploaded documentation file."""
-    _require_integrations_admin(current_user)
+    require_integrations_admin(current_user)
+    # Read file content
+    content = await file.read()
+
+    # Try to decode as text
     try:
-        # Read file content
-        content = await file.read()
-
-        # Try to decode as text
+        documentation = content.decode("utf-8")
+    except UnicodeDecodeError:
         try:
-            documentation = content.decode("utf-8")
-        except UnicodeDecodeError:
-            try:
-                documentation = content.decode("latin-1")
-            except Exception as e:
-                logger.error(f"Failed to decode uploaded file: {e}")
-                raise HTTPException(
-                    status_code=400,
-                    detail="Unable to decode file. Please upload a text-based document.",
-                )
-
-        # Generate integration
-        service = CustomIntegrationService()
-        result = await service.generate_integration(
-            documentation=documentation,
-            integration_name=integration_name,
-            category=category,
-        )
-
-        if not result["success"]:
+            documentation = content.decode("latin-1")
+        except Exception as e:
+            logger.error(f"Failed to decode uploaded file: {e}")
             raise HTTPException(
-                status_code=500,
-                detail=result.get("error", "Failed to generate integration"),
+                status_code=400,
+                detail="Unable to decode file. Please upload a text-based document.",
             )
 
-        return result
+    # Generate integration
+    service = CustomIntegrationService()
+    result = await service.generate_integration(
+        documentation=documentation,
+        integration_name=integration_name,
+        category=category,
+    )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating integration from file: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    if not result["success"]:
+        raise HTTPException(
+            status_code=500,
+            detail=result.get("error", "Failed to generate integration"),
+        )
+
+    return result
 
 
 @router.post("/save")
@@ -162,7 +141,7 @@ async def save_custom_integration(
     against a strict allowlist regex and resolves the final write path
     inside the custom-integrations directory before any disk I/O.
     """
-    _require_integrations_admin(current_user)
+    require_integrations_admin(current_user)
 
     try:
         service = CustomIntegrationService()
@@ -202,16 +181,11 @@ async def list_custom_integrations(
     (descriptions, configuration shape) that's useful for an attacker
     profiling the deployment.
     """
-    _require_integrations_admin(current_user)
-    try:
-        service = CustomIntegrationService()
-        custom_integrations = service.list_custom_integrations()
+    require_integrations_admin(current_user)
+    service = CustomIntegrationService()
+    custom_integrations = service.list_custom_integrations()
 
-        return {"success": True, "integrations": custom_integrations}
-
-    except Exception as e:
-        logger.error(f"Error listing custom integrations: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"success": True, "integrations": custom_integrations}
 
 
 @router.delete("/{integration_id}")
@@ -220,7 +194,7 @@ async def delete_custom_integration(
     current_user: User = Depends(get_current_active_user),
 ):
     """Delete a custom integration."""
-    _require_integrations_admin(current_user)
+    require_integrations_admin(current_user)
     try:
         service = CustomIntegrationService()
         result = await service.delete_integration(integration_id)
@@ -247,7 +221,7 @@ async def validate_custom_integration(
     current_user: User = Depends(get_current_active_user),
 ):
     """Validate a custom integration's server code."""
-    _require_integrations_admin(current_user)
+    require_integrations_admin(current_user)
     try:
         service = CustomIntegrationService()
         result = await service.validate_integration(integration_id)

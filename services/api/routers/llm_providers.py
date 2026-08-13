@@ -9,27 +9,20 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
-import sys
-from pathlib import Path
 from typing import Annotated, Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete as sa_delete, update
-from sqlalchemy.orm import Session
+
+from core.llm.bifrost.admin import push_provider_key, sync_all_provider_models
+from core.llm.providers import provider_service
+from core.platform.url_safety import UrlSafetyError, validate_provider_url
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.secrets import delete_secret, get_secret, set_secret
-from services.api.middleware.auth import get_current_active_user
-from core.auth.auth_service import AuthService
-from core.storage.models import AIModelConfig, LLMProviderConfig, User
+from core.storage.models import LLMProviderConfig, User
 from core.storage.schemas import LLMProviderConfigSchema
-from core.llm.bifrost.admin import push_provider_key
-from core.platform.url_safety import (
-    UrlSafetyError,
-    validate_provider_url,
-)
+from services.api.middleware.auth import get_current_active_user, require_settings_admin
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -47,7 +40,11 @@ _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 # ``core.llm.providers.discovery``; the fallback tuple here is the
 # cold-boot list used only when the live call fails (e.g. no API key
 # was provided at /discover-models time).
-from core.llm.providers.registry import _FALLBACK_MODELS_BY_PROVIDER  # noqa: E402
+from core.llm.providers.registry import (
+    _FALLBACK_MODELS_BY_PROVIDER,
+    fetch_provider_models,
+    invalidate_model_cache,
+)
 
 ANTHROPIC_FALLBACK_MODELS = list(_FALLBACK_MODELS_BY_PROVIDER["anthropic"])
 
@@ -58,20 +55,6 @@ def _slugify(name: str) -> str:
 
 def _secret_ref_for(provider_id: str) -> str:
     return f"llm_provider_{provider_id}_api_key"
-
-
-def _require_settings_admin(current_user: User) -> None:
-    """Raise 403 unless the user has ``settings.write``.
-
-    Provider CRUD touches secrets and pushes them to Bifrost; the discover
-    and test endpoints make outbound HTTP requests that can be steered
-    by ``base_url``. Both gates are admin-only.
-    """
-    if not AuthService.check_permission(current_user.user_id, "settings.write"):
-        raise HTTPException(
-            status_code=403,
-            detail="Permission denied: settings.write required",
-        )
 
 
 def _validate_provider_base_url_shape(base_url: Optional[str]) -> None:
@@ -160,69 +143,6 @@ def _validate_type(provider_type: str) -> None:
         )
 
 
-def _clear_other_defaults(db: Session, provider_type: str, keep_id: str) -> None:
-    """Enforce the 'one default per provider_type' invariant at the app layer.
-
-    The DB has a partial unique index (``llm_provider_default_per_type``,
-    ``WHERE is_default = TRUE``) too, but clearing first avoids the
-    index-conflict round-trip on UPDATE.
-
-    The ``no_autoflush`` guard is load-bearing: callers set ``keep_id``'s
-    ``is_default = True`` (or stage an INSERT with it) *before* calling here,
-    so the Core UPDATE below would otherwise trigger an autoflush that writes
-    the new default while the old one is still TRUE — two defaults at once,
-    which the partial unique index rejects with an IntegrityError (500).
-    Suppressing autoflush lets the UPDATE clear the old default first; the
-    pending ``keep_id`` change then flushes safely at commit.
-    """
-    with db.no_autoflush:
-        db.execute(
-            update(LLMProviderConfig)
-            .where(
-                LLMProviderConfig.provider_type == provider_type,
-                LLMProviderConfig.provider_id != keep_id,
-                LLMProviderConfig.is_default.is_(True),
-            )
-            .values(is_default=False)
-        )
-
-
-def _reconcile_bifrost_key_for_type(
-    db: Session, provider_type: str, exclude_provider_id: str
-) -> None:
-    """Reconcile Bifrost's shared per-type key after a provider loses its key.
-
-    Bifrost stores a single key per ``provider_type`` (see
-    ``bifrost_admin.push_provider_key`` — keyed by type, not by row), so
-    blindly blanking that key whenever one provider of the type is deleted
-    or cleared would knock out every same-type sibling that still relies on
-    it (``_schedule_catalog_resync`` only re-syncs the model allow-list, not
-    the keys, so the type would stay keyless until a restart).
-
-    So: only blank Bifrost's key when this was the last provider of its type
-    with a key; otherwise re-push a surviving sibling's key.
-    ``exclude_provider_id`` is the row being deleted/cleared, so it never
-    counts as a survivor.
-    """
-    survivors = [
-        r
-        for r in db.query(LLMProviderConfig).all()
-        if r.provider_type == provider_type
-        and r.provider_id != exclude_provider_id
-        and r.api_key_ref
-    ]
-    # Prefer the default provider, then any active one, for a stable choice.
-    survivors.sort(key=lambda r: (not r.is_default, not r.is_active))
-    for survivor in survivors:
-        value = get_secret(survivor.api_key_ref)
-        if value:
-            push_provider_key(provider_type, value)
-            return
-    # No surviving provider of this type has a usable key — it was the last
-    # one, so clear the stale credential on Bifrost.
-    push_provider_key(provider_type, "")
-
-
 def _schedule_catalog_resync(reason: str) -> None:
     """Invalidate the model-list cache and fire a background sync.
 
@@ -231,9 +151,6 @@ def _schedule_catalog_resync(reason: str) -> None:
     scheduled refresh. Best-effort — never blocks the response.
     """
     import asyncio
-
-    from core.llm.bifrost.admin import sync_all_provider_models
-    from core.llm.providers.registry import invalidate_model_cache
 
     invalidate_model_cache()
     try:
@@ -251,7 +168,7 @@ async def list_providers(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    rows = db.query(LLMProviderConfig).order_by(LLMProviderConfig.created_at).all()
+    rows = provider_service.list_providers(db)
     return [_to_response(r) for r in rows]
 
 
@@ -262,12 +179,12 @@ async def create_provider(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    _require_settings_admin(current_user)
+    require_settings_admin(current_user)
     _validate_type(payload.provider_type)
     _validate_provider_base_url_shape(payload.base_url)
 
     provider_id = payload.provider_id or _slugify(payload.name)
-    if db.get(LLMProviderConfig, provider_id) is not None:
+    if provider_service.get_provider(db, provider_id) is not None:
         raise HTTPException(
             status_code=409, detail=f"provider_id '{provider_id}' already exists"
         )
@@ -292,14 +209,7 @@ async def create_provider(
         is_default=payload.is_default,
         config=payload.config or {},
     )
-    db.add(row)
-
-    if payload.is_default:
-        _clear_other_defaults(db, payload.provider_type, provider_id)
-
-    # Flush so the read-back sees server defaults; the request's unit of work commits.
-    db.flush()
-    db.refresh(row)
+    provider_service.insert(db, row, make_default=payload.is_default)
     _schedule_catalog_resync(f"created provider {provider_id}")
     return _to_response(row)
 
@@ -311,9 +221,9 @@ async def update_provider(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    _require_settings_admin(current_user)
+    require_settings_admin(current_user)
     _validate_provider_base_url_shape(payload.base_url)
-    row = db.get(LLMProviderConfig, provider_id)
+    row = provider_service.get_provider(db, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
 
@@ -337,7 +247,9 @@ async def update_provider(
             # Bifrost's key is shared per provider_type, so only blank it if
             # no same-type sibling still has a key — otherwise re-push the
             # survivor's so the type keeps a working credential.
-            _reconcile_bifrost_key_for_type(db, row.provider_type, provider_id)
+            provider_service.reconcile_bifrost_key_for_type(
+                db, row.provider_type, provider_id
+            )
         else:
             if not set_secret(ref, payload.api_key):
                 raise HTTPException(status_code=500, detail="Failed to persist API key")
@@ -346,18 +258,12 @@ async def update_provider(
 
     if payload.is_default is True:
         row.is_default = True
-        _clear_other_defaults(db, row.provider_type, provider_id)
+        provider_service.clear_other_defaults(db, row.provider_type, provider_id)
     elif payload.is_default is False:
         if row.is_default:
             # Guard: only enforce when transitioning True → False.
-            other_default = (
-                db.query(LLMProviderConfig)
-                .filter(
-                    LLMProviderConfig.provider_type == row.provider_type,
-                    LLMProviderConfig.provider_id != provider_id,
-                    LLMProviderConfig.is_default.is_(True),
-                )
-                .first()
+            other_default = provider_service.find_other_default(
+                db, row.provider_type, provider_id
             )
             if other_default is None:
                 raise HTTPException(
@@ -369,9 +275,7 @@ async def update_provider(
                 )
         row.is_default = False
 
-    # Flush so the read-back sees server defaults; the request's unit of work commits.
-    db.flush()
-    db.refresh(row)
+    provider_service.settle(db, row)
     _schedule_catalog_resync(f"updated provider {provider_id}")
     return _to_response(row)
 
@@ -382,22 +286,15 @@ async def delete_provider(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    _require_settings_admin(current_user)
-    row = db.get(LLMProviderConfig, provider_id)
+    require_settings_admin(current_user)
+    row = provider_service.get_provider(db, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
 
     # Guard: refuse to delete the only active default for this provider type.
     if row.is_default:
-        other_active = (
-            db.query(LLMProviderConfig)
-            .filter(
-                LLMProviderConfig.provider_type == row.provider_type,
-                LLMProviderConfig.provider_id != provider_id,
-                LLMProviderConfig.is_active.is_(True),
-            )
-            .order_by(LLMProviderConfig.created_at)
-            .first()
+        other_active = provider_service.find_other_active(
+            db, row.provider_type, provider_id
         )
         if other_active is None:
             raise HTTPException(
@@ -407,15 +304,11 @@ async def delete_provider(
                     "Add or activate another provider of this type first."
                 ),
             )
-        # Unset current default first, flush to satisfy the unique partial index,
-        # then promote the next active provider.
-        row.is_default = False
-        db.flush()
-        other_active.is_default = True
+        provider_service.demote_and_promote(db, row, other_active)
 
     # Cascade: remove model-config rows that reference this provider before
     # deleting — the FK is ON DELETE RESTRICT so this must happen first.
-    db.execute(sa_delete(AIModelConfig).where(AIModelConfig.provider_id == provider_id))
+    provider_service.delete_model_configs_for_provider(db, provider_id)
 
     if row.api_key_ref:
         try:
@@ -426,9 +319,11 @@ async def delete_provider(
         # the last keyed provider of its type; otherwise re-push a surviving
         # sibling's key so the type isn't left without a working credential.
         # (``row`` is still in the session here — exclude it explicitly.)
-        _reconcile_bifrost_key_for_type(db, row.provider_type, provider_id)
+        provider_service.reconcile_bifrost_key_for_type(
+            db, row.provider_type, provider_id
+        )
 
-    db.delete(row)
+    provider_service.remove(db, row)
     _schedule_catalog_resync(f"deleted provider {provider_id}")
     return {"success": True, "provider_id": provider_id}
 
@@ -439,15 +334,10 @@ async def set_default_provider(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    _require_settings_admin(current_user)
-    row = db.get(LLMProviderConfig, provider_id)
+    require_settings_admin(current_user)
+    row = provider_service.set_default(db, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
-    row.is_default = True
-    _clear_other_defaults(db, row.provider_type, provider_id)
-    # Flush so the read-back sees server defaults; the request's unit of work commits.
-    db.flush()
-    db.refresh(row)
     return _to_response(row)
 
 
@@ -575,8 +465,8 @@ async def test_provider(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    _require_settings_admin(current_user)
-    row = db.get(LLMProviderConfig, provider_id)
+    require_settings_admin(current_user)
+    row = provider_service.get_provider(db, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
 
@@ -635,7 +525,7 @@ async def discover_models(
     authenticated admin so a stolen session is the only path to even
     reach that validation.
     """
-    _require_settings_admin(current_user)
+    require_settings_admin(current_user)
 
     if req.provider_type not in VALID_PROVIDER_TYPES:
         raise HTTPException(
@@ -699,7 +589,7 @@ async def test_connection(
     reach it. A static single-segment path, so it never collides with
     ``/{provider_id}/test``.
     """
-    _require_settings_admin(current_user)
+    require_settings_admin(current_user)
     _validate_type(req.provider_type)
     success, error = await _probe_provider_connection(
         provider_type=req.provider_type,
@@ -717,11 +607,9 @@ async def list_models(
     db: UnitOfWorkSession,
     current_user: Annotated[User, Depends(get_current_active_user)],
 ):
-    row = db.get(LLMProviderConfig, provider_id)
+    row = provider_service.get_provider(db, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
-
-    from core.llm.providers.registry import fetch_provider_models
 
     # ``fetch_provider_models`` delegates to the discovery module and
     # falls back to the cold-boot list on any error, so callers always
@@ -743,20 +631,15 @@ async def refresh_provider_models(
     same-type providers' models to Bifrost's allow-list. Invalidates the
     registry's TTL cache so the next dropdown fetch sees fresh data.
     """
-    _require_settings_admin(current_user)
-    row = db.get(LLMProviderConfig, provider_id)
+    require_settings_admin(current_user)
+    row = provider_service.get_provider(db, provider_id)
     if row is None:
         raise HTTPException(status_code=404, detail="provider not found")
-
-    from core.llm.bifrost.admin import sync_all_provider_models
-    from core.llm.providers.registry import invalidate_model_cache
 
     invalidate_model_cache()
     # Run the same union-of-same-type sync used at startup so Bifrost
     # sees the new state too, not just the backend's cache.
     sync_results = await sync_all_provider_models()
-
-    from core.llm.providers.registry import fetch_provider_models
 
     try:
         models = await fetch_provider_models(row)
@@ -778,9 +661,7 @@ async def refresh_all_provider_models(
     resulting allow-lists to Bifrost. Useful after enabling a new
     provider or rotating keys in bulk.
     """
-    _require_settings_admin(current_user)
-    from core.llm.bifrost.admin import sync_all_provider_models
-    from core.llm.providers.registry import invalidate_model_cache
+    require_settings_admin(current_user)
 
     invalidate_model_cache()
     sync_results = await sync_all_provider_models()

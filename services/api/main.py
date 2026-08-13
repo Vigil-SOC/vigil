@@ -30,6 +30,7 @@ from services.api.middleware.rate_limit import limiter
 from services.api.middleware.security_headers import SecurityHeadersMiddleware
 
 from services.api.discovery import mount_routers
+from services.api.errors import register_exception_handlers
 from services.api.middleware.auth import get_current_active_user
 from core.config import get_settings
 from core.platform.monitoring import init_sentry, PROMETHEUS_AVAILABLE, get_metrics_response
@@ -102,6 +103,10 @@ _CONTEXT_PATH = get_settings().vigil_context_path.rstrip("/")
 # limits (@limiter.limit) read state from app.state.limiter, so both must be set.
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# Domain errors and anything unhandled become JSON here rather than in each
+# route. Registered before the routers so every mounted route inherits it.
+register_exception_handlers(app)
 
 # Instrument FastAPI with OTEL tracing (health + metrics endpoints excluded)
 try:
