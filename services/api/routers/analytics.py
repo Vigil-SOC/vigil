@@ -18,10 +18,13 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
-from core.storage.models import Finding, Case, CaseClosureInfo, LLMInteractionLog
 from core.reporting.ai_insights_service import AIInsightsService
-from core.threat_intel.mitre_lookup import get_time_range, resolve_technique  # noqa: F401
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.models import Case, CaseClosureInfo, Finding, LLMInteractionLog
+from core.threat_intel.mitre_lookup import (  # noqa: F401
+    get_time_range,
+    resolve_technique,
+)
 
 logger = logging.getLogger(__name__)
 

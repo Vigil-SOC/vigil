@@ -4,7 +4,7 @@ import asyncio
 import logging
 import time
 from datetime import datetime
-from typing import Optional, Dict, List, Any
+from typing import Any, Dict, List, Optional
 
 from services.daemon.config import ProcessingConfig
 
@@ -130,7 +130,7 @@ class FindingProcessor:
 
     def _init_enrichment_services(self):
         """Initialize threat intelligence enrichment services."""
-        from core.config import is_integration_enabled, get_integration_config
+        from core.config import get_integration_config, is_integration_enabled
 
         # VirusTotal
         if is_integration_enabled("virustotal"):
@@ -289,7 +289,9 @@ class FindingProcessor:
             logger.error(f"Error processing finding {finding_id}: {e}")
             self.stats["errors"] += 1
 
-    async def _spawn_enrich(self, finding: Dict[str, Any], source: Optional[str] = None):
+    async def _spawn_enrich(
+        self, finding: Dict[str, Any], source: Optional[str] = None
+    ):
         """Acquire an in-flight slot (blocks when the cap is reached → backpressure),
         then run enrichment in the background. Bounds pending enrich tasks so a burst
         or backfill can't pile up unbounded coroutines. Single choke point shared by
@@ -675,10 +677,14 @@ REASONING: [Brief explanation]
         hits: Dict[str, Any] = {}
         try:
             if ips:
-                hits.update(self._wrap_hits("ip", lookup_indicators("ip", list(set(ips)))))
+                hits.update(
+                    self._wrap_hits("ip", lookup_indicators("ip", list(set(ips))))
+                )
             if domains:
                 hits.update(
-                    self._wrap_hits("domain", lookup_indicators("domain", list(set(domains))))
+                    self._wrap_hits(
+                        "domain", lookup_indicators("domain", list(set(domains)))
+                    )
                 )
             if hashes:
                 for hash_type in ("hash_sha256", "hash_sha1", "hash_md5"):
@@ -692,9 +698,7 @@ REASONING: [Brief explanation]
 
     @staticmethod
     def _wrap_hits(indicator_type: str, rows: Dict[str, Any]) -> Dict[str, Any]:
-        return {
-            f"{indicator_type}:{value}": data for value, data in rows.items()
-        }
+        return {f"{indicator_type}:{value}": data for value, data in rows.items()}
 
     async def _enrich_ip(self, ip: str) -> Optional[Dict[str, Any]]:
         """Enrich IP address with threat intel."""

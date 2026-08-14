@@ -22,7 +22,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +59,10 @@ def _record_pricing_unknown(provider_type: str, model_id: str) -> None:
             )
         _pricing_unknown_counter.add(
             1,
-            {"provider_type": provider_type or "unknown", "model_id": model_id or "unknown"},
+            {
+                "provider_type": provider_type or "unknown",
+                "model_id": model_id or "unknown",
+            },
         )
     except Exception:
         # Telemetry must never break cost math.
@@ -715,7 +717,6 @@ class ModelRegistry:
 
     # ---- assignments -----------------------------------------------------
 
-
     def get_all_assignments(self) -> Dict[str, ComponentAssignment]:
         """Return every configured assignment keyed by component."""
         try:
@@ -996,5 +997,3 @@ def invalidate_model_cache(provider_id: Optional[str] = None) -> None:
     except Exception:  # noqa: BLE001
         pass
     clear_live_meta()
-
-

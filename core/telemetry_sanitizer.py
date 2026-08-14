@@ -13,10 +13,11 @@ Note: LLM content (prompts/responses) and raw finding/IOC values are always
 redacted unless the operator has explicitly opted in via environment variables
 VIGIL_OTEL_RECORD_LLM_CONTENT and VIGIL_OTEL_RECORD_IOC_VALUES respectively.
 """
+
 from __future__ import annotations
 
-import re
 import logging
+import re
 from types import MappingProxyType
 from typing import Any, Optional
 
@@ -24,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from opentelemetry.sdk.trace import SpanProcessor
+
     _SDK_AVAILABLE = True
 except ImportError:
     SpanProcessor = object  # type: ignore[assignment,misc]
@@ -196,8 +198,13 @@ class SensitiveAttributeScrubber(SpanProcessor):  # type: ignore[misc]
                     continue
 
                 # Raw finding / IOC values: redact unless operator opted in
-                if not record_ioc and "finding." in key_lower and any(
-                    k in key_lower for k in ("raw", "payload", "description", "entity")
+                if (
+                    not record_ioc
+                    and "finding." in key_lower
+                    and any(
+                        k in key_lower
+                        for k in ("raw", "payload", "description", "entity")
+                    )
                 ):
                     new_attrs[key] = "[REDACTED]"
                     modified = True

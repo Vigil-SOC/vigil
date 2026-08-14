@@ -1,10 +1,10 @@
 """Service for checking integration compatibility and managing upgrades."""
 
-import re
-import sys
-import logging
-import subprocess
 import importlib.metadata
+import logging
+import re
+import subprocess
+import sys
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)

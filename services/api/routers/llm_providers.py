@@ -9,27 +9,26 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
-import sys
-from pathlib import Path
 from typing import Annotated, Any, Dict, List, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import delete as sa_delete, update
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import update
 from sqlalchemy.orm import Session
-from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.secrets import delete_secret, get_secret, set_secret
-from services.api.middleware.auth import get_current_active_user
+
 from core.auth.auth_service import AuthService
-from core.storage.models import AIModelConfig, LLMProviderConfig, User
-from core.storage.schemas import LLMProviderConfigSchema
 from core.llm.bifrost.admin import push_provider_key
 from core.platform.url_safety import (
     UrlSafetyError,
     validate_provider_url,
 )
+from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.secrets import delete_secret, get_secret, set_secret
+from core.storage.models import AIModelConfig, LLMProviderConfig, User
+from core.storage.schemas import LLMProviderConfigSchema
+from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

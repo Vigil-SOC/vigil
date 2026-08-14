@@ -79,11 +79,7 @@ def ollama_ping(base_url: Optional[str] = None, timeout: float = 2.0) -> bool:
     for a spawned ``ollama serve`` to come up, which rules out
     :func:`fetch_ollama_models` (async, plus an ``/api/show`` per model).
     """
-    base = (
-        (base_url or get_settings().ollama_url)
-        .strip()
-        .rstrip("/")
-    )
+    base = (base_url or get_settings().ollama_url).strip().rstrip("/")
     try:
         with httpx.Client(timeout=timeout, follow_redirects=False) as client:
             return client.get(f"{base}/api/tags").status_code == 200

@@ -15,8 +15,8 @@ import asyncio
 import logging
 from typing import Any, Dict, Optional
 
-from core.ingestion.kafka_config import KafkaConfig
 from core.ingestion.dedup import RedisDedupSet
+from core.ingestion.kafka_config import KafkaConfig
 from core.ingestion.kafka_consumer_service import KafkaConsumerService
 
 logger = logging.getLogger(__name__)

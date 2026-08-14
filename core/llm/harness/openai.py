@@ -11,8 +11,8 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Set
 from core.integrations.mcp import tool_manager
 from core.integrations.mcp.client import process_mcp_client
 from core.llm.router.format import anthropic_tools_to_openai
-from core.response.approval_service import ApprovalService
 from core.llm.router.router import LLMRouter, ProviderSpec
+from core.response.approval_service import ApprovalService
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +94,9 @@ class OpenAIAgentService:
         approvals: Optional[ApprovalService] = None,
     ):
         # mcp_client defaults to the process owner's; None when no owner started.
-        self._mcp_client = mcp_client if mcp_client is not None else process_mcp_client()
+        self._mcp_client = (
+            mcp_client if mcp_client is not None else process_mcp_client()
+        )
         self._approvals = approvals or ApprovalService()
         self._backend_tools = backend_tools or self._load_backend_tools()
         self._include_mcp_tools = include_mcp_tools
@@ -804,7 +806,6 @@ class OpenAIAgentService:
         """Persist an LLMInteractionLog row (non-fatal, fire-and-forget)."""
         try:
             from core.storage.models import LLMInteractionLog
-
             from core.storage.unit_of_work import unit_of_work
 
             try:

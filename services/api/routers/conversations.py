@@ -16,10 +16,10 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from services.api.middleware.auth import get_current_user
-from core.storage.models import User
 from core.chat import conversation_service
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +81,7 @@ async def get_conversation(
     current_user: User = Depends(get_current_user),
 ):
     """Fetch a single conversation with its ordered messages."""
-    conv = conversation_service.get_conversation(
-        conversation_id, current_user.user_id
-    )
+    conv = conversation_service.get_conversation(conversation_id, current_user.user_id)
     if conv is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return conv

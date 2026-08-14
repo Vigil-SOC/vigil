@@ -46,9 +46,7 @@ def list_adapters() -> List[FederationAdapter]:
         try:
             out.append(factory())
         except Exception as e:
-            logger.warning(
-                "Federation adapter %s failed to construct: %s", name, e
-            )
+            logger.warning("Federation adapter %s failed to construct: %s", name, e)
     return out
 
 
@@ -83,11 +81,19 @@ def _ensure_builtins_loaded() -> None:
     # Every vendor adapter lives in its vertical slice; import the adapter module
     # directly for the module-scope register_adapter() side effect.
     try:
-        from core.integrations.aws_security_hub import adapter as _aws_adapter  # noqa: F401
-        from core.integrations.azure_sentinel import adapter as _azure_adapter  # noqa: F401
-        from core.integrations.crowdstrike import adapter as _crowdstrike_adapter  # noqa: F401
+        from core.integrations.aws_security_hub import (  # noqa: F401
+            adapter as _aws_adapter,
+        )
+        from core.integrations.azure_sentinel import (  # noqa: F401
+            adapter as _azure_adapter,
+        )
+        from core.integrations.crowdstrike import (  # noqa: F401
+            adapter as _crowdstrike_adapter,
+        )
         from core.integrations.elastic import adapter as _elastic_adapter  # noqa: F401
-        from core.integrations.microsoft_defender import adapter as _defender_adapter  # noqa: F401
+        from core.integrations.microsoft_defender import (  # noqa: F401
+            adapter as _defender_adapter,
+        )
         from core.integrations.splunk import adapter as _splunk_adapter  # noqa: F401
     except Exception as e:
         logger.warning("Failed to load builtin federation adapters: %s", e)

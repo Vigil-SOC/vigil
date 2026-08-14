@@ -1,7 +1,8 @@
 import asyncio
 import logging
 import time
-from fastapi import Request, HTTPException
+
+from fastapi import HTTPException, Request
 
 logger = logging.getLogger(__name__)
 

@@ -131,7 +131,9 @@ async def list_sources() -> Dict[str, Any]:
 
 
 @router.patch("/sources/{source_id}")
-async def patch_source(source_id: str, payload: FederationSourcePatch) -> Dict[str, Any]:
+async def patch_source(
+    source_id: str, payload: FederationSourcePatch
+) -> Dict[str, Any]:
     if fed_registry.get_adapter(source_id) is None:
         raise HTTPException(status_code=404, detail=f"Unknown source: {source_id}")
 

@@ -122,6 +122,7 @@ class RouterMeta:
     def is_enabled(self) -> bool:
         return True if self.enabled is None else bool(self.enabled())
 
+
 def request_unit_of_work() -> Generator[Session, None, None]:
     """Yield a session whose transaction spans the whole request.
 

@@ -26,9 +26,9 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from core.config import DEFAULT_REDIS_URL, get_settings
-from core.ingestion.dedup import RedisDedupSet
 from core.federation import registry, store
 from core.federation.seed import seed_federation_sources
+from core.ingestion.dedup import RedisDedupSet
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +134,7 @@ class FederationRunner:
 
             interval = int(row.get("interval_seconds") or adapter.default_interval())
             errors = int(row.get("consecutive_errors") or 0)
-            backoff_mult = min(2 ** errors, 8) if errors else 1
+            backoff_mult = min(2**errors, 8) if errors else 1
             sleep_for = max(interval * backoff_mult, 5)
 
             # Honor "poll now" — a redis flag the API sets when the user
@@ -239,7 +239,9 @@ def request_poll_now(source_id: str) -> bool:
 
         url = get_settings().redis_url or DEFAULT_REDIS_URL
         client = redis.from_url(url, decode_responses=True)
-        client.set(f"vigil:federation:trigger:{source_id}", str(int(time.time())), ex=300)
+        client.set(
+            f"vigil:federation:trigger:{source_id}", str(int(time.time())), ex=300
+        )
         return True
     except Exception as e:
         logger.warning("request_poll_now(%s) failed: %s", source_id, e)

@@ -33,9 +33,7 @@ class ElasticEnrichmentService:
     ) -> Dict[str, List[str]]:
         """Extract IOCs from case and findings."""
         ip_pattern = r"\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b"
-        hash_pattern = (
-            r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|\b[a-fA-F0-9]{64}\b"
-        )
+        hash_pattern = r"\b[a-fA-F0-9]{32}\b|\b[a-fA-F0-9]{40}\b|\b[a-fA-F0-9]{64}\b"
 
         indicators: Dict[str, set] = {
             "ips": set(),
@@ -59,9 +57,7 @@ class ElasticEnrichmentService:
                 indicators["hostnames"].add(str(h))
 
         # Filter private IPs
-        indicators["ips"] = {
-            ip for ip in indicators["ips"] if not _is_private_ip(ip)
-        }
+        indicators["ips"] = {ip for ip in indicators["ips"] if not _is_private_ip(ip)}
 
         return {k: sorted(v) for k, v in indicators.items()}
 
@@ -145,6 +141,7 @@ class ElasticEnrichmentService:
 # ------------------------------------------------------------------
 # Helpers
 # ------------------------------------------------------------------
+
 
 def _is_private_ip(ip: str) -> bool:
     try:

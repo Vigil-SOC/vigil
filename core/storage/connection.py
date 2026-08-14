@@ -8,61 +8,61 @@ import asyncio
 import logging
 import threading
 import time
-from dataclasses import astuple, dataclass, field
-from typing import Any, Dict, Optional, Generator, TYPE_CHECKING
-from urllib.parse import parse_qsl, quote, unquote, urlsplit
 from contextlib import contextmanager
+from dataclasses import astuple, dataclass, field
+from typing import TYPE_CHECKING, Any, Dict, Generator, Optional
+from urllib.parse import parse_qsl, quote, unquote, urlsplit
+
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 if TYPE_CHECKING:
     from core.storage.db_proxy import ProxyConfig
 
-from core.storage.models import Base
+from core.config import get_settings
+from core.secrets import get_secret
 
 # Import all models to register them with Base.metadata before create_all()
-from core.storage.models import (
-    Finding,
-    Case,
-    SketchMapping,
-    AttackLayer,
+from core.storage.models import (  # noqa: F401
     AIDecisionLog,
-    SystemConfig,
-    UserPreference,
-    IntegrationConfig,
-    ConfigAuditLog,
-    SLAPolicy,
-    CaseSLA,
+    AttackLayer,
+    Base,
+    Case,
+    CaseAttachment,
+    CaseAuditLog,
+    CaseClosureInfo,
     CaseComment,
-    CaseWatcher,
+    CaseEscalation,
     CaseEvidence,
     CaseIOC,
+    CaseMetrics,
+    CaseNotification,
+    CaseRelationship,
+    CaseSLA,
     CaseTask,
     CaseTemplate,
-    CaseRelationship,
-    CaseMetrics,
-    CaseAttachment,
-    CaseClosureInfo,
-    CaseEscalation,
-    CaseAuditLog,
-    User,
-    Role,
+    CaseWatcher,
+    ChatMessage,
+    ConfigAuditLog,
+    Conversation,
+    CustomAgent,
+    CustomWorkflow,
+    Finding,
+    IntegrationConfig,
     Investigation,
     InvestigationLog,
     LLMInteractionLog,
-    SharedIOC,
-    CaseNotification,
-    CustomAgent,
-    CustomWorkflow,
-    Skill,
     LLMProviderConfig,
-    Conversation,
-    ChatMessage,
+    Role,
+    SharedIOC,
+    SketchMapping,
+    Skill,
+    SLAPolicy,
+    SystemConfig,
+    User,
+    UserPreference,
 )
-
-from core.config import get_settings
-from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +91,8 @@ def _load_platform_db_proxy() -> "ProxyConfig":
     configured.
     """
     try:
-        from core.storage.db_proxy import ProxyConfig
         from core.secrets_manager import get_secret
+        from core.storage.db_proxy import ProxyConfig
     except ImportError:
         # If the secrets manager isn't importable yet skip proxy support gracefully.
         from core.storage.db_proxy import ProxyConfig

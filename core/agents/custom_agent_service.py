@@ -4,11 +4,11 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
+from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
+from core.agents.prompts import render_base_prompt
 from core.storage.connection import get_db_manager
 from core.storage.models import CustomAgent
 from core.storage.schemas import CustomAgentSchema
-from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
-from core.agents.prompts import render_base_prompt
 
 logger = logging.getLogger(__name__)
 

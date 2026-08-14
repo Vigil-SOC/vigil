@@ -17,9 +17,8 @@ from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
 from arq.jobs import DeserializationError
 
-from core.llm.defaults import DEFAULT_MODEL
-
 from core.config import get_settings
+from core.llm.defaults import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -254,7 +253,9 @@ class LLMGateway:
                 "arq deserialization error for investigation_turn [inv=%s job=%s]: %s — "
                 "likely the worker raised an unserializable exception (e.g. APIStatusError). "
                 "Check llm-worker logs for the real error.",
-                inv_id, getattr(job, "job_id", "?"), exc,
+                inv_id,
+                getattr(job, "job_id", "?"),
+                exc,
                 exc_info=True,
             )
             raise RuntimeError(

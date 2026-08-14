@@ -24,10 +24,11 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from core.config import get_settings
-from core.secrets import get_secret
 
 import httpx
+
+from core.config import get_settings
+from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
 

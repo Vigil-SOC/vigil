@@ -162,8 +162,7 @@ async def estimate_anthropic(
 
     if api_key:
         try:
-            from core.llm.providers.clients import \
-                create_async_anthropic_client
+            from core.llm.providers.clients import create_async_anthropic_client
 
             client = create_async_anthropic_client(api_key, timeout=30.0)
             kwargs: Dict[str, Any] = {"model": model_id, "messages": messages}

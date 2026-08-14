@@ -36,6 +36,7 @@ def get_time_range(time_range: str) -> tuple[datetime, datetime]:
 
     return start_time, end_time
 
+
 # {technique_id: (name, tactic)} — extend as ATT&CK coverage grows.
 TECHNIQUE_NAME_FALLBACKS: dict[str, tuple[str, str]] = {
     "T1071.001": ("Web Protocols", "Command and Control"),

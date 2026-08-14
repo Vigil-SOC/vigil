@@ -35,6 +35,7 @@ from typing import Callable, Iterable, Optional
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -64,9 +65,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         cookie_secure: Optional[bool] = None,
     ):
         super().__init__(app)
-        self.enabled = (
-            get_settings().vigil_csrf_enabled if enabled is None else enabled
-        )
+        self.enabled = get_settings().vigil_csrf_enabled if enabled is None else enabled
         self.report_only = (
             get_settings().vigil_csrf_report_only
             if report_only is None

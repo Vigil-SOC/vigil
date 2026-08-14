@@ -10,16 +10,17 @@ import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Any, Dict, List, Optional
+
 import bcrypt
 import jwt
 import pyotp
 from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
-from core.storage.models import User, Role
 from core.config import get_settings
 from core.secrets import get_secret
+from core.storage.models import Role, User
 from core.storage.unit_of_work import unit_of_work
 
 logger = logging.getLogger(__name__)

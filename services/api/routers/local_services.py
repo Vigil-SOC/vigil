@@ -17,13 +17,16 @@ from typing import Callable, List
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
-from services.api.middleware.auth import get_current_active_user, require_settings_admin
-from core.storage.models import User
-from core.platform import service_manager
-from core.platform.autostart_config import get_autostart_services, set_autostart_services
 from core.llm.bifrost.admin import sync_after_ollama_start
+from core.platform import service_manager
+from core.platform.autostart_config import (
+    get_autostart_services,
+    set_autostart_services,
+)
 from core.platform.service_manager import SERVICES, ActionResult, ServiceStatus
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_active_user, require_settings_admin
 
 router = APIRouter()
 
@@ -208,9 +211,7 @@ def service_start(
     _resolve(name)
     # Composition root: the API may depend on both tiers, so it hands the LLM
     # catalog refresh to the platform supervisor, which must not import it.
-    r = service_manager.start(
-        name, wait=wait, post_start_sync=sync_after_ollama_start
-    )
+    r = service_manager.start(name, wait=wait, post_start_sync=sync_after_ollama_start)
     if not r.success:
         code = 409 if r.code in ("not_startable", "not_installed") else 500
         raise HTTPException(status_code=code, detail=r.message)

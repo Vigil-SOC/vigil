@@ -1,10 +1,11 @@
 """Workflows API endpoints for SOC workflow management and execution."""
 
+import logging
 from typing import Any, Dict, List, Optional
 
-import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+
 from core.deps import (
     provide_approvals,
     provide_custom_workflows,

@@ -7,7 +7,8 @@ Handles login, logout, token refresh, password management, and MFA.
 import logging
 from datetime import datetime
 from typing import Annotated, List, Optional
-from fastapi import APIRouter, HTTPException, Depends, Header, Request, Response, status
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -19,12 +20,11 @@ from core.auth.auth_cookies import (
     set_auth_cookies,
 )
 from core.auth.auth_service import (
+    PASSWORD_HISTORY_LIMIT,
     AccountLockedError,
     AuthService,
-    PASSWORD_HISTORY_LIMIT,
     password_matches_any,
 )
-from core.platform.email_service import send_email
 from core.auth.password_reset import (
     generate_reset_token,
     verify_reset_token,
@@ -38,12 +38,13 @@ from core.auth.token_blacklist import (
     is_token_revoked,
     revoke_all_for_user,
 )
-from services.api.middleware.auth import get_current_active_user
-from services.api.middleware.rate_limit import limiter
+from core.config import get_settings
+from core.platform.email_service import send_email
+from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import User
 from core.storage.schemas import UserSchema
-from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.config import get_settings
+from services.api.middleware.auth import get_current_active_user
+from services.api.middleware.rate_limit import limiter
 
 logger = logging.getLogger(__name__)
 

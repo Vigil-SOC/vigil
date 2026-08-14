@@ -56,9 +56,7 @@ class CloudyIngestionService:
 
         finding_id = str(payload.get("event_id") or payload.get("id") or uuid.uuid4())
         ip = (
-            payload.get("client_ip")
-            or event.get("client_ip")
-            or event.get("source_ip")
+            payload.get("client_ip") or event.get("client_ip") or event.get("source_ip")
         )
         host = payload.get("host") or event.get("host") or event.get("zone_name")
         action = (event.get("action") or event.get("ruleAction") or "").lower()
@@ -91,7 +89,9 @@ class CloudyIngestionService:
         return {
             "finding_id": finding_id,
             "data_source": "cloudflare_cloudy",
-            "timestamp": payload.get("timestamp") or event.get("timestamp") or _utcnow_iso(),
+            "timestamp": payload.get("timestamp")
+            or event.get("timestamp")
+            or _utcnow_iso(),
             "anomaly_score": float(payload.get("anomaly_score", 0.5)),
             "embedding": [0.0],  # ingestion service tolerates a placeholder
             "mitre_predictions": mitre,
@@ -133,7 +133,9 @@ class CloudyIngestionService:
         return "medium"
 
     @staticmethod
-    def _extract_mitre(payload: Dict[str, Any], event: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_mitre(
+        payload: Dict[str, Any], event: Dict[str, Any]
+    ) -> Dict[str, Any]:
         mitre = payload.get("mitre_predictions") or event.get("mitre_predictions")
         if isinstance(mitre, dict):
             return mitre

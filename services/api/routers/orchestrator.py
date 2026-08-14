@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
@@ -34,8 +35,8 @@ def _get_orchestrator():
     if _cached_orchestrator is not None:
         return _cached_orchestrator
     try:
-        from services.daemon.orchestrator import Orchestrator
         from services.daemon.config import OrchestratorConfig
+        from services.daemon.orchestrator import Orchestrator
 
         config = OrchestratorConfig()
         orch = Orchestrator(config)
@@ -57,16 +58,17 @@ class InvestigationCreateRequest(BaseModel):
 
 # ---- Status & Control ----
 
+
 @router.get("/status")
 async def get_orchestrator_status():
     """Get orchestrator status: enabled state, active agents, stats, cost."""
     try:
         orch = _get_orchestrator()
-        
+
         investigations = []
         cost_summary = {}
         stats = {}
-        
+
         if orch:
             investigations = orch.get_all_investigations()
             cost_summary = orch.get_cost_summary()
@@ -77,24 +79,28 @@ async def get_orchestrator_status():
         enabled = False
         try:
             from core.storage.config_service import get_config_service
-            settings = get_config_service().get_system_config('orchestrator.settings')
+
+            settings = get_config_service().get_system_config("orchestrator.settings")
             if isinstance(settings, dict):
                 enabled = bool(settings.get("enabled", False))
         except Exception:
             enabled = orch.enabled if orch else False
-        
-        active = [i for i in investigations if i.get("status") in ("assigned", "executing")]
+
+        active = [
+            i for i in investigations if i.get("status") in ("assigned", "executing")
+        ]
         queued = [i for i in investigations if i.get("status") == "queued"]
         completed = [i for i in investigations if i.get("status") == "completed"]
         failed = [i for i in investigations if i.get("status") == "failed"]
         review = [i for i in investigations if i.get("status") == "review_submitted"]
-        
+
         max_agents = 3
         try:
             from core.storage.config_service import get_config_service
-            orch_cfg = get_config_service().get_system_config('orchestrator.settings')
+
+            orch_cfg = get_config_service().get_system_config("orchestrator.settings")
             if orch_cfg and isinstance(orch_cfg, dict):
-                max_agents = int(orch_cfg.get('max_concurrent_agents', 3))
+                max_agents = int(orch_cfg.get("max_concurrent_agents", 3))
         except Exception:
             if orch:
                 max_agents = orch.config.max_concurrent_agents
@@ -127,15 +133,17 @@ def _persist_orchestrator_enabled(enabled: bool) -> None:
         from core.storage.config_service import get_config_service
         from services.api.routers.config import ORCHESTRATOR_DEFAULTS
 
-        svc = get_config_service(user_id='web_ui')
-        current = svc.get_system_config('orchestrator.settings')
-        base = dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
+        svc = get_config_service(user_id="web_ui")
+        current = svc.get_system_config("orchestrator.settings")
+        base = (
+            dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
+        )
         base["enabled"] = bool(enabled)
         svc.set_system_config(
-            key='orchestrator.settings',
+            key="orchestrator.settings",
             value=base,
-            description='Autonomous orchestrator settings',
-            config_type='orchestrator',
+            description="Autonomous orchestrator settings",
+            config_type="orchestrator",
             change_reason=f'Orchestrator {"enabled" if enabled else "disabled"} via API',
         )
     except Exception as e:
@@ -163,7 +171,11 @@ async def disable_orchestrator():
         if orch:
             orch.disable()
         _persist_orchestrator_enabled(False)
-        return {"success": True, "enabled": False, "message": "Orchestrator disabled (graceful)"}
+        return {
+            "success": True,
+            "enabled": False,
+            "message": "Orchestrator disabled (graceful)",
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -191,9 +203,7 @@ async def purge_investigations():
     try:
         orch = _get_orchestrator()
         if not orch:
-            raise HTTPException(
-                status_code=503, detail="Orchestrator not available"
-            )
+            raise HTTPException(status_code=503, detail="Orchestrator not available")
         result = await orch.purge_all_investigations()
         return {
             "success": True,
@@ -209,6 +219,7 @@ async def purge_investigations():
 
 # ---- Investigations ----
 
+
 @router.get("/investigations")
 async def list_investigations(status: Optional[str] = Query(None)):
     """List all investigations with optional status filter."""
@@ -216,7 +227,7 @@ async def list_investigations(status: Optional[str] = Query(None)):
         orch = _get_orchestrator()
         if not orch:
             return {"investigations": [], "count": 0}
-        
+
         investigations = orch.get_all_investigations(status=status)
         return {
             "investigations": investigations,
@@ -233,16 +244,18 @@ async def get_investigation(investigation_id: str):
         orch = _get_orchestrator()
         if not orch:
             raise HTTPException(status_code=404, detail="Orchestrator not available")
-        
+
         inv = orch.get_investigation(investigation_id)
         if not inv:
-            raise HTTPException(status_code=404, detail=f"Investigation not found: {investigation_id}")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Investigation not found: {investigation_id}"
+            )
+
         files = orch.workdir.list_files(investigation_id)
         log = orch.workdir.get_log(investigation_id, tail=20)
         state = orch.workdir.read_state(investigation_id)
         disk_usage = orch.workdir.get_disk_usage(investigation_id)
-        
+
         return {
             **inv,
             "files": files,
@@ -263,13 +276,15 @@ async def get_investigation_file(investigation_id: str, filename: str):
         orch = _get_orchestrator()
         if not orch:
             raise HTTPException(status_code=404, detail="Orchestrator not available")
-        
+
         content = orch.workdir.read_file(investigation_id, filename)
         if not content and not orch.workdir.exists(investigation_id):
-            raise HTTPException(status_code=404, detail=f"Investigation not found: {investigation_id}")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Investigation not found: {investigation_id}"
+            )
+
         is_json = filename.endswith(".json") or filename.endswith(".jsonl")
-        
+
         return {
             "filename": filename,
             "investigation_id": investigation_id,
@@ -289,25 +304,30 @@ async def wake_investigation(investigation_id: str):
         orch = _get_orchestrator()
         if not orch:
             raise HTTPException(status_code=404, detail="Orchestrator not available")
-        
+
         inv = orch.get_investigation(investigation_id)
         if not inv:
-            raise HTTPException(status_code=404, detail=f"Investigation not found: {investigation_id}")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Investigation not found: {investigation_id}"
+            )
+
         if inv.get("status") not in ("sleeping", "needs_rework", "completed", "failed"):
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot wake investigation in status '{inv.get('status')}'"
+                detail=f"Cannot wake investigation in status '{inv.get('status')}'",
             )
-        
+
         state = orch.workdir.read_state(investigation_id)
         state["status"] = "executing"
         state.pop("failure_reason", None)
         state["error_count"] = 0
         orch.workdir.write_state(investigation_id, state)
         orch._update_investigation_status(investigation_id, "assigned")
-        
-        return {"success": True, "message": f"Investigation {investigation_id} woken up"}
+
+        return {
+            "success": True,
+            "message": f"Investigation {investigation_id} woken up",
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -321,15 +341,17 @@ async def kill_investigation(investigation_id: str):
         orch = _get_orchestrator()
         if not orch:
             raise HTTPException(status_code=404, detail="Orchestrator not available")
-        
+
         await orch.agent_runner.stop_agent(investigation_id)
-        orch._update_investigation_status(investigation_id, "failed", "Manually killed by user")
-        
+        orch._update_investigation_status(
+            investigation_id, "failed", "Manually killed by user"
+        )
+
         state = orch.workdir.read_state(investigation_id)
         state["status"] = "failed"
         state["failure_reason"] = "Manually killed by user"
         orch.workdir.write_state(investigation_id, state)
-        
+
         return {"success": True, "message": f"Investigation {investigation_id} killed"}
     except HTTPException:
         raise
@@ -346,7 +368,9 @@ class ReviewRequest(BaseModel):
 async def review_investigation(investigation_id: str, request: ReviewRequest):
     """Human review of an investigation: approve or request rework."""
     if request.action not in ("approve", "rework"):
-        raise HTTPException(status_code=400, detail="action must be 'approve' or 'rework'")
+        raise HTTPException(
+            status_code=400, detail="action must be 'approve' or 'rework'"
+        )
 
     try:
         orch = _get_orchestrator()
@@ -355,7 +379,9 @@ async def review_investigation(investigation_id: str, request: ReviewRequest):
 
         inv = orch.get_investigation(investigation_id)
         if not inv:
-            raise HTTPException(status_code=404, detail=f"Investigation not found: {investigation_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Investigation not found: {investigation_id}"
+            )
 
         if inv.get("status") != "review_submitted":
             raise HTTPException(
@@ -370,10 +396,16 @@ async def review_investigation(investigation_id: str, request: ReviewRequest):
         from core.storage.models import Investigation as InvestigationModel
 
         with get_db_manager().session_scope() as session:
-            db_inv = session.query(InvestigationModel).filter_by(investigation_id=investigation_id).first()
+            db_inv = (
+                session.query(InvestigationModel)
+                .filter_by(investigation_id=investigation_id)
+                .first()
+            )
             if db_inv:
                 db_inv.master_review_notes = request.notes or (
-                    "Approved by human reviewer" if request.action == "approve" else "Rework requested by human reviewer"
+                    "Approved by human reviewer"
+                    if request.action == "approve"
+                    else "Rework requested by human reviewer"
                 )
 
         if request.action == "rework":
@@ -403,16 +435,18 @@ async def create_investigation(request: InvestigationCreateRequest):
         orch = _get_orchestrator()
         if not orch:
             raise HTTPException(status_code=503, detail="Orchestrator not available")
-        
-        orch.investigation_queue.put_nowait({
-            "type": "manual",
-            "workflow_id": request.workflow_id,
-            "finding_ids": request.finding_ids,
-            "case_id": request.case_id,
-            "hypothesis": request.hypothesis,
-            "priority": request.priority,
-        })
-        
+
+        orch.investigation_queue.put_nowait(
+            {
+                "type": "manual",
+                "workflow_id": request.workflow_id,
+                "finding_ids": request.finding_ids,
+                "case_id": request.case_id,
+                "hypothesis": request.hypothesis,
+                "priority": request.priority,
+            }
+        )
+
         return {
             "success": True,
             "message": "Investigation queued for creation",
@@ -423,6 +457,7 @@ async def create_investigation(request: InvestigationCreateRequest):
 
 
 # ---- Scan Existing Findings ----
+
 
 class ScanFindingsRequest(BaseModel):
     severities: list = ["critical", "high"]
@@ -445,7 +480,7 @@ async def scan_existing_findings(request: ScanFindingsRequest):
         with get_db_manager().session_scope() as session:
             already_investigated = set()
             for inv in session.query(Investigation).all():
-                for tid in (inv.trigger_ids or []):
+                for tid in inv.trigger_ids or []:
                     already_investigated.add(tid)
 
             findings = (
@@ -461,12 +496,14 @@ async def scan_existing_findings(request: ScanFindingsRequest):
                 if fid in already_investigated:
                     skipped_existing += 1
                     continue
-                to_investigate.append({
-                    "finding_id": fid,
-                    "severity": f.severity,
-                    "title": f.description[:200] if f.description else "",
-                    "data_source": f.data_source,
-                })
+                to_investigate.append(
+                    {
+                        "finding_id": fid,
+                        "severity": f.severity,
+                        "title": f.description[:200] if f.description else "",
+                        "data_source": f.data_source,
+                    }
+                )
 
         orch = _get_orchestrator()
         created = 0
@@ -482,7 +519,9 @@ async def scan_existing_findings(request: ScanFindingsRequest):
                     )
                     created += 1
                 except Exception as e:
-                    logger.warning(f"Failed to create investigation for {finding_data.get('finding_id')}: {e}")
+                    logger.warning(
+                        f"Failed to create investigation for {finding_data.get('finding_id')}: {e}"
+                    )
 
         return {
             "success": True,
@@ -490,7 +529,9 @@ async def scan_existing_findings(request: ScanFindingsRequest):
             "skipped_already_investigated": skipped_existing,
             "total_matching": created + skipped_existing,
             "message": f"Queued {created} investigations (will run up to max_concurrent_agents at a time)"
-                       + (f", {skipped_existing} already investigated" if skipped_existing else ""),
+            + (
+                f", {skipped_existing} already investigated" if skipped_existing else ""
+            ),
         }
     except Exception as e:
         logger.error(f"Error scanning findings: {e}")
@@ -498,6 +539,7 @@ async def scan_existing_findings(request: ScanFindingsRequest):
 
 
 # ---- Cost ----
+
 
 @router.get("/cost")
 async def get_cost_summary():

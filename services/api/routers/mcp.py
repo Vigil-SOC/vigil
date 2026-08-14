@@ -8,15 +8,16 @@ an MCP server can spawn subprocesses and surface tools to agents.
 
 import logging
 from typing import Dict, List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from services.api.middleware.auth import get_current_active_user
 from core.auth.auth_service import AuthService
 from core.deps import provide_mcp_client
-from core.storage.models import User
 from core.integrations.mcp.service import MCPService
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_active_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

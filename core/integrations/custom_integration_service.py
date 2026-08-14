@@ -4,12 +4,12 @@ import json
 import logging
 import os
 import re
-from pathlib import Path
-from typing import Dict, Any, Optional, List
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from core.llm.defaults import DEFAULT_MODEL
 from core.config import vigil_path
+from core.llm.defaults import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -331,9 +331,9 @@ async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     \"\"\"Handle tool execution requests.\"\"\"
-    
+
     config = get_config()
-    
+
     if not config:
         return [types.TextContent(
             type="text",
@@ -342,7 +342,7 @@ async def handle_call_tool(
                 "message": "Please configure in Settings > Integrations"
             }}, indent=2)
         )]
-    
+
     try:
         if name == "tool_name":
             # Implementation here
@@ -351,9 +351,9 @@ async def handle_call_tool(
                 type="text",
                 text=json.dumps(result, indent=2)
             )]
-        
+
         raise ValueError(f"Unknown tool: {{name}}")
-    
+
     except Exception as e:
         logger.error(f"Error in tool {{name}}: {{e}}")
         return [types.TextContent(

@@ -24,8 +24,8 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from core.ingestion.kafka_config import KafkaConfig
 from core.ingestion.dedup import RedisDedupSet
+from core.ingestion.kafka_config import KafkaConfig
 
 logger = logging.getLogger(__name__)
 

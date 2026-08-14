@@ -24,8 +24,9 @@ from hashlib import sha256
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request, status
-from core.routing import Auth, RouterMeta
+
 from core.config import get_settings
+from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ router = APIRouter()
 def cloudy_ingestion_enabled() -> bool:
     try:
         from core.storage.config_service import get_config_service
+
         cfg = get_config_service().get_system_config("cloudflare.cloudy.enabled")
         if isinstance(cfg, dict):
             if cfg.get("enabled") is True:

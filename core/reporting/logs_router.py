@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter
 from pydantic import BaseModel
+
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
@@ -17,7 +18,7 @@ ROUTER_META = RouterMeta(
 )
 
 # Create dedicated logger for frontend logs
-frontend_logger = logging.getLogger('frontend')
+frontend_logger = logging.getLogger("frontend")
 frontend_logger.setLevel(logging.DEBUG)
 
 # Resolve the frontend log file path.
@@ -30,8 +31,7 @@ log_file = Path("logs") / "frontend-app.log"
 # console handler if the log file cannot be created.
 if not frontend_logger.handlers:
     formatter = logging.Formatter(
-        '%(asctime)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
+        "%(asctime)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
     )
 
     try:
@@ -56,6 +56,7 @@ if not frontend_logger.handlers:
 
 class FrontendLogEntry(BaseModel):
     """Frontend log entry model."""
+
     level: str
     message: str
     component: str
@@ -67,38 +68,38 @@ class FrontendLogEntry(BaseModel):
 async def log_frontend(entry: FrontendLogEntry):
     """
     Receive logs from frontend and write to file.
-    
+
     Args:
         entry: Log entry with level, message, component, and optional extra data
-    
+
     Returns:
         Status confirmation
     """
     try:
         # Build log message
         log_message = f"[{entry.component}] {entry.message}"
-        
+
         # Append extra data if present
         if entry.extra:
             # Format extra data nicely
             extra_str = ", ".join([f"{k}={v}" for k, v in entry.extra.items()])
             log_message += f" ({extra_str})"
-        
+
         # Log at appropriate level
         level = entry.level.upper()
-        if level == 'DEBUG':
+        if level == "DEBUG":
             frontend_logger.debug(log_message)
-        elif level == 'INFO':
+        elif level == "INFO":
             frontend_logger.info(log_message)
-        elif level == 'WARN' or level == 'WARNING':
+        elif level == "WARN" or level == "WARNING":
             frontend_logger.warning(log_message)
-        elif level == 'ERROR':
+        elif level == "ERROR":
             frontend_logger.error(log_message)
         else:
             frontend_logger.info(log_message)
-        
+
         return {"status": "ok"}
-    
+
     except Exception as e:
         # Don't fail the request if logging fails
         logging.error(f"Error processing frontend log: {e}")
@@ -112,6 +113,5 @@ async def get_frontend_log_status():
         "enabled": True,
         "log_file": str(log_file),
         "exists": log_file.exists(),
-        "size": log_file.stat().st_size if log_file.exists() else 0
+        "size": log_file.stat().st_size if log_file.exists() else 0,
     }
-

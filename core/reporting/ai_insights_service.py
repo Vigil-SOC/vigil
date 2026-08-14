@@ -8,16 +8,17 @@ This service analyzes SOC metrics and patterns to generate:
 - Performance optimization suggestions
 """
 
+import asyncio
 import json
 import logging
-from typing import List, Dict, Any
 from datetime import datetime, timezone
-import asyncio
+from typing import Any, Dict, List
+
 from sqlalchemy.orm import Session
 
-from core.secrets_manager import get_secret
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.clients import create_anthropic_client
+from core.secrets_manager import get_secret
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +32,15 @@ class AIInsightsService:
 
     def __init__(self):
         """Initialize the AI insights service with Claude API client."""
-        api_key = (get_secret("ANTHROPIC_API_KEY") or
-                   get_secret("CLAUDE_API_KEY") or
-                   get_secret("anthropic_api_key"))
+        api_key = (
+            get_secret("ANTHROPIC_API_KEY")
+            or get_secret("CLAUDE_API_KEY")
+            or get_secret("anthropic_api_key")
+        )
         if not api_key:
-            logger.warning("No Anthropic API key found - AI insights will use fallback mode")
+            logger.warning(
+                "No Anthropic API key found - AI insights will use fallback mode"
+            )
             self.client = None
         else:
             self.client = create_anthropic_client(api_key)
@@ -129,23 +134,23 @@ class AIInsightsService:
                 if time_range in self._cache:
                     self._cache[time_range]["generating"] = False
             return False
-    
+
     async def generate_insights(
         self,
         db: Session,
         metrics: Dict[str, Any],
         time_series: List[Dict[str, Any]],
-        time_range: str
+        time_range: str,
     ) -> List[Dict[str, Any]]:
         """
         Generate AI-powered insights from analytics data.
-        
+
         Args:
             db: Database session
             metrics: Key SOC metrics
             time_series: Time series data for trends
             time_range: Time range for the analysis
-            
+
         Returns:
             List of insights with recommendations, warnings, and anomalies
         """
@@ -154,31 +159,31 @@ class AIInsightsService:
             if not self.client:
                 logger.info("No Claude API client - using fallback insights")
                 return self._get_fallback_insights(metrics)
-            
+
             # Prepare context for Claude
             context = self._prepare_context(metrics, time_series, time_range)
-            
+
             # Generate insights using Claude
             insights_text = await self._call_claude(context)
-            
+
             # Parse insights from Claude's response
             insights = self._parse_insights(insights_text)
-            
+
             return insights
-        
+
         except Exception as e:
             logger.error(f"Error generating AI insights: {str(e)}")
             # Return fallback insights
             return self._get_fallback_insights(metrics)
-    
+
     def _prepare_context(
         self,
         metrics: Dict[str, Any],
         time_series: List[Dict[str, Any]],
-        time_range: str
+        time_range: str,
     ) -> str:
         """Prepare context for Claude to analyze."""
-        
+
         context = f"""You are an expert Security Operations Center (SOC) analyst AI assistant. Analyze the following SOC metrics and provide actionable insights.
 
 Time Range: {time_range}
@@ -219,11 +224,12 @@ Format your response as a JSON array of insights. Example:
 Provide ONLY the JSON array, no other text."""
 
         return context
-    
+
     async def _call_claude(self, context: str) -> str:
         """Call Claude API via the LLM queue for global rate limiting."""
         try:
             from core.llm.gateway.gateway import get_llm_gateway
+
             gateway = await get_llm_gateway()
             result = await gateway.submit_insights(
                 prompt=context,
@@ -246,43 +252,45 @@ Provide ONLY the JSON array, no other text."""
                     model=self.model,
                     max_tokens=2000,
                     temperature=0.3,
-                    messages=[{"role": "user", "content": context}]
-                )
+                    messages=[{"role": "user", "content": context}],
+                ),
             )
             return message.content[0].text
         except Exception as e:
             logger.error(f"Error calling Claude API: {str(e)}")
             raise
-    
+
     def _parse_insights(self, insights_text: str) -> List[Dict[str, Any]]:
         """Parse insights from Claude's JSON response."""
         try:
             # Extract JSON from response (in case there's extra text)
-            start = insights_text.find('[')
-            end = insights_text.rfind(']') + 1
-            
+            start = insights_text.find("[")
+            end = insights_text.rfind("]") + 1
+
             if start == -1 or end == 0:
                 logger.warning("No JSON array found in Claude response")
                 return []
-            
+
             json_text = insights_text[start:end]
             insights_raw = json.loads(json_text)
-            
+
             # Add timestamps and IDs
             insights = []
             for i, insight in enumerate(insights_raw):
-                insights.append({
-                    "id": f"insight-{datetime.utcnow().timestamp()}-{i}",
-                    "type": insight.get("type", "info"),
-                    "title": insight.get("title", "Insight"),
-                    "description": insight.get("description", ""),
-                    "confidence": insight.get("confidence", 0.7),
-                    "actionable": insight.get("actionable", False),
-                    "timestamp": datetime.utcnow().isoformat(),
-                })
-            
+                insights.append(
+                    {
+                        "id": f"insight-{datetime.utcnow().timestamp()}-{i}",
+                        "type": insight.get("type", "info"),
+                        "title": insight.get("title", "Insight"),
+                        "description": insight.get("description", ""),
+                        "confidence": insight.get("confidence", 0.7),
+                        "actionable": insight.get("actionable", False),
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }
+                )
+
             return insights
-        
+
         except json.JSONDecodeError as e:
             logger.error(f"Error parsing insights JSON: {str(e)}")
             logger.debug(f"Raw response: {insights_text}")
@@ -290,69 +298,80 @@ Provide ONLY the JSON array, no other text."""
         except Exception as e:
             logger.error(f"Error processing insights: {str(e)}")
             return []
-    
+
     def _get_fallback_insights(self, metrics: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Generate fallback insights when AI service is unavailable."""
         insights = []
         timestamp = datetime.utcnow().isoformat()
-        
-        # Findings trend insight
-        if abs(metrics['findingsChange']) > 20:
-            insights.append({
-                "id": f"fallback-findings-{datetime.utcnow().timestamp()}",
-                "type": "warning" if metrics['findingsChange'] > 0 else "info",
-                "title": f"Findings {'increased' if metrics['findingsChange'] > 0 else 'decreased'} significantly",
-                "description": f"Findings changed by {metrics['findingsChange']:+.1f}% compared to previous period.",
-                "confidence": 0.9,
-                "actionable": metrics['findingsChange'] > 0,
-                "timestamp": timestamp,
-            })
-        
-        # Response time insight
-        if metrics['avgResponseTime'] > 60:
-            insights.append({
-                "id": f"fallback-response-{datetime.utcnow().timestamp()}",
-                "type": "warning",
-                "title": "Response time exceeds target",
-                "description": f"Average response time is {metrics['avgResponseTime']} minutes. Consider workload optimization.",
-                "confidence": 0.85,
-                "actionable": True,
-                "timestamp": timestamp,
-            })
-        
-        # False positive insight
-        if metrics['falsePositiveRate'] > 30:
-            insights.append({
-                "id": f"fallback-fp-{datetime.utcnow().timestamp()}",
-                "type": "recommendation",
-                "title": "High false positive rate detected",
-                "description": f"False positive rate is {metrics['falsePositiveRate']}%. Review detection rules for tuning.",
-                "confidence": 0.9,
-                "actionable": True,
-                "timestamp": timestamp,
-            })
-        
-        # Positive performance insight
-        if metrics['responseTimeChange'] < -10:
-            insights.append({
-                "id": f"fallback-performance-{datetime.utcnow().timestamp()}",
-                "type": "info",
-                "title": "Response time improvement",
-                "description": f"Response time improved by {abs(metrics['responseTimeChange']):.1f}%. Great work!",
-                "confidence": 0.95,
-                "actionable": False,
-                "timestamp": timestamp,
-            })
-        
-        return insights if insights else [{
-            "id": f"fallback-default-{datetime.utcnow().timestamp()}",
-            "type": "info",
-            "title": "SOC operations stable",
-            "description": "All metrics are within normal ranges. Continue monitoring for changes.",
-            "confidence": 0.8,
-            "actionable": False,
-            "timestamp": timestamp,
-        }]
-    
-    
 
+        # Findings trend insight
+        if abs(metrics["findingsChange"]) > 20:
+            insights.append(
+                {
+                    "id": f"fallback-findings-{datetime.utcnow().timestamp()}",
+                    "type": "warning" if metrics["findingsChange"] > 0 else "info",
+                    "title": f"Findings {'increased' if metrics['findingsChange'] > 0 else 'decreased'} significantly",
+                    "description": f"Findings changed by {metrics['findingsChange']:+.1f}% compared to previous period.",
+                    "confidence": 0.9,
+                    "actionable": metrics["findingsChange"] > 0,
+                    "timestamp": timestamp,
+                }
+            )
+
+        # Response time insight
+        if metrics["avgResponseTime"] > 60:
+            insights.append(
+                {
+                    "id": f"fallback-response-{datetime.utcnow().timestamp()}",
+                    "type": "warning",
+                    "title": "Response time exceeds target",
+                    "description": f"Average response time is {metrics['avgResponseTime']} minutes. Consider workload optimization.",
+                    "confidence": 0.85,
+                    "actionable": True,
+                    "timestamp": timestamp,
+                }
+            )
+
+        # False positive insight
+        if metrics["falsePositiveRate"] > 30:
+            insights.append(
+                {
+                    "id": f"fallback-fp-{datetime.utcnow().timestamp()}",
+                    "type": "recommendation",
+                    "title": "High false positive rate detected",
+                    "description": f"False positive rate is {metrics['falsePositiveRate']}%. Review detection rules for tuning.",
+                    "confidence": 0.9,
+                    "actionable": True,
+                    "timestamp": timestamp,
+                }
+            )
+
+        # Positive performance insight
+        if metrics["responseTimeChange"] < -10:
+            insights.append(
+                {
+                    "id": f"fallback-performance-{datetime.utcnow().timestamp()}",
+                    "type": "info",
+                    "title": "Response time improvement",
+                    "description": f"Response time improved by {abs(metrics['responseTimeChange']):.1f}%. Great work!",
+                    "confidence": 0.95,
+                    "actionable": False,
+                    "timestamp": timestamp,
+                }
+            )
+
+        return (
+            insights
+            if insights
+            else [
+                {
+                    "id": f"fallback-default-{datetime.utcnow().timestamp()}",
+                    "type": "info",
+                    "title": "SOC operations stable",
+                    "description": "All metrics are within normal ranges. Continue monitoring for changes.",
+                    "confidence": 0.8,
+                    "actionable": False,
+                    "timestamp": timestamp,
+                }
+            ]
+        )

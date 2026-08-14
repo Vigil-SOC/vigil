@@ -53,9 +53,7 @@ class ElasticService:
 
     def _build_kibana_client(self) -> httpx.AsyncClient:
         if not self.kibana_url:
-            raise ValueError(
-                "kibana_url is required for Kibana Security API calls"
-            )
+            raise ValueError("kibana_url is required for Kibana Security API calls")
         headers: Dict[str, str] = {
             "Content-Type": "application/json",
             "kbn-xsrf": "true",
@@ -140,9 +138,7 @@ class ElasticService:
         if sort:
             body["sort"] = sort
         try:
-            resp = await self.es_client.post(
-                f"/{target}/_search", json=body
-            )
+            resp = await self.es_client.post(f"/{target}/_search", json=body)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
@@ -156,9 +152,7 @@ class ElasticService:
             query={
                 "bool": {
                     "must": [{"multi_match": {"query": ip, "fields": ["*"]}}],
-                    "filter": [
-                        {"range": {"@timestamp": {"gte": f"now-{hours}h"}}}
-                    ],
+                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
                 }
             },
             index=index,
@@ -170,12 +164,8 @@ class ElasticService:
         return await self.search(
             query={
                 "bool": {
-                    "must": [
-                        {"multi_match": {"query": file_hash, "fields": ["*"]}}
-                    ],
-                    "filter": [
-                        {"range": {"@timestamp": {"gte": f"now-{hours}h"}}}
-                    ],
+                    "must": [{"multi_match": {"query": file_hash, "fields": ["*"]}}],
+                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
                 }
             },
             index=index,
@@ -199,9 +189,7 @@ class ElasticService:
                             }
                         }
                     ],
-                    "filter": [
-                        {"range": {"@timestamp": {"gte": f"now-{hours}h"}}}
-                    ],
+                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
                 }
             },
             index=index,
@@ -225,9 +213,7 @@ class ElasticService:
                             }
                         }
                     ],
-                    "filter": [
-                        {"range": {"@timestamp": {"gte": f"now-{hours}h"}}}
-                    ],
+                    "filter": [{"range": {"@timestamp": {"gte": f"now-{hours}h"}}}],
                 }
             },
             index=index,
@@ -285,9 +271,7 @@ class ElasticService:
                 "/api/detection_engine/signals/status", json=body
             )
             resp.raise_for_status()
-            logger.info(
-                f"Updated {len(signal_ids)} alerts to status '{status}'"
-            )
+            logger.info(f"Updated {len(signal_ids)} alerts to status '{status}'")
             return True
         except Exception as exc:
             logger.error(f"Error updating alert status: {exc}")
@@ -300,9 +284,7 @@ class ElasticService:
     async def get_case(self, case_id: str) -> Optional[Dict[str, Any]]:
         """Get a Kibana Security case by ID."""
         try:
-            resp = await self.kibana_client.get(
-                f"/api/cases/{case_id}"
-            )
+            resp = await self.kibana_client.get(f"/api/cases/{case_id}")
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
@@ -322,15 +304,9 @@ class ElasticService:
             status: One of 'open', 'in-progress', 'closed'.
             version: The case version string (required for optimistic concurrency).
         """
-        body = {
-            "cases": [
-                {"id": case_id, "version": version, "status": status}
-            ]
-        }
+        body = {"cases": [{"id": case_id, "version": version, "status": status}]}
         try:
-            resp = await self.kibana_client.patch(
-                "/api/cases", json=body
-            )
+            resp = await self.kibana_client.patch("/api/cases", json=body)
             resp.raise_for_status()
             logger.info(f"Updated case {case_id} to status '{status}'")
             return True

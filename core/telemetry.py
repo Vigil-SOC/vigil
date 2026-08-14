@@ -13,6 +13,7 @@ Environment variables:
     ENVIRONMENT                     Deployment environment label (default "development")
     RELEASE_VERSION                 Service version label (default "unknown")
 """
+
 from __future__ import annotations
 
 import json
@@ -41,6 +42,7 @@ _investigation_id_var: ContextVar[Optional[str]] = ContextVar(
 # Context helpers
 # ---------------------------------------------------------------------------
 
+
 def set_investigation_id(investigation_id: Optional[str]) -> None:
     """Attach an investigation ID to the current async context."""
     _investigation_id_var.set(investigation_id)
@@ -55,6 +57,7 @@ def get_investigation_id() -> Optional[str]:
 # Configuration helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_otel_enabled() -> bool:
     return get_settings().vigil_otel_enabled
 
@@ -62,15 +65,15 @@ def _is_otel_enabled() -> bool:
 # Opt-in flag helpers live in core.telemetry_config so the sanitizer can
 # read them without importing this module (breaks the import cycle).
 # Re-exported here for backwards compatibility with existing callers/tests.
-from core.telemetry_config import (  # noqa: E402
+from core.telemetry_config import (  # noqa: E402,F401
     _should_record_ioc_values,
     _should_record_llm_content,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fallback no-op classes (used when OTEL is disabled or SDK missing)
 # ---------------------------------------------------------------------------
+
 
 class _NoOpSpan:
     """No-op span satisfying the OpenTelemetry Span interface."""
@@ -160,13 +163,14 @@ class _FallbackNoOpMeter:
 # Internal initialization
 # ---------------------------------------------------------------------------
 
+
 def _do_init(service_name: str) -> None:
     """Actually initialize OTEL providers. Raises on any failure."""
-    from opentelemetry import trace, metrics
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry import metrics, trace
     from opentelemetry.sdk.metrics import MeterProvider
     from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
     global _tracer_provider, _meter_provider
 
@@ -189,11 +193,13 @@ def _do_init(service_name: str) -> None:
         from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
             OTLPSpanExporter,
         )
+
         span_exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
     except Exception:
         from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
             OTLPSpanExporter as OTLPSpanExporterHTTP,
         )
+
         span_exporter = OTLPSpanExporterHTTP(endpoint=endpoint)
 
     batch_processor = BatchSpanProcessor(
@@ -215,6 +221,7 @@ def _do_init(service_name: str) -> None:
     if sentry_dsn:
         try:
             from core.platform.monitoring import SentrySpanProcessor
+
             tracer_provider.add_span_processor(SentrySpanProcessor())
         except Exception:
             pass  # core.platform.monitoring may not be importable in daemon context
@@ -225,6 +232,7 @@ def _do_init(service_name: str) -> None:
     # --- MeterProvider ---
     try:
         from opentelemetry.exporter.prometheus import PrometheusMetricReader
+
         metric_reader = PrometheusMetricReader()
         logger.debug("Using PrometheusMetricReader on port 9090")
     except Exception:
@@ -233,6 +241,7 @@ def _do_init(service_name: str) -> None:
                 OTLPMetricExporter,
             )
             from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
             metric_reader = PeriodicExportingMetricReader(
                 OTLPMetricExporter(endpoint=endpoint, insecure=True)
             )
@@ -256,6 +265,7 @@ def _do_init(service_name: str) -> None:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def init_telemetry(service_name: str) -> bool:
     """
     Bootstrap tracing and metrics for a process.
@@ -278,9 +288,7 @@ def init_telemetry(service_name: str) -> bool:
         _install_json_logging()
         return True
     except Exception as exc:
-        logger.warning(
-            "OpenTelemetry initialization failed (non-fatal): %s", exc
-        )
+        logger.warning("OpenTelemetry initialization failed (non-fatal): %s", exc)
         return False
 
 
@@ -401,6 +409,7 @@ shutdown_telemetry = shutdown
 # ---------------------------------------------------------------------------
 # Structured JSON logging with OTEL trace correlation (#59)
 # ---------------------------------------------------------------------------
+
 
 def _install_json_logging() -> None:
     """

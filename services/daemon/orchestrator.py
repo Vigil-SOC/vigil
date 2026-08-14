@@ -23,8 +23,9 @@ from services.daemon.agent_runner import AgentRunner
 from services.daemon.config import OrchestratorConfig
 
 try:
-    from core.telemetry import get_meter, get_tracer, inject_traceparent
     from opentelemetry.trace import SpanKind
+
+    from core.telemetry import get_meter, get_tracer, inject_traceparent
 
     _tracer = get_tracer("vigil.daemon.orchestrator")
     _orch_meter = get_meter("vigil.daemon.orchestrator")
@@ -56,6 +57,8 @@ try:
 except Exception:
     _tracer = None  # type: ignore[assignment]
     _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = None  # type: ignore[assignment]
+from core.integrations.mcp.client import process_mcp_client
+from core.response.approval_service import ApprovalService
 from services.daemon.plan_generator import (
     count_steps,
     generate_case_review_context,
@@ -67,8 +70,6 @@ from services.daemon.plan_generator import (
 )
 from services.daemon.shared_intel import SharedIntelligence
 from services.daemon.workdir import WorkdirManager
-from core.integrations.mcp.client import process_mcp_client
-from core.response.approval_service import ApprovalService
 
 logger = logging.getLogger(__name__)
 
@@ -877,7 +878,10 @@ class Orchestrator:
         try:
             # Route through the single helper (#129) so the daemon,
             # MCP server, and ClaudeService all resolve the same path.
-            from core.platform.mempalace_paths import get_closed_cases_dir, get_palace_path
+            from core.platform.mempalace_paths import (
+                get_closed_cases_dir,
+                get_palace_path,
+            )
 
             data_dir = get_palace_path()
             get_closed_cases_dir()  # mkdir side-effect for investigation snapshots
@@ -1314,9 +1318,7 @@ class Orchestrator:
             from core.storage.models import Investigation
 
             with get_db_manager().session_scope() as session:
-                deleted = session.query(Investigation).delete(
-                    synchronize_session=False
-                )
+                deleted = session.query(Investigation).delete(synchronize_session=False)
         except Exception as e:
             logger.error(f"Failed to delete investigations from DB: {e}")
             raise

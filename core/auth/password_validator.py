@@ -10,7 +10,9 @@ from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-_BLOCKLIST_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "common_passwords.txt"
+_BLOCKLIST_PATH = (
+    Path(__file__).resolve().parent.parent.parent / "data" / "common_passwords.txt"
+)
 _blocklist: Optional[frozenset] = None
 
 
@@ -38,7 +40,8 @@ def _get_blocklist() -> frozenset:
     try:
         with open(_BLOCKLIST_PATH, encoding="utf-8") as f:
             _blocklist = frozenset(
-                line.strip().lower() for line in f
+                line.strip().lower()
+                for line in f
                 if line.strip() and not line.startswith("#")
             )
     except FileNotFoundError:
@@ -61,9 +64,17 @@ def validate_password_strength(
     All kwargs are test overrides; production uses env/defaults.
     user_inputs: terms (username, email) zxcvbn penalizes if embedded.
     """
-    limit = min_length if min_length is not None else get_settings().auth_min_password_length
-    byte_ceiling = max_bytes if max_bytes is not None else get_settings().auth_max_password_bytes
-    threshold = min_score if min_score is not None else get_settings().auth_min_zxcvbn_score
+    limit = (
+        min_length
+        if min_length is not None
+        else get_settings().auth_min_password_length
+    )
+    byte_ceiling = (
+        max_bytes if max_bytes is not None else get_settings().auth_max_password_bytes
+    )
+    threshold = (
+        min_score if min_score is not None else get_settings().auth_min_zxcvbn_score
+    )
     # zxcvbn scores run 0-4; clamp so a misconfigured 5+ can't reject every
     # password and a negative value can't underflow the check.
     threshold = max(0, min(4, threshold))
@@ -80,7 +91,11 @@ def validate_password_strength(
             suggestions=["Use a shorter passphrase."],
         )
 
-    block = frozenset(b.lower() for b in blocklist) if blocklist is not None else _get_blocklist()
+    block = (
+        frozenset(b.lower() for b in blocklist)
+        if blocklist is not None
+        else _get_blocklist()
+    )
     if password.lower() in block:
         raise PasswordPolicyError(
             "Password is too common — choose something more unique",

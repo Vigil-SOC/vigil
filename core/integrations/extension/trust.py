@@ -10,9 +10,10 @@ app-admin act of configuring a connector URL in Settings.
 
 from __future__ import annotations
 
-from core.config import get_settings
 from typing import Optional
 from urllib.parse import urlsplit
+
+from core.config import get_settings
 
 _LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
 

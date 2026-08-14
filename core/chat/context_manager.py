@@ -8,6 +8,7 @@ Responsibilities:
 - Prompt-cache control injection (Anthropic cache_control blocks)
 - Tool filtering and per-tool response budgets
 """
+
 from __future__ import annotations
 
 import json
@@ -133,9 +134,7 @@ class ContextManager:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def apply_history_window(
-        messages: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+    def apply_history_window(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         from core.platform.runtime_config import get_ai_operations_setting
 
         window = get_ai_operations_setting("history_window", 20)
@@ -259,7 +258,6 @@ class ContextManager:
         )
         return total_tokens > available_tokens, total_tokens, available_tokens
 
-
     # ------------------------------------------------------------------
     # Rolling summary compression (no LLM call, provider-agnostic)
     # ------------------------------------------------------------------
@@ -279,7 +277,9 @@ class ContextManager:
             _flatten_content_to_text(m.get("content", "")) for m in overflow_messages
         )
 
-        finding_ids = sorted(set(re.findall(r"f-[0-9a-f]{8}-[0-9a-f]{8}", all_text, re.I)))[:10]
+        finding_ids = sorted(
+            set(re.findall(r"f-[0-9a-f]{8}-[0-9a-f]{8}", all_text, re.I))
+        )[:10]
         case_ids = sorted(set(re.findall(r"case-[0-9a-f]{8,}", all_text, re.I)))[:10]
         ips = sorted(set(re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", all_text)))[:10]
         hashes = list(set(re.findall(r"\b[0-9a-f]{40,64}\b", all_text, re.I)))[:5]
@@ -307,14 +307,18 @@ class ContextManager:
             fold_parts.append("Analysis: " + " | ".join(assistant_snippets))
 
         fold_text = "; ".join(fold_parts)
-        combined = (existing_summary + "\n" + fold_text).lstrip("\n") if existing_summary else fold_text
+        combined = (
+            (existing_summary + "\n" + fold_text).lstrip("\n")
+            if existing_summary
+            else fold_text
+        )
 
         # Cap to avoid unbounded growth; keep the tail (most recent folds).
         if len(combined) > _SUMMARY_MAX_CHARS:
             combined = combined[-_SUMMARY_MAX_CHARS:]
             nl = combined.find("\n")
             if nl > 0:
-                combined = "[...earlier context truncated...]\n" + combined[nl + 1:]
+                combined = "[...earlier context truncated...]\n" + combined[nl + 1 :]
 
         return combined
 
@@ -398,4 +402,3 @@ class ContextManager:
             messages, "", system_prompt, backend_tools, mcp_tools, max_context_tokens
         )
         return prepared, len(overflow)
-

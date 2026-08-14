@@ -5,6 +5,7 @@ Extracted so both ``core.telemetry`` and ``core.telemetry_sanitizer`` can
 read operator opt-in flags without importing each other (avoids an import
 cycle between the bootstrap and the span-scrubbing processor).
 """
+
 from __future__ import annotations
 
 from core.config import get_settings

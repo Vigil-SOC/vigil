@@ -85,7 +85,9 @@ class SplunkAdapter:
         last = parse_cursor_since(cursor) or since
         if last is not None:
             # Convert to relative Splunk earliest_time (rounded up to minute)
-            delta_minutes = max(int((datetime.utcnow() - last).total_seconds() // 60) + 1, 1)
+            delta_minutes = max(
+                int((datetime.utcnow() - last).total_seconds() // 60) + 1, 1
+            )
             earliest_time = f"-{delta_minutes}m"
         else:
             # First run: tiny window so we don't replay history.

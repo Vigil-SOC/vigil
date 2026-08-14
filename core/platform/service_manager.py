@@ -26,8 +26,8 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from core.platform.ollama_supervisor import container_base_url
 from core.platform import ollama_supervisor as ollama_process
+from core.platform.ollama_supervisor import container_base_url
 from core.platform.service_contract import (  # re-exported for existing callers
     ActionResult,
     ServiceSpec,

@@ -9,10 +9,11 @@ import json
 import logging
 import subprocess
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Any
-from collections import defaultdict
+from typing import Any, Dict, List, Optional
+
 from core.config import vigil_path
 
 logger = logging.getLogger(__name__)
@@ -89,7 +90,9 @@ class DetectionRulesService:
                 with open(self.config_path, "r") as f:
                     data = json.load(f)
                     self.sources = data.get("sources", [])
-                    logger.info(f"Loaded {len(self.sources)} detection rule sources from config")
+                    logger.info(
+                        f"Loaded {len(self.sources)} detection rule sources from config"
+                    )
                     return
             except Exception as e:
                 logger.error(f"Error loading detection sources config: {e}")
@@ -121,9 +124,13 @@ class DetectionRulesService:
             # Check if repo already exists on disk
             if clone_dir.exists():
                 source["status"] = "ready"
-                source["rule_count"] = self._count_rules(clone_dir, default["format"], default.get("subdirectory", ""))
+                source["rule_count"] = self._count_rules(
+                    clone_dir, default["format"], default.get("subdirectory", "")
+                )
                 source["last_updated"] = datetime.now().isoformat()
-                logger.info(f"Found existing repo: {default['name']} ({source['rule_count']} rules)")
+                logger.info(
+                    f"Found existing repo: {default['name']} ({source['rule_count']} rules)"
+                )
             else:
                 source["status"] = "not_cloned"
                 logger.info(f"Default source not yet cloned: {default['name']}")
@@ -238,13 +245,17 @@ class DetectionRulesService:
             if clone_dir.exists():
                 # Already cloned, just scan
                 source["status"] = "ready"
-                source["rule_count"] = self._count_rules(clone_dir, format, subdirectory)
+                source["rule_count"] = self._count_rules(
+                    clone_dir, format, subdirectory
+                )
                 source["last_updated"] = datetime.now().isoformat()
             else:
                 try:
                     self._git_clone(url, local_path)
                     source["status"] = "ready"
-                    source["rule_count"] = self._count_rules(clone_dir, format, subdirectory)
+                    source["rule_count"] = self._count_rules(
+                        clone_dir, format, subdirectory
+                    )
                     source["last_updated"] = datetime.now().isoformat()
                 except Exception as e:
                     source["status"] = "error"
@@ -254,7 +265,9 @@ class DetectionRulesService:
             local_dir = Path(local_path)
             if local_dir.exists():
                 source["status"] = "ready"
-                source["rule_count"] = self._count_rules(local_dir, format, subdirectory)
+                source["rule_count"] = self._count_rules(
+                    local_dir, format, subdirectory
+                )
                 source["last_updated"] = datetime.now().isoformat()
             else:
                 source["status"] = "error"
@@ -273,6 +286,7 @@ class DetectionRulesService:
 
         if delete_files and source["type"] == "git":
             import shutil
+
             clone_dir = Path(source["local_path"])
             if clone_dir.exists():
                 try:
@@ -317,9 +331,23 @@ class DetectionRulesService:
         for source in self.sources:
             try:
                 updated = self.update_source(source["id"])
-                results.append({"id": source["id"], "name": source["name"], "success": True, "rule_count": updated["rule_count"]})
+                results.append(
+                    {
+                        "id": source["id"],
+                        "name": source["name"],
+                        "success": True,
+                        "rule_count": updated["rule_count"],
+                    }
+                )
             except Exception as e:
-                results.append({"id": source["id"], "name": source["name"], "success": False, "error": str(e)})
+                results.append(
+                    {
+                        "id": source["id"],
+                        "name": source["name"],
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
                 logger.error(f"Failed to update {source['name']}: {e}")
         return results
 
@@ -333,12 +361,14 @@ class DetectionRulesService:
             count = source.get("rule_count", 0)
             total += count
             by_format[source["format"]] += count
-            by_source.append({
-                "name": source["name"],
-                "format": source["format"],
-                "count": count,
-                "status": source.get("status", "unknown"),
-            })
+            by_source.append(
+                {
+                    "name": source["name"],
+                    "format": source["format"],
+                    "count": count,
+                    "status": source.get("status", "unknown"),
+                }
+            )
 
         return {
             "total_rules": total,

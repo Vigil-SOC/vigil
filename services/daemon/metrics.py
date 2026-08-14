@@ -32,6 +32,7 @@ DAEMON_HEALTH_PORT = get_settings().daemon_health_port
 # DaemonMetrics — OTEL-backed, public interface unchanged
 # ---------------------------------------------------------------------------
 
+
 class DaemonMetrics:
     """Metrics tracking backed by OpenTelemetry instruments.
 
@@ -59,6 +60,7 @@ class DaemonMetrics:
 
         try:
             from core.telemetry import get_meter
+
             meter = get_meter("vigil.daemon")
 
             self._polls_counter = meter.create_counter(
@@ -113,7 +115,9 @@ class DaemonMetrics:
         except Exception as _err:
             logger.debug("OTEL record_poll failed (non-fatal): %s", _err)
 
-        logger.debug("Recorded poll for %s: %d events in %.2fs", source, events_count, duration)
+        logger.debug(
+            "Recorded poll for %s: %d events in %.2fs", source, events_count, duration
+        )
 
     def get_poll_count(self, source: str) -> int:
         """Get total poll count for a source."""
@@ -132,7 +136,9 @@ class DaemonMetrics:
         except Exception as _err:
             logger.debug("OTEL record_processing failed (non-fatal): %s", _err)
 
-        logger.debug("Recorded processing: %d findings in %.2fs", findings_count, duration)
+        logger.debug(
+            "Recorded processing: %d findings in %.2fs", findings_count, duration
+        )
 
     def get_total_processed(self) -> int:
         """Get total number of findings processed."""
@@ -185,6 +191,7 @@ class DaemonMetrics:
 # MetricsServer — health/status only on DAEMON_HEALTH_PORT
 # Prometheus /metrics is served by core/telemetry PrometheusMetricReader on 9090
 # ---------------------------------------------------------------------------
+
 
 class MetricsServer:
     """Health and status HTTP server for the daemon.
@@ -259,7 +266,9 @@ class MetricsServer:
             components["scheduler"] = "not_initialized"
 
         if self.orchestrator:
-            components["orchestrator"] = "running" if self.orchestrator.enabled else "disabled"
+            components["orchestrator"] = (
+                "running" if self.orchestrator.enabled else "disabled"
+            )
         else:
             components["orchestrator"] = "not_initialized"
 
@@ -282,7 +291,9 @@ class MetricsServer:
         status = {
             "daemon": {
                 "start_time": self._start_time.isoformat(),
-                "uptime_seconds": (datetime.utcnow() - self._start_time).total_seconds(),
+                "uptime_seconds": (
+                    datetime.utcnow() - self._start_time
+                ).total_seconds(),
             },
             "poller": metrics.get("poller", {}),
             "kafka": metrics.get("kafka", {}),

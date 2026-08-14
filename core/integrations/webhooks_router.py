@@ -1,8 +1,10 @@
 """Webhooks API - Configure and manage case event webhooks."""
 
 from typing import List, Optional
+
 from fastapi import APIRouter
 from pydantic import BaseModel
+
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
@@ -23,6 +25,7 @@ ROUTER_META = RouterMeta(
 
 class WebhookCreate(BaseModel):
     """Create webhook."""
+
     name: str
     url: str
     events: List[str]  # case_created, case_updated, case_closed, sla_breach, etc.
@@ -32,6 +35,7 @@ class WebhookCreate(BaseModel):
 
 class WebhookUpdate(BaseModel):
     """Update webhook."""
+
     name: Optional[str] = None
     url: Optional[str] = None
     events: Optional[List[str]] = None
@@ -43,7 +47,7 @@ class WebhookUpdate(BaseModel):
 async def list_webhooks():
     """
     List all configured webhooks.
-    
+
     Returns:
         List of webhooks
     """
@@ -55,10 +59,10 @@ async def list_webhooks():
 async def create_webhook(data: WebhookCreate):
     """
     Create a new webhook.
-    
+
     Args:
         data: Webhook configuration
-    
+
     Returns:
         Created webhook
     """
@@ -69,7 +73,7 @@ async def create_webhook(data: WebhookCreate):
         "url": data.url,
         "events": data.events,
         "active": data.active,
-        "message": "Webhook management coming soon"
+        "message": "Webhook management coming soon",
     }
 
 
@@ -77,11 +81,11 @@ async def create_webhook(data: WebhookCreate):
 async def update_webhook(webhook_id: str, data: WebhookUpdate):
     """
     Update a webhook.
-    
+
     Args:
         webhook_id: Webhook ID
         data: Update data
-    
+
     Returns:
         Updated webhook
     """
@@ -93,10 +97,10 @@ async def update_webhook(webhook_id: str, data: WebhookUpdate):
 async def delete_webhook(webhook_id: str):
     """
     Delete a webhook.
-    
+
     Args:
         webhook_id: Webhook ID
-    
+
     Returns:
         Success status
     """
@@ -108,10 +112,10 @@ async def delete_webhook(webhook_id: str):
 async def test_webhook(webhook_id: str):
     """
     Test a webhook by sending a test payload.
-    
+
     Args:
         webhook_id: Webhook ID
-    
+
     Returns:
         Test result
     """
@@ -123,14 +127,13 @@ async def test_webhook(webhook_id: str):
 async def get_webhook_deliveries(webhook_id: str, limit: int = 50):
     """
     Get webhook delivery history.
-    
+
     Args:
         webhook_id: Webhook ID
         limit: Maximum deliveries to return
-    
+
     Returns:
         Delivery history
     """
     # TODO: Implement delivery history
     return {"deliveries": [], "message": "Webhook delivery history coming soon"}
-

@@ -5,18 +5,19 @@ Handles user CRUD operations, role assignment, and user administration.
 """
 
 import logging
-from typing import Annotated, List, Optional
-from fastapi import APIRouter, HTTPException, Depends, status, Query
+from typing import Annotated, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 from core.auth.auth_service import AuthService
-from services.api.middleware.auth import get_current_user
 from core.auth.password_validator import PasswordPolicyError, validate_password_strength
 from core.auth.token_blacklist import revoke_all_for_user
-from core.storage.models import User, Role
-from core.storage.schemas import RoleSchema, UserSchema
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
+from core.storage.models import Role, User
+from core.storage.schemas import RoleSchema, UserSchema
+from services.api.middleware.auth import get_current_user
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ ROUTER_META = RouterMeta(
 # Request/Response Models
 class CreateUserRequest(BaseModel):
     """Create user request."""
+
     username: str
     email: EmailStr
     password: str
@@ -41,6 +43,7 @@ class CreateUserRequest(BaseModel):
 
 class UpdateUserRequest(BaseModel):
     """Update user request."""
+
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
     role_id: Optional[str] = None
@@ -49,6 +52,7 @@ class UpdateUserRequest(BaseModel):
 
 class ChangeUserRoleRequest(BaseModel):
     """Change user role request."""
+
     role_id: str
 
 
@@ -78,7 +82,7 @@ async def list_users(
 ):
     """
     List all users (requires users.read permission).
-    
+
     Args:
         skip: Number of users to skip
         limit: Maximum number of users to return
@@ -87,7 +91,7 @@ async def list_users(
         search: Search in username, email, or full name
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         List of users
     """
@@ -95,45 +99,45 @@ async def list_users(
     if not AuthService.check_permission(current_user.user_id, "users.read"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.read required"
+            detail="Permission denied: users.read required",
         )
-    
+
     try:
         query = session.query(User)
-        
+
         # Apply filters
         if role_id:
             query = query.filter(User.role_id == role_id)
-        
+
         if is_active is not None:
             query = query.filter(User.is_active == is_active)
-        
+
         if search:
             search_pattern = f"%{search}%"
             query = query.filter(
-                (User.username.ilike(search_pattern)) |
-                (User.email.ilike(search_pattern)) |
-                (User.full_name.ilike(search_pattern))
+                (User.username.ilike(search_pattern))
+                | (User.email.ilike(search_pattern))
+                | (User.full_name.ilike(search_pattern))
             )
-        
+
         # Get total count
         total = query.count()
-        
+
         # Apply pagination
         users = query.offset(skip).limit(limit).all()
-        
+
         return {
             "total": total,
             "skip": skip,
             "limit": limit,
-            "users": UserSchema.dump_many(users)
+            "users": UserSchema.dump_many(users),
         }
-    
+
     except Exception as e:
         logger.error(f"List users error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list users"
+            detail="Failed to list users",
         )
 
 
@@ -145,12 +149,12 @@ async def get_user(
 ):
     """
     Get user by ID (requires users.read permission).
-    
+
     Args:
         user_id: User ID
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         User information
     """
@@ -159,26 +163,25 @@ async def get_user(
         if not AuthService.check_permission(current_user.user_id, "users.read"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Permission denied: users.read required"
+                detail="Permission denied: users.read required",
             )
-    
+
     user = session.query(User).filter(User.user_id == user_id).first()
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
-    
+
     user_dict = UserSchema.dump(user)
-    
+
     # Add role information
     role = session.query(Role).filter(Role.role_id == user.role_id).first()
     if role:
         user_dict["role"] = RoleSchema.dump(role)
-    
+
     # Add permissions
     user_dict["permissions"] = AuthService.get_user_permissions(user_id)
-    
+
     return user_dict
 
 
@@ -190,12 +193,12 @@ async def create_user(
 ):
     """
     Create a new user (requires users.write permission).
-    
+
     Args:
         request: User creation details
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         Created user information
     """
@@ -203,9 +206,9 @@ async def create_user(
     if not AuthService.check_permission(current_user.user_id, "users.write"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.write required"
+            detail="Permission denied: users.write required",
         )
-    
+
     # Validate password against the full strength policy. Penalize passwords
     # built from the new account's own identifiers.
     try:
@@ -223,8 +226,7 @@ async def create_user(
     role = session.query(Role).filter(Role.role_id == request.role_id).first()
     if not role:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid role ID"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
         )
 
     if not _can_assign_role(current_user, role, session):
@@ -232,7 +234,7 @@ async def create_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Cannot assign a role with more privileges than your own",
         )
-    
+
     # Create user
     user = AuthService.create_user(
         username=request.username,
@@ -240,15 +242,15 @@ async def create_user(
         password=request.password,
         full_name=request.full_name,
         role_id=request.role_id,
-        session=session
+        session=session,
     )
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username or email already exists"
+            detail="Username or email already exists",
         )
-    
+
     logger.info(f"User created by {current_user.username}: {user.username}")
     return UserSchema.dump(user)
 
@@ -262,13 +264,13 @@ async def update_user(
 ):
     """
     Update user information (requires users.write permission).
-    
+
     Args:
         user_id: User ID to update
         request: Update details
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         Updated user information
     """
@@ -276,17 +278,16 @@ async def update_user(
     if not AuthService.check_permission(current_user.user_id, "users.write"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.write required"
+            detail="Permission denied: users.write required",
         )
-    
+
     # Get user
     user = session.query(User).filter(User.user_id == user_id).first()
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
-    
+
     try:
         # Update fields
         email_changed = False
@@ -295,15 +296,16 @@ async def update_user(
 
         if request.email is not None:
             # Check if email is already taken
-            existing = session.query(User).filter(
-                User.email == request.email,
-                User.user_id != user_id
-            ).first()
+            existing = (
+                session.query(User)
+                .filter(User.email == request.email, User.user_id != user_id)
+                .first()
+            )
 
             if existing:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Email already in use"
+                    detail="Email already in use",
                 )
 
             user.email = request.email
@@ -315,8 +317,7 @@ async def update_user(
             role = session.query(Role).filter(Role.role_id == request.role_id).first()
             if not role:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid role ID"
+                    status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
                 )
             if not _can_assign_role(current_user, role, session):
                 raise HTTPException(
@@ -352,7 +353,7 @@ async def update_user(
         logger.error(f"Update user error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update user"
+            detail="Failed to update user",
         )
 
 
@@ -364,12 +365,12 @@ async def delete_user(
 ):
     """
     Delete a user (requires users.delete permission).
-    
+
     Args:
         user_id: User ID to delete
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         Success message
     """
@@ -377,36 +378,35 @@ async def delete_user(
     if not AuthService.check_permission(current_user.user_id, "users.delete"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.delete required"
+            detail="Permission denied: users.delete required",
         )
-    
+
     # Prevent self-deletion
     if user_id == current_user.user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot delete your own account"
+            detail="Cannot delete your own account",
         )
-    
+
     # Get user
     user = session.query(User).filter(User.user_id == user_id).first()
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
-    
+
     try:
         username = user.username
         session.delete(user)
 
         logger.info(f"User deleted by {current_user.username}: {username}")
         return {"message": "User deleted successfully"}
-    
+
     except Exception as e:
         logger.error(f"Delete user error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete user"
+            detail="Failed to delete user",
         )
 
 
@@ -419,13 +419,13 @@ async def change_user_role(
 ):
     """
     Change user role (requires users.write permission).
-    
+
     Args:
         user_id: User ID
         request: New role ID
         current_user: Current authenticated user
         session: Database session
-    
+
     Returns:
         Updated user information
     """
@@ -433,23 +433,21 @@ async def change_user_role(
     if not AuthService.check_permission(current_user.user_id, "users.write"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Permission denied: users.write required"
+            detail="Permission denied: users.write required",
         )
-    
+
     # Get user
     user = session.query(User).filter(User.user_id == user_id).first()
     if not user:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         )
-    
+
     # Verify role exists
     role = session.query(Role).filter(Role.role_id == request.role_id).first()
     if not role:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid role ID"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid role ID"
         )
 
     if not _can_assign_role(current_user, role, session):
@@ -471,6 +469,7 @@ async def change_user_role(
         # cached token happens to expire.
         try:
             from core.auth.token_blacklist import revoke_all_for_user
+
             await revoke_all_for_user(user.user_id)
         except Exception as exc:
             logger.error(
@@ -480,14 +479,16 @@ async def change_user_role(
                 exc,
             )
 
-        logger.info(f"User role changed by {current_user.username}: {user.username} from {old_role_id} to {request.role_id}")
+        logger.info(
+            f"User role changed by {current_user.username}: {user.username} from {old_role_id} to {request.role_id}"
+        )
         return UserSchema.dump(user)
-    
+
     except Exception as e:
         logger.error(f"Change role error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to change user role"
+            detail="Failed to change user role",
         )
 
 
@@ -513,14 +514,11 @@ async def list_roles(
         )
     try:
         roles = session.query(Role).all()
-        return {
-            "roles": RoleSchema.dump_many(roles)
-        }
-    
+        return {"roles": RoleSchema.dump_many(roles)}
+
     except Exception as e:
         logger.error(f"List roles error: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list roles"
+            detail="Failed to list roles",
         )
-

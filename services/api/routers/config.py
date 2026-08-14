@@ -1,25 +1,30 @@
 """Configuration API endpoints."""
 
-from typing import Any, Dict, Optional, List
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
-from pathlib import Path
 import json
 import logging
 import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from core.config import get_settings, vigil_path
 from core.deps import (
     provide_demo_data,
     provide_integration_bridge,
     provide_mcp_client,
 )
 from core.integrations.integration_bridge_service import IntegrationBridgeService
+from core.integrations.integration_secrets import (
+    redact_secrets,
+    secret_fields_for,
+    split_secrets,
+)
+from core.llm.defaults import DEFAULT_MODEL
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret, set_secret
 from core.storage.config_service import get_config_service
-from core.llm.defaults import DEFAULT_MODEL
-from core.integrations.integration_secrets import redact_secrets, secret_fields_for, split_secrets
-from core.config import get_settings, vigil_path
 
 router = APIRouter()
 
@@ -254,7 +259,6 @@ async def set_claude_config(config: ClaudeConfig):
         # commit) must NOT block the secret write that already succeeded, so
         # this runs in its own transaction rather than the request's.
         try:
-            from core.storage.connection import get_db_session
             from core.storage.models import LLMProviderConfig
             from core.storage.unit_of_work import unit_of_work
 
@@ -709,7 +713,9 @@ def _secrets_set_map(integrations: dict) -> dict:
     for iid in integrations:
         fields = secret_fields_for(iid)
         if fields:
-            result[iid] = {field: bool(get_secret(env)) for field, env in fields.items()}
+            result[iid] = {
+                field: bool(get_secret(env)) for field, env in fields.items()
+            }
     return result
 
 
@@ -1018,10 +1024,9 @@ async def set_general_config(config: GeneralConfig):
 
         # Update the global secrets manager if keyring setting changed
         try:
-            from core.secrets_manager import get_secrets_manager
-
             # Force reinitialize with new setting
             from core import secrets_manager as sm_module
+            from core.secrets_manager import get_secrets_manager
 
             sm_module._secrets_manager = None  # Reset global instance
             get_secrets_manager(enable_keyring=config.enable_keyring)

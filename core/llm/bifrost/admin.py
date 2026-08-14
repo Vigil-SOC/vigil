@@ -393,8 +393,6 @@ async def sync_all_provider_models() -> Dict[str, Any]:
 
 async def _do_sync_all_provider_models() -> Dict[str, Any]:
     # Deferred imports to keep module load cheap.
-    from core.storage.connection import get_db_manager
-    from core.storage.models import LLMProviderConfig
     from core.llm.providers import discovery
     from core.llm.providers.registry import (
         _FALLBACK_MODELS_BY_PROVIDER,
@@ -403,6 +401,8 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
         get_extra_model_ids,
         record_live_meta,
     )
+    from core.storage.connection import get_db_manager
+    from core.storage.models import LLMProviderConfig
 
     db_manager = get_db_manager()
     if db_manager._engine is None:

@@ -58,14 +58,21 @@ def local_bifrost_recovery_retry_limit() -> int:
 
 
 def local_bifrost_restart_enabled() -> bool:
-    return bool(get_ai_operations_setting("local_ollama_recovery_restart_gateway", True))
+    return bool(
+        get_ai_operations_setting("local_ollama_recovery_restart_gateway", True)
+    )
 
 
 def is_gateway_connection_error(error: Exception) -> bool:
     """Recognize network errors without retrying provider or model errors."""
     if isinstance(
         error,
-        (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.NetworkError),
+        (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.ReadTimeout,
+            httpx.NetworkError,
+        ),
     ):
         return True
     try:
@@ -132,13 +139,19 @@ async def recover_local_bifrost() -> RecoveryResult:
 
     async with _RECOVERY_LOCK:
         if await _bifrost_healthy():
-            return RecoveryResult(True, False, "gateway is reachable; retrying the request")
+            return RecoveryResult(
+                True, False, "gateway is reachable; retrying the request"
+            )
         if not local_bifrost_restart_enabled():
-            return RecoveryResult(False, False, "gateway is unavailable and automatic restart is disabled")
+            return RecoveryResult(
+                False, False, "gateway is unavailable and automatic restart is disabled"
+            )
 
         logger.warning("Local Bifrost is unavailable; restarting its container")
         if not await _restart_bifrost():
             return RecoveryResult(False, True, "could not restart the local gateway")
         if await _wait_for_bifrost():
             return RecoveryResult(True, True, "local gateway restarted and is healthy")
-        return RecoveryResult(False, True, "local gateway did not become healthy in time")
+        return RecoveryResult(
+            False, True, "local gateway did not become healthy in time"
+        )

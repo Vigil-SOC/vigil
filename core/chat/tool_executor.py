@@ -8,6 +8,7 @@ Handles three dispatch paths:
 ``ToolExecutor`` is stateful only in ``skill_tool_index``, which ClaudeService
 refreshes before each request via ``_refresh_skill_tools``.
 """
+
 from __future__ import annotations
 
 import json
@@ -65,7 +66,9 @@ class ToolExecutor:
                             skills_by_tool_name=self.skill_tool_index or None,
                         )
                     except Exception as exc:
-                        logger.warning("Skill tool dispatch failed for %s: %s", tool_name, exc)
+                        logger.warning(
+                            "Skill tool dispatch failed for %s: %s", tool_name, exc
+                        )
                         result = {"error": f"Skill execution failed: {exc}"}
 
                 # Security detection tools
@@ -153,7 +156,9 @@ class ToolExecutor:
                 logger.info("Executed backend tool: %s", tool_name)
 
             except Exception as exc:
-                logger.error("Error calling backend tool %s: %s", tool_name, exc, exc_info=True)
+                logger.error(
+                    "Error calling backend tool %s: %s", tool_name, exc, exc_info=True
+                )
                 from core.llm.security import wrap_tool_result
 
                 err_text = wrap_tool_result(
@@ -214,7 +219,9 @@ class ToolExecutor:
                         server_name, actual_tool_name, arguments, timeout=30.0
                     )
                     if isinstance(raw, dict):
-                        blocks = raw.get("content", [{"type": "text", "text": str(raw)}])
+                        blocks = raw.get(
+                            "content", [{"type": "text", "text": str(raw)}]
+                        )
                     else:
                         blocks = [{"type": "text", "text": str(raw)}]
 
@@ -272,7 +279,9 @@ class ToolExecutor:
 
         for item in content:
             tool_name = (
-                item.get("name") if isinstance(item, dict) else getattr(item, "name", None)
+                item.get("name")
+                if isinstance(item, dict)
+                else getattr(item, "name", None)
             )
             if not tool_name:
                 continue
@@ -290,9 +299,7 @@ class ToolExecutor:
 # ------------------------------------------------------------------
 
 
-async def _dispatch_findings_tool(
-    tool_name: str, arguments: Dict, data_service
-) -> Any:
+async def _dispatch_findings_tool(tool_name: str, arguments: Dict, data_service) -> Any:
     """Handle all findings/cases backend tool calls."""
     if tool_name == "list_findings":
         limit = arguments.get("limit", 20)
@@ -502,9 +509,7 @@ def _dispatch_attack_tool(tool_name: str, arguments: Dict, data_service) -> Any:
     return {"error": f"Unknown ATT&CK tool: {tool_name}"}
 
 
-def _dispatch_approval_tool(
-    tool_name: str, arguments: Dict, approval_service
-) -> Any:
+def _dispatch_approval_tool(tool_name: str, arguments: Dict, approval_service) -> Any:
     from dataclasses import asdict
 
     if tool_name == "list_pending_approvals":
@@ -517,11 +522,19 @@ def _dispatch_approval_tool(
 
     if tool_name == "approve_action":
         action = approval_service.approve_action(**arguments)
-        return asdict(action) if action else {"error": "Action not found or cannot be approved"}
+        return (
+            asdict(action)
+            if action
+            else {"error": "Action not found or cannot be approved"}
+        )
 
     if tool_name == "reject_action":
         action = approval_service.reject_action(**arguments)
-        return asdict(action) if action else {"error": "Action not found or cannot be rejected"}
+        return (
+            asdict(action)
+            if action
+            else {"error": "Action not found or cannot be rejected"}
+        )
 
     if tool_name == "get_approval_stats":
         return approval_service.get_stats()

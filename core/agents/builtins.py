@@ -224,7 +224,14 @@ Confidence scoring:
         "id": "reporter",
         "decision_id": "reporting",
         "component_category": "reporting",
-        "task_keywords": ["report", "summary", "document", "board brief", "board report", "risk posture"],
+        "task_keywords": [
+            "report",
+            "summary",
+            "document",
+            "board brief",
+            "board report",
+            "risk posture",
+        ],
         "role": "Reporting Agent specializing in clear communication",
         "name": "Reporting Agent",
         "icon": "W",
@@ -283,7 +290,11 @@ Confidence scoring:
         "color": "#FFD3B6",
         "description": "Attack pattern and technique analysis",
         "specialization": "MITRE ATT&CK Analysis",
-        "recommended_tools": ["get_finding", "get_technique_rollup", "create_attack_layer"],
+        "recommended_tools": [
+            "get_finding",
+            "get_technique_rollup",
+            "create_attack_layer",
+        ],
         "max_tokens": 16384,
         "enable_thinking": True,
         "thinking_budget": 6000,
@@ -497,5 +508,3 @@ Confidence scoring:
 </methodology>""",
     },
 ]
-
-

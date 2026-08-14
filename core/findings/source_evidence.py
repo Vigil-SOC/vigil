@@ -14,7 +14,6 @@ from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any, Dict, Optional
 
-
 SOURCE_EVIDENCE_VERSION = 1
 SOURCE_EVIDENCE_PREVIEW_LIMIT = 100
 SOURCE_EVIDENCE_RAW_TEXT_LIMIT = 65_536

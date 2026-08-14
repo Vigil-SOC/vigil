@@ -12,56 +12,164 @@ logger = logging.getLogger(__name__)
 
 WORKFLOW_STEP_MAP = {
     "incident-response": [
-        {"title": "Initial Triage", "description": "Retrieve finding details, assess severity, determine if false positive"},
-        {"title": "Deep Investigation", "description": "Gather evidence, correlate related findings, build entity timeline"},
-        {"title": "Correlate & Enrich", "description": "Search for related activity, enrich IOCs with threat intel"},
-        {"title": "Map to MITRE ATT&CK", "description": "Map discovered TTPs, create ATT&CK Navigator layer"},
-        {"title": "Containment & Response", "description": "Assess blast radius, propose containment actions, create approval requests"},
-        {"title": "Case Management", "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case"},
-        {"title": "Document & Report", "description": "Write investigation summary, submit for review"},
+        {
+            "title": "Initial Triage",
+            "description": "Retrieve finding details, assess severity, determine if false positive",
+        },
+        {
+            "title": "Deep Investigation",
+            "description": "Gather evidence, correlate related findings, build entity timeline",
+        },
+        {
+            "title": "Correlate & Enrich",
+            "description": "Search for related activity, enrich IOCs with threat intel",
+        },
+        {
+            "title": "Map to MITRE ATT&CK",
+            "description": "Map discovered TTPs, create ATT&CK Navigator layer",
+        },
+        {
+            "title": "Containment & Response",
+            "description": "Assess blast radius, propose containment actions, create approval requests",
+        },
+        {
+            "title": "Case Management",
+            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+        },
+        {
+            "title": "Document & Report",
+            "description": "Write investigation summary, submit for review",
+        },
     ],
     "full-investigation": [
-        {"title": "Evidence Gathering", "description": "Retrieve all related findings, entity context, and evidence"},
-        {"title": "Deep Analysis", "description": "Analyze patterns, identify root cause, build hypotheses"},
-        {"title": "ATT&CK Mapping", "description": "Map all TTPs to MITRE ATT&CK, identify technique chains"},
-        {"title": "Cross-Signal Correlation", "description": "Correlate across data sources, find related campaigns"},
-        {"title": "Response Planning", "description": "Determine response actions, assess risk, create approval requests"},
-        {"title": "Case Management", "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case"},
-        {"title": "Final Report", "description": "Comprehensive report with findings, timeline, and recommendations"},
+        {
+            "title": "Evidence Gathering",
+            "description": "Retrieve all related findings, entity context, and evidence",
+        },
+        {
+            "title": "Deep Analysis",
+            "description": "Analyze patterns, identify root cause, build hypotheses",
+        },
+        {
+            "title": "ATT&CK Mapping",
+            "description": "Map all TTPs to MITRE ATT&CK, identify technique chains",
+        },
+        {
+            "title": "Cross-Signal Correlation",
+            "description": "Correlate across data sources, find related campaigns",
+        },
+        {
+            "title": "Response Planning",
+            "description": "Determine response actions, assess risk, create approval requests",
+        },
+        {
+            "title": "Case Management",
+            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+        },
+        {
+            "title": "Final Report",
+            "description": "Comprehensive report with findings, timeline, and recommendations",
+        },
     ],
     "threat-hunt": [
-        {"title": "Hypothesis Formation", "description": "Form hunt hypothesis based on available intelligence"},
-        {"title": "Data Collection", "description": "Gather relevant findings, search for matching patterns"},
-        {"title": "Network Analysis", "description": "Analyze network flows, identify anomalous connections"},
-        {"title": "Artifact Analysis", "description": "Examine suspicious artifacts, file hashes, processes"},
-        {"title": "Intelligence Enrichment", "description": "Enrich discovered IOCs, check threat intel feeds"},
-        {"title": "Case Management", "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case"},
-        {"title": "Hunt Report", "description": "Document findings, update detections, submit report"},
+        {
+            "title": "Hypothesis Formation",
+            "description": "Form hunt hypothesis based on available intelligence",
+        },
+        {
+            "title": "Data Collection",
+            "description": "Gather relevant findings, search for matching patterns",
+        },
+        {
+            "title": "Network Analysis",
+            "description": "Analyze network flows, identify anomalous connections",
+        },
+        {
+            "title": "Artifact Analysis",
+            "description": "Examine suspicious artifacts, file hashes, processes",
+        },
+        {
+            "title": "Intelligence Enrichment",
+            "description": "Enrich discovered IOCs, check threat intel feeds",
+        },
+        {
+            "title": "Case Management",
+            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+        },
+        {
+            "title": "Hunt Report",
+            "description": "Document findings, update detections, submit report",
+        },
     ],
     "forensic-analysis": [
-        {"title": "Evidence Acquisition", "description": "Identify and preserve digital evidence, establish chain of custody"},
-        {"title": "Initial Assessment", "description": "Preliminary analysis of evidence scope and key artifacts"},
-        {"title": "Malware Analysis", "description": "Analyze suspicious files, executables, and scripts"},
-        {"title": "Network Forensics", "description": "Examine network traffic, DNS logs, connection patterns"},
-        {"title": "Timeline Reconstruction", "description": "Build comprehensive event timeline from all sources"},
-        {"title": "Case Management", "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case"},
-        {"title": "Forensic Report", "description": "Detailed forensic report with evidence chain and conclusions"},
+        {
+            "title": "Evidence Acquisition",
+            "description": "Identify and preserve digital evidence, establish chain of custody",
+        },
+        {
+            "title": "Initial Assessment",
+            "description": "Preliminary analysis of evidence scope and key artifacts",
+        },
+        {
+            "title": "Malware Analysis",
+            "description": "Analyze suspicious files, executables, and scripts",
+        },
+        {
+            "title": "Network Forensics",
+            "description": "Examine network traffic, DNS logs, connection patterns",
+        },
+        {
+            "title": "Timeline Reconstruction",
+            "description": "Build comprehensive event timeline from all sources",
+        },
+        {
+            "title": "Case Management",
+            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+        },
+        {
+            "title": "Forensic Report",
+            "description": "Detailed forensic report with evidence chain and conclusions",
+        },
     ],
     "case-review": [
-        {"title": "Review Findings", "description": "Use get_case to load the case, then get_finding for each finding; review IOCs, timeline, and activities already logged"},
-        {"title": "Root Cause Analysis", "description": "Determine root cause from aggregated evidence across all findings; identify the initial access vector and attack chain"},
-        {"title": "Resolution Planning", "description": "Generate concrete resolution steps using add_resolution_step for containment, eradication, and recovery actions"},
-        {"title": "Recommendations", "description": "Write preventive recommendations, lessons learned, and update case description with executive summary using update_case"},
-        {"title": "Finalize Case", "description": "Ensure all resolution steps are recorded, case description updated, and signal_complete"},
+        {
+            "title": "Review Findings",
+            "description": "Use get_case to load the case, then get_finding for each finding; review IOCs, timeline, and activities already logged",
+        },
+        {
+            "title": "Root Cause Analysis",
+            "description": "Determine root cause from aggregated evidence across all findings; identify the initial access vector and attack chain",
+        },
+        {
+            "title": "Resolution Planning",
+            "description": "Generate concrete resolution steps using add_resolution_step for containment, eradication, and recovery actions",
+        },
+        {
+            "title": "Recommendations",
+            "description": "Write preventive recommendations, lessons learned, and update case description with executive summary using update_case",
+        },
+        {
+            "title": "Finalize Case",
+            "description": "Ensure all resolution steps are recorded, case description updated, and signal_complete",
+        },
     ],
 }
 
 DEFAULT_STEPS = [
-    {"title": "Initial Assessment", "description": "Retrieve and assess the triggering finding(s)"},
-    {"title": "Investigation", "description": "Gather evidence, correlate related activity"},
+    {
+        "title": "Initial Assessment",
+        "description": "Retrieve and assess the triggering finding(s)",
+    },
+    {
+        "title": "Investigation",
+        "description": "Gather evidence, correlate related activity",
+    },
     {"title": "Analysis", "description": "Analyze patterns, enrich IOCs, map TTPs"},
     {"title": "Response", "description": "Propose containment and response actions"},
-    {"title": "Case Management", "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case"},
+    {
+        "title": "Case Management",
+        "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+    },
     {"title": "Report", "description": "Document findings and submit for review"},
 ]
 
@@ -72,19 +180,19 @@ def select_workflow(finding: Dict[str, Any]) -> str:
     recommended = (finding.get("recommended_action") or "").lower()
     category = (finding.get("category") or "").lower()
     mitre = finding.get("mitre_predictions") or {}
-    
+
     if recommended in ("isolate", "block") or severity == "critical":
         return "incident-response"
-    
+
     if category in ("malware", "ransomware"):
         return "forensic-analysis"
-    
+
     if len(mitre) >= 3:
         return "full-investigation"
-    
+
     if severity == "high":
         return "full-investigation"
-    
+
     return "incident-response"
 
 
@@ -92,14 +200,24 @@ def _build_entity_section(finding: Dict[str, Any]) -> str:
     """Build the entity context section from a finding."""
     ctx = finding.get("entity_context") or {}
     parts = []
-    
+
     src_ips = ctx.get("src_ips") or ([ctx["src_ip"]] if ctx.get("src_ip") else [])
-    dst_ips = ctx.get("dest_ips") or ctx.get("dst_ips") or ([ctx["dst_ip"]] if ctx.get("dst_ip") else [])
-    hostnames = ctx.get("hostnames") or ([ctx["hostname"]] if ctx.get("hostname") else [])
-    users = ctx.get("usernames") or ctx.get("users") or ([ctx["user"]] if ctx.get("user") else [])
+    dst_ips = (
+        ctx.get("dest_ips")
+        or ctx.get("dst_ips")
+        or ([ctx["dst_ip"]] if ctx.get("dst_ip") else [])
+    )
+    hostnames = ctx.get("hostnames") or (
+        [ctx["hostname"]] if ctx.get("hostname") else []
+    )
+    users = (
+        ctx.get("usernames")
+        or ctx.get("users")
+        or ([ctx["user"]] if ctx.get("user") else [])
+    )
     domains = ctx.get("domains") or []
     hashes = ctx.get("file_hashes") or []
-    
+
     if src_ips:
         parts.append(f"- Source IPs: {', '.join(src_ips[:5])}")
     if dst_ips:
@@ -112,7 +230,7 @@ def _build_entity_section(finding: Dict[str, Any]) -> str:
         parts.append(f"- Domains: {', '.join(domains[:5])}")
     if hashes:
         parts.append(f"- File Hashes: {', '.join(hashes[:3])}")
-    
+
     return "\n".join(parts) if parts else "- No entity context available"
 
 
@@ -147,18 +265,18 @@ def generate_plan(
         f"priority: {primary.get('severity', 'medium')}",
         f"created: {datetime.utcnow().isoformat()}Z",
         "status: planning",
-        f"current_step: 1",
+        "current_step: 1",
         "---",
         "",
         f"# Investigation Plan: {title}",
         "",
         "## Objective",
     ]
-    
+
     if hypothesis:
         lines.append(f"Hunt hypothesis: {hypothesis}")
         lines.append("")
-    
+
     if primary:
         fid = primary.get("finding_id", "unknown")
         desc = (primary.get("description") or "No description")[:300]
@@ -167,33 +285,35 @@ def generate_plan(
         lines.append("### Entity Context")
         lines.append(_build_entity_section(primary))
         lines.append("")
-        lines.append(f"### MITRE ATT&CK Predictions")
+        lines.append("### MITRE ATT&CK Predictions")
         lines.append(f"- {_format_mitre(primary)}")
         lines.append(f"- Anomaly Score: {primary.get('anomaly_score', 'N/A')}")
     else:
         lines.append("Investigate based on provided context.")
-    
+
     if len(findings) > 1:
         lines.append("")
         lines.append(f"### Additional Trigger Findings ({len(findings) - 1})")
         for f in findings[1:5]:
-            lines.append(f"- {f.get('finding_id', '?')}: {(f.get('description') or 'N/A')[:100]}")
-    
+            lines.append(
+                f"- {f.get('finding_id', '?')}: {(f.get('description') or 'N/A')[:100]}"
+            )
+
     lines.append("")
     lines.append("## Steps")
     lines.append("")
-    
+
     for i, step in enumerate(steps, 1):
         lines.append(f"### Step {i}: {step['title']} [pending]")
         lines.append(f"- {step['description']}")
         lines.append("")
-    
+
     lines.append("## Blockers")
     lines.append("(none)")
     lines.append("")
     lines.append("## Notes")
     lines.append("")
-    
+
     return "\n".join(lines)
 
 
@@ -250,7 +370,9 @@ def generate_case_review_plan(
     return "\n".join(lines)
 
 
-def generate_case_review_context(case_id: str, case_title: str, finding_ids: List[str]) -> str:
+def generate_case_review_context(
+    case_id: str, case_title: str, finding_ids: List[str]
+) -> str:
     """Generate the initial context.md for a case-review investigation."""
     lines = [
         "# Case Review Context",
@@ -277,7 +399,9 @@ def _infer_title(finding: Dict[str, Any], workflow_id: str) -> str:
     ctx = finding.get("entity_context") or {}
 
     subject_parts = []
-    hostnames = ctx.get("hostnames") or ([ctx["hostname"]] if ctx.get("hostname") else [])
+    hostnames = ctx.get("hostnames") or (
+        [ctx["hostname"]] if ctx.get("hostname") else []
+    )
     if hostnames:
         subject_parts.append(hostnames[0])
 
@@ -321,7 +445,9 @@ def generate_initial_state(
         "status": "executing",
         "current_step": 1,
         "total_steps": total_steps,
-        "trigger_finding_ids": [f.get("finding_id") for f in findings if f.get("finding_id")],
+        "trigger_finding_ids": [
+            f.get("finding_id") for f in findings if f.get("finding_id")
+        ],
         "created_at": datetime.utcnow().isoformat(),
         "completed_steps": [],
         "discovered_iocs": {},
@@ -334,7 +460,7 @@ def generate_initial_state(
 def generate_initial_context(findings: List[Dict[str, Any]]) -> str:
     """Generate the initial context.md with trigger finding summaries."""
     lines = ["# Investigation Context", "", "## Trigger Findings", ""]
-    
+
     for f in findings[:5]:
         fid = f.get("finding_id", "unknown")
         sev = f.get("severity", "unknown")
@@ -342,10 +468,10 @@ def generate_initial_context(findings: List[Dict[str, Any]]) -> str:
         lines.append(f"### {fid} (Severity: {sev})")
         lines.append(desc)
         lines.append("")
-    
+
     lines.append("## Progress Notes")
     lines.append("")
-    
+
     return "\n".join(lines)
 
 

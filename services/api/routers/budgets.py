@@ -22,6 +22,7 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
+
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()

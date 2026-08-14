@@ -3,6 +3,7 @@
 L1: in-memory dict (fast, per-process).
 L2: MemPalace-backed JSON files (durable across restarts).
 """
+
 from __future__ import annotations
 
 import json

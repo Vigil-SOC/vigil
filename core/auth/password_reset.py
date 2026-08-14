@@ -47,6 +47,7 @@ def _ttl_seconds() -> int:
 def _get_serializer() -> URLSafeTimedSerializer:
     # Import lazily so tests can stub JWT_SECRET_KEY via env before auth_service loads.
     from core.auth.auth_service import JWT_SECRET_KEY
+
     return URLSafeTimedSerializer(JWT_SECRET_KEY, salt=RESET_TOKEN_PURPOSE)
 
 
@@ -67,7 +68,9 @@ def _redis_client():
     try:
         from redis import asyncio as redis_asyncio
     except Exception as exc:
-        logger.warning("redis.asyncio unavailable: %s — reset single-use check disabled", exc)
+        logger.warning(
+            "redis.asyncio unavailable: %s — reset single-use check disabled", exc
+        )
         return None
     url = get_settings().redis_url or DEFAULT_REDIS_URL
     _reset_redis_client = redis_asyncio.from_url(url, decode_responses=True)

@@ -1,30 +1,31 @@
 """Claude API endpoints for chat, streaming, and Agent SDK workflows."""
 
-from typing import List, Optional, Dict, Union, Any, Tuple
+import asyncio
+import base64
+import json
+import logging
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 from fastapi import (
     APIRouter,
     Depends,
+    File,
     HTTPException,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
-    File,
-    UploadFile,
 )
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
-import asyncio
-import json
-import logging
-import base64
 
-from services.api.middleware.auth import get_current_user
-from core.llm.system_prompt import validate_system_prompt
-from core.storage.models import User
-from core.llm.harness.claude import ClaudeService
 from core.llm.defaults import DEFAULT_MODEL
+from core.llm.harness.claude import ClaudeService
 from core.llm.providers.registry import get_registry
-from core.routing import Auth, RouterMeta
+from core.llm.system_prompt import validate_system_prompt
 from core.rate_limit import rate_limit_dependency
+from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_user
 
 router = APIRouter()
 
@@ -101,6 +102,8 @@ def _persist_chat_turn(
         )
     except Exception as exc:  # noqa: BLE001 — fail-open, never break the chat
         logger.warning("chat history write-through failed (non-fatal): %s", exc)
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -340,9 +343,10 @@ async def chat(request: ChatRequest):
     Returns:
         Claude's response
     """
-    from core.agents.manager import AgentManager
-    import uuid
     import time
+    import uuid
+
+    from core.agents.manager import AgentManager
 
     # Generate unique request ID for tracking
     request_id = str(uuid.uuid4())[:8]
@@ -653,8 +657,8 @@ async def chat_stream(
     Returns:
         Streaming response
     """
-    import uuid
     import time
+    import uuid
 
     # Generate unique request ID for tracking
     request_id = str(uuid.uuid4())[:8]
@@ -1031,9 +1035,7 @@ async def chat_stream(
                         complete=history_reached_end,
                     )
                 except Exception as exc:  # noqa: BLE001 — fail-open
-                    logger.warning(
-                        "chat history persist failed (non-fatal): %s", exc
-                    )
+                    logger.warning("chat history persist failed (non-fatal): %s", exc)
 
     return StreamingResponse(
         generate(),
@@ -1253,7 +1255,7 @@ async def summarize_conversation(request: SummarizeRequest):
             full_text[:max_chars] + "\n\n[... earlier conversation truncated ...]"
         )
 
-    summary_prompt = f"""Summarize the following conversation between a user and an AI assistant (Vigil SOC platform). 
+    summary_prompt = f"""Summarize the following conversation between a user and an AI assistant (Vigil SOC platform).
 Preserve ALL important context including:
 - Key findings, case IDs, IOCs, and entity references discussed
 - Decisions made and actions taken
@@ -1660,9 +1662,10 @@ async def generate_chat_report(request: ChatReportRequest):
     Returns:
         Report file information
     """
-    from core.reporting.report_service import ReportService, REPORTLAB_AVAILABLE
-    from pathlib import Path
     from datetime import datetime
+    from pathlib import Path
+
+    from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 
     if not REPORTLAB_AVAILABLE:
         raise HTTPException(

@@ -4,8 +4,8 @@ import json
 import logging
 import os
 from typing import Dict, Optional
-from core.config import vigil_path
 
+from core.config import vigil_path
 from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
 from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
@@ -292,8 +292,8 @@ class IntegrationBridgeService:
             return {}
 
         try:
-            from core.storage.db_proxy import ProxyConfig, child_env_for_proxy
             from core.integrations.integration_secrets import secret_fields_for
+            from core.storage.db_proxy import ProxyConfig, child_env_for_proxy
         except ImportError:  # pragma: no cover - defensive
             return {}
 

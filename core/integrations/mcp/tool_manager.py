@@ -298,7 +298,10 @@ async def execute_backend_tool(
     # through so a name that merely *looks* like a skill still tries the rest
     # of the chain.
     try:
-        from core.skills.skill_tools_bridge import execute_skill_tool, is_skill_tool_name
+        from core.skills.skill_tools_bridge import (
+            execute_skill_tool,
+            is_skill_tool_name,
+        )
 
         if is_skill_tool_name(tool_name):
             return (

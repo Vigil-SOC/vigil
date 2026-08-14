@@ -146,10 +146,12 @@ def _user_block_messages(content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             if isinstance(source, dict) and source.get("type") == "base64":
                 media_type = source.get("media_type", "image/jpeg")
                 data = source.get("data", "")
-                user_parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{media_type};base64,{data}"}
-                })
+                user_parts.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{media_type};base64,{data}"},
+                    }
+                )
             else:
                 user_parts.append(block)
         else:

@@ -11,15 +11,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from core.agents.agent_ai_generator import AgentAIGenerator
-from core.deps import provide_agent_ai, provide_mcp_registry
-from core.integrations.mcp.registry import MCPRegistry
-from core.llm.system_prompt import validate_system_prompt
 from core.agents.custom_agent_service import (
     CustomAgentAlreadyExists,
     CustomAgentNotFound,
     CustomAgentService,
 )
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX
+from core.deps import provide_agent_ai, provide_mcp_registry
+from core.integrations.mcp.registry import MCPRegistry
+from core.llm.system_prompt import validate_system_prompt
 from core.routing import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
@@ -245,7 +245,7 @@ async def fork_agent(
     without affecting the source.
     """
     try:
-        from services.api.routers.agents import agent_manager, _resolve_agent
+        from services.api.routers.agents import _resolve_agent, agent_manager
 
         source = _resolve_agent(source_agent_id)
         if source is None:

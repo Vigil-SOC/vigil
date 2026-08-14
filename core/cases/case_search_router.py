@@ -1,9 +1,10 @@
 """Advanced Case Search API endpoints."""
 
+from datetime import datetime
 from typing import List, Optional
+
 from fastapi import APIRouter
 from pydantic import BaseModel
-from datetime import datetime
 
 from core.cases.case_search_service import CaseSearchService
 from core.routing import Auth, RouterMeta
@@ -20,6 +21,7 @@ search_service = CaseSearchService()
 
 class AdvancedSearch(BaseModel):
     """Advanced search request."""
+
     query_text: Optional[str] = None
     status: Optional[List[str]] = None
     priority: Optional[List[str]] = None
@@ -39,10 +41,10 @@ class AdvancedSearch(BaseModel):
 async def advanced_search(data: AdvancedSearch):
     """
     Perform advanced case search.
-    
+
     Args:
         data: Search parameters
-    
+
     Returns:
         Search results with pagination
     """
@@ -59,7 +61,7 @@ async def advanced_search(data: AdvancedSearch):
         updated_before=data.updated_before,
         has_sla_breach=data.has_sla_breach,
         limit=data.limit,
-        offset=data.offset
+        offset=data.offset,
     )
     return results
 
@@ -69,17 +71,17 @@ async def full_text_search(
     query: str,
     search_comments: bool = True,
     search_evidence: bool = True,
-    limit: int = 50
+    limit: int = 50,
 ):
     """
     Full-text search across cases and related entities.
-    
+
     Args:
         query: Search query
         search_comments: Include comments
         search_evidence: Include evidence
         limit: Maximum results
-    
+
     Returns:
         Search results grouped by type
     """
@@ -93,11 +95,11 @@ async def full_text_search(
 async def search_by_ioc(ioc_value: str, ioc_type: Optional[str] = None):
     """
     Find cases containing a specific IOC.
-    
+
     Args:
         ioc_value: IOC value to search
         ioc_type: Optional IOC type filter
-    
+
     Returns:
         Cases containing the IOC
     """
@@ -109,14 +111,13 @@ async def search_by_ioc(ioc_value: str, ioc_type: Optional[str] = None):
 async def get_related_cases(case_id: str, max_results: int = 10):
     """
     Find cases related to a given case.
-    
+
     Args:
         case_id: Case ID
         max_results: Maximum results to return
-    
+
     Returns:
         Related cases with similarity scores
     """
     related = search_service.get_related_cases(case_id, max_results)
     return {"related_cases": related}
-

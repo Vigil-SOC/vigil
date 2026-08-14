@@ -64,7 +64,6 @@ except Exception:
 
 from core.llm.cost.calls import compute_call_cost
 
-
 WORKDIR_TOOLS = [
     {
         "name": "read_investigation_file",

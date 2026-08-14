@@ -1,12 +1,13 @@
 """Case Templates API endpoints."""
 
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from core.storage.schemas import CaseSchema, CaseTemplateSchema
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.routing import Auth, RouterMeta
+from core.storage.schemas import CaseSchema, CaseTemplateSchema
 
 router = APIRouter()
 
@@ -20,6 +21,7 @@ workflow_service = CaseWorkflowService()
 
 class TemplateCreate(BaseModel):
     """Create template request."""
+
     name: str
     template_type: str
     description: Optional[str] = None
@@ -34,6 +36,7 @@ class TemplateCreate(BaseModel):
 
 class TemplateUpdate(BaseModel):
     """Update template request."""
+
     name: Optional[str] = None
     description: Optional[str] = None
     default_priority: Optional[str] = None
@@ -48,6 +51,7 @@ class TemplateUpdate(BaseModel):
 
 class CaseFromTemplate(BaseModel):
     """Create case from template."""
+
     title: str
     description: Optional[str] = None
     assignee: Optional[str] = None
@@ -59,11 +63,11 @@ class CaseFromTemplate(BaseModel):
 async def list_templates(template_type: Optional[str] = None, active_only: bool = True):
     """
     List all case templates.
-    
+
     Args:
         template_type: Filter by template type
         active_only: Only return active templates
-    
+
     Returns:
         List of templates
     """
@@ -75,10 +79,10 @@ async def list_templates(template_type: Optional[str] = None, active_only: bool 
 async def get_template(template_id: str):
     """
     Get a specific template.
-    
+
     Args:
         template_id: Template ID
-    
+
     Returns:
         Template details
     """
@@ -92,10 +96,10 @@ async def get_template(template_id: str):
 async def create_template(data: TemplateCreate):
     """
     Create a new case template.
-    
+
     Args:
         data: Template creation data
-    
+
     Returns:
         Created template
     """
@@ -109,12 +113,12 @@ async def create_template(data: TemplateCreate):
         task_templates=data.task_templates,
         playbook_steps=data.playbook_steps,
         applicable_mitre_techniques=data.applicable_mitre_techniques,
-        tags=data.tags
+        tags=data.tags,
     )
-    
+
     if not template:
         raise HTTPException(status_code=500, detail="Failed to create template")
-    
+
     return CaseTemplateSchema.dump(template)
 
 
@@ -122,20 +126,22 @@ async def create_template(data: TemplateCreate):
 async def update_template(template_id: str, data: TemplateUpdate):
     """
     Update a template.
-    
+
     Args:
         template_id: Template ID
         data: Update data
-    
+
     Returns:
         Success status
     """
     updates = {k: v for k, v in data.dict().items() if v is not None}
     success = workflow_service.update_template(template_id, updates)
-    
+
     if not success:
-        raise HTTPException(status_code=404, detail="Template not found or update failed")
-    
+        raise HTTPException(
+            status_code=404, detail="Template not found or update failed"
+        )
+
     return {"success": True}
 
 
@@ -143,18 +149,18 @@ async def update_template(template_id: str, data: TemplateUpdate):
 async def delete_template(template_id: str):
     """
     Delete (deactivate) a template.
-    
+
     Args:
         template_id: Template ID
-    
+
     Returns:
         Success status
     """
     success = workflow_service.delete_template(template_id)
-    
+
     if not success:
         raise HTTPException(status_code=404, detail="Template not found")
-    
+
     return {"success": True}
 
 
@@ -162,11 +168,11 @@ async def delete_template(template_id: str):
 async def create_case_from_template(template_id: str, data: CaseFromTemplate):
     """
     Create a new case from a template.
-    
+
     Args:
         template_id: Template ID
         data: Case creation data
-    
+
     Returns:
         Created case
     """
@@ -176,11 +182,12 @@ async def create_case_from_template(template_id: str, data: CaseFromTemplate):
         description=data.description,
         assignee=data.assignee,
         finding_ids=data.finding_ids,
-        override_priority=data.override_priority
+        override_priority=data.override_priority,
     )
-    
-    if not case:
-        raise HTTPException(status_code=500, detail="Failed to create case from template")
-    
-    return CaseSchema.dump(case)
 
+    if not case:
+        raise HTTPException(
+            status_code=500, detail="Failed to create case from template"
+        )
+
+    return CaseSchema.dump(case)

@@ -6,18 +6,20 @@ only — the previous query-string-based shape allowed traversal payloads
 to be smuggled through ``--url-query`` (see 2026-05 disclosure).
 """
 
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from pydantic import BaseModel
 import logging
-from core.routing import Auth, RouterMeta
-from services.api.middleware.auth import get_current_active_user
+from typing import Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
+
 from core.auth.auth_service import AuthService
-from core.storage.models import User
 from core.integrations.custom_integration_service import (
     CustomIntegrationService,
     InvalidIntegrationIdError,
 )
+from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
 

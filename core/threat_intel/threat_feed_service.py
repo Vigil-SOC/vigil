@@ -120,7 +120,9 @@ def _parse_dt(value: Any) -> Optional[datetime]:
         return value.replace(tzinfo=None)
     if isinstance(value, str):
         try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(
+                tzinfo=None
+            )
         except ValueError:
             return None
     return None
@@ -186,16 +188,24 @@ def fetch_taxii_collection(
         params: Dict[str, Any] = {}
         if since:
             params["added_after"] = since.isoformat() + "Z"
-        envelope = collection.get_objects(**params) if params else collection.get_objects()
+        envelope = (
+            collection.get_objects(**params) if params else collection.get_objects()
+        )
     except Exception as e:  # noqa: BLE001
         logger.error("TAXII fetch failed (%s/%s): %s", server_url, collection_id, e)
         return []
 
-    objects = envelope.get("objects") if isinstance(envelope, dict) else getattr(envelope, "objects", [])
+    objects = (
+        envelope.get("objects")
+        if isinstance(envelope, dict)
+        else getattr(envelope, "objects", [])
+    )
     out: List[NormalizedIndicator] = []
     for obj in objects or []:
         try:
-            out.extend(parse_stix_indicator(obj, source=source, collection_id=collection_id))
+            out.extend(
+                parse_stix_indicator(obj, source=source, collection_id=collection_id)
+            )
         except Exception as e:  # noqa: BLE001
             logger.debug("Skipping malformed STIX object: %s", e)
     return out
@@ -270,7 +280,12 @@ def upsert_indicators(indicators: List[NormalizedIndicator]) -> Dict[str, int]:
                         existing.raw_stix = ind.raw_stix
                     updated += 1
             except Exception as e:  # noqa: BLE001
-                logger.debug("Failed to upsert indicator %s/%s: %s", ind.indicator_type, ind.indicator_value, e)
+                logger.debug(
+                    "Failed to upsert indicator %s/%s: %s",
+                    ind.indicator_type,
+                    ind.indicator_value,
+                    e,
+                )
                 skipped += 1
     return {"inserted": inserted, "updated": updated, "skipped": skipped}
 

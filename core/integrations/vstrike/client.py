@@ -519,22 +519,17 @@ class VStrikeService:
             try:
                 resp = _post(jwt)
             except _HTTP_ERRORS as e:
-                raise RuntimeError(
-                    f"VStrike MCP tools/list retry failed: {e}"
-                ) from e
+                raise RuntimeError(f"VStrike MCP tools/list retry failed: {e}") from e
 
         if resp.status_code != 200:
             raise RuntimeError(
-                f"VStrike MCP tools/list HTTP {resp.status_code}: "
-                f"{resp.text[:200]}"
+                f"VStrike MCP tools/list HTTP {resp.status_code}: " f"{resp.text[:200]}"
             )
 
         try:
             body = _parse_response_body(resp)
         except ValueError as e:
-            raise RuntimeError(
-                f"VStrike MCP tools/list non-JSON response: {e}"
-            ) from e
+            raise RuntimeError(f"VStrike MCP tools/list non-JSON response: {e}") from e
 
         if isinstance(body, dict) and body.get("error"):
             raise RuntimeError(f"VStrike MCP tools/list error: {body['error']}")

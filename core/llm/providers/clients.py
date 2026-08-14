@@ -51,8 +51,7 @@ def _bifrost_anthropic_base_url() -> str:
 
 def create_anthropic_client(api_key: str, *, timeout: float = _DEFAULT_TIMEOUT):
     """Synchronous Anthropic client routed through Bifrost."""
-    from anthropic import \
-        Anthropic  # lazy so tests without the SDK still import
+    from anthropic import Anthropic  # lazy so tests without the SDK still import
 
     return Anthropic(
         api_key=api_key,

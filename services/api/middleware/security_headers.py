@@ -17,6 +17,7 @@ from typing import Callable, Optional
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
+
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -84,9 +85,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     ):
         super().__init__(app)
         self.hsts_enabled = (
-            get_settings().vigil_hsts_enabled
-            if hsts_enabled is None
-            else hsts_enabled
+            get_settings().vigil_hsts_enabled if hsts_enabled is None else hsts_enabled
         )
         self.frame_options_enabled = (
             get_settings().vigil_frame_options_enabled
@@ -104,9 +103,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             else referrer_policy_enabled
         )
         self.csp_enabled = (
-            get_settings().vigil_csp_enabled
-            if csp_enabled is None
-            else csp_enabled
+            get_settings().vigil_csp_enabled if csp_enabled is None else csp_enabled
         )
         self.csp_policy = csp_policy or get_settings().vigil_csp_policy or DEFAULT_CSP
         # Admit allowlisted connector origins so the browser may import their
@@ -133,9 +130,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                     connector_origins,
                 )
         self.hsts_max_age = (
-            get_settings().vigil_hsts_max_age
-            if hsts_max_age is None
-            else hsts_max_age
+            get_settings().vigil_hsts_max_age if hsts_max_age is None else hsts_max_age
         )
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:

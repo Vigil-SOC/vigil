@@ -8,6 +8,7 @@ import logging
 from typing import Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+
 from core.routing import Auth, RouterMeta
 from core.skills.schemas import (
     SkillCreate,

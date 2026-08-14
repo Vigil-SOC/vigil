@@ -20,8 +20,9 @@ from typing import Any, Dict, List, Optional
 import aiohttp
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
-from core.routing import Auth, RouterMeta
+
 from core.config import get_settings
+from core.routing import Auth, RouterMeta
 
 # Prefix and tags live in ROUTER_META, not the APIRouter() constructor — one
 # home for mount metadata across all 42 routers. This module was the sole

@@ -14,11 +14,11 @@ SECURITY_DETECTION_TOOLS = [
                 "techniques": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of MITRE technique IDs (e.g., ['T1059.001', 'T1071.001'])"
+                    "description": "List of MITRE technique IDs (e.g., ['T1059.001', 'T1071.001'])",
                 }
             },
-            "required": ["techniques"]
-        }
+            "required": ["techniques"],
+        },
     },
     {
         "name": "search_detections",
@@ -28,21 +28,21 @@ SECURITY_DETECTION_TOOLS = [
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search query - keywords or phrases (e.g., 'powershell base64', 'lateral movement', 'mimikatz')"
+                    "description": "Search query - keywords or phrases (e.g., 'powershell base64', 'lateral movement', 'mimikatz')",
                 },
                 "source_type": {
                     "type": "string",
                     "enum": ["sigma", "splunk", "elastic", "kql"],
-                    "description": "Optional: Filter by detection format. Omit to search all formats."
+                    "description": "Optional: Filter by detection format. Omit to search all formats.",
                 },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of results to return (default: 20)",
-                    "default": 20
-                }
+                    "default": 20,
+                },
             },
-            "required": ["query"]
-        }
+            "required": ["query"],
+        },
     },
     {
         "name": "identify_gaps",
@@ -52,11 +52,11 @@ SECURITY_DETECTION_TOOLS = [
             "properties": {
                 "context": {
                     "type": "string",
-                    "description": "Context for gap analysis (e.g., 'ransomware', 'APT29', 'initial access', 'lateral movement')"
+                    "description": "Context for gap analysis (e.g., 'ransomware', 'APT29', 'initial access', 'lateral movement')",
                 }
             },
-            "required": ["context"]
-        }
+            "required": ["context"],
+        },
     },
     {
         "name": "get_coverage_stats",
@@ -67,10 +67,10 @@ SECURITY_DETECTION_TOOLS = [
                 "source_type": {
                     "type": "string",
                     "enum": ["sigma", "splunk", "elastic", "kql"],
-                    "description": "Optional: Get stats for specific source format only"
+                    "description": "Optional: Get stats for specific source format only",
                 }
-            }
-        }
+            },
+        },
     },
     {
         "name": "get_detection_count",
@@ -81,11 +81,11 @@ SECURITY_DETECTION_TOOLS = [
                 "source_type": {
                     "type": "string",
                     "enum": ["sigma", "splunk", "elastic", "kql"],
-                    "description": "Optional: Count for specific source format"
+                    "description": "Optional: Count for specific source format",
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 ]
 
 # DeepTempo Findings Tools (Already implemented in backend)
@@ -99,40 +99,40 @@ DEEPTEMPO_FINDING_TOOLS = [
                 "severity": {
                     "type": "string",
                     "enum": ["low", "medium", "high", "critical"],
-                    "description": "Filter by severity level"
+                    "description": "Filter by severity level",
                 },
                 "data_source": {
                     "type": "string",
-                    "description": "Filter by data source (e.g., 'sysmon', 'cloudtrail')"
+                    "description": "Filter by data source (e.g., 'sysmon', 'cloudtrail')",
                 },
                 "status": {
                     "type": "string",
-                    "description": "Filter by status (e.g., 'new', 'investigating', 'resolved')"
+                    "description": "Filter by status (e.g., 'new', 'investigating', 'resolved')",
                 },
                 "sort_by": {
                     "type": "string",
                     "enum": ["timestamp", "anomaly_score", "severity"],
                     "description": "Column to sort by",
-                    "default": "timestamp"
+                    "default": "timestamp",
                 },
                 "sort_order": {
                     "type": "string",
                     "enum": ["asc", "desc"],
                     "description": "Sort direction",
-                    "default": "desc"
+                    "default": "desc",
                 },
                 "offset": {
                     "type": "integer",
                     "description": "Pagination offset (0-based)",
-                    "default": 0
+                    "default": 0,
                 },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of findings to return",
-                    "default": 20
-                }
-            }
-        }
+                    "default": 20,
+                },
+            },
+        },
     },
     {
         "name": "search_findings",
@@ -142,50 +142,38 @@ DEEPTEMPO_FINDING_TOOLS = [
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Text search query (searches finding IDs, descriptions, entity context)"
+                    "description": "Text search query (searches finding IDs, descriptions, entity context)",
                 },
                 "severity": {
                     "type": "string",
                     "enum": ["low", "medium", "high", "critical"],
-                    "description": "Filter by severity level"
+                    "description": "Filter by severity level",
                 },
                 "data_source": {
                     "type": "string",
-                    "description": "Filter by data source"
+                    "description": "Filter by data source",
                 },
-                "status": {
-                    "type": "string",
-                    "description": "Filter by status"
-                },
+                "status": {"type": "string", "description": "Filter by status"},
                 "sort_by": {
                     "type": "string",
                     "enum": ["timestamp", "anomaly_score", "severity"],
-                    "default": "anomaly_score"
+                    "default": "anomaly_score",
                 },
                 "sort_order": {
                     "type": "string",
                     "enum": ["asc", "desc"],
-                    "default": "desc"
+                    "default": "desc",
                 },
-                "offset": {
-                    "type": "integer",
-                    "default": 0
-                },
-                "limit": {
-                    "type": "integer",
-                    "default": 20
-                }
+                "offset": {"type": "integer", "default": 0},
+                "limit": {"type": "integer", "default": 20},
             },
-            "required": ["query"]
-        }
+            "required": ["query"],
+        },
     },
     {
         "name": "get_findings_stats",
         "description": "Get aggregate statistics about all findings without returning individual finding data. Returns counts by severity, data source, status, and top MITRE techniques. Use this to get an overview before drilling into specific findings.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "get_finding",
@@ -195,11 +183,11 @@ DEEPTEMPO_FINDING_TOOLS = [
             "properties": {
                 "finding_id": {
                     "type": "string",
-                    "description": "The finding ID (e.g., 'f-20260209-001')"
+                    "description": "The finding ID (e.g., 'f-20260209-001')",
                 }
             },
-            "required": ["finding_id"]
-        }
+            "required": ["finding_id"],
+        },
     },
     {
         "name": "nearest_neighbors",
@@ -209,16 +197,16 @@ DEEPTEMPO_FINDING_TOOLS = [
             "properties": {
                 "finding_id": {
                     "type": "string",
-                    "description": "Reference finding ID to find neighbors for"
+                    "description": "Reference finding ID to find neighbors for",
                 },
                 "limit": {
                     "type": "integer",
                     "description": "Number of similar findings to return",
-                    "default": 10
-                }
+                    "default": 10,
+                },
             },
-            "required": ["finding_id"]
-        }
+            "required": ["finding_id"],
+        },
     },
     {
         "name": "list_cases",
@@ -229,33 +217,25 @@ DEEPTEMPO_FINDING_TOOLS = [
                 "status": {
                     "type": "string",
                     "enum": ["open", "in_progress", "closed"],
-                    "description": "Filter by case status"
+                    "description": "Filter by case status",
                 },
                 "severity": {
                     "type": "string",
                     "enum": ["low", "medium", "high", "critical"],
-                    "description": "Filter by severity"
+                    "description": "Filter by severity",
                 },
-                "limit": {
-                    "type": "integer",
-                    "default": 50
-                }
-            }
-        }
+                "limit": {"type": "integer", "default": 50},
+            },
+        },
     },
     {
         "name": "get_case",
         "description": "Get detailed information about a specific case including all findings, timeline, activities, and MITRE techniques.",
         "input_schema": {
             "type": "object",
-            "properties": {
-                "case_id": {
-                    "type": "string",
-                    "description": "The case ID"
-                }
-            },
-            "required": ["case_id"]
-        }
+            "properties": {"case_id": {"type": "string", "description": "The case ID"}},
+            "required": ["case_id"],
+        },
     },
     {
         "name": "create_case",
@@ -263,27 +243,24 @@ DEEPTEMPO_FINDING_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "title": {
-                    "type": "string",
-                    "description": "Case title/summary"
-                },
+                "title": {"type": "string", "description": "Case title/summary"},
                 "description": {
                     "type": "string",
-                    "description": "Detailed case description"
+                    "description": "Detailed case description",
                 },
                 "severity": {
                     "type": "string",
                     "enum": ["low", "medium", "high", "critical"],
-                    "description": "Case severity"
+                    "description": "Case severity",
                 },
                 "finding_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "Optional: Initial findings to add to case"
-                }
+                    "description": "Optional: Initial findings to add to case",
+                },
             },
-            "required": ["title", "severity"]
-        }
+            "required": ["title", "severity"],
+        },
     },
     {
         "name": "add_finding_to_case",
@@ -292,10 +269,10 @@ DEEPTEMPO_FINDING_TOOLS = [
             "type": "object",
             "properties": {
                 "case_id": {"type": "string"},
-                "finding_id": {"type": "string"}
+                "finding_id": {"type": "string"},
             },
-            "required": ["case_id", "finding_id"]
-        }
+            "required": ["case_id", "finding_id"],
+        },
     },
     {
         "name": "update_case",
@@ -305,12 +282,21 @@ DEEPTEMPO_FINDING_TOOLS = [
             "properties": {
                 "case_id": {"type": "string", "description": "The case ID to update"},
                 "title": {"type": "string", "description": "New title"},
-                "description": {"type": "string", "description": "New description or executive summary"},
-                "status": {"type": "string", "enum": ["open", "investigating", "resolved", "closed"]},
-                "priority": {"type": "string", "enum": ["low", "medium", "high", "critical"]}
+                "description": {
+                    "type": "string",
+                    "description": "New description or executive summary",
+                },
+                "status": {
+                    "type": "string",
+                    "enum": ["open", "investigating", "resolved", "closed"],
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                },
             },
-            "required": ["case_id"]
-        }
+            "required": ["case_id"],
+        },
     },
     {
         "name": "add_resolution_step",
@@ -319,13 +305,22 @@ DEEPTEMPO_FINDING_TOOLS = [
             "type": "object",
             "properties": {
                 "case_id": {"type": "string", "description": "The case ID"},
-                "description": {"type": "string", "description": "What needs to be done or was done"},
-                "action_taken": {"type": "string", "description": "The specific action taken or recommended"},
-                "result": {"type": "string", "description": "Outcome or expected outcome of the action"}
+                "description": {
+                    "type": "string",
+                    "description": "What needs to be done or was done",
+                },
+                "action_taken": {
+                    "type": "string",
+                    "description": "The specific action taken or recommended",
+                },
+                "result": {
+                    "type": "string",
+                    "description": "Outcome or expected outcome of the action",
+                },
             },
-            "required": ["case_id", "description", "action_taken"]
-        }
-    }
+            "required": ["case_id", "description", "action_taken"],
+        },
+    },
 ]
 
 # Attack Layer Tools
@@ -340,10 +335,10 @@ ATTACK_LAYER_TOOLS = [
                     "type": "string",
                     "enum": ["coverage", "findings", "detections"],
                     "description": "Type of layer to generate",
-                    "default": "coverage"
+                    "default": "coverage",
                 }
-            }
-        }
+            },
+        },
     },
     {
         "name": "get_technique_rollup",
@@ -353,11 +348,11 @@ ATTACK_LAYER_TOOLS = [
             "properties": {
                 "tactic": {
                     "type": "string",
-                    "description": "Optional: Filter by MITRE tactic (e.g., 'initial-access', 'execution')"
+                    "description": "Optional: Filter by MITRE tactic (e.g., 'initial-access', 'execution')",
                 }
-            }
-        }
-    }
+            },
+        },
+    },
 ]
 
 # Approval Tools
@@ -371,10 +366,10 @@ APPROVAL_TOOLS = [
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of pending actions to return",
-                    "default": 50
+                    "default": 50,
                 }
-            }
-        }
+            },
+        },
     },
     {
         "name": "get_approval_action",
@@ -384,11 +379,11 @@ APPROVAL_TOOLS = [
             "properties": {
                 "action_id": {
                     "type": "string",
-                    "description": "The action ID (e.g., 'action-20260209-001')"
+                    "description": "The action ID (e.g., 'action-20260209-001')",
                 }
             },
-            "required": ["action_id"]
-        }
+            "required": ["action_id"],
+        },
     },
     {
         "name": "approve_action",
@@ -398,16 +393,16 @@ APPROVAL_TOOLS = [
             "properties": {
                 "action_id": {
                     "type": "string",
-                    "description": "The action ID to approve"
+                    "description": "The action ID to approve",
                 },
                 "approved_by": {
                     "type": "string",
                     "description": "Name of approver (e.g., 'analyst_name', 'auto_approved')",
-                    "default": "analyst"
-                }
+                    "default": "analyst",
+                },
             },
-            "required": ["action_id"]
-        }
+            "required": ["action_id"],
+        },
     },
     {
         "name": "reject_action",
@@ -417,36 +412,29 @@ APPROVAL_TOOLS = [
             "properties": {
                 "action_id": {
                     "type": "string",
-                    "description": "The action ID to reject"
+                    "description": "The action ID to reject",
                 },
-                "reason": {
-                    "type": "string",
-                    "description": "Reason for rejection"
-                },
+                "reason": {"type": "string", "description": "Reason for rejection"},
                 "rejected_by": {
                     "type": "string",
                     "description": "Name of person rejecting",
-                    "default": "analyst"
-                }
+                    "default": "analyst",
+                },
             },
-            "required": ["action_id", "reason"]
-        }
+            "required": ["action_id", "reason"],
+        },
     },
     {
         "name": "get_approval_stats",
         "description": "Get statistics about approval actions including total, pending, approved, rejected, and executed counts.",
-        "input_schema": {
-            "type": "object",
-            "properties": {}
-        }
-    }
+        "input_schema": {"type": "object", "properties": {}},
+    },
 ]
 
 # Combine all tools
 ALL_TOOLS = (
-    SECURITY_DETECTION_TOOLS +
-    DEEPTEMPO_FINDING_TOOLS +
-    ATTACK_LAYER_TOOLS +
-    APPROVAL_TOOLS
+    SECURITY_DETECTION_TOOLS
+    + DEEPTEMPO_FINDING_TOOLS
+    + ATTACK_LAYER_TOOLS
+    + APPROVAL_TOOLS
 )
-

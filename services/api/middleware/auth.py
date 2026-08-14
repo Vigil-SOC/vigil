@@ -5,18 +5,18 @@ Provides middleware for FastAPI to validate JWT tokens and check permissions.
 Supports DEV_MODE for bypassing authentication during development.
 """
 
-from core.routing import UnitOfWorkSession
 import logging
 from typing import Optional
-from fastapi import HTTPException, Header, Depends, Request, status
+
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
 from core.auth.token_blacklist import is_token_revoked
-from core.storage.models import User
-
 from core.config import get_settings
+from core.routing import UnitOfWorkSession
+from core.storage.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,9 @@ def _get_dev_user(session: Session) -> User:
 
         # If no admin, create a mock user object (won't be persisted)
         if _dev_user is None:
-            from core.storage.models import Role
             import uuid
+
+            from core.storage.models import Role
 
             # Try to get admin role
             admin_role = session.query(Role).filter(Role.name == "admin").first()

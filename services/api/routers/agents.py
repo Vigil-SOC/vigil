@@ -1,15 +1,16 @@
 """Agents API endpoints for SOC agent management."""
 
+import logging
 from typing import Optional
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-import logging
 
+from core.agents.builtins import DEFAULT_AGENT_ID
+from core.agents.manager import CUSTOM_AGENT_ID_PREFIX, AgentManager
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.llm.defaults import DEFAULT_MODEL
-from core.agents.builtins import DEFAULT_AGENT_ID
-from core.agents.manager import AgentManager, CUSTOM_AGENT_ID_PREFIX
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
@@ -42,6 +43,7 @@ def _resolve_agent(agent_id: str):
 
 class InvestigationRequest(BaseModel):
     """Request to start an investigation with an agent."""
+
     finding_id: str
     agent_id: Optional[str] = DEFAULT_AGENT_ID
     additional_context: Optional[str] = None
@@ -61,10 +63,7 @@ async def list_agents():
         # place — you'd still get the built-in list back.
         agent_manager.refresh_custom_agents()
         agents = agent_manager.get_agent_list()
-        return {
-            "agents": agents,
-            "current_agent": agent_manager.current_agent_id
-        }
+        return {"agents": agents, "current_agent": agent_manager.current_agent_id}
     except Exception as e:
         logger.error(f"Error listing agents: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -74,10 +73,10 @@ async def list_agents():
 async def get_agent(agent_id: str):
     """
     Get details for a specific agent.
-    
+
     Args:
         agent_id: The agent ID
-    
+
     Returns:
         Agent details
     """
@@ -95,7 +94,7 @@ async def get_agent(agent_id: str):
             "specialization": agent.specialization,
             "recommended_tools": agent.recommended_tools,
             "max_tokens": agent.max_tokens,
-            "enable_thinking": agent.enable_thinking
+            "enable_thinking": agent.enable_thinking,
         }
     except HTTPException:
         raise
@@ -108,10 +107,10 @@ async def get_agent(agent_id: str):
 async def set_current_agent(agent_id: str):
     """
     Set the current active agent.
-    
+
     Args:
         agent_id: The agent ID to set as current
-    
+
     Returns:
         Success status
     """
@@ -119,11 +118,8 @@ async def set_current_agent(agent_id: str):
         success = agent_manager.set_current_agent(agent_id)
         if not success:
             raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
-        
-        return {
-            "success": True,
-            "current_agent": agent_manager.current_agent_id
-        }
+
+        return {"success": True, "current_agent": agent_manager.current_agent_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -135,32 +131,40 @@ async def set_current_agent(agent_id: str):
 async def start_investigation(request: InvestigationRequest):
     """
     Start an investigation on a finding with a specific agent.
-    
+
     Args:
         request: Investigation request with finding ID and agent
-    
+
     Returns:
         Investigation prompt and agent details
     """
     from core.storage.database_data_service import DatabaseDataService
-    
+
     try:
         # Get the finding
         data_service = DatabaseDataService()
         finding = data_service.get_finding(request.finding_id)
-        
+
         if not finding:
-            raise HTTPException(status_code=404, detail=f"Finding not found: {request.finding_id}")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Finding not found: {request.finding_id}"
+            )
+
         # Get the agent
         agent = _resolve_agent(request.agent_id)
         if not agent:
-            raise HTTPException(status_code=404, detail=f"Agent not found: {request.agent_id}")
-        
+            raise HTTPException(
+                status_code=404, detail=f"Agent not found: {request.agent_id}"
+            )
+
         # Construct investigation prompt
-        techniques = finding.get('predicted_techniques', [])
-        technique_str = ', '.join([t.get('technique_id', '') for t in techniques]) if techniques else 'None'
-        
+        techniques = finding.get("predicted_techniques", [])
+        technique_str = (
+            ", ".join([t.get("technique_id", "") for t in techniques])
+            if techniques
+            else "None"
+        )
+
         prompt = f"""Please investigate this security finding:
 
 **Finding ID:** {finding.get('finding_id')}
@@ -174,7 +178,7 @@ async def start_investigation(request: InvestigationRequest):
 {f'**Additional Context:** {request.additional_context}' if request.additional_context else ''}
 
 Please conduct a thorough investigation of this finding. Use your available tools to gather more information, correlate with other findings, and provide your analysis."""
-        
+
         return {
             "prompt": prompt,
             "agent": {
@@ -182,11 +186,11 @@ Please conduct a thorough investigation of this finding. Use your available tool
                 "name": agent.name,
                 "icon": agent.icon,
                 "color": agent.color,
-                "system_prompt": agent.system_prompt
+                "system_prompt": agent.system_prompt,
             },
-            "finding": finding
+            "finding": finding,
         }
-    
+
     except HTTPException:
         raise
     except Exception as e:
@@ -196,6 +200,7 @@ Please conduct a thorough investigation of this finding. Use your available tool
 
 class AgentRunRequest(BaseModel):
     """Request to run an agent task with Agent SDK."""
+
     finding_id: Optional[str] = None
     case_id: Optional[str] = None
     task: Optional[str] = None
@@ -210,37 +215,45 @@ async def run_agent(
 ):
     """
     Run an agent task using Claude Agent SDK.
-    
+
     This endpoint leverages the Agent SDK for autonomous tool execution,
     allowing the agent to investigate findings, cases, or perform custom tasks.
-    
+
     Args:
         request: Agent run request
-    
+
     Returns:
         Agent execution result with tool calls and analysis
     """
-    from core.storage.database_data_service import DatabaseDataService
     from core.llm.harness.claude import ClaudeService
-    
+    from core.storage.database_data_service import DatabaseDataService
+
     try:
         agent = _resolve_agent(request.agent_id)
         if not agent:
-            raise HTTPException(status_code=404, detail=f"Agent not found: {request.agent_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Agent not found: {request.agent_id}"
+            )
 
         # Build task from finding/case if not explicitly provided
         task = request.task
         context_data = {}
-        
+
         if request.finding_id and not task:
             data_service = DatabaseDataService()
             finding = data_service.get_finding(request.finding_id)
             if not finding:
-                raise HTTPException(status_code=404, detail=f"Finding not found: {request.finding_id}")
-            
-            techniques = finding.get('predicted_techniques', [])
-            technique_str = ', '.join([t.get('technique_id', '') for t in techniques]) if techniques else 'None'
-            
+                raise HTTPException(
+                    status_code=404, detail=f"Finding not found: {request.finding_id}"
+                )
+
+            techniques = finding.get("predicted_techniques", [])
+            technique_str = (
+                ", ".join([t.get("technique_id", "") for t in techniques])
+                if techniques
+                else "None"
+            )
+
             task = f"""Investigate security finding {finding.get('finding_id')}.
 
 Finding Details:
@@ -252,14 +265,16 @@ Finding Details:
 - MITRE ATT&CK Techniques: {technique_str}
 
 Use the get_finding tool first to retrieve full details, then investigate thoroughly."""
-            context_data['finding'] = finding
-            
+            context_data["finding"] = finding
+
         elif request.case_id and not task:
             data_service = DatabaseDataService()
             case = data_service.get_case(request.case_id)
             if not case:
-                raise HTTPException(status_code=404, detail=f"Case not found: {request.case_id}")
-            
+                raise HTTPException(
+                    status_code=404, detail=f"Case not found: {request.case_id}"
+                )
+
             task = f"""Investigate case {case.get('case_id')}.
 
 Case Details:
@@ -270,11 +285,13 @@ Case Details:
 - Finding Count: {len(case.get('finding_ids', []))}
 
 Use the get_case tool first to retrieve full details, then investigate all associated findings."""
-            context_data['case'] = case
-        
+            context_data["case"] = case
+
         if not task:
-            raise HTTPException(status_code=400, detail="No task, finding_id, or case_id provided")
-        
+            raise HTTPException(
+                status_code=400, detail="No task, finding_id, or case_id provided"
+            )
+
         claude_service = ClaudeService(
             use_backend_tools=True,
             use_mcp_tools=True,  # Enable MCP tools for dynamic enrichment
@@ -282,12 +299,12 @@ Use the get_case tool first to retrieve full details, then investigate all assoc
             enable_thinking=agent.enable_thinking,
             mcp_registry=registry,
         )
-        
+
         if not claude_service.has_api_key():
             from services.api.routers.claude import NO_PROVIDER_DETAIL
 
             raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
-        
+
         # Build allowed tools: combine agent's recommended tools with
         # dynamically discovered MCP tools from the registry
         allowed_tools = list(agent.recommended_tools) if agent.recommended_tools else []
@@ -295,39 +312,40 @@ Use the get_case tool first to retrieve full details, then investigate all assoc
             mcp_tool_names = registry.get_tool_names()
             if mcp_tool_names:
                 allowed_tools.extend(mcp_tool_names)
-                logger.info(f"Agent '{agent.id}' enriched with {len(mcp_tool_names)} MCP tools")
+                logger.info(
+                    f"Agent '{agent.id}' enriched with {len(mcp_tool_names)} MCP tools"
+                )
         except Exception as e:
             logger.debug(f"Could not get MCP tools from registry: {e}")
-        
+
         result = await claude_service.run_agent_task(
             task=task,
             agent_config={
                 "system_prompt": agent.system_prompt,
                 "allowed_tools": allowed_tools if allowed_tools else None,
                 "max_turns": 15,
-                "model": DEFAULT_MODEL
-            }
+                "model": DEFAULT_MODEL,
+            },
         )
-        
+
         return {
             "success": result.get("success", False),
             "agent": {
                 "id": agent.id,
                 "name": agent.name,
                 "icon": agent.icon,
-                "color": agent.color
+                "color": agent.color,
             },
             "task": task,
             "result": result.get("final_result", ""),
             "tool_calls": result.get("tool_calls", []),
             "error": result.get("error"),
             "context": context_data,
-            "agent_sdk_used": request.use_agent_sdk
+            "agent_sdk_used": request.use_agent_sdk,
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Error running agent: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-

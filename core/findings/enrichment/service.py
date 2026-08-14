@@ -70,8 +70,8 @@ def _resolve_provider(component: str) -> Tuple[Any, str, Any]:
         NoProviderConfigured: nothing resolved, or no Anthropic API key.
         ProviderUnavailable: the resolved provider id has no spec row.
     """
-    from core.llm.router.router import get_provider_spec
     from core.llm.providers.registry import get_registry
+    from core.llm.router.router import get_provider_spec
 
     resolved_model = get_registry().resolve_model_for_component(component)
     if not resolved_model:
@@ -128,13 +128,13 @@ async def _dispatch(
         "model": model_id,
         "max_tokens": LOCAL_MAX_TOKENS,
     }
-    from core.llm.router.router import LLMRouter
     from core.llm.providers.recovery import (
         is_gateway_connection_error,
         local_bifrost_recovery_enabled,
         local_bifrost_recovery_retry_limit,
         recover_local_bifrost,
     )
+    from core.llm.router.router import LLMRouter
 
     retry_limit = local_bifrost_recovery_retry_limit()
     for attempt in range(retry_limit + 1):

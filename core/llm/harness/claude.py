@@ -9,8 +9,8 @@ from pathlib import Path  # noqa: F401 — patched as ``claude.Path`` in tests
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
 
 from core.config import REPO_ROOT, get_settings
-from core.secrets import get_secret
 from core.llm.defaults import DEFAULT_MODEL, build_thinking_kwargs
+from core.secrets import get_secret
 
 # GH #89 — resolve the summarization model via ai_model_configs with a safe
 # fallback to the historical hardcoded default. Defined at module scope so
@@ -36,8 +36,8 @@ def _resolve_summarization_model() -> str:
 
 # Import backend tool support
 try:
-    from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
     from core.detections.tools import get_security_detection_tools
+    from core.llm.tool_schemas import ALL_TOOLS as BACKEND_TOOLS
 
     BACKEND_TOOLS_AVAILABLE = True
 except ImportError as e:
@@ -51,6 +51,7 @@ try:
     # `create_anthropic_client` / `create_async_anthropic_client` in
     # core.llm.providers.clients so every Anthropic call flows through Bifrost (GH #84).
     from anthropic import Anthropic, AsyncAnthropic  # noqa: F401
+
     from core.llm.providers.clients import (
         create_anthropic_client,
         create_async_anthropic_client,
@@ -62,8 +63,9 @@ except ImportError:
 
 # OTEL instrumentation (lazy to avoid hard dependency)
 try:
-    from core.telemetry import get_tracer, get_meter, create_genai_metrics
     from opentelemetry.trace import SpanKind
+
+    from core.telemetry import create_genai_metrics, get_meter, get_tracer
 
     _cs_tracer = get_tracer("vigil.services.claude")
     _cs_meter = get_meter("vigil.services.claude")
@@ -82,9 +84,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+from core.chat.context_manager import ContextManager  # noqa: E402
+
 # Sub-module imports (lazy to avoid circular deps at module load)
 from core.chat.session_manager import SessionManager  # noqa: E402
-from core.chat.context_manager import ContextManager  # noqa: E402
 from core.chat.tool_executor import ToolExecutor  # noqa: E402
 from core.detections.detection_rules_service import DetectionRulesService  # noqa: E402
 from core.integrations.mcp.client import process_mcp_client  # noqa: E402
@@ -122,7 +125,9 @@ class ClaudeService:
                 Anthropic provider row (GH #88). When set, _load_api_key reads
                 this secret first before the legacy CLAUDE_API_KEY fallback chain.
         """
-        self._mcp_client = mcp_client if mcp_client is not None else process_mcp_client()
+        self._mcp_client = (
+            mcp_client if mcp_client is not None else process_mcp_client()
+        )
         self._mcp_registry = mcp_registry or MCPRegistry()
         self._detection_rules = detection_rules or DetectionRulesService()
 
@@ -213,7 +218,7 @@ When a user mentions an ID or entity (finding, case, IP, hash, domain), ALWAYS u
 Common patterns you should recognize and how to handle them:
 
 - Finding IDs: "f-YYYYMMDD-XXXXXXXX" → Use deeptempo-findings_get_finding tool
-- Case IDs: "case-YYYYMMDD-XXXXXXXX" → Use deeptempo-findings_get_case tool  
+- Case IDs: "case-YYYYMMDD-XXXXXXXX" → Use deeptempo-findings_get_case tool
 - IP addresses: X.X.X.X → Consider using IP geolocation or threat intel tools
 - Domain names: example.com → Consider using URL analysis or threat intel tools
 - File hashes: MD5/SHA1/SHA256 → Consider using malware analysis tools
@@ -881,7 +886,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         except Exception as e:
             logger.debug(f"Could not populate MCP registry: {e}")
 
-
     def has_api_key(self) -> bool:
         """Return True if this ClaudeService can call the Anthropic SDK.
 
@@ -1305,7 +1309,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             max_context_tokens=max_context_tokens,
         )
 
-
     def _prepare_context_sync(
         self,
         messages: List[Dict],
@@ -1352,6 +1355,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         self, session_id: str, overflow: List[Dict], existing_summary: str
     ) -> None:
         """Fold aged-out messages into the session summary in a daemon thread."""
+
         def _fold() -> None:
             try:
                 new_summary = ContextManager.fold_overflow(overflow, existing_summary)
@@ -1428,7 +1432,9 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                     # of the chain.
                     if tool_name and tool_name.startswith("skill_"):
                         try:
-                            from core.skills.skill_tools_bridge import execute_skill_tool
+                            from core.skills.skill_tools_bridge import (
+                                execute_skill_tool,
+                            )
 
                             result = execute_skill_tool(
                                 tool_name,
@@ -1483,7 +1489,9 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                         "update_case",
                         "add_resolution_step",
                     ]:
-                        from core.storage.database_data_service import DatabaseDataService
+                        from core.storage.database_data_service import (
+                            DatabaseDataService,
+                        )
 
                         data_service = DatabaseDataService()
 
@@ -1667,7 +1675,9 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
                     # Attack layer tools
                     elif tool_name in ["get_attack_layer", "get_technique_rollup"]:
-                        from core.storage.database_data_service import DatabaseDataService
+                        from core.storage.database_data_service import (
+                            DatabaseDataService,
+                        )
 
                         data_service = DatabaseDataService()
 
@@ -2028,7 +2038,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             logger.info(
                 f"🤔 ClaudeService.chat() - Thinking: {use_thinking}, Budget: {thinking_budget or self.thinking_budget}, Model: {model}"
             )
-            logger.info(f"📤 Sending to Claude API:")
+            logger.info("📤 Sending to Claude API:")
             logger.info(f"   - Message type: {type(message).__name__}")
             if isinstance(message, str):
                 logger.info(
@@ -2286,7 +2296,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                 return "I apologize, but I cannot assist with that request."
 
             if response.stop_reason == "tool_use" and response.content:
-                logger.info(f"🔧 Tool use detected - processing tools...")
+                logger.info("🔧 Tool use detected - processing tools...")
                 # Log tool calls
                 for block in response.content:
                     if hasattr(block, "type") and block.type == "tool_use":
@@ -2341,9 +2351,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                     messages.append(
                         {
                             "role": "assistant",
-                            "content": self._clean_blocks_for_resend(
-                                assistant_content
-                            ),
+                            "content": self._clean_blocks_for_resend(assistant_content),
                         }
                     )
                     # Tool results need to be wrapped in a user message
@@ -2549,7 +2557,6 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
         # Simple text message
         return message
 
-
     async def chat_stream(
         self,
         message: Union[str, List[Dict]],
@@ -2604,7 +2611,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
             logger.info(
                 f"🌊 ClaudeService.chat_stream() - Thinking: {use_thinking}, Budget: {thinking_budget or self.thinking_budget}, Model: {model}"
             )
-            logger.info(f"📤 Streaming to Claude API:")
+            logger.info("📤 Streaming to Claude API:")
             logger.info(f"   - Message type: {type(message).__name__}")
             if isinstance(message, str):
                 logger.info(
@@ -2897,7 +2904,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
                 # Check if tool use is needed
                 if stop_reason == "tool_use" and accumulated_content:
-                    logger.info(f"🔧 Tool use in stream - processing...")
+                    logger.info("🔧 Tool use in stream - processing...")
 
                     # Check for infinite loop detection
                     current_tool_calls = []
@@ -2914,7 +2921,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
                         and current_tool_calls in last_tool_calls[-3:]
                     ):
                         logger.warning(
-                            f"⚠️ Infinite loop detected - same tool calls repeated"
+                            "⚠️ Infinite loop detected - same tool calls repeated"
                         )
                         yield {
                             "type": "text",
@@ -2988,10 +2995,7 @@ Your goal is to help SOC analysts work more efficiently by leveraging all availa
 
         message = f"Analyze this security finding:\n\n{finding_text}\n\nProvide a detailed analysis."
 
-        return self.chat(
-            message, system_prompt=system_prompt, model=DEFAULT_MODEL
-        )
-
+        return self.chat(message, system_prompt=system_prompt, model=DEFAULT_MODEL)
 
     async def generate_event_analysis(
         self,

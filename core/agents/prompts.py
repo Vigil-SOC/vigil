@@ -4,7 +4,6 @@
 agent records so the record data stays free of prompt-template text.
 """
 
-
 # Memory-palace section is separate from BASE_PROMPT so we can omit it
 # entirely when the mempalace MCP server isn't connected (#129). Before
 # this split, agents were *always* told they had access to 14

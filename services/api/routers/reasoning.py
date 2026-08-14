@@ -3,12 +3,12 @@
 import logging
 
 from fastapi import APIRouter, HTTPException, Query
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
+from core.routing import Auth, RouterMeta
 from core.storage.connection import get_db_manager
 from core.storage.models import LLMInteractionLog
 from core.storage.schemas import LLMInteractionLogSchema
-from core.routing import Auth, RouterMeta
 
 logger = logging.getLogger(__name__)
 

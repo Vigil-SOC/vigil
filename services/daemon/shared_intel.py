@@ -18,6 +18,7 @@ def _get_mempalace_searcher():
         return None
     try:
         from mempalace.searcher import search_memories
+
         from core.platform.mempalace_paths import get_palace_path
 
         data_dir = get_palace_path()

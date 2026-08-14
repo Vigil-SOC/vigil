@@ -119,8 +119,7 @@ class AgentAIGenerator:
             "icon": "Single uppercase letter (e.g. 'P')",
             "color": "Hex color like '#8e44ad'",
             "role": (
-                "Short role phrase for BASE_PROMPT "
-                "(e.g. 'phishing specialist')"
+                "Short role phrase for BASE_PROMPT " "(e.g. 'phishing specialist')"
             ),
             "extra_principles": (
                 "Bullet list of additional principles, one per line prefixed "
@@ -170,7 +169,7 @@ class AgentAIGenerator:
                 (
                     "## Requirements\n"
                     "- `role` is a short noun phrase. It renders as "
-                    "\"You are a SOC {role} in the Vigil SOC platform.\"\n"
+                    '"You are a SOC {role} in the Vigil SOC platform."\n'
                     "- `extra_principles` is added AFTER Vigil's baseline "
                     "principles. Use '- ' bullets, one per line.\n"
                     "- `methodology` is a numbered step list (1., 2., 3., ...) "

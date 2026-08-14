@@ -29,8 +29,9 @@ logger = logging.getLogger(__name__)
 
 class EmailBackend(ABC):
     @abstractmethod
-    def send(self, *, to: str, subject: str, body: str, from_addr: Optional[str] = None) -> None:
-        ...
+    def send(
+        self, *, to: str, subject: str, body: str, from_addr: Optional[str] = None
+    ) -> None: ...
 
 
 class ConsoleBackend(EmailBackend):
@@ -113,7 +114,8 @@ def get_email_backend() -> EmailBackend:
     else:
         if choice != "console":
             logger.warning(
-                "Unknown VIGIL_EMAIL_BACKEND=%r; falling back to console backend", choice
+                "Unknown VIGIL_EMAIL_BACKEND=%r; falling back to console backend",
+                choice,
             )
         _backend = ConsoleBackend()
     return _backend
@@ -130,8 +132,6 @@ def send_email(
     outage does not turn into a user-facing 500. Callers that need the
     error (e.g. admin ops) can call the backend directly."""
     try:
-        get_email_backend().send(
-            to=to, subject=subject, body=body, from_addr=from_addr
-        )
+        get_email_backend().send(to=to, subject=subject, body=body, from_addr=from_addr)
     except Exception as exc:
         logger.error("Email send failed: to=%s subject=%r error=%s", to, subject, exc)

@@ -8,15 +8,15 @@ The SentrySpanProcessor bridges OTEL error spans to Sentry breadcrumbs so
 both systems remain useful without creating duplicate transaction records.
 """
 
-import time
 import logging
-
+import time
 from typing import Any, Optional
 
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
 from core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -44,9 +44,7 @@ try:
             try:
                 ctx = span.get_span_context()
                 if ctx and ctx.is_valid:
-                    sentry_sdk.set_tag(
-                        "otel.trace_id", format(ctx.trace_id, "032x")
-                    )
+                    sentry_sdk.set_tag("otel.trace_id", format(ctx.trace_id, "032x"))
             except Exception:
                 pass
 
@@ -59,9 +57,7 @@ try:
                     category="otel.span",
                     level="error",
                     data={
-                        "span_id": format(
-                            span.get_span_context().span_id, "016x"
-                        ),
+                        "span_id": format(span.get_span_context().span_id, "016x"),
                     },
                 )
             except Exception:
@@ -106,14 +102,12 @@ def init_sentry() -> None:
         logger.info("Sentry DSN not configured, skipping initialization")
         return
 
-
     # When OTEL is active, disable Sentry's own distributed tracing to prevent
     # double-tracing. Sentry still captures errors — tracing is OTEL's job.
     otel_active = get_settings().vigil_otel_enabled
-    traces_sample_rate = 0.0 if otel_active else (
-        0.1 if environment == "production" else 1.0
+    traces_sample_rate = (
+        0.0 if otel_active else (0.1 if environment == "production" else 1.0)
     )
-
 
     sentry_sdk.init(
         dsn=sentry_dsn,
@@ -144,7 +138,6 @@ def init_sentry() -> None:
     )
 
 
-
 def before_send_filter(event, hint):
     """Filter events before sending to Sentry."""
 
@@ -168,14 +161,16 @@ def capture_exception(error: Exception, context: Optional[dict] = None) -> None:
     sentry_sdk.capture_exception(error)
 
 
-def add_breadcrumb(message: str, category: str = "default", level: str = "info", data: Optional[dict] = None) -> None:
+def add_breadcrumb(
+    message: str,
+    category: str = "default",
+    level: str = "info",
+    data: Optional[dict] = None,
+) -> None:
     """Add a breadcrumb for debugging."""
 
     sentry_sdk.add_breadcrumb(
-        message=message,
-        category=category,
-        level=level,
-        data=data or {}
+        message=message, category=category, level=level, data=data or {}
     )
 
 
@@ -186,28 +181,27 @@ def add_breadcrumb(message: str, category: str = "default", level: str = "info",
 PROMETHEUS_AVAILABLE = False
 
 try:
-    from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+    from prometheus_client import (
+        CONTENT_TYPE_LATEST,
+        Counter,
+        Gauge,
+        Histogram,
+        generate_latest,
+    )
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.requests import Request as StarletteRequest
 
     http_requests_total = Counter(
-        'http_requests_total',
-        'Total HTTP requests',
-        ['method', 'endpoint', 'status']
+        "http_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
     )
     http_request_duration_seconds = Histogram(
-        'http_request_duration_seconds',
-        'HTTP request duration in seconds',
-        ['method', 'endpoint']
+        "http_request_duration_seconds",
+        "HTTP request duration in seconds",
+        ["method", "endpoint"],
     )
-    active_cases_total = Gauge(
-        'active_cases_total',
-        'Number of active cases'
-    )
+    active_cases_total = Gauge("active_cases_total", "Number of active cases")
     findings_processed_total = Counter(
-        'findings_processed_total',
-        'Total findings processed',
-        ['source', 'severity']
+        "findings_processed_total", "Total findings processed", ["source", "severity"]
     )
 
     PROMETHEUS_AVAILABLE = True

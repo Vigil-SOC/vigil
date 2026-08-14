@@ -611,8 +611,8 @@ For each phase:
         Any failure degrades to ``(None, DEFAULT_MODEL)`` (legacy behavior).
         """
         try:
-            from core.llm.router.router import get_provider_spec
             from core.llm.providers.registry import get_registry
+            from core.llm.router.router import get_provider_spec
 
             pick = get_registry().resolve_model_for_component(component)
             if not pick:
@@ -681,8 +681,8 @@ For each phase:
         """Legacy composite-prompt path for file-based workflows that
         don't have structured phases. No approval gating possible —
         there's no phase_id to attach an approval to."""
-        from core.llm.harness.claude import ClaudeService
         from core.agents.manager import SOCAgentLibrary
+        from core.llm.harness.claude import ClaudeService
 
         target_context = self._build_target_context(parameters)
         all_agents = SOCAgentLibrary.get_all_agents()
@@ -852,8 +852,8 @@ For each phase:
         """Shared phase-loop body used by both initial execute and
         resume. Walks phases from ``start_index``; pauses or completes
         the run as appropriate."""
-        from core.llm.harness.claude import ClaudeService
         from core.agents.manager import SOCAgentLibrary
+        from core.llm.harness.claude import ClaudeService
 
         run_service = self._workflow_runs
         approval_service = self._approvals
@@ -1255,16 +1255,14 @@ You have access to SOC tools and must ground every conclusion in tool output.
                         if techniques
                         else "None"
                     )
-                    parts.append(
-                        f"""**Target Finding:**
+                    parts.append(f"""**Target Finding:**
 - Finding ID: {finding.get('finding_id')}
 - Severity: {finding.get('severity')}
 - Data Source: {finding.get('data_source')}
 - Timestamp: {finding.get('timestamp')}
 - Anomaly Score: {finding.get('anomaly_score', 'N/A')}
 - Description: {finding.get('description', 'N/A')}
-- MITRE ATT&CK Techniques: {technique_str}"""
-                    )
+- MITRE ATT&CK Techniques: {technique_str}""")
                 else:
                     parts.append(
                         f"**Target Finding ID:** {finding_id} (details will be retrieved during execution)"
@@ -1281,15 +1279,13 @@ You have access to SOC tools and must ground every conclusion in tool output.
                 data_service = DatabaseDataService()
                 case = data_service.get_case(case_id)
                 if case:
-                    parts.append(
-                        f"""**Target Case:**
+                    parts.append(f"""**Target Case:**
 - Case ID: {case.get('case_id')}
 - Title: {case.get('title')}
 - Status: {case.get('status')}
 - Priority: {case.get('priority')}
 - Description: {case.get('description', 'N/A')}
-- Finding Count: {len(case.get('finding_ids', []))}"""
-                    )
+- Finding Count: {len(case.get('finding_ids', []))}""")
                 else:
                     parts.append(
                         f"**Target Case ID:** {case_id} (details will be retrieved during execution)"
