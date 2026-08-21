@@ -218,6 +218,26 @@ expected output)
 The property the gate asserts — every Fold over a historical Ledger reproduces
 its Golden byte-for-byte, projection and derivations alike.
 
+### Console (web client)
+
+Vocabulary of `clients/web/src/` — TypeScript, outside `core/`, and here for the
+same reason the agent layer is: it re-declares the domains' nouns as its own view
+shapes, so the collisions need naming rather than leaving to the reader.
+
+**Console** (SOC Console):
+The authenticated surface an analyst works in — nav rail, topbar, screen area and
+the Vigil chat dock, all under one `.soc-console` root. Login and Setup are
+full-page surfaces that render *outside* it.
+_Avoid_: dashboard (that is one Screen), app, UI, redesign (retired — the console
+was "the redesign" only while a second UI existed, and that ended with #502)
+
+**Screen**:
+One of the eight named views the Console routes, each owning a URL (`/<screen>`)
+and implementing the `ConsoleScreenProps` contract the shell passes it. Login,
+Setup and the in-shell 404 are views but not Screens: nothing routes them by key
+and none implements the contract.
+_Avoid_: page, tab, view
+
 ## Relationships
 
 - A **Case** groups one or more **Findings**
@@ -261,6 +281,11 @@ its Golden byte-for-byte, projection and derivations alike.
 - A **Golden** is the output of the implementation being replaced, never of the one
   under test. This is the whole of **Fold Equivalence**'s value and the rule
   ADR 0012 exists to hold
+- The **Console** routes one or more **Screens**; a Screen is named by exactly one
+  `ConsoleScreenKey` and reached at exactly one URL
+- A **Screen** renders a **Finding view-model**, not a **Finding** — the mapping
+  between them lives in one place (`src/data/mappers.ts`) and is lossy in both
+  directions
 
 ## Flagged ambiguities
 
@@ -344,6 +369,15 @@ its Golden byte-for-byte, projection and derivations alike.
   green suite pinning a port to itself. Resolved: a **Golden** is defined by
   provenance, not by being saved; regenerating one means re-running the *original*
   implementation. See ADR 0012.
+- **the web client's `Finding` is not the domain's `Finding`.** The console
+  declares its own `Finding` and `CaseRow` interfaces, and `src/data/mappers.ts`
+  says plainly that "the view shapes carry richer fields than the API returns" —
+  so a field visible on a Finding in the UI may be derived, defaulted to an
+  em-dash, or a neutral placeholder rather than anything the backend sent.
+  Resolved: they are distinct, and the UI one is a **Finding view-model**. Reading
+  a screen as evidence of what a Finding *is* gets the domain wrong; `mappers.ts`
+  is the only honest account of which fields survive the trip.
+
 - **"a future run can be added" is narrower than it reads.** A new fixture is only
   a valid Fold Equivalence input if its Ledger is in the pre-harness file format,
   and nothing produces that format any more. The population of possible fixtures

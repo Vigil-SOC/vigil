@@ -1,23 +1,23 @@
 import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
-import ProtectedRoute from './components/auth/ProtectedRoute'
-import SetupGate from './components/setup/SetupGate'
-// Eager (never suspends) so it can serve as the redesign's own Suspense
-// fallback while the lazy redesign chunk loads.
-import RedesignLoader from './redesign/shell/Loader'
+import ProtectedRoute from './routing/ProtectedRoute'
+import SetupGate from './routing/SetupGate'
+// Eager (never suspends) so it can serve as the Suspense fallback while the
+// lazy console/login/setup chunks load.
+import Loader from './routing/Loader'
 
 // Lazy-loaded so a refresh on any route only pulls that screen's module graph.
-const SocConsole = lazy(() => import('./redesign/SocConsole'))
-const SocLogin = lazy(() => import('./redesign/screens/login/LoginScreen'))
+const SocConsole = lazy(() => import('./shell/SocConsole'))
+const SocLogin = lazy(() => import('./screens/login/LoginScreen'))
 // Standalone /setup screen (no console shell).
-const SetupScreen = lazy(() => import('./redesign/screens/setup/SetupScreen'))
+const SetupScreen = lazy(() => import('./screens/setup/SetupScreen'))
 
 function App() {
   return (
     <AuthProvider>
       <div className="flex h-screen">
-        <Suspense fallback={<RedesignLoader />}>
+        <Suspense fallback={<Loader />}>
           <Routes>
             {/* Public — the login screen is the single sign-in surface. */}
             <Route path="/login" element={<SocLogin />} />
@@ -45,10 +45,6 @@ function App() {
               {/* deeper junk paths (/a/b/…) fall through to the in-shell 404 */}
               <Route path="*" element={<SocConsole />} />
             </Route>
-
-            {/* Back-compat — the console used to live under /redesign/*. */}
-            <Route path="/redesign" element={<Navigate to="/" replace />} />
-            <Route path="/redesign/*" element={<Navigate to="/" replace />} />
           </Routes>
         </Suspense>
       </div>

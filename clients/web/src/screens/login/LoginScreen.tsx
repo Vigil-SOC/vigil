@@ -1,0 +1,361 @@
+/* ============================================================
+   Login / auth screen — split brand + form layout, ported from
+   the design's "SOC Login.html" handoff into the console token
+   system so it themes (dark/light) and accents identically to the
+   console. Wired to the real auth flow (useAuth().login), mirroring
+   pages/Login.tsx — including the MFA step — and lands in the
+   console on success.
+   ============================================================ */
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import '../../styles.css'
+import { useAuth } from '../../contexts/AuthContext'
+import { bootstrapApi } from '../../services/api'
+import { Icon } from '../../shared/icons'
+import { VigilLogo } from '../../shared/VigilLogo'
+import { accentVars } from '../../shell/accent'
+import { SocThemeProvider, useSocTheme } from '../../shell/theme'
+
+export default function LoginScreen() {
+  // the auth screen lives outside the console shell, so it brings its own
+  // theme provider (mode + accent) — same source of truth the console reads.
+  return (
+    <SocThemeProvider>
+      <LoginInner />
+    </SocThemeProvider>
+  )
+}
+
+function LoginInner() {
+  const navigate = useNavigate()
+  const { login } = useAuth()
+  const { scheme, setScheme, accent } = useSocTheme()
+
+  const [usernameOrEmail, setUsernameOrEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [mfaCode, setMfaCode] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [remember, setRemember] = useState(true)
+  const [showMfa, setShowMfa] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const mfaInputRef = useRef<HTMLInputElement>(null)
+
+  // null until the bootstrap check resolves; true means the instance has no
+  // account yet, so show first-account creation instead of sign-in.
+  const [needsBootstrap, setNeedsBootstrap] = useState<boolean | null>(null)
+  const [email, setEmail] = useState('')
+
+  useEffect(() => {
+    if (showMfa) setTimeout(() => mfaInputRef.current?.focus(), 80)
+  }, [showMfa])
+
+  useEffect(() => {
+    // Fail closed to sign-in: a transient error shouldn't expose account
+    // creation on an instance that already has users.
+    bootstrapApi
+      .status()
+      .then((res) => setNeedsBootstrap(res.data.required))
+      .catch(() => setNeedsBootstrap(false))
+  }, [])
+
+  const handleBootstrap = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      await bootstrapApi.create({ username: usernameOrEmail, email, password })
+      await login(usernameOrEmail, password)
+      navigate('/dashboard')
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Could not create your account.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+    try {
+      await login(usernameOrEmail, password, showMfa ? mfaCode : undefined)
+      // land in the SOC console (the primary surface)
+      navigate('/dashboard')
+    } catch (err: any) {
+      if (err?.message === 'MFA_REQUIRED') {
+        setShowMfa(true)
+        setMfaCode('')
+        setError('Enter your 2FA code to continue.')
+      } else {
+        setError(err?.response?.data?.detail || 'Sign in failed. Check your credentials.')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const backToCredentials = () => {
+    setShowMfa(false)
+    setMfaCode('')
+    setError('')
+  }
+
+  return (
+    <div
+      className="soc-console auth-root"
+      data-theme={scheme}
+      style={accentVars(accent.a, accent.b)}
+    >
+      <div className="auth" data-screen-label="Sign in">
+        <button
+          className="auth-theme"
+          type="button"
+          onClick={() => setScheme(scheme === 'dark' ? 'light' : 'dark')}
+          aria-label={scheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={scheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          <Icon name={scheme === 'dark' ? 'sun' : 'moon'} size={17} />
+        </button>
+
+        {/* ---------- brand panel ---------- */}
+        <section className="brand">
+          <div className="brand-top">
+            <VigilLogo className="auth-logo" />
+          </div>
+
+          <div className="brand-body">
+            <h1>Vigilant, Open, Trustworthy.</h1>
+            <p>
+              Open source and community built, Vigil stands watch beside
+              your analysts on the journey toward greater autonomy.
+            </p>
+          </div>
+        </section>
+
+        {/* ---------- form panel ---------- */}
+        <section className="auth-pane">
+          <div className="form-wrap">
+            <header>
+              <h2>
+                {needsBootstrap
+                  ? 'Create your account'
+                  : showMfa
+                    ? 'Two-factor authentication'
+                    : 'Sign in'}
+              </h2>
+              <p>
+                {needsBootstrap
+                  ? 'No account exists yet. Set up the first administrator.'
+                  : showMfa
+                    ? 'Confirm your identity to finish signing in.'
+                    : 'Authenticate to access the operations console.'}
+              </p>
+            </header>
+
+            {error && (
+              <div className={`auth-error${showMfa ? ' info' : ''}`} role="alert">
+                <Icon name={showMfa ? 'info' : 'alert'} size={15} />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {needsBootstrap ? (
+              <form onSubmit={handleBootstrap} autoComplete="on" noValidate>
+                <div className="field">
+                  <label htmlFor="bs-user">Username</label>
+                  <div className="ctrl">
+                    <Icon name="user" className="lead" />
+                    <input
+                      id="bs-user"
+                      name="username"
+                      type="text"
+                      placeholder="admin"
+                      autoComplete="username"
+                      autoFocus
+                      disabled={loading}
+                      value={usernameOrEmail}
+                      onChange={(e) => setUsernameOrEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="bs-email">Email</label>
+                  <div className="ctrl">
+                    <Icon name="send" className="lead" />
+                    <input
+                      id="bs-email"
+                      name="email"
+                      type="email"
+                      placeholder="you@company.com"
+                      autoComplete="email"
+                      disabled={loading}
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                    />
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label htmlFor="bs-pass">Password</label>
+                  <div className="ctrl">
+                    <Icon name="lock" className="lead" />
+                    <input
+                      id="bs-pass"
+                      name="new-password"
+                      type={showPassword ? 'text' : 'password'}
+                      placeholder="At least 12 characters"
+                      autoComplete="new-password"
+                      disabled={loading}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                    />
+                    <button
+                      className="reveal"
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      title={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      <Icon name="eye" size={17} />
+                    </button>
+                  </div>
+                </div>
+
+                <button
+                  className="btn-signin"
+                  type="submit"
+                  disabled={loading || !usernameOrEmail || !email || !password}
+                >
+                  {loading ? (
+                    <span className="spin" aria-hidden="true" />
+                  ) : (
+                    <>
+                      Create account
+                      <Icon name="arrowR" />
+                    </>
+                  )}
+                </button>
+              </form>
+            ) : (
+            <form onSubmit={handleSubmit} autoComplete="on" noValidate>
+              {!showMfa ? (
+                <>
+                  <div className="field">
+                    <label htmlFor="auth-user">Username or email</label>
+                    <div className="ctrl">
+                      <Icon name="user" className="lead" />
+                      <input
+                        id="auth-user"
+                        name="username"
+                        type="text"
+                        placeholder="analyst@company.com"
+                        autoComplete="username"
+                        autoFocus
+                        disabled={loading}
+                        value={usernameOrEmail}
+                        onChange={(e) => setUsernameOrEmail(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="field">
+                    <label htmlFor="auth-pass">Password</label>
+                    <div className="ctrl">
+                      <Icon name="lock" className="lead" />
+                      <input
+                        id="auth-pass"
+                        name="password"
+                        type={showPassword ? 'text' : 'password'}
+                        placeholder="••••••••••••"
+                        autoComplete="current-password"
+                        disabled={loading}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                      />
+                      <button
+                        className="reveal"
+                        type="button"
+                        onClick={() => setShowPassword((v) => !v)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        title={showPassword ? 'Hide password' : 'Show password'}
+                      >
+                        <Icon name="eye" size={17} />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="row-between">
+                    <label className="remember">
+                      <input
+                        type="checkbox"
+                        checked={remember}
+                        onChange={(e) => setRemember(e.target.checked)}
+                      />
+                      <span className="box">
+                        <Icon name="check2" />
+                      </span>
+                      Keep me signed in
+                    </label>
+                    <a
+                      className="link"
+                      href="#"
+                      onClick={(e) => e.preventDefault()}
+                    >
+                      Forgot password?
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <div className="field">
+                  <label htmlFor="auth-mfa">Authentication code</label>
+                  <div className="ctrl">
+                    <Icon name="shield" className="lead" />
+                    <input
+                      id="auth-mfa"
+                      name="mfa"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      placeholder="000000"
+                      ref={mfaInputRef}
+                      disabled={loading}
+                      value={mfaCode}
+                      onChange={(e) => {
+                        const v = e.target.value.replace(/\D/g, '')
+                        if (v.length <= 6) setMfaCode(v)
+                      }}
+                    />
+                  </div>
+                  <div className="mfa-back">
+                    <button type="button" className="link" onClick={backToCredentials}>
+                      ← Back to sign in
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <button
+                className="btn-signin"
+                type="submit"
+                disabled={loading || (showMfa && mfaCode.length !== 6)}
+              >
+                {loading ? (
+                  <span className="spin" aria-hidden="true" />
+                ) : (
+                  <>
+                    {showMfa ? 'Verify & sign in' : 'Sign in'}
+                    <Icon name="arrowR" />
+                  </>
+                )}
+              </button>
+            </form>
+            )}
+          </div>
+        </section>
+      </div>
+    </div>
+  )
+}

@@ -1,0 +1,74 @@
+// Soft-checklist state: runs each step's readiness predicate over fetched state.
+// Purely additive — the hard gate lives in useSetupStatus / SetupGate.
+// `requiredReady` / `incompleteCount` feed a planned dashboard nudge (tests only).
+import { useCallback, useEffect, useState } from 'react'
+import { llmProviderApi, aiConfigApi, budgetsApi, configApi } from '../../services/api'
+import {
+  SETUP_STEPS,
+  emptySetupState,
+  type SetupState,
+  type SetupStep,
+} from './setupSteps'
+
+export interface ChecklistStep extends SetupStep {
+  ready: boolean
+}
+
+export interface SetupChecklist {
+  steps: ChecklistStep[]
+  requiredReady: boolean
+  incompleteCount: number
+  loading: boolean
+  refetch: () => void
+}
+
+// Every source fail-opens to its empty default (Promise.allSettled), so one
+// flaky endpoint can't crash the page. Advisory — not a security control.
+const fetchSetupState = async (): Promise<SetupState> => {
+  const base = emptySetupState()
+  const [providers, integrations, aiConfig, budget, orchestrator] = await Promise.allSettled([
+    llmProviderApi.list(),
+    configApi.getIntegrations(),
+    aiConfigApi.getConfig(),
+    budgetsApi.get(),
+    configApi.getOrchestrator(),
+  ])
+
+  if (providers.status === 'fulfilled') base.providers = providers.value.data || []
+  if (integrations.status === 'fulfilled')
+    base.enabledIntegrations = integrations.value.data?.enabled_integrations ?? []
+  if (aiConfig.status === 'fulfilled') base.assignments = aiConfig.value.data?.assignments ?? {}
+  if (budget.status === 'fulfilled') base.budget = budget.value.data ?? null
+  if (orchestrator.status === 'fulfilled')
+    base.orchestratorEnabled = !!orchestrator.value.data?.enabled
+
+  return base
+}
+
+const useSetupChecklist = (): SetupChecklist => {
+  const [state, setState] = useState<SetupState>(emptySetupState)
+  const [loading, setLoading] = useState(true)
+
+  // Flip `loading` only on the initial load, not refetches: a refetch updates the
+  // steps in place, and blanking the list to the loader mid-save made it flash.
+  const refetch = useCallback(() => {
+    fetchSetupState()
+      .then(setState)
+      .finally(() => setLoading(false))
+  }, [])
+
+  useEffect(() => {
+    refetch()
+  }, [refetch])
+
+  const steps: ChecklistStep[] = SETUP_STEPS.map((step) => ({
+    ...step,
+    ready: step.selectReady(state),
+  }))
+  const requiredReady = steps.every((s) => s.tier !== 'required' || s.ready)
+  const incompleteCount = steps.filter((s) => s.tier !== 'required' && !s.ready).length
+
+  return { steps, requiredReady, incompleteCount, loading, refetch }
+}
+
+export default useSetupChecklist

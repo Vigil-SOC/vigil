@@ -1,10 +1,10 @@
 /** @type {import('tailwindcss').Config} */
-// Scoped to the /redesign preview only. preflight is OFF so Tailwind's global
-// reset never touches the rest of the MUI app. Color tokens point at the
-// design's CSS variables (defined on .soc-console) so the accent stays
-// runtime-swappable via the tweaks panel.
+// preflight is OFF: the console's own reset lives in styles.css under
+// @layer base, so Tailwind's global reset would fight it. Color tokens point at
+// the CSS variables defined on .soc-console, keeping the accent runtime-swappable
+// from Settings -> Appearance.
 module.exports = {
-  content: ['./src/redesign/**/*.{ts,tsx}'],
+  content: ['./src/**/*.{ts,tsx}'],
   corePlugins: { preflight: false },
   theme: {
     extend: {

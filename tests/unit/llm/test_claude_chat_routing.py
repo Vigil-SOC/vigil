@@ -5,7 +5,7 @@ Background: ``main`` merged #348 ("route local Ollama providers through
 Bifrost") while this branch carried an overlapping non-Anthropic routing
 change. The reconciliation kept #348's ``provider_id::model_id`` parsing and
 no-tools guardrail prompt, and added a fallback to the *configured default*
-provider so the redesigned Chat dock — which sends a **bare** model id — still
+provider so the Chat dock — which sends a **bare** model id — still
 routes to a non-Anthropic provider instead of 503-ing on Ollama-only
 deployments. These tests pin that behaviour.
 
@@ -87,7 +87,7 @@ def _spec(
 
 
 def test_bare_model_id_has_no_provider():
-    # The redesigned Chat dock sends a bare model id (no "::").
+    # The Chat dock sends a bare model id (no "::").
     assert claude._resolve_provider_model_for_request("qwen3-coder:latest", None) == (
         None,
         "qwen3-coder:latest",
@@ -152,7 +152,7 @@ def test_explicit_provider_id_wins(monkeypatch):
 
 
 def test_no_provider_id_falls_back_to_default(monkeypatch):
-    # Bare model id (redesign Chat dock) → no provider_id → use the default.
+    # Bare model id (Chat dock) → no provider_id → use the default.
     import core.llm.router.router as r
 
     default = _spec()
@@ -231,7 +231,7 @@ def test_router_guardrail_prompt_forbids_tools():
 @pytest.mark.parametrize(
     "provider_id, default_type, expect_router",
     [
-        (None, "ollama", True),  # bare id + ollama default → route (redesign)
+        (None, "ollama", True),  # bare id + ollama default → route (Chat dock)
         (None, "anthropic", False),  # anthropic default → ClaudeService path
         ("ollama-local", "anthropic", True),  # explicit ollama beats default
         (None, None, False),  # nothing configured → ClaudeService 503 gate

@@ -1,6 +1,6 @@
 """Conversation history service — durable, per-analyst chat conversations.
 
-Backs the cross-device chat history for the redesign chat console. A
+Backs the cross-device chat history for the console chat dock. A
 ``Conversation``'s id IS the frontend ``session_id``, so reopening a
 conversation lets the in-process ``SessionManager`` restore live context and
 continue the same session. This store is separate from

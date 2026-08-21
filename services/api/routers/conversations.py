@@ -1,6 +1,6 @@
 """Conversation history API — cross-device, per-analyst chat history.
 
-Surfaces the durable conversation store behind the redesign chat console:
+Surfaces the durable conversation store behind the console chat dock:
 list past conversations, reopen one with its full message history, rename,
 soft-archive, hard-delete, and a one-time localStorage import. Every handler
 is auth-gated and scoped to the authenticated user via ``get_current_user``.

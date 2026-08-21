@@ -1,5 +1,5 @@
 // Integration credential schema: the field shapes the wizard renders from.
-// UI-agnostic so the redesign wizard and config/integrations.ts can share it.
+// UI-agnostic so the console wizard and config/integrations.ts can share it.
 
 export interface IntegrationField {
   name: string

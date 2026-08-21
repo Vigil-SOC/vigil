@@ -2154,7 +2154,7 @@ class ThreatIndicator(Base):
 class Conversation(Base):
     """Cross-device, per-analyst persistent chat conversation.
 
-    The Claude.ai-style history store for the redesign chat console: a
+    The Claude.ai-style history store for the console chat dock: a
     listable, reopenable conversation owned by an analyst. The primary key
     IS the frontend ``session_id`` so reopening a conversation lets the
     in-process ``SessionManager`` (and its MemPalace files) restore live

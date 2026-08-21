@@ -48,10 +48,14 @@ vigil/
 │   └── worker/           # ARQ llm-worker — drains the arq:llm queue (python -m services.worker)
 ├── clients/web/             # React + TypeScript + Vite SPA
 │   └── src/
-│       ├── redesign/     # The SOC console — screens/, shell/, shared/
-│       ├── components/   # Cross-console components (auth, setup)
+│       ├── routing/      # What App.tsx composes: route guards + the transition Loader
+│       ├── shell/        # The console frame — SocConsole, chat dock, theming
+│       ├── screens/      # One dir per view; the 8 keyed ones + login, setup, 404
+│       ├── shared/       # UI primitives (ui.tsx, formKit.tsx, icons.tsx)
+│       ├── data/         # View-model types, API mappers, static lookups
+│       ├── extensions/   # Page-extension host + connector contracts
 │       ├── services/     # Axios API client services
-│       └── contexts/     # React Context (auth, theme)
+│       └── contexts/     # React Context (auth, color scheme)
 ├── tools/mcp/            # The MCP servers that talk to Vigil's own services
 ├── core/                 # Shared library: capability domains + a storage/platform tier; API routers colocate at core/<domain>/*_router.py
 │   ├── llm/              # The LLM layer: router/, harness/, providers/, cost/ — see core/llm/README.md
@@ -352,8 +356,8 @@ Key config variables: `DAEMON_AUTO_TRIAGE`, `DAEMON_CONFIDENCE_THRESHOLD`, `ORCH
 
 - **Framework**: React 18 + Vite 5 (not CRA)
 - **UI**: Tailwind utility classes + the CSS custom properties in
-  `clients/web/src/redesign/styles.css`. Reuse the primitives in
-  `redesign/shared/` (`ui.tsx`, `formKit.tsx`, `icons.tsx`) — there is no
+  `clients/web/src/styles.css`. Reuse the primitives in
+  `src/shared/` (`ui.tsx`, `formKit.tsx`, `icons.tsx`) — there is no
   component library, so do not add one
 - **State/data**: plain hooks (`useState`/`useEffect`) over the axios services;
   React Context for auth/theme/toasts

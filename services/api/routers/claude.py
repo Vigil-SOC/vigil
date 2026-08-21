@@ -220,7 +220,7 @@ def _select_active_provider(provider_id: Optional[str]):
       1. An explicit ``provider_id`` — the model picker can send the model as
          ``provider_id::model_id`` (#348); look the provider up by id.
       2. The configured default provider (``get_default_provider_spec``) — so a
-         *bare* model id (the shape the redesigned Chat dock sends) still routes
+         *bare* model id (the shape the Chat dock sends) still routes
          to a non-Anthropic default instead of falling through to the Anthropic
          SDK and 503-ing on Ollama-only deployments.
 

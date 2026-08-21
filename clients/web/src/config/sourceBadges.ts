@@ -1,6 +1,6 @@
 // Generic `source → {label, color, icon}` map with a neutral fallback. Plain
-// data (no framework deps) so both the redesign console and the legacy MUI
-// findings table can render a consistent chip. `icon` is a redesign IconName.
+// data (no framework deps) so any surface can render a consistent chip.
+// `icon` is an IconName from shared/icons.
 
 export interface SourceBadge {
   label: string
