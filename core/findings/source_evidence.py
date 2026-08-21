@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections.abc import Mapping
 from datetime import date, datetime
 from typing import Any, Dict, Optional
 
 
 SOURCE_EVIDENCE_VERSION = 1
+SEQUENCE_EVIDENCE_VERSION = 2
 SOURCE_EVIDENCE_PREVIEW_LIMIT = 100
 SOURCE_EVIDENCE_RAW_TEXT_LIMIT = 65_536
 
@@ -127,6 +129,8 @@ def normalize_source_evidence(
         return _invalid_evidence(fallback_kind, default_schema_id)
 
     version = parsed.get("version", SOURCE_EVIDENCE_VERSION)
+    if version == SEQUENCE_EVIDENCE_VERSION:
+        return _normalize_sequence_evidence(parsed)
     kind = _telemetry_kind(parsed.get("telemetry_kind")) or fallback_kind
     schema_id = _text(parsed.get("schema_id")) or _text(default_schema_id)
     status = _text(parsed.get("status"))
@@ -211,6 +215,116 @@ def normalize_source_evidence(
             supplied_raw_text_truncated or raw_text_truncated
         )
     return envelope
+
+
+def _normalize_sequence_evidence(parsed: Mapping[str, Any]) -> Dict[str, Any]:
+    """Validate the joined, immutable sequence-evidence envelope.
+
+    Version 2 deliberately has no free-form raw payload.  It carries a
+    deterministic summary, bounded record previews, and an immutable artifact
+    reference used by the paginated evidence endpoint.
+    """
+    status = _text(parsed.get("status"))
+    provenance = _text(parsed.get("provenance"))
+    association_basis = _text(parsed.get("association_basis"))
+    sequence_id = _text(parsed.get("sequence_id"))
+    dataset_id = _text(parsed.get("dataset_id"))
+    run_id = _text(parsed.get("run_id"))
+    artifact = parsed.get("artifact")
+    summary = parsed.get("summary")
+    coverage = parsed.get("coverage")
+    streams = parsed.get("streams")
+    if (
+        status != "available"
+        or provenance != "joined"
+        or association_basis not in {"producer_membership", "sequence_builder_replay"}
+        or not all((sequence_id, dataset_id, run_id))
+        or not isinstance(artifact, Mapping)
+        or not isinstance(summary, Mapping)
+        or not isinstance(coverage, Mapping)
+        or not isinstance(streams, Mapping)
+    ):
+        return _invalid_evidence()
+
+    artifact_id = _text(artifact.get("artifact_id"))
+    flow_sha256 = _text(artifact.get("flow_sha256"))
+    modbus_sha256 = _text(artifact.get("modbus_sha256"))
+    if (
+        not artifact_id
+        or re.fullmatch(r"[a-f0-9]{64}", artifact_id) is None
+        or not flow_sha256
+        or re.fullmatch(r"[a-f0-9]{64}", flow_sha256) is None
+        or (
+            modbus_sha256 is not None
+            and re.fullmatch(r"[a-f0-9]{64}", modbus_sha256) is None
+        )
+    ):
+        return _invalid_evidence()
+
+    normalized_streams: Dict[str, Any] = {}
+    for kind, expected_schema in (
+        ("netflow", "sequence_evidence/v1"),
+        ("modbus", "sequence_protocol_evidence/v1"),
+    ):
+        stream = streams.get(kind)
+        if not isinstance(stream, Mapping) or stream.get("schema_id") != expected_schema:
+            return _invalid_evidence()
+        raw_records = stream.get("records", [])
+        if not isinstance(raw_records, (list, tuple)):
+            return _invalid_evidence()
+        records = [
+            _json_safe(record)
+            for record in raw_records[:SOURCE_EVIDENCE_PREVIEW_LIMIT]
+            if isinstance(record, Mapping)
+        ]
+        if len(records) != min(len(raw_records), SOURCE_EVIDENCE_PREVIEW_LIMIT):
+            return _invalid_evidence()
+        try:
+            total_records = int(stream.get("total_records", len(raw_records)))
+        except (TypeError, ValueError):
+            return _invalid_evidence()
+        if total_records < len(records) or total_records < 0:
+            return _invalid_evidence()
+        truncated = stream.get("truncated", False)
+        if not isinstance(truncated, bool):
+            return _invalid_evidence()
+        normalized_streams[kind] = {
+            "schema_id": expected_schema,
+            "total_records": total_records,
+            "truncated": bool(
+                truncated
+                or total_records > len(records)
+                or len(raw_records) > len(records)
+            ),
+            "records": records,
+        }
+
+    normalized_summary = _json_safe(summary)
+    normalized_coverage = _json_safe(coverage)
+    if not isinstance(normalized_summary, Mapping) or not isinstance(
+        normalized_coverage, Mapping
+    ):
+        return _invalid_evidence()
+    if not _text(normalized_summary.get("text")):
+        return _invalid_evidence()
+
+    return {
+        "version": SEQUENCE_EVIDENCE_VERSION,
+        "status": "available",
+        "provenance": "joined",
+        "association_basis": association_basis,
+        "sequence_id": sequence_id,
+        "dataset_id": dataset_id,
+        "run_id": run_id,
+        "artifact": {
+            "artifact_id": artifact_id,
+            "flow_sha256": flow_sha256,
+            "modbus_sha256": modbus_sha256,
+        },
+        "summary": dict(normalized_summary),
+        "coverage": dict(normalized_coverage),
+        "streams": normalized_streams,
+    }
 
 
 def source_evidence_from_loglm_row(row: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
@@ -346,6 +460,15 @@ def project_finding_source_evidence_for_list(finding: Dict[str, Any]) -> Dict[st
     projected_evidence = dict(evidence)
     projected_evidence.pop("records", None)
     projected_evidence.pop("raw_text", None)
+    streams = projected_evidence.get("streams")
+    if isinstance(streams, Mapping):
+        projected_streams = {}
+        for kind, stream in streams.items():
+            if isinstance(stream, Mapping):
+                projected_stream = dict(stream)
+                projected_stream.pop("records", None)
+                projected_streams[kind] = projected_stream
+        projected_evidence["streams"] = projected_streams
     projected_evidence["payload_included"] = False
     projected_context["source_evidence"] = projected_evidence
     projected["entity_context"] = projected_context

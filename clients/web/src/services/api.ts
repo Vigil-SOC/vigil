@@ -185,6 +185,11 @@ export const findingsApi = {
   }) => api.get('/findings/', { params }),
   
   getById: (id: string) => api.get(`/findings/${id}`),
+
+  getSourceEvidence: (
+    id: string,
+    params: { kind: 'netflow' | 'modbus'; offset?: number; limit?: number },
+  ) => api.get(`/findings/${id}/source-evidence`, { params }),
   
   getSummary: () => api.get('/findings/stats/summary'),
   
@@ -468,6 +473,170 @@ export const mcpApi = {
     api.put(`/mcp/servers/${name}/enabled`, { enabled }),
 }
 
+
+// VStrike (CloudCurrent) integration API
+// Routes are mounted at /api/integrations/vstrike; axios baseURL is /api.
+export const vstrikeApi = {
+  health: () => api.get('/integrations/vstrike/health'),
+
+  // 503 with detail.missing=['username','password'] when UI creds unset.
+  iframeToken: () =>
+    api.post<{ token: string; iframe_url: string }>(
+      '/integrations/vstrike/ui/iframe-token',
+    ),
+
+  listNetworks: () =>
+    api.get<{ networks: Array<Record<string, any>> }>(
+      '/integrations/vstrike/ui/networks',
+    ),
+
+  loadNetwork: (network_id: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/load-network',
+      { network_id },
+    ),
+
+  // Kill-chain replay — instructs VStrike to walk a sequence of nodes in the
+  // active iframe session. 501 when VStrike's MCP server hasn't shipped the
+  // `ui-killchain-replay` tool yet; the caller surfaces that as a snackbar.
+  killchainReplay: (
+    network_id: string,
+    steps: Array<{
+      node_id: string
+      timestamp: string
+      technique?: string
+      label?: string
+      dwell_ms?: number
+    }>,
+    opts?: { loop?: boolean; autoPlay?: boolean },
+  ) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/killchain-replay',
+      {
+        network_id,
+        steps,
+        loop: opts?.loop ?? false,
+        auto_play: opts?.autoPlay ?? true,
+      },
+    ),
+
+  // -------------------------------------------------------------------------
+  // Data-plane proxies (node search, drift, storylines, legends)
+  // -------------------------------------------------------------------------
+
+  nodeSearch: (query: string, network_id?: string, limit?: number) =>
+    api.post<{ query: string; results: Array<Record<string, any>> }>(
+      '/integrations/vstrike/nodes/search',
+      { query, network_id, limit },
+    ),
+
+  nodeDrift: (node_id: string, network_id?: string) =>
+    api.post<{ node_id: string; drift: Array<Record<string, any>> }>(
+      '/integrations/vstrike/nodes/drift',
+      { node_id, network_id },
+    ),
+
+  listStorylines: (network_id?: string) =>
+    api.get<{ network_id?: string; storylines: Array<Record<string, any>> }>(
+      '/integrations/vstrike/storylines',
+      { params: { network_id } },
+    ),
+
+  storylineEvents: (storyline_id: string, network_id?: string) =>
+    api.post<{ storyline_id: string; events: Array<Record<string, any>> }>(
+      '/integrations/vstrike/storylines/events',
+      { storyline_id, network_id },
+    ),
+
+  listLegendRuns: (network_id?: string) =>
+    api.get<{ network_id?: string; legend_runs: Array<Record<string, any>> }>(
+      '/integrations/vstrike/legend-runs',
+      { params: { network_id } },
+    ),
+
+  legendRunResults: (legend_run_id: string, network_id?: string) =>
+    api.post<{ legend_run_id: string; results: Record<string, any> }>(
+      '/integrations/vstrike/legend-runs/results',
+      { legend_run_id, network_id },
+    ),
+
+  // -------------------------------------------------------------------------
+  // UI control plane (camera, storyline, VCR playback)
+  // -------------------------------------------------------------------------
+
+  uiCameraNode: (node_ids: string[], network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/camera-node',
+      { node_ids, network_id },
+    ),
+
+  uiCameraPosition: (
+    position: Record<string, number>,
+    rotation?: Record<string, number>,
+    network_id?: string,
+  ) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/camera-position',
+      { position, rotation, network_id },
+    ),
+
+  uiStorylineApply: (storyline_id: string, network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/storyline-apply',
+      { storyline_id, network_id },
+    ),
+
+  uiStorylineMode: (mode: string, network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/storyline-mode',
+      { mode, network_id },
+    ),
+
+  uiStorylineForward: (network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/storyline-forward',
+      { network_id },
+    ),
+
+  uiStorylineBackward: (network_id?: string) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/storyline-backward',
+      { network_id },
+    ),
+
+  // -------------------------------------------------------------------------
+  // Net-new VStrike tools (network-graph-get, ui-legend-apply,
+  // ui-rightpanel-focus). The `extra` bag lets callers forward additional
+  // fields verbatim, matching the defensive shape on the backend.
+  // -------------------------------------------------------------------------
+
+  networkGraph: (network_id?: string, extra?: Record<string, any>) =>
+    api.post<{
+      network_id?: string
+      graph: {
+        label?: string
+        nodes: Array<Record<string, any>>
+        edges: Array<Record<string, any>>
+        bbox?: any
+      }
+    }>('/integrations/vstrike/network-graph', { network_id, ...(extra ?? {}) }),
+
+  uiLegendApply: (
+    legend_run_id: string,
+    network_id?: string,
+    extra?: Record<string, any>,
+  ) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/legend-apply',
+      { legend_run_id, network_id, ...(extra ?? {}) },
+    ),
+
+  uiRightpanelFocus: (extra?: Record<string, any>) =>
+    api.post<{ ok: boolean; result: any }>(
+      '/integrations/vstrike/ui/rightpanel-focus',
+      { ...(extra ?? {}) },
+    ),
+}
 
 // Claude API
 export const claudeApi = {

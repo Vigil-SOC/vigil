@@ -95,11 +95,11 @@ class DatabaseService:
             logger.error(f"Error creating finding {finding_id}: {e}")
             return None
 
-    def bulk_create_findings(self, rows: List[Dict[str, Any]]) -> Dict[str, int]:
+    def bulk_create_findings(self, rows: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Dedup + insert many findings in one transaction; per-row create_finding
         doesn't scale to hundred-thousand-row parquet files."""
         if not rows:
-            return {'imported': 0, 'skipped': 0}
+            return {'imported': 0, 'skipped': 0, 'imported_ids': []}
 
         by_id = {r['finding_id']: r for r in rows}
         ids = list(by_id.keys())
@@ -129,10 +129,19 @@ class DatabaseService:
                         status=r.get('status', 'new'),
                     ))
                 session.flush()
-                return {'imported': len(new_ids), 'skipped': len(rows) - len(new_ids)}
+                return {
+                    'imported': len(new_ids),
+                    'skipped': len(rows) - len(new_ids),
+                    'imported_ids': new_ids,
+                }
         except Exception as e:
             logger.error(f"Error bulk-creating findings: {e}")
-            return {'imported': 0, 'skipped': 0, 'errors': len(rows)}
+            return {
+                'imported': 0,
+                'skipped': 0,
+                'errors': len(rows),
+                'imported_ids': [],
+            }
 
     def get_finding(self, finding_id: str) -> Optional[Finding]:
         """

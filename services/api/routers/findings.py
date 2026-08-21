@@ -1,5 +1,6 @@
 """Findings API endpoints."""
 
+from collections.abc import Mapping
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -17,6 +18,7 @@ from core.findings.source_evidence import (
     normalize_finding_source_evidence,
     project_finding_source_evidence_for_list,
 )
+from core.findings.evidence_store import SequenceEvidenceError, SequenceEvidenceStore
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 
 router = APIRouter()
@@ -86,6 +88,47 @@ def get_findings(
         "limit": limit,
         "has_more": (offset + limit) < total,
     }
+
+
+@router.get("/{finding_id}/source-evidence")
+def get_finding_source_evidence(
+    finding_id: str,
+    kind: str = Query("netflow", pattern="^(netflow|modbus)$"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Page immutable flow or Modbus records for one exact LogLM sequence."""
+    finding = data_service.get_finding(finding_id)
+    if not finding:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    normalized = normalize_finding_source_evidence(finding)
+    context = normalized.get("entity_context")
+    evidence = context.get("source_evidence") if isinstance(context, Mapping) else None
+    if not isinstance(evidence, Mapping) or evidence.get("version") != 2:
+        raise HTTPException(
+            status_code=404,
+            detail="Exact sequence evidence is not attached to this finding",
+        )
+    artifact = evidence.get("artifact")
+    if not isinstance(artifact, Mapping):
+        raise HTTPException(status_code=422, detail="Invalid evidence artifact reference")
+    try:
+        return SequenceEvidenceStore().query(
+            artifact_id=str(artifact.get("artifact_id") or ""),
+            sequence_id=str(evidence.get("sequence_id") or ""),
+            kind=kind,
+            offset=offset,
+            limit=limit,
+            expected_run_id=str(evidence.get("run_id") or ""),
+            expected_dataset_id=str(evidence.get("dataset_id") or ""),
+            expected_sha256=(
+                str(artifact.get("flow_sha256") or "")
+                if kind == "netflow"
+                else str(artifact.get("modbus_sha256") or "") or None
+            ),
+        )
+    except SequenceEvidenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get("/{finding_id}")

@@ -99,6 +99,8 @@ class Settings(BaseSettings):
     data_backend: str = "database"
     autostart_services: Optional[str] = None
     max_upload_size_mb: int = 500
+    evidence_store_path: str = ""
+    evidence_store_max_mb: int = 10_240
     vigil_context_path: str = ""
     vigil_frontend_url: str = ""
     mempalace_palace_path: Optional[str] = None

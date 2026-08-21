@@ -110,6 +110,8 @@ async def _spool_upload(file: UploadFile, suffix: str) -> Path:
 @router.post("/upload", response_model=IngestionJobStatus, status_code=202)
 async def upload_and_ingest_file(
     file: UploadFile = File(...),
+    evidence_file: Optional[UploadFile] = File(None),
+    protocol_evidence_file: Optional[UploadFile] = File(None),
     data_type: str = Form("finding"),
     format: Optional[str] = Form(None)
 ):
@@ -129,19 +131,56 @@ async def upload_and_ingest_file(
     if format not in ['json', 'csv', 'jsonl', 'parquet']:
         raise HTTPException(status_code=400, detail="format must be 'json', 'csv', 'jsonl', or 'parquet'")
 
-    temp_path = await _spool_upload(file, f'.{format}')
+    if evidence_file is not None and (format != 'parquet' or data_type != 'finding'):
+        raise HTTPException(
+            status_code=400,
+            detail="sequence evidence requires a parquet finding upload",
+        )
+    if protocol_evidence_file is not None and evidence_file is None:
+        raise HTTPException(
+            status_code=400,
+            detail="protocol evidence requires sequence flow evidence",
+        )
+
+    temp_paths: list[Path] = []
+    try:
+        temp_path = await _spool_upload(file, f'.{format}')
+        temp_paths.append(temp_path)
+        evidence_path = None
+        protocol_evidence_path = None
+        if evidence_file is not None:
+            evidence_path = await _spool_upload(evidence_file, '.evidence.parquet')
+            temp_paths.append(evidence_path)
+        if protocol_evidence_file is not None:
+            protocol_evidence_path = await _spool_upload(
+                protocol_evidence_file, '.protocol-evidence.parquet'
+            )
+            temp_paths.append(protocol_evidence_path)
+    except Exception:
+        for path in temp_paths:
+            path.unlink(missing_ok=True)
+        raise
 
     job = IngestionJob(filename=filename, fmt=format, data_type=data_type)
     try:
         get_job_registry().start(job)
     except IngestionJobConflict as conflict:
-        temp_path.unlink(missing_ok=True)
+        for path in temp_paths:
+            path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=409,
             detail=f"Already ingesting '{conflict.active.filename}'. Wait for it to finish."
         )
 
-    task = asyncio.create_task(run_in_threadpool(run_job, job, temp_path))
+    task = asyncio.create_task(
+        run_in_threadpool(
+            run_job,
+            job,
+            temp_path,
+            evidence_path,
+            protocol_evidence_path,
+        )
+    )
     _running_tasks.add(task)
     task.add_done_callback(_running_tasks.discard)
 

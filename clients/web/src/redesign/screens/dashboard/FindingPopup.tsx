@@ -380,7 +380,7 @@ export default function FindingPopup({
             </div>
           )}
 
-          <SourceEvidenceSection evidence={sourceEvidence} />
+          <SourceEvidenceSection evidence={sourceEvidence} findingId={raw.finding_id} />
 
           {/* AI enrichment — on-demand */}
           <div className="modal-section">

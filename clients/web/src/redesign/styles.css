@@ -5652,6 +5652,57 @@
       line-height: 1.5;
    }
 
+   .source-evidence-summary {
+     margin: 12px 0 6px;
+     color: var(--tx-1);
+     line-height: 1.5;
+   }
+
+   .source-evidence h5 {
+     margin: 14px 0 8px;
+   }
+
+   .source-evidence-provenance {
+     margin: 0 14px 12px;
+     padding: 8px 10px;
+     border: 1px solid var(--line-soft);
+     border-radius: var(--r);
+     font-size: 12px;
+   }
+
+   .source-evidence-provenance>summary {
+     cursor: pointer;
+     font-weight: 600;
+   }
+
+   .source-evidence-provenance dl {
+     margin: 8px 0 0;
+   }
+
+   .source-evidence-provenance dl>div {
+     display: grid;
+     grid-template-columns: minmax(120px, 0.3fr) minmax(0, 1fr);
+     gap: 10px;
+     padding: 4px 0;
+   }
+
+   .source-evidence-provenance dt {
+     color: var(--tx-3);
+   }
+
+   .source-evidence-provenance dd {
+     margin: 0;
+     overflow-wrap: anywhere;
+   }
+
+   .source-evidence-pagination {
+     display: flex;
+     align-items: center;
+     justify-content: flex-end;
+     gap: 10px;
+     margin-top: 8px;
+   }
+
    .source-evidence-table-scroll {
       overflow-x: auto;
       border-top: 1px solid var(--line);

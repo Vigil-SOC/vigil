@@ -17,13 +17,18 @@ import hashlib
 import logging
 import tempfile
 from pathlib import Path
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 from io import StringIO
 
 from core.findings.source_evidence import (
     normalize_finding_source_evidence,
     source_evidence_from_loglm_row,
+)
+from core.findings.evidence_store import (
+    SequenceEvidenceBundle,
+    SequenceEvidenceError,
+    SequenceEvidenceStore,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,6 +86,38 @@ def row_identity_key(row: Dict[str, Any], columns: tuple) -> str:
     return '|'.join(parts)
 
 
+def _coerce_optional_verdict(value: Any, field_name: str) -> Optional[bool]:
+    """Normalize an optional boolean verdict and reject ambiguous values."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)) and value in (0, 1):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "malicious", "attack"}:
+        return True
+    if normalized in {"false", "0", "no", "benign", "normal", "clean"}:
+        return False
+    raise ValueError(f"Invalid {field_name} verdict: {value!r}")
+
+
+def _label_verdict(value: Any) -> Optional[bool]:
+    """Map recognized source labels to an attack/benign verdict."""
+    if value is None:
+        return None
+    normalized = str(value).strip().lower().replace("_", "-")
+    if normalized in {
+        "malicious", "attack", "anomalous", "threat", "1", "true"
+    }:
+        return True
+    if normalized in {
+        "benign", "normal", "clean", "non-malicious", "0", "false"
+    }:
+        return False
+    return None
+
+
 class IngestionService:
     """Service for ingesting data from various formats into the database."""
     
@@ -115,6 +152,8 @@ class IngestionService:
             'cases_imported': 0,
             'cases_skipped': 0,
             'cases_errors': 0,
+            'evidence_attached': 0,
+            'evidence_unchanged': 0,
         }
         self._identity_warned: set = set()
 
@@ -264,7 +303,95 @@ class IngestionService:
             logger.error(f"Error ingesting finding {finding_id}: {e}")
             return False
 
-    def _ingest_finding_batch(self, finding_dicts: List[Dict[str, Any]]) -> None:
+    @staticmethod
+    def _joined_sequence_evidence(finding_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        context = finding_data.get('entity_context')
+        if not isinstance(context, dict):
+            return None
+        evidence = context.get('source_evidence')
+        if (
+            isinstance(evidence, dict)
+            and evidence.get('version') == 2
+            and evidence.get('status') == 'available'
+        ):
+            return evidence
+        return None
+
+    def _merge_existing_source_evidence(self, finding_data: Dict[str, Any]) -> None:
+        """Attach validated v2 evidence without changing finding identity/verdict."""
+        evidence = self._joined_sequence_evidence(finding_data)
+        if evidence is None:
+            return
+        finding_id = finding_data['finding_id']
+        if self.use_database and self.db_service:
+            existing = self.db_service.get_finding(finding_id)
+            if existing is None:
+                raise SequenceEvidenceError(
+                    f"finding disappeared while attaching evidence: {finding_id}"
+                )
+            context = dict(existing.entity_context or {})
+            if context.get('source_evidence') == evidence:
+                self.stats['evidence_unchanged'] += 1
+                return
+            context['source_evidence'] = evidence
+            if not self.db_service.update_finding(finding_id, entity_context=context):
+                raise SequenceEvidenceError(
+                    f"failed to attach evidence to finding: {finding_id}"
+                )
+            self.stats['evidence_attached'] += 1
+            return
+
+        from core.storage.database_data_service import DatabaseDataService
+
+        data_service = DatabaseDataService()
+        existing = data_service.get_finding(finding_id)
+        if not existing:
+            raise SequenceEvidenceError(
+                f"finding disappeared while attaching evidence: {finding_id}"
+            )
+        context = dict(existing.get('entity_context') or {})
+        if context.get('source_evidence') == evidence:
+            self.stats['evidence_unchanged'] += 1
+            return
+        context['source_evidence'] = evidence
+        if not data_service.update_finding(finding_id, entity_context=context):
+            raise SequenceEvidenceError(
+                f"failed to attach evidence to finding: {finding_id}"
+            )
+        self.stats['evidence_attached'] += 1
+
+    @staticmethod
+    def _imported_finding_ids(
+        result: Dict[str, Any], findings: List[Dict[str, Any]]
+    ) -> set[str]:
+        """Return identities inserted by the bulk write, failing closed on ambiguity."""
+        expected = int(result.get('imported', 0))
+        valid_ids = {str(finding['finding_id']) for finding in findings}
+        raw_ids = result.get('imported_ids')
+        if raw_ids is None:
+            # Compatibility for all-or-nothing test doubles and older adapters.
+            if expected == 0:
+                return set()
+            if expected == len(valid_ids) and int(result.get('skipped', 0)) == 0:
+                return valid_ids
+            raise SequenceEvidenceError(
+                "bulk finding write did not identify newly inserted findings"
+            )
+        if not isinstance(raw_ids, (list, tuple, set)):
+            raise SequenceEvidenceError("bulk finding imported_ids must be a collection")
+        imported_ids = {str(value) for value in raw_ids if str(value)}
+        if len(imported_ids) != expected or not imported_ids.issubset(valid_ids):
+            raise SequenceEvidenceError(
+                "bulk finding imported_ids do not match the import result"
+            )
+        return imported_ids
+
+    def _ingest_finding_batch(
+        self,
+        finding_dicts: List[Dict[str, Any]],
+        *,
+        merge_source_evidence: bool = False,
+    ) -> None:
         """Bulk-dedup and insert a batch in one DB round trip, vs. per-row ingest_finding."""
         if not finding_dicts:
             return
@@ -272,6 +399,8 @@ class IngestionService:
         if not self.use_database or not self.db_service:
             for finding_data in finding_dicts:
                 self.ingest_finding(finding_data)
+                if merge_source_evidence:
+                    self._merge_existing_source_evidence(finding_data)
             return
 
         valid = []
@@ -298,9 +427,22 @@ class IngestionService:
             self.stats['findings_imported'] += result['imported']
             self.stats['findings_skipped'] += result['skipped']
             self.stats['findings_errors'] += result.get('errors', 0)
+            if result.get('errors', 0) == 0 and merge_source_evidence:
+                imported_ids = self._imported_finding_ids(result, valid)
+                by_id = {str(item['finding_id']): item for item in valid}
+                for finding_id, finding_data in by_id.items():
+                    if self._joined_sequence_evidence(finding_data) is None:
+                        continue
+                    if finding_id in imported_ids:
+                        # The exact evidence envelope was inserted atomically with the row.
+                        self.stats['evidence_attached'] += 1
+                    else:
+                        self._merge_existing_source_evidence(finding_data)
         except Exception as e:
             logger.error(f"Error bulk ingesting findings: {e}")
             self.stats['findings_errors'] += len(valid)
+            if isinstance(e, SequenceEvidenceError):
+                raise
 
     def _ingest_findings_batched(self, findings, batch_size: int = 1000) -> None:
         """Feed an iterable of finding dicts through _ingest_finding_batch in chunks."""
@@ -754,7 +896,10 @@ class IngestionService:
     def ingest_parquet_file(
         self,
         file_path: Union[str, Path],
-        data_source: str = 'flow'
+        data_source: str = 'flow',
+        evidence_file_path: Optional[Union[str, Path]] = None,
+        protocol_evidence_file_path: Optional[Union[str, Path]] = None,
+        merge_source_evidence: bool = False,
     ) -> Dict[str, Any]:
         """LogLM embedding exports route through _parquet_row_to_finding; anything
         else ingests generically via _generic_row_to_finding."""
@@ -778,6 +923,31 @@ class IngestionService:
             schema_kind = self._detect_parquet_schema(col_names)
             logger.info(f"Detected parquet schema: {schema_kind}")
 
+            evidence_bundle = None
+            stored_evidence = None
+            if evidence_file_path is not None:
+                if schema_kind != 'loglm':
+                    raise SequenceEvidenceError(
+                        "sequence evidence may only accompany a LogLM finding parquet"
+                    )
+                evidence_bundle = SequenceEvidenceBundle(
+                    Path(evidence_file_path),
+                    Path(protocol_evidence_file_path)
+                    if protocol_evidence_file_path is not None
+                    else None,
+                )
+                self._preflight_sequence_evidence(parquet_file, evidence_bundle)
+                stored_evidence = SequenceEvidenceStore().persist(evidence_bundle)
+                logger.info(
+                    "Validated sequence evidence artifact %s for %s sequences",
+                    stored_evidence.artifact_id,
+                    len(evidence_bundle.flows_by_sequence),
+                )
+            elif protocol_evidence_file_path is not None:
+                raise SequenceEvidenceError(
+                    "protocol evidence requires the sequence flow evidence file"
+                )
+
             sampled_first_row = False
             batch_size = 1000
             for batch in parquet_file.iter_batches(batch_size=batch_size):
@@ -792,13 +962,25 @@ class IngestionService:
                             logger.info(f"Parquet sample row (types+values): {sample}")
                             sampled_first_row = True
                         if schema_kind == 'loglm':
-                            finding_batch.append(self._parquet_row_to_finding(row, data_source))
+                            finding = self._parquet_row_to_finding(row, data_source)
+                            if evidence_bundle is not None and stored_evidence is not None:
+                                sequence_id = str(row.get('sequence_id') or '')
+                                finding['entity_context']['source_evidence'] = (
+                                    evidence_bundle.envelope(sequence_id, stored_evidence)
+                                )
+                                finding['entity_context']['evidence_availability'] = 'available'
+                            finding_batch.append(finding)
                         else:
                             finding_batch.append(self._generic_row_to_finding(row, data_source))
                     except Exception as e:
                         logger.error(f"Error processing parquet row: {e}")
                         self.stats['findings_errors'] += 1
-                self._ingest_finding_batch(finding_batch)
+                self._ingest_finding_batch(
+                    finding_batch,
+                    merge_source_evidence=bool(
+                        merge_source_evidence and evidence_bundle is not None
+                    ),
+                )
 
             logger.info(f"Parquet ingestion complete: {self.stats}")
             return self.stats
@@ -806,9 +988,60 @@ class IngestionService:
         except ImportError:
             logger.error("pyarrow is required for parquet ingestion: pip install pyarrow")
             return self.stats
+        except SequenceEvidenceError:
+            self.stats['findings_errors'] = max(
+                self.stats['findings_errors'], self.stats['findings_total'] or 1
+            )
+            raise
         except Exception as e:
             logger.error(f"Error ingesting parquet file: {e}")
             return self.stats
+
+    @staticmethod
+    def _preflight_sequence_evidence(parquet_file, bundle: SequenceEvidenceBundle) -> None:
+        """Validate all finding/evidence joins before persisting or ingesting."""
+        available = set(parquet_file.schema_arrow.names)
+        required = {'sequence_id', 'row_count'}
+        missing = required - available
+        if missing:
+            raise SequenceEvidenceError(
+                f"finding parquet lacks evidence join columns: {sorted(missing)}"
+            )
+        columns = [
+            column
+            for column in ('sequence_id', 'row_count', 'run_id', 'dataset_id')
+            if column in available
+        ]
+        seen: set[str] = set()
+        for batch in parquet_file.iter_batches(columns=columns, batch_size=1000):
+            values = batch.to_pydict()
+            for index in range(batch.num_rows):
+                sequence_id = str(values['sequence_id'][index] or '')
+                if not sequence_id or sequence_id in seen:
+                    raise SequenceEvidenceError(
+                        f"finding parquet has missing/duplicate sequence_id: {sequence_id!r}"
+                    )
+                seen.add(sequence_id)
+                row_count = int(values['row_count'][index] or 0)
+                if not bundle.has_sequence(sequence_id, row_count):
+                    raise SequenceEvidenceError(
+                        f"no exact {row_count}-row evidence membership for {sequence_id}"
+                    )
+                if 'run_id' in values:
+                    run_id = str(values['run_id'][index] or '')
+                    if run_id and run_id != bundle.run_id:
+                        raise SequenceEvidenceError(
+                            f"run_id mismatch for {sequence_id}: {run_id} != {bundle.run_id}"
+                        )
+                if 'dataset_id' in values:
+                    dataset_id = str(values['dataset_id'][index] or '')
+                    if dataset_id and dataset_id != bundle.dataset_id:
+                        raise SequenceEvidenceError(
+                            f"dataset_id mismatch for {sequence_id}: "
+                            f"{dataset_id} != {bundle.dataset_id}"
+                        )
+        if not seen:
+            raise SequenceEvidenceError("finding parquet contains no sequences")
 
     def _parquet_row_to_finding(
         self,
@@ -889,8 +1122,51 @@ class IngestionService:
             'dst_ip': row.get('engaged_ip'),
             'incident_pred': incident_pred,
             'confidence_score': anomaly_score,
+            'prediction_confidence': (
+                float(confidence) if confidence is not None else 0.85
+            ),
+            'verdict': 'attack' if is_attack else 'benign',
             'sequence_id': sequence_id,
         }
+
+        # ``malicious`` and ``label`` are source ground truth, not aliases for
+        # the model's ``incident_pred``. Keep them separate so false positives
+        # and false negatives remain visible in downstream evidence views.
+        malicious_verdict = _coerce_optional_verdict(
+            row.get('malicious'), 'malicious'
+        )
+        label_verdict = _label_verdict(row.get('label'))
+        if (
+            malicious_verdict is not None
+            and label_verdict is not None
+            and malicious_verdict != label_verdict
+        ):
+            raise ValueError(
+                "Contradictory ground truth: malicious and label disagree"
+            )
+        ground_truth_verdict = (
+            malicious_verdict
+            if malicious_verdict is not None
+            else label_verdict
+        )
+        if ground_truth_verdict is not None:
+            entity_context.update({
+                'ground_truth_malicious': ground_truth_verdict,
+                'ground_truth_verdict': (
+                    'attack' if ground_truth_verdict else 'benign'
+                ),
+                'ground_truth_source': (
+                    'malicious'
+                    if malicious_verdict is not None
+                    else 'label'
+                ),
+                'prediction_matches_ground_truth': (
+                    ground_truth_verdict == is_attack
+                ),
+            })
+        for source_field in ('malicious', 'label'):
+            if row.get(source_field) is not None:
+                entity_context[source_field] = row[source_field]
 
         if row.get('event_start_time') is not None:
             entity_context['event_start_time'] = int(row['event_start_time'])

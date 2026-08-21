@@ -1,71 +1,47 @@
 # Structured source evidence
 
-Vigil can retain a bounded preview of the source records that produced a
-finding. The preview lives at `finding.entity_context.source_evidence`, so it
-does not require a database migration. Finding list responses retain only the
-envelope metadata with `payload_included: false`;
-`GET /api/findings/{finding_id}` returns the payload.
+Vigil supports two source-evidence contracts inside
+`finding.entity_context.source_evidence`. Finding-list responses retain only
+the envelope; finding detail and the evidence paging endpoint expose records.
 
-## Contract
+## Embedded evidence (version 1)
 
-```json
-{
-  "version": 1,
-  "telemetry_kind": "netflow",
-  "schema_id": "netflow.v1",
-  "status": "available",
-  "provenance": "embedded",
-  "total_records": 150,
-  "truncated": true,
-  "records": [],
-  "raw_text": "optional source-native text"
-}
-```
+Version 1 accepts a bounded producer-owned preview for NetFlow, DNS, HTTP
+sessions, or generic logs. It records a versioned schema ID, availability
+state, provenance, total record count, truncation, and up to 100 records. It is
+appropriate when the finding artifact itself carries the source preview.
 
-`telemetry_kind` is the renderer selector, not `finding.data_source`. Supported
-values are `netflow`, `dns`, `http_session`, and `generic_log`. This lets the
-capability apply to network flows, DNS, Layer 7 sessions, and other logs without
-forcing unrelated schemas into a NetFlow table. `schema_id` remains owned by
-the producer and should be versioned when its record fields change.
+## Exact sequence evidence (version 2)
 
-`status` is one of:
+For LogLM findings, ingestion may receive two immutable companion Parquet
+artifacts:
 
-- `available`: at least one structured record or non-empty `raw_text` exists.
-- `not_in_artifact`: the source artifact did not include raw evidence.
-- `redacted`: evidence existed but was intentionally removed before ingestion.
-- `invalid`: evidence was supplied but failed contract validation.
+- `sequence_evidence/v1`: normalized flow rows with exact `sequence_id`,
+  ordered membership, flow identity, run/dataset identity, endpoints, counters,
+  capture hash, and packet bounds.
+- `sequence_protocol_evidence/v1`: Modbus observations joined to one of those
+  flows by capture, endpoints, and packet references.
 
-No envelope means the finding has no declared source-evidence capability, so
-the finding dialog hides the section. The other non-available states render a
-short, truthful message.
+Vigil validates all identities and joins before mutating findings. It then
+stores the companions under a content-addressed artifact ID and attaches a
+version-2 envelope to each finding. Duplicate finding imports may update that
+evidence reference but do not rewrite the finding verdict or identity.
 
-## LogLM Parquet inputs
+`GET /api/findings/{finding_id}/source-evidence` accepts `kind=netflow|modbus`,
+`offset`, and `limit` (maximum 500). The UI renders a deterministic behavioral
+summary plus paginated flow and Modbus tables. Any LLM-generated prose remains
+separate from these source-backed facts.
 
-The preferred Parquet column is `source_evidence`, containing the object above
-or its JSON representation. Current artifacts with `events_json` and/or
-`sequence` are adapted during ingestion:
+The store defaults to 10,240 MiB and is configured by
+`EVIDENCE_STORE_PATH`/`EVIDENCE_STORE_MAX_MB`. It fails closed when capacity is
+exhausted; it does not evict artifacts still referenced by findings. Companion
+files contain normalized metadata and provenance, never raw PCAP or payload.
 
-- `events_json` becomes ordered `records`.
-- `sequence` becomes `raw_text`.
-- `source_evidence_kind` explicitly selects the telemetry renderer. If absent,
-  these legacy columns use `generic_log` rather than guessing from
-  `data_source="flow"`.
-- Optional columns are `source_evidence_schema_id`, `source_evidence_status`,
-  `source_evidence_provenance`, and `source_evidence_total_records`.
+## Truth boundaries
 
-Ingestion retains at most 100 structured records and 64 KiB of raw text per
-finding, records truncation metadata, converts non-finite numbers to `null`,
-and never lets malformed evidence prevent the finding itself from ingesting.
-
-## Canonical record fields
-
-The built-in tables recognize these v1 field names:
-
-- NetFlow: `timestamp`, `source_ip`, `source_port`, `destination_ip`,
-  `destination_port`, `protocol`, `forward_packets`, `backward_packets`,
-  `forward_bytes`, `backward_bytes`, `duration_ms`.
-- DNS: `timestamp`, `client_ip`, `server_ip`, `query`, `query_type`, `answer`,
-  `response_code`, `ttl`.
-
-HTTP-session and generic-log records render as ordered, expandable key/value
-records so source fields remain visible without inventing a universal schema.
+- A model finding is not proof of attack.
+- Observed endpoint traffic is not an inferred network topology.
+- Missing evidence remains unavailable; Vigil does not reconstruct records
+  from token bins or ask an LLM to invent them.
+- Capture hashes and packet references prove artifact linkage only when the
+  upstream custody and manifest gates also pass.

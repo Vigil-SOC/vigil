@@ -2,7 +2,7 @@ export type SourceTelemetryKind = 'netflow' | 'dns' | 'http_session' | 'generic_
 export type SourceEvidenceStatus = 'available' | 'not_in_artifact' | 'redacted' | 'invalid'
 export type SourceEvidenceProvenance = 'embedded' | 'joined'
 
-export interface SourceEvidence {
+export interface LegacySourceEvidence {
   version: 1
   telemetryKind: SourceTelemetryKind
   schemaId: string
@@ -15,11 +15,71 @@ export interface SourceEvidence {
   rawTextTruncated: boolean
 }
 
+export interface SequenceEvidenceStream {
+  schemaId: string
+  totalRecords: number
+  truncated: boolean
+  records: Array<Record<string, unknown>>
+}
+
+export interface SequenceSourceEvidence {
+  version: 2
+  status: 'available'
+  provenance: 'joined'
+  telemetryKind: 'netflow'
+  schemaId: 'sequence_evidence/v1'
+  totalRecords: number
+  truncated: boolean
+  records: Array<Record<string, unknown>>
+  rawTextTruncated: false
+  associationBasis: 'producer_membership' | 'sequence_builder_replay'
+  sequenceId: string
+  datasetId: string
+  runId: string
+  artifact: {
+    artifactId: string
+    flowSha256: string
+    modbusSha256?: string
+  }
+  summary: {
+    text: string
+    flowCount: number
+    packetCount: number
+    byteCount: number
+    protocolCounts: Record<string, number>
+    modbusTransactionCount: number
+    modbusOperationCounts: Record<string, number>
+    modbusResponseCounts: Record<string, number>
+  }
+  coverage: {
+    eventStartTime: number
+    eventEndTime: number
+    captureSha256s: string[]
+    flowMembershipComplete: boolean
+    modbusPacketAssociation: boolean
+  }
+  streams: {
+    netflow: SequenceEvidenceStream
+    modbus: SequenceEvidenceStream
+  }
+}
+
+export type SourceEvidence = LegacySourceEvidence | SequenceSourceEvidence
+
+export interface SourceEvidencePage {
+  kind: 'netflow' | 'modbus'
+  total: number
+  offset: number
+  limit: number
+  records: Array<Record<string, unknown>>
+}
+
 const KINDS = new Set<SourceTelemetryKind>(['netflow', 'dns', 'http_session', 'generic_log'])
 const STATUSES = new Set<SourceEvidenceStatus>(['available', 'not_in_artifact', 'redacted', 'invalid'])
 const PROVENANCE = new Set<SourceEvidenceProvenance>(['embedded', 'joined'])
+const SHA256 = /^[a-f0-9]{64}$/
 
-function invalidEvidence(value?: Record<string, unknown>): SourceEvidence {
+function invalidEvidence(value?: Record<string, unknown>): LegacySourceEvidence {
   const kind = KINDS.has(value?.telemetry_kind as SourceTelemetryKind)
     ? value?.telemetry_kind as SourceTelemetryKind
     : 'generic_log'
@@ -58,6 +118,7 @@ export function parseSourceEvidence(value: unknown): SourceEvidence | undefined 
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return invalidEvidence()
   const raw = parsed as Record<string, unknown>
+  if (raw.version === 2) return parseSequenceEvidence(raw)
   const kind = raw.telemetry_kind as SourceTelemetryKind
   const status = raw.status as SourceEvidenceStatus
   const provenance = raw.provenance as SourceEvidenceProvenance
@@ -113,6 +174,121 @@ export function parseSourceEvidence(value: unknown): SourceEvidence | undefined 
     records,
     rawText,
     rawTextTruncated: raw.raw_text_truncated === true,
+  }
+}
+
+function objectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function numberRecord(value: unknown): Record<string, number> | undefined {
+  if (!objectRecord(value)) return undefined
+  const entries = Object.entries(value)
+  if (!entries.every(([, count]) => typeof count === 'number' && Number.isFinite(count))) return undefined
+  return Object.fromEntries(entries) as Record<string, number>
+}
+
+function sequenceStream(value: unknown, schemaId: string): SequenceEvidenceStream | undefined {
+  if (!objectRecord(value) || value.schema_id !== schemaId) return undefined
+  const total = value.total_records
+  const truncated = value.truncated
+  const records = value.records === undefined
+    ? []
+    : Array.isArray(value.records) && value.records.every(objectRecord)
+      ? value.records
+      : undefined
+  if (
+    typeof total !== 'number'
+    || !Number.isInteger(total)
+    || total < 0
+    || typeof truncated !== 'boolean'
+    || !records
+    || total < records.length
+  ) return undefined
+  return { schemaId, totalRecords: total, truncated: truncated || total > records.length, records }
+}
+
+function parseSequenceEvidence(raw: Record<string, unknown>): SourceEvidence {
+  const artifact = objectRecord(raw.artifact) ? raw.artifact : undefined
+  const summary = objectRecord(raw.summary) ? raw.summary : undefined
+  const coverage = objectRecord(raw.coverage) ? raw.coverage : undefined
+  const streams = objectRecord(raw.streams) ? raw.streams : undefined
+  const netflow = sequenceStream(streams?.netflow, 'sequence_evidence/v1')
+  const modbus = sequenceStream(streams?.modbus, 'sequence_protocol_evidence/v1')
+  const protocolCounts = numberRecord(summary?.protocol_counts)
+  const operationCounts = numberRecord(summary?.modbus_operation_counts)
+  const responseCounts = numberRecord(summary?.modbus_response_counts)
+  const association = raw.association_basis
+  const captureHashes = coverage?.capture_sha256s
+  if (
+    raw.status !== 'available'
+    || raw.provenance !== 'joined'
+    || (association !== 'producer_membership' && association !== 'sequence_builder_replay')
+    || typeof raw.sequence_id !== 'string' || !raw.sequence_id.trim()
+    || typeof raw.dataset_id !== 'string' || !raw.dataset_id.trim()
+    || typeof raw.run_id !== 'string' || !raw.run_id.trim()
+    || !artifact
+    || typeof artifact.artifact_id !== 'string' || !SHA256.test(artifact.artifact_id)
+    || typeof artifact.flow_sha256 !== 'string' || !SHA256.test(artifact.flow_sha256)
+    || (artifact.modbus_sha256 !== null && artifact.modbus_sha256 !== undefined
+      && (typeof artifact.modbus_sha256 !== 'string' || !SHA256.test(artifact.modbus_sha256)))
+    || !summary
+    || typeof summary.text !== 'string'
+    || typeof summary.flow_count !== 'number'
+    || typeof summary.packet_count !== 'number'
+    || typeof summary.byte_count !== 'number'
+    || typeof summary.modbus_transaction_count !== 'number'
+    || !protocolCounts
+    || !operationCounts
+    || !responseCounts
+    || !coverage
+    || typeof coverage.event_start_time !== 'number'
+    || typeof coverage.event_end_time !== 'number'
+    || !Array.isArray(captureHashes)
+    || !captureHashes.every((hash) => typeof hash === 'string')
+    || typeof coverage.flow_membership_complete !== 'boolean'
+    || typeof coverage.modbus_packet_association !== 'boolean'
+    || !netflow
+    || !modbus
+  ) return invalidEvidence(raw)
+
+  return {
+    version: 2,
+    status: 'available',
+    provenance: 'joined',
+    telemetryKind: 'netflow',
+    schemaId: 'sequence_evidence/v1',
+    totalRecords: netflow.totalRecords,
+    truncated: netflow.truncated,
+    records: netflow.records,
+    rawTextTruncated: false,
+    associationBasis: association,
+    sequenceId: raw.sequence_id,
+    datasetId: raw.dataset_id,
+    runId: raw.run_id,
+    artifact: {
+      artifactId: artifact.artifact_id,
+      flowSha256: artifact.flow_sha256,
+      modbusSha256: typeof artifact.modbus_sha256 === 'string' ? artifact.modbus_sha256 : undefined,
+    },
+    summary: {
+      text: summary.text,
+      flowCount: summary.flow_count,
+      packetCount: summary.packet_count,
+      byteCount: summary.byte_count,
+      protocolCounts,
+      modbusTransactionCount: summary.modbus_transaction_count,
+      modbusOperationCounts: operationCounts,
+      modbusResponseCounts: responseCounts,
+    },
+    coverage: {
+      eventStartTime: coverage.event_start_time,
+      eventEndTime: coverage.event_end_time,
+      captureSha256s: captureHashes as string[],
+      flowMembershipComplete: coverage.flow_membership_complete,
+      modbusPacketAssociation: coverage.modbus_packet_association,
+    },
+    streams: { netflow, modbus },
   }
 }
 
