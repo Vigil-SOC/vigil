@@ -1514,7 +1514,16 @@ class Investigation(Base):
     workflow_id: Mapped[str] = mapped_column(String(50), nullable=False)
 
     trigger_type: Mapped[str] = mapped_column(String(30), nullable=False)
-    trigger_ids: Mapped[List[dict]] = mapped_column(JSONB, nullable=False, default=list)
+    # Finding ids, not objects (#554). Both writers build a list of
+    # ``findings.finding_id`` strings -- services/daemon/orchestrator.py:407
+    # (``[f.get("finding_id") for f in findings ...]``) and :942
+    # (``finding_ids[:10]``) -- and every reader treats the elements as those
+    # strings: services/api/routers/orchestrator.py:484 tests them for set
+    # membership against ``Finding.finding_id``, and orchestrator.py:1098 writes
+    # ``trigger_ids[0]`` straight into ``AIDecisionLog.finding_id``, a
+    # String(50) FK. The old ``List[dict]`` annotation matched no writer or
+    # reader. Storage stays JSONB; promoting the column is deferred to #468.
+    trigger_ids: Mapped[List[str]] = mapped_column(JSONB, nullable=False, default=list)
 
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
 
