@@ -306,13 +306,23 @@ services:
   # calls hit the /anthropic passthrough (preserves extended thinking and
   # prompt caching); OpenAI/Ollama/etc. hit the /v1 OpenAI-format surface.
   # Live config lives in /app/data/config.db (SQLite); config.json is used
-  # as a first-boot seed. Configure Bifrost's own exact-hash / semantic
-  # cache via its UI at http://localhost:8080.
+  # as a first-boot seed. Providers, keys, models and virtual keys are managed
+  # from Vigil's own Settings -> AI Config, which reaches this config store
+  # through the authenticated passthrough in
+  # services/api/routers/bifrost_config.py. Bifrost's own UI at
+  # http://localhost:8080 remains the place for what that passthrough
+  # deliberately does not expose: cache and plugin config.
   bifrost:
     image: maximhq/bifrost:latest
     container_name: deeptempo-bifrost
     ports:
-      - "8080:8080"
+      # Loopback-only: Bifrost runs with its admin auth disabled, so its config
+      # API -- provider credentials included -- is unauthenticated. Published on
+      # 0.0.0.0 that is readable and writable by anything reaching the host.
+      # Vigil's own traffic uses the compose network, not this mapping. A
+      # deployment needing the UI off-box must turn on Bifrost's admin auth
+      # rather than widen this.
+      - "127.0.0.1:8080:8080"
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}

@@ -1,43 +1,43 @@
 /* ============================================================
-   Settings · AI Config — four sub-panels behind an internal tab bar:
-   Providers (CRUD + test + set-default), Model Assignment (per-
-   component provider/model + inherit), Operations (cost/perf knobs),
-   Budgets (Bifrost virtual-key config + live quota). Mirrors the
-   legacy AI Config tab (LLMProvidersTab / ModelAssignmentTab /
-   AIOperationsTab / BudgetsSection).
+   Settings · AI Config — five sub-panels behind an internal tab bar.
+
+   Providers, Models and Virtual Keys read and write the Bifrost gateway's own
+   config store through the backend passthrough, so what this page shows is
+   what actually routes. Model Assignment is Vigil's own concept (which model
+   each component uses) and still resolves against llm_provider_configs;
+   Operations are Vigil runtime knobs.
    ============================================================ */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
-  ConfirmDialog,
   EmptyState,
   Field,
   NumberInput,
   Select,
   SettingsCard,
-  TextInput,
   Toggle,
   ToggleRow,
 } from '../../shared/ui'
-import LlmProviderDialog from './LlmProviderDialog'
+import AiProvidersPanel from './AiProvidersPanel'
+import AiModelsPanel from './AiModelsPanel'
+import AiBudgetsPanel from './AiBudgetsPanel'
 import {
   AI_OPS_DEFAULTS,
   useAiOperations,
-  useBudgets,
-  useLlmProviders,
   useModelAssignment,
   type AIOperationsSettings,
 } from './useSettings'
-import type { LLMProvider, AIModelInfo } from '../../../services/api'
+import type { AIModelInfo } from '../../../services/api'
 import type { SectionProps } from './types'
 import { COMPONENT_LABELS, CHAT_DEFAULT_KEY } from '../../../config/aiComponents'
 
-type AiTab = 'providers' | 'models' | 'operations' | 'budgets'
+type AiTab = 'providers' | 'catalogue' | 'assignment' | 'keys' | 'operations'
 const TABS: [AiTab, string][] = [
-  ['providers', 'Providers'],
-  ['models', 'Model Assignment'],
+  ['providers', 'Providers & Keys'],
+  ['catalogue', 'Models'],
+  ['assignment', 'Model Assignment'],
+  ['keys', 'Virtual Keys'],
   ['operations', 'Operations'],
-  ['budgets', 'Budgets'],
 ]
 
 export default function AiConfigSection({ notify }: SectionProps) {
@@ -51,179 +51,12 @@ export default function AiConfigSection({ notify }: SectionProps) {
           </button>
         ))}
       </div>
-      {tab === 'providers' && <ProvidersPanel notify={notify} />}
-      {tab === 'models' && <ModelAssignmentPanel notify={notify} />}
+      {tab === 'providers' && <AiProvidersPanel notify={notify} />}
+      {tab === 'catalogue' && <AiModelsPanel />}
+      {tab === 'assignment' && <ModelAssignmentPanel notify={notify} />}
+      {tab === 'keys' && <AiBudgetsPanel notify={notify} />}
       {tab === 'operations' && <OperationsPanel notify={notify} />}
-      {tab === 'budgets' && <BudgetsPanel notify={notify} />}
     </>
-  )
-}
-
-/* ---------------- Providers ---------------- */
-function ProvidersPanel({ notify }: SectionProps) {
-  const { providers, phase, error, reload, test, remove, setDefault } = useLlmProviders()
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editing, setEditing] = useState<LLMProvider | null>(null)
-  const [testingId, setTestingId] = useState<string | null>(null)
-  const [confirmDel, setConfirmDel] = useState<LLMProvider | null>(null)
-  const [deleting, setDeleting] = useState(false)
-
-  const handleTest = async (id: string) => {
-    setTestingId(id)
-    try {
-      const res = await test(id)
-      if (res.success) notify('ok', `Connection OK for ${id}.`)
-      else notify('err', `Test failed: ${res.error || 'unknown error'}`)
-      reload()
-    } catch (e) {
-      notify('err', (e as { message?: string })?.message || 'Test request failed.')
-    } finally {
-      setTestingId(null)
-    }
-  }
-
-  const handleSetDefault = async (id: string) => {
-    try {
-      await setDefault(id)
-      notify('ok', `Default set to ${id}.`)
-    } catch (e) {
-      notify('err', (e as { message?: string })?.message || 'Failed to set default.')
-    }
-  }
-
-  const handleDelete = async () => {
-    if (!confirmDel) return
-    setDeleting(true)
-    try {
-      await remove(confirmDel.provider_id)
-      notify('ok', `Deleted ${confirmDel.name}.`)
-      setConfirmDel(null)
-    } catch (e) {
-      notify('err', (e as { message?: string })?.message || 'Delete failed.')
-    } finally {
-      setDeleting(false)
-    }
-  }
-
-  const hasOtherActiveOfType = (p: LLMProvider) =>
-    providers.some(
-      (q) => q.provider_id !== p.provider_id && q.provider_type === p.provider_type && q.is_active,
-    )
-
-  const requestDelete = (p: LLMProvider) => {
-    // The API blocks deleting the only active provider of a type (it has no
-    // sibling to promote to default), so surface that up front instead of a
-    // confirm dialog that implies an auto-promotion that won't happen.
-    if (p.is_default && !hasOtherActiveOfType(p)) {
-      notify(
-        'err',
-        `"${p.name}" is the only active ${p.provider_type} provider and can't be deleted. ` +
-          `Add or activate another ${p.provider_type} provider first.`,
-      )
-      return
-    }
-    setConfirmDel(p)
-  }
-
-  // Mirror the warning to what deletion actually does: default providers
-  // trigger a promotion; either way the provider's model assignments and
-  // stored API key are removed.
-  const deleteBody = (p: LLMProvider) =>
-    p.is_default
-      ? `"${p.name}" is the primary ${p.provider_type} provider. Deleting it promotes the next active ${p.provider_type} provider to primary. Its model assignments and stored API key are also removed.`
-      : `Delete "${p.name}"? Its model assignments and stored API key are also removed.`
-
-  const statusChip = (p: LLMProvider) => {
-    if (!p.is_active) return <span className="chip">Inactive</span>
-    if (p.last_test_success === true) return <span className="status closed">Active</span>
-    if (p.last_test_success === false) return <span className="chip" style={{ color: 'var(--crit)' }}>Error</span>
-    return <span className="chip">Untested</span>
-  }
-
-  return (
-    <SettingsCard
-      wide
-      title="LLM Providers"
-      desc="Configure additional Anthropic, OpenAI, or Ollama providers. Traffic routes through the Bifrost gateway — Anthropic calls use the /anthropic passthrough so extended thinking and prompt caching round-trip unchanged."
-      actions={
-        <button className="btn primary" onClick={() => { setEditing(null); setDialogOpen(true) }}>
-          <Icon name="plus" /> Add Provider
-        </button>
-      }
-    >
-      {phase === 'loading' && <EmptyState loading compact icon="sparkle" title="Loading providers…" />}
-      {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load providers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
-      {phase === 'ready' && (
-        <div className="table-wrap">
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Name</th><th>Type</th><th>Model</th><th>Status</th><th>Default</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {providers.length === 0 && (
-                <tr><td colSpan={6}><EmptyState table compact icon="sparkle" title="No AI providers configured" body="Add Ollama, Anthropic, or OpenAI-compatible providers before using AI analysis, workflow generation, or agent chat." primary={{ label: 'Add provider', onClick: () => { setEditing(null); setDialogOpen(true) }, icon: 'plus' }} /></td></tr>
-              )}
-              {providers.map((p) => (
-                <tr key={p.provider_id}>
-                  <td>
-                    <div className="flex flex-col">
-                      <span>{p.name}</span>
-                      <span className="text-xs text-tx-3">{p.provider_id}</span>
-                    </div>
-                  </td>
-                  <td><span className="chip">{p.provider_type}</span></td>
-                  <td className="font-mono text-xs">{p.default_model}</td>
-                  <td>{statusChip(p)}</td>
-                  <td>
-                    <button
-                      className="btn ghost icon"
-                      title={p.is_default ? 'Default for this provider type' : 'Set as default'}
-                      onClick={() => !p.is_default && handleSetDefault(p.provider_id)}
-                      style={p.is_default ? { color: 'var(--accent-2)' } : undefined}
-                    >
-                      <Icon name={p.is_default ? 'sparkle' : 'plus'} size={15} />
-                    </button>
-                  </td>
-                  <td style={{ textAlign: 'right' }}>
-                    <div className="inline-flex gap-1.5">
-                      <button className="btn ghost icon" title="Test connection" disabled={testingId === p.provider_id} onClick={() => handleTest(p.provider_id)}>
-                        <Icon name={testingId === p.provider_id ? 'refresh' : 'bolt'} size={15} />
-                      </button>
-                      <button className="btn ghost icon" title="Edit" onClick={() => { setEditing(p); setDialogOpen(true) }}>
-                        <Icon name="edit" size={15} />
-                      </button>
-                      <button className="btn ghost icon" title="Delete" onClick={() => requestDelete(p)}>
-                        <Icon name="trash" size={15} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {dialogOpen && (
-        <LlmProviderDialog
-          existing={editing}
-          onClose={() => { setDialogOpen(false); setEditing(null) }}
-          onSaved={() => { setDialogOpen(false); setEditing(null); notify('ok', 'Provider saved.'); reload() }}
-        />
-      )}
-      <ConfirmDialog
-        open={!!confirmDel}
-        title="Delete provider?"
-        body={confirmDel ? deleteBody(confirmDel) : ''}
-        confirmLabel="Delete"
-        busy={deleting}
-        onConfirm={handleDelete}
-        onClose={() => setConfirmDel(null)}
-      />
-    </SettingsCard>
   )
 }
 
@@ -424,115 +257,6 @@ function OperationsPanel({ notify }: SectionProps) {
         />
         <div className="settings-grid-2 mt-4" style={{ gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 2fr)' }}>
           {numField('local_ollama_recovery_retry_limit', 'Retry attempts', 'Retries after the first failed request. 0 disables retries.', 0, 3)}
-        </div>
-      </div>
-    </SettingsCard>
-  )
-}
-
-/* ---------------- Budgets ---------------- */
-function maskVk(vk: string): string {
-  if (!vk || vk.length <= 8) return vk
-  return `${vk.slice(0, 6)}…${vk.slice(-4)}`
-}
-
-const ENFORCEMENT_OPTIONS = [
-  { value: 'warning', label: 'Warning only — log but allow' },
-  { value: 'hard_stop', label: 'Hard stop — block on exceed' },
-]
-
-function BudgetsPanel({ notify }: SectionProps) {
-  const { settings, quota, phase, reload, save } = useBudgets()
-  const [draft, setDraft] = useState(settings)
-  const [saving, setSaving] = useState(false)
-  const [showVk, setShowVk] = useState(false)
-
-  useEffect(() => { setDraft(settings) }, [settings])
-
-  if (phase === 'loading') {
-    return <div className="text-sm text-tx-3 py-8 text-center">Loading budget settings…</div>
-  }
-
-  const dirty =
-    draft.default_vk !== settings.default_vk ||
-    draft.budget_limit_usd !== settings.budget_limit_usd ||
-    draft.enforcement_mode !== settings.enforcement_mode
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      await save({
-        default_vk: draft.default_vk.trim(),
-        budget_limit_usd: Number(draft.budget_limit_usd) || 0,
-        enforcement_mode: draft.enforcement_mode,
-      })
-      notify('ok', 'Budget settings saved.')
-    } catch (e) {
-      notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Save failed.')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const firstBudget = quota?.quota?.budgets?.[0]
-  const spendPct =
-    firstBudget && firstBudget.max_limit > 0
-      ? Math.min(100, Math.round((firstBudget.current_usage / firstBudget.max_limit) * 100))
-      : 0
-  const barColor = spendPct >= 90 ? 'var(--crit)' : spendPct >= 75 ? 'var(--high)' : 'var(--accent)'
-
-  return (
-    <SettingsCard
-      title="Budgets (Bifrost virtual key)"
-      desc="Bifrost enforces a USD budget per virtual key, upstream of every LLM call. DEV_MODE=true or LLM_BUDGET_UNLIMITED=true bypasses enforcement."
-      actions={
-        <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
-      }
-    >
-      {quota?.configured && quota.available && firstBudget && (
-        <div className="mb-4">
-          <div className="flex justify-between mb-1.5 text-sm">
-            <span><strong>${firstBudget.current_usage.toFixed(2)}</strong> spent of <strong>${firstBudget.max_limit.toFixed(2)}</strong></span>
-            <span className="text-xs text-tx-3">{firstBudget.reset_duration} cycle · resets {firstBudget.last_reset || '—'}</span>
-          </div>
-          <div className="h-1.5 rounded-full bg-[var(--bg-3)] overflow-hidden">
-            <div className="h-full rounded-full" style={{ width: `${spendPct}%`, background: barColor }} />
-          </div>
-        </div>
-      )}
-      {quota?.configured && !quota.available && (
-        <div className="settings-banner err mb-3"><Icon name="alert" size={14} /> {quota.message || "Bifrost is unreachable or the configured VK doesn't exist."}</div>
-      )}
-      {!quota?.configured && (
-        <div className="settings-banner info mb-3"><Icon name="info" size={14} /> {quota?.message || 'No virtual key configured. Provision one in the Bifrost UI, then paste its ID below.'}</div>
-      )}
-
-      <div className="flex flex-col gap-3.5 max-w-[560px]">
-        <Field label="Default virtual key (sk-bf-…)" hint="Read from x-bf-vk on every upstream LLM call. Empty = bootstrap mode (no enforcement).">
-          <TextInput
-            value={showVk ? draft.default_vk : maskVk(draft.default_vk)}
-            onFocus={() => setShowVk(true)}
-            onBlur={() => setShowVk(false)}
-            onChange={(e) => setDraft({ ...draft, default_vk: e.target.value })}
-          />
-        </Field>
-        <Field label="Monthly budget ceiling ($)" hint="Reference value for the dashboard. Keep in sync with the VK's Bifrost ceiling.">
-          <NumberInput
-            value={draft.budget_limit_usd}
-            onChange={(e) => setDraft({ ...draft, budget_limit_usd: Number(e.target.value) })}
-          />
-        </Field>
-        <Field label="Enforcement mode">
-          <Select
-            value={draft.enforcement_mode}
-            options={ENFORCEMENT_OPTIONS}
-            onSelect={(v) => setDraft({ ...draft, enforcement_mode: v as 'warning' | 'hard_stop' })}
-          />
-        </Field>
-        <div>
-          <button className="btn primary" disabled={!dirty || saving} onClick={handleSave}>
-            <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}
-          </button>
         </div>
       </div>
     </SettingsCard>
