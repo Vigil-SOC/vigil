@@ -339,9 +339,18 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@deeptempo.ai}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      # SERVER_MODE is deliberately left at pgAdmin's default (True). Setting it
+      # to 'False' selects desktop mode, which disables the login prompt
+      # entirely -- the container logs "Configuring authentication for DESKTOP
+      # mode" and GET / lands straight on /browser/ with no credential check.
+      # That made PGADMIN_DEFAULT_PASSWORD decorative rather than a gate (#707).
     ports:
-      - "5050:80"
+      # Loopback-only, for the same reason as postgres and redis above. This
+      # console reaches the database over deeptempo-network by service name, so
+      # it is inside the perimeter that the loopback binds establish -- an
+      # unauthenticated console published on 0.0.0.0 would route straight around
+      # them, using the default password committed above.
+      - "127.0.0.1:5050:80"
     volumes:
       - pgadmin_data:/var/lib/pgadmin
     depends_on:
