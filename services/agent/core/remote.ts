@@ -32,6 +32,10 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
   const call = options.fetch ?? globalThis.fetch;
   return {
     invoke: async (tool: RegisteredTool, args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult> => {
+      // A tool the registry answers itself never leaves the process: every call routes
+      // through this dispatch, so a local implementation was otherwise unreachable.
+      if (tool.local) return tool.invoke(args);
+
       // The tool's timeout and the run's abort both end this call, so whichever
       // fires first does: a lost lease must not wait out a 30s tool.
       //

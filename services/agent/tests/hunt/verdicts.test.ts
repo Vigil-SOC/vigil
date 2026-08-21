@@ -5,7 +5,7 @@ import {
   verdictsOf,
   type Verdicts,
 } from "../../workflows/hunt/config.js";
-import { HuntController, InvalidDecision, validateDecision } from "../../workflows/hunt/controller.js";
+import { InvalidDecision, validateDecision } from "../../workflows/hunt/controller.js";
 import type { DisconfirmationCritic } from "../../workflows/hunt/ports.js";
 import { ScriptedDisconfirmationCritic } from "../../workflows/hunt/scripted.js";
 import { evidenceStrength, isGap } from "../../workflows/hunt/strength.js";
@@ -130,11 +130,11 @@ describe("evidence_strength predicates", () => {
     expect(evidenceStrength(ledger.projection, hypothesisId).corroborating_sources).toBe(1);
   });
 
-  it("refuses proven when every supporting record is attacker-influenceable", async () => {
+  it("refuses proven when nothing supporting it was attested by the telemetry", async () => {
     const { ledger, hypothesisId } = await oneHypothesis();
     const citations = [
-      evidenceOn(ledger, hypothesisId, { source: "http", attackerInfluenceable: true }),
-      evidenceOn(ledger, hypothesisId, { source: "dns", attackerInfluenceable: true }),
+      evidenceOn(ledger, hypothesisId, { source: "http", restsOn: [{ field: "filename", authored: "adversary" }] }),
+      evidenceOn(ledger, hypothesisId, { source: "dns", restsOn: [{ field: "threat_label", authored: "third_party" }] }),
     ];
 
     const result = await controllerFor(ledger, [validateOn(hypothesisId, citations)], {
@@ -142,7 +142,32 @@ describe("evidence_strength predicates", () => {
     }).advanceIteration();
 
     expect(ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("active");
-    expect(result.note).toMatch(/an adversary could have written/);
+    expect(result.note).toMatch(/the telemetry attested/);
+  });
+
+  // Attacker-caused is not attacker-authored: the adversary chose the destination and
+  // the interval, and the sensor counted the connections. A hunt whose every record is
+  // flagged attacker-influenceable could not prove anything at any budget.
+  it("allows proven when the support rests on what the sensor counted", async () => {
+    const { ledger, hypothesisId } = await oneHypothesis();
+    const citations = [
+      evidenceOn(ledger, hypothesisId, {
+        source: "net_flow",
+        attackerInfluenceable: true,
+        restsOn: [{ field: "conn_count", authored: "sensor" }, { field: "dest_ip", authored: "adversary" }],
+      }),
+      evidenceOn(ledger, hypothesisId, {
+        source: "endpoint",
+        attackerInfluenceable: true,
+        restsOn: [{ field: "parent_process", authored: "sensor" }],
+      }),
+    ];
+
+    await controllerFor(ledger, [validateOn(hypothesisId, citations)], {
+      critic: new ScriptedDisconfirmationCritic(true),
+    }).advanceIteration();
+
+    expect(ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("proven");
   });
 
   it("does not gate on stated_confidence", async () => {
@@ -377,3 +402,16 @@ describe("verdict thresholds are config", () => {
     expect(ledger.projection.hypotheses.get(hypothesisId)!.status).toBe("proven");
   });
 });
+
+// Every optional field on the decision schema is nullable except one. A verb that
+// carries no query — VALIDATE, ABANDON, CONCLUDE — emitted null for query_intent
+// and was refused for a field it was right to leave empty, costing an attempt and
+// a re-ask on the turn the hunt was trying to reach a verdict.
+describe('a verb that carries no query', () => {
+  it('declares query_intent nullable, like its siblings', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const arch = readFileSync(join(import.meta.dirname, '..', '..', 'arch', 'threathunt.yaml'), 'utf8')
+    expect(arch).toContain('query_intent: { type: [string, "null"] }')
+  })
+})

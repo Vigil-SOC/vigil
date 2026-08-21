@@ -16,6 +16,8 @@ export interface Workflow {
   /** "file" (built-in, read-only) or "custom" (DB-backed, editable/deletable) */
   source: string
   useCase: string
+  /** "hunt" runs the hypothesis loop and is bounded by turns; the rest walk phases. */
+  runKind: string
 }
 
 // Agent label + dot color used to be mirrored here as AGENT_META; it now comes

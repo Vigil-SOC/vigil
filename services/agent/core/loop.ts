@@ -47,6 +47,9 @@ export interface TurnConfig {
   verbs: readonly string[];
   result_cap: number;
   recall_limit: number;
+  // Lets this turn run against a ledger that already holds a terminal. Only for a turn
+  // that describes a run rather than continues one -- never one that can reach a tool.
+  after_terminal?: boolean;
   signal?: AbortSignal;
 }
 
@@ -82,6 +85,9 @@ export interface Outcome<T> {
   turns: number;
   rejected: string[];
   reason: string;
+  // What this turn spent, tallied by the turn itself: the pool's running total is only
+  // this turn's spend when nothing else is spending concurrently.
+  cost_usd: number;
 }
 
 // The workflow's events for this turn; the harness appends its own as it burns them.

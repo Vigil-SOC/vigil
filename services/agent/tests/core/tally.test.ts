@@ -204,6 +204,7 @@ function broke(): Budget {
     spent: { calls: 0, cost_usd: 0, tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 } },
     beginCall: async () => ({ reason: "calls_exhausted", used: 0, limit: 0 }),
     record: () => {},
+    raise: () => {},
     priceOf: async () => ({ cost_usd: null, source: null }),
   };
 }

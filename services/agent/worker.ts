@@ -9,7 +9,7 @@ import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
-import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunKind, RunPayload } from "./contracts/events.js";
+import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
 import {
   LEASE_TTL_MS,
@@ -41,7 +41,28 @@ type StartJob = Extract<RunJob, { reason: "start" }>;
 export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = defaultResolver()): Promise<RunSpec> {
   const entry = archFor(job.run_kind);
   const arch = job.request.arch === "" ? entry.arch : job.request.arch;
-  const tighten = (spec: RunSpec): RunSpec => withOverrides(spec, job.request.overrides);
+  // Carried on the job, not the reference, which names a definition many runs share.
+  const asked = job.request.hypotheses ?? [];
+  const turns = job.request.iterations;
+  // Only ever tightens: a caller may ask to be asked, never to skip a declared gate.
+  const gate = job.request.approve_hypotheses === true ? { hypothesis_approval: "ask" } : {};
+  const tighten = (spec: RunSpec): RunSpec =>
+    withOverrides(
+      {
+        ...spec,
+        sections: {
+          ...spec.sections,
+          ...(asked.length === 0 ? {} : { operator_hypotheses: asked }),
+          ...(Object.keys(gate).length === 0
+            ? {}
+            : { checkpoints: { ...((spec.sections?.["checkpoints"] as object) ?? {}), ...gate } }),
+        },
+        // Under thresholds: the harness refuses an unknown budgets key, and turns are
+        // the workflow's unit rather than its own.
+        ...(turns === undefined ? {} : { thresholds: { ...spec.thresholds, max_iterations: turns } }),
+      },
+      job.request.overrides,
+    );
   if (!isReference(job.request.playbook)) {
     return tighten(buildSpec({ arch, playbook: job.request.playbook, config: job.request.config }, entry.actions, entry.owned, job.request.prompt));
   }
@@ -196,12 +217,13 @@ export async function advance(
     await journalAnswers(state, job.run_id, job.run_kind, answersFor());
 
     if (await abandonIfParkedOut(state, leases, job, spec)) return;
+    if (await abandonIfStalled(state, leases, job)) return;
     if (latest !== null) await markResumed(state, job, owner, latest);
     await drive(state, job, spec, build, halt.signal, directives);
     await settle(state, leases, job, spec, owner);
   } catch (error) {
     await abandon(job, error);
-    await forget(state, leases, job.run_id, owner);
+    await forget(state, leases, job, owner, error);
     throw error;
   } finally {
     clearInterval(renewing);
@@ -218,12 +240,40 @@ export async function advance(
 // retry that lands seconds later, and a refused claim returns quietly, so BullMQ
 // would retire the job as a success with the run stalled. release() is scoped to
 // this owner, so a worker already reclaimed displaces nobody.
-async function forget(state: State, leases: Leases, runId: string, owner: string): Promise<void> {
-  if ((await state.latestSeq(runId)) === null) {
-    await leases.finish(runId);
+async function forget(state: State, leases: Leases, job: RunJob, owner: string, error: unknown): Promise<void> {
+  if ((await state.latestSeq(job.run_id)) === null) {
+    await leases.finish(job.run_id);
     return;
   }
-  await leases.release(runId, owner, 0);
+  if (await stopBecauseItCannotSucceed(state, leases, job, error)) return;
+  await leases.release(job.run_id, owner, 0);
+}
+
+// A spec error answers the same way on every attempt, and on a resume the layers come
+// off the ledger, so no retry can change it. Say why it stopped and stop, rather than
+// refilling the queue with jobs none of which could succeed.
+async function stopBecauseItCannotSucceed(
+  state: State,
+  leases: Leases,
+  job: RunJob,
+  error: unknown,
+): Promise<boolean> {
+  if (!(error instanceof SpecError)) return false;
+  // SpecError is not only about specs: a lead that emits no decision throws one, often
+  // because a checkpoint is open. A run waiting on a person must never be killed.
+  if (await waitingOnSomeone(state, job.run_id)) return false;
+
+  const reason = `its spec cannot be built: ${error.message}`;
+  await state.append(job.run_id, [
+    { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "failed", reason } },
+  ]);
+  // abandon() already told the mirror for compose; every other kind is told off the
+  // terminal in settle, which this path returns before reaching.
+  if (job.run_kind !== "compose") {
+    await mirrorFor().terminal(job.run_id, { outcome: "failed", reason, summary: "" });
+  }
+  await reap(leases, job.run_id);
+  return true;
 }
 
 // Where a run was picked back up, so a crash and its recovery are readable rather
@@ -306,6 +356,43 @@ async function abandonIfParkedOut(state: State, leases: Leases, job: RunJob, spe
   await mirrorFor().terminal(job.run_id, { outcome: "abandoned", reason, summary: "" });
   await reap(leases, job.run_id);
   return true;
+}
+
+// Sweeps that journal nothing but being picked up again: a run whose calls fail without
+// throwing advances nothing, and the SpecError path cannot see it because nothing threw.
+// Counted off the ledger, which is what survives a worker restart.
+export const MAX_STALLED_RESUMES = 6;
+
+// Neither is progress: a failing call writes a spend at zero, and a resume says only
+// that somebody looked again.
+const NOT_PROGRESS: ReadonlySet<string> = new Set(["resumed", "spend"]);
+
+async function abandonIfStalled(state: State, leases: Leases, job: RunJob): Promise<boolean> {
+  const events = await state.read(job.run_id);
+  // A parked hunt journals a resume on every sweep, so counting those would end every
+  // run that asked a question. abandonIfParkedOut owns the case nobody answers.
+  if (parkedFor(events) !== null) return false;
+  let resumes = 0;
+  for (let at = events.length - 1; at >= 0; at -= 1) {
+    const kind = events[at]?.kind ?? "";
+    if (!NOT_PROGRESS.has(kind)) break;
+    if (kind === "resumed") resumes += 1;
+  }
+  if (resumes < MAX_STALLED_RESUMES) return false;
+
+  const reason = `picked up ${resumes} times without advancing; something upstream is failing without saying so`;
+  await state.append(job.run_id, [
+    { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "abandoned", reason } },
+  ]);
+  await mirrorFor().terminal(job.run_id, { outcome: "abandoned", reason, summary: "" });
+  await reap(leases, job.run_id);
+  return true;
+}
+
+// Whether anything is waiting on a person. Read fresh, since the callers reach here
+// from a catch holding events that may predate the checkpoint.
+async function waitingOnSomeone(state: State, runId: string): Promise<boolean> {
+  return parkedFor(await state.read(runId)) !== null;
 }
 
 // How long the oldest unanswered checkpoint has been waiting, or null when none

@@ -191,3 +191,32 @@ def test_search_returns_none_when_job_creation_fails():
 @pytest.mark.parametrize("trailing", ["", "/"])
 def test_server_url_trailing_slash_is_normalised(trailing):
     assert _service(server_url=BASE + trailing).server_url == BASE
+
+
+# An agent writes its own SPL, so it writes the leading command too. Prepending a
+# second one turned "search" into a keyword filter and returned a narrowed answer
+# that looked like a real one.
+class TestTheLeadingCommand:
+    def test_leaves_a_query_that_already_searches_alone(self):
+        from core.integrations.splunk.client import _as_search
+
+        assert _as_search("search index=botsv3 sourcetype=stream:dns") == (
+            "search index=botsv3 sourcetype=stream:dns"
+        )
+
+    def test_leaves_a_generating_command_alone(self):
+        from core.integrations.splunk.client import _as_search
+
+        assert _as_search("| tstats count where index=botsv3 by host") == (
+            "| tstats count where index=botsv3 by host"
+        )
+
+    def test_adds_the_command_a_bare_query_is_missing(self):
+        from core.integrations.splunk.client import _as_search
+
+        assert _as_search("index=botsv3 error") == "search index=botsv3 error"
+
+    def test_reads_the_command_whatever_its_case(self):
+        from core.integrations.splunk.client import _as_search
+
+        assert _as_search("SEARCH index=botsv3") == "SEARCH index=botsv3"

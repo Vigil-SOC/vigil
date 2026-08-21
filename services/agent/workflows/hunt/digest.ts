@@ -14,7 +14,6 @@ import type {
   Salience,
 } from "./types.js";
 
-export const DEFAULT_EVIDENCE_WINDOW = 25;
 const DIRECTIVE_WINDOW = 5;
 
 // How much likelier an unshown record is to be resurfaced than one the lead has
@@ -411,7 +410,7 @@ export function buildDigest(projection: Projection, iteration: number, policy: D
     // What is left after this one. Counting the iteration in flight as remaining
     // tells the lead it has a turn it does not have.
     budget_remaining: {
-      iterations: Math.max(hunt.budgets.max_calls - iteration, 0),
+      iterations: Math.max(hunt.budgets.max_iterations - iteration, 0),
       cost_usd: Math.max(hunt.budgets.max_cost_usd - hunt.cost_usd, 0),
     },
     directives: projection.directives

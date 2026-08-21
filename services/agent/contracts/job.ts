@@ -26,6 +26,15 @@ export interface StartRequest {
   config: string;
   prompt: string;
   overrides?: Record<string, unknown>;
+  // What the caller wants tested, beside what the playbook states. Per-run, so it is
+  // not resolvable from the reference.
+  hypotheses?: string[];
+  // How many turns this run may take. Per-run for the same reason; absent leaves the
+  // config's.
+  iterations?: number;
+  // Whether a person approves the hypotheses before the hunt spends anything. The policy
+  // defaults to auto, so a headless run advances with nobody to ask.
+  approve_hypotheses?: boolean;
 }
 
 // A resume carries no request, so a resume path that read one would not compile.

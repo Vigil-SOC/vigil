@@ -16,7 +16,6 @@ export class Journal {
   private events: HuntEvent[] = [];
   private pending: Body[] = [];
   private view: Projection | null = null;
-  private written = 0;
 
   private constructor(
     private readonly state: State<HuntKinds>,
@@ -33,7 +32,6 @@ export class Journal {
   ): Promise<Journal> {
     const journal = new Journal(state, queue, runId, runKind);
     journal.events = await state.read(runId);
-    journal.written = journal.events.length;
     return journal;
   }
 
@@ -81,7 +79,7 @@ export class Journal {
     const batch = this.pending;
     this.pending = [];
     const owned = batch.map((body) => ({ ...body, run_id: this.runId, run_kind: this.runKind }) as NewEvent<HuntKinds>);
-    this.written = await this.state.append(this.runId, owned);
+    await this.state.append(this.runId, owned);
     this.events = await this.state.read(this.runId);
     this.view = null;
   }

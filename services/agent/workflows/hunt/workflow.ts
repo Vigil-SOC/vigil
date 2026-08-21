@@ -1,16 +1,22 @@
 import { announceOpen, noAnnounce, type Announce } from "../../core/checkpoints.js";
+import { GatewayExhausted } from "../../core/limiter.js";
 import type { Harness } from "../../core/loop.js";
 import type { RunOutcome, TerminalHandoff } from "../../contracts/events.js";
 import type { RunSpec } from "../../core/spec.js";
-import { BudgetRefused, disconfirmationCritic, decisionProvider, workerDispatcher } from "./adapters.js";
-import { huntSpec } from "./config.js";
+import { BudgetRefused, disconfirmationCritic, decisionProvider, narrativeWriter, workerDispatcher } from "./adapters.js";
+import { narrativeInput, type Narrative } from "./narrative.js";
+import type { Narrator } from "./ports.js";
+import { huntSpec, verdictsOf } from "./config.js";
 import { pendingCheckpoints } from "./checkpoints.js";
 import { HuntAlreadyTerminal, HuntController, HuntParked, resumeHunt, startHunt } from "./controller.js";
 import { createEnricher, type Tool } from "./enrich.js";
-import type { HuntKinds, Projection } from "./ledger.js";
+import { fold, type HuntEvent, type HuntKinds, type Projection } from "./ledger.js";
+import type { HarnessFactory } from "../../harness.js";
+import type { State } from "../../core/seams.js";
 import type { DirectiveQueue } from "./ports.js";
-import { buildReport, renderReport } from "./report.js";
-import type { Handoff } from "./types.js";
+// Aliased: this module's own HuntReport is the run's status, not the deliverable.
+import { buildReport, renderReport, type HuntReport as HuntDeliverable } from "./report.js";
+import type { Handoff, HuntOutcome } from "./types.js";
 import { expandFrom } from "./expand.js";
 import { registryOf } from "../../core/registry.js";
 import { toolsFrom } from "../../tools/remote.js";
@@ -64,7 +70,14 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
     ),
   };
 
+  // The pool was built from the spec this run started on, so a resumed hunt would be
+  // refused on the ceiling an extension already lifted. Only the two arms an extension
+  // buys: budgetsOf owns the call meter and turn count.
+  const granted = ledger.projection.hunt.budgets;
+  harness.budget.raise({ max_cost_usd: granted.max_cost_usd, max_wall_ms: granted.max_wall_ms });
+
   const ports = { harness: scoped, spec: options.spec, run_id, actions: options.actions, ...(options.signal === undefined ? {} : { signal: options.signal }) };
+  const narrator = narrativeWriter(ports);
   const controller = new HuntController(
     ledger,
     decisionProvider(ports),
@@ -73,6 +86,9 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
     spec.sections?.["digest"] as never,
     createEnricher(spec, enrichmentTools(scoped, options.spec)),
     disconfirmationCritic(ports),
+    // verdictsOf reads the deployment's own thresholds, which the predicate must see.
+    verdictsOf(options.spec),
+    harness.budget,
   );
 
   for (;;) {
@@ -87,7 +103,7 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
       // crash between the two loses the iteration rather than half of it.
       await ledger.flush();
       if (iteration.hunt_status === "terminal") {
-        return await end(harness, options, ledger, outcomeOf(iteration.hunt_outcome), iteration.note);
+        return await end(harness, options, ledger, outcomeOf(iteration.hunt_outcome), iteration.note, controller, narrator);
       }
     } catch (error) {
       // Parked is not failed: the hunt is waiting on a person, and the whole
@@ -96,17 +112,50 @@ export async function runHunt(harness: Harness<HuntKinds>, options: HuntOptions)
         await ledger.flush();
         return await parked(harness, options, ledger, error.message);
       }
-      // A run that spent its allowance has ended, not failed to start. Without a
-      // terminal it stays "running" to the API and the watchdog re-enqueues it
-      // every sweep to refuse the same call again.
+      // A run that spent its allowance has neither failed nor necessarily finished, so
+      // it parks on the same extend/conclude/abort the hunt's own ceiling offers.
       if (error instanceof BudgetRefused) {
+        const note = controller.parkOnRefusal(error.message);
         await ledger.flush();
-        return await end(harness, options, ledger, "budget_exhausted", error.message);
+        return await parked(harness, options, ledger, note);
       }
       if (error instanceof HuntAlreadyTerminal) return report(ledger, "completed", error.message);
-      throw error;
+      // Everything else has still left a ledger with iterations on it, so it ends here
+      // through the same end() the budget path takes rather than being rethrown.
+      const reason = error instanceof Error ? error.message : String(error);
+      await ledger.flush();
+      // The gateway's own allowance is not this hunt failing.
+      if (error instanceof GatewayExhausted) {
+        return await end(harness, options, ledger, "budget_exhausted", reason, controller, narrator);
+      }
+      // Logged as well as journaled: the stack is the only thing that says a defect in
+      // this process from an ordinary failed run.
+      console.error(`hunt ${run_id} ended on an unhandled error`, error);
+      return await end(harness, options, ledger, "failed", reason, controller, narrator);
     }
   }
+}
+
+// An account of a run, written now, from the spec the run itself was built with --
+// not from whatever the arch files say today. Standalone so a caller needs neither
+// the lease nor the loop: a finished hunt is the one whose write-up a person most
+// wants rewritten, and by then there is nothing left running to ask.
+export async function narrateRun(
+  state: State<HuntKinds>,
+  runId: string,
+  events: readonly HuntEvent[],
+  build: HarnessFactory,
+): Promise<Narrative> {
+  const projection = fold(events);
+  const spec = projection.hunt.spec;
+  const harness = build<HuntKinds>("hunt", spec, state);
+  const narrative = await narrativeWriter({ harness, spec, run_id: runId, actions: [] }).narrate(
+    narrativeInput(projection, buildReport(projection)),
+  );
+  await state.append(runId, [
+    { run_id: runId, run_kind: "hunt", kind: "narrative", payload: narrative } as never,
+  ]);
+  return narrative;
 }
 
 // The hunt ends by patching its own state, which only its projection reads. The
@@ -117,15 +166,46 @@ async function end(
   ledger: Awaited<ReturnType<typeof startHunt>>,
   outcome: RunOutcome,
   reason: string,
+  controller: HuntController,
+  narrator?: Narrator,
 ): Promise<HuntReport> {
+  // Through the controller even when the hunt stopped on something it never chose:
+  // terminate() resolves the active hypotheses, stamps the outcome and finalizes.
+  // Idempotent -- outcome precedence leaves an already-terminated hunt as it stands.
+  controller.terminate(huntOutcomeOf(outcome), reason);
+  await ledger.flush();
+  const built = buildReport(ledger.projection);
+  const narrative = await narrate(harness, options, ledger.projection, built, narrator);
   if ((await harness.state.terminal(options.run_id)) === null) {
-    const summary = renderReport(buildReport(ledger.projection));
     const handoffs = await handoffsOf(harness, options.run_id, ledger.projection);
     await harness.state.append(options.run_id, [
-      { run_id: options.run_id, run_kind: "hunt", kind: "terminal", payload: { outcome, reason, summary, handoffs } } as never,
+      { run_id: options.run_id, run_kind: "hunt", kind: "terminal", payload: { outcome, reason, summary: renderReport(built, ledger.projection, narrative), handoffs } } as never,
     ]);
   }
   return report(ledger, outcome, reason);
+}
+
+// One call, at the end, over the whole record. Fail-open, since the verdicts stand on
+// their own. Journaled as its own event, so a regenerate is cheap and buildReport's
+// frozen object -- the ADR 0012 goldens -- stays untouched.
+async function narrate(
+  harness: Harness<HuntKinds>,
+  options: HuntOptions,
+  projection: Projection,
+  built: HuntDeliverable,
+  narrator?: Narrator,
+): Promise<Narrative | null> {
+  if (narrator === undefined) return null;
+  try {
+    const narrative = await narrator.narrate(narrativeInput(projection, built));
+    await harness.state.append(options.run_id, [
+      { run_id: options.run_id, run_kind: "hunt", kind: "narrative", payload: narrative } as never,
+    ]);
+    return narrative;
+  } catch (error) {
+    console.error(`hunt ${options.run_id} ended without an account of it`, error);
+    return null;
+  }
 }
 
 // The case files the hunt wrote, carried out on the terminal. Read off the events
@@ -180,7 +260,18 @@ async function parked(
 // reported honestly, not a failure: saying nothing was shown is the point.
 function outcomeOf(outcome: string | null): RunOutcome {
   if (outcome === "aborted") return "aborted";
-  if (outcome === "budget_exhausted") return "budget_exhausted";
+  // budget_terminated is the hunt's name for it, budget_exhausted the shared one.
+  if (outcome === "budget_terminated" || outcome === "budget_exhausted") return "budget_exhausted";
+  if (outcome === "failed") return "failed";
+  return "completed";
+}
+
+// The same translation the other way. abandoned has no hunt outcome of its own: the
+// controller calls a run nobody answered before its park TTL aborted.
+function huntOutcomeOf(outcome: RunOutcome): HuntOutcome {
+  if (outcome === "budget_exhausted") return "budget_terminated";
+  if (outcome === "aborted" || outcome === "abandoned") return "aborted";
+  if (outcome === "failed") return "failed";
   return "completed";
 }
 

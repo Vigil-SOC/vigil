@@ -10,10 +10,20 @@ export const UNDECLARED_SOURCE = "undeclared";
 // no EDR on that subnet" is a fact about visibility that no query would ever
 export const OPERATOR_GAP_PROVENANCE = "operator_gap";
 
+// A capability the arch's roles asked for that this deployment binds no tool to:
+// nothing was installed to fail, and no query will discover it.
+export const DEPLOYMENT_GAP_PROVENANCE = "deployment_gap";
+
+// Stated rather than discovered: both name a blind spot no dispatch can close, unlike
+// a tool_failure a retry might.
+function declaredGap(record: EvidenceRecord): boolean {
+  return record.provenance === OPERATOR_GAP_PROVENANCE || record.provenance === DEPLOYMENT_GAP_PROVENANCE;
+}
+
 // The one gap reader over evidence, which is why a new kind of blind spot
 // updates exactly this function and the count below it.
 export function isGap(record: EvidenceRecord): boolean {
-  return record.provenance === "tool_failure" || record.provenance === OPERATOR_GAP_PROVENANCE;
+  return record.provenance === "tool_failure" || declaredGap(record);
 }
 
 // What went unanswered, not how many times it failed: three retries of one query
@@ -35,8 +45,11 @@ export function openGaps(projection: Projection, hypothesisId: string): number {
   }
 
   for (const record of projection.evidence.values()) {
-    if (record.provenance !== OPERATOR_GAP_PROVENANCE) continue;
-    if (record.payload["hypothesis_id"] !== hypothesisId) continue;
+    if (!declaredGap(record)) continue;
+    // A blind spot the hunt cannot attribute is one it carries into every claim, so
+    // an unattributed gap floors open_gaps for the whole run.
+    const bears = record.payload["hypothesis_id"];
+    if (bears !== null && bears !== undefined && bears !== hypothesisId) continue;
     unanswered.add(record.summary);
   }
 
@@ -62,6 +75,31 @@ function survivedDisconfirmation(projection: Projection, hypothesisId: string, l
   return linked.every((evidenceId) => argued.has(evidenceId));
 }
 
+// Distinct techniques evidence bearing on this hypothesis actually cited, not
+// what the hypothesis was declared to test -- a hunt can find something its
+// playbook did not name. Presentation only: nothing here is part of the
+// journaled report, so a run's frozen record cannot disagree with a rendering
+// of it.
+export function citedTechniques(projection: Projection, hypothesisId: string): string[] {
+  const cited = projection.links
+    .filter((link) => link.hypothesis_id === hypothesisId && link.relation !== "neither")
+    .map((link) => projection.evidence.get(link.evidence_id)?.attack_technique)
+    .filter((technique): technique is string => typeof technique === "string" && technique !== "");
+  return [...new Set(cited)].sort();
+}
+
+// Whether anything this finding rests on was attested by the telemetry rather than
+// chosen by the adversary. One sensor-attested basis is enough: a connection count and
+// an attacker-chosen filename in the same record still leaves the count standing.
+//
+// Falls back to the record-level boolean where no basis was named, so a ledger written
+// before the split reads exactly as it did.
+export function sensorAttested(record: EvidenceRecord): boolean {
+  const rests = record.rests_on ?? [];
+  if (rests.length === 0) return !record.attacker_influenceable;
+  return rests.some((basis) => basis.authored === "sensor");
+}
+
 export function evidenceStrength(projection: Projection, hypothesisId: string): EvidenceStrength {
   const linked = (relation: LinkRelation): EvidenceRecord[] =>
     projection.links
@@ -80,7 +118,9 @@ export function evidenceStrength(projection: Projection, hypothesisId: string): 
     contradicting_records: contradicting.length,
     open_gaps: openGaps(projection, hypothesisId),
     // Vacuously true with no support at all, which is the fail-closed answer.
-    attacker_influenceable_only: supporting.every((record) => record.attacker_influenceable),
+    // Named for what it gates rather than for what it counts: true when nothing
+    // supporting this claim rests on an observation the adversary could not have written.
+    attacker_influenceable_only: !supporting.some(sensorAttested),
     survived_disconfirmation: survivedDisconfirmation(projection, hypothesisId, allLinked),
   };
 }
@@ -97,7 +137,7 @@ export function unmetPredicates(strength: EvidenceStrength, verdicts: Verdicts):
     );
   }
   if (strength.attacker_influenceable_only) {
-    unmet.push("every supporting record sits in a field an adversary could have written");
+    unmet.push("nothing supporting it rests on an observation the telemetry attested rather than the adversary authored");
   }
   if (strength.open_gaps >= verdicts.gap_lock_threshold) {
     unmet.push(`${strength.open_gaps} open visibility gap(s) bear on it`);

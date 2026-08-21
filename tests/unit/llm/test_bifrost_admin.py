@@ -172,7 +172,10 @@ def test_write_never_echoes_the_masked_value_back():
         )
 
     body = [c for c in rec.calls if c["method"] == "PUT"][0]["kwargs"]["json"]
-    assert body["value"]["value"] == _SECRET
+    assert body["value"] == _SECRET
+    # And not the wrapper either: Bifrost stores that verbatim as the credential,
+    # which reads back as its own masked JSON and 401s every call.
+    assert not isinstance(body["value"], dict)
     assert masked not in str(body)
 
 
@@ -251,7 +254,9 @@ def test_push_provider_key_updates_existing_key_in_place():
     put = [c for c in rec.calls if c["method"] == "PUT"][0]
     assert put["url"].endswith("/api/providers/anthropic/keys/key-1")
     body = put["kwargs"]["json"]
-    assert body["value"] == {"value": "sk-ant-new", "type": "plain_text"}
+    # Bare, not wrapped: the wrapper is accepted with a 200 and stored as the
+    # credential itself, which 401s every call afterwards.
+    assert body["value"] == "sk-ant-new"
     # Carries the existing allow-list forward rather than wiping it.
     assert body["models"] == ["claude-opus-4-7"]
 
@@ -263,7 +268,7 @@ def test_push_provider_key_creates_key_when_absent():
 
     post = [c for c in rec.calls if c["method"] == "POST"][0]
     assert post["url"].endswith("/api/providers/anthropic/keys")
-    assert post["kwargs"]["json"]["value"]["value"] == "sk-ant-new"
+    assert post["kwargs"]["json"]["value"] == "sk-ant-new"
 
 
 def test_push_provider_key_deletes_on_empty_value():

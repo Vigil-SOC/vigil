@@ -54,3 +54,35 @@ async def read_projection(run_id: str) -> Optional[Dict[str, Any]]:
         logger.warning("projection for %s answered %s", run_id, response.status_code)
         return None
     return response.json()
+
+
+# Longer than a read: this asks a model to write a whole run's account.
+WRITE_TIMEOUT_S = 180
+
+
+async def write_narrative(run_id: str) -> Dict[str, Any]:
+    """Ask the agent layer for a fresh account of ``run_id``.
+
+    Raises rather than answering None: an operator pressed a button and is
+    owed the reason it did not work.
+    """
+    import httpx
+
+    url = agent_route(f"/runs/{run_id}/narrate")
+    try:
+        async with httpx.AsyncClient(timeout=WRITE_TIMEOUT_S) as client:
+            response = await client.post(url, headers=_headers())
+    except httpx.TimeoutException:
+        # Its own str() is empty, so re-raised with the one fact that matters.
+        raise RuntimeError(
+            f"the agent layer was still writing after {WRITE_TIMEOUT_S}s; "
+            "the account is written to the ledger when it finishes, "
+            "so reopen the run to read it"
+        ) from None
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
+
+    if response.status_code != 200:
+        detail = response.text[:400]
+        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
+    return response.json()

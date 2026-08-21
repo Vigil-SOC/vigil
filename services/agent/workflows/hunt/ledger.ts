@@ -1,4 +1,5 @@
 import type { AgentEvent, CheckpointPayload, PatchPayload, ResolutionPayload } from "../../contracts/events.js";
+import type { Narrative } from "./narrative.js";
 import type { State } from "../../core/seams.js";
 import type {
   DecisionRecord,
@@ -24,6 +25,8 @@ export type HuntKinds = {
   // The report is a deliverable the fold ignores, so its shape is the report
   // builder's to own rather than the ledger's.
   finalize: unknown;
+  // Written at the end and again on request: the latest wins, the earlier ones stay.
+  narrative: Narrative;
 };
 
 export type HuntEvent = AgentEvent<HuntKinds>;
@@ -102,9 +105,18 @@ export function fold(events: readonly HuntEvent[]): Projection {
       case "evidence":
         view.evidence.set(event.payload.evidence_id, structuredClone(event.payload));
         break;
-      case "link":
-        view.links.push(structuredClone(event.payload));
+      // Upserted, not appended: the lead re-rules on every observation each iteration,
+      // and evidenceStrength counting duplicate and self-contradicting links is corrupt,
+      // not thorough. The latest ruling is the belief; the ledger holds the earlier ones.
+      case "link": {
+        const link = structuredClone(event.payload);
+        const at = view.links.findIndex(
+          (held) => held.evidence_id === link.evidence_id && held.hypothesis_id === link.hypothesis_id,
+        );
+        if (at === -1) view.links.push(link);
+        else view.links[at] = link;
         break;
+      }
       case "dispatch":
         view.dispatches.set(
           (event.payload as unknown as DispatchRecord).dispatch_id,
@@ -138,8 +150,9 @@ export function fold(events: readonly HuntEvent[]): Projection {
         break;
       case "finalize":
       case "spend":
-        // Neither is state. The report is derived from the fold, so the fold must
-        // never derive anything from it; spend is the budget's and the gateway's.
+      case "narrative":
+        // None is state: the narrative is an account of the fold, so it cannot also be
+        // an input to it.
         break;
       default:
         // A kind added without a fold arm is a silent hole in the projection, so

@@ -7,14 +7,14 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import Depends, APIRouter, Header
+from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel, Field
 
 from core.agents.internal_auth import authorise
-from core.agents.mcp_tools import MCPFailure, execute_mcp_tool
+from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, split_tool_name
+from core.agents.tool_registry import execute_backend_tool
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
-from core.agents.tool_registry import execute_backend_tool
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
@@ -48,6 +48,11 @@ def _failure(kind: str, **detail: Any) -> Dict[str, Any]:
     return {"ok": False, "failure": {"kind": kind, **detail}}
 
 
+# Where a tool that answers an envelope keeps the rows. Read as one object the whole
+# envelope is one row, so max_rows never bites however much came back.
+_ENVELOPE_ROWS = ("results", "rows", "events", "items", "data")
+
+
 # Whatever the ladder returned, as rows. A bare mapping is one row rather than no
 # rows, so a tool answering with a single object is not read as an empty result.
 def _rows(result: Any) -> List[Any]:
@@ -55,6 +60,11 @@ def _rows(result: Any) -> List[Any]:
         return []
     if isinstance(result, list):
         return result
+    if isinstance(result, dict):
+        for field in _ENVELOPE_ROWS:
+            held = result.get(field)
+            if isinstance(held, list):
+                return held
     return [result]
 
 
@@ -80,18 +90,40 @@ def _is_bad_arguments(exc: TypeError) -> bool:
     return any(phrase in str(exc) for phrase in _SIGNATURE_MISMATCH)
 
 
-# The cap reaches the tool rather than only its answer, for anything paging on limit.
-# What ignores it is still truncated below: a bound an adapter drops is not a bound.
+# The names a row cap travels under: "limit" alone misses splunk_execute's max_results,
+# and the MCP servers are the ones that answer in bulk.
+_ROW_CAP_ARGS = ("limit", "max_results", "max_count")
+
+
+# The cap reaches the tool rather than only its answer, and a caller asking for less
+# keeps its own number. What ignores the cap is still truncated below.
+#
+# Only names the call already carries are lowered: setting all of them would hand a
+# tool a keyword its signature does not take. "limit" is added when it names none.
 def _bounded(args: Dict[str, Any], max_rows: int) -> Dict[str, Any]:
-    requested = args.get("limit")
-    if isinstance(requested, int) and requested <= max_rows:
-        return args
-    return {**args, "limit": max_rows}
+    named = [name for name in _ROW_CAP_ARGS if name in args]
+    if not named:
+        return {**args, "limit": max_rows}
+    lowered = {
+        name: min(args[name], max_rows) if isinstance(args[name], int) else max_rows
+        for name in named
+    }
+    return {**args, **lowered}
+
+
+# The telemetry plane the rows came out of, which is what a hunt counts corroboration
+# over. One label for everything leaves a worker's own typed string as the only domain.
+def _source_system(tool: str, registry: MCPRegistry) -> str:
+    try:
+        split = split_tool_name(tool, registry.get_active_servers())
+    except Exception:  # noqa: BLE001 — a registry that cannot be read names no server
+        return SOURCE_SYSTEM
+    return SOURCE_SYSTEM if split is None else split[0]
 
 
 # Backend tools first, then the MCP servers. One ceiling governs both, so a tool
 # does not get a second timeout by virtue of living on the other side.
-async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool]:
+async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, str]:
     seconds = body.bounds.timeout_ms / 1000
     args = _bounded(body.args, body.bounds.max_rows)
 
@@ -99,10 +131,11 @@ async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool]:
         execute_backend_tool(body.tool, args), timeout=seconds
     )
     if handled:
-        return result, True
-    return await asyncio.wait_for(
+        return result, True, SOURCE_SYSTEM
+    result, handled = await asyncio.wait_for(
         execute_mcp_tool(body.tool, args, seconds, registry), timeout=seconds
     )
+    return result, handled, _source_system(body.tool, registry)
 
 
 @router.post("/invoke")
@@ -114,7 +147,7 @@ async def invoke(
     authorise(authorization, "tool invocation")
 
     try:
-        result, handled = await _run(body, registry)
+        result, handled, source = await _run(body, registry)
     except asyncio.TimeoutError:
         return _failure("timeout", timeoutMs=body.bounds.timeout_ms)
     # An MCP server that could not be reached is a gap in visibility, not a defect
@@ -147,5 +180,5 @@ async def invoke(
         "rows": rows[: body.bounds.max_rows],
         "rowCount": min(len(rows), body.bounds.max_rows),
         "capped": capped,
-        "sourceSystem": SOURCE_SYSTEM,
+        "sourceSystem": source,
     }

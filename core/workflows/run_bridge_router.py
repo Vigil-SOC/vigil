@@ -38,8 +38,11 @@ RUN_STATUS = {WAITING: "paused", "running": "running", "completed": "running"}
 
 # A run nobody stopped and nothing broke. Aborted and abandoned both read as
 # crashes under "failed", and only one of the three is worth paging over.
+# budget_exhausted is the same mistake one step along: a hunt that stopped at the
+# ceiling its operator set did what it was told.
 TERMINAL_STATUS = {
     "completed": "completed",
+    "budget_exhausted": "completed",
     "aborted": "cancelled",
     "abandoned": "cancelled",
 }
@@ -141,32 +144,111 @@ def record_terminal(
         approvals,
     )
 
+    status = TERMINAL_STATUS.get(update.outcome, "failed")
     run_service.finalize_run(
         run_id,
-        status=TERMINAL_STATUS.get(update.outcome, "failed"),
+        status=status,
         result_summary=update.summary or None,
-        error=None if update.outcome == "completed" else update.reason,
+        # Only a failure writes the error column, which the console renders under a
+        # red heading. A run stopped at its ceiling has a reason, not an error, and
+        # that reason is on the terminal event and in the report.
+        error=update.reason if status == "failed" else None,
         cost_usd=update.cost_usd,
     )
 
+    # The case the run was started from, so its report reaches the case rather than
+    # living only in the run row.
+    origin = _origin_case(run_id, run_service)
+    if origin:
+        _record_report(origin, run_id, update)
+
     for handoff in update.handoffs:
-        _open_case(run_id, handoff)
+        _open_case(run_id, handoff, origin)
+
+
+def _origin_case(run_id: str, run_service: WorkflowRunService) -> str:
+    run = run_service.get_run(run_id) or {}
+    case_id = (run.get("trigger_context") or {}).get("case_id")
+    return str(case_id) if case_id else ""
+
+
+# Appended rather than written over: a case accumulates what was done to it, and the
+# description is the analyst's own. activities is the list the case UI reads.
+def _add_activity(
+    case_id: str, activity_type: str, description: str, details: Dict[str, Any]
+) -> None:
+    from core.storage.database_data_service import DatabaseDataService
+
+    data = DatabaseDataService()
+    case = data.get_case(case_id)
+    if not case:
+        logger.warning("case %s is gone; %s not recorded on it", case_id, activity_type)
+        return
+
+    activities = list(case.get("activities") or [])
+    activities.append(
+        {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "activity_type": activity_type,
+            "description": description,
+            "details": details,
+        }
+    )
+    data.update_case(case_id, activities=activities)
+
+
+def _record_report(case_id: str, run_id: str, update: TerminalUpdate) -> None:
+    try:
+        _add_activity(
+            case_id,
+            "agent_run_report",
+            update.summary or update.reason or update.outcome,
+            {"run_id": run_id, "outcome": update.outcome, "cost_usd": update.cost_usd},
+        )
+    except Exception:  # noqa: BLE001 — the run ended either way
+        logger.exception(
+            "could not record the report of %s on case %s", run_id, case_id
+        )
 
 
 # A run that ended by handing work over opens the case that receives it. The agent
 # layer holds no case table, so the document travels and this side files it.
-def _open_case(run_id: str, handoff: TerminalHandoff) -> None:
+def _open_case(run_id: str, handoff: TerminalHandoff, origin: str = "") -> None:
     from core.storage.database_data_service import DatabaseDataService
 
     try:
-        DatabaseDataService().create_case(
+        opened = DatabaseDataService().create_case(
             title=handoff.title[:200],
             finding_ids=[],
             priority="high",
-            description=handoff.markdown,
+            description=_with_origin(handoff.markdown, origin),
         )
     except Exception:  # noqa: BLE001 — the run ended either way
         logger.exception("could not open %s handed off by %s", handoff.case_id, run_id)
+        return
+
+    # Both directions, so neither case is a dead end.
+    if origin and opened:
+        _record_handoff(origin, run_id, handoff, opened.get("case_id", ""))
+
+
+def _with_origin(markdown: str, origin: str) -> str:
+    return f"{markdown}\n\n_Escalated from case {origin}._\n" if origin else markdown
+
+
+def _record_handoff(
+    case_id: str, run_id: str, handoff: TerminalHandoff, opened: str
+) -> None:
+    try:
+        _add_activity(
+            case_id,
+            "agent_run_handoff",
+            f"Escalated to incident response as "
+            f"{opened or handoff.case_id}: {handoff.title}",
+            {"run_id": run_id, "case_id": opened, "handoff_id": handoff.case_id},
+        )
+    except Exception:  # noqa: BLE001 — the case it opened is the deliverable
+        logger.exception("could not link %s back to case %s", opened, case_id)
 
 
 # A run parked on a checkpoint, as a question in the approvals inbox. Only the

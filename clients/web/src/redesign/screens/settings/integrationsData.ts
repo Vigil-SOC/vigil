@@ -53,7 +53,7 @@ export const MCP_CATEGORIES: McpCategory[] = [
   { label: 'Reference Servers', servers: ['github'] },
   { label: 'EDR / XDR', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
   { label: 'SIEM / Data Lake', servers: ['splunk', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
-  { label: 'Threat Intelligence', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp'] },
+  { label: 'Threat Intelligence', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp', 'firecrawl'] },
   { label: 'Cloud Security', servers: ['aws-security', 'gcp-scc', 'palo-alto'] },
   { label: 'Identity & Access', servers: ['okta', 'azure-ad'] },
   { label: 'Network Security', servers: ['vstrike'] },
@@ -62,6 +62,7 @@ export const MCP_CATEGORIES: McpCategory[] = [
 ]
 
 export const SERVER_DESCRIPTIONS = new Map(Object.entries({
+  firecrawl: 'Web search and page retrieval for an investigation. Retrieved pages are scrubbed and delimited before a model sees them — a page is data, not direction.',
   'deeptempo-findings': 'Core findings and case management. Required for the investigation workflow, case creation, and findings display.',
   'tempo-flow': 'Orchestrates multi-step agent workflows and playbook execution. Required for automated investigation chains.',
   approval: 'Human-in-the-loop approval queue for response actions (isolate host, block IP, etc.). Prevents the AI from taking destructive actions without analyst review.',

@@ -4,26 +4,29 @@ SQLAlchemy Database Models for Vigil SOC
 Defines the database schema for cases, findings, and related entities.
 """
 
+import uuid
 from datetime import datetime
-from typing import Optional, List
+from typing import List, Optional
+
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Column,
-    String,
-    Integer,
-    Float,
-    DateTime,
-    Text,
-    ForeignKey,
-    Table,
-    Index,
-    Boolean,
     ARRAY,
+    Boolean,
+    Column,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
     Numeric,
+    String,
+    Table,
+    Text,
     UniqueConstraint,
     text,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.ext.mutable import MutableList
 from pgvector.sqlalchemy import Vector
 import uuid
@@ -37,7 +40,6 @@ JSONBList = MutableList.as_mutable(JSONB)
 
 class Base(DeclarativeBase):
     """Base class for all database models."""
-
 
 
 # Association table for case-finding many-to-many relationship
@@ -68,7 +70,9 @@ class Finding(Base):
     # Primary key
     finding_id: Mapped[str] = mapped_column(String(50), primary_key=True)
 
-    embedding: Mapped[List[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
+    embedding: Mapped[List[float]] = mapped_column(
+        Vector(EMBEDDING_DIM), nullable=False
+    )
     mitre_predictions: Mapped[dict] = mapped_column(JSONB, nullable=False)
     anomaly_score: Mapped[float] = mapped_column(Float, nullable=False)
 
@@ -530,9 +534,7 @@ class FederationSource(Base):
 
     # Health
     last_poll_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    last_success_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime, nullable=True
-    )
+    last_success_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     consecutive_errors: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
@@ -1417,7 +1419,9 @@ class User(Base):
     # MFA
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     mfa_secret: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    mfa_recovery_codes: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    mfa_recovery_codes: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
 
     # Session tracking
     last_login: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -1811,6 +1815,8 @@ class WorkflowRun(Base):
         JSONB, nullable=False, default=list, server_default="[]"
     )
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Set when an operator removes the run from History. The row and its ledger stay.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (
         Index("idx_workflow_runs_workflow_id", "workflow_id", "started_at"),
@@ -2193,9 +2199,7 @@ class Conversation(Base):
         server_default="now()",
     )
     # Sort key for the history list; null until the first message lands.
-    last_message_at: Mapped[Optional[datetime]] = mapped_column(
-        DateTime, nullable=True
-    )
+    last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     messages: Mapped[List["ChatMessage"]] = relationship(
         "ChatMessage",

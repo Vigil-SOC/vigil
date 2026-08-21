@@ -24,7 +24,12 @@ BASE_BACKOFF_S = 0.5
 JITTER_S = 0.25
 
 # Transient: the gateway or the provider behind it could not take the call now.
-RETRYABLE = frozenset({429, 500, 502, 503, 504})
+RETRYABLE = frozenset({429, 500, 502, 503})
+
+# A ceiling was reached rather than a server stumbling. These answer the same way every
+# attempt, so they get one more try and not three, each of which bills tokens the
+# gateway discards. Mirrored in the agent layer's limiter.ts, held to it by a ratchet.
+CEILING = frozenset({408, 504})
 
 # The budget is spent. Retrying spends nothing and answers nothing.
 EXHAUSTED = 402
@@ -78,6 +83,7 @@ async def through_gateway(
     from core.llm.cost.budget import BudgetExceeded
 
     last: BaseException
+    ceilings = 0
     for attempt in range(attempts):
         try:
             return await call()
@@ -90,7 +96,11 @@ async def through_gateway(
                     message=body or "Bifrost reported the budget is spent",
                     status_code=status,
                 ) from error
-            if status is None or status not in RETRYABLE:
+            if status in CEILING:
+                ceilings += 1
+                if ceilings > 1:
+                    raise
+            elif status is None or status not in RETRYABLE:
                 raise
             last = error
             if attempt == attempts - 1:

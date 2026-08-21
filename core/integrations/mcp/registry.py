@@ -180,9 +180,24 @@ def _normalised(tool: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+# Whether this deployment dials every configured MCP server at startup. Defined here
+# because populate_from_cache reads it and services/api/main.py enforces it. Off by
+# default under DEV_MODE; an explicit setting wins either way.
+def eager_connect_enabled() -> bool:
+    from core.config import get_settings
+
+    settings = get_settings()
+    if settings.mcp_auto_connect_on_startup is not None:
+        return bool(settings.mcp_auto_connect_on_startup)
+    return not settings.dev_mode
+
+
 # The disk cache is a warm-start artifact: a server can appear there and have
 # failed to connect this boot. Registering it anyway lets a model claim a
-# capability it cannot exercise (#129), so live connection state gates it.
+# capability it cannot exercise (#129), so live connection state gates it -- but only
+# where this boot actually dialled. With eager connect off nothing is connected until
+# a call arrives and call_tool reconnects, so the same check drops every server and
+# leaves every capability they answer unbound for the whole boot.
 def populate_from_cache(registry: MCPRegistry) -> int:
     from core.integrations.mcp.client import process_mcp_client
 
@@ -195,7 +210,7 @@ def populate_from_cache(registry: MCPRegistry) -> int:
         return 0
 
     connected: Dict[str, bool] = {}
-    if mcp_client is not None:
+    if eager_connect_enabled() and mcp_client is not None:
         try:
             connected = mcp_client.get_connection_status() or {}
         except Exception as exc:  # noqa: BLE001
@@ -211,5 +226,5 @@ def populate_from_cache(registry: MCPRegistry) -> int:
         )
         registered += 1
 
-    logger.info("MCP registry populated from %d connected server(s)", registered)
+    logger.info("MCP registry populated from %d server(s)", registered)
     return registered

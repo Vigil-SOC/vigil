@@ -8,11 +8,13 @@ import {
 } from "../../workflows/hunt/controller.js";
 import { buildDigest, scoredFrontier } from "../../workflows/hunt/digest.js";
 import { unclassified } from "../../workflows/hunt/strength.js";
+import { evidenceFrom, salvaged } from "../../workflows/hunt/adapters.js";
 import { terminationVerdict } from "../../workflows/hunt/termination.js";
 import type { Decision } from "../../workflows/hunt/types.js";
 import {
   bareEvidence,
   CONCLUDE,
+  evidenceOn,
   controllerFor,
   finalized,
   gapLock,
@@ -22,6 +24,7 @@ import {
   relate,
   resolve,
   ruled,
+  SEED_IP,
   type Started,
 } from "../support/hunt.js";
 
@@ -50,6 +53,45 @@ describe("the null is on the board before anything is argued", () => {
     const started = await newLedger();
     expect(nulls(started)).toHaveLength(0);
     expect(started.hypothesisIds).toHaveLength(1);
+  });
+});
+
+// The guard above was dead in production for as long as it has existed: every test
+// of it builds its evidence by hand and sets provenance itself, while the real
+// dispatcher never set it at all. unclassified() filters on provenance === "worker",
+// so it always returned nothing and validateCoverage never rejected a decision.
+// This is the test that goes through the path a run actually takes.
+describe("the dispatcher stamps the provenance the guard reads", () => {
+  it("marks a worker's own findings as worker evidence", () => {
+    const records = evidenceFrom({
+      results: [{ source_system: "cisco:asa", summary: "412 connections", salience: "notable", why_notable: "regular", payload: {} }],
+    });
+    expect(records).toHaveLength(1);
+    expect(records[0]!.provenance).toBe("worker");
+  });
+
+  it("leaves an observation the lead has to rule on", async () => {
+    const started = await loop({ hypotheses: ["h one"] });
+    const [record] = evidenceFrom({
+      results: [{ source_system: "duckdb", summary: "one row", salience: "routine", why_notable: "baseline", payload: {} }],
+    });
+    const controller = controllerFor(started.ledger, [INVESTIGATE], {
+      dispatcher: {
+        dispatch: async (request: { dispatch_id: string }) => ({
+          dispatch_id: request.dispatch_id,
+          evidence: [record!],
+          failed: false,
+          failure_reason: "",
+          cost_usd: 0,
+        }),
+      } as never,
+    });
+
+    await controller.advanceIteration();
+
+    // Two active hypotheses -- one given, one null -- and the observation ruled on
+    // neither, which is precisely what the drift guard exists to refuse.
+    expect(unclassified(started.ledger.projection)).toHaveLength(2);
   });
 });
 
@@ -220,5 +262,143 @@ describe("stop when one dominates, or when none can", () => {
     expect(finalized(starved.ledger)[0]!.outcome).toBe("data_starved");
     expect(finalized(done.ledger)[0]!.outcome).toBe("completed");
     expect(finalized(starved.ledger)[0]!.outcome).not.toBe(finalized(done.ledger)[0]!.outcome);
+  });
+});
+
+// The refusal a live run died on. The lead put a hypothesis id in target_entity;
+// the refusal was right but said only that the graph was empty, so all three
+// attempts repeated it and the run failed on the attempt bound.
+describe("refusing an entity the graph does not know", () => {
+  it("says what target_entity holds and that an empty graph admits none", async () => {
+    const started = await loop({ hypotheses: ["h one"] });
+    const stray: Decision = { ...INVESTIGATE, target_entity: "hypothesis:h-cf7fbf91" };
+
+    expect(() => validateDecision(stray, started.ledger.projection)).toThrow(/target_entity names a thing/);
+    expect(() => validateDecision(stray, started.ledger.projection)).toThrow(/leave it unset/);
+  });
+
+  it("names what the graph does know once evidence has arrived", async () => {
+    const started = await loop({ hypotheses: ["h one"] });
+    evidenceOn(started.ledger, [...started.ledger.projection.hypotheses.keys()][0]!, {
+      entities: [SEED_IP],
+    });
+    const stray: Decision = { ...INVESTIGATE, target_entity: "host:nowhere" };
+
+    expect(() => validateDecision(stray, started.ledger.projection)).toThrow(/the graph knows /);
+  });
+});
+
+// A failed dispatch is evidence about this deployment, and its text is ours. The
+// extractor read IPs out of "read tcp 172.18.0.3:46528->160.79.104.10:443" -- a
+// Docker bridge address and the model gateway -- and put them on the board as
+// observables. A worker then spent a turn deciding whether api.anthropic.com was
+// attacker infrastructure and wrote that a Frothly host had beaconed to it.
+describe("a hunt does not investigate its own plumbing", () => {
+  // Through the real dispatch path: a worker that fails is how this record is
+  // written, and the extraction runs where it is appended.
+  const failingDispatcher = (reason: string) => ({
+    dispatch: async (request: { dispatch_id: string }) => ({
+      dispatch_id: request.dispatch_id,
+      evidence: [],
+      failed: true,
+      failure_reason: reason,
+      cost_usd: 0,
+    }),
+  });
+
+  it("takes no entities from a tool failure, however many addresses it names", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    const controller = controllerFor(started.ledger, [INVESTIGATE], {
+      dispatcher: failingDispatcher(
+        "Error reading stream: read tcp 172.18.0.3:46528->160.79.104.10:443: read: connection timed out",
+      ) as never,
+    });
+
+    await controller.advanceIteration();
+
+    const record = [...started.ledger.projection.evidence.values()].find(
+      (one) => one.provenance === "tool_failure",
+    );
+    // Two defences, and the summary one matters most: salienceFloor promotes a
+    // tool_failure to anomalous, so whatever this says is the most prominent thing
+    // the lead reads. The reason stays reachable for the operator, in the payload.
+    expect(record?.summary).not.toMatch(/160\.79\.104\.10/);
+    expect(record?.summary).not.toMatch(/172\.18\.0\.3/);
+    expect(record?.payload["failure_reason"]).toMatch(/160\.79\.104\.10/);
+    expect(record?.entities).toEqual([]);
+  });
+
+  // A dispatch that ran real queries and then died at the write-up. Discarding the
+  // rows made one flaky call cost the whole iteration.
+  const dyingAfterCalls = (reason: string) => ({
+    dispatch: async (request: { dispatch_id: string }) => ({
+      dispatch_id: request.dispatch_id,
+      evidence: salvaged([
+        {
+          tool: "splunk_execute",
+          args: '{"spl_query":"index=botsv3 | stats count by dest_ip"}',
+          result: { ok: true as const, rows: [{ dest_ip: "45.77.53.176", count: 412 }], rowCount: 1, capped: false, sourceSystem: "cisco:asa" },
+          wrapped: { text: "", scanned: false, verbs: [] },
+        },
+      ] as never),
+      failed: true,
+      failure_reason: reason,
+      cost_usd: 0,
+    }),
+  });
+
+  it("keeps the rows a dispatch gathered before its write-up died", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    const controller = controllerFor(started.ledger, [INVESTIGATE], {
+      dispatcher: dyingAfterCalls("read tcp 172.18.0.3:46528->160.79.104.10:443: read: connection timed out") as never,
+    });
+
+    await controller.advanceIteration();
+
+    const records = [...started.ledger.projection.evidence.values()];
+    // Both: the gap says the hunt could not finish looking, the salvage says what
+    // it saw before it stopped. Either alone misreports the iteration.
+    expect(records.filter((one) => one.provenance === "tool_failure")).toHaveLength(1);
+    const kept = records.filter((one) => one.provenance === "unsummarised");
+    expect(kept).toHaveLength(1);
+    expect(kept[0]!.source_system).toBe("cisco:asa");
+    // The estate's address, from the payload -- which is the whole point of keeping it.
+    expect(kept[0]!.entities).toEqual([{ type: "ip", value: "45.77.53.176" }]);
+    // Nothing vouched for these rows, so they cannot clear a branch on their own.
+    expect(kept[0]!.attacker_influenceable).toBe(true);
+  });
+
+  // The estate's own addresses still have to reach the board: this refuses a
+  // source, not a shape. Same path, same kind of text, opposite provenance.
+  it("still takes entities from a worker's real answer", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    const controller = controllerFor(started.ledger, [INVESTIGATE], {
+      dispatcher: {
+        dispatch: async (request: { dispatch_id: string }) => ({
+          dispatch_id: request.dispatch_id,
+          evidence: [
+            {
+              source_system: "net_flow",
+              summary: "HOST-42 reached 45.77.53.176 every 30s",
+              payload: {},
+              salience: "notable" as const,
+              why_notable: "low jitter",
+              provenance: "worker",
+              attacker_influenceable: false,
+              instruction_like: false,
+            },
+          ],
+          failed: false,
+          cost_usd: 0,
+        }),
+      } as never,
+    });
+
+    await controller.advanceIteration();
+
+    const record = [...started.ledger.projection.evidence.values()].find(
+      (one) => one.provenance === "worker",
+    );
+    expect(record?.entities.map((one) => one.value)).toContain("45.77.53.176");
   });
 });

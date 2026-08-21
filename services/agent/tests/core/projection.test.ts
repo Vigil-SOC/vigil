@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
-import type { SpendPayload } from "../../contracts/budget.js";
 import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { TOOL_APPROVAL } from "../../core/loop.js";
 import { InProcessState } from "../../core/state.js";

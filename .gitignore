@@ -130,6 +130,10 @@ celerybeat.pid
 # Environments
 .env
 .env.local
+# Timestamped .env backups written by local tooling. One was sitting untracked
+# with a live provider key in it, which `git add -A` would have published.
+.env.bak.*
+.env.*.bak
 .venv
 env/
 venv/
@@ -258,3 +262,19 @@ slop.toml
 # the directory itself has to be unignored, not just the files in it.
 runs/
 !services/agent/tests/fixtures/runs/
+
+# Editor, build and indexer scratch. All local, none of it ever committed.
+.vite/
+.zed/
+index.scip.stamp
+
+# The gateway's own store, wherever it is launched from: it holds provider API keys,
+# in plaintext unless the deployment turned on Bifrost's key encryption.
+/config.db
+/logs.db
+/bifrost/
+
+# Working copies of two dropped submodules, which survive a checkout. Neither has a
+# production importer here -- mcp-servers' four servers are vendored at tools/mcp/.
+/deeptempo-core/
+/mcp-servers/

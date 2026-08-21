@@ -95,13 +95,17 @@ describe("controller", () => {
   });
 
   it("parks at the budget checkpoint rather than ending the hunt itself", async () => {
-    const { ledger } = await newLedger({ budgets: { max_calls: 1, max_cost_usd: 10, max_wall_ms: 1_800_000, max_park_ms: 604_800_000 } });
+    const { ledger } = await newLedger({ budgets: { max_iterations: 1, max_calls: 12, max_cost_usd: 10, max_wall_ms: 1_800_000, max_park_ms: 604_800_000 } });
     const result = await controllerFor(ledger, [INVESTIGATE]).advanceIteration();
 
     // Running out of money is a question for an operator, not a verdict.
     expect(result.hunt_status).toBe("parked");
     expect(result.hunt_outcome).toBeNull();
-    expect(result.note).toMatch(/budget exhausted/);
+    // Names the arm that bound, not just "budget": a run stopped at 3 of 3 turns
+    // while $0.11 of $14 was spent reads as a broken ceiling unless the sentence
+    // says which of the two ran out.
+    expect(result.note).toMatch(/ran out of turns: iteration 1 of 1/);
+    expect(result.note).toMatch(/having spent \$/);
   });
 
   it("rejects an uncited ABANDON but accepts a cited one", async () => {
@@ -181,6 +185,50 @@ describe("bounded re-prompt", () => {
     expect(ledger.projection.hunt.status).toBe("active");
   });
 
+  // A worker whose call dies costs one gap record and a critic whose call dies leaves
+  // its hypothesis standing. The lead's used to take the whole hunt with it, so one 504
+  // on one write-up threw away every iteration behind it.
+  it("asks the lead again when its call dies, rather than losing the iteration", async () => {
+    const { ledger } = await newLedger();
+    let calls = 0;
+    const provider: DecisionProvider = {
+      decide: async (): Promise<DecisionResult> => {
+        calls += 1;
+        if (calls === 1) throw Object.assign(new Error("504 request timed out"), { cost_usd: 0.03 });
+        return { decision: CONCLUDE, model_id: "m", prompt_version: "v", cost_usd: 0.01 };
+      },
+    };
+
+    const iteration = await new HuntController(ledger, provider).advanceIteration();
+
+    expect(calls).toBe(2);
+    expect(iteration.action).toBe("CONCLUDE");
+    const record = ledger.projection.decisions[0]!;
+    expect(record.rejected_attempts).toEqual([expect.stringContaining("504")]);
+    // The failed call was paid for, so the iteration is charged for both.
+    expect(record.cost_usd).toBeCloseTo(0.04, 10);
+  });
+
+  it("journals a stall rather than throwing when every attempt at the lead dies", async () => {
+    const { ledger } = await newLedger();
+    let calls = 0;
+    const provider: DecisionProvider = {
+      decide: async (): Promise<DecisionResult> => {
+        calls += 1;
+        throw Object.assign(new Error("504 request timed out"), { cost_usd: 0.02 });
+      },
+    };
+
+    await expect(new HuntController(ledger, provider).advanceIteration()).rejects.toThrow(InvalidDecision);
+
+    expect(calls).toBe(MAX_DECISION_ATTEMPTS);
+    const record = ledger.projection.decisions[0]!;
+    expect(record.decision.action).toBe("STALLED");
+    expect(record.cost_usd).toBeCloseTo(0.06, 10);
+    // Still active: the iteration never advanced, so a resume retries it.
+    expect(ledger.projection.hunt.status).toBe("active");
+  });
+
   // A stall a lead could emit would be a way to end a hunt without a verdict.
   it("refuses a STALLED emitted by the lead", async () => {
     const { ledger } = await newLedger();
@@ -190,8 +238,12 @@ describe("bounded re-prompt", () => {
   });
 
   it("terminates a stalled hunt that has spent its budget", async () => {
-    const { ledger } = await newLedger();
-    // Each attempt costs more than the whole budget allows.
+    // The ceiling is stated here rather than borrowed from the shipped default:
+    // the premise is "one attempt costs more than the budget", and reading the
+    // default made that premise change whenever the default did.
+    const { ledger } = await newLedger({
+      budgets: { max_iterations: 8, max_calls: 5_000, max_cost_usd: 1, max_wall_ms: 1_800_000, max_park_ms: 604_800_000 },
+    });
     const provider = new StubbornProvider(UNCITED_ABANDON, 3);
 
     await expect(new HuntController(ledger, provider).advanceIteration()).rejects.toThrow(InvalidDecision);

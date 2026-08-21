@@ -32,8 +32,17 @@ def splunk_mod(monkeypatch):
     spec = importlib.util.spec_from_file_location("splunk_tool_under_test", SPLUNK_TOOL)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    for key in ("SPLUNK_URL", "SPLUNK_USERNAME", "SPLUNK_PASSWORD", "SPLUNK_VERIFY_SSL"):
+    for key in (
+        "SPLUNK_URL",
+        "SPLUNK_USERNAME",
+        "SPLUNK_PASSWORD",
+        "SPLUNK_VERIFY_SSL",
+    ):
         monkeypatch.delenv(key, raising=False)
+    # Clearing the env is not clearing the credential: _read_credential asks the
+    # encrypted store first, so on a machine with Splunk configured these tests
+    # read the operator's real value. Each test that wants a store sets its own.
+    monkeypatch.setattr(module, "_get_secret", lambda key: None)
     return module
 
 
@@ -47,7 +56,10 @@ def test_env_read_via_secrets_manager(splunk_mod, monkeypatch):
 
 def test_returns_default_when_unset(splunk_mod):
     assert splunk_mod._read_credential("SPLUNK_URL") is None
-    assert splunk_mod._read_credential("SPLUNK_URL", "http://fallback") == "http://fallback"
+    assert (
+        splunk_mod._read_credential("SPLUNK_URL", "http://fallback")
+        == "http://fallback"
+    )
 
 
 def test_secrets_manager_wins_over_env(splunk_mod, monkeypatch):

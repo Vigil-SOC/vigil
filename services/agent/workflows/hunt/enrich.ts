@@ -1,7 +1,7 @@
 import { key } from "./entities.js";
 import type { Enricher } from "./ports.js";
 import { SpecError } from "../../core/spec.js";
-import { DEFAULT_ENRICHMENT, type EnrichmentChain, type HuntSpec } from "./config.js";
+import type { EnrichmentChain, HuntSpec } from "./config.js";
 export interface Tool {
   id: string;
   description: string;

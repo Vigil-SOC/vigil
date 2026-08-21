@@ -20,7 +20,10 @@ SERVERS = [
 
 class TestSplittingTheName:
     def test_finds_the_server_and_the_tool(self):
-        assert split_tool_name("virustotal_lookup_ip", SERVERS) == ("virustotal", "lookup_ip")
+        assert split_tool_name("virustotal_lookup_ip", SERVERS) == (
+            "virustotal",
+            "lookup_ip",
+        )
 
     # The case a naive split on "_" gets wrong: splunk-selfhosted_search starts
     # with neither a clean prefix nor one underscore, and splunk is a real server
@@ -109,9 +112,12 @@ class TestIndicatorLookup:
 
     def test_accepts_a_single_value_as_well_as_a_batch(self, monkeypatch):
         run = self._lookup(monkeypatch, {})
-        assert run({"value": "evil.test", "indicator_type": "domain"})[0][
-            "indicator_value"
-        ] == "evil.test"
+        assert (
+            run({"value": "evil.test", "indicator_type": "domain"})[0][
+                "indicator_value"
+            ]
+            == "evil.test"
+        )
 
     # invalid_args at the bridge rather than an empty answer: a call with nothing
     # to look up is a defect, and the router reads a TypeError as exactly that.
@@ -119,3 +125,30 @@ class TestIndicatorLookup:
         run = self._lookup(monkeypatch, {})
         with pytest.raises(TypeError):
             run({"indicator_type": "ip"})
+
+
+# The one branch nothing exercised: every router test monkeypatches
+# execute_mcp_tool away, so the client import inside it was never run and a name
+# that does not exist there read as a working dispatch until a real tool call.
+class TestReachingTheClient:
+    class _Registry:
+        def get_active_servers(self):
+            return ["splunk-selfhosted"]
+
+        def get_tool_names(self):
+            return ["splunk-selfhosted_splunk_nl_search"]
+
+    @pytest.mark.asyncio
+    async def test_names_the_accessor_the_client_module_actually_exports(
+        self, monkeypatch
+    ):
+        import core.integrations.mcp.client as client
+        from core.agents.mcp_tools import UNAVAILABLE, MCPFailure, execute_mcp_tool
+
+        monkeypatch.setattr(client, "_process_client", None)
+        with pytest.raises(MCPFailure) as raised:
+            await execute_mcp_tool(
+                "splunk-selfhosted_splunk_nl_search", {}, 5.0, self._Registry()
+            )
+
+        assert raised.value.kind == UNAVAILABLE

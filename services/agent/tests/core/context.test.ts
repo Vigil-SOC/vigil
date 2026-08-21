@@ -6,8 +6,11 @@ import {
   foldHistory,
   prefixBytes,
   prefixOf,
+  sizeOf,
   stableTools,
   transientTail,
+  type FoldPolicy,
+  type Summarise,
 } from "../../core/context.js";
 import type { Message, ToolSchema } from "../../core/provider.js";
 
@@ -87,7 +90,7 @@ describe("the middle folds and the edges hold", () => {
 
   it("never leaves a tool result without the turn that asked for it", () => {
     const long = history(60);
-    const { messages, folded } = foldHistory(long, SUMMARY, { head: 1, tail: 8, max_messages: 40 });
+    const { messages, folded } = foldHistory(long, SUMMARY, { head: 1, tail: 8, max_messages: 40 , max_chars: 1_000_000 });
 
     // head is 1, and message 1 is the tool result answering it. The head grows to
     // keep the pair; nothing is dropped from every slice at once.
@@ -130,5 +133,113 @@ describe("the transient tail", () => {
     const one = assemble(prefix, "the task", history(4), "first", SUMMARY).messages.slice(0, 2);
     const two = assemble(prefix, "the task", history(6), "second", SUMMARY).messages.slice(0, 2);
     expect(one).toEqual(two);
+  });
+});
+
+// The bug a live run died on: a 400 from the provider, "unexpected tool_use_id
+// found in tool_result blocks". boundary() protected the head edge and nothing
+// protected the tail, so a fold could open the tail on a tool result whose
+// asking turn had just been replaced by the summary note.
+describe("a fold never strands a tool result", () => {
+  const policy = { head: 2, tail: 8, max_messages: 40 , max_chars: 1_000_000 };
+  const summarise = () => "…";
+
+  // Every assistant turn asks for three tools, so a raw index counted back from
+  // the end lands mid-run more often than not.
+  const history: Message[] = [];
+  for (let turn = 0; turn < 20; turn += 1) {
+    history.push({ role: "assistant", content: "", tool_calls: [{ id: `c${turn}`, tool: "search", args: "{}" }] });
+    for (const part of [0, 1, 2]) history.push({ role: "tool", call_id: `c${turn}-${part}`, content: "rows" });
+  }
+
+  it("opens the tail on the turn that asked, not on its results", () => {
+    const { messages } = foldHistory(history, summarise, policy);
+    const note = messages.findIndex((message) => message.role === "user");
+
+    expect(messages[note + 1]?.role).not.toBe("tool");
+  });
+
+  it("leaves no tool result anywhere without an assistant turn before it", () => {
+    const { messages } = foldHistory(history, summarise, policy);
+
+    messages.forEach((message, at) => {
+      if (message.role !== "tool") return;
+      const before = messages.slice(0, at).reverse().find((one) => one.role !== "tool");
+      expect(before?.role).toBe("assistant");
+    });
+  });
+
+  it("still folds something rather than giving up on the whole history", () => {
+    expect(foldHistory(history, summarise, policy).folded).toBeGreaterThan(0);
+  });
+});
+
+describe("a request bounded by weight, not only by turn count", () => {
+  // Alternating turns, each tool result `bytes` long: the shape a role granted a bulk
+  // query tool actually produces.
+  const heavy = (n: number, bytes: number): Message[] =>
+    Array.from({ length: n }, (_, i) =>
+      i % 2 === 0
+        ? ({ role: "assistant", content: `asking ${i}`, tool_calls: [] } as Message)
+        : ({ role: "tool", call_id: `c${i}`, content: "x".repeat(bytes) } as Message),
+    );
+
+  const note: Summarise = (folded) => `[${folded.length} folded]`;
+  const roomy = { head: 2, tail: 4, max_messages: 40, max_chars: 10_000_000 } as FoldPolicy;
+
+  // Twelve messages sit inside max_messages and weigh 60k. That request is the one
+  // every write-up died on: the count said it was small.
+  it("brings a transcript the count called small under the budget", () => {
+    const history = heavy(12, 10_000);
+    const policy: FoldPolicy = { head: 2, tail: 4, max_messages: 40, max_chars: 30_000 };
+
+    expect(sizeOf(foldHistory(history, note, roomy).messages)).toBeGreaterThan(policy.max_chars);
+    const { messages, folded } = foldHistory(history, note, policy);
+
+    expect(folded).toBeGreaterThan(0);
+    expect(sizeOf(messages)).toBeLessThanOrEqual(policy.max_chars);
+  });
+
+  // The point of shrinking an edge: it must not shrink past the rule that keeps a tool
+  // result with the assistant turn that asked for it. The provider refuses otherwise.
+  it("never opens the tail on a tool result while shrinking it", () => {
+    const { messages } = foldHistory(heavy(10, 30_000), note, {
+      head: 1,
+      tail: 6,
+      max_messages: 40,
+      max_chars: 20_000,
+    });
+
+    const summary = messages.findIndex((message) => message.content.startsWith("["));
+    expect(summary).toBeGreaterThan(-1);
+    expect(messages[summary + 1]?.role).not.toBe("tool");
+  });
+
+  // A prefix is not free. A fold that ignored it let the request cross the ceiling with
+  // the history well inside its own share of it.
+  it("charges the prefix against the same budget the history is folded to", () => {
+    const history = heavy(12, 5_000);
+    const policy: FoldPolicy = { head: 2, tail: 4, max_messages: 40, max_chars: 40_000 };
+
+    const light = assemble(prefixOf("short", [], []), "task", history, "", note, policy);
+    const laden = assemble(prefixOf("s".repeat(25_000), [], []), "task", history, "", note, policy);
+
+    expect(laden.folded).toBeGreaterThan(light.folded);
+    expect(sizeOf(laden.messages)).toBeLessThanOrEqual(policy.max_chars);
+  });
+
+  // Weight is a ceiling on the fold, not a licence to drop the last turn: a role that
+  // cannot see what it just did cannot write it up. One message over the whole budget
+  // is result_cap's problem, and the fold says so by refusing to go below one edge.
+  it("keeps both edges however heavy they are", () => {
+    const { messages } = foldHistory(heavy(8, 30_000), note, {
+      head: 1,
+      tail: 1,
+      max_messages: 40,
+      max_chars: 100,
+    });
+
+    expect(messages[0]!.content).toBe("asking 0");
+    expect(messages.at(-1)!.content).toContain("x");
   });
 });

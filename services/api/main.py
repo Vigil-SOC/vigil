@@ -23,20 +23,23 @@ from core.config import get_settings, validate_settings_or_exit
 
 validate_settings_or_exit()
 
-from fastapi import FastAPI, Depends
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from slowapi.errors import RateLimitExceeded
 from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
+from core.platform.monitoring import (
+    PROMETHEUS_AVAILABLE,
+    get_metrics_response,
+    init_sentry,
+)
 from core.version import __version__
+from services.api.discovery import mount_routers
+from services.api.middleware.auth import get_current_active_user
 from services.api.middleware.csrf import CSRFMiddleware
 from services.api.middleware.rate_limit import limiter
 from services.api.middleware.security_headers import SecurityHeadersMiddleware
-
-from services.api.discovery import mount_routers
-from services.api.middleware.auth import get_current_active_user
-from core.platform.monitoring import init_sentry, PROMETHEUS_AVAILABLE, get_metrics_response
 
 # Single source of truth for the "require an authenticated active user"
 # dependency. Applied to every non-public /api/* router below so that any
@@ -188,12 +191,11 @@ mount_routers(
 
 
 def _mcp_auto_connect_enabled() -> bool:
-    # Off by default in DEV_MODE so optional MCP processes cannot block a local
-    # backend startup; an explicit setting wins either way.
-    settings = get_settings()
-    if settings.mcp_auto_connect_on_startup is not None:
-        return settings.mcp_auto_connect_on_startup
-    return not settings.dev_mode
+    # One definition site: the registry reads the same rule to decide whether it may
+    # trust its warm-start cache.
+    from core.integrations.mcp.registry import eager_connect_enabled
+
+    return eager_connect_enabled()
 
 
 async def _connect_external_services(mcp_client, registry):
@@ -250,6 +252,11 @@ async def _connect_external_services(mcp_client, registry):
         logger.info(
             "MCP auto-connect disabled; optional MCP servers will connect on demand"
         )
+        # On demand still needs the registry: it is what makes a capability bindable,
+        # and call_tool reconnects itself.
+        from core.integrations.mcp.registry import populate_from_cache
+
+        populate_from_cache(registry)
         return
 
     logger.info("Initializing MCP client with persistent connections...")
@@ -490,8 +497,8 @@ async def _startup(app: FastAPI):
     # Initialize data storage backend
     logger.info("Initializing data storage...")
     try:
-        from core.storage.database_data_service import DatabaseDataService
         from core.config import is_demo_mode
+        from core.storage.database_data_service import DatabaseDataService
 
         # Defense-in-depth: ensure the SQLAlchemy-managed schema exists before
         # any endpoint tries to query it. start.sh runs scripts/init_schema.py
@@ -657,8 +664,8 @@ async def metrics():
 async def health_check():
     """Health check endpoint with storage backend info."""
     try:
-        from core.storage.database_data_service import DatabaseDataService
         from core.config import is_demo_mode, state_dir_status
+        from core.storage.database_data_service import DatabaseDataService
 
         service = DatabaseDataService()
         backend_info = service.get_backend_info()
@@ -698,7 +705,9 @@ static_dir = frontend_build_dir / "static"
 # This prevents errors during development when frontend hasn't been built
 if frontend_build_dir.exists() and static_dir.exists():
     try:
-        app.mount(f"{_CONTEXT_PATH}/static", StaticFiles(directory=static_dir), name="static")
+        app.mount(
+            f"{_CONTEXT_PATH}/static", StaticFiles(directory=static_dir), name="static"
+        )
         logger.info(f"Serving static files from: {static_dir}")
     except Exception as e:
         logger.warning(f"Failed to mount static files: {e}")
@@ -716,7 +725,9 @@ else:
 assets_dir = frontend_build_dir / "assets"
 if frontend_build_dir.exists() and assets_dir.exists():
     try:
-        app.mount(f"{_CONTEXT_PATH}/assets", StaticFiles(directory=assets_dir), name="assets")
+        app.mount(
+            f"{_CONTEXT_PATH}/assets", StaticFiles(directory=assets_dir), name="assets"
+        )
         logger.info(f"Serving frontend assets from: {assets_dir}")
     except Exception as e:
         logger.warning(f"Failed to mount frontend assets: {e}")
@@ -741,7 +752,9 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
             # SSRF guard). A <meta>, not an inline <script>, because CSP is
             # script-src 'self'.
             try:
-                from core.integrations.extension.trust import connector_allowlist_origins
+                from core.integrations.extension.trust import (
+                    connector_allowlist_origins,
+                )
 
                 origins = connector_allowlist_origins()
                 if origins:
@@ -778,5 +791,9 @@ if __name__ == "__main__":
 
     logger.info("Starting Vigil SOC API server...")
     uvicorn.run(
-        "services.api.main:app", host="0.0.0.0", port=6987, reload=True, log_level="info"
+        "services.api.main:app",
+        host="0.0.0.0",
+        port=6987,
+        reload=True,
+        log_level="info",
     )

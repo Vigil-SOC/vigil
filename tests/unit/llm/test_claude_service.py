@@ -11,9 +11,11 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from core.llm.harness.claude import ClaudeService
-from tests.fixtures.claude_responses import (MOCK_AUTH_ERROR,
-                                             MOCK_CONVERSATION_HISTORY,
-                                             MOCK_RATE_LIMIT_ERROR)
+from tests.fixtures.claude_responses import (
+    MOCK_AUTH_ERROR,
+    MOCK_CONVERSATION_HISTORY,
+    MOCK_RATE_LIMIT_ERROR,
+)
 
 
 class TestClaudeServiceInitialization:
@@ -44,8 +46,9 @@ class TestClaudeServiceInitialization:
         assert service.enable_thinking is True
         assert service.thinking_budget == 20000
 
+    @patch("core.llm.router.router.discover_anthropic_api_key", return_value=None)
     @patch("core.llm.harness.claude.get_secret")
-    def test_init_no_api_key(self, mock_get_secret):
+    def test_init_no_api_key(self, mock_get_secret, _discover):
         """Test initialization when API key is not available."""
         mock_get_secret.return_value = None
 
@@ -319,8 +322,9 @@ class TestClaudeServiceAPIInteraction:
 class TestClaudeServiceErrorHandling:
     """Test error handling for various API errors."""
 
+    @patch("core.llm.router.router.discover_anthropic_api_key", return_value=None)
     @patch("core.llm.harness.claude.get_secret")
-    def test_missing_api_key_error(self, mock_get_secret):
+    def test_missing_api_key_error(self, mock_get_secret, _discover):
         """Test behavior when API key is missing."""
         mock_get_secret.return_value = None
 

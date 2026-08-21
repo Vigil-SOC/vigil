@@ -88,7 +88,3 @@ export function pendingCheckpoints(projection: Projection): Checkpoint[] {
     (checkpoint) => resolutionOf(projection, checkpoint.checkpoint_id) === undefined,
   );
 }
-
-export function pendingOfClass(projection: Projection, checkpointClass: CheckpointClass): Checkpoint | undefined {
-  return pendingCheckpoints(projection).find((checkpoint) => checkpoint.checkpoint_class === checkpointClass);
-}

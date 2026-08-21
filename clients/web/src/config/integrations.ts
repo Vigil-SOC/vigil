@@ -78,6 +78,24 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     docs_url: 'https://developer.shodan.io/',
   },
   {
+    id: 'firecrawl',
+    name: 'Firecrawl',
+    category: 'Threat Intelligence',
+    description: 'Search and read web pages during an investigation — vendor advisories, CVE writeups, and reporting on an observable.',
+    functionality_type: 'Data Enrichment',
+    fields: [
+      {
+        name: 'api_key',
+        label: 'API Key',
+        type: 'password',
+        required: true,
+        placeholder: 'fc-...',
+        helpText: 'Get your API key from https://www.firecrawl.dev/app/api-keys',
+      },
+    ],
+    docs_url: 'https://docs.firecrawl.dev/',
+  },
+  {
     id: 'misp',
     name: 'MISP',
     category: 'Threat Intelligence',

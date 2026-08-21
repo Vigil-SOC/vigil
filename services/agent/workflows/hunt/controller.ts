@@ -1,3 +1,4 @@
+import type { Budget } from "../../contracts/budget.js";
 import type { State } from "../../core/seams.js";
 import type { HuntKinds } from "./journal.js";
 import { type HuntSpec } from "./config.js";
@@ -14,6 +15,8 @@ import {
   type Checkpoints,
   type Resolution,
 } from "./checkpoints.js";
+import { BudgetRefused, LeadParked } from "./adapters.js";
+import { GatewayExhausted } from "../../core/limiter.js";
 import { buildDigest, focusOf, rankFrontier, suppressedEntities } from "./digest.js";
 import { buildEntityGraph, entitiesOf, fromText, key } from "./entities.js";
 import { drain, grantOf, journalNote, peek } from "./inbox.js";
@@ -25,12 +28,14 @@ import type {
   Enricher,
   WorkerDispatcher,
 } from "./ports.js";
-import { buildReport, caseFilePath, renderCaseFile, renderReport, reportPath } from "./report.js";
+import { narrativeOf } from "./render.js";
+import { buildReport, renderCaseFile } from "./report.js";
 import { sanitize, sanitizeQuestion } from "./sanitize.js";
 import {
   DEFAULT_DISPATCH,
+  unboundCapabilities,
   type DispatchPolicy,
-  
+
 } from "../../core/spec.js";
 import {  DEFAULT_DIGEST,
   DEFAULT_ENRICHMENT,
@@ -42,10 +47,12 @@ import {  DEFAULT_DIGEST,
 import { terminationVerdict, type TerminationVerdict } from "./termination.js";
 import {
   CRITIC_SOURCE_SYSTEM,
+  DEPLOYMENT_GAP_PROVENANCE,
   evidenceStrength,
   NULL_CHECK_PROVENANCE,
   OPERATOR_GAP_PROVENANCE,
   UNDECLARED_SOURCE,
+  sensorAttested,
   unmetPredicates, pairKey, unclassified } from "./strength.js";
 import {
   ACTIONS_REQUIRING_CITATION,
@@ -64,6 +71,7 @@ import {
   type EvidenceRecord,
   type Expansion,
   type HuntOutcome,
+  type HuntState,
   type Hypothesis,
   type IterationResult,
   type NullCheckEvidence,
@@ -71,6 +79,7 @@ import {
   type NullCheckResult,
   type OpenQuestion,
   type WorkerEvidence,
+  CALLS_PER_ITERATION,
 } from "./types.js";
 
 // A dispatch that never ran because an operator had already halted the hunt.
@@ -104,6 +113,14 @@ export const MAX_DECISION_ATTEMPTS = 3;
 export const BASE_RATE_PROVENANCE = "base_rate";
 export const NULL_HYPOTHESIS = "the activity has a benign explanation and no attack occurred";
 
+// What the deployment reports about its own reach, never a worker's telemetry. Kept
+// out of data_domains so it earns no corroboration credit.
+export const DEPLOYMENT_SOURCE = "deployment";
+
+// A belief the caller put up for this run, rather than one the definition states.
+// Both are contenders the null must beat; only the provenance tells them apart.
+export const OPERATOR_HYPOTHESIS_PROVENANCE = "operator";
+
 // EXPAND does not advance the iteration, so only this stops a lead reading forever.
 export const MAX_EXPANSIONS = 3;
 
@@ -133,6 +150,36 @@ interface NullCheckAttempt {
 }
 
 const NO_NULL_CHECK: NullCheckAttempt = { result: null, blocked: "", cost_usd: 0, argued: [] };
+
+// Named because two places have to agree: the record is written in one and its
+// entities are refused in the other.
+export const TOOL_FAILURE = "tool_failure";
+
+// Which arm of the budget stopped the run, or null while both have room. Named, so
+// "budget exhausted" is never reported beside a cost ceiling with room left in it.
+export function boundBy(hunt: HuntState): "iterations" | "cost" | null {
+  if (hunt.cost_usd >= hunt.budgets.max_cost_usd) return "cost";
+  if (hunt.iteration >= hunt.budgets.max_iterations) return "iterations";
+  return null;
+}
+
+// Both numbers either way, because the one with room is the answer to "then why
+// did it stop" and is the first thing an operator looks for.
+export function boundReason(hunt: HuntState): string {
+  const spend = `$${hunt.cost_usd.toFixed(4)} of $${hunt.budgets.max_cost_usd.toFixed(2)}`;
+  const turns = `iteration ${hunt.iteration} of ${hunt.budgets.max_iterations}`;
+  if (boundBy(hunt) === "cost") return `spent its allowance: ${spend}, at ${turns}`;
+  return `ran out of turns: ${turns}, having spent ${spend}`;
+}
+
+// Where the hunt stood, claiming nothing about why it stopped — unlike boundReason,
+// which is only ever asked when a ceiling bound.
+export function standingOf(hunt: HuntState): string {
+  return (
+    `iteration ${hunt.iteration} of ${hunt.budgets.max_iterations}, ` +
+    `having spent $${hunt.cost_usd.toFixed(4)} of $${hunt.budgets.max_cost_usd.toFixed(2)}`
+  );
+}
 
 // A call that died mid-way still spent. Duck-typed rather than reaching into the
 // LLM module, so the controller stays free of it.
@@ -225,9 +272,10 @@ function validateAbandon(decision: Decision, projection: Projection): void {
     .map((id) => projection.evidence.get(id))
     .filter((record): record is EvidenceRecord => record !== undefined);
 
-  if (!cited.some((record) => !record.attacker_influenceable && !record.instruction_like)) {
+  if (!cited.some((record) => sensorAttested(record) && !record.instruction_like)) {
     throw new InvalidDecision(
-      "every record ABANDON cites is attacker-influenceable; cite at least one whose content an adversary could not have authored",
+      "every record ABANDON cites rests only on content an adversary could have authored; " +
+        "cite at least one resting on something the telemetry attested",
     );
   }
 }
@@ -240,8 +288,13 @@ function validateFocus(decision: Decision, projection: Projection): void {
 
   if (target !== undefined && target !== null && graph.node(target) === undefined) {
     const known = graph.nodes().map((node) => key(node.entity)).sort();
+    // Names what the field holds: a hypothesis id reads as a well-formed key, so
+    // without it every retry repeats the refused attempt until the bound.
     throw new InvalidDecision(
-      `no evidence mentions ${target}; the graph knows ${known.slice(0, 8).join(", ") || "nothing yet"}`,
+      known.length === 0
+        ? `target_entity names a thing evidence mentions -- a host, ip, user or hash -- not ${target}. ` +
+            "No evidence has been gathered yet, so leave it unset until a worker has answered."
+        : `no evidence mentions ${target}; the graph knows ${known.slice(0, 8).join(", ")}`,
     );
   }
   // An operator's known-benign call is an authorization, so it binds the Hunt
@@ -305,7 +358,9 @@ export async function startHunt(
     cost_usd: 0,
     budgets: spec.budgets,
     scope: spec.scope,
-    narrative: spec.narrative,
+    // Journalled once, so a replay shows exactly what the lead was told and the
+    // critic argues the null against the same context.
+    narrative: narrativeOf(spec),
     created_at: now,
     terminated_at: null,
     parked_at: null,
@@ -320,15 +375,33 @@ export async function startHunt(
     started_by: startedBy,
   });
 
-  for (const [index, statement] of spec.hypotheses.entries()) {
+  for (const statement of spec.hypotheses) {
     ledger.append({
       kind: "hypothesis",
       payload: {
         hypothesis_id: newId("h", 4),
         statement,
         status: "active",
-        attack_technique: spec.attack_techniques[index] ?? null,
+        // attack_techniques is the vocabulary a citation is gated against, not a
+        // per-hypothesis label: what a hypothesis is about is what its evidence cited.
+        attack_technique: null,
         provenance: "hunt_spec",
+        resolution_reason: null,
+        evidence_strength: null,
+      },
+    });
+  }
+
+  // The caller's own claim, on the board as a peer of the definition's.
+  for (const statement of spec.operator_hypotheses) {
+    ledger.append({
+      kind: "hypothesis",
+      payload: {
+        hypothesis_id: newId("h", 4),
+        statement,
+        status: "active",
+        attack_technique: null,
+        provenance: OPERATOR_HYPOTHESIS_PROVENANCE,
         resolution_reason: null,
         evidence_strength: null,
       },
@@ -352,12 +425,37 @@ export async function startHunt(
     });
   }
 
+  // Journalled once at start, so a missing capability reaches the report as a blind
+  // spot the verdicts count. resumeHunt seeds nothing, so a handover cannot re-declare.
+  const unbound = unboundCapabilities(spec.roles, spec.tools);
+  for (const capability of unbound) {
+    ledger.append({
+      kind: "evidence",
+      payload: {
+        evidence_id: newId("ev"),
+        dispatch_id: null,
+        iteration: 0,
+        source_system: DEPLOYMENT_SOURCE,
+        summary: `no tool in this deployment answers ${capability}`,
+        payload: { capability, hypothesis_id: null },
+        salience: "notable",
+        why_notable: "the roles that need it run without it, so no query can close this",
+        provenance: DEPLOYMENT_GAP_PROVENANCE,
+        attacker_influenceable: false,
+        instruction_like: false,
+        entities: [],
+        captured_at: now,
+      },
+    });
+  }
+
   // Raised whichever way the policy falls, so the approval is a ledger fact
   // rather than something a caller remembers. An ask with nothing pending deadlocks.
   const checkpoint = raiseCheckpoint(
     "hypothesis_approval",
     0,
-    `Approve and start this hunt on ${spec.hypotheses.length} hypothesis(es)?`,
+    `Approve and start this hunt on ${spec.hypotheses.length + spec.operator_hypotheses.length} hypothesis(es)` +
+      `${spec.operator_hypotheses.length > 0 ? `, ${spec.operator_hypotheses.length} from your request` : ""}?`,
     {
       hypotheses: [...ledger.projection.hypotheses.values()].map((hypothesis) => ({
         hypothesis_id: hypothesis.hypothesis_id,
@@ -365,6 +463,8 @@ export async function startHunt(
       })),
       budgets: spec.budgets,
       scope: spec.scope,
+      // What the operator is approving a hunt to run without.
+      unbound_capabilities: unbound,
     },
   );
   ledger.append({ kind: "checkpoint", payload: checkpoint });
@@ -401,24 +501,27 @@ export class HuntController {
     // prove anything, and says so rather than transitioning quietly.
     private readonly critic?: DisconfirmationCritic | undefined,
     private readonly verdicts: Verdicts = DEFAULT_VERDICTS,
+    // The harness's own ceiling. Optional so a scripted controller needs no pool,
+    // and held only so an extension can widen what the pool refuses on.
+    private readonly pool?: Budget | undefined,
   ) {}
 
   // Read from the journaled spec rather than passed in: the chains a hunt runs
   // were fixed when it started, and resume must not pick up an edited config.
   private get enrichment() {
-    return this.ledger.projection.hunt.spec.enrichment ?? DEFAULT_ENRICHMENT;
+    return { ...DEFAULT_ENRICHMENT, ...(this.ledger.projection.hunt.spec.enrichment ?? {}) };
   }
 
-  // Read from the journaled spec for the same reason: the ceilings a hunt runs
-  // under were fixed when it started, so an edited config cannot quietly raise
+  // Read from the journaled spec for the same reason. Merged key by key, not taken
+  // whole: a ledger predating a threshold would otherwise read it as a NaN ceiling.
   private get termination(): Termination {
-    return this.ledger.projection.hunt.spec.termination ?? DEFAULT_TERMINATION;
+    return { ...DEFAULT_TERMINATION, ...(this.ledger.projection.hunt.spec.termination ?? {}) };
   }
 
   // Read from the journaled spec for the same reason the others are: whether a
   // class stops and asks was settled when the hunt started, so an edited config
   private get checkpoints(): Checkpoints {
-    return this.ledger.projection.hunt.spec.checkpoints ?? DEFAULT_CHECKPOINTS;
+    return { ...DEFAULT_CHECKPOINTS, ...(this.ledger.projection.hunt.spec.checkpoints ?? {}) };
   }
 
   private raiseAsk(
@@ -493,8 +596,26 @@ export class HuntController {
     // rather than what the spec merely asked for.
     let attribution = { model_id: projection.hunt.spec.model, prompt_version: "" };
 
+    const watch = this.watchForAbort();
+    try {
     while (attempts < MAX_DECISION_ATTEMPTS) {
-      const result = await this.provider.decide(presented);
+      let result: DecisionResult;
+      try {
+        result = await this.provider.decide(presented, watch.signal);
+      } catch (error) {
+        // A dead call has not decided this iteration, so it takes the same bounded
+        // re-ask a schema-invalid emission gets rather than ending the run.
+        // Exhausted budgets are the exception: the next call answers identically.
+        if (error instanceof BudgetRefused || error instanceof GatewayExhausted) throw error;
+        // A park is not a dead call — every re-ask folds the same ledger and refuses
+        // again — so it surfaces as HuntParked and the run stays answerable.
+        if (error instanceof LeadParked) throw new HuntParked(error.message);
+        if (watch.signal.aborted) throw error;
+        attempts += 1;
+        spent += spentBefore(error);
+        rejected.push(error instanceof Error ? error.message : String(error));
+        continue;
+      }
       rejected.push(...(result.rejected_attempts ?? []));
       spent += result.cost_usd;
       attribution = { model_id: result.model_id, prompt_version: result.prompt_version };
@@ -544,6 +665,9 @@ export class HuntController {
       `the Hunt Lead emitted nothing valid in ${MAX_DECISION_ATTEMPTS} attempts ` +
         `($${spent.toFixed(4)} spent): ${rejected.join(" | ")}`,
     );
+    } finally {
+      watch.stop();
+    }
   }
 
   // Reuses the decision event rather than adding a kind of its own: what that
@@ -647,16 +771,25 @@ export class HuntController {
           break;
       }
     }
+    // Durable before anything is decided on it: the lead folds the *stored* ledger to
+    // see whether the run is answerable, so a buffered approval reads as no approval.
+    await this.ledger.flush();
+
     if (this.ledger.projection.hunt.status === "terminal") return true;
 
     if (abort) {
       this.terminate("aborted", "an operator halted the hunt");
       return true;
     }
-    // Not completed: the predicate never passed, the money ran out and the
-    // operator accepted the stop. Precedence already encodes the difference.
+    // Two endings, not one: at a ceiling the operator accepted the stop, away from
+    // one they asked for a verdict on what was in hand.
     if (conclude) {
-      this.terminate("budget_terminated", "an operator accepted the stop at the budget checkpoint");
+      const bound = boundBy(this.ledger.projection.hunt);
+      if (bound !== null) {
+        this.terminate("budget_terminated", "an operator accepted the stop at the budget checkpoint");
+      } else {
+        this.terminate("completed", `an operator asked the hunt to conclude on what it had: ${standingOf(this.ledger.projection.hunt)}`);
+      }
       return true;
     }
     // After the drain, not before: an answer already waiting in the inbox is an
@@ -1029,14 +1162,27 @@ export class HuntController {
     return `concluded as ${verdict.outcome} on the last of the budget`;
   }
 
+  // The harness refused a call on a ceiling the hunt's predicate does not read — the
+  // wall clock — so it parks on the same three answers every other ceiling parks on.
+  parkOnRefusal(reason: string): string {
+    const hunt = this.ledger.projection.hunt;
+    if (hunt.status !== "active") return this.suspendedBecause();
+    this.ledger.patch("hunt", hunt.hunt_id, {
+      status: "parked",
+      parked_at: new Date().toISOString(),
+      parked_reason: reason,
+    });
+    return `parked: ${reason} — extend, conclude or abort`;
+  }
+
   // The budget checkpoint. The hunt stops spending and waits: extend, conclude or
   // abort. Parked rather than terminated, because "the money ran out" is a
   private park(): string {
     const hunt = this.ledger.projection.hunt;
-    const reason =
-      `budget exhausted at iteration ${hunt.iteration} of ${hunt.budgets.max_calls}, ` +
-      `$${hunt.cost_usd.toFixed(4)} of $${hunt.budgets.max_cost_usd.toFixed(2)}`;
+    const reason = boundReason(hunt);
 
+    // Not a checkpoint, though it is a question: Run.settled() reads an unresolved one
+    // as "no call may proceed", which no extension could then lift. parked_reason holds it.
     this.ledger.patch("hunt", hunt.hunt_id, {
       status: "parked",
       parked_at: new Date().toISOString(),
@@ -1051,45 +1197,56 @@ export class HuntController {
     const hunt = this.ledger.projection.hunt;
     const grant = grantOf(directive);
 
-    if (grant.iterations <= 0 && grant.cost_usd <= 0) {
+    if (grant.iterations <= 0 && grant.cost_usd <= 0 && grant.wall_ms <= 0) {
       journalNote(
         this.ledger,
         `extend "${directive.text}" granted nothing the controller could read; ` +
-          "say how many iterations or how many dollars (e.g. \"+5 iterations\", \"+$10\").",
+          "say how many iterations, how many dollars or how many minutes " +
+          "(e.g. \"+5 iterations\", \"+$10\", \"+30 minutes\").",
       );
       return;
     }
 
-    // An extension buys iterations and dollars. Wall time and how long the hunt
-    // may sit parked are not on offer, so both carry over untouched.
+    // An extension buys iterations, dollars and wall clock. How long the hunt may
+    // sit parked is not on offer and carries over untouched.
     const asked: Budgets = {
-      max_calls: hunt.budgets.max_calls + grant.iterations,
+      max_iterations: hunt.budgets.max_iterations + grant.iterations,
+      max_calls: (hunt.budgets.max_iterations + grant.iterations) * CALLS_PER_ITERATION,
       max_cost_usd: Number((hunt.budgets.max_cost_usd + grant.cost_usd).toFixed(6)),
-      max_wall_ms: hunt.budgets.max_wall_ms,
+      max_wall_ms: hunt.budgets.max_wall_ms + grant.wall_ms,
       max_park_ms: hunt.budgets.max_park_ms,
     };
-    const { hard_max_calls, hard_max_cost_usd } = this.termination;
+    const { hard_max_iterations, hard_max_calls, hard_max_cost_usd, hard_max_wall_ms } = this.termination;
     const budgets: Budgets = {
+      max_iterations: Math.min(asked.max_iterations, hard_max_iterations),
       max_calls: Math.min(asked.max_calls, hard_max_calls),
-      max_wall_ms: hunt.budgets.max_wall_ms,
+      max_wall_ms: Math.min(asked.max_wall_ms, hard_max_wall_ms),
       max_cost_usd: Math.min(asked.max_cost_usd, hard_max_cost_usd),
       max_park_ms: hunt.budgets.max_park_ms,
     };
     this.ledger.patch("hunt", hunt.hunt_id, { budgets });
+    // The pool enforces the wall and the call meter and was built from the spec, so an
+    // extension it is not told about buys nothing.
+    this.pool?.raise(budgets);
 
-    if (budgets.max_calls < asked.max_calls || budgets.max_cost_usd < asked.max_cost_usd) {
+    if (
+      budgets.max_iterations < asked.max_iterations ||
+      budgets.max_cost_usd < asked.max_cost_usd ||
+      budgets.max_wall_ms < asked.max_wall_ms
+    ) {
       journalNote(
         this.ledger,
-        `${directive.actor} extended the hunt to ${asked.max_calls} iterations / ` +
-          `$${asked.max_cost_usd.toFixed(2)}; clamped to the hard ceiling of ${hard_max_calls} iterations / ` +
-          `$${hard_max_cost_usd.toFixed(2)}.`,
+        `${directive.actor} extended the hunt to ${asked.max_iterations} iterations / ` +
+          `$${asked.max_cost_usd.toFixed(2)} / ${Math.round(asked.max_wall_ms / 60_000)} minutes; clamped to the hard ` +
+          `ceiling of ${hard_max_iterations} iterations / $${hard_max_cost_usd.toFixed(2)} / ` +
+          `${Math.round(hard_max_wall_ms / 60_000)} minutes.`,
       );
     }
 
     if (this.budgetExhausted()) {
       journalNote(
         this.ledger,
-        `the extension leaves no room at ${budgets.max_calls} iterations / $${budgets.max_cost_usd.toFixed(2)}, ` +
+        `the extension leaves no room at ${budgets.max_iterations} iterations / $${budgets.max_cost_usd.toFixed(2)}, ` +
           "so the hunt stays parked; conclude or abort it.",
       );
       return;
@@ -1360,7 +1517,25 @@ export class HuntController {
   }
 
   // Only what an operator queued and the drain has not taken: a halt on the ledger
-  // already ended the hunt. An unreachable queue reads as no abort, never a throw.
+  // already ended the hunt. Returns the stop, so no interval outlives its call.
+  private watchForAbort(): { signal: AbortSignal; stop: () => void } {
+    const halt = new AbortController();
+    let checking = false;
+    const poll = setInterval(() => {
+      if (checking) return;
+      checking = true;
+      void this.abortQueued()
+        .then((queued) => {
+          if (queued) halt.abort(new Error(CANCELLED_ON_ABORT));
+        })
+        .finally(() => {
+          checking = false;
+        });
+    }, ABORT_POLL_MS);
+    poll.unref?.();
+    return { signal: halt.signal, stop: () => clearInterval(poll) };
+  }
+
   private async abortQueued(): Promise<boolean> {
     try {
       return (await peek(this.ledger)).some((directive) => directive.kind === "abort");
@@ -1661,7 +1836,9 @@ export class HuntController {
         evidence_id: evidenceId,
         dispatch_id: dispatchId,
         iteration,
-        entities: entitiesOf(record),
+        // A failed dispatch's text is ours, not the estate's: its addresses are the
+        // gateway and the Docker bridge, and a hunt must not investigate its own plumbing.
+        entities: record.provenance === TOOL_FAILURE ? [] : entitiesOf(record),
         captured_at: new Date().toISOString(),
       };
       this.ledger.append({ kind: "evidence", payload: stored });
@@ -1711,19 +1888,23 @@ export class HuntController {
     const settled = this.ledger.projection.dispatches.get(result.dispatch_id)?.status;
     if (settled === undefined || settled === "complete") return [];
 
-    // A failed worker is evidence about visibility, not a lost turn.
+    // A failed worker is evidence about visibility, not a lost turn, and the rows it
+    // did gather come too.
     const records = result.failed
       ? [
           {
             source_system: "dispatcher",
-            summary: `worker failed: ${result.failure_reason}`,
-            payload: {},
+            // The reason stays out of the summary and in the payload: it is our plumbing,
+            // and the lead only needs to know a query could not be run.
+            summary: "a query the hunt wanted could not be run",
+            payload: { failure_reason: result.failure_reason },
             salience: "routine" as const,
-            why_notable: "a query the hunt wanted could not be run",
-            provenance: "tool_failure",
+            why_notable: "a blind spot in what this run could see, not a finding",
+            provenance: TOOL_FAILURE,
             attacker_influenceable: false,
             instruction_like: false,
           },
+          ...result.evidence,
         ]
       : result.evidence;
 
@@ -1745,9 +1926,9 @@ export class HuntController {
       cost_usd: result.cost_usd,
       calls: result.calls ?? [],
     });
-    // A gap record is a fact about visibility, not a finding, so it counts as
-    // neither evidence appended nor something worth enriching.
-    return result.failed ? [] : appended;
+    // A gap record is a fact about visibility, not a finding, so it counts as neither
+    // evidence appended nor something worth enriching. Salvaged rows are telemetry, and do.
+    return appended.filter((record) => record.provenance !== TOOL_FAILURE);
   }
 
   // The Hunt Lead recommends stopping; the controller decides. A refusal is not
@@ -1825,9 +2006,6 @@ export class HuntController {
   }
 
   private budgetExhausted(): boolean {
-    const hunt = this.ledger.projection.hunt;
-    return (
-      hunt.iteration >= hunt.budgets.max_calls || hunt.cost_usd >= hunt.budgets.max_cost_usd
-    );
+    return boundBy(this.ledger.projection.hunt) !== null;
   }
 }

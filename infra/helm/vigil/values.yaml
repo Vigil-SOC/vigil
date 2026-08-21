@@ -408,6 +408,7 @@ dbInit:
     - 19_agent_ledger.sql
     - 20_agent_directives.sql
     - 21_agent_run_leases.sql
+    - 22_workflow_run_deleted.sql
   resources:
     requests:
       cpu: 50m

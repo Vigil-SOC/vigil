@@ -24,10 +24,23 @@ function comparable(projection: ReturnType<typeof fold>): unknown {
   );
 }
 
+// The one deliberate divergence from the file ledger's fold. It appended every
+// link, so a record the lead re-ruled on each iteration ended up carrying the same
+// hypothesis many times over -- and among those, "supports" beside "weakens". The
+// harness fold upserts on the pair, so the golden's links are collapsed the same
+// way here rather than the goldens being rewritten: everything else still compares
+// against what the old implementation actually produced.
+function lastPerPair(links: { evidence_id: string; hypothesis_id: string }[]): unknown[] {
+  const held = new Map<string, unknown>();
+  for (const link of links) held.set(`${link.evidence_id} ${link.hypothesis_id}`, link);
+  return [...held.values()];
+}
+
 // Written by running the file ledger's own fold over the same fixture, with the
 // same Map conversion applied, so this compares implementations and not shapes.
 function golden(name: string): unknown {
-  return renamedGolden(JSON.parse(gunzipped(`${name}.projection.json.gz`)));
+  const held = renamedGolden(JSON.parse(gunzipped(`${name}.projection.json.gz`))) as Record<string, unknown>;
+  return { ...held, links: lastPerPair(held["links"] as { evidence_id: string; hypothesis_id: string }[]) };
 }
 
 describe("the fold survives the move to the harness ledger", () => {

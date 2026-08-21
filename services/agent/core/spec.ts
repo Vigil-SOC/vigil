@@ -491,6 +491,48 @@ function constrainWorkerId(
   return { ...schema, properties: { ...properties, worker_agent_id: { ...field, enum: ids } } };
 }
 
+// A field inside a worker's result rows, narrowed to a vocabulary the playbook declared:
+// a reader counting distinct values of a free string counts a typo as a second source.
+function constrainResultField(
+  schema: Record<string, unknown> | null,
+  field: string,
+  values: readonly string[],
+): Record<string, unknown> | null {
+  if (schema === null || values.length === 0) return schema;
+  const properties = asRecord(schema["properties"], "roles.workers.output_schema.properties");
+  const results = properties["results"];
+  if (typeof results !== "object" || results === null) return schema;
+
+  const items = (results as Record<string, unknown>)["items"];
+  if (typeof items !== "object" || items === null) return schema;
+
+  const itemProperties = (items as Record<string, unknown>)["properties"];
+  if (typeof itemProperties !== "object" || itemProperties === null) return schema;
+
+  const target = (itemProperties as Record<string, unknown>)[field];
+  if (typeof target !== "object" || target === null) return schema;
+
+  return {
+    ...schema,
+    properties: {
+      ...properties,
+      results: {
+        ...(results as Record<string, unknown>),
+        items: {
+          ...(items as Record<string, unknown>),
+          properties: { ...(itemProperties as Record<string, unknown>), [field]: { ...target, enum: [...values] } },
+        },
+      },
+    },
+  };
+}
+
+// The vocabulary a playbook declared for a section. Absent constrains nothing.
+function declaredStrings(playbook: Playbook, section: string): readonly string[] {
+  const declared = playbook.sections[section];
+  return Array.isArray(declared) ? declared.filter((one): one is string => typeof one === "string") : [];
+}
+
 export interface SpecPaths {
   arch: string;
   playbook: string;
@@ -516,6 +558,14 @@ function providersOf(tools: readonly ToolSpec[]): Map<string, string[]> {
   return byCapability;
 }
 
+// The inverse of bindCapabilities: what the roles asked for that this deployment answers
+// with nothing. Declaration order, so a ledger replays the same.
+export function unboundCapabilities(roles: Roles, tools: readonly ToolSpec[]): string[] {
+  const providers = providersOf(tools);
+  const asking = [roles.lead, roles.critic, ...Object.values(roles.workers)];
+  return [...new Set(asking.flatMap((role) => role?.needs ?? []))].filter((need) => !providers.has(need));
+}
+
 function bindCapabilities(roles: Roles, tools: readonly ToolSpec[]): Roles {
   const providers = providersOf(tools);
   const bind = (role: RoleSpec): RoleSpec => {
@@ -537,7 +587,25 @@ export function assembleSpec(sources: SpecSources): RunSpec {
   const { arch, playbook, config } = sources;
   const bound = bindCapabilities(arch.roles, config.tools);
   const declared = new Set(config.tools.map((tool) => tool.id));
-  const roles = applyDirectives(bound, playbook.directives, declared);
+  const applied = applyDirectives(bound, playbook.directives, declared);
+  const domains = declaredStrings(playbook, "data_domains");
+  const techniques = declaredStrings(playbook, "attack_techniques");
+  const roles: Roles = {
+    ...applied,
+    workers: Object.fromEntries(
+      Object.entries(applied.workers).map(([id, role]) => [
+        id,
+        {
+          ...role,
+          output_schema: constrainResultField(
+            constrainResultField(role.output_schema, "source_system", domains),
+            "attack_technique",
+            techniques,
+          ),
+        },
+      ]),
+    ),
+  };
   const staffed = Object.keys(roles.workers).length > 0;
 
   // The roster and the worker-id constraint are the lead's alone. Without one

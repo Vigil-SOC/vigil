@@ -2,9 +2,10 @@
 // resolution a default import lands on module.exports.default. The named export
 // exists in both, so this one line satisfies `bundler` and NodeNext alike.
 import { Ajv, type ValidateFunction } from "ajv";
+import { GatewayExhausted } from "./limiter.js";
 import { ZERO_TOKENS, type Refusal, type SpendPayload, type TokenCounts } from "../contracts/budget.js";
 import type { CheckpointPayload, DispatchPayload, NewEvent, ResolutionPayload, TerminalPayload } from "../contracts/events.js";
-import type { RegisteredTool, ToolResult } from "../contracts/tool.js";
+import { ToolBoundsViolation, type RegisteredTool, type ToolResult } from "../contracts/tool.js";
 import {
   approvalId,
   TOOL_APPROVAL,
@@ -16,7 +17,7 @@ import {
   type TurnConfig,
 } from "./loop.js";
 import { ProviderError, type Message, type ToolCall, type ToolSchema, type Turn, type TurnRequest } from "./provider.js";
-import { assemble, prefixOf, type Prefix } from "./context.js";
+import { assemble, prefixOf, type FoldPolicy, type Prefix } from "./context.js";
 import { scannerFor, wrap } from "./security.js";
 import type { State } from "./seams.js";
 
@@ -59,8 +60,13 @@ class Run<T, Kinds extends Record<string, unknown>> {
   private readonly transcript: Message[] = [];
   private prefix: Prefix = { system: "", tools: [], recall: "" };
   private lastFold = 0;
+  // Null until a write-up dies: retrying the largest request a role can send, unchanged,
+  // is three times the cost for the same answer, so the retry sends less.
+  private tightened: FoldPolicy | null = null;
+  private folds = 0;
   private turns = 0;
   private capped = false;
+  private spent = 0;
   private prose = "";
   private readonly folder: Folder<Kinds>;
 
@@ -73,7 +79,20 @@ class Run<T, Kinds extends Record<string, unknown>> {
     this.folder = new Folder(harness.state, cfg.run_id);
   }
 
+  // A provider that dies is a run that failed, which is what Outcome is for: it carries
+  // the status, the reason and the calls already made, where a thrown error loses all
+  // three. An abort still throws, because a cancelled run is not a run that answered.
   async *execute(): TurnStream<T> {
+    try {
+      return yield* this.attempt();
+    } catch (error) {
+      if (this.cfg.signal?.aborted === true || hardStop(error)) throw error;
+      const reason = error instanceof Error ? error.message : String(error);
+      return yield* announce(this.done("failed", null, reason));
+    }
+  }
+
+  private async *attempt(): TurnStream<T> {
     this.transcript.push(...(this.cfg.history ?? []));
 
     // Recalled once and rendered into the opening turn, never re-recalled per
@@ -141,7 +160,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
   // The store is the authority on whether the run is still going, so one
   // cancelled or answered out of band is seen on the next pass rather than never.
   private settled(fold: Fold): Outcome<T> | null {
-    if (fold.terminal !== null) {
+    if (fold.terminal !== null && this.cfg.after_terminal !== true) {
       const status: Status = fold.terminal.outcome === "completed" ? "completed" : "failed";
       return this.done(status, null, `the ledger already ended this run: ${fold.terminal.reason}`);
     }
@@ -204,7 +223,20 @@ class Run<T, Kinds extends Record<string, unknown>> {
       const refusal = await this.harness.budget.beginCall();
       if (refusal !== null) return this.exhausted(refusal);
 
-      const turn = yield* this.burn({ messages: this.assembled(tail), tools: [], emit: schema });
+      // A write-up that died has still gathered everything behind it, so the only thing
+      // worth changing before asking again is how much it is asked over.
+      let turn;
+      try {
+        turn = yield* this.burn({ messages: this.assembled(tail), tools: [], emit: schema });
+      } catch (error) {
+        const tighter = FOLD_LADDER[this.folds];
+        if (tighter === undefined || this.cfg.signal?.aborted === true) throw error;
+        this.tightened = tighter;
+        this.folds += 1;
+        this.rejected.push(`the emission call failed (${(error as Error).message}); asked again over a folded transcript`);
+        attempt -= 1;
+        continue;
+      }
 
       const parsed = tryParse(turn.content);
       if (parsed !== undefined && validate(parsed)) {
@@ -228,7 +260,15 @@ class Run<T, Kinds extends Record<string, unknown>> {
   // Prefix, then the folded history, then a tail that is never persisted. What
   // summarising drops is the fold's to decide, and the edges are never dropped.
   private assembled(working = ""): Message[] {
-    const { messages, folded } = assemble(this.prefix, this.cfg.task, this.transcript, working, summariseFolded);
+    const policy = this.tightened ?? undefined;
+    const { messages, folded } = assemble(
+      this.prefix,
+      this.cfg.task,
+      this.transcript,
+      working,
+      summariseFolded,
+      ...(policy === undefined ? [] : ([policy] as const)),
+    );
     this.lastFold = folded;
     return messages;
   }
@@ -277,6 +317,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
       pricing_source: priced.source,
     };
     this.harness.budget.record(payload);
+    this.spent += payload.cost_usd ?? 0;
     await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "spend", payload });
     return payload;
   }
@@ -316,8 +357,16 @@ class Run<T, Kinds extends Record<string, unknown>> {
       turns: this.turns,
       rejected: this.rejected,
       reason,
+      cost_usd: Number(this.spent.toFixed(6)),
     };
   }
+}
+
+// Not every throw is a turn that failed: an exhausted gateway cannot serve the next
+// call either, and a defect in this process is not a role that could not answer.
+function hardStop(error: unknown): boolean {
+  if (error instanceof TypeError || error instanceof ReferenceError || error instanceof SyntaxError) return true;
+  return error instanceof GatewayExhausted || error instanceof ToolBoundsViolation;
 }
 
 // The last event a run yields and the outcome it returns are the same thing, so
@@ -379,6 +428,17 @@ class Folder<Kinds extends Record<string, unknown>> {
   }
 }
 
+// Tried in order, one step per failed write-up. DEFAULT_FOLD already bounds a request
+// by weight, so this is the backstop rather than the mechanism: a ceiling lower than
+// the one DEFAULT_FOLD was set for, reached only after a write-up has already died.
+// Both ceilings are reachable, which matters: neither edge folds below one message, so
+// the floor is roughly two result_caps and a budget under that is a budget the fold can
+// never meet. It would spend the whole ladder failing to.
+const FOLD_LADDER: readonly FoldPolicy[] = [
+  { head: 2, tail: 4, max_messages: 10, max_chars: 60_000 },
+  { head: 1, tail: 1, max_messages: 4, max_chars: 40_000 },
+];
+
 // Names what was dropped rather than reproducing it: a summary that quotes the
 // middle back is the middle, and folds nothing.
 function summariseFolded(folded: readonly Message[]): string {
@@ -405,10 +465,17 @@ function parseArgs(raw: string): Record<string, unknown> | null {
 
 function tryParse(content: string): unknown {
   try {
-    return JSON.parse(content);
+    return JSON.parse(fenceless(content));
   } catch {
     return undefined;
   }
+}
+
+// Some models return the object inside a markdown code fence, which is a correct
+// answer this layer would otherwise reject as unparseable and pay to ask again.
+function fenceless(content: string): string {
+  const fenced = /^\s*```(?:json)?\s*([\s\S]*?)\s*```\s*$/.exec(content);
+  return fenced === null ? content : fenced[1]!;
 }
 
 const ajv = new Ajv({ allErrors: true, strict: false });

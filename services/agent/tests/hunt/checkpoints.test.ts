@@ -6,7 +6,7 @@ import {
   resolutionOf,
 } from "../../workflows/hunt/checkpoints.js";
 import { DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
-import { HuntController, HuntParked, validateDecision } from "../../workflows/hunt/controller.js";
+import { HuntParked, validateDecision } from "../../workflows/hunt/controller.js";
 import { buildDigest, scoredFrontier, suppressedEntities } from "../../workflows/hunt/digest.js";
 import { steer } from "../../workflows/hunt/inbox.js";
 import type { Journal } from "../../workflows/hunt/journal.js";

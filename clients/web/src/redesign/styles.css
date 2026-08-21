@@ -1880,6 +1880,9 @@
    .detail-tabs {
       display: flex;
       align-items: center;
+      /* Seven tabs do not fit the run detail panel, and an unwrapped flex row scrolls
+         the whole panel sideways. */
+      flex-wrap: wrap;
       gap: 4px;
       padding: 10px 24px;
       border-bottom: 1px solid var(--line);
@@ -4033,6 +4036,17 @@
       background: var(--crit-dim);
    }
 
+   /* The confirmed half of a destructive pair: filled, so it reads as the commit. */
+   .btn.danger.solid {
+      background: var(--crit);
+      color: #fff;
+   }
+
+   .btn.danger.solid:hover {
+      background: var(--crit);
+      filter: brightness(1.08);
+   }
+
    .feedback-box {
       width: 100%;
       min-height: 70px;
@@ -4838,6 +4852,16 @@
    .modal-body {
       padding: 18px;
       overflow-y: auto;
+      /* auto, not hidden: hidden does not contain a too-wide child, it makes it
+         unreachable. */
+      overflow-x: auto;
+      /* .modal-body is a flex child of the column-flex .modal; without this its
+         default min-height:auto lets it grow to its content's intrinsic size
+         instead of the space .modal actually has left, so long content pushed
+         past the modal's edge (clipped by .modal's overflow:hidden) rather than
+         scrolling inside overflow-y:auto here. */
+      flex: 1 1 auto;
+      min-height: 0;
    }
 
    /* dropdown filter menu */
@@ -5792,8 +5816,379 @@
       padding: 4px 14px 14px;
    }
 
+   /* The panel is a cell of the history table, so it inherited that table's
+      white-space: nowrap and nothing inside it could wrap at all -- a one-line
+      "Why it ended" ran off the page and the whole modal scrolled sideways.
+      overflow-wrap on the descendants could not fix that: nowrap forbids wrapping
+      outright, and overflow-wrap only breaks inside a word once wrapping is
+      already allowed. Reset on the one element that turns it off for everything
+      below; td.tight puts it back where a column really is atomic.
+
+      Selected through .tbl tbody so it outweighs the rule it is undoing --
+      `.run-detail-row>td` alone is less specific than `.tbl tbody td` and loses. */
+   .tbl tbody tr.run-detail-row>td {
+      white-space: normal;
+      /* A hunt's prose is full of tokens with no spaces in them -- ev-efbee70bf7a6,
+         172.18.0.3:47618->160.79.104.10:443 -- and one of those is enough to set a
+         width the modal cannot meet. Inherited, so every descendant gets it. */
+      overflow-wrap: anywhere;
+   }
+
    .run-detail .tbl {
       margin-top: 4px;
+   }
+
+   /* A hunt's cells hold prose — statements, questions, the reason a query came
+      back empty. Under the table's default nowrap a 300-character intent pushed
+      the table wider than the modal and the panel scrolled sideways. */
+   .run-detail .tbl tbody td {
+      white-space: normal;
+      vertical-align: top;
+      line-height: 1.45;
+      /* Wrapping at spaces is not enough: a hunt's text is full of tokens that
+         contain none — 172.18.0.3:47618->160.79.104.10:443, ev-efbee70bf7a6,
+         sourcetype=aws:cloudwatchlogs:vpcflow — and one of those sets the cell's
+         minimum width, which pushes the table past the modal however the prose
+         around it wraps. `anywhere` also lets the cell shrink below that token. */
+      overflow-wrap: anywhere;
+   }
+
+   /* Outside the run panel, which inherits it from .run-detail-row>td. */
+   .run-ask {
+      overflow-wrap: anywhere;
+   }
+
+   /* Flex children default to min-width:auto, so the run id and the meta group
+      refuse to shrink and widen the bar instead of wrapping within it. */
+   .run-bar>* {
+      min-width: 0;
+   }
+
+   /* tight hugs the column to its content; it does not mean the content is
+      unbreakable. Numbers, a status word and an id are atomic and stay nowrap --
+      a cell holding a list that grows (techniques cited, what a record bears on)
+      must not carry this class, or it sets a minimum width the modal cannot meet
+      and the panel scrolls sideways however the prose around it wraps. */
+   .run-detail .tbl tbody td.tight {
+      white-space: nowrap;
+      width: 1%;
+   }
+
+   /* What the run is doing, and the one control that ends it. Stop lives with the
+      run's own state rather than among the steering directives. */
+   /* What the hunt is asking someone to do, above the tabs. Bordered on the accent
+      rather than filled: it is the one thing in the panel that wants doing, and a
+      block of colour at the top of every finished run stops being read. */
+   .hunt-actions {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-left: 2px solid var(--accent-2);
+      border-radius: 8px;
+      background: var(--bg-1);
+   }
+
+   .hunt-actions-head {
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      color: var(--tx-3);
+      margin-bottom: 7px;
+   }
+
+   .hunt-actions-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+   }
+
+   .hunt-actions-list li {
+      display: flex;
+      gap: 9px;
+      align-items: baseline;
+      font-size: 12.5px;
+      line-height: 1.5;
+      color: var(--tx-2);
+      max-width: 96ch;
+   }
+
+   /* Fixed width so the text of every step starts on the same column. */
+   .hunt-actions-n {
+      flex: 0 0 18px;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--accent-2);
+   }
+
+   .hunt-account {
+      padding-top: 4px;
+   }
+
+   /* The panel is wide so the tables have room for four columns and a hash. Prose
+      does not want that room: a line of body text runs best at 65-75 characters and
+      becomes hard to track back across at twice that.
+
+      The measure is on the column, not on the text inside it. Held on the text, a
+      card stayed full width while its prose stopped two thirds of the way across —
+      a wide empty box with a narrow strip of words down one side. */
+   .hunt-account {
+      max-width: 76ch;
+   }
+
+   /* The one paragraph a reader takes away if they read nothing else, so it is set
+      larger than the prose under it rather than the same size. */
+   .hunt-lede {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--tx);
+      margin: 6px 0 12px;
+   }
+
+   /* What the run modal will actually put on the board, before it costs anything. */
+   .hyp-preview {
+      margin-top: -4px;
+      padding: 9px 11px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--bg-1);
+   }
+
+   .hyp-preview-head {
+      font-size: 11.5px;
+      color: var(--tx-3);
+      margin-bottom: 7px;
+   }
+
+   .hyp-preview-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+   }
+
+   .hyp-preview-list li {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      font-size: 12px;
+      line-height: 1.45;
+      color: var(--tx-2);
+   }
+
+   /* Marked, not refused: the splitter is not clever enough to be sure, and an
+      operator who meant it should still be able to run it. */
+   .hyp-preview-list li.suspect {
+      color: var(--high);
+   }
+
+   .hyp-preview-n {
+      flex: 0 0 20px;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--tx-3);
+   }
+
+   .hyp-preview-warn {
+      margin-top: 8px;
+      font-size: 11.5px;
+      line-height: 1.45;
+      color: var(--high);
+   }
+
+   /* A belief's short name. Monospace so H1 and H10 line up down a column, and
+      carried in the accent so a reference reads as a pointer rather than as prose. */
+   .hyp-ref {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--accent-2);
+      cursor: help;
+   }
+
+   /* One card per distinct incident. The account already separates them; a wall of
+      markdown throws that structure away on the way to the screen.
+
+      The gap between cards is nearly twice the space between paragraphs inside one,
+      so a card reads as a unit. At equal spacing the borders were the only thing
+      grouping anything, and they are deliberately quiet. */
+   .incidents {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      margin: 8px 0 2px;
+   }
+
+   .incident {
+      padding: 14px 16px 15px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--bg-1);
+   }
+
+   /* Ruled off rather than merely bolder. At 12.5px semibold over 12.5px regular the
+      heading and the first line of prose were the same object; the rule is what says
+      one names the other. */
+   .incident-h {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+      margin: 0 0 10px;
+      padding-bottom: 9px;
+      border-bottom: 1px solid var(--line-soft);
+      font-size: 13.5px;
+      font-weight: 600;
+      line-height: 1.35;
+      color: var(--tx);
+   }
+
+   /* Something to scan and to refer to out loud. The writer's own headings do not
+      number themselves, and "the third one" is how a person talks about a list. */
+   .incident-n {
+      flex: 0 0 auto;
+      font-family: var(--mono);
+      font-size: 10.5px;
+      font-weight: 500;
+      color: var(--accent-2);
+      letter-spacing: .04em;
+   }
+
+   /* The card is the heading's container, so the prose inside starts flush. */
+   .incident .md> :first-child {
+      margin-top: 0;
+   }
+
+   .incident .md> :last-child {
+      margin-bottom: 0;
+   }
+
+   /* An address, a timestamp and a filename are most of a hunt's prose. Marked in the
+      accent they out-shouted the sentences carrying them and broke every line into
+      fragments. Quiet enough to stay part of the sentence, distinct enough to be a
+      literal. */
+   .incident .md code {
+      font-size: 11px;
+      padding: 1px 4px;
+      background: var(--bg-3);
+      color: var(--tx-2);
+   }
+
+   .incident .md li {
+      margin: 4px 0;
+   }
+
+   .verdict-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+   }
+
+   .verdict-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      font-size: 11.5px;
+      background: var(--bg-1);
+   }
+
+   .verdict-chip b {
+      color: var(--tx);
+      font-weight: 600;
+   }
+
+   .verdict-chip .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+   }
+
+   /* Where the report stops restating the tabs and points at them instead. */
+   .hunt-account-foot {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line-soft);
+   }
+
+   .run-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 9px 0 11px;
+      border-bottom: 1px solid var(--line-soft);
+   }
+
+   .run-bar .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+   }
+
+   .run-bar .pill .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: currentColor;
+   }
+
+   .run-bar .meta {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--tx-2);
+   }
+
+   .run-bar .meta b {
+      color: var(--tx);
+      font-weight: 600;
+   }
+
+   .run-bar .sep {
+      width: 1px;
+      height: 18px;
+      background: var(--line);
+   }
+
+   .budget-track {
+      width: 70px;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--bg-3);
+      overflow: hidden;
+   }
+
+   .budget-fill {
+      height: 100%;
+      background: var(--accent);
+   }
+
+   /* The one thing on the panel waiting on a person, so it sits above the tabs
+      rather than inside one of them. */
+   .run-ask {
+      margin-top: 14px;
+      padding: 13px 15px;
+      border-left: 3px solid var(--high);
+      border-radius: var(--r);
+      background: var(--high-dim);
+   }
+
+   .run-detail .detail-tabs {
+      padding: 10px 0;
    }
 
    .tech-expand>td {

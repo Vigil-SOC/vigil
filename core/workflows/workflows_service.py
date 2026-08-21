@@ -21,9 +21,115 @@ HUNT_RUN_KIND = "hunt"
 WORKFLOW_SCHEME = "workflow:"
 
 
-def _nothing_to_run(workflow: "WorkflowDefinition") -> str:
+# None rather than a number, so a caller that says nothing leaves the definition's
+# count rather than pinning every run to whatever this file thinks.
+def _asked_iterations(parameters: Optional[Dict[str, Any]]) -> Optional[int]:
+    stated = (parameters or {}).get("iterations")
+    try:
+        return int(stated) if stated is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+# The harness already takes an overrides block naming budgets or runtime, so a cost
+# ceiling needs no new contract. None leaves the resolver's, which is the shipped one.
+def _asked_overrides(parameters: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    stated = (parameters or {}).get("max_cost_usd")
+    if stated is None:
+        return None
+    try:
+        ceiling = float(stated)
+    except (TypeError, ValueError):
+        return None
+    return {"budgets": {"max_cost_usd": ceiling}} if ceiling > 0 else None
+
+
+# A key carrying None is not an absent key: JSON null reaches TypeScript as a value,
+# which a reader checking `=== undefined` takes as one.
+def _omit_unset(request: Dict[str, Any]) -> Dict[str, Any]:
+    return {key: value for key, value in request.items() if value is not None}
+
+
+# One statement per line, so an operator can put up more than one belief without a
+# second field. Blank lines are spacing rather than an empty hypothesis.
+def _asked_hypotheses(parameters: Optional[Dict[str, Any]]) -> List[str]:
+    stated = (parameters or {}).get("hypothesis") or ""
+    return [line.strip() for line in str(stated).splitlines() if line.strip()]
+
+
+# A hunt argues the null against a claim, and neither "idk" nor "credential access"
+# can be argued against, though both clear a not-blank check.
+#
+# A heuristic: it recognises a sentence, not a true one. Four words is the shortest
+# real claim in a definition, and a verb is what separates a claim from a topic.
+MIN_HYPOTHESIS_WORDS = 4
+# Irregular past tenses are listed because "ed " catches only the regular ones.
+# Widening admits more claims; a subject label still carries no verb to match.
+_TOPIC_VERBS = (
+    " is ",
+    " are ",
+    " was ",
+    " were ",
+    " has ",
+    " have ",
+    " had ",
+    " been ",
+    " will ",
+    " can ",
+    " could ",
+    " does ",
+    " do ",
+    " did ",
+    " ran ",
+    " runs ",
+    " left ",
+    " took ",
+    " sent ",
+    " got ",
+    " made ",
+    " came ",
+    " went ",
+    " saw ",
+    " broke ",
+    " held ",
+    " kept ",
+    " lost ",
+    " found ",
+    " gave ",
+    " began ",
+    " wrote ",
+    " read ",
+    " built ",
+    " brought ",
+    " spoke ",
+    " stole ",
+    " hid ",
+    "s to ",
+    "ing ",
+    "ed ",
+)
+
+
+def _not_a_claim(statement: str) -> bool:
+    words = statement.split()
+    if len(words) < MIN_HYPOTHESIS_WORDS:
+        return True
+    padded = f" {statement.lower()} "
+    return not any(verb in padded for verb in _TOPIC_VERBS)
+
+
+# A hunt tests what it was given, from the definition or from this caller. Neither
+# must carry one alone; between them one is, or the run tests nothing.
+def _nothing_to_run(
+    workflow: "WorkflowDefinition", parameters: Optional[Dict[str, Any]] = None
+) -> str:
     if workflow.run_kind == HUNT_RUN_KIND:
-        return "" if workflow.metadata.get("hypotheses") else "hypotheses"
+        if workflow.metadata.get("hypotheses"):
+            return ""
+        asked = _asked_hypotheses(parameters)
+        if not asked:
+            return "hypotheses"
+        return "claims" if all(_not_a_claim(one) for one in asked) else ""
     return "" if workflow.phases else "phases"
 
 
@@ -131,6 +237,9 @@ class WorkflowDefinition:
             "use_case": self.use_case,
             "trigger_examples": self.trigger_examples,
             "source": self.source,
+            # The console reads this to know a run takes a turn count rather than
+            # walking phases, instead of keying off the workflow id.
+            "run_kind": self.run_kind,
         }
         if include_body:
             result["body"] = self.body
@@ -349,7 +458,25 @@ class WorkflowsService:
         # Caught here as well as in the resolver, so a definition with nothing to
         # run is refused before it leaves a run record behind. The two loops read
         # different sections, so they are empty in different ways.
-        missing = _nothing_to_run(workflow)
+        missing = _nothing_to_run(workflow, parameters)
+        if missing == "claims":
+            return {
+                "success": False,
+                "error": (
+                    "A hypothesis has to be a claim the hunt can argue against. "
+                    '"credential access" names a subject; "credentials taken '
+                    'from HOST-42 were reused elsewhere" can be shown false.'
+                ),
+            }
+        if missing == "hypotheses":
+            return {
+                "success": False,
+                "error": (
+                    "A hunt needs a hypothesis to test. State one per line in "
+                    "Hypothesis -- what a hunt is out to test is a claim about "
+                    f"your estate, and {workflow_id} ships none."
+                ),
+            }
         if missing:
             return {
                 "success": False,
@@ -377,14 +504,25 @@ class WorkflowsService:
             # The definition's, not a constant: threat-hunt drives the hypothesis
             # loop and the other four walk their phases, from one entry point.
             run_kind=workflow.run_kind,
-            request={
-                # A reference, not a path: the agent layer asks for the resolved
-                # layers at run start, so an edited definition reaches the next run.
-                "arch": "",
-                "playbook": f"{WORKFLOW_SCHEME}{workflow.id}",
-                "config": "",
-                "prompt": self._build_target_context(parameters),
-            },
+            request=_omit_unset(
+                {
+                    # A reference, not a path: the layers resolve at run start, so an
+                    # edited definition reaches the next run.
+                    "arch": "",
+                    "playbook": f"{WORKFLOW_SCHEME}{workflow.id}",
+                    "config": "",
+                    "prompt": self._build_target_context(parameters),
+                    # On the job, not in the playbook: the reference names a definition
+                    # every run of it shares.
+                    "hypotheses": _asked_hypotheses(parameters),
+                    "iterations": _asked_iterations(parameters),
+                    "overrides": _asked_overrides(parameters),
+                    # True only: _omit_unset keeps None out, so an unset flag leaves the
+                    # config's policy rather than pinning every run to this side's.
+                    "approve_hypotheses": (parameters or {}).get("approve_hypotheses")
+                    or None,
+                }
+            ),
             enqueued_by=triggered_by or "api",
         )
         try:
@@ -421,8 +559,7 @@ class WorkflowsService:
 
         if finding_id:
             try:
-                from core.storage.database_data_service import \
-                    DatabaseDataService
+                from core.storage.database_data_service import DatabaseDataService
 
                 data_service = DatabaseDataService()
                 finding = data_service.get_finding(finding_id)
@@ -452,8 +589,7 @@ class WorkflowsService:
 
         if case_id:
             try:
-                from core.storage.database_data_service import \
-                    DatabaseDataService
+                from core.storage.database_data_service import DatabaseDataService
 
                 data_service = DatabaseDataService()
                 case = data_service.get_case(case_id)

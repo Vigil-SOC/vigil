@@ -40,28 +40,17 @@ export const ACTIONS_REQUIRING_CITATION: ReadonlySet<DecisionAction> = new Set([
   "EXPAND",
 ]);
 
-// What the controller actually does something about. An arch may only declare
-// these: a verb that is merely in the vocabulary would be journaled, change
-export const EXECUTABLE_ACTIONS = [
-  "INVESTIGATE",
-  "EXPAND",
-  "PIVOT",
-  "DEEPEN",
-  "ABANDON",
-  "VALIDATE",
-  "CHECKPOINT",
-  "CONCLUDE",
-  "HANDOFF_IR",
-] as const satisfies readonly DecisionAction[];
-
 // parked is the budget checkpoint: the hunt has stopped spending and waits on an
 // operator to extend, conclude or abort it. It advances nothing until then, so it
 export type HuntStatus = "pending_approval" | "active" | "parked" | "terminal";
 
+// failed is an ending like the others, not an absence of one: a hunt stopped by a
+// fault still has hypotheses to resolve and a report to write.
 export type HuntOutcome =
   | "completed"
   | "budget_terminated"
   | "data_starved"
+  | "failed"
   | "aborted";
 
 // Higher wins. An outcome on the record is never downgraded, so a late
@@ -70,7 +59,9 @@ export const OUTCOME_PRECEDENCE: Record<HuntOutcome, number> = {
   completed: 0,
   budget_terminated: 1,
   data_starved: 2,
-  aborted: 3,
+  failed: 3,
+  // Above failed: a run a person stopped is stopped for that reason.
+  aborted: 4,
 };
 
 // handed_off is terminal for the hunt but not an ending of it: the claim now
@@ -88,13 +79,27 @@ export type Salience = "routine" | "notable" | "anomalous";
 // and never-considered are the difference the cross-hypothesis update exists for.
 export type LinkRelation = "supports" | "weakens" | "neither";
 
-// The harness's limits under the hunt's name, so a spec reads as one thing.
-export type Budgets = BudgetLimits;
+// The harness counts model calls; a hunt counts turns, and one turn costs several.
+export type Budgets = BudgetLimits & { max_iterations: number };
 
+// A turn dispatches up to max_workers workers, each running its own tool loop, plus
+// the lead and the pass that argues against them; the two spare turns per agent are the
+// emission retries. Derived rather than guessed, since a flat constant undercounts a
+// fan-out. Cost is the governor; calls only backstop a turn running away.
+export function callsPerIteration(maxWorkers: number, maxTurns: number): number {
+  return (maxWorkers + 2) * (maxTurns + 2);
+}
+
+// The shape the shipped arch and runtime describe: 4 workers, 8 turns each.
+export const CALLS_PER_ITERATION = callsPerIteration(4, 8);
+
+// 90 minutes: a hunt averages several minutes an iteration once workers fan out, and
+// a wall that fires first makes every other budget decorative.
 export const DEFAULT_BUDGETS: Budgets = {
-  max_calls: 20,
-  max_cost_usd: 25.0,
-  max_wall_ms: 1_800_000,
+  max_iterations: 8,
+  max_calls: 8 * CALLS_PER_ITERATION,
+  max_cost_usd: 15.0,
+  max_wall_ms: 5_400_000,
   max_park_ms: DEFAULT_PARK_MS,
 };
 
@@ -142,6 +147,9 @@ export type DirectiveKind = (typeof DIRECTIVE_KINDS)[number];
 export interface BudgetGrant {
   iterations: number;
   cost_usd: number;
+  // Minutes of wall clock. On offer because iterations and dollars left over are no
+  // use to a run whose clock ran out.
+  wall_ms: number;
 }
 
 export interface Directive {
@@ -258,6 +266,20 @@ export interface OpenQuestion {
   closed_reason?: string | null;
 }
 
+// Who chose the value a finding rests on. The adversary picks a filename, a
+// User-Agent, a process name; they cause a beacon interval and a connection count but
+// cannot author what the sensor counted without owning the sensor. A third party's
+// claim -- a feed label, a reputation verdict -- is nobody's observation.
+export type Authorship = "sensor" | "adversary" | "third_party";
+
+// One thing a finding rests on. Named so a verdict can ask what the support actually
+// stands on rather than whether the adversary touched the record at all: in a hunt the
+// adversary's own behaviour is the signal, so attacker-caused is every record there is.
+export interface RestsOn {
+  field: string;
+  authored: Authorship;
+}
+
 export interface EvidenceRecord {
   evidence_id: string;
   dispatch_id: string | null;
@@ -268,8 +290,16 @@ export interface EvidenceRecord {
   salience: Salience;
   why_notable: string;
   provenance: string;
-  // Set when an adversary could have written the value; an ABANDON must not rest on it alone.
+  // The worker's own claim about this record, distinct from the playbook author's
+  // label. Absent rather than null, and schema-gated so one cannot be invented.
+  attack_technique?: string;
+  // Set when an adversary could have written the value. Superseded by rests_on, which
+  // says which values: kept because the ledger holds it and a run written before the
+  // split still reads correctly.
   attacker_influenceable: boolean;
+  // What the finding rests on, field by field. Absent on a ledger written before the
+  // split, and on a worker that named nothing.
+  rests_on?: RestsOn[];
   instruction_like: boolean;
   // Extracted once at capture and stored, so tightening the pattern later cannot
   // rewrite the graph a past decision was made against.
@@ -318,7 +348,9 @@ export interface Decision {
   // focus, which is what makes DEEPEN and PIVOT distinguishable.
   target_entity?: string | null;
   worker_agent_id?: string | null;
-  query_intent?: string;
+  // Nullable like its siblings: a verb carrying no query emits null, and the
+  // controller falls back to the rationale.
+  query_intent?: string | null;
   // How the evidence of the previous iteration bears on every active hypothesis.
   // The lead cannot classify what its own dispatch has not returned yet.
   evidence_relations?: EvidenceRelation[];

@@ -1145,6 +1145,8 @@ export const workflowApi = {
     case_id?: string
     context?: string
     hypothesis?: string
+    iterations?: number
+    approve_hypotheses?: boolean
   }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
   reloadFiles: () => api.post('/workflows/reload'),
 
@@ -1154,11 +1156,21 @@ export const workflowApi = {
   listRuns: (id: string, params: { limit?: number; offset?: number; status?: string } = {}) =>
     api.get(`/workflows/${id}/runs`, { params }),
   getRun: (runId: string) => api.get(`/workflows/runs/${runId}`),
+  // Hides a finished run from History. The row and its ledger stay: what the
+  // agents did is still auditable by run_id after an operator tidies the list.
+  deleteRun: (runId: string) => api.delete(`/workflows/runs/${runId}`),
 
-  // Steer a run that is already going. Queued rather than journalled: the worker
-  // holding the ledger is what turns a directive into an event on it.
-  steer: (runId: string, kind: string, text = '') =>
-    api.post(`/agent-runs/${runId}/directives`, { kind, text }),
+  // Stop, as opposed to steer. Queues the abort so the run can settle itself and write
+  // a report, and escalates behind that: steer('abort') alone leaves a wedged worker running.
+  cancelRun: (runId: string, reason: string, rejectedBy?: string) =>
+    api.post(`/workflows/runs/${runId}/cancel`, { reason, ...(rejectedBy && { rejected_by: rejectedBy }) }),
+
+  // Steer a run that is already going. Queued rather than journalled: the worker holding
+  // the ledger is what turns a directive into an event on it. `fields` carries the typed
+  // half — the entity a benign suppresses, the grant an extend buys — which prose in
+  // `text` cannot say unambiguously, and which the run's regex used to have to guess at.
+  steer: (runId: string, kind: string, text = '', fields?: Record<string, unknown>) =>
+    api.post(`/agent-runs/${runId}/directives`, { kind, text, ...(fields && { fields }) }),
 
   // Custom (database-backed) CRUD
   listCustom: (activeOnly: boolean = true) =>

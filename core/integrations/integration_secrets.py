@@ -62,6 +62,7 @@ _CATALOG_ONLY_SECRET_FIELDS: Mapping[str, tuple[str, ...]] = {
     # mcp_token: static bearer the LogLM MCP tools present to the connector.
     "loglm": ("mint_secret", "mcp_token"),
     "gcp-threat-intel": ("api_key",),
+    "firecrawl": ("api_key",),
     "cortex-xdr": ("api_key",),
     "trend-micro-vision-one": ("api_token",),
     "sophos-intercept-x": ("client_secret",),

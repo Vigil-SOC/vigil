@@ -64,6 +64,10 @@ export interface Budget {
   readonly limits: BudgetLimits;
   readonly spent: Spend;
   beginCall(): Promise<Refusal | null>;
+  // Widens a ceiling an operator extended. Widen-only, so a resumed run cannot be
+  // handed a smaller allowance than the one it was already refused under, and the
+  // pool stays the single authority on what a run may still spend.
+  raise(limits: Partial<BudgetLimits>): void;
   record(payload: SpendPayload): void;
   // What a call cost, for the ledger and for max_cost_usd. Here rather than on the
   // harness because this object already owns the ceiling and the running total.

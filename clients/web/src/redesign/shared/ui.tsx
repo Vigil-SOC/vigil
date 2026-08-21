@@ -113,7 +113,9 @@ export function Popup({
   onClose: () => void
   title: ReactNode
   children: ReactNode
-  width?: number
+  // A number is pixels; a string is any CSS width. .modal's max-width keeps it inside
+  // the viewport either way.
+  width?: number | string
 }) {
   const panelRef = useRef<HTMLDivElement>(null)
   const escapeLayerRef = useRef(Symbol('popup'))

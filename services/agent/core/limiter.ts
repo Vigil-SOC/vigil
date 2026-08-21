@@ -9,7 +9,11 @@ export interface RateLimit {
 // this layer's pool declining a call it has not yet made.
 export class GatewayExhausted extends Error {}
 
-const RETRYABLE = new Set([429, 500, 502, 503, 504]);
+const RETRYABLE = new Set([429, 500, 502, 503]);
+
+// Statuses that mean a ceiling was reached rather than a server that stumbled. They
+// answer the same way every attempt, so they get one extra try rather than three.
+const CEILING = new Set([408, 504]);
 
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -86,13 +90,21 @@ export class Limiter {
 
   private async withRetry<T>(call: () => Promise<T>): Promise<T> {
     let lastError: unknown;
+    let blind = 0;
     for (let attempt = 0; attempt < this.attempts; attempt += 1) {
       try {
         return await call();
       } catch (error) {
         const status = statusOf(error);
         if (status === 402) throw new GatewayExhausted((error as Error).message);
-        if (status !== undefined && !RETRYABLE.has(status)) throw error;
+        // One more attempt, not three: retrying a ceiling costs a role its whole dispatch
+        // in wall clock. A dead socket is the same ceiling with nobody left to answer.
+        if (status === undefined || CEILING.has(status)) {
+          blind += 1;
+          if (blind > 1) throw error;
+        } else if (!RETRYABLE.has(status)) {
+          throw error;
+        }
         lastError = error;
         if (attempt === this.attempts - 1) break;
         const backoff = retryAfterMs(error) ?? 2 ** attempt * 500;

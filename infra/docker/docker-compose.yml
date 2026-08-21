@@ -318,6 +318,9 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
     volumes:
+      # The file is the bootstrap; the volume is where Bifrost keeps what it was
+      # told at runtime. Without it every UI change lasted until the next recreate.
+      - bifrost_data:/app/data
       - ./bifrost/config.json:/app/data/config.json:ro
     depends_on:
       redis:
@@ -499,6 +502,8 @@ volumes:
   splunk_etc:
     driver: local
   prometheus_data:
+    driver: local
+  bifrost_data:
     driver: local
   grafana_data:
     driver: local

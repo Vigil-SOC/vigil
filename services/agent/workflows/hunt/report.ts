@@ -1,7 +1,8 @@
 import { resolutionOf, type Checkpoint, type Resolution } from "./checkpoints.js";
 import { suppressedEntities } from "./digest.js";
 import type { Projection } from "./ledger.js";
-import { isGap, unruledObservations } from "./strength.js";
+import { citedTechniques, isGap, sensorAttested, unruledObservations } from "./strength.js";
+import { renderNarrative, type Narrative } from "./narrative.js";
 import type {
   Budgets,
   EvidenceRecord,
@@ -80,14 +81,35 @@ export interface HuntReport {
   unruled?: number;
 }
 
-export function reportPath(ledgerPath: string): string {
-  return `${ledgerPath.replace(/\.jsonl$/, "")}.report.md`;
+// One entry per question, not per worker: a fan-out hands every worker the same
+// query_intent. Presentation only -- buildReport's gaps array is untouched.
+export interface AskedGap {
+  iteration: number;
+  hypothesis_id: string | null;
+  query_intent: string;
+  reasons: string[];
+  workers: number;
 }
 
-// Beside the ledger, like the report: a deliverable an IR responder can be
-// handed without access to this process or its JSONL. The id already carries
-export function caseFilePath(ledgerPath: string, caseId: string): string {
-  return `${ledgerPath.replace(/\.jsonl$/, "")}.${caseId}.md`;
+export function groupedGaps(gaps: readonly VisibilityGap[]): AskedGap[] {
+  const byQuestion = new Map<string, AskedGap>();
+  for (const gap of gaps) {
+    const key = `${gap.iteration}|${gap.hypothesis_id ?? ""}|${gap.query_intent}`;
+    const held = byQuestion.get(key);
+    if (held === undefined) {
+      byQuestion.set(key, {
+        iteration: gap.iteration,
+        hypothesis_id: gap.hypothesis_id,
+        query_intent: gap.query_intent,
+        reasons: [gap.summary],
+        workers: 1,
+      });
+      continue;
+    }
+    held.workers += 1;
+    if (!held.reasons.includes(gap.summary)) held.reasons.push(gap.summary);
+  }
+  return [...byQuestion.values()];
 }
 
 function verdictOf(hypothesis: {
@@ -195,23 +217,62 @@ function headline(report: HuntReport): string {
     );
   }
   if (report.outcome === "completed") {
+    // "Reached the end of its frontier" is a claim about coverage, which a hunt
+    // concluded early cannot make.
+    const left = report.backlog.length + report.parked_hypotheses.length;
+    if (left > 0) {
+      return `Nothing was proven, and the hunt did not run out of things to try: ${left} lead(s) were left open. See the parked backlog below.`;
+    }
     return "Nothing was proven. The hunt reached the end of its frontier without finding support that cleared the bar.";
+  }
+  if (report.outcome === "failed") {
+    return "Nothing was proven: the hunt stopped on a fault, not on an answer. What it had gathered by then is below.";
   }
   return `Nothing was proven; the hunt ended ${report.outcome ?? "without an outcome"} with its hypotheses unresolved.`;
 }
 
-export function renderReport(report: HuntReport): string {
+// How many records the report prints: enough for the whole trail, bounded so a long
+// run does not bury the verdicts.
+export const FINDINGS_SHOWN = 40;
+
+// What the hunt actually saw, which the verdicts and gaps between them never say.
+// Derived from the projection, so buildReport's frozen object is untouched.
+function findings(projection: Projection): string[] {
+  const gathered = [...projection.evidence.values()].filter((record) => !isGap(record)).reverse();
+  const lines = [`## What the hunt found (${gathered.length})`, ""];
+  if (gathered.length === 0) return [...lines, "Nothing came back that was not a blind spot.", ""];
+
+  const shown = gathered.slice(0, FINDINGS_SHOWN);
+  lines.push(shown.length < gathered.length ? `The ${shown.length} most recent, newest first.` : "Newest first.", "");
+  for (const record of shown) {
+    const links = projection.links.filter((link) => link.evidence_id === record.evidence_id);
+    // Evidence attached to nothing is the case worth printing.
+    const bears = links.length === 0 ? "bears on nothing" : links.map((link) => `${link.relation} ${link.hypothesis_id}`).join(", ");
+    const caveat = sensorAttested(record) ? "" : ", nothing sensor-attested";
+    lines.push(`- **iteration ${record.iteration}** (${record.source_system || "unattributed"}, ${record.salience}${caveat}) — ${record.summary}`);
+    if (record.why_notable) lines.push(`  - ${record.why_notable}`);
+    lines.push(`  - ${bears}`);
+  }
+  return [...lines, ""];
+}
+
+// projection is optional and never touches HuntReport's own shape, which the ADR 0012
+// goldens compare exactly: citations are derived fresh from the ledger at render time.
+export function renderReport(report: HuntReport, projection?: Projection, narrative?: Narrative | null): string {
   const lines: string[] = [
     `# Hunt report — ${report.name}`,
     "",
     `- **Outcome:** ${report.outcome ?? "not terminated"}`,
     `- **Hunt:** ${report.hunt_id}`,
-    `- **Iterations:** ${report.iterations} of ${report.budgets.max_calls}`,
+    `- **Iterations:** ${report.iterations} of ${report.budgets.max_iterations}`,
     `- **Cost:** $${report.cost_usd.toFixed(4)} of $${report.budgets.max_cost_usd.toFixed(2)}`,
     `- **Started:** ${report.created_at}`,
     `- **Ended:** ${report.terminated_at ?? "still running"}`,
   ];
   if (report.reason) lines.push(`- **Why it ended:** ${report.reason}`);
+  // Before the verdicts, since everything below is the record it was written from.
+  // Absent when the narrator could not run, leaving the report as it was.
+  if (narrative !== undefined && narrative !== null) lines.push("", ...renderNarrative(narrative));
   lines.push("", headline(report), "", "## Verdicts", "");
 
   const ordered = [...report.hypotheses].sort(
@@ -220,19 +281,27 @@ export function renderReport(report: HuntReport): string {
   for (const hypothesis of ordered) {
     lines.push(`### ${hypothesis.hypothesis_id} — ${hypothesis.status}`, "", hypothesis.statement, "");
     if (hypothesis.resolution_reason) lines.push(`_${hypothesis.resolution_reason}_`, "");
+    // What evidence actually cited, distinct from the playbook's own label: a hunt
+    // can find something its definition never named.
+    const observed = projection === undefined ? [] : citedTechniques(projection, hypothesis.hypothesis_id);
+    if (observed.length > 0) lines.push(`**Techniques cited by evidence:** ${observed.join(", ")}`, "");
     if (hypothesis.evidence_strength !== null) {
       lines.push(`Evidence strength at verdict: ${strengthLine(hypothesis.evidence_strength)}.`, "");
     }
   }
+
+  if (projection !== undefined) lines.push(...findings(projection));
 
   lines.push(`## Visibility gaps (${report.gaps.length})`, "");
   if (report.gaps.length === 0) {
     lines.push("None: every query the hunt wanted to run came back.", "");
   } else {
     lines.push("Questions the hunt could not answer. Each is a blind spot, not a finding.", "");
-    for (const gap of report.gaps) {
-      const bearing = gap.hypothesis_id === null ? "unattributed" : gap.hypothesis_id;
-      lines.push(`- iteration ${gap.iteration} (${bearing}): ${gap.query_intent || gap.summary} — ${gap.summary}`);
+    for (const asked of groupedGaps(report.gaps)) {
+      const bearing = asked.hypothesis_id === null ? "unattributed" : asked.hypothesis_id;
+      const workers = asked.workers > 1 ? ` (${asked.workers} workers)` : "";
+      lines.push(`- iteration ${asked.iteration} (${bearing})${workers}: ${asked.query_intent || asked.reasons[0]}`);
+      if (asked.query_intent !== "") for (const reason of asked.reasons) lines.push(`  - ${reason}`);
     }
     lines.push("");
   }
@@ -303,6 +372,30 @@ export function renderReport(report: HuntReport): string {
 
 // What an IR responder is handed: the claim, the numbers behind it, the records
 // it rests on, and — the part a finding usually loses — what the hunt could not
+// What the finding rests on, and who chose it. A reader deciding whether to act on a
+// claim needs to know which half of it the adversary could have written.
+function restsOnLine(record: EvidenceRecord): string[] {
+  const rests = record.rests_on ?? [];
+  if (rests.length === 0) {
+    return [sensorAttested(record) ? "" : "_This record rests on content an adversary could have written._"];
+  }
+  const named = rests.map((basis) => `${basis.field} (${basis.authored})`).join(", ");
+  return [`_Rests on: ${named}._`];
+}
+
+// What a responder has to re-run: the payload is the answer, this is the question.
+// An enriched record has no dispatch, and a chain is not a query anyone chose.
+function queriesBehind(projection: Projection, record: EvidenceRecord): string[] {
+  const dispatch = record.dispatch_id === null ? undefined : projection.dispatches.get(record.dispatch_id);
+  if (dispatch === undefined || dispatch.calls.length === 0) return [];
+  return [
+    "Queries behind it:",
+    "",
+    ...dispatch.calls.map((call) => `- \`${call.tool}\` — \`${call.arguments}\``),
+    "",
+  ];
+}
+
 export function renderCaseFile(projection: Projection, handoff: Handoff): string {
   const hypothesis = projection.hypotheses.get(handoff.hypothesis_id);
   const report = buildReport(projection);
@@ -317,7 +410,6 @@ export function renderCaseFile(projection: Projection, handoff: Handoff): string
     `- **Hunt:** ${projection.hunt.hunt_id}`,
     `- **Hypothesis:** ${handoff.hypothesis_id}`,
     `- **Escalated:** ${handoff.created_at} (iteration ${handoff.iteration})`,
-    `- **Ledger:** ${projection.hunt.hunt_id}.jsonl`,
     "",
     "## The claim",
     "",
@@ -342,11 +434,12 @@ export function renderCaseFile(projection: Projection, handoff: Handoff): string
       "",
       record.summary,
       "",
-      record.attacker_influenceable ? "_This record sits in a field an adversary could have written._" : "",
+      ...restsOnLine(record),
       "```json",
       JSON.stringify(record.payload, null, 2),
       "```",
       "",
+      ...queriesBehind(projection, record),
     );
   }
 

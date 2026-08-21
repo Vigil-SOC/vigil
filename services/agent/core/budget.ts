@@ -128,7 +128,7 @@ class Pool implements Budget {
   private readonly priced: boolean;
 
   constructor(
-    readonly limits: BudgetLimits,
+    public limits: BudgetLimits,
     private readonly quota: Quota,
     private readonly now: () => number,
     seed: Seed,
@@ -141,6 +141,19 @@ class Pool implements Budget {
     // would hand a killed run a fresh wall-time allowance on every attempt.
     this.started = seed.started === 0 ? now() : seed.started;
     this.priced = prices !== noPrices;
+  }
+
+  raise(limits: Partial<BudgetLimits>): void {
+    // A limit that is not a finite number is not a limit: every comparison against
+    // NaN is false, so storing one would delete the ceiling instead of raising it.
+    const asked = (value: number | undefined, held: number): number =>
+      typeof value === "number" && Number.isFinite(value) ? Math.max(held, value) : held;
+    this.limits = {
+      max_calls: asked(limits.max_calls, this.limits.max_calls),
+      max_cost_usd: asked(limits.max_cost_usd, this.limits.max_cost_usd),
+      max_wall_ms: asked(limits.max_wall_ms, this.limits.max_wall_ms),
+      max_park_ms: asked(limits.max_park_ms, this.limits.max_park_ms),
+    };
   }
 
   get spent(): Spend {

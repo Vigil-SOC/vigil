@@ -78,7 +78,7 @@ const SWARM: ScriptedTurn[] = [
           summary: "every 300s +/- 4s over 6 hours, 412 connections to 45.77.53.176",
           salience: "anomalous",
           why_notable: "the jitter is too low for a human or a poller",
-          payload: { interval_s: 300, connections: 412 },
+          payload: JSON.stringify({ interval_s: 300, connections: 412 }),
         },
       ],
     },

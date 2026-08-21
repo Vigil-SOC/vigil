@@ -26,9 +26,14 @@ export function internalToken(): string {
 // /v1 is Bifrost's OpenAI-format surface and BIFROST_URL names the gateway, not
 // that surface: core/llm/router/router.py appends the same suffix to the same
 // variable. Without it every call reaches the gateway root and answers 405.
+//
+// maxRetries: 0 because the limiter is the retry policy. The SDK's own default would
+// multiply against the limiter's and the gateway's, billing every attempt.
 const client = new OpenAI({
   baseURL: `${(process.env["BIFROST_URL"] ?? "http://bifrost:8080").replace(/\/+$/, "")}/v1`,
   apiKey: process.env["BIFROST_API_KEY"] ?? "unused",
+  maxRetries: 0,
+  timeout: Number(process.env["VIGIL_LLM_TIMEOUT_MS"] ?? 600_000),
 });
 
 const limiter = new Limiter({ rpm: 500, tpm: 400_000 }, 4);
