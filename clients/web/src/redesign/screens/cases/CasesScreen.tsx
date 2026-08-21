@@ -48,7 +48,7 @@ function casePrompt(c: CaseRow): string {
 
 /* ---------------- table sorting ---------------- */
 type SortKey = 'id' | 'title' | 'status' | 'prio' | 'ownerName' | 'findings' | 'tactic' | 'age' | 'sla' | 'updated'
-const PRIO_RANK: Record<CaseRow['prio'], number> = { critical: 0, high: 1, medium: 2, low: 3 }
+const PRIO_RANK = { critical: 0, high: 1, medium: 2, low: 3 } satisfies Record<CaseRow['prio'], number>
 
 function sortValue(c: CaseRow, key: SortKey): string | number {
   switch (key) {
@@ -1054,7 +1054,7 @@ function CasesDetail({
 
   // the old CaseDetailDialog's five tabs, re-skinned as redesign cards.
   // Header + tab bar stay pinned; only the active tab's body scrolls.
-  const groups: Record<CaseTab, ReactNode> = {
+  const groups = {
     Overview: (
       <>
         <Metrics findings={c?.findings ?? 0} crit={sev.critical} high={sev.high} sla={c?.sla ?? '—'} />
@@ -1089,7 +1089,7 @@ function CasesDetail({
         <AuditLogCard caseId={id} />
       </>
     ),
-  }
+  } satisfies Record<CaseTab, ReactNode>
 
   return (
     <div className="split">

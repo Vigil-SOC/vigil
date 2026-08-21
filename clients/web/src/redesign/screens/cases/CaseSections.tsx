@@ -242,7 +242,12 @@ interface Task {
   status: string
   completed_at?: string
 }
-const PRIO_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 }
+const PRIO_ORDER = { critical: 0, high: 1, medium: 2, low: 3 } as const
+type TaskPriority = keyof typeof PRIO_ORDER
+const isTaskPriority = (v: string | undefined): v is TaskPriority =>
+  v !== undefined && Object.prototype.hasOwnProperty.call(PRIO_ORDER, v)
+/** Sort rank for a task's priority; anything the API sends that we don't know sorts as medium. */
+const prioOrder = (v: string | undefined) => PRIO_ORDER[isTaskPriority(v) ? v : 'medium']
 export function TasksCard({ caseId }: { caseId: string }) {
   const { data, phase, reload } = useResource<Task[]>(caseId, () =>
     casesApi.getTasks(caseId).then((r) => (r.data?.tasks || []) as Task[]),
@@ -253,7 +258,7 @@ export function TasksCard({ caseId }: { caseId: string }) {
     const ad = a.status === 'completed' ? 1 : 0
     const bd = b.status === 'completed' ? 1 : 0
     if (ad !== bd) return ad - bd
-    return (PRIO_ORDER[a.priority || 'medium'] ?? 2) - (PRIO_ORDER[b.priority || 'medium'] ?? 2)
+    return prioOrder(a.priority) - prioOrder(b.priority)
   })
   const done = tasks.filter((t) => t.status === 'completed').length
   const pct = tasks.length ? Math.round((done / tasks.length) * 100) : 0
@@ -343,12 +348,12 @@ interface SLA {
   paused_at?: string
   paused_duration_seconds?: number
 }
-const SLA_STATUS_CLASS: Record<string, string> = {
+const SLA_STATUS_CLASS = {
   active: 'status open',
   breached: 'sla danger',
   met: 'status closed',
   paused: 'sla warn',
-}
+} satisfies Record<SLA['status'], string>
 export function SLACard({ caseId }: { caseId: string }) {
   const { data, phase, reload } = useResource<SLA | null>(caseId, () =>
     casesApi.getSLA(caseId).then((r) => (r.data?.sla ?? null) as SLA | null),
@@ -625,7 +630,7 @@ interface IOC {
   is_whitelisted?: boolean
   enrichment_data?: { threat_score?: number }
 }
-function threatLevel(i: IOC): { label: string; cls: string } {
+function threatLevel(i: IOC) {
   if (i.is_whitelisted) return { label: 'Whitelisted', cls: 'status closed' }
   const s = i.enrichment_data?.threat_score ?? 0
   if (s > 7) return { label: 'High Risk', cls: 'sev critical' }
@@ -704,13 +709,16 @@ interface LinkedCase {
   relationship_type?: string
   created_at?: string
 }
-const REL_LABEL: Record<string, string> = {
+const REL_LABEL = {
   duplicate_of: 'Duplicate Of',
   related_to: 'Related To',
   caused_by: 'Caused By',
   follows: 'Follows',
   blocks: 'Blocks',
-}
+} as const
+type RelationshipType = keyof typeof REL_LABEL
+const isRelationshipType = (v: string | undefined): v is RelationshipType =>
+  v !== undefined && Object.prototype.hasOwnProperty.call(REL_LABEL, v)
 export function RelatedCasesCard({ caseId, rows, onSelect }: { caseId: string; rows: CaseRow[]; onSelect: (id: string) => void }) {
   const { data, phase, reload } = useResource<LinkedCase[]>(caseId, () =>
     casesApi.getLinkedCases(caseId).then((r) => (r.data?.linked_cases || []) as LinkedCase[]),
@@ -737,7 +745,7 @@ export function RelatedCasesCard({ caseId, rows, onSelect }: { caseId: string; r
       {adding && (
         <div className="px-[18px] py-3 border-b border-line-soft grid grid-cols-[140px_1fr] gap-2.5">
           <select className={inputCls} value={form.relationship_type} onChange={(e) => setForm({ ...form, relationship_type: e.target.value })}>
-            {Object.keys(REL_LABEL).map((t) => <option key={t} value={t}>{REL_LABEL[t]}</option>)}
+            {Object.entries(REL_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
           <select className={inputCls} value={form.related_case_id} onChange={(e) => setForm({ ...form, related_case_id: e.target.value })}>
             <option value="">Select case…</option>
@@ -751,7 +759,7 @@ export function RelatedCasesCard({ caseId, rows, onSelect }: { caseId: string; r
         {phase === 'ready' && linked.length === 0 && <MiniEmpty icon="link" title="No related cases" body="Link duplicate, blocking, or related cases when investigations overlap." />}
         {linked.map((l) => (
           <div key={l.link_id} className="flex items-center gap-2.5 clickable" onClick={() => onSelect(l.related_case_id)}>
-            <span className="tag">{REL_LABEL[l.relationship_type || ''] || l.relationship_type || '—'}</span>
+            <span className="tag">{isRelationshipType(l.relationship_type) ? REL_LABEL[l.relationship_type] : l.relationship_type || '—'}</span>
             <div className="min-w-0 flex-1">
               <div className="text-[13px] text-tx truncate">{l.related_case_title || l.related_case_id}</div>
               <div className="flex items-center gap-2 mt-[2px]">
