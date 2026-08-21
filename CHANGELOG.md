@@ -1,5 +1,41 @@
 # Changelog
 
+## [0.5.1](https://github.com/Vigil-SOC/vigil/compare/v0.5.0...v0.5.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **api:** declare the watcher notification vocabulary ([#558](https://github.com/Vigil-SOC/vigil/issues/558)) ([76c55b8](https://github.com/Vigil-SOC/vigil/commit/76c55b8be1cbf4ef92cc6ca2e1e0700510da8634))
+* **config:** report invalid startup settings cleanly ([#685](https://github.com/Vigil-SOC/vigil/issues/685)) ([f7a915b](https://github.com/Vigil-SOC/vigil/commit/f7a915b61eba547dcadf63fbb15935c303209981))
+* **daemon:** resolve permission denied on .vigil in containerized environments ([#701](https://github.com/Vigil-SOC/vigil/issues/701)) ([003339d](https://github.com/Vigil-SOC/vigil/commit/003339d236020df46e7de1f5db340c80416d910e))
+* **desktop:** stage the bifrost config from infra/ ([#706](https://github.com/Vigil-SOC/vigil/issues/706)) ([dc2059a](https://github.com/Vigil-SOC/vigil/commit/dc2059a6c25cb75ad67026a14723a8cdf6c09d1b))
+* **scripts:** bind the role permissions payload through an explicit cast ([#571](https://github.com/Vigil-SOC/vigil/issues/571)) ([4122be2](https://github.com/Vigil-SOC/vigil/commit/4122be2bd1757bb6481b8c1de6517e8c6ef2ecd2)), closes [#567](https://github.com/Vigil-SOC/vigil/issues/567)
+* **state:** one way to locate the state directory ([#704](https://github.com/Vigil-SOC/vigil/issues/704)) ([950c1d3](https://github.com/Vigil-SOC/vigil/commit/950c1d31fcc0839e734beef5cf1965cfa4e492f7))
+* **storage:** persist in-place JSONB list appends ([#709](https://github.com/Vigil-SOC/vigil/issues/709)) ([f61607d](https://github.com/Vigil-SOC/vigil/commit/f61607dfec853d248729aacff5b34050b1a68fd5))
+* **ui:** read the watcher timestamp from created_at ([#564](https://github.com/Vigil-SOC/vigil/issues/564)) ([c37d301](https://github.com/Vigil-SOC/vigil/commit/c37d30116bf4e3a81a49a1c8d9147e99d636a10d))
+
+
+### Code Refactoring
+
+* **integrations:** the descriptor is the registry ([#682](https://github.com/Vigil-SOC/vigil/issues/682)) ([b55f76d](https://github.com/Vigil-SOC/vigil/commit/b55f76d1327377c14fbc1e70edc2ec853b4d0302))
+* replace deprecated datetime.utcnow() with naive-UTC helper ([#575](https://github.com/Vigil-SOC/vigil/issues/575)) ([d716471](https://github.com/Vigil-SOC/vigil/commit/d7164717e16289bcfcd21aac10a6576c26d14836))
+* **tools:** move the MCP tool servers to httpx ([#663](https://github.com/Vigil-SOC/vigil/issues/663)) ([57f4d7a](https://github.com/Vigil-SOC/vigil/commit/57f4d7afc85aff25b3b4b5cc10c81b7678bb18ff))
+
+
+### Miscellaneous Chores
+
+* **ci:** surface refactor and chore in changelog ([#683](https://github.com/Vigil-SOC/vigil/issues/683)) ([935e1b6](https://github.com/Vigil-SOC/vigil/commit/935e1b63aad3874596d3337cd734a1dcd8f1eda9))
+* **deps:** bump the actions group across 1 directory with 15 updates ([#692](https://github.com/Vigil-SOC/vigil/issues/692)) ([2c184ca](https://github.com/Vigil-SOC/vigil/commit/2c184cacbb8289a0b9b2f06537ad8aa39b07aa34))
+* **deps:** update arq requirement from &gt;=0.27.0 to &gt;=0.28.0 ([#677](https://github.com/Vigil-SOC/vigil/issues/677)) ([a5309d7](https://github.com/Vigil-SOC/vigil/commit/a5309d75b13677ecd715ffce14bf1e52673bcd5e))
+* **deps:** update opentelemetry-exporter-otlp-proto-grpc requirement ([#680](https://github.com/Vigil-SOC/vigil/issues/680)) ([af3c91b](https://github.com/Vigil-SOC/vigil/commit/af3c91b186aa93129af24f7d78033b179ebbc5ad))
+* **deps:** update psycopg2-binary requirement from &gt;=2.9.9 to &gt;=2.9.12 ([#689](https://github.com/Vigil-SOC/vigil/issues/689)) ([36ce87a](https://github.com/Vigil-SOC/vigil/commit/36ce87aaad75dd8e1dae30da32a7a84f229bb4b7))
+* **deps:** update python-multipart requirement ([#676](https://github.com/Vigil-SOC/vigil/issues/676)) ([56d6491](https://github.com/Vigil-SOC/vigil/commit/56d64918218e51b4f54ef3939344f0d392e5eb6a))
+* **deps:** update pyyaml requirement from &gt;=6.0.0 to &gt;=6.0.3 ([#690](https://github.com/Vigil-SOC/vigil/issues/690)) ([44e0e29](https://github.com/Vigil-SOC/vigil/commit/44e0e296a6a577dee59ea12f7f8bb551b4d1f4b8))
+* **deps:** update reportlab requirement from &gt;=4.0.0 to &gt;=5.0.0 ([#688](https://github.com/Vigil-SOC/vigil/issues/688)) ([ac641b8](https://github.com/Vigil-SOC/vigil/commit/ac641b84d9b2172dc495fecada04689747016d50))
+* **deps:** update requests requirement from &gt;=2.31.0 to &gt;=2.34.2 ([#678](https://github.com/Vigil-SOC/vigil/issues/678)) ([db35f2d](https://github.com/Vigil-SOC/vigil/commit/db35f2d691982541260f9695b79c94287361e012))
+* **deps:** update sqlalchemy requirement from &gt;=2.0.0 to &gt;=2.0.52 ([#679](https://github.com/Vigil-SOC/vigil/issues/679)) ([bd4f8dc](https://github.com/Vigil-SOC/vigil/commit/bd4f8dcf6f6269f6de06d058cca4e1bbb7a4c555))
+* **deps:** update stix2 requirement from &gt;=3.0.1 to &gt;=3.0.2 ([#687](https://github.com/Vigil-SOC/vigil/issues/687)) ([c5d22fb](https://github.com/Vigil-SOC/vigil/commit/c5d22fbc1103a2b3a5f8824961efb65615d536a9))
+
 ## [0.5.0](https://github.com/Vigil-SOC/vigil/compare/v0.4.0...v0.5.0) (2026-08-14)
 
 
