@@ -40,7 +40,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       POSTGRES_INITDB_ARGS: "-E UTF8"
     ports:
-      - "5432:5432"
+      # Loopback-only. A bare "5432:5432" publishes on 0.0.0.0, which put the
+      # findings, cases and llm_provider_configs tables in reach of anything on
+      # the operator's network -- behind a password whose default is committed
+      # above. Nothing off-host consumes this: sibling containers dial
+      # postgres:5432 over deeptempo-network and a host-run backend uses
+      # loopback. Widening this is a deployment decision, not a default.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Path is relative to this compose file (infra/docker/), so ../ points
@@ -60,7 +66,10 @@ services:
     image: redis:7-alpine
     container_name: deeptempo-redis
     ports:
-      - "6379:6379"
+      # Loopback-only, for the same reason as postgres above, and with less
+      # standing in the way: this Redis runs without requirepass, so anything
+      # that reaches the port owns the ARQ queue and the session store.
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
