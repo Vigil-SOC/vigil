@@ -1,5 +1,92 @@
 # Changelog
 
+## [0.6.0](https://github.com/Vigil-SOC/vigil/compare/v0.5.0...v0.6.0) (2026-09-04)
+
+
+### Features
+
+* **hunt:** make a threat hunt runnable from the console, and worth reading ([#700](https://github.com/Vigil-SOC/vigil/issues/700)) ([1f90b97](https://github.com/Vigil-SOC/vigil/commit/1f90b9744467f70286ebdd556906880a49c2e313))
+* **mcp:** connect enabled servers concurrently at API boot ([#785](https://github.com/Vigil-SOC/vigil/issues/785)) ([3791578](https://github.com/Vigil-SOC/vigil/commit/3791578fefc4391a843e431b2a469c34d58d23ff))
+* **mcp:** default-enable splunk-selfhosted ([#806](https://github.com/Vigil-SOC/vigil/issues/806)) ([15661ef](https://github.com/Vigil-SOC/vigil/commit/15661ef8d1c173063d554e9b00376015c7f2fd9c))
+* **memory:** episodic memory — what runs saw and concluded ([#727](https://github.com/Vigil-SOC/vigil/issues/727)) ([#815](https://github.com/Vigil-SOC/vigil/issues/815)) ([24e530f](https://github.com/Vigil-SOC/vigil/commit/24e530f57bc1036f7fc65f5fea01f14e31f9da06))
+* **web:** export and remember findings views ([#757](https://github.com/Vigil-SOC/vigil/issues/757)) ([9704e44](https://github.com/Vigil-SOC/vigil/commit/9704e44062906baaf88a0b6763b90001790fae77))
+* **workflows:** root-cause-analysis run, auto-fired on handoff for approval ([#807](https://github.com/Vigil-SOC/vigil/issues/807)) ([c1d6e15](https://github.com/Vigil-SOC/vigil/commit/c1d6e15da2122bc8cde7fc371532b9c9a8d58398))
+
+
+### Bug Fixes
+
+* **api:** declare the watcher notification vocabulary ([#558](https://github.com/Vigil-SOC/vigil/issues/558)) ([76c55b8](https://github.com/Vigil-SOC/vigil/commit/76c55b8be1cbf4ef92cc6ca2e1e0700510da8634))
+* **cases:** append notes as JSONB list entries ([#745](https://github.com/Vigil-SOC/vigil/issues/745)) ([9479d62](https://github.com/Vigil-SOC/vigil/commit/9479d6298d67a230d4c9f78509655d0134b5a6d0))
+* **ci:** drop the stale submodule gitlinks ([#749](https://github.com/Vigil-SOC/vigil/issues/749)) ([dd2cbf5](https://github.com/Vigil-SOC/vigil/commit/dd2cbf5c4361e69018326c10d35b4f7553502860))
+* **ci:** provision nightly full-test-suite like the PR integration job ([#782](https://github.com/Vigil-SOC/vigil/issues/782)) ([730d0c7](https://github.com/Vigil-SOC/vigil/commit/730d0c7cde4443f9891167ae8727f04761725bfa))
+* **ci:** start release images instead of importing their packages ([#777](https://github.com/Vigil-SOC/vigil/issues/777)) ([fba73df](https://github.com/Vigil-SOC/vigil/commit/fba73dfaa1ec0f56d0b2e2a2d4a9002d2a0d8e79))
+* **compose:** bind Postgres and Redis to loopback ([#708](https://github.com/Vigil-SOC/vigil/issues/708)) ([776e6d5](https://github.com/Vigil-SOC/vigil/commit/776e6d54eaa09380d15ced15531b6b5ed04f7f66))
+* **compose:** re-apply init SQL after create_all on docker compose up ([#778](https://github.com/Vigil-SOC/vigil/issues/778)) ([660079b](https://github.com/Vigil-SOC/vigil/commit/660079bfbdbb622dadda6405b27e2d91dd179e73))
+* **compose:** stop shipping pgAdmin as an unauthenticated console ([#710](https://github.com/Vigil-SOC/vigil/issues/710)) ([d6a54c2](https://github.com/Vigil-SOC/vigil/commit/d6a54c25a31428dc385effa661e2d096d8aac3bf)), closes [#707](https://github.com/Vigil-SOC/vigil/issues/707)
+* **config:** report invalid startup settings cleanly ([#685](https://github.com/Vigil-SOC/vigil/issues/685)) ([f7a915b](https://github.com/Vigil-SOC/vigil/commit/f7a915b61eba547dcadf63fbb15935c303209981))
+* **config:** validate Settings at llm-worker startup ([#720](https://github.com/Vigil-SOC/vigil/issues/720)) ([594d2bf](https://github.com/Vigil-SOC/vigil/commit/594d2bf7aff09eb96e181316a1156757f1b1964d))
+* **daemon:** resolve permission denied on .vigil in containerized environments ([#701](https://github.com/Vigil-SOC/vigil/issues/701)) ([003339d](https://github.com/Vigil-SOC/vigil/commit/003339d236020df46e7de1f5db340c80416d910e))
+* **daemon:** stop gating the LLM worker on orchestrator.settings.enabled ([#722](https://github.com/Vigil-SOC/vigil/issues/722)) ([4de1b70](https://github.com/Vigil-SOC/vigil/commit/4de1b70f9a74262172611357245f638fa5c7e649))
+* **db:** report schema drift at startup instead of silently serving ([#569](https://github.com/Vigil-SOC/vigil/issues/569)) ([73c1e9a](https://github.com/Vigil-SOC/vigil/commit/73c1e9a2239b07d143ab944c987f5efc7b3aeae9)), closes [#562](https://github.com/Vigil-SOC/vigil/issues/562)
+* **db:** store notification metadata on the column, not a shadow attr ([#563](https://github.com/Vigil-SOC/vigil/issues/563)) ([cfee9d6](https://github.com/Vigil-SOC/vigil/commit/cfee9d63bed9c8e9569a4ea3ce26bc57ce45e87f))
+* **decisions:** land the AI Decisions badge on the tab it counted ([#750](https://github.com/Vigil-SOC/vigil/issues/750)) ([830228e](https://github.com/Vigil-SOC/vigil/commit/830228ef3f1825761e33912de544c84cda389246))
+* **desktop:** stage the bifrost config from infra/ ([#706](https://github.com/Vigil-SOC/vigil/issues/706)) ([dc2059a](https://github.com/Vigil-SOC/vigil/commit/dc2059a6c25cb75ad67026a14723a8cdf6c09d1b))
+* **llm:** honor Ollama thinking preference ([#758](https://github.com/Vigil-SOC/vigil/issues/758)) ([906d939](https://github.com/Vigil-SOC/vigil/commit/906d939280514c9f92bdf1f5d373ecc39e70ce51))
+* **llm:** push custom OpenAI-compatible base_url to Bifrost ([#783](https://github.com/Vigil-SOC/vigil/issues/783)) ([6eec74d](https://github.com/Vigil-SOC/vigil/commit/6eec74d4147ba369f71f6d25da7b5a7386abd162))
+* **mcp:** bind runtime-enabled MCP servers in hunt resolve ([#805](https://github.com/Vigil-SOC/vigil/issues/805)) ([c8b96bc](https://github.com/Vigil-SOC/vigil/commit/c8b96bcb33fd77d9e531da8029f8fdebdbc51ea3))
+* **mcp:** keep a dropped session in the chat tool list ([#812](https://github.com/Vigil-SOC/vigil/issues/812)) ([8629ccf](https://github.com/Vigil-SOC/vigil/commit/8629ccf42988305b414765e5299d0ec319dfbcfb))
+* **platform:** resolve permission denied on /.vigil in containerized environments ([#695](https://github.com/Vigil-SOC/vigil/issues/695)) ([#774](https://github.com/Vigil-SOC/vigil/issues/774)) ([235e619](https://github.com/Vigil-SOC/vigil/commit/235e6198ba992084ac815742a9af8dbb628f3925))
+* **response:** expire approvals nobody will ever answer ([#743](https://github.com/Vigil-SOC/vigil/issues/743)) ([04a7327](https://github.com/Vigil-SOC/vigil/commit/04a732730dbd7a6a0242609ae341033d38d3eb9d)), closes [#675](https://github.com/Vigil-SOC/vigil/issues/675)
+* **scripts:** bind the role permissions payload through an explicit cast ([#571](https://github.com/Vigil-SOC/vigil/issues/571)) ([4122be2](https://github.com/Vigil-SOC/vigil/commit/4122be2bd1757bb6481b8c1de6517e8c6ef2ecd2)), closes [#567](https://github.com/Vigil-SOC/vigil/issues/567)
+* **splunk:** search all indexes and map all-time earliest_time ([#779](https://github.com/Vigil-SOC/vigil/issues/779)) ([bc222f0](https://github.com/Vigil-SOC/vigil/commit/bc222f0c01d200ac75d809f616b8f93e3fc7260c))
+* **state:** one way to locate the state directory ([#704](https://github.com/Vigil-SOC/vigil/issues/704)) ([950c1d3](https://github.com/Vigil-SOC/vigil/commit/950c1d31fcc0839e734beef5cf1965cfa4e492f7))
+* stop documenting DATABASE_URL as Python's DB source of truth ([#764](https://github.com/Vigil-SOC/vigil/issues/764)) ([d3d228a](https://github.com/Vigil-SOC/vigil/commit/d3d228a9b3861088c5b3c8b0e610e2dd27bbc8b9))
+* **storage:** correct investigations.trigger_ids to List[str] ([#712](https://github.com/Vigil-SOC/vigil/issues/712)) ([f509a0a](https://github.com/Vigil-SOC/vigil/commit/f509a0a9327a546310607634c2b629aa7f0b1b3c)), closes [#554](https://github.com/Vigil-SOC/vigil/issues/554)
+* **storage:** persist in-place JSONB list appends ([#709](https://github.com/Vigil-SOC/vigil/issues/709)) ([f61607d](https://github.com/Vigil-SOC/vigil/commit/f61607dfec853d248729aacff5b34050b1a68fd5))
+* **ui:** read the watcher timestamp from created_at ([#564](https://github.com/Vigil-SOC/vigil/issues/564)) ([c37d301](https://github.com/Vigil-SOC/vigil/commit/c37d30116bf4e3a81a49a1c8d9147e99d636a10d))
+* **web:** UserMenu no longer white-screens when full_name is null ([#770](https://github.com/Vigil-SOC/vigil/issues/770)) ([b225a2b](https://github.com/Vigil-SOC/vigil/commit/b225a2b4a6f8eef1adb0383b190fb83287362f20))
+
+
+### Code Refactoring
+
+* **cases:** keep literal types on lookups ([#705](https://github.com/Vigil-SOC/vigil/issues/705)) ([413b65c](https://github.com/Vigil-SOC/vigil/commit/413b65c91d0c8ae834d3a215be0721a12be2bb35))
+* **integrations:** the descriptor is the registry ([#682](https://github.com/Vigil-SOC/vigil/issues/682)) ([b55f76d](https://github.com/Vigil-SOC/vigil/commit/b55f76d1327377c14fbc1e70edc2ec853b4d0302))
+* replace deprecated datetime.utcnow() with naive-UTC helper ([#575](https://github.com/Vigil-SOC/vigil/issues/575)) ([d716471](https://github.com/Vigil-SOC/vigil/commit/d7164717e16289bcfcd21aac10a6576c26d14836))
+* **tools:** move the MCP tool servers to httpx ([#663](https://github.com/Vigil-SOC/vigil/issues/663)) ([57f4d7a](https://github.com/Vigil-SOC/vigil/commit/57f4d7afc85aff25b3b4b5cc10c81b7678bb18ff))
+* **web:** retire the redesign directory ([#711](https://github.com/Vigil-SOC/vigil/issues/711)) ([fa38c67](https://github.com/Vigil-SOC/vigil/commit/fa38c67d578524597408181288f9a928830bca9e))
+
+
+### Documentation
+
+* add SECURITY.md aligned with the published security.txt ([#723](https://github.com/Vigil-SOC/vigil/issues/723)) ([e6158b4](https://github.com/Vigil-SOC/vigil/commit/e6158b4a84b5303f4a7becdaf770ef305030bc02))
+
+
+### Miscellaneous Chores
+
+* **ci:** surface refactor and chore in changelog ([#683](https://github.com/Vigil-SOC/vigil/issues/683)) ([935e1b6](https://github.com/Vigil-SOC/vigil/commit/935e1b63aad3874596d3337cd734a1dcd8f1eda9))
+* **deps:** bump hadolint/hadolint-action in the actions group ([#760](https://github.com/Vigil-SOC/vigil/issues/760)) ([d697766](https://github.com/Vigil-SOC/vigil/commit/d697766501975200c39eba7dbefbbb1100d20192))
+* **deps:** bump the actions group across 1 directory with 15 updates ([#692](https://github.com/Vigil-SOC/vigil/issues/692)) ([2c184ca](https://github.com/Vigil-SOC/vigil/commit/2c184cacbb8289a0b9b2f06537ad8aa39b07aa34))
+* **deps:** drop unused claude-agent-sdk ([#762](https://github.com/Vigil-SOC/vigil/issues/762)) ([2ab4715](https://github.com/Vigil-SOC/vigil/commit/2ab4715bf36c7ee74002417a332c8d5d5989b15a)), closes [#694](https://github.com/Vigil-SOC/vigil/issues/694)
+* **deps:** update aiokafka requirement from &gt;=0.10.0 to &gt;=0.14.0 ([#716](https://github.com/Vigil-SOC/vigil/issues/716)) ([0771b0e](https://github.com/Vigil-SOC/vigil/commit/0771b0e5bb105028549896bbc001169ddfc427f8))
+* **deps:** update arq requirement from &gt;=0.27.0 to &gt;=0.28.0 ([#677](https://github.com/Vigil-SOC/vigil/issues/677)) ([a5309d7](https://github.com/Vigil-SOC/vigil/commit/a5309d75b13677ecd715ffce14bf1e52673bcd5e))
+* **deps:** update boto3 requirement from &gt;=1.34.0 to &gt;=1.43.77 ([#714](https://github.com/Vigil-SOC/vigil/issues/714)) ([82d8aa7](https://github.com/Vigil-SOC/vigil/commit/82d8aa7e17f1816250776fc9f743ea9c71f45720))
+* **deps:** update fastapi requirement from &gt;=0.129.0 to &gt;=0.141.1 ([#713](https://github.com/Vigil-SOC/vigil/issues/713)) ([2c825ed](https://github.com/Vigil-SOC/vigil/commit/2c825ed72a9a1425eef6a072bffb3444bb823c4b))
+* **deps:** update ijson requirement from &gt;=3.2.0 to &gt;=3.5.1 ([#717](https://github.com/Vigil-SOC/vigil/issues/717)) ([710c995](https://github.com/Vigil-SOC/vigil/commit/710c995e7a957f94b881fe689c98e1150469e343))
+* **deps:** update opentelemetry-exporter-otlp-proto-grpc requirement ([#680](https://github.com/Vigil-SOC/vigil/issues/680)) ([af3c91b](https://github.com/Vigil-SOC/vigil/commit/af3c91b186aa93129af24f7d78033b179ebbc5ad))
+* **deps:** update psycopg2-binary requirement from &gt;=2.9.9 to &gt;=2.9.12 ([#689](https://github.com/Vigil-SOC/vigil/issues/689)) ([36ce87a](https://github.com/Vigil-SOC/vigil/commit/36ce87aaad75dd8e1dae30da32a7a84f229bb4b7))
+* **deps:** update python-multipart requirement ([#676](https://github.com/Vigil-SOC/vigil/issues/676)) ([56d6491](https://github.com/Vigil-SOC/vigil/commit/56d64918218e51b4f54ef3939344f0d392e5eb6a))
+* **deps:** update pyyaml requirement from &gt;=6.0.0 to &gt;=6.0.3 ([#690](https://github.com/Vigil-SOC/vigil/issues/690)) ([44e0e29](https://github.com/Vigil-SOC/vigil/commit/44e0e296a6a577dee59ea12f7f8bb551b4d1f4b8))
+* **deps:** update reportlab requirement from &gt;=4.0.0 to &gt;=5.0.0 ([#688](https://github.com/Vigil-SOC/vigil/issues/688)) ([ac641b8](https://github.com/Vigil-SOC/vigil/commit/ac641b84d9b2172dc495fecada04689747016d50))
+* **deps:** update requests requirement from &gt;=2.31.0 to &gt;=2.34.2 ([#678](https://github.com/Vigil-SOC/vigil/issues/678)) ([db35f2d](https://github.com/Vigil-SOC/vigil/commit/db35f2d691982541260f9695b79c94287361e012))
+* **deps:** update slowapi requirement from &gt;=0.1.9 to &gt;=0.1.10 ([#715](https://github.com/Vigil-SOC/vigil/issues/715)) ([e546d7c](https://github.com/Vigil-SOC/vigil/commit/e546d7c842ba26596ed1b6fbc6bfd621de3442e7))
+* **deps:** update sqlalchemy requirement from &gt;=2.0.0 to &gt;=2.0.52 ([#679](https://github.com/Vigil-SOC/vigil/issues/679)) ([bd4f8dc](https://github.com/Vigil-SOC/vigil/commit/bd4f8dcf6f6269f6de06d058cca4e1bbb7a4c555))
+* **deps:** update stix2 requirement from &gt;=3.0.1 to &gt;=3.0.2 ([#687](https://github.com/Vigil-SOC/vigil/issues/687)) ([c5d22fb](https://github.com/Vigil-SOC/vigil/commit/c5d22fbc1103a2b3a5f8824961efb65615d536a9))
+* **env:** add Docker so cloud agents can run compose ([#781](https://github.com/Vigil-SOC/vigil/issues/781)) ([0f95da9](https://github.com/Vigil-SOC/vigil/commit/0f95da9e79f2e307e70e76913c6ab69f97abe95a))
+* **env:** add Helm so cloud agents can run helm template ([#790](https://github.com/Vigil-SOC/vigil/issues/790)) ([5f44aec](https://github.com/Vigil-SOC/vigil/commit/5f44aecbebbd37b7acaa8de763b20e8bab7447d9))
+* release 0.5.1 ([#763](https://github.com/Vigil-SOC/vigil/issues/763)) ([238cf3b](https://github.com/Vigil-SOC/vigil/commit/238cf3b02d49e105e25886d5a4062a5477348bbf))
+* release 0.6.0 ([#817](https://github.com/Vigil-SOC/vigil/issues/817)) ([f67bf20](https://github.com/Vigil-SOC/vigil/commit/f67bf20b4b05eb62950a72e8f0ae0c0dcdc7538a))
+* remove per-finding embedding storage ([#761](https://github.com/Vigil-SOC/vigil/issues/761)) ([160170b](https://github.com/Vigil-SOC/vigil/commit/160170b690ed5c5b0255eab6699d110764ae9456))
+
 ## [0.5.0](https://github.com/Vigil-SOC/vigil/compare/v0.4.0...v0.5.0) (2026-08-14)
 
 
