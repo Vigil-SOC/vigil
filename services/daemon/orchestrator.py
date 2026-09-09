@@ -644,7 +644,7 @@ class Orchestrator:
 
     # Absent and unreadable answer the same, because both mean the run's inputs
     # are not there to be read, and a half-read investigation is not a better one.
-    def _sidecar(self, inv_id: str, filename: str) -> Any:
+    def _read_sidecar_json(self, inv_id: str, filename: str) -> Any:
         held = self.workdir.read_file(inv_id, filename)
         if not held:
             return None
@@ -659,13 +659,13 @@ class Orchestrator:
     def _hypothesis_subjects(
         self, inv_id: str, stated: List[str]
     ) -> Dict[str, List[str]]:
-        declared = self._sidecar(inv_id, "hypothesis_subjects.json")
+        declared = self._read_sidecar_json(inv_id, "hypothesis_subjects.json")
         return {} if declared is None else kept_subjects(declared, stated)
 
-    # Re-minted rather than trusted: the keys crossed a queue boundary as a file,
-    # and one in the shared-IOC vocabulary returns no rows rather than an error.
+    # normalise_keys carries the absent, the non-list and the unusable to the same
+    # empty answer, which is what a run that recalls nothing is.
     def _recall_keys(self, inv_id: str) -> List[str]:
-        return normalise_keys(self._sidecar(inv_id, "recall_keys.json"))
+        return normalise_keys(self._read_sidecar_json(inv_id, "recall_keys.json"))
 
     async def _enqueue_investigation(self, inv_record: Dict) -> None:
         inv_id = inv_record["investigation_id"]

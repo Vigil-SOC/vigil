@@ -260,8 +260,8 @@ describe("an arch drives the loop", () => {
   });
 });
 
-// An alert-driven investigation is the run that has no hypotheses to derive keys
-// from, so the keys it was opened on are the only thing it can recall about.
+// An investigation opened on Findings has no hypotheses to derive keys from, so
+// the keys it was handed are the only thing it can recall about.
 describe("an investigation recalls on the entities it was opened on", () => {
   function opened(keys: readonly string[]): RunSpec {
     const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");

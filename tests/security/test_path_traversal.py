@@ -94,9 +94,9 @@ async def test_save_integration_refuses_traversal(tmp_path):
     assert result["success"] is False
     assert "integration_id" in result["error"] or "escape" in result["error"]
 
-    # The base directory should not have been written into.
-    written = list(tmp_path.glob("*"))
-    assert all("mcp" not in p.name for p in written)
+    # Refused before anything was written, so the base directory is still empty --
+    # stronger than naming the payload, which a legitimate file could also contain.
+    assert list(tmp_path.glob("*")) == []
 
 
 @pytest.mark.asyncio

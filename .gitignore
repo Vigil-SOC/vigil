@@ -296,8 +296,9 @@ index.scip.stamp
 /bifrost/
 
 # Working copies of dropped submodules, which survive a checkout. None has a
-# production importer here -- mcp-servers' four servers are vendored at tools/mcp/,
-# and mempalace's data directory is the operator's to remove.
+# production importer here -- mcp-servers' four servers are vendored at tools/mcp/.
+# Palace *data* never lived here: it is under the state directory, and is the
+# operator's to remove.
 /deeptempo-core/
 /mcp-servers/
 /mempalace/

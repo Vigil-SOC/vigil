@@ -271,8 +271,8 @@ Python package and **no** `core/platform/db/` — all DB code lives here.
 
 **Platform** (`platform`):
 Process/config/runtime plumbing — local service orchestration and process
-supervision, autostart config, runtime-config resolution, memory-palace paths,
-demo-data seeding, URL/SSRF safety. Not a junk drawer: a file belongs here only
+supervision, autostart config, runtime-config resolution, demo-data seeding,
+URL/SSRF safety. Not a junk drawer: a file belongs here only
 if it's runtime plumbing with no owning capability. The cut against a capability
 domain is **mechanism vs. knowledge**: supervising a process, or resolving a
 setting, is `platform`; knowing what the setting *means* is the domain's.

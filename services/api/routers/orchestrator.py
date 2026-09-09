@@ -507,6 +507,9 @@ async def scan_existing_findings(request: ScanFindingsRequest):
                         "severity": f.severity,
                         "title": f.description[:200] if f.description else "",
                         "data_source": f.data_source,
+                        # The entities the run recalls on, and what cross-investigation
+                        # correlation indexes. Projected away, both read an empty set.
+                        "entity_context": f.entity_context,
                     }
                 )
 
@@ -569,6 +572,7 @@ _COC_WORKDIR_FILES = [
     "timeline.json",
     "hypotheses.json",
     "hypothesis_subjects.json",
+    "recall_keys.json",
     "review.md",
 ]
 
