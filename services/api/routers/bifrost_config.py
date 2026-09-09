@@ -69,6 +69,7 @@ _ALLOWED_PATHS = re.compile(
 )
 
 _METHODS = ("GET", "POST", "PUT", "DELETE")
+_WRITE_METHODS = frozenset({"POST", "PUT", "DELETE"})
 
 # ``providers/{name}/keys`` and ``providers/{name}/keys/{key_id}`` — the only
 # paths carrying a credential, and so the only ones needing secret handling.
@@ -225,7 +226,9 @@ def _resolve_optional_token(body: Dict[str, Any], key_id: Optional[str]) -> None
         body.pop("value", None)
 
 
-def _resolve_key_value(body: Dict[str, Any], key_id: Optional[str]) -> None:
+def _resolve_key_value(
+    body: Dict[str, Any], key_id: Optional[str], provider: Optional[str] = None
+) -> None:
     """Put a usable credential on ``body``, in place.
 
     A write that echoes the mask, or omits ``value`` entirely, is the console
@@ -242,11 +245,28 @@ def _resolve_key_value(body: Dict[str, Any], key_id: Optional[str]) -> None:
       Either credential is mirrored to ``value`` so a single ``llm_key_<id>``
       ref backs the key, and an edit that leaves the credential blank
       substitutes the stored copy back in.
-    * **Ollama** carries a URL the operator typed under ``ollama_key_config``,
-      not a secret we mask or store — so such a write needs no substitution.
+    * **Ollama** carries its endpoint under ``ollama_key_config`` and a bearer
+      token, when the endpoint wants one, under ``value``. Both read back
+      masked, so both are substituted from our own copies.
+
+    ``provider`` comes from the request path, which is where the provider is
+    actually stated. Ollama used to be recognised by the presence of its block
+    instead, and the console omits that block on an edit that does not retype
+    the URL — so a weight change on a key holding a literal endpoint fell
+    through to the API-key path below and was refused for want of a credential
+    Ollama does not have. Vertex still keys on its block, because there the
+    block *is* the statement: a service account sends one and an express-mode
+    API key does not.
     """
     ollama = body.get("ollama_key_config")
-    if isinstance(ollama, dict):
+    # The path names the provider; the block is only consulted when it doesn't
+    # (a direct call from a test).
+    if provider == "ollama" or (provider is None and isinstance(ollama, dict)):
+        # Always a block, even when the write carried none: Bifrost takes an
+        # absent one literally and blanks the endpoint.
+        if not isinstance(ollama, dict):
+            ollama = {}
+            body["ollama_key_config"] = ollama
         _resolve_ollama_url(ollama, key_id)
         _resolve_optional_token(body, key_id)
         return
@@ -354,7 +374,7 @@ async def proxy(
     keys_match = _KEYS_PATH.match(path)
     key_id = keys_match.group("key_id") if keys_match else None
     if keys_match and isinstance(body, dict):
-        _resolve_key_value(body, key_id)
+        _resolve_key_value(body, key_id, keys_match.group("provider"))
 
     url = f"{get_settings().bifrost_url.rstrip('/')}/api/{path}"
     try:
@@ -369,9 +389,14 @@ async def proxy(
         logger.warning("Bifrost proxy %s %s failed: %s", request.method, url, exc)
         raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
 
-    if keys_match and upstream.status_code < 400:
-        _persist_key_secret(request.method, key_id, body, upstream)
-        await mirror.sync_provider(keys_match.group("provider"))
+    # Writes only. Both of these have side effects — a secrets-store write and a
+    # provider-row upsert — and hanging them off every request meant a key LIST
+    # did them too: the settings screen lists keys for every provider on mount,
+    # so opening it fired two extra gateway calls and a row write per provider.
+    if keys_match and request.method in _WRITE_METHODS and upstream.status_code < 400:
+        provider = keys_match.group("provider")
+        _persist_key_secret(request.method, key_id, body, upstream, provider)
+        await mirror.sync_provider(provider)
 
     return Response(
         content=upstream.content,
@@ -385,6 +410,7 @@ def _persist_key_secret(
     key_id: Optional[str],
     body: Optional[Dict[str, Any]],
     upstream: httpx.Response,
+    provider: Optional[str] = None,
 ) -> None:
     """Mirror an accepted key write into the secrets store.
 
@@ -403,7 +429,7 @@ def _persist_key_secret(
         # An ollama key carries no credential at all — its endpoint takes the
         # place of one, and is kept for the same reason the vertex scope is.
         ollama = (body or {}).get("ollama_key_config")
-        if isinstance(ollama, dict):
+        if provider == "ollama" and isinstance(ollama, dict):
             ref_id = _written_key_id(key_id, upstream)
             url = ollama.get("url")
             if ref_id and url and not _is_masked(url):
