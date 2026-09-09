@@ -12,6 +12,7 @@
      validated the credential upstream. That is the health signal; there is no
      separate test call. */
 import api from './api'
+import type { Schema } from './apiTypes'
 
 export interface BifrostSecret {
   value: string
@@ -262,29 +263,12 @@ export function perMillion(perToken: number | undefined): number | null {
   return typeof perToken === 'number' ? perToken * 1_000_000 : null
 }
 
-/** Whether a key can actually route, and how to badge it — decided by the
-    backend (`core/llm/bifrost/mirror.py`), never re-derived here.
-
-    The rule is subtle enough that restating it in the console drifted from the
-    Python twice in one afternoon: Bifrost reports both "I refused this
-    credential" and "I could not check this credential" as `list_models_failed`,
-    and only the provider plus the description tell them apart. One
-    implementation, one verdict. */
-export type KeyHealth = 'healthy' | 'unverified' | 'unverifiable' | 'rejected'
-
-export interface KeyVerdict {
-  provider: string
-  routable: boolean
-  health: KeyHealth
-  description?: string | null
-}
-
-export interface BifrostRoutability {
-  /** provider name → does any of its keys route */
-  providers: Record<string, boolean>
-  /** key id → that key's verdict */
-  keys: Record<string, KeyVerdict>
-}
+/** Decided by the backend (`core/llm/bifrost/mirror.py`), never re-derived
+    here: Bifrost reports both a refused credential and one it could not check
+    as `list_models_failed`. */
+export type KeyVerdict = Schema<'KeyVerdict'>
+export type KeyHealth = KeyVerdict['health']
+export type BifrostRoutability = Schema<'Routability'>
 
 /** Does any Bifrost provider have a routable key? The setup gate's Bifrost-side
     readiness check — one request, where it used to make one per provider. */

@@ -29,10 +29,11 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Annotated, Any, Dict, Optional
+from typing import Annotated, Any, Dict, Literal, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel
 
 from core.auth.auth_service import AuthService
 from core.config import get_settings
@@ -317,7 +318,25 @@ def _resolve_key_value(
 # computed in core.llm.bifrost.mirror so the console, the setup gate and
 # scripts/reset-setup.sh all read one implementation instead of restating it in
 # three languages.
-@router.get("/routability")
+class KeyVerdict(BaseModel):
+    """Whether one Bifrost key can route, and how the console should badge it."""
+
+    provider: str
+    routable: bool
+    health: Literal["healthy", "unverified", "unverifiable", "rejected"]
+    description: Optional[str] = None
+
+
+class Routability(BaseModel):
+    """Declared rather than a bare dict so the generated client carries the
+    shape: hand-maintaining it in TypeScript is the drift this route's own
+    verdict exists to end."""
+
+    providers: Dict[str, bool]
+    keys: Dict[str, KeyVerdict]
+
+
+@router.get("/routability", response_model=Routability)
 async def routability(
     current_user: Annotated[User, Depends(get_current_active_user)],
 ) -> Dict[str, Any]:
@@ -329,7 +348,9 @@ async def routability(
     _require_settings_admin(current_user)
     try:
         return await mirror.routability()
-    except httpx.HTTPError as exc:
+    except (httpx.HTTPError, ValueError) as exc:
+        # ValueError: a gateway that answers 200 with something other than JSON
+        # is still an upstream failure, not a bug in this handler.
         logger.warning("Routability check failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
 

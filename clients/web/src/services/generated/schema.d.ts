@@ -9490,6 +9490,23 @@ export interface components {
             /** Topics */
             topics?: string[];
         };
+        /**
+         * KeyVerdict
+         * @description Whether one Bifrost key can route, and how the console should badge it.
+         */
+        KeyVerdict: {
+            /** Description */
+            description?: string | null;
+            /**
+             * Health
+             * @enum {string}
+             */
+            health: "healthy" | "unverified" | "unverifiable" | "rejected";
+            /** Provider */
+            provider: string;
+            /** Routable */
+            routable: boolean;
+        };
         /** LLMProviderCreate */
         LLMProviderCreate: {
             /** Api Key */
@@ -9973,6 +9990,22 @@ export interface components {
             action: string;
             /** Notes */
             notes?: string | null;
+        };
+        /**
+         * Routability
+         * @description Declared rather than a bare dict so the generated client carries the
+         *     shape: hand-maintaining it in TypeScript is the drift this route's own
+         *     verdict exists to end.
+         */
+        Routability: {
+            /** Keys */
+            keys: {
+                [key: string]: components["schemas"]["KeyVerdict"];
+            };
+            /** Providers */
+            providers: {
+                [key: string]: boolean;
+            };
         };
         /** RunStatusResponse */
         RunStatusResponse: {
@@ -13205,9 +13238,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["Routability"];
                 };
             };
             /** @description Validation Error */
