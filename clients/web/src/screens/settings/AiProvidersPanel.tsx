@@ -400,7 +400,7 @@ export function KeyDialog({
       if (isOllama) {
         // Always sent, even empty: Bifrost blanks an endpoint the write omits.
         base.ollama_key_config = { url: url.trim() || storedUrlEnv }
-        // An empty `value` is No auth; an omitted one keeps the stored token.
+        // An empty `value` is no credential; an omitted one keeps the stored token.
         if (ollamaAuth === 'none') base.value = ''
         else if (secret.trim()) base.value = secret.trim()
       } else if (isVertex && vertexAuth === 'service_account') {
@@ -444,12 +444,12 @@ export function KeyDialog({
           <>
             <Field
               label="Authentication"
-              hint="Ollama's own server takes no credential, which is the single-machine case. Pick API key only when the endpoint below sits behind something that authenticates; the gateway sends it as a bearer token."
+              hint="Ollama takes no credential of its own. Pick API key only when something in front of the endpoint below asks for one; the gateway sends it as a bearer token."
             >
               <div className="inline-flex gap-1.5">
                 {(
                   [
-                    ['none', 'No auth'],
+                    ['none', 'None'],
                     ['api_key', 'API key'],
                   ] as const
                 ).map(([mode, label]) => (

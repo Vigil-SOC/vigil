@@ -203,9 +203,9 @@ def _resolve_optional_token(body: Dict[str, Any], key_id: Optional[str]) -> None
     The console states the mode, so the two empty cases are not the same and
     are told apart by whether the field is there at all. An *omitted* value is
     "keep what is stored", so a weight edit does not silently strip the token
-    off a key that needs one. An *empty* value is the operator choosing No
-    auth, and has to survive — substituting the stored token there would make
-    the switch back impossible.
+    off a key that needs one. An *empty* value is the operator choosing the
+    unauthenticated mode, and has to survive — substituting the stored token
+    there would make the switch back impossible.
     """
     if "value" not in body:
         stored = get_secret(_secret_ref(key_id)) if key_id else None
@@ -448,8 +448,8 @@ def _persist_key_secret(
                 set_secret(_ollama_ref(ref_id), url)
             # The bearer token, when the deployment has one, is a real secret
             # and is kept like any other. Its absence is normal here, and an
-            # explicit empty one is No auth — drop the copy so a later edit
-            # does not resurrect a token the operator turned off.
+            # explicit empty one is unauthenticated — drop the copy so a
+            # later edit does not resurrect a token the operator turned off.
             token = (body or {}).get("value")
             if ref_id and token and not _is_masked(token):
                 set_secret(_secret_ref(ref_id), token)
