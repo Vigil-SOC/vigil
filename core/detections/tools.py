@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 import yaml
 
 from core.config import _safe_home
+from core.detections.lint import lint_sigma
 
 
 class SecurityDetectionsTools:
@@ -518,6 +519,18 @@ class SecurityDetectionsTools:
                 techniques.extend([t.upper() for t in techs])
 
         return techniques
+
+    async def lint_detections(
+        self,
+        rule_yaml: Optional[str] = None,
+        source_path: Optional[str] = None,
+    ) -> Dict:
+        """Reject Sigma rules keyed to a specific IP, host, user, or subnet.
+
+        Pass a rule YAML string or a directory of ``.yml`` files. Does not
+        run on ``add_source`` / clone; community corpora stay importable.
+        """
+        return lint_sigma(rule_yaml=rule_yaml, source_path=source_path)
 
 
 # Global instance for reuse

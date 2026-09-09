@@ -194,6 +194,7 @@ _SECURITY_TOOLS = frozenset(
         "identify_gaps",
         "get_coverage_stats",
         "get_detection_count",
+        "lint_detections",
     }
 )
 
