@@ -249,21 +249,16 @@ def _resolve_key_value(
       token, when the endpoint wants one, under ``value``. Both read back
       masked, so both are substituted from our own copies.
 
-    ``provider`` comes from the request path, which is where the provider is
-    actually stated. Ollama used to be recognised by the presence of its block
-    instead, and the console omits that block on an edit that does not retype
-    the URL — so a weight change on a key holding a literal endpoint fell
-    through to the API-key path below and was refused for want of a credential
+    ``provider`` comes from the request path. Keying Ollama on its block
+    instead sent an edit that did not retype the URL -- which omits the block
+    -- down the API-key path, where it was refused for want of a credential
     Ollama does not have. Vertex still keys on its block, because there the
     block *is* the statement: a service account sends one and an express-mode
     API key does not.
     """
     ollama = body.get("ollama_key_config")
-    # The path names the provider; the block is only consulted when it doesn't
-    # (a direct call from a test).
     if provider == "ollama" or (provider is None and isinstance(ollama, dict)):
-        # Always a block, even when the write carried none: Bifrost takes an
-        # absent one literally and blanks the endpoint.
+        # Bifrost takes an absent block literally and blanks the endpoint.
         if not isinstance(ollama, dict):
             ollama = {}
             body["ollama_key_config"] = ollama
@@ -389,10 +384,6 @@ async def proxy(
         logger.warning("Bifrost proxy %s %s failed: %s", request.method, url, exc)
         raise HTTPException(status_code=502, detail=f"Bifrost unreachable: {exc}")
 
-    # Writes only. Both of these have side effects — a secrets-store write and a
-    # provider-row upsert — and hanging them off every request meant a key LIST
-    # did them too: the settings screen lists keys for every provider on mount,
-    # so opening it fired two extra gateway calls and a row write per provider.
     if keys_match and request.method in _WRITE_METHODS and upstream.status_code < 400:
         provider = keys_match.group("provider")
         _persist_key_secret(request.method, key_id, body, upstream, provider)

@@ -56,16 +56,8 @@ def get_playbook(
 ) -> ResolvedPlaybook:
     authorise(authorization, "playbook resolution")
 
-    # Which provider and model this run gets, resolved here rather than left to
-    # the config layer's DEFAULT_MODEL floor. That floor is a Claude id, so a
-    # deployment whose only provider is Ollama ran every hunt against a model it
-    # does not have; and a model with no provider beside it is routed by the
-    # gateway to whichever provider claims the bare name first.
-    #
-    # ``investigation`` is the assignment row this already belongs to — the
-    # console labels it "Investigation Agents: Investigator, Threat Hunter,
-    # Correlator" — and the registry falls it back to chat_default when unset,
-    # so nothing new has to be configured.
+    # Not the config layer's DEFAULT_MODEL floor, which is a Claude id whatever
+    # the provider. ``investigation`` is the row the console files hunts under.
     resolved = target.resolve_component("investigation")
     if resolved is None:
         logger.info(

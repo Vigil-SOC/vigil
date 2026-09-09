@@ -62,8 +62,7 @@ export default function SetupProviderStep({ onSaved }: { onSaved: () => void }) 
     <div className="flex flex-col gap-3">
       {localErr && <Banner kind="err">{localErr}</Banner>}
 
-      {/* A missing verdict marks every provider unroutable, which would
-          otherwise stall this step with nothing on screen to say why. */}
+      {/* A missing verdict marks every provider unroutable, so say why. */}
       {verdicts === null && (
         <Banner kind="err">
           Couldn’t check whether the gateway’s keys can route — a key you add may show
@@ -141,11 +140,6 @@ export default function SetupProviderStep({ onSaved }: { onSaved: () => void }) 
           onSave={async (data) => {
             const saved = await saveKey(addingKeyFor, null, data)
             setAddingKeyFor(null)
-            // Bifrost validates the credential as it stores it and reports the
-            // verdict as status, but only the backend knows whether a
-            // `list_models_failed` was a refusal or a check that could never
-            // have run — vertex is always the latter, and flagging it told
-            // people to check a credential that routes fine. Ask, don't guess.
             let rejected = false
             try {
               const { data: r } = await bifrostApi.routability()

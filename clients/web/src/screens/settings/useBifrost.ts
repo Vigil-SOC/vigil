@@ -27,12 +27,7 @@ const errText = (e: unknown, fallback: string): string => {
 export function useBifrostProviders() {
   const [providers, setProviders] = useState<BifrostProvider[]>([])
   const [keys, setKeys] = useState<Record<string, BifrostKey[]>>({})
-  // Whether each key routes, and how to badge it — decided server-side so this
-  // hook never re-derives Bifrost's ambiguous statuses. `null` means the verdict
-  // could not be fetched, which is not the same as a verdict of "not routable":
-  // an empty map read as the latter and put a red Rejected chip back on a key
-  // that routes fine, which is the bug the verdict exists to fix. Callers have
-  // to handle the third state.
+  // `null` is "could not ask", not a verdict of "not routable".
   const [verdicts, setVerdicts] = useState<BifrostRoutability | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)

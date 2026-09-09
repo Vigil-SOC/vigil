@@ -35,13 +35,7 @@ import {
 } from '../../services/bifrostApi'
 import type { SectionProps } from './types'
 
-// The label comes from the backend's verdict (core/llm/bifrost/mirror.py), which
-// is the only thing that knows whether a `list_models_failed` was a refusal or a
-// check that could never have run. Without a verdict this cannot tell those
-// apart, so it does not guess: `list_models_failed` reads as unverified rather
-// than Rejected, because showing Rejected for a key that routes fine sent
-// people looking for a fault that isn't there. `success` is the one status that
-// speaks for itself.
+// Without a verdict, a `list_models_failed` cannot be told from a refusal.
 function KeyStatusChip({ status, description, verdict }: {
   status?: string
   description?: string
@@ -71,10 +65,7 @@ function KeyStatusChip({ status, description, verdict }: {
   )
 }
 
-/** Did the backend judge this freshly-written key a real failure?
-    Re-reads the verdict rather than the hook's copy, which the save has just
-    invalidated. A verdict we can't fetch is not reported as a fault — the key
-    is stored either way, and the table's chip will show the truth on reload. */
+/** Re-reads the verdict: the save has just invalidated the hook's copy. */
 async function keyRejected(keyId: string | undefined): Promise<boolean> {
   if (!keyId) return false
   try {
@@ -306,11 +297,6 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
             const saved = await saveKey(editing.provider, editing.key?.id || null, data)
             setEditing(null)
             setExpanded(editing.provider)
-            // Bifrost validates the credential upstream as it stores it, so its
-            // verdict is the only test result there is. Ask the backend what
-            // that verdict means rather than reading `status` here: a
-            // `list_models_failed` the gateway could never have passed is not a
-            // fault to report, and only one place knows the difference.
             const rejected = await keyRejected(saved?.id)
             notify(
               rejected ? 'err' : 'ok',
@@ -360,18 +346,9 @@ export function KeyDialog({
   // Vertex takes either a bare API key or a service-account JSON scoped by
   // project/region — so it gets a mode switch and its own fields.
   const isVertex = provider === 'vertex'
-  // Ollama's credential is an endpoint, which Bifrost keeps under its own
-  // block — a write that omits the block blanks it, so this branch always
-  // sends one. A token is separate and usually absent, hence the mode switch:
-  // the bare server takes no credential, but the gateway does send `value` as
-  // a bearer token when one is set, which is what reaches a server behind an
-  // authenticating proxy.
   const isOllama = provider === 'ollama'
   const storedUrl = secretText(existing?.ollama_key_config?.url)
   const storedToken = secretText(existing?.value)
-  // A seeded key resolves its URL from OLLAMA_URL. The value reads back masked
-  // but the reference does not, so an edit that leaves the field blank can hand
-  // the reference back rather than a mask Bifrost would store verbatim.
   const storedUrlEnv = secretEnvRef(existing?.ollama_key_config?.url)
   const storedProject = secretText(existing?.vertex_key_config?.project_id)
   const storedRegion = secretText(existing?.vertex_key_config?.region)
@@ -386,15 +363,8 @@ export function KeyDialog({
 
   const [name, setName] = useState(existing?.name || `${provider}-key`)
   const [secret, setSecret] = useState('')
-  // Bifrost masks project/region on read like any other stored field, so a
-  // masked one starts blank behind its own mask as a placeholder — the same
-  // "leave blank to keep" contract the service-account JSON already has.
-  // Seeding the input with the mask instead put "[object Object]" in the box
-  // (the wrapper is not a string) and, once unwrapped, would have written the
-  // mask back as the project id.
-  // A create defaults to the reference, not a literal: the deployment already
-  // states where Ollama is, from the side that has to reach it. The shipped
-  // compose sets OLLAMA_URL=http://host.docker.internal:11434 for exactly that.
+  // Bifrost masks every stored field on read and stores a mask echoed back,
+  // so a masked field starts blank behind its own mask.
   const [url, setUrl] = useState(
     existing ? (isMasked(storedUrl) ? '' : storedUrl) : 'env.OLLAMA_URL',
   )
@@ -418,15 +388,9 @@ export function KeyDialog({
         models: allowAll ? ['*'] : chosen,
       }
       if (isOllama) {
-        // Always sent, even empty: Bifrost takes an absent block literally and
-        // blanks the endpoint. Blank means "keep what's there" — hand back the
-        // env reference when there is one, and otherwise let the backend
-        // substitute its stored copy.
+        // Always sent, even empty: Bifrost blanks an endpoint the write omits.
         base.ollama_key_config = { url: url.trim() || storedUrlEnv }
-        // The mode is the instruction, so the two blank cases differ: an empty
-        // `value` under No auth says "there is no token", while omitting the
-        // field under API key says "keep the stored one". Sending nothing in
-        // both would make switching back to No auth impossible.
+        // An empty `value` is No auth; an omitted one keeps the stored token.
         if (ollamaAuth === 'none') base.value = ''
         else if (secret.trim()) base.value = secret.trim()
       } else if (isVertex && vertexAuth === 'service_account') {
@@ -453,8 +417,6 @@ export function KeyDialog({
 
   // A create needs a credential; a service-account vertex create also needs
   // project + region.
-  // Ollama asks for a URL where every other provider asks for a secret, and
-  // for a token too only when the operator says the endpoint wants one.
   const missingCredential = !existing && !(isOllama ? url.trim() : secret.trim())
   const missingOllamaToken =
     isOllama && ollamaAuth === 'api_key' && !existing && !secret.trim()

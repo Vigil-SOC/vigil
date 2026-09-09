@@ -176,13 +176,6 @@ def env_ref(field):
     return None
 
 
-# Whether a key routes is decided once, by the backend, in
-# core/llm/bifrost/mirror.py. This script used to restate that predicate so it
-# could run without the app's venv, but the rule is subtle -- Bifrost reports
-# both "I refused this" and "I could not check this" as list_models_failed --
-# and the copies drifted apart the first time a new failure mode turned up. The
-# API is already this script's source for providers, assignments, budget and
-# autonomy, so one more call costs nothing it wasn't already paying.
 _verdicts = None
 
 
@@ -190,9 +183,7 @@ def verdicts():
     """The backend's routability map, fetched once per run.
 
     Raises rather than degrading to an empty map: every key would then read as
-    non-routable, and the reset would report a clean sweep while disabling
-    nothing. A reset that quietly does nothing is the worst possible answer
-    here, since the whole point is to prove the gate has been drained.
+    non-routable and the reset would report a clean sweep it never made.
     """
     global _verdicts
     if _verdicts is None:
@@ -287,8 +278,7 @@ except Exception as exc:  # noqa: BLE001
     print(f"  {YELLOW}bifrost unreachable{NC} {DIM}({exc}) — no keys disabled{NC}")
     raise SystemExit(0)
 
-# Fetched before the loop so the deliberate refusal in verdicts() lands as a
-# message rather than a traceback out of the middle of a partial sweep.
+# Before the loop, so the refusal above is a message, not a partial sweep.
 try:
     verdicts()
 except Exception as exc:  # noqa: BLE001
@@ -308,10 +298,7 @@ for p in provs:
     for k in keys:
         if not k.get("enabled"):
             continue
-        # Only routable keys hold the step green, and only they are worth a
-        # write: an env-placeholder key whose variable is unset can't even be
-        # rewritten (Bifrost rejects the empty value it would have to carry),
-        # and reporting that as a failure sends people chasing a non-problem.
+        # An env-placeholder key whose variable is unset cannot be rewritten.
         if not routable(k):
             inert += 1
             continue

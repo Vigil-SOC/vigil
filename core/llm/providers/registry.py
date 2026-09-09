@@ -562,23 +562,13 @@ class ComponentAssignment:
 
 _MODEL_LIST_CACHE: Dict[str, List[str]] = {}
 
-# The subset of ``_MODEL_LIST_CACHE`` keys whose list came from a real catalogue
-# — an upstream fetch or the gateway's datasheet — rather than from the
-# bootstrap floor below. The two are not interchangeable to a caller asking
-# "does this provider serve model X?": the floor is a handful of ids chosen to
-# keep a dropdown from being empty, and answering "no" from it silently swapped
-# a valid selection for the provider's default (see ``_router_model`` in
-# services/api/routers/claude.py). Only a live entry may be used to deny.
+# Which ``_MODEL_LIST_CACHE`` entries are a real catalogue rather than the
+# bootstrap floor below, which must never be used to rule a model out.
 _LIVE_CATALOGUES: set = set()
 
 
 def catalogue_of(provider_id: str) -> Optional[List[str]]:
-    """The models ``provider_id`` is known to serve, or None if not known.
-
-    None means "no catalogue", which includes the case where the cache holds
-    only the bootstrap floor. A caller has to be able to tell that apart from a
-    catalogue that genuinely lacks a model.
-    """
+    """The models ``provider_id`` is known to serve, or None if not known."""
     if provider_id not in _LIVE_CATALOGUES:
         return None
     return _MODEL_LIST_CACHE.get(provider_id) or None

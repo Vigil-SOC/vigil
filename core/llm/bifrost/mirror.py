@@ -194,12 +194,6 @@ async def _apply(provider: str, *, routable: bool) -> None:
 
     default_model = await default_model_for_provider_type(provider)
     if not default_model:
-        # No model can be named for this provider yet — an Ollama server that
-        # cannot be listed, or a catalogue the gateway could not serve. Leave
-        # the row alone rather than promising a model the provider does not
-        # have: ``default_model`` is what dispatch falls back to, so a wrong one
-        # 404s with nothing left to correct it to. reconcile_all retries on
-        # every catalogue sync.
         logger.warning(
             "Not mirroring provider %s — no servable default_model to floor it to",
             provider,
