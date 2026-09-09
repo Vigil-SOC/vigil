@@ -954,14 +954,6 @@ export const timelineApi = {
   }) => api.get('/timeline/range', { params }),
   
   getClusterTimeline: (cluster_id: string) => api.get(`/timeline/cluster/${cluster_id}`),
-  
-  getEventVisualization: (event_id: string, params?: {
-    time_window_minutes?: number
-    include_ai_analysis?: boolean
-  }) => api.get(`/timeline/event/${event_id}/visualization`, { params }),
-  
-  getFindingEvents: (finding_id: string) => 
-    api.get(`/timeline/finding/${finding_id}/context`, { params: { time_window_minutes: 60 } }),
 }
 
 export const detectionRulesApi = {

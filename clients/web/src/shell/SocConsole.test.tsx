@@ -231,8 +231,6 @@ describe('SocConsole', () => {
     expect(screen.getByText(/Techniques by occurrence/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
     expect(await screen.findByText(/events$/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: 'Entity Graph' }))
-    expect(screen.getByText('No entity graph yet')).toBeInTheDocument()
   })
 
   it('restores and clears versioned findings preferences', async () => {

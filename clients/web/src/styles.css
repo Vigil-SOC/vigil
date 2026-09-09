@@ -4571,16 +4571,6 @@
       gap: 18px;
    }
 
-   /* full-height wrapper so the Entity Graph tab centres its EmptyState;
-      the EmptyState primitive owns the icon/copy styling */
-   .entity-empty {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: calc(100vh - 180px);
-      padding: 40px;
-   }
-
    /* ---------- Timeline tab ---------- */
    .tl-controls {
       display: flex;
