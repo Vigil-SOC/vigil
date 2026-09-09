@@ -74,6 +74,7 @@ _USER_FIELDS = frozenset(
         "logonuser",
     }
 )
+_ENV_TLDS = frozenset({"corp", "local", "internal", "lan"})
 _TOKEN = re.compile(r"[^\s,;'\"=]+")
 
 _SID = re.compile(r"^S-\d+(-\d+)+$", re.IGNORECASE)
@@ -195,15 +196,19 @@ def _findings_for(field: Optional[str], value: str) -> list[dict[str, str]]:
         findings.append(_finding(kind, literal, field_name))
 
     for token in _TOKEN.findall(value):
-        if ":" not in token:
+        ip_token = _unbracket_ip(token)
+        if ":" not in ip_token:
             continue
-        kind, literal = _classify_ip_token(token)
+        kind, literal = _classify_ip_token(ip_token)
         if kind is None or literal is None:
             continue
         findings.append(_finding(kind, literal, field_name))
 
-    for host in _ENV_HOST.findall(value):
+    hosts = _ENV_HOST.findall(value)
+    for host in hosts:
         findings.append(_finding("hostname", host, field_name))
+    if not hosts and _is_env_host_suffix(value):
+        findings.append(_finding("hostname", value.strip(), field_name))
 
     if _is_user_field(field_name):
         person = _specific_person(value)
@@ -211,6 +216,23 @@ def _findings_for(field: Optional[str], value: str) -> list[dict[str, str]]:
             findings.append(_finding("user", person, field_name))
 
     return findings
+
+
+def _unbracket_ip(token: str) -> str:
+    if token.startswith("[") and token.endswith("]") and token.count("]") == 1:
+        return token[1:-1]
+    return token
+
+
+def _is_env_host_suffix(value: str) -> bool:
+    """``*.local`` / ``.corp.local`` — environment TLD without a host label."""
+    token = value.strip().strip("'\"")
+    if token.startswith("*"):
+        token = token[1:]
+    if not token.startswith("."):
+        return False
+    labels = [part for part in token.lower().split(".") if part]
+    return bool(labels) and labels[-1] in _ENV_TLDS
 
 
 def _classify_ip_token(token: str) -> tuple[Optional[str], Optional[str]]:

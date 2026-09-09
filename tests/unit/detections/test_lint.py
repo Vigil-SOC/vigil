@@ -91,6 +91,23 @@ def test_behavioural_process_cmdline_rule_passes():
     assert result["rewrite_guidance"] is None
 
 
+def test_environment_tld_suffix_and_glob_are_rejected():
+    rule = """
+title: Domain-suffixed workstation
+logsource:
+  product: windows
+detection:
+  selection:
+    ComputerName|endswith: '.corp.local'
+    HostName: '*.local'
+  condition: selection
+"""
+    result = lint_sigma(rule_yaml=rule)
+    assert result["passed"] is False
+    assert {item["kind"] for item in result["findings"]} == {"hostname"}
+    assert result["rewrite_guidance"]
+
+
 @pytest.mark.asyncio
 async def test_tool_lints_yaml_string_and_source_path(tmp_path: Path):
     tools = SecurityDetectionsTools()
