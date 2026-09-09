@@ -156,6 +156,16 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
           primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }}
         />
       )}
+      {phase === 'ready' && verdicts === null && (
+        <EmptyState
+          error
+          compact
+          icon="alert"
+          title="Couldn’t check whether these keys can route"
+          body="Health below falls back to the gateway's own status, which cannot tell a refused credential from one it was unable to check."
+          primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }}
+        />
+      )}
       {phase === 'ready' && providers.length === 0 && (
         <EmptyState
           compact
