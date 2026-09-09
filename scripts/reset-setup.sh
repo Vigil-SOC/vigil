@@ -336,7 +336,7 @@ PY
 
 # --- argument parsing -----------------------------------------------------
 do_providers=false; do_assignments=false; do_budget=false; do_autonomy=false
-do_bifrost=false
+do_bifrost=false; bifrost_failed=false
 status_only=false; assume_yes=false
 data_sources=()
 
@@ -454,7 +454,10 @@ fi
 # After the provider deletes, not before: deleting a provider reconciles its
 # Bifrost key, so draining Postgres first means fewer keys left to disable here.
 if [ "$do_bifrost" = true ]; then
-  bifrost_py reset
+  # Only this step: the reset's later steps are independent of the gateway, and
+  # under `set -e` a raise here used to take the budget, the orchestrator and
+  # the data sources down with it.
+  bifrost_py reset || bifrost_failed=true
 fi
 
 if [ "$do_budget" = true ]; then
@@ -476,4 +479,9 @@ for s in "${data_sources[@]:-}"; do
 done
 
 echo
+if [ "${bifrost_failed:-false}" = true ]; then
+  echo -e "${YELLOW}Done, except the gateway.${NC} Its keys were left alone — reload"
+  echo -e "/setup once you have disabled them, or the provider step stays green."
+  exit 1
+fi
 echo -e "${GREEN}Done.${NC} Reload /setup to redo the wizard."
