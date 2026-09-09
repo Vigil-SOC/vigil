@@ -125,10 +125,6 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 500
     vigil_context_path: str = ""
     vigil_frontend_url: str = ""
-    mempalace_palace_path: Optional[str] = None
-    # Tri-state so the orchestrator can treat unset as on and still honour an
-    # explicit false for emergency disable.
-    mempalace_daemon_enabled: Optional[bool] = None
 
     # Database. DATABASE_URL is not a field: Settings.extra is ignore so the
     # agent and scripts/migrate_schema.py can keep it in the environment.
@@ -318,7 +314,6 @@ class Settings(BaseSettings):
 
     @field_validator(
         "demo_mode",
-        "mempalace_daemon_enabled",
         "daemon_slack_enabled",
         "mcp_auto_connect_on_startup",
         mode="before",

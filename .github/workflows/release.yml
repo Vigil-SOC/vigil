@@ -63,10 +63,9 @@ jobs:
       id-token: write          # keyless cosign signing
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v7
         with:
-          submodules: recursive
           fetch-depth: 0
 
       - name: Set up Docker Buildx
@@ -146,10 +145,9 @@ jobs:
       id-token: write          # keyless cosign signing
 
     steps:
-      - name: Checkout (with submodules)
+      - name: Checkout
         uses: actions/checkout@v7
         with:
-          submodules: recursive
           fetch-depth: 0
 
       - name: Set up Docker Buildx
@@ -221,8 +219,6 @@ jobs:
       id-token: write          # keyless cosign signing
 
     steps:
-      # No submodules: the agent layer is TypeScript under services/agent and
-      # the build context copies nothing else.
       - name: Checkout
         uses: actions/checkout@v7
         with:

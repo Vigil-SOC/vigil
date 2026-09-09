@@ -295,10 +295,13 @@ index.scip.stamp
 /logs.db
 /bifrost/
 
-# Working copies of two dropped submodules, which survive a checkout. Neither has a
+# Working copies of dropped submodules, which survive a checkout. None has a
 # production importer here -- mcp-servers' four servers are vendored at tools/mcp/.
+# Palace *data* never lived here: it is under the state directory, and is the
+# operator's to remove.
 /deeptempo-core/
 /mcp-servers/
+/mempalace/
 
 # Local scratch space -- notes and throwaway files, never committed.
 /.scratch/

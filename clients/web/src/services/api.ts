@@ -619,8 +619,6 @@ export const configApi = {
     review_model: string
     workdir_base: string
   }) => api.post('/config/orchestrator', data),
-
-  getMempalaceHealth: () => api.get<MempalaceHealth>('/config/mempalace/health'),
 }
 
 export interface PlatformDatabaseProxyConfig {
@@ -633,21 +631,6 @@ export interface PlatformDatabaseProxyConfig {
   // Booleans only — secret values are never returned by the API.
   has_proxy_password: boolean
   has_ssh_key_passphrase: boolean
-}
-
-// Mempalace is hidden from the MCP list: it's an always-on core dependency, so
-// its health surfaces on the General tab (#136).
-export interface MempalaceHealth {
-  connected: boolean
-  error: string | null
-  palace_path: string
-  palace_exists: boolean
-  size_bytes: number | null
-  size_human: string | null
-  last_modified_iso: string | null
-  closed_cases_count: number | null
-  memories_count: number | null
-  memories_count_source: 'chromadb' | 'unavailable'
 }
 
 // the backend calls the connector BFF server-to-server, so the mint secret

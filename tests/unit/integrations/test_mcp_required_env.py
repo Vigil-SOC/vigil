@@ -182,8 +182,8 @@ class TestSubstituteEnvVars:
         service = MCPService()
         monkeypatch.setenv("HOME", "/Users/test")
         assert (
-            service._substitute_env_vars("${UNSET_VAR_XYZ:-${HOME}/.vigil/palace}")
-            == "/Users/test/.vigil/palace"
+            service._substitute_env_vars("${UNSET_VAR_XYZ:-${HOME}/.vigil}")
+            == "/Users/test/.vigil"
         )
 
     def test_nested_default_when_both_unset(self):
@@ -194,26 +194,26 @@ class TestSubstituteEnvVars:
             service._substitute_env_vars("${A:-${B:-fallback}}") == "fallback"
         )
 
-    def test_mempalace_config_path(self, monkeypatch):
-        """Real-world shape from mcp-config.json."""
+    def test_an_explicit_setting_beats_a_nested_default(self, monkeypatch):
+        """Both branches of one line, on a variable a spawned server really gets.
+
+        VIGIL_DIR is defaulted for every child (see ``service.py``), so an entry
+        that overrides it and otherwise builds a path from ${HOME} is the shape
+        this expander exists for. Reading only the default branch would pass on a
+        line that ignores what the operator set.
+        """
         from core.integrations.mcp.service import MCPService
 
         service = MCPService()
         monkeypatch.setenv("HOME", "/Users/test")
-        # Ensure the default branch is taken — a leaked MEMPALACE_PALACE_PATH
-        # from another test would short-circuit the ${VAR:-default} expansion.
-        monkeypatch.delenv("MEMPALACE_PALACE_PATH", raising=False)
-        result = service._substitute_env_vars(
-            "${MEMPALACE_PALACE_PATH:-${HOME}/.vigil/mempalace/palace}"
-        )
-        assert result == "/Users/test/.vigil/mempalace/palace"
+        # A value leaked from another test would short-circuit the default branch.
+        monkeypatch.delenv("VIGIL_DIR", raising=False)
+        line = "${VIGIL_DIR:-${HOME}/.vigil}/workspace"
 
-        # When the env var is explicitly set, it wins.
-        monkeypatch.setenv("MEMPALACE_PALACE_PATH", "/custom/palace")
-        result = service._substitute_env_vars(
-            "${MEMPALACE_PALACE_PATH:-${HOME}/.vigil/mempalace/palace}"
-        )
-        assert result == "/custom/palace"
+        assert service._substitute_env_vars(line) == "/Users/test/.vigil/workspace"
+
+        monkeypatch.setenv("VIGIL_DIR", "/custom/vigil")
+        assert service._substitute_env_vars(line) == "/custom/vigil/workspace"
 
 
 class TestRetryDormantIfReady:

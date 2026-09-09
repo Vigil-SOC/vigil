@@ -8,46 +8,28 @@ whole table.
 import logging
 from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 
+from core.memory.entity_keys import entity_context_candidates
 from core.storage.connection import get_db_manager
 from core.storage.shared_ioc_repository import SharedIOCRepository, make_key
 
 logger = logging.getLogger(__name__)
 
-# entity_context spellings, in lookup order. Alternatives within a tuple are
-# aliases: the first one present wins.
-_LIST_FIELDS = (
-    ("ip", ("src_ips",)),
-    ("ip", ("dest_ips", "dst_ips")),
-    ("hostname", ("hostnames",)),
-    ("user", ("usernames", "users")),
-    ("hash", ("file_hashes",)),
-    ("domain", ("domains",)),
-)
-_SCALAR_FIELDS = (
-    ("ip", "src_ip"),
-    ("ip", "dst_ip"),
-    ("hostname", "hostname"),
-    ("user", "user"),
-)
-
 
 def _keys_from_finding(finding: Dict[str, Any]) -> Set[str]:
-    ctx = finding.get("entity_context") or {}
-    keys: Set[str] = set()
+    """This finding's entities as shared-IOC keys.
 
-    for ioc_type, names in _LIST_FIELDS:
-        values = next((ctx[n] for n in names if ctx.get(n)), None) or []
-        for value in values:
-            key = make_key(ioc_type, value)
-            if key:
-                keys.add(key)
-
-    for ioc_type, name in _SCALAR_FIELDS:
-        key = make_key(ioc_type, ctx.get(name))
-        if key:
-            keys.add(key)
-
-    return keys
+    The spelling map is memory's (``entity_context_candidates``); the keys are
+    this table's. ``make_key`` aliases ``host`` back to ``hostname`` on the way
+    in, so what lands in ``shared_iocs`` is what always landed there -- and a key
+    minted in the wrong vocabulary joins against nothing.
+    """
+    return {
+        key
+        for key in (
+            make_key(kind, value) for kind, value in entity_context_candidates(finding)
+        )
+        if key
+    }
 
 
 class SharedIntelligence:

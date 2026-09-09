@@ -48,7 +48,7 @@ class SaveIntegrationRequest(BaseModel):
 
     Mandatory JSON body — does not accept query-string fallback. The
     previous shape took the same fields as raw path/query args and was
-    abused to overwrite ``mempalace/mempalace/mcp_server.py``.
+    abused to overwrite a runtime module outside the integrations directory.
     """
 
     integration_id: str

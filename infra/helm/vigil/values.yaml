@@ -661,10 +661,6 @@ config:
   VIGIL_COOKIE_SECURE: "true"
   VIGIL_COOKIE_SAMESITE: "strict"
 
-  # MemPalace
-  MEMPALACE_PALACE_PATH: "/app/data/mempalace/palace"
-  MEMPALACE_DAEMON_ENABLED: "false"
-
   # Integrations — non-secret URLs/usernames
   SPLUNK_URL: ""
   SPLUNK_USERNAME: ""

@@ -507,6 +507,9 @@ async def scan_existing_findings(request: ScanFindingsRequest):
                         "severity": f.severity,
                         "title": f.description[:200] if f.description else "",
                         "data_source": f.data_source,
+                        # The entities the run recalls on, and what cross-investigation
+                        # correlation indexes. Projected away, both read an empty set.
+                        "entity_context": f.entity_context,
                     }
                 )
 
@@ -561,14 +564,20 @@ async def get_cost_summary():
 # ---- Chain of Custody ----
 
 # Workdir files to include in the chain-of-custody package.
+#
+# `hypotheses.txt`, not `.json`: WorkdirManager scaffolds an empty `hypotheses.json`
+# and nothing ever writes it, so the export carried a truthy "[]" while the claims
+# the run was opened to test sat unread in the file beside it. An audit document
+# that says "no hypotheses" is worse than one that says nothing.
 _COC_WORKDIR_FILES = [
     "plan.md",
     "state.json",
     "context.md",
     "iocs.json",
     "timeline.json",
-    "hypotheses.json",
+    "hypotheses.txt",
     "hypothesis_subjects.json",
+    "recall_keys.json",
     "review.md",
 ]
 

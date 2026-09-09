@@ -18,16 +18,14 @@ jobs:
   # ============================================================================
   lint-backend:
     name: Lint Backend
-    # Canonical repo only. Forks can't run this pipeline (private submodules +
-    # missing secrets) so pushes to a fork's main/develop just email the owner
+    # Canonical repo only. Forks can't run this pipeline (missing secrets) so
+    # pushes to a fork's main/develop just email the owner
     # a failure. For pull_request events github.repository is the BASE repo, so
     # contributor PRs against Vigil-SOC/vigil still run CI as normal.
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -114,8 +112,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -261,8 +257,6 @@ jobs:
           - { os: macos-latest,  arch: arm64  }
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Show the host Python that must NOT be used
         run: |
@@ -323,8 +317,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -493,8 +485,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -588,8 +578,6 @@ jobs:
       POSTGRES_DB: deeptempo_test
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -632,8 +620,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -684,8 +670,6 @@ jobs:
     
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4

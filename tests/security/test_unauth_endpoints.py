@@ -93,7 +93,7 @@ PROTECTED_ROUTES = [
         },
     ),
     ("GET", "/api/mcp/servers/enabled", None),
-    ("PUT", "/api/mcp/servers/mempalace/enabled", {"enabled": False}),
+    ("PUT", "/api/mcp/servers/deeptempo-findings/enabled", {"enabled": False}),
     ("GET", "/api/orchestrator/status", None),
     ("POST", "/api/orchestrator/investigations/purge", None),
     ("GET", "/api/approvals/pending", None),
@@ -254,7 +254,7 @@ ADMIN_ONLY_ROUTES = [
         },
     ),
     ("GET", "/api/custom-integrations/list", None),
-    ("PUT", "/api/mcp/servers/mempalace/enabled", {"enabled": False}),
+    ("PUT", "/api/mcp/servers/deeptempo-findings/enabled", {"enabled": False}),
     ("POST", "/api/mcp/servers/reload", None),
     (
         "POST",

@@ -7,6 +7,7 @@ import { budgetOf, unmeteredQuota } from "../../core/budget.js";
 import { localDispatch } from "../../core/dispatch.js";
 import type { Harness } from "../../core/loop.js";
 import { nullMemory } from "../../core/memory.js";
+import type { Memory } from "../../core/seams.js";
 import { registryOf } from "../../core/registry.js";
 import { buildSpec, type RunSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
@@ -14,6 +15,7 @@ import type { Answers } from "../../core/answers.js";
 import { grantsOf, runLead, type LeadKinds, type LeadOptions } from "../../workflows/lead/workflow.js";
 import { isLead, respondingProvider } from "../support/responding-provider.js";
 import { scriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
+import { countingMemory, RECALL_KEYS } from "../support/recalled.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
 const RUN = "7d3c2d3e-0000-4000-8000-000000000624";
@@ -37,7 +39,7 @@ function specFor(kind: RunKind, playbook: string, config: string): RunSpec {
   return buildSpec({ arch: entry.arch, playbook: join(FIXTURES, playbook), config: join(FIXTURES, config) }, entry.actions);
 }
 
-function harnessOf(spec: RunSpec, script: readonly ScriptedTurn[], state: InProcessState<LeadKinds>): Harness<LeadKinds> {
+function harnessOf(spec: RunSpec, script: readonly ScriptedTurn[], state: InProcessState<LeadKinds>, memory: Memory = nullMemory): Harness<LeadKinds> {
   const grants = grantsOf(spec);
   const tools = [...new Set(Object.values(grants).flat())].map(stub);
   return {
@@ -45,7 +47,7 @@ function harnessOf(spec: RunSpec, script: readonly ScriptedTurn[], state: InProc
     registry: registryOf(tools, grants),
     dispatch: localDispatch,
     budget: budgetOf(spec.budgets, unmeteredQuota),
-    memory: nullMemory,
+    memory,
     state,
   };
 }
@@ -255,5 +257,37 @@ describe("an arch drives the loop", () => {
     expect(grantsOf(specFor("investigate", "case.playbook.yaml", "case.config.yaml"))).toEqual({
       lead: ["case_records"],
     });
+  });
+});
+
+// An investigation opened on Findings has no hypotheses to derive keys from, so
+// the keys it was handed are the only thing it can recall about.
+describe("an investigation recalls on the entities it was opened on", () => {
+  function opened(keys: readonly string[]): RunSpec {
+    const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
+    return { ...spec, sections: { ...spec.sections, recall_keys: [...keys] } };
+  }
+
+  it("reads episodic memory on the keys the run carried", async () => {
+    const spec = opened(RECALL_KEYS);
+    const memory = countingMemory();
+    const state = new InProcessState<LeadKinds>();
+    await runLead(harnessOf(spec, SINGLE, state, memory), options("investigate", spec));
+
+    // Once, not once per turn: a lead takes a fresh turn each iteration, and a
+    // second read would move the prefix inside the run.
+    expect(memory.reads()).toEqual([[...RECALL_KEYS]]);
+    expect((await state.read(RUN)).filter((event) => event.kind === "recall")).toHaveLength(1);
+  });
+
+  it("performs no keyed read when the run carried no keys", async () => {
+    const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
+    const memory = countingMemory();
+    const state = new InProcessState<LeadKinds>();
+    await runLead(harnessOf(spec, SINGLE, state, memory), options("investigate", spec));
+
+    // Nothing asked, rather than asked and answered nothing: the two have to stay
+    // apart, and an unkeyed read here would be the second of them.
+    expect(memory.reads()).toEqual([]);
   });
 });

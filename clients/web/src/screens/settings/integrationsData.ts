@@ -1,7 +1,7 @@
 import { getAllIntegrations } from '../../config/integrations'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 
-export const HIDDEN_MCP_SERVERS = new Set(['mempalace', 'splunk-selfhosted'])
+export const HIDDEN_MCP_SERVERS = new Set(['splunk-selfhosted'])
 
 export const SERVER_TO_INTEGRATION = new Map(Object.entries({
   'aws-security': 'aws-security-hub',

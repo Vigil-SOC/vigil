@@ -3029,33 +3029,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/config/mempalace/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Mempalace Health
-         * @description Health snapshot for the mempalace memory store.
-         *
-         *     Aggregates MCP connection state with filesystem facts about the
-         *     palace directory so operators can sanity-check at a glance whether
-         *     memories are actually being persisted. Always returns 200 — failures
-         *     are surfaced via ``connected: false`` and ``error`` fields rather
-         *     than HTTP errors, so the panel can render even when mempalace is
-         *     completely down.
-         */
-        get: operations["get_api_config_mempalace_health"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/config/orchestrator": {
         parameters: {
             query?: never;
@@ -9935,7 +9908,7 @@ export interface components {
          *
          *     Mandatory JSON body — does not accept query-string fallback. The
          *     previous shape took the same fields as raw path/query args and was
-         *     abused to overwrite ``mempalace/mempalace/mcp_server.py``.
+         *     abused to overwrite a runtime module outside the integrations directory.
          */
         SaveIntegrationRequest: {
             /** Integration Id */
@@ -16126,37 +16099,6 @@ export interface operations {
             path: {
                 integration_id: string;
             };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_config_mempalace_health: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
             cookie?: never;
         };
         requestBody?: never;
