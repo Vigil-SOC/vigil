@@ -620,8 +620,12 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
                 )
                 meta = None
 
+            # A stand-in when the provider has a fetcher that could not answer,
+            # and the real thing when it has none.
+            stood_in = False
             if meta is None and provider_type not in _HOST_OWNED_CATALOGUE:
                 meta = await fetch_catalogue_models(provider_type)
+                stood_in = meta is not None and provider_type in _DISCOVERABLE
 
             if meta is not None:
                 upstream_ok = True
@@ -634,7 +638,7 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
 
             # Upstream failed: union the bootstrap list so the dropdown
             # isn't empty while still carrying the extras below.
-            if not upstream_ok:
+            if not upstream_ok or stood_in:
                 for mid in _FALLBACK_MODELS_BY_PROVIDER.get(provider_type, ()):
                     if mid not in row_seen:
                         row_seen.add(mid)
@@ -651,7 +655,10 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             # Single-writer: populate the dropdown cache with this row's
             # list. ``fetch_provider_models`` reads this same key.
             _MODEL_LIST_CACHE[row_dict["provider_id"]] = row_ids
-            if upstream_ok:
+            # A stood-in datasheet is not this provider's catalogue: ruling a
+            # model out from it is the silent substitution ``can_serve`` exists
+            # to avoid, and its list is missing whatever the bootstrap carries.
+            if upstream_ok and not stood_in:
                 _LIVE_CATALOGUES.add(row_dict["provider_id"])
             else:
                 _LIVE_CATALOGUES.discard(row_dict["provider_id"])
@@ -665,11 +672,17 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
                 type_union.append(mid)
 
         # Host before allow-list: namespaced models are meaningless if the
-        # gateway still talks to the stock OpenAI cloud. One document per
-        # type; the default row already sits first, matching the key we push.
+        # gateway still talks to the stock OpenAI cloud. One document per type.
         if provider_type == "openai":
+            # The first row that states a host, not simply the first row: a
+            # mirror row carries no base_url and claims is_default when the
+            # type has none, so sorting alone let it shadow a real row's custom
+            # host and revert self-hosted traffic to the stock cloud.
+            hosted = next(
+                (r for r in provider_rows if r.get("base_url")), provider_rows[0]
+            )
             base_url_results[provider_type] = sync_provider_base_url(
-                provider_type, provider_rows[0].get("base_url")
+                provider_type, hosted.get("base_url")
             )
 
         if not type_union:
@@ -775,9 +788,10 @@ async def _fetch_meta_for_row(
         # same trust anchor as the admin-gated test and discover-models
         # endpoints. Without this, sync fails for any RFC1918 host even
         # though the UI dropdown populated fine.
-        return await discovery.fetch_ollama_models(base_url, allow_loopback=True)
+        return await _list_ollama_models(base_url, discovery)
 
-    return await fetch_catalogue_models(provider_type)
+    logger.debug("Bifrost sync: no fetcher for provider_type %s", provider_type)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -794,6 +808,11 @@ async def _fetch_meta_for_row(
 # Bifrost's ollama catalogue is the generic library, not what a host pulled.
 _HOST_OWNED_CATALOGUE = frozenset({"ollama"})
 
+# Types ``_fetch_meta_for_row`` has a real fetcher for. For anything else the
+# datasheet is the only catalogue there will ever be, so it can be trusted as
+# one; for these it is a stand-in for a fetch that failed or had no key.
+_DISCOVERABLE = frozenset({"anthropic", "openai", "ollama"})
+
 # What the row's ``default_model`` should floor to, per provider type. That
 # field is only a floor — it is what the picker shows when discovery yields
 # nothing (#409) and what dispatch uses when a caller names no model; the
@@ -804,6 +823,9 @@ _HOST_OWNED_CATALOGUE = frozenset({"ollama"})
 # catalogue's first entry.
 _CATALOG_DEFAULT_PREFERENCE: Dict[str, tuple] = {
     "vertex": ("gemini-2.5-flash", "gemini-2.0-flash", "claude-sonnet-4-5"),
+    # Mid-tier, rather than the opus the bootstrap list leads with or the haiku
+    # the marker sweep would otherwise land on.
+    "anthropic": ("claude-sonnet-4-6",),
 }
 
 
@@ -870,25 +892,45 @@ async def fetch_catalogue_models(provider_type: str) -> Optional[List[Any]]:
     return meta
 
 
-async def _first_pulled_ollama_model() -> Optional[str]:
-    """The first model this host has actually pulled, or None if it can't say.
+async def _list_ollama_models(
+    base_url: Optional[str], discovery: Any = None
+) -> Optional[List[Any]]:
+    """List an Ollama server's pulled models, or None if none can be reached.
 
-    A mirrored row carries no ``base_url``, and loopback is only right for a
-    single-machine install, so the configured endpoint is tried first.
+    A mirrored row carries no ``base_url`` of its own, and ``fetch_ollama_models``
+    then defaults to loopback — right only for a single-machine install, and
+    this process is as likely to be containerised as the gateway is. So a row
+    without one falls to ``OLLAMA_URL`` before that default. The catalogue and
+    the row's ``default_model`` both resolve through here; reading them from
+    different endpoints gave a row a servable default and an empty picker.
+
+    A server that answers with nothing pulled has answered: only a failure to
+    reach one moves on to the next candidate.
     """
-    from core.llm.providers import discovery
+    if discovery is None:
+        from core.llm.providers import discovery as discovery_module
 
+        discovery = discovery_module
+
+    candidates: List[Optional[str]] = [base_url] if base_url else []
     configured = (get_settings().ollama_url or "").strip()
-    candidates = [configured, None] if configured else [None]
-    for base_url in candidates:
-        try:
-            models = await discovery.fetch_ollama_models(base_url, allow_loopback=True)
-        except Exception as exc:  # noqa: BLE001 - try the next endpoint
-            logger.debug("Could not list pulled Ollama models at %s: %s", base_url, exc)
+    for candidate in (configured, None):
+        if candidate and candidate in candidates:
             continue
-        if models:
-            return models[0].id
+        candidates.append(candidate)
+
+    for candidate in candidates:
+        try:
+            return await discovery.fetch_ollama_models(candidate, allow_loopback=True)
+        except Exception as exc:  # noqa: BLE001 - try the next endpoint
+            logger.debug("Could not list Ollama models at %s: %s", candidate, exc)
     return None
+
+
+async def _first_pulled_ollama_model() -> Optional[str]:
+    """The first model this host has actually pulled, or None if it can't say."""
+    models = await _list_ollama_models(None)
+    return models[0].id if models else None
 
 
 async def default_model_for_provider_type(provider_type: str) -> Optional[str]:
@@ -913,15 +955,11 @@ async def default_model_for_provider_type(provider_type: str) -> Optional[str]:
 
     bootstrap = _FALLBACK_MODELS_BY_PROVIDER.get(provider_type) or ()
     if bootstrap:
-        return bootstrap[0]
+        return _preferred_floor(provider_type, list(bootstrap))
 
     meta = await fetch_catalogue_models(provider_type)
     if meta:
-        ids = {m.id for m in meta}
-        for preferred in _CATALOG_DEFAULT_PREFERENCE.get(provider_type, ()):
-            if preferred in ids:
-                return preferred
-        return _cheapest_looking(meta) or meta[0].id
+        return _preferred_floor(provider_type, [m.id for m in meta])
 
     logger.warning(
         "No catalogue or bootstrap model for provider type %s — leaving it "
@@ -934,12 +972,21 @@ async def default_model_for_provider_type(provider_type: str) -> Optional[str]:
 _MID_TIER_MARKERS = ("flash", "mini", "haiku", "lite", "small", "nano")
 
 
-def _cheapest_looking(meta: List[Any]) -> Optional[str]:
+def _preferred_floor(provider_type: str, ids: List[str]) -> str:
+    """Which of ``ids`` a mirrored row should floor its ``default_model`` to.
+
+    One path for both sources. The bootstrap list used to be taken at face
+    value, so anthropic floored to the priciest id it declares while the
+    catalogue path was busy avoiding exactly that.
+    """
+    for preferred in _CATALOG_DEFAULT_PREFERENCE.get(provider_type, ()):
+        if preferred in ids:
+            return preferred
     for marker in _MID_TIER_MARKERS:
-        for entry in meta:
-            if marker in entry.id.lower():
-                return entry.id
-    return None
+        for candidate in ids:
+            if marker in candidate.lower():
+                return candidate
+    return ids[0]
 
 
 def sync_after_ollama_start() -> dict:
