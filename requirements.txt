@@ -1,11 +1,3 @@
-# Submodule (editable install). Only installed once the submodule is
-# initialized: git submodule update --init --recursive
-# mempalace is a first-class component (#129). It's a git submodule rather than
-# a PyPI pin so we can track a specific upstream SHA and patch locally; chromadb
-# comes in as a transitive dep of mempalace's own pyproject.toml.
--e ./mempalace
-
-
 # Vigil SOC - Requirements
 
 # Core

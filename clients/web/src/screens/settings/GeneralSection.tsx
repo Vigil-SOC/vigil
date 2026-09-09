@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { ConfirmDialog, SettingsCard, ToggleRow } from '../../shared/ui'
-import { casesApi, findingsApi, mcpApi, orchestratorApi } from '../../services/api'
+import { casesApi, findingsApi, orchestratorApi } from '../../services/api'
 import { notificationService } from '../../services/notifications'
 import { useAuth } from '../../contexts/AuthContext'
-import { useGeneralSettings, useMempalaceHealth } from './useSettings'
+import { useGeneralSettings } from './useSettings'
 import CostAnalyticsCard from './CostAnalyticsCard'
 import type { SectionProps } from './types'
 
@@ -12,7 +12,6 @@ type ClearAction = 'findings' | 'investigations' | 'cases' | 'workspace'
 
 export default function GeneralSection({ notify }: SectionProps) {
   const { config, setConfig, phase, error, reload, save } = useGeneralSettings()
-  const { health, loading: healthLoading, reload: reloadHealth } = useMempalaceHealth()
   const { hasPermission } = useAuth()
   const canDeleteFindings = hasPermission('findings.delete')
   const canDeleteCases = hasPermission('cases.delete')
@@ -20,7 +19,6 @@ export default function GeneralSection({ notify }: SectionProps) {
   const [saving, setSaving] = useState(false)
   const [clearAction, setClearAction] = useState<ClearAction | null>(null)
   const [clearing, setClearing] = useState(false)
-  const [testing, setTesting] = useState(false)
 
   if (phase === 'loading') {
     return <div className="text-sm text-tx-3 py-16 text-center">Loading general settings…</div>
@@ -98,28 +96,12 @@ export default function GeneralSection({ notify }: SectionProps) {
         }
       }
       setClearAction(null)
-      reloadHealth()
     } catch (e) {
       notify('err', (e as { message?: string })?.message || 'Failed to clear data.')
     } finally {
       setClearing(false)
     }
   }
-
-  const handleTestMempalace = async () => {
-    setTesting(true)
-    try {
-      await mcpApi.testServer('mempalace')
-      notify('ok', 'Mempalace connection OK.')
-      reloadHealth()
-    } catch (e) {
-      notify('err', (e as { message?: string })?.message || 'Mempalace connection failed.')
-    } finally {
-      setTesting(false)
-    }
-  }
-
-  const dot = health?.connected ? 'var(--ok)' : health ? 'var(--crit)' : 'var(--tx-faint)'
 
   return (
     <>
@@ -186,62 +168,6 @@ export default function GeneralSection({ notify }: SectionProps) {
       </SettingsCard>
 
       <CostAnalyticsCard />
-
-      <SettingsCard
-        title={
-          <span className="inline-flex items-center gap-2">
-            <span style={{ width: 8, height: 8, borderRadius: '50%', background: dot }} />
-            Mempalace Health
-          </span>
-        }
-        desc="Persistent memory store used by every agent. Always on — not toggleable from Integrations."
-        actions={
-          <>
-            <button className="btn ghost" onClick={reloadHealth} disabled={healthLoading}>
-              <Icon name="refresh" /> Refresh
-            </button>
-            <button className="btn ghost" onClick={handleTestMempalace} disabled={testing}>
-              {testing ? 'Testing…' : 'Test connection'}
-            </button>
-          </>
-        }
-      >
-        {health ? (
-          <div className="kv-grid" style={{ gridTemplateColumns: '180px 1fr' }}>
-            <span className="k">Status</span>
-            <span className="v">
-              <span className={`status ${health.connected ? 'closed' : 'open'}`}>
-                {health.connected ? 'Connected' : 'Disconnected'}
-              </span>
-              {health.error && <span className="text-crit ml-2">{health.error}</span>}
-            </span>
-            <span className="k">Palace path</span>
-            <span className="v font-mono break-all">
-              {health.palace_path}
-              {!health.palace_exists && <span className="text-crit ml-1">(missing)</span>}
-            </span>
-            <span className="k">Size on disk</span>
-            <span className="v">{health.size_human ?? '—'}</span>
-            <span className="k">Last write</span>
-            <span className="v">
-              {health.last_modified_iso ? new Date(health.last_modified_iso).toLocaleString() : '—'}
-            </span>
-            <span className="k">Closed cases</span>
-            <span className="v">{health.closed_cases_count ?? '—'}</span>
-            <span className="k">Stored memories</span>
-            <span className="v">
-              {health.memories_count ?? '—'}
-              {health.memories_count_source === 'unavailable' && (
-                <span className="text-tx-3 ml-1">(chromadb unavailable)</span>
-              )}
-            </span>
-          </div>
-        ) : (
-          <div className="text-sm text-tx-3">
-            {healthLoading ? 'Loading mempalace health…' : 'Could not load mempalace health.'}
-          </div>
-        )}
-      </SettingsCard>
 
       <ConfirmDialog
         open={clearAction != null}

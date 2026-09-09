@@ -13,8 +13,8 @@ jobs:
   full-test-suite:
     name: Full Test Suite
     # Canonical repo only. Scheduled workflows run on the default branch of any
-    # fork with Actions enabled, but forks lack the private submodules + secrets
-    # this suite needs, so a nightly run just emails the fork owner a failure.
+    # fork with Actions enabled, but forks lack the secrets this suite needs, so a
+    # nightly run just emails the fork owner a failure.
     # Skipping (not failing) keeps forks quiet.
     if: github.repository == 'Vigil-SOC/vigil'
     runs-on: ubuntu-latest
@@ -62,9 +62,6 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-        with:
-          # requirements.lock installs -e ./mempalace, an empty dir without this.
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -133,8 +130,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
       
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -167,8 +162,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
       - name: Set up Python
         uses: actions/setup-python@v7

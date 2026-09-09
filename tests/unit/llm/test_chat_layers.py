@@ -70,38 +70,3 @@ def test_declare_drops_blank_description_mcp_tool():
     # "[server] " prefix), so the emptiness guard drops it.
     declared = {t["id"] for t in _declare(None, [_mcp("shodan_host", description="")])}
     assert "shodan_host" not in declared
-
-
-# The second filter: the palace goes whole-server, reads included, because chat
-# must not write episodic memory at all. chat_layers.py carries the reasoning.
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "name",
-    [
-        "mempalace_add_drawer",
-        "mempalace_diary_write",
-        "mempalace_kg_add",
-        "mempalace_kg_invalidate",
-        "mempalace_kg_supersede",
-        "mempalace_update_drawer",
-        "mempalace_event_append",
-        "mempalace_artifact_put",
-        "mempalace_search",
-        "mempalace_kg_query",
-        "mempalace_status",
-    ],
-)
-def test_declare_drops_every_mempalace_tool(name):
-    declared = {t["id"] for t in _declare(None, [_mcp(name)])}
-    assert name not in declared
-
-
-@pytest.mark.unit
-def test_declare_drops_the_palace_without_touching_other_servers():
-    declared = {
-        t["id"]
-        for t in _declare(
-            [], [_mcp("mempalace_add_drawer"), _mcp("virustotal_get_ip_report")]
-        )
-    }
-    assert declared == {"virustotal_get_ip_report"}

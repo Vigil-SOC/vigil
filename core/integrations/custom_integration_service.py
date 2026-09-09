@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 # Strict allowlist for integration IDs. Anchored, lowercase, no path
 # separators, no traversal. Closes the path-traversal-to-RCE chain in
-# the 2026-05 disclosure where ``integration_id=../../../proc/self/cwd/
-# mempalace/mempalace/mcp`` was used to overwrite a runtime module.
+# the 2026-05 disclosure where an ``integration_id`` of
+# ``../../../proc/self/cwd/<pkg>`` was used to overwrite a runtime module.
 _INTEGRATION_ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 # Server code is meant to be a single small MCP server module — anything

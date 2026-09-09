@@ -46,12 +46,6 @@ LICENSE
 # requirements.txt is needed by Dockerfile.backend + Dockerfile.daemon;
 # the wildcard above would otherwise exclude it.
 !requirements.txt
-# mempalace is pip-installed during the image build and its build backend reads
-# README.md for metadata (its pyproject declares `readme = "README.md"`, which
-# hard-fails if the file is absent). The `*.md` wildcard above would otherwise
-# strip it from the build context. deeptempo-core and mcp-servers were here too
-# until #654 dropped those submodules.
-!mempalace/README.md
 
 # Logs
 logs/

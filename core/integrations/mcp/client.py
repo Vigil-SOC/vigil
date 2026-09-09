@@ -331,7 +331,7 @@ class MCPClient:
         except Exception as e:
             # Preserve the exception text so the UI can surface the real
             # reason (e.g. "FileNotFoundError: uvx", "ModuleNotFoundError:
-            # mempalace", "missing env var GITHUB_TOKEN") instead of a
+            # mcp", "missing env var GITHUB_TOKEN") instead of a
             # generic "Failed to connect".
             self.last_errors[server_name] = f"{type(e).__name__}: {e}"
             logger.error(f"Failed to connect to {server_name}: {e}")

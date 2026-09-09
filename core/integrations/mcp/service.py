@@ -258,7 +258,6 @@ class MCPService:
         "security-detections",
         "approval",
         "attack-layer",
-        "mempalace",
         # The self-hosted SIEM a hunt reads through telemetry_search -- the
         # customer's own Splunk, the expected telemetry path, not an optional
         # add-on. Safe to default-on: unset ${SPLUNK_*} placeholders leave it
@@ -406,8 +405,8 @@ class MCPService:
                     # detection scans the raw config above, not this spawn env,
                     # so dormancy behavior is unchanged.
                     env = os.environ.copy()  # noqa: ENV001 - MCP child env
-                    # mcp-config.json refers to ${VIGIL_DIR}; an unset var would
-                    # substitute to "" and root child paths at "/".
+                    # An mcp-config.json entry may refer to ${VIGIL_DIR}; unset, it
+                    # would substitute to "" and root child paths at "/".
                     env.setdefault("VIGIL_DIR", str(vigil_path()))
                     # httpx ignores REQUESTS_CA_BUNDLE, so inheriting it is
                     # not enough.

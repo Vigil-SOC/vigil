@@ -19,6 +19,7 @@ sys.path.insert(0, str(REPO))
 from core.agents.projections import run_id_for
 from services.daemon.config import OrchestratorConfig
 from services.daemon.orchestrator import Orchestrator
+from services.daemon.workdir import WorkdirManager
 
 pytestmark = pytest.mark.unit
 
@@ -37,6 +38,21 @@ def _orchestrator() -> Orchestrator:
 
 def _record(**overrides):
     return {"investigation_id": INV, "workflow_id": "incident-response", **overrides}
+
+
+# A real workdir, because what is being tested is that the keys survive the gap
+# between an investigation being created and being enqueued -- which is a file on
+# disk and a read of it, not a value held in the process.
+def _opening(tmp_path: Path) -> Orchestrator:
+    orch = object.__new__(Orchestrator)
+    orch.config = OrchestratorConfig(dry_run=True)
+    orch.workdir = WorkdirManager(str(tmp_path))
+    orch.shared_intel = MagicMock()
+    orch.stats = {"investigations_created": 0}
+    orch._save_investigation = MagicMock()
+    orch._update_investigation_status = MagicMock()
+    orch._check_cross_correlations = AsyncMock()
+    return orch
 
 
 class TestEnqueue:
@@ -87,6 +103,58 @@ class TestEnqueue:
             "max_cost_usd": 3.5,
             "max_wall_ms": 900_000,
         }
+
+    # The one place the vocabulary is observable. A key spelled the shared-IOC way
+    # -- `hostname:` where memory writes `host:` -- returns no rows and every other
+    # test still passes, so the read reads as an entity nobody has looked at.
+    @pytest.mark.asyncio
+    async def test_carries_the_trigger_entities_as_recall_keys(self, tmp_path):
+        orch = _opening(tmp_path)
+        findings = [
+            {
+                "finding_id": "f-1",
+                "entity_context": {"src_ips": ["10.0.0.5"], "hostnames": ["DC01"]},
+            },
+            {
+                "finding_id": "f-2",
+                "entity_context": {"dest_ips": ["45.77.53.176"], "usernames": ["Root"]},
+            },
+        ]
+        await orch._create_investigation(
+            "incident-response", findings, "alert", "medium"
+        )
+        record = orch._save_investigation.call_args[0][0]
+
+        with patch(
+            "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
+        ) as enqueued:
+            await orch._enqueue_investigation(record)
+
+        # Every finding, not the first: an investigation opened over several is not
+        # narrowed to whichever one happened to be first in the list.
+        assert sorted(enqueued.await_args[0][0]["request"]["recall_keys"]) == [
+            "host:dc01",
+            "ip:10.0.0.5",
+            "ip:45.77.53.176",
+            "user:root",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_finding_with_no_entities_carries_no_keys(self, tmp_path):
+        orch = _opening(tmp_path)
+        await orch._create_investigation(
+            "incident-response", [{"finding_id": "f-1"}], "alert", "medium"
+        )
+        record = orch._save_investigation.call_args[0][0]
+
+        with patch(
+            "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
+        ) as enqueued:
+            await orch._enqueue_investigation(record)
+
+        # Empty rather than absent-and-guessed: "nothing was asked" has to stay
+        # distinguishable from "nothing is known".
+        assert enqueued.await_args[0][0]["request"]["recall_keys"] == []
 
     @pytest.mark.asyncio
     async def test_marks_the_investigation_failed_when_the_queue_refuses(self):

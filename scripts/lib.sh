@@ -194,21 +194,6 @@ deps_source() {
     fi
 }
 
-# --- Build filtered requirements (skip uninitialized submodule editable installs) ---
-filtered_reqs() {
-    local src="${1:-$REPO_ROOT/requirements.txt}"
-    local tmp; tmp=$(mktemp)
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^-e[[:space:]]+\. ]]; then
-            local dir="${line#*-e }"
-            dir="${dir#*-e	}"
-            [ -f "$dir/setup.py" ] || [ -f "$dir/pyproject.toml" ] || continue
-        fi
-        echo "$line"
-    done < "$src" > "$tmp"
-    echo "$tmp"
-}
-
 # --- Load .env (preserves caller-supplied vars) ---
 load_env() {
     if [ -f "$REPO_ROOT/.env" ]; then
@@ -281,13 +266,11 @@ install_python_deps() {
     ensure_uv || return 1
     local venv="$REPO_ROOT/venv"
     local src; src=$(deps_source)
-    local reqs; reqs=$(filtered_reqs "$src")
     local log="$REPO_ROOT/logs/pip-install.log"
     mkdir -p "$REPO_ROOT/logs"
 
     echo "Installing Python dependencies from $(basename "$src") (log: $log)..."
-    if ! "$UV" pip install --python "$venv/bin/python" -r "$reqs" >"$log" 2>&1; then
-        rm -f "$reqs"
+    if ! "$UV" pip install --python "$venv/bin/python" -r "$src" >"$log" 2>&1; then
         echo "" >&2
         echo "Failed to install Python dependencies. Last 30 lines:" >&2
         tail -30 "$log" >&2
@@ -295,7 +278,6 @@ install_python_deps() {
         echo "Full log: $log" >&2
         return 1
     fi
-    rm -f "$reqs"
     verify_python_env
 }
 

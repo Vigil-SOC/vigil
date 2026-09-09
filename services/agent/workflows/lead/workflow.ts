@@ -180,8 +180,19 @@ function turnFor(options: LeadOptions, role: string, spec: RoleSpec, task: strin
     verbs: options.actions,
     result_cap: runtime.result_cap,
     recall_limit: runtime.recall_limit,
+    // Only the lead recalls at run start: its prefix is the run's, and a worker
+    // reading again would open a second prefix on a neighbourhood that has moved.
+    recall_keys: role === "lead" ? openingKeys(options.spec) : [],
     ...(options.signal === undefined ? {} : { signal: options.signal }),
   };
+}
+
+// What the run opens its episodic read on, stated by whoever created it. Sorted for
+// the reason recallKeysOf sorts: one investigation asks in one order, whatever its source.
+function openingKeys(spec: RunSpec): readonly string[] {
+  const held = spec.sections["recall_keys"];
+  if (!Array.isArray(held)) return [];
+  return [...new Set(held.filter((key): key is string => typeof key === "string" && key !== ""))].sort();
 }
 
 // The playbook's half, rendered once: what this run is about and what an analyst

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sys
 from pathlib import Path
+
 import pytest
 import yaml
 
@@ -31,28 +32,11 @@ def test_recall_entity_in_every_builtin_recommended_tools():
         ), f"Agent {agent['id']} is missing recall_entity in recommended_tools"
 
 
-def test_no_mempalace_write_tools_in_recommended_tools():
-    """No agent may declare mempalace write tools (#735)."""
-    forbidden_tools = {
-        "mempalace_add_drawer",
-        "mempalace_delete_drawer",
-        "mempalace_kg_add",
-        "mempalace_kg_invalidate",
-        "mempalace_diary_write",
-    }
-    for agent in BUILTIN_AGENTS:
-        tools = set(agent.get("recommended_tools", []))
-        overlap = tools & forbidden_tools
-        assert not overlap, f"Agent {agent['id']} carries write tools: {overlap}"
-
-
 def test_memory_block_is_read_only():
     """Memory operations block must mention recall_entity and instruct not to write."""
     assert "recall_entity" in _MEMORY_BLOCK
     assert "read-only" in _MEMORY_BLOCK
     assert "no tool to write" in _MEMORY_BLOCK
-    assert "mempalace_add_drawer" not in _MEMORY_BLOCK
-    assert "mempalace_diary_write" not in _MEMORY_BLOCK
     assert "BEFORE starting" not in _MEMORY_BLOCK
     assert "DURING investigation" not in _MEMORY_BLOCK
     assert "AFTER completing" not in _MEMORY_BLOCK
@@ -116,13 +100,7 @@ def test_a_custom_agent_granted_recall_is_told_about_it():
 
 def test_builtin_principles_memory_lines_are_read_only():
     """Every builtin agent's extra_principles Memory line instructs read-only recall_entity."""
-    forbidden_phrases = [
-        "mempalace_add_drawer",
-        "mempalace_diary_write",
-        "mempalace_kg_add",
-        "store FP reasoning",
-        "mempalace_search",
-    ]
+    forbidden_phrases = ["store FP reasoning"]
     for agent in BUILTIN_AGENTS:
         principles = agent.get("extra_principles", "")
         for phrase in forbidden_phrases:
@@ -217,33 +195,6 @@ def test_every_agents_recall_grant_survives_the_chat_declaration():
     for agent in BUILTIN_AGENTS:
         declared = {t["id"] for t in _declare(agent["recommended_tools"], [])}
         assert "recall_entity" in declared, f"{agent['id']} cannot call recall_entity"
-
-
-def test_chat_cannot_reach_a_memory_palace_write_tool():
-    """The other half of read-only: the grant above must not come with a way to write.
-
-    Chat's MCP half is not filtered by ``recommended_tools`` — every connected
-    server is appended — so the palace has to be dropped by ``_declare`` itself.
-    """
-    from core.llm.chat_layers import _declare
-
-    palace = [
-        {
-            "name": name,
-            "description": "writes to the palace",
-            "input_schema": {"type": "object"},
-        }
-        for name in (
-            "mempalace_add_drawer",
-            "mempalace_diary_write",
-            "mempalace_kg_add",
-        )
-    ]
-    triage = next(a for a in BUILTIN_AGENTS if a["id"] == AgentId.TRIAGE.value)
-    declared = {t["id"] for t in _declare(triage["recommended_tools"], palace)}
-
-    assert "recall_entity" in declared
-    assert not any(name.startswith("mempalace_") for name in declared)
 
 
 # The acceptance criterion of #735, and the only one a structural check cannot

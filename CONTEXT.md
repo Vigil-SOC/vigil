@@ -146,7 +146,7 @@ What earlier investigations saw and concluded, so a later run stops re-deriving
 a settled answer. A hunt's is derived from its **Ledger** at the terminal; a
 **Case**'s is derived from the Case itself when it closes, and has no Ledger
 behind it at all. Reorders the frontier and never decides (ADR 0015).
-_Avoid_: MemPalace (the component this replaces), cache, RAG
+_Avoid_: MemPalace (the component this replaced, since removed), cache, RAG
 
 **Distil** (`memory`):
 The job that turns a finished investigation into Episodic Memory rows. One per
@@ -174,6 +174,14 @@ What closing a **Case** determined: `resolved`, `false_positive`, `duplicate`,
 is a recorded absence, not a determination.
 _Avoid_: resolution, disposition, reason
 
+**Entity Key**:
+The `type:value` string an **Episodic Memory** row is written and queried on --
+`ip:10.0.0.5`, `host:dc01`. Minted by one rule, defang then case-fold, sparing the
+types where case is significant, so a stored key and a queried key cannot be
+normalised two ways. A `shared_iocs` key is the same shape on a different
+vocabulary and is not one of these.
+_Avoid_: IOC key, indicator, entity id
+
 **Recall**:
 One read of **Episodic Memory** on exact entity keys. A run performs one at start
 and renders it into the frozen prefix; a worker performs one mid-run through the
@@ -181,8 +189,10 @@ and renders it into the frozen prefix; a worker performs one mid-run through the
 undisturbed. Recall never contributes to corroboration — it reorders what to look
 at and settles nothing (ADR 0015).
 
-A run's keys are the subjects an operator declared for the hypotheses actually
-being put up, and where none were declared, the entities the hypotheses name.
+A run's keys come from what the run was opened on. A hunt's are the subjects an
+operator declared for the hypotheses actually being put up, and where none were
+declared, the entities the hypotheses name. An investigation opened on findings
+has neither, so its keys are the entities its trigger findings carry.
 Declared keys first because a person typed them and the spec refused the
 unusable ones; extraction at all because a scheduled hunt declares none, and the
 autonomous path would otherwise never read memory. A key read out of a statement
@@ -544,3 +554,13 @@ _Avoid_: page, tab, view
   is therefore closed — the ten committed runs plus whatever old-format ledgers
   still exist. A hunt run by current code can be a regression snapshot, never a
   Golden.
+- **`type:value` keys are minted by two rules that disagree.** An **Entity Key**
+  (`core/memory/entity_keys.py`) defangs and keeps case for `arn` and `aws_key`; a
+  `shared_iocs` key (`core/storage/shared_ioc_repository.py`) does neither, and
+  spells a host `hostname` where memory spells it `host`. Handing one subsystem's
+  keys to the other returns no rows, which reads as an entity nobody has looked
+  at rather than as a bad query. Resolved: they stay separate, because unifying
+  them is a migration of a live table. The one shared piece is the
+  `entity_context` spelling map, which yields candidates in memory's vocabulary --
+  `make_key` aliases `host` back to `hostname` on the way in, so the older keys
+  are unchanged.

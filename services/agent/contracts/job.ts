@@ -33,6 +33,9 @@ export interface StartRequest {
   // by position: an order the caller cannot see is not an order they can get right.
   // Values are `type:value` keys, the form the hunt already writes an entity in.
   hypothesis_subjects?: Record<string, string[]>;
+  // Entity Keys the run opens its episodic read on, minted Python-side by the one rule.
+  // Optional and additive, so a job queued before the field existed still parses.
+  recall_keys?: string[];
   // How many turns this run may take. Per-run for the same reason; absent leaves the
   // config's.
   iterations?: number;

@@ -29,7 +29,7 @@ TRAVERSAL_PAYLOADS = [
     "../x",
     "../../tmp/x",
     "../../../proc/self/cwd/x",
-    "../../../proc/self/cwd/mempalace/mempalace/mcp",
+    "../../../proc/self/cwd/core/integrations/mcp",
     "/tmp/x",
     "..%2fx",
     "%2e%2e%2fx",
@@ -87,7 +87,7 @@ async def test_save_integration_refuses_traversal(tmp_path):
     svc.metadata_file = svc.custom_integrations_dir / "metadata.json"
 
     result = await svc.save_integration(
-        integration_id="../../../proc/self/cwd/mempalace/mempalace/mcp",
+        integration_id="../../../proc/self/cwd/core/integrations/mcp",
         metadata={"name": "evil"},
         server_code="print('pwn')",
     )
@@ -96,7 +96,7 @@ async def test_save_integration_refuses_traversal(tmp_path):
 
     # The base directory should not have been written into.
     written = list(tmp_path.glob("*"))
-    assert all("mempalace" not in p.name for p in written)
+    assert all("mcp" not in p.name for p in written)
 
 
 @pytest.mark.asyncio

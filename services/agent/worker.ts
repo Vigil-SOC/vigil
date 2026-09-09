@@ -44,6 +44,9 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
   // Carried on the job, not the reference, which names a definition many runs share.
   const asked = job.request.hypotheses ?? [];
   const subjects = job.request.hypothesis_subjects ?? {};
+  // Onto the spec, so they are journaled with the run event: a resume reads the spec
+  // back, and one that lost its keys would open on a prefix its first turn never had.
+  const recallKeys = job.request.recall_keys ?? [];
   const turns = job.request.iterations;
   // Only ever tightens: a caller may ask to be asked, never to skip a declared gate.
   const gate = job.request.approve_hypotheses === true ? { hypothesis_approval: "ask" } : {};
@@ -55,6 +58,7 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
           ...spec.sections,
           ...(asked.length === 0 ? {} : { operator_hypotheses: asked }),
           ...(Object.keys(subjects).length === 0 ? {} : { operator_hypothesis_subjects: subjects }),
+          ...(recallKeys.length === 0 ? {} : { recall_keys: recallKeys }),
           ...(Object.keys(gate).length === 0
             ? {}
             : { checkpoints: { ...((spec.sections?.["checkpoints"] as object) ?? {}), ...gate } }),

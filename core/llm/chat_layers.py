@@ -67,22 +67,6 @@ _READONLY_LEADS = frozenset(
 )
 
 
-# MemPalace, the prose store #735 moves the agents off — not Episodic Memory,
-# which chat reaches through the static recall_entity tool and this does not
-# touch. The reason is not the one above: a palace write is gateable, it simply
-# must not happen. Chat is the surface where an analyst thinks aloud, and prose
-# written there and read back later as history is the promotion of guess to fact
-# ADR 0015 forbids.
-#
-# Whole-server rather than by verb, which also drops chat's palace reads. The
-# palace ships 44 tools and the write half is the larger, so a read allow-list
-# goes stale toward more writes — the direction that matters. #735's factory
-# scope says drop `mempalace_*`; narrowing this to write verbs is a one-line
-# change if the reads turn out to be missed. The server stays connected: the
-# daemon still uses it, and retiring it is #730's work.
-_MEMORY_PALACE_PREFIX = "mempalace_"
-
-
 def _is_destructive_mcp(name: str) -> bool:
     """True for a server-prefixed MCP tool that performs an irreversible action.
 
@@ -126,21 +110,14 @@ def _declare(
     # connected an integration expects the assistant to use it regardless of any
     # agent's tool list, and hunts curate separately (playbook_resolver). So a
     # ``wanted`` list filters only the built-ins; live integrations are appended —
-    # except two kinds: direct-action MCP tools (see ``_is_destructive_mcp``),
-    # which chat cannot safely gate, and the memory palace (see above), which
-    # chat must not write.
+    # except direct-action MCP tools (see ``_is_destructive_mcp``), which chat
+    # cannot safely gate.
     static = {t["name"]: t for t in ALL_TOOLS if t.get("name")}
     mcp = {t["name"]: t for t in (mcp_tools or []) if t.get("name")}
     static_names = (
         list(static) if wanted is None else [n for n in wanted if n in static]
     )
-    mcp_names = [
-        n
-        for n in mcp
-        if n not in static_names
-        and not _is_destructive_mcp(n)
-        and not n.startswith(_MEMORY_PALACE_PREFIX)
-    ]
+    mcp_names = [n for n in mcp if n not in static_names and not _is_destructive_mcp(n)]
     names = static_names + mcp_names
     catalogue = {**static, **mcp}
     declared = []

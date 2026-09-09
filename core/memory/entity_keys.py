@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 from typing import Iterable, List, Tuple
 
-from core.memory.recall_contract import KEY_CASE_SENSITIVE_TYPES
+from core.memory.recall_contract import ENTITY_KEY_TYPES, KEY_CASE_SENSITIVE_TYPES
 
 # Threat intel writes addresses defanged, and threat_intel is a worker whose
 # output feeds this, so normalising first is cheaper than carrying defanged
@@ -92,4 +92,80 @@ def normalise_keys(keys: object) -> List[str]:
     return _deduped(
         normalise_key(str(key))
         for key in (keys if isinstance(keys, (list, tuple)) else [])
+    )
+
+
+# How a finding's entity context is spelled, in memory's vocabulary. One map, so
+# a new ingest field reaches cross-investigation correlation and memory recall at
+# once. Alternatives within a tuple are aliases: the first one present wins,
+# because sources disagree about `dest` and `dst` and mean the same thing.
+#
+# `host`, not `hostname`: this is memory's spelling. The shared-IOC minter aliases
+# it back on the way in, so the keys that subsystem writes are unchanged.
+_CONTEXT_LISTS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("ip", ("src_ips",)),
+    ("ip", ("dest_ips", "dst_ips")),
+    ("host", ("hostnames",)),
+    ("user", ("usernames", "users")),
+    ("hash", ("file_hashes",)),
+    ("domain", ("domains",)),
+)
+
+_CONTEXT_SCALARS: Tuple[Tuple[str, str], ...] = (
+    ("ip", "src_ip"),
+    ("ip", "dst_ip"),
+    ("host", "hostname"),
+    ("user", "user"),
+)
+
+
+_CONTEXT_TYPES = {kind for kind, _ in _CONTEXT_LISTS} | {
+    kind for kind, _ in _CONTEXT_SCALARS
+}
+_OFF_VOCABULARY = _CONTEXT_TYPES - set(ENTITY_KEY_TYPES)
+if _OFF_VOCABULARY:
+    raise ImportError(
+        f"entity context maps {sorted(_OFF_VOCABULARY)} onto no Entity Key type; "
+        "a key minted outside ENTITY_KEY_TYPES is one no reader will ever query"
+    )
+
+
+def entity_context_candidates(finding: object) -> List[Tuple[str, str]]:
+    """A finding's entity context as ``(type, value)`` candidates.
+
+    Typed but not minted: the caller decides which vocabulary the key is spelled
+    in, and there are two. Empty for a finding carrying no entity context, which
+    is what keeps "nothing was asked" apart from "nothing is known".
+    """
+    context = finding.get("entity_context") if isinstance(finding, dict) else None
+    if not isinstance(context, dict):
+        return []
+
+    candidates: List[Tuple[str, str]] = []
+    for kind, names in _CONTEXT_LISTS:
+        values = next((context[n] for n in names if context.get(n)), None) or []
+        if not isinstance(values, (list, tuple)):
+            continue
+        candidates.extend((kind, str(value)) for value in values)
+
+    for kind, name in _CONTEXT_SCALARS:
+        value = context.get(name)
+        if value:
+            candidates.append((kind, str(value)))
+
+    return candidates
+
+
+def finding_entity_keys(findings: object) -> List[str]:
+    """Entity Keys for the findings an investigation was opened on.
+
+    The deduped union across every finding, not the first one's: an investigation
+    opened over several findings is about all of them. Recall bounds itself per
+    key, per kind and overall and reports what it dropped, so a wider union does
+    not mean an unbounded prefix.
+    """
+    return _deduped(
+        entity_key(kind, value)
+        for finding in (findings if isinstance(findings, list) else [])
+        for kind, value in entity_context_candidates(finding)
     )

@@ -60,6 +60,7 @@ except Exception:
 from core.agents.projections import read_projection, run_id_for
 from core.agents.queue import build_start_job, enqueue_run
 from core.integrations.mcp.client import process_mcp_client
+from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
 from core.workflows.hypothesis_subjects import kept_subjects
@@ -117,7 +118,6 @@ class Orchestrator:
         self._data_service = None
         self._claude_service = None
         self._hourly_costs: List[Dict] = []
-        self._mp = self._init_mempalace()
 
         self.stats = {
             "investigations_created": 0,
@@ -369,13 +369,15 @@ class Orchestrator:
         )
         self.workdir.write_state(inv_id, state)
 
-        context_md = generate_initial_context(findings)
-        # Append any prior MemPalace intelligence for the trigger entities
-        if findings:
-            prior_context = self._fetch_prior_palace_context(findings[0])
-            if prior_context:
-                context_md = context_md + "\n\n" + prior_context
-        self.workdir.write_file(inv_id, "context.md", context_md)
+        self.workdir.write_file(
+            inv_id, "context.md", generate_initial_context(findings)
+        )
+        # What this run is about, so the harness's keyed read has something to ask
+        # on. Written even when empty: an investigation whose findings name no
+        # entity asked nothing rather than being handed keys nobody minted.
+        self.workdir.write_file(
+            inv_id, "recall_keys.json", json.dumps(finding_entity_keys(findings))
+        )
         # Beside the context and read back the same way at enqueue: what the hunt was
         # opened to test reaches its board as a hypothesis, not as prose in the brief.
         if hypothesis:
@@ -640,20 +642,30 @@ class Orchestrator:
                         "Orchestrator stopped while the run was in flight",
                     )
 
+    # Absent and unreadable answer the same, because both mean the run's inputs
+    # are not there to be read, and a half-read investigation is not a better one.
+    def _sidecar(self, inv_id: str, filename: str) -> Any:
+        held = self.workdir.read_file(inv_id, filename)
+        if not held:
+            return None
+        try:
+            return json.loads(held)
+        except ValueError:
+            logger.warning("%s has an unreadable %s", inv_id, filename)
+            return None
+
     # An empty map rather than None, because a JSON null reaches the agent layer
     # as a value where a missing key reads as unset.
     def _hypothesis_subjects(
         self, inv_id: str, stated: List[str]
     ) -> Dict[str, List[str]]:
-        held = self.workdir.read_file(inv_id, "hypothesis_subjects.json")
-        if not held:
-            return {}
-        try:
-            declared = json.loads(held)
-        except ValueError:
-            logger.warning("%s has an unreadable hypothesis_subjects.json", inv_id)
-            return {}
-        return kept_subjects(declared, stated)
+        declared = self._sidecar(inv_id, "hypothesis_subjects.json")
+        return {} if declared is None else kept_subjects(declared, stated)
+
+    # Re-minted rather than trusted: the keys crossed a queue boundary as a file,
+    # and one in the shared-IOC vocabulary returns no rows rather than an error.
+    def _recall_keys(self, inv_id: str) -> List[str]:
+        return normalise_keys(self._sidecar(inv_id, "recall_keys.json"))
 
     async def _enqueue_investigation(self, inv_record: Dict) -> None:
         inv_id = inv_record["investigation_id"]
@@ -675,6 +687,10 @@ class Orchestrator:
             "prompt": self.workdir.read_file(inv_id, "context.md") or "",
             "hypotheses": hypotheses,
             "hypothesis_subjects": self._hypothesis_subjects(inv_id, hypotheses),
+            # What the run opens its episodic read on. A hunt derives its own from
+            # the hypotheses being put up; an investigation has none, so its keys
+            # are the entities the findings it was opened on carry.
+            "recall_keys": self._recall_keys(inv_id),
             # ORCHESTRATOR_MAX_COST and ORCHESTRATOR_MAX_RUNTIME keep their meaning
             # as the ceilings the budget seam refuses the next call at.
             "overrides": {
@@ -910,7 +926,6 @@ class Orchestrator:
                 _inv_completed.add(1)
             self.stats["reviews_completed"] += 1
             self.shared_intel.close_investigation(inv_id, state.get("case_id"))
-            self._persist_investigation_to_palace(inv_id, state)
 
             self.workdir.append_log(
                 inv_id,
@@ -1106,102 +1121,6 @@ class Orchestrator:
     # -------------------------------------------------------------------------
     # AI Decision Logging
     # -------------------------------------------------------------------------
-
-    def _init_mempalace(self):
-        """Initialize MemPalace data directory for daemon persistence.
-
-        MemPalace is a core dependency (not user-toggleable) — investigation
-        summaries are always written as JSON files directly into the palace
-        data directory, and the MemPalace Searcher is used for cross-run
-        lookups. The legacy MEMPALACE_DAEMON_ENABLED env gate is honoured
-        only when explicitly set to "false" to allow emergency disable in
-        broken environments.
-        """
-        if get_settings().mempalace_daemon_enabled is False:
-            logger.warning(
-                "MemPalace daemon integration disabled via MEMPALACE_DAEMON_ENABLED=false "
-                "(core dependency — only disable for emergency debugging)"
-            )
-            return None
-        try:
-            # Route through the single helper (#129) so the daemon,
-            # MCP server, and ClaudeService all resolve the same path.
-            from core.platform.mempalace_paths import (
-                get_closed_cases_dir,
-                get_palace_path,
-            )
-
-            data_dir = get_palace_path()
-            get_closed_cases_dir()  # mkdir side-effect for investigation snapshots
-            logger.info(f"MemPalace daemon integration enabled (data_dir={data_dir})")
-            return data_dir
-        except Exception as e:
-            logger.debug(f"MemPalace daemon init failed: {e}")
-            return None
-
-    def _persist_investigation_to_palace(self, inv_id: str, state: Dict) -> None:
-        """Store completed investigation summary as a JSON file in the palace data directory."""
-        if not self._mp:
-            return
-        try:
-            closed_cases_dir = self._mp / "investigations" / "closed-cases"
-            closed_cases_dir.mkdir(parents=True, exist_ok=True)
-            safe_id = inv_id.replace("/", "_")
-            dest = closed_cases_dir / f"{safe_id}.json"
-            dest.write_text(
-                json.dumps(
-                    {
-                        "inv_id": inv_id,
-                        "workflow_id": state.get("workflow_id"),
-                        "summary": state.get("summary", ""),
-                        "proposed_actions": state.get("proposed_actions", []),
-                        "completed_steps": state.get("completed_steps", []),
-                        "case_id": state.get("case_id"),
-                        "completed_at": utcnow().isoformat(),
-                    },
-                    indent=2,
-                )
-            )
-            logger.debug(f"Persisted investigation {inv_id} to MemPalace closed-cases")
-        except Exception as e:
-            logger.debug(f"MemPalace investigation persist failed: {e}")
-
-    def _fetch_prior_palace_context(self, finding: Dict) -> str:
-        """Query MemPalace Searcher for prior intelligence on a finding's entity set."""
-        if not self._mp:
-            return ""
-        try:
-            from mempalace.searcher import search_memories
-
-            ctx = finding.get("entity_context") or {}
-            terms = []
-            for ip in (ctx.get("src_ips") or []) + (
-                ctx.get("dest_ips") or ctx.get("dst_ips") or []
-            ):
-                terms.append(ip)
-            if ctx.get("src_ip"):
-                terms.append(ctx["src_ip"])
-            if ctx.get("dst_ip"):
-                terms.append(ctx["dst_ip"])
-            for d in ctx.get("domains") or []:
-                terms.append(d)
-            for h in ctx.get("file_hashes") or []:
-                terms.append(h)
-            if not terms:
-                return ""
-
-            query = " ".join(terms[:8])
-            results = search_memories(query=query, palace_path=str(self._mp))
-            if not results:
-                return ""
-
-            lines = ["## Prior Intelligence from MemPalace\n"]
-            for r in (results or [])[:5]:
-                lines.append(f"- {str(r)[:300]}")
-            return "\n".join(lines)
-        except Exception as e:
-            logger.debug(f"MemPalace prior context fetch failed: {e}")
-            return ""
 
     def _log_ai_decision(
         self,

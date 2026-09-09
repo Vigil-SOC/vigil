@@ -49,11 +49,6 @@ elif ! node -e "process.exit(parseInt(process.version.slice(1))>=18?0:1)" 2>/dev
     echo "Node.js 18+ required. Frontend + agent layer will not start."; SKIP_FRONTEND=1; SKIP_AGENT=1
 fi
 
-# --- Git submodules ---
-if [ -d ".git" ] && [ ! -f "mempalace/pyproject.toml" ] && [ ! -f "mempalace/setup.py" ]; then
-    git submodule update --init --recursive || echo "Warning: submodule init failed."
-fi
-
 # --- Python environment ---
 ensure_venv
 install_python_deps
