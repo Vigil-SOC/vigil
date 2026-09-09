@@ -37,29 +37,36 @@ import type { SectionProps } from './types'
 
 // The label comes from the backend's verdict (core/llm/bifrost/mirror.py), which
 // is the only thing that knows whether a `list_models_failed` was a refusal or a
-// check that could never have run. `status` is the fallback for a key the
-// verdict call didn't cover — showing "Rejected" for a key that routes fine sent
-// people looking for a fault that isn't there.
+// check that could never have run. Without a verdict this cannot tell those
+// apart, so it does not guess: `list_models_failed` reads as unverified rather
+// than Rejected, because showing Rejected for a key that routes fine sent
+// people looking for a fault that isn't there. `success` is the one status that
+// speaks for itself.
 function KeyStatusChip({ status, description, verdict }: {
   status?: string
   description?: string
   verdict?: KeyVerdict
 }) {
-  const health = verdict?.health ?? (status === 'success' ? 'healthy' : undefined)
-  if (health === 'healthy') return <span className="status closed">Healthy</span>
-  if (health === 'unverified' || !status || status === 'unknown') {
-    return <span className="chip">Unverified</span>
+  if (verdict?.health === 'healthy' || (!verdict && status === 'success')) {
+    return <span className="status closed">Healthy</span>
   }
-  if (health === 'unverifiable') {
+  if (verdict?.health === 'unverifiable') {
     return (
       <span className="chip" title={description}>
         Unverifiable
       </span>
     )
   }
+  if (verdict?.health === 'rejected') {
+    return (
+      <span className="chip" style={{ color: 'var(--crit)' }} title={description || status}>
+        {status === 'list_models_failed' ? 'Rejected' : status}
+      </span>
+    )
+  }
   return (
-    <span className="chip" style={{ color: 'var(--crit)' }} title={description || status}>
-      {status === 'list_models_failed' ? 'Rejected' : status}
+    <span className="chip" title={verdict ? description : status}>
+      Unverified
     </span>
   )
 }
@@ -235,7 +242,7 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
                               ? 'All'
                               : `${k.models?.length || 0} allowed`}
                           </td>
-                          <td><KeyStatusChip status={k.status} description={k.description} verdict={verdicts.keys[k.id]} /></td>
+                          <td><KeyStatusChip status={k.status} description={k.description} verdict={verdicts?.keys[k.id]} /></td>
                           <td style={{ textAlign: 'right' }}>
                             <div className="inline-flex gap-1.5">
                               <button
@@ -411,11 +418,11 @@ export function KeyDialog({
         models: allowAll ? ['*'] : chosen,
       }
       if (isOllama) {
-        // Blank on an edit means "keep what's there": hand back the env
-        // reference when there is one, and otherwise omit the field so the
-        // backend substitutes its stored copy.
-        const kept = url.trim() || storedUrlEnv
-        if (kept) base.ollama_key_config = { url: kept }
+        // Always sent, even empty: Bifrost takes an absent block literally and
+        // blanks the endpoint. Blank means "keep what's there" — hand back the
+        // env reference when there is one, and otherwise let the backend
+        // substitute its stored copy.
+        base.ollama_key_config = { url: url.trim() || storedUrlEnv }
         // The mode is the instruction, so the two blank cases differ: an empty
         // `value` under No auth says "there is no token", while omitting the
         // field under API key says "keep the stored one". Sending nothing in

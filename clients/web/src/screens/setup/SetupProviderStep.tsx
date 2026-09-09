@@ -62,11 +62,20 @@ export default function SetupProviderStep({ onSaved }: { onSaved: () => void }) 
     <div className="flex flex-col gap-3">
       {localErr && <Banner kind="err">{localErr}</Banner>}
 
+      {/* A missing verdict marks every provider unroutable, which would
+          otherwise stall this step with nothing on screen to say why. */}
+      {verdicts === null && (
+        <Banner kind="err">
+          Couldn’t check whether the gateway’s keys can route — a key you add may show
+          as unroutable until this succeeds.
+        </Banner>
+      )}
+
       {providers.length > 0 && (
         <div className="flex flex-col gap-1.5">
           {providers.map((p) => {
             const pk = keys[p.name] || []
-            const routable = verdicts.providers[p.name] ?? false
+            const routable = verdicts?.providers[p.name] ?? false
             return (
               <div
                 key={p.name}

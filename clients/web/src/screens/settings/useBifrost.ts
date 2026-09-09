@@ -28,10 +28,12 @@ export function useBifrostProviders() {
   const [providers, setProviders] = useState<BifrostProvider[]>([])
   const [keys, setKeys] = useState<Record<string, BifrostKey[]>>({})
   // Whether each key routes, and how to badge it — decided server-side so this
-  // hook never re-derives Bifrost's ambiguous statuses. Empty until loaded, and
-  // left empty if the call fails: no verdict reads as "not routable", which is
-  // the safe direction for a gate.
-  const [verdicts, setVerdicts] = useState<BifrostRoutability>({ providers: {}, keys: {} })
+  // hook never re-derives Bifrost's ambiguous statuses. `null` means the verdict
+  // could not be fetched, which is not the same as a verdict of "not routable":
+  // an empty map read as the latter and put a red Rejected chip back on a key
+  // that routes fine, which is the bug the verdict exists to fix. Callers have
+  // to handle the third state.
+  const [verdicts, setVerdicts] = useState<BifrostRoutability | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -59,7 +61,7 @@ export function useBifrostProviders() {
           bifrostApi
             .routability()
             .then((r) => r.data)
-            .catch(() => ({ providers: {}, keys: {} }) as BifrostRoutability),
+            .catch(() => null),
         ])
         if (cancelled) return
         setProviders(list)
