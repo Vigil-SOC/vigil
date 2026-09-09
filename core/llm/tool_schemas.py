@@ -91,6 +91,23 @@ SECURITY_DETECTION_TOOLS = [
             },
         },
     },
+    {
+        "name": "lint_detections",
+        "description": "Lint Sigma detection rules for match keys tied to a specific IP, hostname, user, or subnet. Returns rewrite guidance to make the rule behavioural. Pass rule_yaml for one rule or source_path to walk .yml files under an existing source. Does not block importing community rule sources.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "rule_yaml": {
+                    "type": "string",
+                    "description": "Sigma rule YAML to lint. Pass this or source_path, not both.",
+                },
+                "source_path": {
+                    "type": "string",
+                    "description": "Directory of Sigma .yml files (or a single .yml file) to lint.",
+                },
+            },
+        },
+    },
 ]
 
 # DeepTempo Findings Tools (Already implemented in backend)
