@@ -1,8 +1,8 @@
 import { format } from 'date-fns'
+import { findingEndpoints, sourceTime, sourceTimestamp } from './findingPresentation'
 import {
   MISSING_FINDING_SCORE,
   MISSING_FINDING_SEVERITY,
-  MISSING_FINDING_TIME,
   type CaseRow,
   type Finding,
 } from './data'
@@ -133,7 +133,7 @@ function topTechnique(preds?: Record<string, number>): { tech: string; conf: num
 }
 
 /** already surfaced as fixed columns; the rest become `extra` */
-const MAPPED_ENTITY_KEYS = new Set(['hostnames', 'usernames'])
+const MAPPED_ENTITY_KEYS = new Set(['hostnames', 'usernames', 'source_evidence'])
 
 function extraEntities(ec: ApiFinding['entity_context']): Record<string, string> | undefined {
   if (!ec) return undefined
@@ -151,6 +151,8 @@ export function mapApiFinding(f: ApiFinding): Finding {
   const ec = f.entity_context
   return {
     id: f.finding_id,
+    title: f.title,
+    ...findingEndpoints(ec),
     sev: findingSev(f.severity),
     tech,
     conf,
@@ -158,8 +160,8 @@ export function mapApiFinding(f: ApiFinding): Finding {
     src: f.data_source || DASH,
     host: ec?.hostnames?.[0] || DASH,
     user: ec?.usernames?.[0] || DASH,
-    time: f.timestamp ? fmt(f.timestamp, 'MMM d, HH:mm') : MISSING_FINDING_TIME,
-    ts: epochMs(f.timestamp ?? undefined),
+    time: sourceTime(f.timestamp),
+    ts: sourceTimestamp(f.timestamp),
     score: typeof f.anomaly_score === 'number' ? f.anomaly_score : null,
     status: findingStatus(f.status),
     extra: extraEntities(ec),

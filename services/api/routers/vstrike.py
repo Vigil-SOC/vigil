@@ -17,13 +17,14 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, IPvAnyAddress, field_validator
 
 from core.config import get_settings
 from core.integrations.vstrike.client import (
     VStrikeToolNotImplemented,
     get_vstrike_service,
 )
+from core.integrations.vstrike.events import project_faults
 from core.integrations.vstrike.schemas import (
     VStrikeFindingResult,
     VStrikeHealthResponse,
@@ -569,6 +570,61 @@ def ui_camera_node(request: VStrikeCameraNodeRequest) -> dict:
         logger.error("VStrike ui-camera-node failed: %s", e)
         raise HTTPException(status_code=502, detail=str(e))
     return {"ok": True, "result": result}
+
+
+class VStrikeFocusRequest(BaseModel):
+    network_id: str = Field(min_length=1, max_length=256)
+    ip4s: list[IPvAnyAddress] = Field(min_length=1, max_length=50)
+
+    @field_validator("network_id")
+    @classmethod
+    def nonblank_network(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("network_id is required")
+        return value.strip()
+
+    @field_validator("ip4s")
+    @classmethod
+    def ipv4_only(cls, addresses: list[IPvAnyAddress]) -> list[IPvAnyAddress]:
+        if any(address.version != 4 for address in addresses):
+            raise ValueError("VStrike selection currently supports IPv4 only")
+        return addresses
+
+
+@authenticated_router.post("/ui/find-by-ip-then-zoom")
+def ui_find_by_ip_then_zoom(request: VStrikeFocusRequest) -> dict:
+    """Forward an explicit selection request without asserting visual success."""
+    service = _ui_service_or_503()
+    addresses = list(dict.fromkeys(str(address) for address in request.ip4s))
+    try:
+        service.ui_find_by_ip_then_zoom(request.network_id, addresses)
+    except VStrikeToolNotImplemented:
+        raise HTTPException(501, "VStrike does not support selection by IPv4 address.")
+    except Exception:
+        # Provider exceptions can contain authenticated URLs or response bodies.
+        raise HTTPException(502, "VStrike could not accept the selection request.")
+    return {"status": "requested", "network_id": request.network_id, "ip4s": addresses}
+
+
+class VStrikeFaultQueryRequest(BaseModel):
+    storyline_id: str = Field(min_length=1, max_length=256, pattern=r"\S")
+    limit: int = Field(default=100, ge=1, le=250)
+
+
+@authenticated_router.post("/faults/query")
+def query_faults(request: VStrikeFaultQueryRequest) -> dict:
+    """Read a bounded external event page. This route never writes findings."""
+    service = _ui_service_or_503()
+    try:
+        events = service.storyline_faults_page(request.storyline_id, request.limit)
+    except Exception:
+        raise HTTPException(502, "VStrike events could not be read. Try again.")
+    return {
+        "faults": project_faults(events),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "limit": request.limit,
+        "truncated": len(events) >= request.limit,
+    }
 
 
 class VStrikeCameraPositionRequest(BaseModel):

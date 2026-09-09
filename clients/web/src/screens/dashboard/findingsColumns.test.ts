@@ -37,10 +37,10 @@ describe('adaptive findings columns', () => {
     expect(deviceCol.render(splunk)).toMatchObject({ props: { children: '—' } })
   })
 
-  it('preserves the default 11-column view', () => {
+  it('provides the endpoint column and keeps detailed fields optional', () => {
     const base = baseFindingColumns(() => {}, () => {})
-    expect(base).toHaveLength(11)
+    expect(base).toHaveLength(12)
     expect(base.filter((c) => c.sortVal).map((c) => c.key)).toEqual(['sev', 'time', 'score', 'status'])
-    expect(base.filter((c) => c.searchVal).map((c) => c.key)).toEqual(['id', 'tech', 'src', 'host', 'user'])
+    expect(base.filter((c) => c.searchVal).map((c) => c.key)).toEqual(['id', 'tech', 'endpoints', 'src', 'host', 'user'])
   })
 })

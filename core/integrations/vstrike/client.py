@@ -751,6 +751,50 @@ class VStrikeService:
             args["networkId"] = network_id
         return self._call_mcp_tool("ui-camera-node", args)
 
+    def ui_find_by_ip_then_zoom(self, network_id: str, ip4s: List[str]) -> Any:
+        """Request a selection; tool acceptance does not confirm rendered focus."""
+        try:
+            return self._call_mcp_tool(
+                "ui-find-by-ip-then-zoom", {"networkId": network_id, "ip4s": ip4s}
+            )
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            if any(
+                term in message
+                for term in (
+                    "-32601",
+                    "method not found",
+                    "tool not found",
+                    "unknown tool",
+                    "not implemented",
+                    "unsupported",
+                )
+            ):
+                raise VStrikeToolNotImplemented(
+                    "VStrike does not support selection by IPv4 address."
+                ) from exc
+            raise
+
+    def storyline_faults_page(
+        self, storyline_id: str, limit: int
+    ) -> List[Dict[str, Any]]:
+        """Read one bounded newest-first page using the storyline-set contract."""
+        result = self._call_mcp_tool(
+            "storyline-events-get",
+            {
+                "storylineSetId": storyline_id,
+                "level": "danger",
+                "first": 0,
+                "rows": limit,
+                "sortField": "date",
+                "sortOrder": "desc",
+            },
+        )
+        events = _extract_list(result, ("events", "results", "items", "data"))
+        if events is None:
+            raise RuntimeError("VStrike returned an invalid event page.")
+        return events[:limit]
+
     def ui_camera_position(
         self,
         position: Dict[str, float],
@@ -770,7 +814,7 @@ class VStrikeService:
         self, storyline_id: str, *, network_id: Optional[str] = None
     ) -> Any:
         """Apply the specified storyline to the active network view."""
-        args: Dict[str, Any] = {"storylineId": storyline_id}
+        args: Dict[str, Any] = {"storylineSetId": storyline_id}
         if network_id:
             args["networkId"] = network_id
         return self._call_mcp_tool("ui-storyline-apply", args)
@@ -784,17 +828,11 @@ class VStrikeService:
 
     def ui_storyline_forward(self, *, network_id: Optional[str] = None) -> Any:
         """Step forward in the storyline timeline."""
-        args: Dict[str, Any] = {}
-        if network_id:
-            args["networkId"] = network_id
-        return self._call_mcp_tool("ui-storyline-forward", args)
+        return self._call_mcp_tool("ui-storyline-forward", {})
 
     def ui_storyline_backward(self, *, network_id: Optional[str] = None) -> Any:
         """Step backward in the storyline timeline."""
-        args: Dict[str, Any] = {}
-        if network_id:
-            args["networkId"] = network_id
-        return self._call_mcp_tool("ui-storyline-backward", args)
+        return self._call_mcp_tool("ui-storyline-backward", {})
 
     # ------------------------------------------------------------------ #
     # Defensive wrappers for VStrike's net-new MCP tools.

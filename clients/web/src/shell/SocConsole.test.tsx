@@ -225,14 +225,14 @@ describe('SocConsole', () => {
     }
   })
 
-  it('switches every Dashboard tab including the interactive Timeline', async () => {
+  it('switches the available Dashboard tabs and hides VStrike when disabled', async () => {
     renderConsole()
     fireEvent.click(screen.getByRole('tab', { name: 'ATT&CK' }))
     expect(screen.getByText(/Techniques by occurrence/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'Timeline' }))
     expect(await screen.findByText(/events$/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('tab', { name: 'Entity Graph' }))
-    expect(screen.getByText('No entity graph yet')).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: 'VStrike' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /VStrike/ })).not.toBeInTheDocument()
   })
 
   it('restores and clears versioned findings preferences', async () => {

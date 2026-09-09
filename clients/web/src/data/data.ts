@@ -32,6 +32,9 @@ export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
 
 export interface Finding {
   id: string
+  title?: string
+  sourceIp?: string
+  destinationIp?: string
   sev: 'Critical' | 'High' | 'Medium' | 'Low' | 'Unrated'
   tech: string
   conf: number

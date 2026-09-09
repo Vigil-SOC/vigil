@@ -358,7 +358,7 @@ function SocConsoleInner() {
           (the dock has its own close control, so showing both is redundant) and
           while a full-bleed detail view is open (e.g. a case detail, which has
           its own "Open in Vigil" action — two Vigil buttons would be redundant) */}
-      {!chatOpen && !viewFull && (
+      {!chatOpen && !viewFull && current !== 'dashboard' && (
         <button
           className="chat-fab"
           title="Ask Vigil - AI assistant"

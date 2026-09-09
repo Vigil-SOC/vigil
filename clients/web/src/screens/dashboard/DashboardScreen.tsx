@@ -1,3 +1,6 @@
+import { useExtensions } from '../../extensions/ExtensionProvider'
+import VStrikePanel, { type GraphRequest } from '../../integrations/vstrike/VStrikePanel'
+import FindingsDrawer from './FindingsDrawer'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { Pie, Hbars } from '../../shared/charts'
@@ -21,16 +24,39 @@ import {
   saveFindingsViewPreferences,
 } from './findingsPreferences'
 
-type DashTab = 'findings' | 'attack' | 'timeline' | 'entity'
+type DashTab = 'findings' | 'attack' | 'timeline' | 'vstrike'
 
-export default function DashboardScreen({ openChat, goSettings }: ConsoleScreenProps) {
+export default function DashboardScreen({ openChat, goSettings, go }: ConsoleScreenProps) {
+  const { enabledIntegrations, loading: integrationsLoading } = useExtensions()
+  const vstrikeEnabled = !integrationsLoading && enabledIntegrations.includes('vstrike')
   const [tab, setTab] = useState<DashTab>('findings')
+  const [visitedVStrike, setVisitedVStrike] = useState(false)
+  const [eventsOpen, setEventsOpen] = useState(false)
+  const [graphRequest, setGraphRequest] = useState<GraphRequest | null>(null)
+  const [detailId, setDetailId] = useState<string | null>(null)
+  const requestSequence = useRef(0)
+  const activeTab = tab === 'vstrike' && !vstrikeEnabled ? 'findings' : tab
+  useEffect(() => {
+    if (vstrikeEnabled) return
+    setTab((value) => value === 'vstrike' ? 'findings' : value)
+    setVisitedVStrike(false)
+    setEventsOpen(false)
+    setGraphRequest(null)
+  }, [vstrikeEnabled])
+  const showVStrike = (ips?: string[], findingId?: string) => {
+    if (ips?.length) setGraphRequest({ id: ++requestSequence.current, ips, findingId })
+    setVisitedVStrike(true); setEventsOpen(false); setDetailId(null); setTab('vstrike')
+  }
+  const openEvents = () => { setVisitedVStrike(true); setEventsOpen(true) }
+  const openFindingGraph = (finding: Finding) => {
+    if (finding.sourceIp && finding.destinationIp) showVStrike([finding.sourceIp, finding.destinationIp], finding.id)
+  }
   const tabs: [DashTab, string][] = [
     ['findings', 'Findings'],
     ['attack', 'ATT&CK'],
     ['timeline', 'Timeline'],
-    ['entity', 'Entity Graph'],
   ]
+  if (vstrikeEnabled) tabs.push(['vstrike', 'VStrike'])
   return (
     <>
       <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line tabbar">
@@ -39,19 +65,25 @@ export default function DashboardScreen({ openChat, goSettings }: ConsoleScreenP
             <button
               key={k}
               role="tab"
-              aria-selected={tab === k}
-              className={`tab${tab === k ? ' active' : ''}`}
-              onClick={() => setTab(k)}
+              aria-selected={activeTab === k}
+              className={`tab${activeTab === k ? ' active' : ''}`}
+              onClick={() => { setDetailId(null); if (k === 'vstrike') showVStrike(); else setTab(k) }}
             >
               {label}
             </button>
           ))}
         </div>
       </div>
-      {tab === 'findings' && <FindingsTab openChat={openChat} goSettings={goSettings} />}
-      {tab === 'attack' && <AttackTab />}
-      {tab === 'timeline' && <TimelineTab />}
-      {tab === 'entity' && <EntityStub />}
+      <div hidden={activeTab !== 'findings'}>
+        <FindingsTab active={activeTab === 'findings'} openChat={openChat} goSettings={goSettings} go={go}
+          detailId={detailId} onDetail={setDetailId} onVStrike={vstrikeEnabled ? openFindingGraph : undefined} onEvents={vstrikeEnabled ? openEvents : undefined} />
+      </div>
+      {activeTab === 'attack' && <AttackTab />}
+      {activeTab === 'timeline' && <TimelineTab />}
+      {vstrikeEnabled && visitedVStrike && <VStrikePanel active={activeTab === 'vstrike'} request={graphRequest} eventsOpen={eventsOpen}
+        onCloseEvents={() => setEventsOpen(false)} onOpenEvents={openEvents} onFocus={(ips) => showVStrike(ips)}
+        onBack={() => setTab('findings')} onBackToFinding={(id) => { setTab('findings'); setDetailId(id) }}
+        onConfigure={() => goSettings('integrations')} />}
     </>
   )
 }
@@ -66,7 +98,9 @@ function findingPrompt(f: Finding): string {
   return `Investigate finding ${f.id} — ${parts.join(', ')}. What happened and what should I do next?`
 }
 
-function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openChat' | 'goSettings'>) {
+function FindingsTab({ openChat, goSettings, go, active, detailId, onDetail, onVStrike, onEvents }: Pick<ConsoleScreenProps, 'openChat' | 'goSettings' | 'go'> & {
+  active: boolean; detailId: string | null; onDetail: (id: string | null) => void; onVStrike?: (finding: Finding) => void; onEvents?: () => void
+}) {
   const { notify } = useToast()
   const { rows, phase, error, reload } = useFindings()
   const { kpis, reload: reloadKpis } = useDashboardKpis()
@@ -74,9 +108,18 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
   const [query, setQuery] = useState('')
   const [sev, setSev] = useState(initialPreferences.severity)
   const [src, setSrc] = useState(initialPreferences.source)
-  const [detailId, setDetailId] = useState<string | null>(null)
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
+  const [columnsOpen, setColumnsOpen] = useState(false)
+  const [columnQuery, setColumnQuery] = useState('')
+  const tableRef = useRef<HTMLDivElement>(null)
+  const savedScroll = useRef({ top: 0, left: 0 })
+  useLayoutEffect(() => {
+    if (active && tableRef.current) {
+      tableRef.current.scrollTop = savedScroll.current.top
+      tableRef.current.scrollLeft = savedScroll.current.left
+    }
+  }, [active])
   // null = untouched, so use each column's default visibility. An empty Set is
   // meaningfully different: the user unhid everything.
   const [hiddenCols, setHiddenCols] = useState<Set<string> | null>(
@@ -87,12 +130,13 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
   // code change here
   const allColumns = useMemo(() => {
     const base = baseFindingColumns(
-      (f) => setDetailId(f.id),
+      (f) => onDetail(f.id),
       (f) => openChat(findingPrompt(f)),
+      onVStrike,
     )
     const extra = extraFindingColumns(rows)
     return [...base.slice(0, -1), ...extra, base[base.length - 1]]
-  }, [rows, openChat])
+  }, [rows, openChat, onVStrike, onDetail])
 
   const defaultHidden = useMemo(
     () => new Set(allColumns.filter((c) => c.visible === false).map((c) => c.key)),
@@ -168,27 +212,27 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
 
   return (
     <>
-      <div className="grid grid-cols-4 border-b border-line">
-        <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
+      <div className="findings-kpis grid grid-cols-2 md:grid-cols-4 border-b border-line">
+        <button aria-label="Clear findings filters" onClick={() => { setQuery(''); setSev('any'); setSrc('any') }} className="text-left relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Total Findings</span>
           <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{kpi(kpis?.findingsTotal)}</span></div>
           <span className="text-xs text-tx-faint">{kpis ? `${kpis.findingsCritical} critical · ${kpis.findingsHigh} high` : ' '}</span>
-        </div>
-        <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
+        </button>
+        <button aria-label="Open active cases" onClick={() => { go('cases') }} className="text-left relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Active Cases</span>
-          <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{kpi(kpis?.casesTotal)}</span></div>
+          <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{kpi(kpis ? kpis.casesOpen + kpis.casesInvestigating : undefined)}</span></div>
           <span className="text-xs text-tx-faint">{kpis ? `${kpis.casesOpen} open · ${kpis.casesInvestigating} investigating` : ' '}</span>
-        </div>
-        <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
+        </button>
+        <button aria-label="Filter critical findings" onClick={() => { setSev((value) => value === 'critical' ? 'any' : 'critical') }} className="text-left relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Critical Alerts</span>
           <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-crit">{kpi(kpis?.findingsCritical)}</span></div>
           <span className="text-xs text-tx-faint">requires immediate attention</span>
-        </div>
-        <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
+        </button>
+        <button aria-label="Filter high findings" onClick={() => { setSev((value) => value === 'high' ? 'any' : 'high') }} className="text-left relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0">
           <span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">High Priority</span>
           <div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-high">{kpi(kpis?.findingsHigh)}</span></div>
           <span className="text-xs text-tx-faint">review within 24h</span>
-        </div>
+        </button>
       </div>
 
       <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
@@ -198,7 +242,7 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
         </div>
         <FilterButton
           activeCount={(sev !== 'any' ? 1 : 0) + (src !== 'any' ? 1 : 0)}
-          onClearAll={() => { setSev('any'); setSrc('any'); setHiddenCols(null) }}
+          onClearAll={() => { setSev('any'); setSrc('any') }}
         >
           <FilterGroup
             label="Severity"
@@ -215,8 +259,16 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
             ]}
           />
           <FilterGroup label="Source" value={src} onSelect={setSrc} options={srcOptions} />
+
+        </FilterButton>
+        <button className="btn ghost" onClick={() => setColumnsOpen(true)}>Columns</button>
+        {onEvents && <button className="btn ghost" onClick={onEvents}>VStrike events</button>}
+        <button className="btn ghost" onClick={() => openChat()}><Icon name="brain" />Ask Vigil</button>
+        {columnsOpen && <FindingsDrawer title="Columns" onClose={() => setColumnsOpen(false)}>
+          <p className="muted">Choose which fields appear in the findings queue.</p>
+          <div className="search"><input aria-label="Search columns" placeholder="Search columns…" value={columnQuery} onChange={(event) => setColumnQuery(event.target.value)} /></div>
           <ColumnPicker
-            columns={allColumns}
+            columns={allColumns.filter((column) => column.label.toLowerCase().includes(columnQuery.toLowerCase()))}
             hidden={effectiveHidden}
             onToggle={(key) => setHiddenCols((h) => {
               const next = new Set(h ?? defaultHidden)
@@ -225,7 +277,8 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
               return next
             })}
           />
-        </FilterButton>
+          <button className="btn ghost" onClick={() => setHiddenCols(null)}>Restore default columns</button>
+        </FindingsDrawer>}
         <div className="flex-1" />
         <button className="btn ghost icon" title="Refresh" onClick={refresh}><Icon name="refresh" /></button>
         <button
@@ -236,7 +289,14 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
         ><Icon name="download" /> Export</button>
       </div>
 
-      <div className="table-wrap list-scroll list-scroll-kpi">
+      {(query || sev !== 'any' || src !== 'any') && <div className="findings-chips">
+        {query && <button className="chip" onClick={() => setQuery('')}>Search: {query} ×</button>}
+        {sev !== 'any' && <button className="chip" onClick={() => setSev('any')}>Severity: {sev} ×</button>}
+        {src !== 'any' && <button className="chip" onClick={() => setSrc('any')}>Source: {src} ×</button>}
+        <button className="btn ghost" onClick={() => { setQuery(''); setSev('any'); setSrc('any') }}>Clear all filters</button>
+      </div>}
+      <div className="table-wrap list-scroll list-scroll-kpi" ref={tableRef}
+        onScroll={(event) => { if (active) savedScroll.current = { top: event.currentTarget.scrollTop, left: event.currentTarget.scrollLeft } }}>
         <DataTable
           columns={columns}
           rows={paged}
@@ -245,7 +305,7 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
           error={error}
           sort={sort}
           onSort={toggleSort}
-          onRowClick={(f) => setDetailId(f.id)}
+          onRowClick={(f) => onDetail(f.id)}
           onRetry={refresh}
           className="tbl findings-tbl"
           loadingMessage={<EmptyState loading table compact icon="search" title="Loading findings…" />}
@@ -288,7 +348,7 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
           ><Icon name="chevR" size={14} /></button>
         </span>
       </div>
-      <FindingPopup id={detailId} onClose={() => setDetailId(null)} onChanged={() => { reload(); reloadKpis() }} onConfigureAi={() => goSettings('ai-config')} />
+      <FindingPopup id={active ? detailId : null} onOpenInVStrike={onVStrike} onClose={() => onDetail(null)} onChanged={() => { reload(); reloadKpis() }} onConfigureAi={() => goSettings('ai-config')} />
     </>
   )
 }
@@ -414,17 +474,6 @@ function AttackTab() {
   )
 }
 
-function EntityStub() {
-  return (
-    <div className="entity-empty">
-      <EmptyState
-        icon="graph"
-        title="No entity graph yet"
-        body="Host, user, and source relationships appear here once findings include entity fields."
-      />
-    </div>
-  )
-}
 
 const DAY = 86400000
 

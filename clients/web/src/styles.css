@@ -6868,3 +6868,54 @@
 .hunt-hero-example:hover { border-color: var(--accent-line); color: var(--tx); background: var(--bg-2); }
 .hunt-hero-example svg { flex: 0 0 auto; color: var(--accent-2); }
 .hunt-hero-tip { margin-top: 16px; font-size: 12px; line-height: 1.5; max-width: 460px; }
+
+/* Findings queue and optional external network context. */
+.finding-title-cell { display: grid; gap: 4px; min-width: 190px; max-width: 340px; white-space: normal; }
+.finding-title-cell > button { text-align: left; font-weight: 600; color: var(--tx); }
+.finding-title-cell > small { font-size: 11px; overflow-wrap: anywhere; }
+.finding-actions { display: inline-flex; align-items: center; gap: 8px; }
+.finding-actions .row-act { display: inline-flex; }
+.finding-vstrike { white-space: nowrap; }
+.findings-tbl td:last-child, .findings-tbl th:last-child { position: sticky; right: 0; background: var(--panel); z-index: 1; }
+.findings-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 22px; border-bottom: 1px solid var(--line); }
+.finding-context-summary { margin: 12px 0 20px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; overflow-wrap: anywhere; }
+.finding-context-summary h3 { margin: 0; font-size: 16px; }
+.findings-drawer { position: fixed; inset: 0 0 0 auto; margin: 0; height: 100dvh; max-height: 100dvh; width: min(540px, 100vw); max-width: 100vw; color: var(--tx, #20232a); background: var(--panel, #fff); border: 0; border-left: 1px solid var(--line, #ddd); padding: 0; box-shadow: -10px 0 50px #0002; }
+.findings-drawer::backdrop { background: #10152650; }
+.findings-drawer > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 18px 22px; border-bottom: 1px solid var(--line, #ddd); }
+.findings-drawer h2 { margin: 0; font-size: 18px; }
+.findings-drawer-body { padding: 20px 22px; overflow-y: auto; height: calc(100% - 76px); }
+.vstrike-panel { padding: 16px 22px 24px; }
+.vstrike-parked { position: fixed; left: -20000px; top: 0; width: 1280px; height: 720px; visibility: hidden; pointer-events: none; }
+.vstrike-fullscreen { position: fixed; inset: 0; z-index: 90; overflow: auto; background: var(--panel, #fff); }
+.vstrike-controls, .vstrike-toolbar { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+.vstrike-controls label { display: flex; flex-direction: column; gap: 5px; font-size: 11px; color: var(--tx-3); }
+.vstrike-controls select { width: 220px; max-width: 100%; border: 1px solid var(--line); border-radius: 7px; padding: 8px; background: var(--panel); color: var(--tx); font-size: 13px; }
+.vstrike-selection { margin-top: 14px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; overflow-wrap: anywhere; }
+.vstrike-selection .btn { margin-right: 6px; margin-top: 6px; }
+.vstrike-note { color: var(--tx-3); font-size: 12px; }
+.vstrike-error { color: var(--crit); }
+.vstrike-frame { position: relative; overflow: hidden; width: 100%; border: 1px solid var(--line); border-radius: 10px; background: #f6f7f9; }
+.vstrike-frame iframe { display: block; border: 0; transform-origin: top left; max-width: none; }
+.vstrike-event-list { display: grid; gap: 12px; }
+.vstrike-event-list article { border: 1px solid var(--line); border-radius: 10px; padding: 14px; overflow-wrap: anywhere; }
+.vstrike-event-list h3 { margin: 0 0 6px; font-size: 14px; }
+.vstrike-event-list time { color: var(--tx-3); font-size: 11px; }
+.vstrike-event-list details { margin-top: 14px; color: var(--tx-2); font-size: 12px; }
+.vstrike-event-list summary { cursor: pointer; }
+.vstrike-event-list dl > div { display: grid; grid-template-columns: 80px 1fr; gap: 8px; }
+.vstrike-event-list dd { margin: 0; }
+.vstrike-event-action { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+@media (max-width: 700px) {
+  .vstrike-panel { padding: 12px; }
+  .vstrike-controls, .vstrike-controls label { width: 100%; }
+  .vstrike-controls select { width: 100%; }
+  .finding-actions .row-act { display: none; }
+}
+
+.findings-kpis > button { background: transparent; color: var(--tx); border-top: 0; border-bottom: 0; border-left: 0; cursor: pointer; }
+.findings-kpis > button:hover { background: var(--panel); }
+.finding-title-cell > button { background: transparent; border: 0; padding: 0; font: inherit; font-weight: 600; cursor: pointer; }
+.finding-title-cell > button:hover { color: var(--accent); }
+.findings-drawer .filter-group-label { display: none; }
+.findings-drawer .search { margin-bottom: 12px; width: 100%; max-width: none; }

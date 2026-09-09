@@ -14,6 +14,7 @@ ignore HSTS on plain HTTP anyway and emitting it would be noise.
 import logging
 from typing import Callable, Optional
 
+from starlette.concurrency import run_in_threadpool
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
@@ -106,6 +107,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             get_settings().vigil_csp_enabled if csp_enabled is None else csp_enabled
         )
         self.csp_policy = csp_policy or get_settings().vigil_csp_policy or DEFAULT_CSP
+        self.default_frame_policy = not (csp_policy or get_settings().vigil_csp_policy)
         # Admit allowlisted connector origins so the browser may import their
         # bundle + call their BFF. Read once at startup (restart to change).
         try:
@@ -148,7 +150,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             )
 
         if self.csp_enabled:
-            response.headers.setdefault("Content-Security-Policy", self.csp_policy)
+            policy = self.csp_policy
+            if self.default_frame_policy and "text/html" in response.headers.get(
+                "content-type", ""
+            ):
+                from core.integrations.vstrike.frame_origin import (
+                    configured_frame_origin,
+                )
+
+                try:
+                    origin = await run_in_threadpool(configured_frame_origin)
+                except Exception:
+                    origin = None
+                if origin:
+                    # Only the iframe may contact this origin. Scripts and API
+                    # connections keep their existing policy. Custom CSP wins.
+                    policy += f"; frame-src 'self' {origin}"
+            response.headers.setdefault("Content-Security-Policy", policy)
 
         if self.hsts_enabled and self._is_https(request):
             response.headers.setdefault(

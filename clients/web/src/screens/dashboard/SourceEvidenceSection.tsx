@@ -1,11 +1,11 @@
+import { sourceTime, sourceTimestamp } from '../../data/findingPresentation'
 import { SOURCE_TELEMETRY_LABELS, type SourceEvidence } from '../../data/sourceEvidence'
 import type { ReactNode } from 'react'
 
 const EMPTY = '—'
 
 function displayValue(value: unknown): string {
-  if (value === null) return 'null'
-  if (value === undefined || value === '') return EMPTY
+  if (value == null || value === '') return EMPTY
   if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
   try {
     return JSON.stringify(value)
@@ -33,13 +33,13 @@ function NetFlowTable({ evidence }: { evidence: SourceEvidence }) {
       <table className="source-evidence-table">
         <caption className="sr-only">NetFlow records attached to this finding</caption>
         <thead><tr>
-          <th scope="col">Time</th><th scope="col">Source</th><th scope="col">Destination</th>
+          <th scope="col">Time (UTC)</th><th scope="col">Source</th><th scope="col">Destination</th>
           <th scope="col">Protocol</th><th scope="col">Packets F/B</th>
           <th scope="col">Bytes F/B</th><th scope="col">Duration</th>
         </tr></thead>
         <tbody>{evidence.records.map((record, index) => (
           <tr key={`${displayValue(record.timestamp)}-${index}`}>
-            <td className="mono">{displayValue(record.timestamp)}</td>
+            <td className="mono">{sourceTime(typeof record.timestamp === 'string' ? record.timestamp : undefined)}</td>
             <td className="mono">{endpoint(record.source_ip, record.source_port)}</td>
             <td className="mono">{endpoint(record.destination_ip, record.destination_port)}</td>
             <td className="mono">{displayValue(record.protocol)}</td>
@@ -59,13 +59,13 @@ function DnsTable({ evidence }: { evidence: SourceEvidence }) {
       <table className="source-evidence-table">
         <caption className="sr-only">DNS records attached to this finding</caption>
         <thead><tr>
-          <th scope="col">Time</th><th scope="col">Client</th><th scope="col">Server</th>
+          <th scope="col">Time (UTC)</th><th scope="col">Client</th><th scope="col">Server</th>
           <th scope="col">Query</th><th scope="col">Type</th><th scope="col">Answer</th>
           <th scope="col">Rcode</th><th scope="col">TTL</th>
         </tr></thead>
         <tbody>{evidence.records.map((record, index) => (
           <tr key={`${displayValue(record.timestamp)}-${displayValue(record.query)}-${index}`}>
-            <td className="mono">{displayValue(record.timestamp)}</td>
+            <td className="mono">{sourceTime(typeof record.timestamp === 'string' ? record.timestamp : undefined)}</td>
             <td className="mono">{displayValue(record.client_ip)}</td>
             <td className="mono">{displayValue(record.server_ip)}</td>
             <td className="mono">{displayValue(record.query)}</td>
@@ -123,6 +123,9 @@ export function SourceEvidenceSection({ evidence }: { evidence?: SourceEvidence 
     )
   }
 
+  evidence = { ...evidence, records: [...evidence.records].sort((left, right) =>
+    (sourceTimestamp(typeof left.timestamp === 'string' ? left.timestamp : undefined) ?? Number.POSITIVE_INFINITY)
+    - (sourceTimestamp(typeof right.timestamp === 'string' ? right.timestamp : undefined) ?? Number.POSITIVE_INFINITY)) }
   const recordCount = evidence.records.length
   const countLabel = evidence.totalRecords > 0
     ? `${recordCount} of ${evidence.totalRecords} records`

@@ -1,3 +1,5 @@
+import FindingVStrikeAction from './FindingVStrikeAction'
+import { findingTitle } from '../../data/findingPresentation'
 import { Icon } from '../../shared/icons'
 import SourceChip from '../../shared/SourceChip'
 import type { ColumnDef } from '../../shared/DataTable'
@@ -23,12 +25,13 @@ function labelFor(key: string): string {
 export function baseFindingColumns(
   onView: (f: Finding) => void,
   onInvestigate: (f: Finding) => void,
+  onVStrike?: (f: Finding) => void,
 ): ColumnDef<Finding>[] {
   return [
     {
-      key: 'id', label: 'Finding ID',
-      render: (f) => <span className="id-cell">{f.id}</span>,
-      searchVal: (f) => f.id,
+      key: 'id', label: 'Finding',
+      render: (f) => <span className="finding-title-cell"><button onClick={(event) => { event.stopPropagation(); onView(f) }}>{findingTitle(f)}</button><small className="mono muted">{f.id}</small></span>,
+      searchVal: (f) => `${f.id} ${findingTitle(f)}`,
     },
     {
       key: 'sev', label: 'Severity',
@@ -36,28 +39,33 @@ export function baseFindingColumns(
       sortVal: (f) => SEV_RANK[f.sev], defaultDir: 'desc',
     },
     {
-      key: 'tech', label: 'MITRE Technique',
+      key: 'tech', label: 'MITRE Technique', visible: false,
       render: (f) => <><span className="tag">{f.tech}</span> <span className="muted">{f.conf}%</span></>,
       searchVal: (f) => f.tech,
     },
-    { key: 'tactic', label: 'Tactic', render: (f) => f.tactic },
+    { key: 'tactic', label: 'Tactic', visible: false, render: (f) => f.tactic },
+    {
+      key: 'endpoints', label: 'Endpoints',
+      render: (f) => <span className="mono">{f.sourceIp || NDASH} → {f.destinationIp || NDASH}</span>,
+      searchVal: (f) => `${f.sourceIp || ''} ${f.destinationIp || ''}`,
+    },
     {
       key: 'src', label: 'Source',
       render: (f) => <SourceChip source={f.src} />,
       searchVal: (f) => f.src,
     },
     {
-      key: 'host', label: 'Host',
+      key: 'host', label: 'Host', visible: false,
       render: (f) => <span className="mono">{f.host}</span>,
       searchVal: (f) => f.host,
     },
     {
-      key: 'user', label: 'User',
+      key: 'user', label: 'User', visible: false,
       render: (f) => <span className="mono muted">{f.user}</span>,
       searchVal: (f) => f.user,
     },
     {
-      key: 'time', label: 'Time',
+      key: 'time', label: 'Time (UTC)',
       render: (f) => <span className="muted">{f.time}</span>,
       sortVal: timeKey, defaultDir: 'desc',
     },
@@ -84,9 +92,11 @@ export function baseFindingColumns(
     {
       key: 'actions', label: 'Actions', headless: true,
       render: (f) => (
-        <span className="row-act">
+        <span className="finding-actions">
+          {onVStrike && <FindingVStrikeAction finding={f} onOpen={onVStrike} />}
+          <span className="row-act">
           <button title="View" onClick={(e) => { e.stopPropagation(); onView(f) }}><Icon name="eye" /></button>
-          <button title="Investigate with Vigil" onClick={(e) => { e.stopPropagation(); onInvestigate(f) }}><Icon name="brain" /></button>
+          <button title="Investigate with Vigil" onClick={(e) => { e.stopPropagation(); onInvestigate(f) }}><Icon name="brain" /></button></span>
         </span>
       ),
     },

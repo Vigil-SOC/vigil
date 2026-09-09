@@ -4584,6 +4584,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/integrations/vstrike/faults/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Query Faults
+         * @description Read a bounded external event page. This route never writes findings.
+         */
+        post: operations["post_api_integrations_vstrike_faults_query"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/integrations/vstrike/findings": {
         parameters: {
             query?: never;
@@ -4868,6 +4888,26 @@ export interface paths {
          * @description Set the camera position and rotation explicitly.
          */
         post: operations["post_api_integrations_vstrike_ui_camera-position"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/vstrike/ui/find-by-ip-then-zoom": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ui Find By Ip Then Zoom
+         * @description Forward an explicit selection request without asserting visual success.
+         */
+        post: operations["post_api_integrations_vstrike_ui_find-by-ip-then-zoom"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10796,6 +10836,16 @@ export interface components {
                 [key: string]: unknown;
             } | null;
         };
+        /** VStrikeFaultQueryRequest */
+        VStrikeFaultQueryRequest: {
+            /**
+             * Limit
+             * @default 100
+             */
+            limit: number;
+            /** Storyline Id */
+            storyline_id: string;
+        };
         /**
          * VStrikeFinding
          * @description A single finding pushed from VStrike.
@@ -10843,6 +10893,13 @@ export interface components {
              * @enum {string}
              */
             status: "updated" | "created" | "failed";
+        };
+        /** VStrikeFocusRequest */
+        VStrikeFocusRequest: {
+            /** Ip4S */
+            ip4s: string[];
+            /** Network Id */
+            network_id: string;
         };
         /**
          * VStrikeHealthResponse
@@ -18733,6 +18790,43 @@ export interface operations {
             };
         };
     };
+    post_api_integrations_vstrike_faults_query: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VStrikeFaultQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_integrations_vstrike_findings: {
         parameters: {
             query?: never;
@@ -19208,6 +19302,43 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["VStrikeCameraPositionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_integrations_vstrike_ui_find-by-ip-then-zoom": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VStrikeFocusRequest"];
             };
         };
         responses: {

@@ -1,5 +1,6 @@
-/* The embedded VStrike NetworkContextPanel is deliberately not ported: it needs
-   the VStrike provider, which isn't mounted under the console shell. */
+import FindingVStrikeAction from './FindingVStrikeAction'
+import { findingTitle } from '../../data/findingPresentation'
+import type { Finding } from '../../data/data'
 import { useEffect, useState } from 'react'
 import { findingsApi } from '../../services/api'
 import { mapApiFinding, formatFindingScore, type ApiFinding } from '../../data/mappers'
@@ -161,11 +162,13 @@ export default function FindingPopup({
   onClose,
   onChanged,
   onConfigureAi,
+  onOpenInVStrike,
 }: {
   id: string | null
   onClose: () => void
   onChanged?: () => void
   onConfigureAi?: () => void
+  onOpenInVStrike?: (finding: Finding) => void
 }) {
   const [raw, setRaw] = useState<RawFinding | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
@@ -318,11 +321,17 @@ export default function FindingPopup({
             </div>
           </div>
 
+          <div className="finding-context-summary">
+            <h3>{findingTitle(f)}</h3>
+            <p className="mono">{f.sourceIp || 'Source IPv4 unavailable'} → {f.destinationIp || 'Destination IPv4 unavailable'}</p>
+            {sourceEvidence?.status === 'available' && <p>{sourceEvidence.totalRecords} source records{sourceEvidence.truncated ? ' · preview truncated' : ''}</p>}
+            {onOpenInVStrike && <FindingVStrikeAction finding={f} onOpen={onOpenInVStrike} />}
+          </div>
           <div className="kv-grid fp-grid">
             <span className="k">Source</span><span className="v"><SourceChip source={f.src} /></span>
             <span className="k">Host</span><span className="v mono">{f.host}</span>
             <span className="k">User</span><span className="v mono">{f.user}</span>
-            <span className="k">Time</span><span className="v">{f.time}</span>
+            <span className="k">Time (UTC)</span><span className="v">{f.time}</span>
             <span className="k">Status</span>
             <span className="v" style={{ maxWidth: 220 }}>
               <Select value={status} options={STATUS_OPTIONS} onSelect={changeStatus} />

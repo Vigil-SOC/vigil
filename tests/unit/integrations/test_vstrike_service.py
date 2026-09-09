@@ -928,7 +928,7 @@ def test_ui_storyline_apply_passes_storyline_id():
 
     payload = mock_post.call_args.kwargs["json"]
     assert payload["params"]["name"] == "ui-storyline-apply"
-    assert payload["params"]["arguments"]["storylineId"] == "s1"
+    assert payload["params"]["arguments"]["storylineSetId"] == "s1"
 
 
 def test_ui_storyline_mode_passes_mode():
@@ -945,7 +945,7 @@ def test_ui_storyline_mode_passes_mode():
     assert payload["params"]["arguments"]["mode"] == "replay"
 
 
-def test_ui_storyline_forward_passes_network_id():
+def test_ui_storyline_forward_has_no_mcp_arguments():
     svc = _ui_service()
     _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
     with patch(
@@ -956,10 +956,10 @@ def test_ui_storyline_forward_passes_network_id():
 
     payload = mock_post.call_args.kwargs["json"]
     assert payload["params"]["name"] == "ui-storyline-forward"
-    assert payload["params"]["arguments"]["networkId"] == "net-1"
+    assert payload["params"]["arguments"] == {}
 
 
-def test_ui_storyline_backward_passes_network_id():
+def test_ui_storyline_backward_has_no_mcp_arguments():
     svc = _ui_service()
     _jwt_cache[(svc.base_url, svc.username)] = ("jwt-A", 9_999_999_999.0)
     with patch(
@@ -970,7 +970,7 @@ def test_ui_storyline_backward_passes_network_id():
 
     payload = mock_post.call_args.kwargs["json"]
     assert payload["params"]["name"] == "ui-storyline-backward"
-    assert payload["params"]["arguments"]["networkId"] == "net-1"
+    assert payload["params"]["arguments"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -1227,3 +1227,43 @@ def test_ui_rightpanel_focus_forwards_extras_for_future_compat():
 
     args = mock_post.call_args.kwargs["json"]["params"]["arguments"]
     assert args == {"future_field": "x"}
+
+
+def test_fault_page_uses_bounded_storyline_set_contract():
+    svc = _ui_service()
+    with patch.object(svc, "_call_mcp_tool", return_value={"events": [{"eventId": "one"}]}) as call:
+        assert svc.storyline_faults_page("example-scenario", 100) == [{"eventId": "one"}]
+    call.assert_called_once_with("storyline-events-get", {
+        "storylineSetId": "example-scenario", "level": "danger", "first": 0,
+        "rows": 100, "sortField": "date", "sortOrder": "desc",
+    })
+
+
+def test_fault_page_rejects_malformed_results():
+    svc = _ui_service()
+    with patch.object(svc, "_call_mcp_tool", return_value={"invalid": "shape"}):
+        with pytest.raises(RuntimeError, match="invalid event page"):
+            svc.storyline_faults_page("example-scenario", 100)
+
+
+def test_ipv4_focus_preserves_full_addresses_in_mcp_request():
+    svc = _ui_service()
+    with patch.object(svc, "_call_mcp_tool", return_value={"ok": True}) as call:
+        svc.ui_find_by_ip_then_zoom("example-network", ["192.0.2.2", "192.0.2.20"])
+    call.assert_called_once_with("ui-find-by-ip-then-zoom", {"networkId": "example-network", "ip4s": ["192.0.2.2", "192.0.2.20"]})
+
+
+@pytest.mark.parametrize("message", ["unknown tool", "method not found (-32601)"])
+def test_ipv4_focus_reports_unsupported_tool(message):
+    svc = _ui_service()
+    from core.integrations.vstrike.client import VStrikeToolNotImplemented
+    with patch.object(svc, "_call_mcp_tool", side_effect=RuntimeError(message)):
+        with pytest.raises(VStrikeToolNotImplemented):
+            svc.ui_find_by_ip_then_zoom("example-network", ["192.0.2.2"])
+
+
+def test_ipv4_focus_retains_transport_failure_type():
+    svc = _ui_service()
+    with patch.object(svc, "_call_mcp_tool", side_effect=RuntimeError("unreachable")):
+        with pytest.raises(RuntimeError, match="unreachable"):
+            svc.ui_find_by_ip_then_zoom("example-network", ["192.0.2.2"])
