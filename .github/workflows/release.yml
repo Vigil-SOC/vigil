@@ -60,7 +60,7 @@ jobs:
     permissions:
       contents: read
       packages: write          # push to ghcr.io
-      id-token: write          # keyless cosign signing (future)
+      id-token: write          # keyless cosign signing
 
     steps:
       - name: Checkout (with submodules)
@@ -105,6 +105,7 @@ jobs:
         run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push backend
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -121,6 +122,17 @@ jobs:
             PYTHON_VERSION=${{ steps.pin.outputs.version }}
           platforms: linux/amd64,linux/arm64
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      # Sign the multi-arch index digest, not the tags: tags are mutable and
+      # this job pushes linux/amd64,linux/arm64 as one manifest list.
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ghcr.io/vigil-soc/vigil-backend
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
   # ---------------------------------------------------------------------------
   # Build + push: daemon
   # ---------------------------------------------------------------------------
@@ -131,7 +143,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
+      id-token: write          # keyless cosign signing
 
     steps:
       - name: Checkout (with submodules)
@@ -172,6 +184,7 @@ jobs:
         run: echo "version=$(tr -d '[:space:]' < .python-version)" >> "$GITHUB_OUTPUT"
 
       - name: Build and push daemon
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -186,6 +199,15 @@ jobs:
             PYTHON_VERSION=${{ steps.pin.outputs.version }}
           platforms: linux/amd64,linux/arm64
 
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ghcr.io/vigil-soc/vigil-daemon
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
   # ---------------------------------------------------------------------------
   # Build + push: agent (worker and serve run the same image)
   # ---------------------------------------------------------------------------
@@ -196,7 +218,7 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
+      id-token: write          # keyless cosign signing
 
     steps:
       # No submodules: the agent layer is TypeScript under services/agent and
@@ -234,6 +256,7 @@ jobs:
             org.opencontainers.image.licenses=Apache-2.0
 
       - name: Build and push agent
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -246,6 +269,15 @@ jobs:
           build-args: |
             VIGIL_VERSION=${{ github.ref_name }}
           platforms: linux/amd64,linux/arm64
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+          IMAGE: ghcr.io/vigil-soc/vigil-agent
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
   # ---------------------------------------------------------------------------
   # Smoke-test: pull the images and verify they start
