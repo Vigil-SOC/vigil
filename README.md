@@ -153,6 +153,18 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 > (`docker pull ghcr.io/vigil-soc/vigil-backend:<version>`) or check out a
 > release tag before running (`git checkout v<version>`). Find the newest
 > version on the [releases page](https://github.com/Vigil-SOC/vigil/releases/latest).
+>
+> Released images are signed keyless by
+> [`.github/workflows/release.yml`](.github/workflows/release.yml). Confirm a
+> pull came from that workflow (image tag drops the leading `v`; the certificate
+> identity uses the git tag):
+>
+> ```bash
+> cosign verify \
+>   --certificate-identity https://github.com/Vigil-SOC/vigil/.github/workflows/release.yml@refs/tags/v<version> \
+>   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+>   ghcr.io/vigil-soc/vigil-backend:<version>
+> ```
 
 ### Prerequisites
 
