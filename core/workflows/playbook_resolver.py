@@ -276,6 +276,7 @@ def resolve(
     model: Optional[str] = None,
     workflows: Optional["WorkflowsService"] = None,
     registry: Optional["MCPRegistry"] = None,
+    provider: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Return the playbook and config layers for ``workflow_id``, as YAML text."""
     from core.workflows.workflows_service import WorkflowsService
@@ -309,6 +310,7 @@ def resolve(
 
     config = {
         "model": model or DEFAULT_MODEL,
+        **({"provider": provider} if provider else {}),
         "budgets": _budgets(phases),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
@@ -392,6 +394,7 @@ def resolve_hunt(
     model: Optional[str] = None,
     workflows: Optional["WorkflowsService"] = None,
     registry: Optional["MCPRegistry"] = None,
+    provider: Optional[str] = None,
 ) -> Tuple[str, str]:
     from core.workflows.workflows_service import WorkflowsService
 
@@ -419,6 +422,7 @@ def resolve_hunt(
 
     config = {
         "model": model or DEFAULT_MODEL,
+        **({"provider": provider} if provider else {}),
         "budgets": dict(HUNT_BUDGETS),
         "runtime": DEFAULT_RUNTIME,
         "tools": _bound_capabilities(list(HUNT_CAPABILITIES), _tool_catalogue(registry))

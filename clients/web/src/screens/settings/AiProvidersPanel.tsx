@@ -25,26 +25,63 @@ import {
 import { useBifrostProviders, useProviderModels, bifrostError } from './useBifrost'
 import {
   bifrostApi,
+  keyRefusal,
+  isMasked,
   secretText,
+  secretEnvRef,
   COMMON_PROVIDERS,
+  type KeyVerdict,
   type BifrostKey,
   type BifrostKeyWrite,
 } from '../../services/bifrostApi'
 import type { SectionProps } from './types'
 
-function KeyStatusChip({ status }: { status?: string }) {
-  if (status === 'success') return <span className="status closed">Healthy</span>
-  if (!status || status === 'unknown') return <span className="chip">Unverified</span>
+// Without a verdict, a `list_models_failed` cannot be told from a refusal.
+function KeyStatusChip({ status, description, verdict }: {
+  status?: string
+  description?: string
+  verdict?: KeyVerdict
+}) {
+  if (verdict?.health === 'healthy' || (!verdict && status === 'success')) {
+    return <span className="status closed">Healthy</span>
+  }
+  if (verdict?.health === 'disabled') {
+    return <span className="chip">Disabled</span>
+  }
+  if (verdict?.health === 'unverifiable') {
+    return (
+      <span className="chip" title={description}>
+        Unverifiable
+      </span>
+    )
+  }
+  if (verdict?.health === 'rejected') {
+    return (
+      <span className="chip" style={{ color: 'var(--crit)' }} title={description || status}>
+        {status === 'list_models_failed' ? 'Rejected' : status}
+      </span>
+    )
+  }
   return (
-    <span className="chip" style={{ color: 'var(--crit)' }} title={status}>
-      {status === 'list_models_failed' ? 'Rejected' : status}
+    <span className="chip" title={verdict ? description : status}>
+      Unverified
     </span>
   )
 }
 
 export default function AiProvidersPanel({ notify }: SectionProps) {
-  const { providers, keys, phase, error, reload, saveKey, removeKey, addProvider, removeProvider } =
-    useBifrostProviders()
+  const {
+    providers,
+    keys,
+    verdicts,
+    phase,
+    error,
+    reload,
+    saveKey,
+    removeKey,
+    addProvider,
+    removeProvider,
+  } = useBifrostProviders()
   const [expanded, setExpanded] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ provider: string; key: BifrostKey | null } | null>(null)
   const [addingProvider, setAddingProvider] = useState(false)
@@ -109,6 +146,16 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
           icon="alert"
           title="Couldn’t reach the Bifrost gateway"
           body={error}
+          primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }}
+        />
+      )}
+      {phase === 'ready' && verdicts === null && (
+        <EmptyState
+          error
+          compact
+          icon="alert"
+          title="Couldn’t check whether these keys can route"
+          body="Health below falls back to the gateway's own status, which cannot tell a refused credential from one it was unable to check."
           primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }}
         />
       )}
@@ -189,7 +236,7 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
                               ? 'All'
                               : `${k.models?.length || 0} allowed`}
                           </td>
-                          <td><KeyStatusChip status={k.status} /></td>
+                          <td><KeyStatusChip status={k.status} description={k.description} verdict={verdicts?.keys[k.id]} /></td>
                           <td style={{ textAlign: 'right' }}>
                             <div className="inline-flex gap-1.5">
                               <button
@@ -253,13 +300,11 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
             const saved = await saveKey(editing.provider, editing.key?.id || null, data)
             setEditing(null)
             setExpanded(editing.provider)
-            // Bifrost validates the credential upstream as it stores it, so its
-            // verdict is the only test result there is — surface it verbatim.
-            if (saved?.status && saved.status !== 'success' && saved.status !== 'unknown') {
-              notify('err', `Key stored, but Bifrost reports "${saved.status}" — check the credential.`)
-            } else {
-              notify('ok', 'Key saved.')
-            }
+            const refusal = await keyRefusal(saved?.id)
+            notify(
+              refusal ? 'err' : 'ok',
+              refusal ? `Key stored, but it cannot route: ${refusal}` : 'Key saved.',
+            )
           }}
         />
       )}
@@ -302,14 +347,38 @@ export function KeyDialog({
   // Vertex takes either a bare API key or a service-account JSON scoped by
   // project/region — so it gets a mode switch and its own fields.
   const isVertex = provider === 'vertex'
+  const isOllama = provider === 'ollama'
+  const storedUrl = secretText(existing?.ollama_key_config?.url)
+  const storedToken = secretText(existing?.value)
+  const storedUrlEnv = secretEnvRef(existing?.ollama_key_config?.url)
+  const storedProject = secretText(existing?.vertex_key_config?.project_id)
+  const storedRegion = secretText(existing?.vertex_key_config?.region)
   const [vertexAuth, setVertexAuth] = useState<'service_account' | 'api_key'>(
-    existing?.vertex_key_config?.project_id ? 'service_account' : 'api_key',
+    storedProject ? 'service_account' : 'api_key',
+  )
+  // A key Bifrost holds no token for reads back as an empty `value`, which is
+  // the unauthenticated case — the common one, so it leads.
+  const [ollamaAuth, setOllamaAuth] = useState<'none' | 'api_key'>(
+    storedToken ? 'api_key' : 'none',
   )
 
   const [name, setName] = useState(existing?.name || `${provider}-key`)
   const [secret, setSecret] = useState('')
-  const [projectId, setProjectId] = useState(existing?.vertex_key_config?.project_id ?? '')
-  const [region, setRegion] = useState(existing?.vertex_key_config?.region ?? '')
+  // Bifrost masks every stored field on read and stores a mask echoed back,
+  // so a masked field starts blank behind its own mask.
+  const [url, setUrl] = useState(
+    existing ? (isMasked(storedUrl) ? '' : storedUrl) : 'env.OLLAMA_URL',
+  )
+  // The gateway resolves this URL, and the shipped compose runs it in a
+  // container — so a loopback host names the container, not the machine the
+  // operator typed it on. The field hint says so and gets typed past anyway,
+  // which is what a hint under a text box is worth; this says it where the
+  // mistake is, and only then.
+  const urlIsLoopback = /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(
+    url.trim(),
+  )
+  const [projectId, setProjectId] = useState(isMasked(storedProject) ? '' : storedProject)
+  const [region, setRegion] = useState(isMasked(storedRegion) ? '' : storedRegion)
   const [weight, setWeight] = useState(existing?.weight ?? 1)
   const [enabled, setEnabled] = useState(existing?.enabled ?? true)
   const [allowAll, setAllowAll] = useState(existing ? existing.models?.includes('*') !== false : true)
@@ -327,12 +396,18 @@ export function KeyDialog({
         enabled,
         models: allowAll ? ['*'] : chosen,
       }
-      if (isVertex && vertexAuth === 'service_account') {
-        // The service-account JSON is omitted when left blank; the backend
-        // substitutes the stored copy into both auth_credentials and value.
+      if (isOllama) {
+        // Always sent, even empty: Bifrost blanks an endpoint the write omits.
+        base.ollama_key_config = { url: url.trim() || storedUrlEnv }
+        // An empty `value` is no credential; an omitted one keeps the stored token.
+        if (ollamaAuth === 'none') base.value = ''
+        else if (secret.trim()) base.value = secret.trim()
+      } else if (isVertex && vertexAuth === 'service_account') {
+        // Every field is omitted when left blank; the backend substitutes its
+        // stored copy, and for the credential mirrors it into `value` too.
         base.vertex_key_config = {
-          project_id: projectId.trim() || undefined,
-          region: region.trim() || undefined,
+          ...(projectId.trim() ? { project_id: projectId.trim() } : {}),
+          ...(region.trim() ? { region: region.trim() } : {}),
           ...(secret.trim() ? { auth_credentials: secret.trim() } : {}),
         }
       } else if (secret.trim()) {
@@ -351,7 +426,9 @@ export function KeyDialog({
 
   // A create needs a credential; a service-account vertex create also needs
   // project + region.
-  const missingCredential = !existing && !secret.trim()
+  const missingCredential = !existing && !(isOllama ? url.trim() : secret.trim())
+  const missingOllamaToken =
+    isOllama && ollamaAuth === 'api_key' && !existing && !secret.trim()
   const missingVertexScope =
     isVertex && vertexAuth === 'service_account' && !existing && (!projectId.trim() || !region.trim())
 
@@ -362,9 +439,83 @@ export function KeyDialog({
         <Field label="Key name" hint="Must be unique across the gateway.">
           <TextInput value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        {isVertex ? (
+        {isOllama ? (
           <>
-            <Field label="Authentication" hint="Vertex accepts either a plain API key or a service-account key.">
+            <Field
+              label="Authentication"
+              hint="Ollama takes no credential of its own. Pick API key only when something in front of the endpoint below asks for one; the gateway sends it as a bearer token."
+            >
+              <div className="inline-flex gap-1.5">
+                {(
+                  [
+                    ['none', 'None'],
+                    ['api_key', 'API key'],
+                  ] as const
+                ).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`btn ${ollamaAuth === mode ? 'primary' : 'ghost'}`}
+                    onClick={() => {
+                      setOllamaAuth(mode)
+                      setSecret('')
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </Field>
+            <Field
+              label="Server URL"
+              hint={
+                storedUrl
+                  ? `Leave blank to keep the stored endpoint${storedUrlEnv ? ` (${storedUrlEnv})` : ''}.`
+                  : 'Resolved by the gateway, not by your browser. env.OLLAMA_URL defers to whatever the deployment already set.'
+              }
+            >
+              <TextInput
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder={storedUrlEnv || storedUrl || 'env.OLLAMA_URL'}
+                autoComplete="off"
+                spellCheck={false}
+              />
+              {urlIsLoopback && (
+                <p className="text-xs mt-1.5" style={{ color: 'var(--high)' }}>
+                  The gateway resolves this, and it runs in a container — so
+                  loopback is the container itself, not this machine. Ollama on
+                  the host is <code>http://host.docker.internal:11434</code>, or
+                  leave <code>env.OLLAMA_URL</code> to use whatever the
+                  deployment set. Loopback is right only if the gateway runs
+                  outside Docker.
+                </p>
+              )}
+            </Field>
+            {ollamaAuth === 'api_key' && (
+              <Field
+                label="API key"
+                hint={
+                  storedToken
+                    ? 'Leave blank to keep the stored token.'
+                    : 'Whatever the proxy in front of Ollama expects. Stored encrypted in Vigil’s secret store and pushed to the gateway.'
+                }
+              >
+                <PasswordInput
+                  value={secret}
+                  onChange={(e) => setSecret(e.target.value)}
+                  placeholder={storedToken ? '•••••••• (unchanged)' : ''}
+                  autoComplete="new-password"
+                />
+              </Field>
+            )}
+          </>
+        ) : isVertex ? (
+          <>
+            <Field
+              label="Authentication"
+              hint="An API key only works against Vertex express mode — an AI Studio key belongs under the gemini provider instead. A service account is what a standard Vertex project takes."
+            >
               <div className="inline-flex gap-1.5">
                 {(
                   [
@@ -389,11 +540,33 @@ export function KeyDialog({
             {vertexAuth === 'service_account' ? (
               <>
                 <div className="settings-grid-2" style={{ gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)' }}>
-                  <Field label="Project ID" hint="The GCP project that owns the Vertex AI endpoint.">
-                    <TextInput value={projectId} onChange={(e) => setProjectId(e.target.value)} placeholder="my-gcp-project" />
+                  <Field
+                    label="Project ID"
+                    hint={
+                      storedProject
+                        ? 'Leave blank to keep the stored project.'
+                        : 'The GCP project that owns the Vertex AI endpoint.'
+                    }
+                  >
+                    <TextInput
+                      value={projectId}
+                      onChange={(e) => setProjectId(e.target.value)}
+                      placeholder={storedProject || 'my-gcp-project'}
+                    />
                   </Field>
-                  <Field label="Region" hint="Vertex location, e.g. us-central1.">
-                    <TextInput value={region} onChange={(e) => setRegion(e.target.value)} placeholder="us-central1" />
+                  <Field
+                    label="Region"
+                    hint={
+                      storedRegion
+                        ? 'Leave blank to keep the stored region.'
+                        : 'Vertex location, e.g. us-central1.'
+                    }
+                  >
+                    <TextInput
+                      value={region}
+                      onChange={(e) => setRegion(e.target.value)}
+                      placeholder={storedRegion || 'us-central1'}
+                    />
                   </Field>
                 </div>
                 <Field
@@ -401,7 +574,7 @@ export function KeyDialog({
                   hint={
                     existing
                       ? 'Leave blank to keep the stored service account — paste a new one only to rotate it.'
-                      : 'The full service-account key JSON. Stored encrypted in Vigil’s secret store and pushed to the gateway.'
+                      : 'The service-account key file — the one whose "type" is "service_account". A gcloud application-default login file is also accepted, but it is your own login and stops working on your org’s reauth schedule. Stored encrypted in Vigil’s secret store and pushed to the gateway.'
                   }
                 >
                   <textarea
@@ -470,7 +643,9 @@ export function KeyDialog({
         <button className="btn ghost" onClick={onClose} disabled={saving}>Cancel</button>
         <button
           className="btn primary"
-          disabled={saving || !name.trim() || missingCredential || missingVertexScope}
+          disabled={
+            saving || !name.trim() || missingCredential || missingVertexScope || missingOllamaToken
+          }
           onClick={submit}
         >
           <Icon name="check2" /> {saving ? 'Saving…' : 'Save'}

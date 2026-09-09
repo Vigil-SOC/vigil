@@ -19,6 +19,7 @@ from core.llm.defaults import DEFAULT_MODEL
 from core.llm.harness.claude import ClaudeService
 from core.llm.providers.registry import get_registry
 from core.llm.system_prompt import validate_system_prompt
+from core.llm.target import model_for, provider_for
 from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
@@ -215,51 +216,6 @@ ROUTER_AGENT_TOOLS_SYSTEM_PROMPT = (
 )
 
 
-def _select_active_provider(provider_id: Optional[str]):
-    """Pick the provider a chat request should route through.
-
-    Precedence:
-      1. An explicit ``provider_id`` — the model picker can send the model as
-         ``provider_id::model_id`` (#348); look the provider up by id.
-      2. The configured default provider (``get_default_provider_spec``) — so a
-         *bare* model id (the shape the Chat dock sends) still routes to a
-         non-Anthropic default instead of falling through to the Anthropic SDK
-         and 503-ing on Ollama-only deployments.
-
-    Returns a ``ProviderSpec`` or ``None``. Lookups are wrapped so a transient
-    DB error degrades to the ClaudeService/Anthropic path rather than 500-ing.
-    """
-    from core.llm.router.router import get_default_provider_spec, get_provider_spec
-
-    provider = None
-    if provider_id:
-        try:
-            provider = get_provider_spec(provider_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("provider lookup failed for %s: %s", provider_id, exc)
-            provider = None
-    if provider is None:
-        try:
-            provider = get_default_provider_spec()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("default provider lookup failed: %s", exc)
-            provider = None
-    return provider
-
-
-def _router_model(provider, requested_model: Optional[str]) -> str:
-    """Model id to send to a non-Anthropic provider.
-
-    A stale Claude selection (e.g. ``chat_default`` seeded to a ``claude-*`` id)
-    would 404 at Bifrost when the active provider is Ollama/OpenAI — pin it to
-    the provider's own default model instead.
-    """
-    model = requested_model or provider.default_model
-    if model.startswith("claude-") and provider.provider_type != "anthropic":
-        return provider.default_model
-    return model
-
-
 class ContentBlock(BaseModel):
     """Content block for message (text or image)."""
 
@@ -351,10 +307,10 @@ async def chat_stream(
             system_prompt = agent.system_prompt
             tools = list(agent.recommended_tools) if agent.recommended_tools else None
 
-    active_provider = _select_active_provider(provider_id)
+    active_provider = provider_for(provider_id)
     if active_provider is None:
         _raise_no_provider()
-    request.model = _router_model(active_provider, request.model)
+    request.model = model_for(active_provider, request.model)
 
     # Surface whatever MCP integrations are connected right now (VirusTotal, OTX,
     # MISP, Shodan, …) so the assistant can call them the moment their server is
@@ -366,7 +322,12 @@ async def chat_stream(
         "run_id": run_id_for(session_id),
         "turns": _turns_of(request.messages),
         "system_prompt": system_prompt or "",
-        "config": chat_config(request.model, tools, mcp_tools),
+        # The provider rides alongside the model so the gateway routes to the
+        # account this request resolved to, rather than to whichever provider
+        # claims the bare model name first.
+        "config": chat_config(
+            request.model, tools, mcp_tools, provider=active_provider.provider_type
+        ),
     }
     if request.parent_run_id:
         payload["parent_run_id"] = request.parent_run_id

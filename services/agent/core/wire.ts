@@ -83,18 +83,31 @@ function tally(): Tally {
   };
 }
 
-export function openAiSurface(client: OpenAI, model: string, limiter: Limiter, provider_type: string): Provider {
-  return new OpenAiSurface(client, model, limiter, provider_type);
+export function openAiSurface(
+  client: OpenAI,
+  model: string,
+  limiter: Limiter,
+  provider_type: string,
+  wire_model: string = model,
+): Provider {
+  return new OpenAiSurface(client, model, limiter, provider_type, wire_model);
 }
 
 // The one surface built. The gateway routes to either provider family behind a
 // model name, so a second wire buys nothing until cache_control and thinking.
 class OpenAiSurface implements Provider {
+  // Two names for one model, and they are not interchangeable. `wire_model` is
+  // what the gateway is asked for and may be namespaced ("vertex/gemini-2.5-flash")
+  // so it routes to the intended provider rather than whichever one happens to
+  // claim the bare name first. `model` stays bare because that is the id the
+  // price catalogue is keyed by -- sending the namespaced form there matched
+  // nothing, and an unpriced call eventually stops the run.
   constructor(
     private readonly client: OpenAI,
     readonly model: string,
     private readonly limiter: Limiter,
     readonly provider_type: string,
+    private readonly wire_model: string = model,
   ) {}
 
   // Assembled before the events are emitted, so usage precedes the tool calls. The
@@ -108,7 +121,7 @@ class OpenAiSurface implements Provider {
 
   private async ask(request: TurnRequest): Promise<Turn> {
     const tools = request.tools.length === 0 ? {} : { tools: wireTools(request.tools) };
-    return turnOf(await this.call({ model: this.model, messages: wire(request.messages), ...tools }, request.signal));
+    return turnOf(await this.call({ model: this.wire_model, messages: wire(request.messages), ...tools }, request.signal));
   }
 
   private async emit(request: TurnRequest, schema: Record<string, unknown>): Promise<Turn> {
@@ -119,7 +132,7 @@ class OpenAiSurface implements Provider {
     if ((emitModes.get(mode) ?? "schema") === "schema") {
       try {
         const format = { type: "json_schema" as const, json_schema: { name: "emission", strict: false, schema } };
-        const turn = spend.count(turnOf(await this.call({ model: this.model, messages, response_format: format }, request.signal)));
+        const turn = spend.count(turnOf(await this.call({ model: this.wire_model, messages, response_format: format }, request.signal)));
         // A gateway that drops response_format answers 200 with an object of the model's
         // own invention, so fall through to the tool, whose parameters it does forward.
         if (honours(turn.content, schema)) return turn;
@@ -139,7 +152,7 @@ class OpenAiSurface implements Provider {
     // Neither wire carried it, so the schema goes in the prompt, which asks nothing of
     // the gateway. What comes back is JSON the caller already parses and corrects.
     const asked = [...messages, { role: "user" as const, content: prompted(schema) }];
-    const turn = spend.count(turnOf(await this.call({ model: this.model, messages: asked }, request.signal)));
+    const turn = spend.count(turnOf(await this.call({ model: this.wire_model, messages: asked }, request.signal)));
     if (turn.content !== "" || turn.tool_calls.length === 0) return turn;
 
     // No tools were offered and it called one anyway: a provider that finds a name in
@@ -147,7 +160,7 @@ class OpenAiSurface implements Provider {
     return spend.count(
       turnOf(
         await this.call(
-          { model: this.model, messages: [...asked, { role: "user", content: instead(turn) }] },
+          { model: this.wire_model, messages: [...asked, { role: "user", content: instead(turn) }] },
           request.signal,
         ),
       ),
@@ -164,7 +177,7 @@ class OpenAiSurface implements Provider {
   ): Promise<Turn | null> {
     const emit = { name: EMIT_TOOL, description: "Emit your answer.", parameters: schema };
     const forced = {
-      model: this.model,
+      model: this.wire_model,
       messages,
       tools: [{ type: "function" as const, function: emit }],
       tool_choice: { type: "function" as const, function: { name: EMIT_TOOL } },

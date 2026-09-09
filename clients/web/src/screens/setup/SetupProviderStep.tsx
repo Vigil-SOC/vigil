@@ -13,10 +13,11 @@ import { Field } from '../../shared/ui'
 import { Banner } from '../../shared/formKit'
 import { useBifrostProviders, bifrostError } from '../settings/useBifrost'
 import { KeyDialog } from '../settings/AiProvidersPanel'
-import { COMMON_PROVIDERS, keyIsRoutable } from '../../services/bifrostApi'
+import { COMMON_PROVIDERS, keyRefusal } from '../../services/bifrostApi'
 
 export default function SetupProviderStep({ onSaved }: { onSaved: () => void }) {
-  const { providers, keys, phase, error, reload, saveKey, addProvider } = useBifrostProviders()
+  const { providers, keys, verdicts, phase, error, reload, saveKey, addProvider } =
+    useBifrostProviders()
   const [newProvider, setNewProvider] = useState('')
   const [busy, setBusy] = useState(false)
   const [localErr, setLocalErr] = useState<string | null>(null)
@@ -61,11 +62,19 @@ export default function SetupProviderStep({ onSaved }: { onSaved: () => void }) 
     <div className="flex flex-col gap-3">
       {localErr && <Banner kind="err">{localErr}</Banner>}
 
+      {/* A missing verdict marks every provider unroutable, so say why. */}
+      {verdicts === null && (
+        <Banner kind="err">
+          Couldn’t check whether the gateway’s keys can route — a key you add may show
+          as unroutable until this succeeds.
+        </Banner>
+      )}
+
       {providers.length > 0 && (
         <div className="flex flex-col gap-1.5">
           {providers.map((p) => {
             const pk = keys[p.name] || []
-            const routable = pk.some(keyIsRoutable)
+            const routable = verdicts?.providers[p.name] ?? false
             return (
               <div
                 key={p.name}
@@ -131,14 +140,9 @@ export default function SetupProviderStep({ onSaved }: { onSaved: () => void }) 
           onSave={async (data) => {
             const saved = await saveKey(addingKeyFor, null, data)
             setAddingKeyFor(null)
-            // Bifrost validates the credential as it stores it and reports the
-            // verdict as status. "success" and "unknown" both advance setup —
-            // "unknown" is expected for providers it can't list-verify (vertex).
-            // Only a genuine failure (e.g. list_models_failed) is surfaced.
-            if (saved?.status && saved.status !== 'success' && saved.status !== 'unknown') {
-              setLocalErr(
-                `Key stored, but Bifrost reports "${saved.status}" — check the credential.`,
-              )
+            const refusal = await keyRefusal(saved?.id)
+            if (refusal) {
+              setLocalErr(`Key stored, but it cannot route: ${refusal}`)
               reload()
             } else {
               onSaved()

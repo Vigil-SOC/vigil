@@ -562,6 +562,17 @@ class ComponentAssignment:
 
 _MODEL_LIST_CACHE: Dict[str, List[str]] = {}
 
+# Which ``_MODEL_LIST_CACHE`` entries are a real catalogue rather than the
+# bootstrap floor below, which must never be used to rule a model out.
+_LIVE_CATALOGUES: set = set()
+
+
+def catalogue_of(provider_id: str) -> Optional[List[str]]:
+    """The models ``provider_id`` is known to serve, or None if not known."""
+    if provider_id not in _LIVE_CATALOGUES:
+        return None
+    return _MODEL_LIST_CACHE.get(provider_id) or None
+
 
 # Cold-boot fallback lists — used only when the live upstream API is
 # unreachable at the exact moment a caller needs a list. Each entry is
@@ -682,6 +693,7 @@ async def fetch_provider_models(row) -> List[str]:
         if mid not in fallback:
             fallback.append(mid)
     _MODEL_LIST_CACHE[row.provider_id] = fallback
+    _LIVE_CATALOGUES.discard(row.provider_id)
     return fallback
 
 
@@ -1032,8 +1044,10 @@ def invalidate_model_cache(provider_id: Optional[str] = None) -> None:
     so the UI sees fresh data."""
     if provider_id is None:
         _MODEL_LIST_CACHE.clear()
+        _LIVE_CATALOGUES.clear()
     else:
         _MODEL_LIST_CACHE.pop(provider_id, None)
+        _LIVE_CATALOGUES.discard(provider_id)
     # Provider-scoped live meta / discovery cache invalidation — best
     # effort. ``provider_id`` is a DB id, not a provider_type, so we can't
     # surgically drop a single entry; clear all meta + discovery cache

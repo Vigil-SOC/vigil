@@ -154,11 +154,14 @@ const SetupScreen = () => {
 
   const llmReady = steps.find((s) => s.id === 'llm-provider')?.ready ?? false
 
-  // on /setup with the provider not ready, a prior dismissal is stale: clear it,
-  // or completing the provider bounces the user out before the optional steps
+  // Being on /setup at all is an intent to run setup, so a prior dismissal is
+  // stale on arrival. Clearing it only while the provider was unready made it
+  // permanent once one was configured: SetupGate never sends a configured user
+  // here, so the flag's only surviving effect was to bounce anyone who came
+  // back deliberately — unfixable short of clearing site data.
   useEffect(() => {
-    if (!loading && !llmReady) clearSetupDismissed()
-  }, [loading, llmReady])
+    clearSetupDismissed()
+  }, [])
 
   const optionalSteps = steps.filter((s) => s.tier !== 'required')
   const requiredCount = steps.length - optionalSteps.length

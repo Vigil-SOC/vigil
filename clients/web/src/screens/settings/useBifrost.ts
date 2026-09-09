@@ -9,6 +9,7 @@ import {
   type BifrostModel,
   type BifrostModelParameters,
   type BifrostProvider,
+  type BifrostRoutability,
   type BifrostVirtualKey,
   type BifrostVirtualKeyWrite,
 } from '../../services/bifrostApi'
@@ -26,6 +27,8 @@ const errText = (e: unknown, fallback: string): string => {
 export function useBifrostProviders() {
   const [providers, setProviders] = useState<BifrostProvider[]>([])
   const [keys, setKeys] = useState<Record<string, BifrostKey[]>>({})
+  // `null` is "could not ask", not a verdict of "not routable".
+  const [verdicts, setVerdicts] = useState<BifrostRoutability | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -39,19 +42,26 @@ export function useBifrostProviders() {
       .listProviders()
       .then(async (res) => {
         const list = res.data.providers || []
-        const entries = await Promise.all(
-          list.map(async (p) => {
-            try {
-              const r = await bifrostApi.listKeys(p.name)
-              return [p.name, r.data.keys || []] as const
-            } catch {
-              return [p.name, []] as const
-            }
-          }),
-        )
+        const [entries, routability] = await Promise.all([
+          Promise.all(
+            list.map(async (p) => {
+              try {
+                const r = await bifrostApi.listKeys(p.name)
+                return [p.name, r.data.keys || []] as const
+              } catch {
+                return [p.name, []] as const
+              }
+            }),
+          ),
+          bifrostApi
+            .routability()
+            .then((r) => r.data)
+            .catch(() => null),
+        ])
         if (cancelled) return
         setProviders(list)
         setKeys(Object.fromEntries(entries))
+        setVerdicts(routability)
         setPhase('ready')
       })
       .catch((e) => {
@@ -100,7 +110,18 @@ export function useBifrostProviders() {
     [reload],
   )
 
-  return { providers, keys, phase, error, reload, saveKey, removeKey, addProvider, removeProvider }
+  return {
+    providers,
+    keys,
+    verdicts,
+    phase,
+    error,
+    reload,
+    saveKey,
+    removeKey,
+    addProvider,
+    removeProvider,
+  }
 }
 
 /** The gateway's model catalog. `query` filters server-side. */

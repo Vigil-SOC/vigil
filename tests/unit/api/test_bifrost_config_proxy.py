@@ -94,27 +94,30 @@ def test_editing_a_key_we_hold_no_secret_for_is_a_400(monkeypatch):
 
 
 @pytest.mark.unit
-def test_vertex_service_account_is_mirrored_to_value(monkeypatch):
-    # A fresh service-account JSON is used verbatim and copied onto value so a
-    # single secret ref backs both.
+def test_vertex_service_account_is_not_mirrored_to_value(monkeypatch):
+    # The JSON is used verbatim and stays in auth_credentials alone. Bifrost
+    # picks a vertex key's auth mode by whether `value` is populated, so
+    # copying it there made the gateway authenticate as an API key and fail
+    # with "API keys are not supported by this API" -- a 401 that names
+    # nothing of the real cause.
     monkeypatch.setattr(proxy, "get_secret", lambda ref: None)
     sa = '{"type": "service_account", "project_id": "p"}'
     body = {"vertex_key_config": {"project_id": "p", "region": "us", "auth_credentials": sa}}
     proxy._resolve_key_value(body, None)
-    assert body["value"] == sa
+    assert "value" not in body
     assert body["vertex_key_config"]["auth_credentials"] == sa
 
 
 @pytest.mark.unit
 def test_vertex_edit_without_credential_substitutes_the_stored_one(monkeypatch):
     # Editing project/region without re-pasting the JSON pulls the stored copy
-    # into both auth_credentials and value.
+    # into auth_credentials -- and only there, for the reason above.
     monkeypatch.setattr(
         proxy, "get_secret", lambda ref: "stored-sa" if ref == "llm_key_v1" else None
     )
     body = {"vertex_key_config": {"project_id": "p", "region": "eu"}}
     proxy._resolve_key_value(body, "v1")
-    assert body["value"] == "stored-sa"
+    assert "value" not in body
     assert body["vertex_key_config"]["auth_credentials"] == "stored-sa"
 
 

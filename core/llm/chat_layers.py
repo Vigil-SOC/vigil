@@ -164,9 +164,18 @@ def chat_config(
     model: str,
     tools: Optional[List[str]] = None,
     mcp_tools: Optional[List[Dict[str, Any]]] = None,
+    provider: Optional[str] = None,
 ) -> str:
+    """Render the agent layer's config document.
+
+    ``provider`` is the gateway's provider name, carried separately from the
+    model rather than folded into it: Bifrost routes ``<provider>/<model>`` but
+    the price catalogue is keyed by the bare id, so the agent needs both. Left
+    out when unknown, which is what every caller did before this existed.
+    """
     document = {
         "model": model,
+        **({"provider": provider} if provider else {}),
         "budgets": DEFAULT_BUDGETS,
         "runtime": DEFAULT_RUNTIME,
         "tools": _declare(tools, mcp_tools),

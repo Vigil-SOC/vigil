@@ -1236,6 +1236,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/bifrost/routability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Routability
+         * @description Per-key and per-provider "can this actually route?".
+         *
+         *     One call answers what used to take 1 + N proxy round trips — the setup gate
+         *     listed providers, then every provider's keys, on its critical path.
+         */
+        get: operations["get_api_bifrost_routability"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/bifrost/{path}": {
         parameters: {
             query?: never;
@@ -9239,6 +9262,23 @@ export interface components {
             /** Topics */
             topics?: string[];
         };
+        /**
+         * KeyVerdict
+         * @description Whether one Bifrost key can route, and how the console should badge it.
+         */
+        KeyVerdict: {
+            /** Description */
+            description?: string | null;
+            /**
+             * Health
+             * @enum {string}
+             */
+            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled";
+            /** Provider */
+            provider: string;
+            /** Routable */
+            routable: boolean;
+        };
         /** LLMProviderCreate */
         LLMProviderCreate: {
             /** Api Key */
@@ -9722,6 +9762,22 @@ export interface components {
             action: string;
             /** Notes */
             notes?: string | null;
+        };
+        /**
+         * Routability
+         * @description Declared rather than a bare dict so the generated client carries the
+         *     shape: hand-maintaining it in TypeScript is the drift this route's own
+         *     verdict exists to end.
+         */
+        Routability: {
+            /** Keys */
+            keys: {
+                [key: string]: components["schemas"]["KeyVerdict"];
+            };
+            /** Providers */
+            providers: {
+                [key: string]: boolean;
+            };
         };
         /** RunStatusResponse */
         RunStatusResponse: {
@@ -12924,6 +12980,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LoginResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_bifrost_routability: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Routability"];
                 };
             };
             /** @description Validation Error */

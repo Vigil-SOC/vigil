@@ -12,7 +12,13 @@ const providerModels = vi.fn()
 const modelParameters = vi.fn()
 const createKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
 const updateKey = vi.fn(() => Promise.resolve({ data: { id: 'k1', status: 'success' } }))
+const routability = vi.fn()
 
+// This mock replaces the module wholesale, so anything the panel reaches for and
+// does not find here is `undefined` at the call site rather than a missing-export
+// error — which surfaces as the panel's generic failure state and says nothing
+// about the cause. Keep it in step with what AiProvidersPanel and useBifrost
+// import.
 vi.mock('../../services/bifrostApi', () => ({
   bifrostApi: {
     listProviders: () => listProviders(),
@@ -21,11 +27,19 @@ vi.mock('../../services/bifrostApi', () => ({
     modelParameters: (...a: unknown[]) => modelParameters(...(a as [])),
     createKey: (...a: unknown[]) => createKey(...(a as [])),
     updateKey: (...a: unknown[]) => updateKey(...(a as [])),
+    routability: () => routability(),
     createProvider: vi.fn(),
     removeProvider: vi.fn(),
     removeKey: vi.fn(),
   },
   secretText: (v: unknown) => (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')),
+  isMasked: (v: unknown) =>
+    (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')).includes('*'),
+  keyRefusal: () => Promise.resolve(null),
+  secretEnvRef: (v: unknown) =>
+    typeof v === 'object' && (v as { from_env?: boolean })?.from_env
+      ? ((v as { env_var?: string }).env_var ?? '')
+      : '',
   COMMON_PROVIDERS: ['anthropic', 'openai', 'ollama', 'vertex'],
 }))
 
@@ -45,6 +59,16 @@ const mount = async (keys: unknown[], routable: string[]) => {
   listKeys.mockResolvedValue({ data: { keys, total: keys.length } })
   providerModels.mockResolvedValue({
     data: { models: routable.map((name) => ({ name, provider: 'anthropic' })), total: routable.length },
+  })
+  routability.mockResolvedValue({
+    data: {
+      providers: { anthropic: keys.length > 0 },
+      keys: Object.fromEntries(
+        (keys as { id?: string }[])
+          .filter((k) => k.id)
+          .map((k) => [k.id, { provider: 'anthropic', routable: true, health: 'healthy' }]),
+      ),
+    },
   })
   render(<AiProvidersPanel notify={() => {}} />)
   await screen.findByText('anthropic')

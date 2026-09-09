@@ -12,6 +12,7 @@
      validated the credential upstream. That is the health signal; there is no
      separate test call. */
 import api from './api'
+import type { Schema } from './apiTypes'
 
 export interface BifrostSecret {
   value: string
@@ -48,18 +49,46 @@ export interface BifrostKey {
   description?: string
   use_for_batch_api?: boolean
   ollama_key_config?: { url: BifrostSecret | string }
-  /** project_id/region read back plain; auth_credentials read back masked. */
-  vertex_key_config?: { project_id?: string; region?: string; auth_credentials?: BifrostSecret | string }
+  /** Every field here reads back masked and wrapped, project_id and region
+      included — they are not secrets, but Bifrost stores them in the same
+      secret shape and masks them the same way. Unwrap with `secretText`. */
+  vertex_key_config?: {
+    project_id?: BifrostSecret | string
+    region?: BifrostSecret | string
+    auth_credentials?: BifrostSecret | string
+  }
 }
 
 /** Vertex's credential is not an API key: it is a service-account JSON plus the
     project/region that scope it. Bifrost holds the JSON under `auth_credentials`;
-    the passthrough mirrors it to the key's `value` so one secret ref backs both. */
+    the passthrough mirrors it to the key's `value` so one secret ref backs both.
+
+    All three fields are omitted on an edit that isn't changing them — Bifrost
+    masks each on read, and echoing a mask back stores the mask, so the
+    passthrough substitutes its own copy instead. */
 export interface VertexKeyConfig {
   project_id?: string
   region?: string
   /** Service-account JSON. Omit on edit to keep the stored one. */
   auth_credentials?: string
+}
+
+/** True when a read-back value is Bifrost's mask rather than something a human
+    typed. Bifrost masks as `prod****oglm`, and it accepts a write that echoes
+    that, storing the mask verbatim — so a masked field is never sent back. */
+export function isMasked(v: BifrostSecret | string | undefined): boolean {
+  return secretText(v).includes('*')
+}
+
+/** The `env.FOO` reference behind a field Bifrost resolves from the environment,
+    or '' when the field holds a literal.
+
+    Unlike the value, `env_var` comes back unmasked — so a field the operator did
+    not retype can be written back as its reference rather than as the mask. That
+    is the only way to edit a seeded key (whose URL is `env.OLLAMA_URL`) without
+    knowing what the environment resolved it to. */
+export function secretEnvRef(v: BifrostSecret | string | undefined): string {
+  return typeof v === 'object' && v?.from_env ? v.env_var || '' : ''
 }
 
 export interface BifrostKeyWrite {
@@ -72,6 +101,9 @@ export interface BifrostKeyWrite {
   use_for_batch_api?: boolean
   /** Vertex only — sent instead of a bare `value`. */
   vertex_key_config?: VertexKeyConfig
+  /** Ollama only — its credential is an endpoint, not a secret. Omit to keep
+      the stored URL. */
+  ollama_key_config?: { url: string }
 }
 
 export interface BifrostModel {
@@ -205,6 +237,9 @@ export const bifrostApi = {
   modelParameters: (model: string, provider: string) =>
     api.get<BifrostModelParameters>(`${bf}/models/parameters`, { params: { model, provider } }),
 
+  /** Vigil's own verdict on Bifrost's keys — not a proxied Bifrost path. */
+  routability: () => api.get<BifrostRoutability>(`${bf}/routability`),
+
   listVirtualKeys: () =>
     api.get<{ virtual_keys: BifrostVirtualKey[] | null; count: number }>(
       `${bf}/governance/virtual-keys`,
@@ -228,45 +263,34 @@ export function perMillion(perToken: number | undefined): number | null {
   return typeof perToken === 'number' ? perToken * 1_000_000 : null
 }
 
-/** True when the key's credential was set by a human rather than pointing at an
-    env var. A first-boot seed's keys reference `env.ANTHROPIC_API_KEY` etc.
-    (from_env: true); anything the console wrote carries a literal value. */
-function credFromEnv(k: BifrostKey): boolean {
-  const v = k.value
-  if (v && typeof v === 'object' && 'from_env' in v) return !!v.from_env
-  const sa = k.vertex_key_config?.auth_credentials
-  if (sa && typeof sa === 'object' && 'from_env' in sa) return !!sa.from_env
-  return false
-}
+/** Decided by the backend (`core/llm/bifrost/mirror.py`), never re-derived
+    here: Bifrost reports both a refused credential and one it could not check
+    as `list_models_failed`. */
+export type KeyVerdict = Schema<'KeyVerdict'>
+export type KeyHealth = KeyVerdict['health']
+export type BifrostRoutability = Schema<'Routability'>
 
-/** True when a key can actually route. A "success" status means Bifrost
-    verified the credential upstream — the strongest signal. But some providers
-    (vertex, notably) have no list-models path, so Bifrost never advances them
-    past "unknown"; those still route, so "unknown" is accepted — but only for a
-    credential a human actually set, so a fresh install's env-placeholder seed
-    keys don't read as already-configured. */
-export function keyIsRoutable(k: BifrostKey): boolean {
-  if (!k.enabled) return false
-  if (k.status === 'success') return true
-  if (!k.status || k.status === 'unknown') return !credFromEnv(k)
-  return false
+/** Why a freshly-written key was refused, or null when it was not.
+
+    Re-reads the verdict: the save has just invalidated the hook's copy. The
+    reason comes from Bifrost, which is the only thing that tried the
+    credential — "check the credential" on its own points at the wrong field
+    for a provider whose credential is an endpoint. */
+export async function keyRefusal(keyId: string | undefined): Promise<string | null> {
+  if (!keyId) return null
+  try {
+    const { data } = await bifrostApi.routability()
+    const verdict = data.keys?.[keyId]
+    if (verdict?.health !== 'rejected') return null
+    return verdict.description || 'Bifrost refused it and gave no reason.'
+  } catch {
+    return null
+  }
 }
 
 /** Does any Bifrost provider have a routable key? The setup gate's Bifrost-side
-    readiness check. Best-effort per provider — a listKeys failure counts as
-    "not routable" rather than throwing the whole check. */
+    readiness check — one request, where it used to make one per provider. */
 export async function anyRoutableBifrostProvider(): Promise<boolean> {
-  const { data } = await bifrostApi.listProviders()
-  const providers = data.providers || []
-  const flags = await Promise.all(
-    providers.map(async (p) => {
-      try {
-        const r = await bifrostApi.listKeys(p.name)
-        return (r.data.keys || []).some(keyIsRoutable)
-      } catch {
-        return false
-      }
-    }),
-  )
-  return flags.some(Boolean)
+  const { data } = await bifrostApi.routability()
+  return Object.values(data.providers || {}).some(Boolean)
 }

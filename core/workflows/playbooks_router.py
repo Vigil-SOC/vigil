@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from core.agents.internal_auth import authorise
 from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry
+from core.llm import target
 from core.routing import Auth, RouterMeta
 from core.workflows.playbook_resolver import UnknownPlaybook, resolve, resolve_hunt
 from core.workflows.workflows_service import WorkflowsService
@@ -55,11 +56,25 @@ def get_playbook(
 ) -> ResolvedPlaybook:
     authorise(authorization, "playbook resolution")
 
+    # Not the config layer's DEFAULT_MODEL floor, which is a Claude id whatever
+    # the provider. ``investigation`` is the row the console files hunts under.
+    resolved = target.resolve_component("investigation")
+    if resolved is None:
+        logger.info(
+            "%s: no model assignment resolved; the config layer's default stands",
+            workflow_id,
+        )
+    provider, model = resolved or (None, None)
+
     # The definition says which loop drives it, and the two loops read different
     # sections: a compose run wants phases, a hunt wants beliefs to test.
     try:
         playbook, config = _resolver_for(workflows, workflow_id)(
-            workflow_id, workflows=workflows, registry=registry
+            workflow_id,
+            model=model,
+            workflows=workflows,
+            registry=registry,
+            provider=provider,
         )
     except UnknownPlaybook as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from None

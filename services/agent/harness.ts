@@ -56,6 +56,12 @@ function grantsFor(kind: RunKind, spec: RunSpec): Record<string, readonly string
 
 // The six injected parts, assembled per run because the model, the grants and the
 // budget are all the spec's. Nothing here is shared between two runs.
+// The gateway's own namespacing: "<provider>/<model>". Left bare when the spec
+// names no provider, which is every config written before this field existed.
+function wireModel(spec: { model: string; provider?: string }): string {
+  return spec.provider ? `${spec.provider}/${spec.model}` : spec.model;
+}
+
 export function harnessFor<K extends Record<string, unknown>>(
   kind: RunKind,
   spec: RunSpec,
@@ -65,7 +71,11 @@ export function harnessFor<K extends Record<string, unknown>>(
 ): Harness<K> {
   const tools = process.env["VIGIL_TOOLS_URL"] ?? "http://localhost:6987/internal/tools/invoke";
   return {
-    provider: openAiSurface(client, spec.model, limiter, "bifrost"),
+    // Bare id for pricing, namespaced id on the wire — see openAiSurface. Without
+    // the namespace the gateway matched "gemini-2.5-flash" to whichever provider
+    // claimed it first, so a chat pointed at Vertex was answered (or refused) by
+    // a different account entirely.
+    provider: openAiSurface(client, spec.model, limiter, "bifrost", wireModel(spec)),
     registry: registryOf(toolsFrom(spec.tools), grantsFor(kind, spec)),
     dispatch: remoteDispatch({ url: tools, token: internalToken() }),
     budget: budgetOf(spec.budgets, unmeteredQuota, Date.now, seed, prices),

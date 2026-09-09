@@ -209,7 +209,9 @@ config.json
 # config.db is its config store and holds provider API keys -- in plaintext
 # unless the deployment turned on Bifrost's key encryption; logs.db carries
 # request and response bodies. Neither is ever committed.
-bifrost/
+# Anchored: unanchored, this also swallowed core/llm/bifrost/ and
+# infra/docker/bifrost/, so a new file in either was ignored on sight.
+/bifrost/
 /logs.db
 
 # Node.js / React

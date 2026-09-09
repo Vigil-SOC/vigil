@@ -98,6 +98,11 @@ export interface Runtime {
 export interface Config {
   sections: Record<string, unknown>;
   model: string;
+  // Which upstream serves `model`, when the caller knows. The gateway routes a
+  // bare name to whichever provider claims it first, which is a coin flip on a
+  // deployment holding two that both offer "gemini-2.5-flash". Optional because
+  // a single-provider deployment has nothing to disambiguate.
+  provider?: string;
   budgets: BudgetLimits;
   runtime: Runtime;
   tools: ToolSpec[];
@@ -150,7 +155,7 @@ const LAYERS = {
     "phases",
     "narrative",
   ],
-  config: ["model", "budgets", "runtime", "tools", "approvals", "thresholds"],
+  config: ["model", "provider", "budgets", "runtime", "tools", "approvals", "thresholds"],
 } as const;
 
 export type Layer = keyof typeof LAYERS;
@@ -421,6 +426,7 @@ export function parseConfig(text: string, owned: Owned = NONE): Config {
   const sections = Object.fromEntries((owned["config"] ?? []).filter((key) => key in front).map((key) => [key, front[key]]));
   const model = str(front["model"]);
   if (model.trim() === "") throw new SpecError("config needs a model: a deployment that names none bills nothing and answers nothing");
+  const provider = front["provider"] === undefined ? undefined : str(front["provider"]).trim() || undefined;
 
   const tools = parseTools(front["tools"]);
   const declared = new Set(tools.map((tool) => tool.id));
@@ -433,6 +439,7 @@ export function parseConfig(text: string, owned: Owned = NONE): Config {
   return {
     sections,
     model,
+    ...(provider === undefined ? {} : { provider }),
     budgets: positive(merge(front["budgets"], DEFAULT_BUDGETS, "budgets"), "budgets"),
     runtime: positive(merge(front["runtime"], DEFAULT_RUNTIME, "runtime"), "runtime"),
     tools,
