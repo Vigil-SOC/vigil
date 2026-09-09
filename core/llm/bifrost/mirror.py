@@ -278,10 +278,15 @@ HEALTH_HEALTHY = "healthy"
 HEALTH_UNVERIFIED = "unverified"
 HEALTH_UNVERIFIABLE = "unverifiable"
 HEALTH_REJECTED = "rejected"
+HEALTH_DISABLED = "disabled"
 
 
 def key_health(key: Dict[str, Any], provider: Optional[str] = None) -> str:
     """One of the ``HEALTH_*`` labels for a key's Bifrost status."""
+    if not key.get("enabled", True):
+        # Its credential may be perfectly good; the key still routes nothing,
+        # and badging it Healthy beside routable=false read as a contradiction.
+        return HEALTH_DISABLED
     status = key.get("status")
     if status == "success":
         return HEALTH_HEALTHY

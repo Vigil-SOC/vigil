@@ -25,6 +25,7 @@ import {
 import { useBifrostProviders, useProviderModels, bifrostError } from './useBifrost'
 import {
   bifrostApi,
+  keyRefusal,
   isMasked,
   secretText,
   secretEnvRef,
@@ -43,6 +44,9 @@ function KeyStatusChip({ status, description, verdict }: {
 }) {
   if (verdict?.health === 'healthy' || (!verdict && status === 'success')) {
     return <span className="status closed">Healthy</span>
+  }
+  if (verdict?.health === 'disabled') {
+    return <span className="chip">Disabled</span>
   }
   if (verdict?.health === 'unverifiable') {
     return (
@@ -63,17 +67,6 @@ function KeyStatusChip({ status, description, verdict }: {
       Unverified
     </span>
   )
-}
-
-/** Re-reads the verdict: the save has just invalidated the hook's copy. */
-async function keyRejected(keyId: string | undefined): Promise<boolean> {
-  if (!keyId) return false
-  try {
-    const { data } = await bifrostApi.routability()
-    return data.keys?.[keyId]?.health === 'rejected'
-  } catch {
-    return false
-  }
 }
 
 export default function AiProvidersPanel({ notify }: SectionProps) {
@@ -307,12 +300,10 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
             const saved = await saveKey(editing.provider, editing.key?.id || null, data)
             setEditing(null)
             setExpanded(editing.provider)
-            const rejected = await keyRejected(saved?.id)
+            const refusal = await keyRefusal(saved?.id)
             notify(
-              rejected ? 'err' : 'ok',
-              rejected
-                ? `Key stored, but Bifrost reports "${saved?.status}" — check the credential.`
-                : 'Key saved.',
+              refusal ? 'err' : 'ok',
+              refusal ? `Key stored, but it cannot route: ${refusal}` : 'Key saved.',
             )
           }}
         />
@@ -377,6 +368,14 @@ export function KeyDialog({
   // so a masked field starts blank behind its own mask.
   const [url, setUrl] = useState(
     existing ? (isMasked(storedUrl) ? '' : storedUrl) : 'env.OLLAMA_URL',
+  )
+  // The gateway resolves this URL, and the shipped compose runs it in a
+  // container — so a loopback host names the container, not the machine the
+  // operator typed it on. The field hint says so and gets typed past anyway,
+  // which is what a hint under a text box is worth; this says it where the
+  // mistake is, and only then.
+  const urlIsLoopback = /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(
+    url.trim(),
   )
   const [projectId, setProjectId] = useState(isMasked(storedProject) ? '' : storedProject)
   const [region, setRegion] = useState(isMasked(storedRegion) ? '' : storedRegion)
@@ -472,7 +471,7 @@ export function KeyDialog({
               hint={
                 storedUrl
                   ? `Leave blank to keep the stored endpoint${storedUrlEnv ? ` (${storedUrlEnv})` : ''}.`
-                  : 'Resolved by the gateway, not by your browser — and Vigil runs Ollama on the host while the gateway runs in Docker, so a literal here needs the host’s name from inside the container (http://host.docker.internal:11434), not localhost. env.OLLAMA_URL defers to whatever the deployment already set.'
+                  : 'Resolved by the gateway, not by your browser. env.OLLAMA_URL defers to whatever the deployment already set.'
               }
             >
               <TextInput
@@ -482,6 +481,16 @@ export function KeyDialog({
                 autoComplete="off"
                 spellCheck={false}
               />
+              {urlIsLoopback && (
+                <p className="text-xs mt-1.5" style={{ color: 'var(--high)' }}>
+                  The gateway resolves this, and it runs in a container — so
+                  loopback is the container itself, not this machine. Ollama on
+                  the host is <code>http://host.docker.internal:11434</code>, or
+                  leave <code>env.OLLAMA_URL</code> to use whatever the
+                  deployment set. Loopback is right only if the gateway runs
+                  outside Docker.
+                </p>
+              )}
             </Field>
             {ollamaAuth === 'api_key' && (
               <Field

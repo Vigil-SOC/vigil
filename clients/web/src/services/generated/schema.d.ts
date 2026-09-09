@@ -9501,7 +9501,7 @@ export interface components {
              * Health
              * @enum {string}
              */
-            health: "healthy" | "unverified" | "unverifiable" | "rejected";
+            health: "healthy" | "unverified" | "unverifiable" | "rejected" | "disabled";
             /** Provider */
             provider: string;
             /** Routable */

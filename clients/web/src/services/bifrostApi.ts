@@ -270,6 +270,24 @@ export type KeyVerdict = Schema<'KeyVerdict'>
 export type KeyHealth = KeyVerdict['health']
 export type BifrostRoutability = Schema<'Routability'>
 
+/** Why a freshly-written key was refused, or null when it was not.
+
+    Re-reads the verdict: the save has just invalidated the hook's copy. The
+    reason comes from Bifrost, which is the only thing that tried the
+    credential — "check the credential" on its own points at the wrong field
+    for a provider whose credential is an endpoint. */
+export async function keyRefusal(keyId: string | undefined): Promise<string | null> {
+  if (!keyId) return null
+  try {
+    const { data } = await bifrostApi.routability()
+    const verdict = data.keys?.[keyId]
+    if (verdict?.health !== 'rejected') return null
+    return verdict.description || 'Bifrost refused it and gave no reason.'
+  } catch {
+    return null
+  }
+}
+
 /** Does any Bifrost provider have a routable key? The setup gate's Bifrost-side
     readiness check — one request, where it used to make one per provider. */
 export async function anyRoutableBifrostProvider(): Promise<boolean> {

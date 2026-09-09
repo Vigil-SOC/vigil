@@ -35,6 +35,7 @@ vi.mock('../../services/bifrostApi', () => ({
   secretText: (v: unknown) => (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')),
   isMasked: (v: unknown) =>
     (typeof v === 'string' ? v : ((v as { value?: string })?.value ?? '')).includes('*'),
+  keyRefusal: () => Promise.resolve(null),
   secretEnvRef: (v: unknown) =>
     typeof v === 'object' && (v as { from_env?: boolean })?.from_env
       ? ((v as { env_var?: string }).env_var ?? '')

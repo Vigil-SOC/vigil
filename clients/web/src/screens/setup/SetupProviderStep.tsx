@@ -13,7 +13,7 @@ import { Field } from '../../shared/ui'
 import { Banner } from '../../shared/formKit'
 import { useBifrostProviders, bifrostError } from '../settings/useBifrost'
 import { KeyDialog } from '../settings/AiProvidersPanel'
-import { bifrostApi, COMMON_PROVIDERS } from '../../services/bifrostApi'
+import { COMMON_PROVIDERS, keyRefusal } from '../../services/bifrostApi'
 
 export default function SetupProviderStep({ onSaved }: { onSaved: () => void }) {
   const { providers, keys, verdicts, phase, error, reload, saveKey, addProvider } =
@@ -140,17 +140,9 @@ export default function SetupProviderStep({ onSaved }: { onSaved: () => void }) 
           onSave={async (data) => {
             const saved = await saveKey(addingKeyFor, null, data)
             setAddingKeyFor(null)
-            let rejected = false
-            try {
-              const { data: r } = await bifrostApi.routability()
-              rejected = saved?.id ? r.keys?.[saved.id]?.health === 'rejected' : false
-            } catch {
-              rejected = false
-            }
-            if (rejected) {
-              setLocalErr(
-                `Key stored, but Bifrost reports "${saved?.status}" — check the credential.`,
-              )
+            const refusal = await keyRefusal(saved?.id)
+            if (refusal) {
+              setLocalErr(`Key stored, but it cannot route: ${refusal}`)
               reload()
             } else {
               onSaved()
