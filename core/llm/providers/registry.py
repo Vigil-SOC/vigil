@@ -562,6 +562,27 @@ class ComponentAssignment:
 
 _MODEL_LIST_CACHE: Dict[str, List[str]] = {}
 
+# The subset of ``_MODEL_LIST_CACHE`` keys whose list came from a real catalogue
+# — an upstream fetch or the gateway's datasheet — rather than from the
+# bootstrap floor below. The two are not interchangeable to a caller asking
+# "does this provider serve model X?": the floor is a handful of ids chosen to
+# keep a dropdown from being empty, and answering "no" from it silently swapped
+# a valid selection for the provider's default (see ``_router_model`` in
+# services/api/routers/claude.py). Only a live entry may be used to deny.
+_LIVE_CATALOGUES: set = set()
+
+
+def catalogue_of(provider_id: str) -> Optional[List[str]]:
+    """The models ``provider_id`` is known to serve, or None if not known.
+
+    None means "no catalogue", which includes the case where the cache holds
+    only the bootstrap floor. A caller has to be able to tell that apart from a
+    catalogue that genuinely lacks a model.
+    """
+    if provider_id not in _LIVE_CATALOGUES:
+        return None
+    return _MODEL_LIST_CACHE.get(provider_id) or None
+
 
 # Cold-boot fallback lists — used only when the live upstream API is
 # unreachable at the exact moment a caller needs a list. Each entry is
@@ -682,6 +703,7 @@ async def fetch_provider_models(row) -> List[str]:
         if mid not in fallback:
             fallback.append(mid)
     _MODEL_LIST_CACHE[row.provider_id] = fallback
+    _LIVE_CATALOGUES.discard(row.provider_id)
     return fallback
 
 
@@ -1032,8 +1054,10 @@ def invalidate_model_cache(provider_id: Optional[str] = None) -> None:
     so the UI sees fresh data."""
     if provider_id is None:
         _MODEL_LIST_CACHE.clear()
+        _LIVE_CATALOGUES.clear()
     else:
         _MODEL_LIST_CACHE.pop(provider_id, None)
+        _LIVE_CATALOGUES.discard(provider_id)
     # Provider-scoped live meta / discovery cache invalidation — best
     # effort. ``provider_id`` is a DB id, not a provider_type, so we can't
     # surgically drop a single entry; clear all meta + discovery cache
