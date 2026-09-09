@@ -28,7 +28,11 @@
 #   --bifrost            Disable every enabled key in Bifrost's store. Disabled, not
 #                        deleted — the credential and its ~/.vigil/secrets.enc ref
 #                        survive, so re-enabling is one click in Settings → AI Config
-#                        and nothing has to be retyped.
+#                        and nothing has to be retyped. Disabling through the proxy
+#                        retires the key's mirror row with it; the env-backed
+#                        fallback below writes straight to the gateway and does not,
+#                        so pair this with --providers (or use --all) to be sure the
+#                        gate is drained.
 #   --assignments        Clear all per-agent model assignments
 #   --budget             Clear the Bifrost virtual key + spend cap
 #   --autonomy           Disable the autonomous orchestrator (preserves its cost caps)
@@ -201,7 +205,7 @@ def verdicts():
     return _verdicts
 
 
-def routable(k, provider=None):
+def routable(k):
     """Does this key hold the provider step green? Backend's verdict."""
     return bool((verdicts().get("keys") or {}).get(k.get("id"), {}).get("routable"))
 
@@ -268,7 +272,7 @@ if MODE == "status":
             f"{p['name']}/{k.get('name') or k['id'][:8]}"
             for p in providers()
             for k in keys_of(p["name"])
-            if routable(k, p["name"])
+            if routable(k)
         ]
     except Exception as exc:  # noqa: BLE001 — advisory line, never fatal
         print(f"unreachable ({exc})")
@@ -282,6 +286,16 @@ try:
 except Exception as exc:  # noqa: BLE001
     print(f"  {YELLOW}bifrost unreachable{NC} {DIM}({exc}) — no keys disabled{NC}")
     raise SystemExit(0)
+
+# Fetched before the loop so the deliberate refusal in verdicts() lands as a
+# message rather than a traceback out of the middle of a partial sweep.
+try:
+    verdicts()
+except Exception as exc:  # noqa: BLE001
+    print(f"  {YELLOW}cannot tell which keys route{NC} {DIM}({exc}){NC}")
+    print(f"  {DIM}nothing disabled — a reset that reports a clean sweep it did "
+          f"not make is worse than one that stops{NC}")
+    raise SystemExit(1)
 
 changed = stuck = inert = 0
 for p in provs:
@@ -298,7 +312,7 @@ for p in provs:
         # write: an env-placeholder key whose variable is unset can't even be
         # rewritten (Bifrost rejects the empty value it would have to carry),
         # and reporting that as a failure sends people chasing a non-problem.
-        if not routable(k, name):
+        if not routable(k):
             inert += 1
             continue
         label = f"{name}/{k.get('name') or k['id'][:8]}"
@@ -354,7 +368,7 @@ while [ $# -gt 0 ]; do
     --all)         do_providers=true; do_bifrost=true; do_assignments=true; do_budget=true; do_autonomy=true ;;
     --status)      status_only=true ;;
     -y|--yes)      assume_yes=true ;;
-    -h|--help)     awk 'NR>1 && /^# Env:/{exit} NR>1 && /^#/{sub(/^# ?/,"");print}' "$0"; exit 0 ;;
+    -h|--help)     awk 'NR>1 && /^# DB step:/{exit} NR>1 && /^#/{sub(/^# ?/,"");print}' "$0"; exit 0 ;;
     *)             echo "Unknown option: $1" >&2; exit 1 ;;
   esac
   shift
