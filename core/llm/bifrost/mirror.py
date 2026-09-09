@@ -115,16 +115,29 @@ def _session_scope():
     return db.session_scope()
 
 
-def _upsert_row(provider: str, default_model: str) -> None:
+def _upsert_row(
+    provider: str, default_model: str, servable: Optional[set] = None
+) -> None:
     from core.storage.models import LLMProviderConfig
 
     with _session_scope() as session:
         row = session.get(LLMProviderConfig, _mirror_id(provider))
         if row is not None:
-            # Reactivate rather than restate: an operator may have retitled the
-            # row or changed its default_model, and re-adding a key must not
-            # stamp over that.
             row.is_active = True
+            # Otherwise left alone: an operator may have retitled the row or
+            # chosen its default_model, and re-adding a key must not stamp over
+            # that. But a default the provider no longer serves is not a choice
+            # -- an `ollama rm` of that model 404s every call that names none.
+            if servable and row.default_model not in servable:
+                logger.info(
+                    "Mirror row %s defaulted to %s, which %s no longer serves — "
+                    "moving it to %s",
+                    _mirror_id(provider),
+                    row.default_model,
+                    provider,
+                    default_model,
+                )
+                row.default_model = default_model
             return
         # ``llm_provider_default_per_type`` is unique on provider_type where
         # is_default, so claim the default only when the type has none.
@@ -199,7 +212,23 @@ async def _apply(provider: str, *, routable: bool) -> None:
             provider,
         )
         return
-    await asyncio.to_thread(_upsert_row, provider, default_model)
+    servable = await _servable_models(provider)
+    await asyncio.to_thread(_upsert_row, provider, default_model, servable)
+
+
+async def _servable_models(provider: str) -> Optional[set]:
+    """What ``provider`` serves right now, or None when that cannot be known.
+
+    Only asked of a self-hosted server, whose set changes under the operator's
+    hands. A cloud provider's catalogue does not shrink out from under a stored
+    default, so there is nothing to re-heal and no request worth making.
+    """
+    from core.llm.bifrost.admin import _HOST_OWNED_CATALOGUE, _list_ollama_models
+
+    if provider not in _HOST_OWNED_CATALOGUE:
+        return None
+    models = await _list_ollama_models(None)
+    return {m.id for m in models} if models else None
 
 
 async def sync_provider(provider: str) -> None:

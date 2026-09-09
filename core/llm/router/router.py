@@ -473,6 +473,15 @@ def provider_spec_from_row(row) -> ProviderSpec:
 
 
 def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
+    """One provider's dispatch spec, or None when it cannot be dispatched to.
+
+    Inactive rows are refused, matching ``get_default_provider_spec``. A saved
+    ``ai_model_configs`` assignment outlives the row it names — the FK is ON
+    DELETE RESTRICT, so retiring a provider deactivates it rather than deleting
+    it — and without this an assignment kept dispatching to a provider whose
+    credential the gateway no longer has. The caller then falls back to the
+    configured default, as it does for an assignment naming no row at all.
+    """
     try:
         from core.storage.connection import get_db_session
         from core.storage.models import LLMProviderConfig
@@ -484,12 +493,16 @@ def get_provider_spec(provider_id: Optional[str]) -> Optional[ProviderSpec]:
     try:
         if provider_id:
             row = session.get(LLMProviderConfig, provider_id)
+            if row is not None and not row.is_active:
+                logger.info("Provider %s is inactive — not dispatchable", provider_id)
+                row = None
         else:
             row = (
                 session.query(LLMProviderConfig)
                 .filter(
                     LLMProviderConfig.provider_type == "anthropic",
                     LLMProviderConfig.is_default.is_(True),
+                    LLMProviderConfig.is_active.is_(True),
                 )
                 .first()
             )
