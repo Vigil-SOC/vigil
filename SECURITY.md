@@ -22,10 +22,24 @@ we do not backport to earlier minors.
 | Older `0.x` minors | ❌ | No backports. While in `0.x`, minor bumps may break agent prompts, workflow schemas, and MCP interfaces — see [contributing](https://vigilsoc.org/docs/contributing/#versioning-and-releases). |
 | `main` (unreleased) | ✅ | Reports welcome; note the commit SHA. |
 
-Container images (`ghcr.io/vigil-soc/vigil-backend`, `vigil-daemon`) and the
-Helm chart at `infra/helm/vigil/` follow the same window. Chart `version` and
-`appVersion` move in lockstep, so the chart version identifies the app release
-it deploys.
+Container images (`ghcr.io/vigil-soc/vigil-backend`, `vigil-daemon`,
+`vigil-agent`) and the Helm chart at `infra/helm/vigil/` follow the same window.
+Chart `version` and `appVersion` move in lockstep, so the chart version
+identifies the app release it deploys.
+
+Release images are signed keyless by `.github/workflows/release.yml` (GitHub
+OIDC → Fulcio, Rekor). Confirm an image came from that workflow — the identity
+is pinned to this file and issuer, not any Actions run in the repo. Image tags
+drop the leading `v`; the certificate identity uses the git tag:
+
+```bash
+cosign verify \
+  --certificate-identity https://github.com/Vigil-SOC/vigil/.github/workflows/release.yml@refs/tags/v<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/vigil-soc/vigil-backend:<version>
+```
+
+The same invocation works for `vigil-daemon` and `vigil-agent`.
 
 ---
 
