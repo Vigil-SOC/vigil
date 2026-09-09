@@ -19,6 +19,7 @@ from core.llm.defaults import DEFAULT_MODEL
 from core.llm.harness.claude import ClaudeService
 from core.llm.providers.registry import get_registry
 from core.llm.system_prompt import validate_system_prompt
+from core.llm.target import model_for, provider_for
 from core.rate_limit import rate_limit_dependency
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret
@@ -215,107 +216,6 @@ ROUTER_AGENT_TOOLS_SYSTEM_PROMPT = (
 )
 
 
-def _select_active_provider(provider_id: Optional[str]):
-    """Pick the provider a chat request should route through.
-
-    Precedence:
-      1. An explicit ``provider_id`` — the model picker can send the model as
-         ``provider_id::model_id`` (#348); look the provider up by id.
-      2. The configured default provider (``get_default_provider_spec``) — so a
-         *bare* model id (the shape the Chat dock sends) still routes to a
-         non-Anthropic default instead of falling through to the Anthropic SDK
-         and 503-ing on Ollama-only deployments.
-
-    Returns a ``ProviderSpec`` or ``None``. Lookups are wrapped so a transient
-    DB error degrades to the ClaudeService/Anthropic path rather than 500-ing.
-    """
-    from core.llm.router.router import get_default_provider_spec, get_provider_spec
-
-    provider = None
-    if provider_id:
-        try:
-            provider = get_provider_spec(provider_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("provider lookup failed for %s: %s", provider_id, exc)
-            provider = None
-    if provider is None:
-        try:
-            provider = get_default_provider_spec()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("default provider lookup failed: %s", exc)
-            provider = None
-    return provider
-
-
-# Provider types that can answer a ``claude-*`` id. Anthropic direct, plus the
-# two clouds that resell the models -- Vertex and Bedrock. Used only when the
-# catalogue is unknown; a known catalogue answers the question outright.
-_SERVES_CLAUDE = frozenset({"anthropic", "vertex", "bedrock"})
-
-
-def _router_model(provider, requested_model: Optional[str]) -> str:
-    """Model id to send, pinned to the provider's default if it can't serve it.
-
-    A stale selection — ``chat_default`` left pointing at a model the active
-    provider never had — would 404 at Bifrost, so it falls back to the
-    provider's own default.
-
-    The test is whether the provider's catalogue holds the model, not what type
-    the provider is. The earlier version asked "is this Anthropic?" and pinned
-    every ``claude-*`` id elsewhere, which was right for Ollama and OpenAI and
-    wrong for Vertex: Google resells Claude, so a Claude id there is a real
-    selection. It was discarded before it ever reached the gateway, and the
-    substitute's failure was what surfaced — an error about Gemini for a
-    request the operator had pointed at Claude.
-
-    The catalogue is only known once something has populated the cache, so an
-    unknown one falls back to the single thing that can be said without it: a
-    ``claude-*`` id cannot be served by a provider that does not carry Claude
-    at all. Which providers those are is an allowlist rather than a test for
-    Anthropic, since Google and AWS resell Claude too.
-    """
-    model = requested_model or provider.default_model
-    if model == provider.default_model:
-        return model
-
-    catalogue = _provider_catalogue(provider)
-    if catalogue is not None:
-        if model in catalogue:
-            return model
-        logger.info(
-            "Model %s is not in %s's catalogue — falling back to %s",
-            model,
-            provider.provider_id,
-            provider.default_model,
-        )
-        return provider.default_model
-
-    if model.startswith("claude-") and provider.provider_type not in _SERVES_CLAUDE:
-        logger.info(
-            "Provider %s does not serve Claude — falling back to %s",
-            provider.provider_id,
-            provider.default_model,
-        )
-        return provider.default_model
-    return model
-
-
-def _provider_catalogue(provider) -> Optional[set]:
-    """Model ids this provider can route, or None when that isn't known.
-
-    Reads the same cache that fills the console's model picker, so a model the
-    operator could select is a model this accepts.
-    """
-    try:
-        from core.llm.providers.registry import _MODEL_LIST_CACHE
-
-        cached = _MODEL_LIST_CACHE.get(provider.provider_id)
-        return set(cached) if cached else None
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("catalogue lookup failed for %s: %s", provider.provider_id, exc)
-        return None
-
-
 class ContentBlock(BaseModel):
     """Content block for message (text or image)."""
 
@@ -407,10 +307,10 @@ async def chat_stream(
             system_prompt = agent.system_prompt
             tools = list(agent.recommended_tools) if agent.recommended_tools else None
 
-    active_provider = _select_active_provider(provider_id)
+    active_provider = provider_for(provider_id)
     if active_provider is None:
         _raise_no_provider()
-    request.model = _router_model(active_provider, request.model)
+    request.model = model_for(active_provider, request.model)
 
     # Surface whatever MCP integrations are connected right now (VirusTotal, OTX,
     # MISP, Shodan, …) so the assistant can call them the moment their server is

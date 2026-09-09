@@ -31,6 +31,7 @@ for _p in (str(REPO),):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+from core.llm import target  # noqa: E402
 from core.llm.router.router import ProviderSpec  # noqa: E402
 
 pytestmark = pytest.mark.unit
@@ -134,7 +135,7 @@ def test_unspecified_model_uses_registry_tuple(monkeypatch):
     )
 
 
-# --- _select_active_provider ------------------------------------------------
+# --- target.provider_for ------------------------------------------------
 
 
 def test_explicit_provider_id_wins(monkeypatch):
@@ -148,7 +149,7 @@ def test_explicit_provider_id_wins(monkeypatch):
         r, "get_provider_spec", lambda pid: oll if pid == "ollama-local" else None
     )
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: anthropic_default)
-    assert claude._select_active_provider("ollama-local") is oll
+    assert target.provider_for("ollama-local") is oll
 
 
 def test_no_provider_id_falls_back_to_default(monkeypatch):
@@ -158,7 +159,7 @@ def test_no_provider_id_falls_back_to_default(monkeypatch):
     default = _spec()
     monkeypatch.setattr(r, "get_provider_spec", lambda pid: None)
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: default)
-    assert claude._select_active_provider(None) is default
+    assert target.provider_for(None) is default
 
 
 def test_unknown_provider_id_falls_back_to_default(monkeypatch):
@@ -167,7 +168,7 @@ def test_unknown_provider_id_falls_back_to_default(monkeypatch):
     default = _spec()
     monkeypatch.setattr(r, "get_provider_spec", lambda pid: None)
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: default)
-    assert claude._select_active_provider("ghost") is default
+    assert target.provider_for("ghost") is default
 
 
 def test_provider_lookup_error_degrades_to_default(monkeypatch):
@@ -181,7 +182,7 @@ def test_provider_lookup_error_degrades_to_default(monkeypatch):
     monkeypatch.setattr(r, "get_provider_spec", _boom)
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: default)
     # A transient lookup error must not 500 — it degrades to the default.
-    assert claude._select_active_provider("ollama-local") is default
+    assert target.provider_for("ollama-local") is default
 
 
 def test_no_provider_anywhere_returns_none(monkeypatch):
@@ -189,30 +190,30 @@ def test_no_provider_anywhere_returns_none(monkeypatch):
 
     monkeypatch.setattr(r, "get_provider_spec", lambda pid: None)
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: None)
-    assert claude._select_active_provider(None) is None
+    assert target.provider_for(None) is None
 
 
-# --- _router_model ----------------------------------------------------------
+# --- target.model_for ----------------------------------------------------------
 
 
 def test_stale_claude_model_pinned_to_ollama_default():
     # Any claude-* selection on a non-Anthropic provider would 404 at Bifrost —
     # pin it to the provider's own default model.
-    assert claude._router_model(_spec(), A_CLAUDE_MODEL) == AN_OLLAMA_MODEL
+    assert target.model_for(_spec(), A_CLAUDE_MODEL) == AN_OLLAMA_MODEL
 
 
 def test_non_claude_model_passes_through():
-    assert claude._router_model(_spec(), "qwen3-coder:latest") == "qwen3-coder:latest"
+    assert target.model_for(_spec(), "qwen3-coder:latest") == "qwen3-coder:latest"
 
 
 def test_claude_model_kept_for_anthropic_provider():
     anth = _spec(provider_type="anthropic", provider_id="a")
     # On an Anthropic provider a claude-* model is valid and must pass through.
-    assert claude._router_model(anth, A_CLAUDE_MODEL) == A_CLAUDE_MODEL
+    assert target.model_for(anth, A_CLAUDE_MODEL) == A_CLAUDE_MODEL
 
 
 def test_none_requested_uses_provider_default():
-    assert claude._router_model(_spec(), None) == AN_OLLAMA_MODEL
+    assert target.model_for(_spec(), None) == AN_OLLAMA_MODEL
 
 
 # --- guardrail prompt -------------------------------------------------------
@@ -249,7 +250,7 @@ def test_use_router_decision(monkeypatch, provider_id, default_type, expect_rout
     monkeypatch.setattr(r, "get_provider_spec", lambda pid: explicit)
     monkeypatch.setattr(r, "get_default_provider_spec", lambda: default)
 
-    active = claude._select_active_provider(provider_id)
+    active = target.provider_for(provider_id)
     # Mirrors the inline gate in chat()/chat_stream().
     use_router = (
         active is not None and getattr(active, "provider_type", None) != "anthropic"
