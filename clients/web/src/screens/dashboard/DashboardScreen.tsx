@@ -21,7 +21,7 @@ import {
   saveFindingsViewPreferences,
 } from './findingsPreferences'
 
-type DashTab = 'findings' | 'attack' | 'timeline' | 'entity'
+type DashTab = 'findings' | 'attack' | 'timeline'
 
 export default function DashboardScreen({ openChat, goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<DashTab>('findings')
@@ -29,7 +29,6 @@ export default function DashboardScreen({ openChat, goSettings }: ConsoleScreenP
     ['findings', 'Findings'],
     ['attack', 'ATT&CK'],
     ['timeline', 'Timeline'],
-    ['entity', 'Entity Graph'],
   ]
   return (
     <>
@@ -51,7 +50,6 @@ export default function DashboardScreen({ openChat, goSettings }: ConsoleScreenP
       {tab === 'findings' && <FindingsTab openChat={openChat} goSettings={goSettings} />}
       {tab === 'attack' && <AttackTab />}
       {tab === 'timeline' && <TimelineTab />}
-      {tab === 'entity' && <EntityStub />}
     </>
   )
 }
@@ -411,18 +409,6 @@ function AttackTab() {
         </div>
       </div>
     </>
-  )
-}
-
-function EntityStub() {
-  return (
-    <div className="entity-empty">
-      <EmptyState
-        icon="graph"
-        title="No entity graph yet"
-        body="Host, user, and source relationships appear here once findings include entity fields."
-      />
-    </div>
   )
 }
 
