@@ -139,7 +139,7 @@ spec:
                 exit 1
               fi
               echo "setting vigil_app password"
-              psql -v ON_ERROR_STOP=1 --set=pw="$pw" -c "ALTER ROLE vigil_app PASSWORD :'pw'"
+              printf '%s\n' "ALTER ROLE vigil_app PASSWORD :'pw';" | psql -v ON_ERROR_STOP=1 --set=pw="$pw"
 
               echo "Database initialization complete."
           volumeMounts:
