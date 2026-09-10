@@ -543,6 +543,22 @@ async function bringUpStandalone(): Promise<boolean> {
   }
 
   phase("services", "start");
+  // Existing volumes skip initdb. Apply SQL (including vigil_app) before the
+  // backend logs in as that role, or `up --wait` deadlocks on /api/health.
+  if ((await runCompose(composeArgs("up", "-d", "--wait", "postgres"))) !== 0) {
+    phase("services", "fail");
+    sendSplash("error", "The Vigil containers did not start. See the log above.");
+    return false;
+  }
+  if (
+    (await runCompose(
+      composeArgs("run", "--rm", "--no-deps", "--entrypoint", "sh", "db-seed", "/apply.sh"),
+    )) !== 0
+  ) {
+    phase("services", "fail");
+    sendSplash("error", "Could not prepare the database. See the log above.");
+    return false;
+  }
   if ((await runCompose(composeArgs("up", "-d", "--wait"))) !== 0) {
     phase("services", "fail");
     sendSplash("error", "The Vigil containers did not start. See the log above.");

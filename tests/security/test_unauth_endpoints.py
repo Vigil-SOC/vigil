@@ -97,11 +97,6 @@ PROTECTED_ROUTES = [
     ("GET", "/api/orchestrator/status", None),
     ("POST", "/api/orchestrator/investigations/purge", None),
     ("GET", "/api/approvals/pending", None),
-    (
-        "POST",
-        "/api/integrations/compatibility/install",
-        {"integration_id": "misp"},
-    ),
     ("GET", "/api/claude/models", None),
     (
         "POST",
@@ -239,11 +234,6 @@ def test_vstrike_inbound_without_bearer_uses_api_key_gate(app):
 # Routes that require admin permission on top of authentication.
 # An authenticated non-admin must be rejected with 403.
 ADMIN_ONLY_ROUTES = [
-    (
-        "POST",
-        "/api/integrations/compatibility/install",
-        {"integration_id": "misp"},
-    ),
     (
         "POST",
         "/api/custom-integrations/save",

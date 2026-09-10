@@ -99,8 +99,9 @@ helper. Prefer the Secret when both are set.
   value: {{ include "vigil.postgres.port" . | toString | quote }}
 - name: POSTGRES_DB
   value: {{ include "vigil.postgres.database" . | quote }}
+{{/* Runtime login; schema owner stays vigil.postgres.username (StatefulSet, db-init). */}}
 - name: POSTGRES_USER
-  value: {{ include "vigil.postgres.username" . | quote }}
+  value: "vigil_app"
 {{- if .Values.redis.bitnami.enabled }}
 {{- if .Values.redis.bitnami.auth.enabled }}
 - name: REDIS_PASSWORD

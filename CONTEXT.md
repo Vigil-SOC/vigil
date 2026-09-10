@@ -301,7 +301,9 @@ collide with the capability domains above often enough to belong beside them.
 
 **Ledger**:
 The append-only event log of one run, and its only durable record. Every other
-view of a run is derived from it rather than stored beside it.
+view of a run is derived from it rather than stored beside it. The application
+role `vigil_app` may `SELECT` and `INSERT`; `UPDATE`, `DELETE` and `TRUNCATE`
+are revoked at the database.
 _Avoid_: journal, audit log, history
 
 **Fold**:
