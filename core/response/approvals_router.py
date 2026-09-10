@@ -74,6 +74,8 @@ def _pending_to_dict(action: Any) -> Dict[str, Any]:
         "parameters": action.parameters,
         "workflow_run_id": action.workflow_run_id,
         "workflow_phase_id": action.workflow_phase_id,
+        "reversibility": action.reversibility,
+        "idempotency_key": action.idempotency_key,
     }
 
 

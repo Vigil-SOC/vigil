@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from core.agents.builtins import AgentId
-from core.response.approval_service import ActionType, ApprovalService
+from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -348,10 +348,20 @@ Please review and approve/reject in the SOC dashboard.
                 evidence=evidence,
                 created_by=AgentId.AUTO_RESPONDER.value,
                 parameters={"hostname": hostname, "correlation": correlation_data},
+                idempotency_key=f"{ActionType.ISOLATE_HOST.value}:{ip_address}",
             )
 
+            if action.status == ActionStatus.EXECUTED.value:
+                return {
+                    "status": "executed",
+                    "action_id": action.action_id,
+                    "message": f"Host {hostname or ip_address} already isolated",
+                    "confidence": action.confidence,
+                    "result": action.execution_result,
+                }
+
             # Check if auto-approved (confidence >= 0.90)
-            if action.status == "approved":
+            if action.status == ActionStatus.APPROVED.value:
                 logger.info(
                     f"Action {action.action_id} auto-approved (confidence: {confidence:.2%})"
                 )
