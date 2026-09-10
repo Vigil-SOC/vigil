@@ -404,48 +404,7 @@ export const mcpApi = {
 }
 
 export const claudeApi = {
-  uploadFile: (file: File) => {
-    const formData = new FormData()
-    formData.append('file', file)
-    return api.post('/claude/upload-file', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    })
-  },
-  
   getModels: () => api.get('/claude/models'),
-  
-  summarizeConversation: (data: {
-    messages: Array<{
-      role: string
-      content: string | Array<{
-        type: string
-        text?: string
-        source?: any
-      }>
-    }>
-    model?: string
-  }) => api.post('/claude/summarize', data, { timeout: LLM_TIMEOUT }),
-
-  analyzeFinding: (finding_id: string, context?: string) =>
-    api.post('/claude/analyze-finding', null, {
-      params: { finding_id, context },
-      timeout: LLM_TIMEOUT,
-    }),
-  
-  generateChatReport: (data: {
-    tab_title: string
-    messages: Array<{
-      role: string
-      content: string | Array<{
-        type: string
-        text?: string
-        source?: any
-      }>
-    }>
-    notes?: string
-  }) => api.post('/claude/generate-chat-report', data, { timeout: LLM_TIMEOUT }),
 }
 
 export const agentsApi = {

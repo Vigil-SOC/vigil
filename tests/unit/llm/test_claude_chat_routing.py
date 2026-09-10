@@ -4,10 +4,9 @@
 Background: ``main`` merged #348 ("route local Ollama providers through
 Bifrost") while this branch carried an overlapping non-Anthropic routing
 change. The reconciliation kept #348's ``provider_id::model_id`` parsing and
-no-tools guardrail prompt, and added a fallback to the *configured default*
-provider so the Chat dock — which sends a **bare** model id — still routes to
-a non-Anthropic provider instead of 503-ing on Ollama-only deployments. These
-tests pin that behaviour.
+added a fallback to the *configured default* provider so the Chat dock —
+which sends a **bare** model id — still routes to a non-Anthropic provider
+instead of 503-ing on Ollama-only deployments. These tests pin that behaviour.
 
 The module is loaded via ``importlib`` so the pure helper functions can be
 exercised without importing the whole ``services.api.routers`` package (which pulls in
@@ -214,45 +213,3 @@ def test_claude_model_kept_for_anthropic_provider():
 
 def test_none_requested_uses_provider_default():
     assert target.model_for(_spec(), None) == AN_OLLAMA_MODEL
-
-
-# --- guardrail prompt -------------------------------------------------------
-
-
-def test_router_guardrail_prompt_forbids_tools():
-    p = claude.ROUTER_NO_TOOLS_SYSTEM_PROMPT
-    assert "no executable tools" in p
-    # Must not invite tool/placeholder hallucination on the no-tools path.
-    assert "Do not" in p
-
-
-# --- end-to-end routing decision (the use_router contract) ------------------
-
-
-@pytest.mark.parametrize(
-    "provider_id, default_type, expect_router",
-    [
-        (None, "ollama", True),  # bare id + ollama default → route (Chat dock)
-        (None, "anthropic", False),  # anthropic default → ClaudeService path
-        ("ollama-local", "anthropic", True),  # explicit ollama beats default
-        (None, None, False),  # nothing configured → ClaudeService 503 gate
-    ],
-)
-def test_use_router_decision(monkeypatch, provider_id, default_type, expect_router):
-    import core.llm.router.router as r
-
-    explicit = _spec() if provider_id else None
-    default = (
-        _spec(provider_type=default_type, provider_id="default")
-        if default_type
-        else None
-    )
-    monkeypatch.setattr(r, "get_provider_spec", lambda pid: explicit)
-    monkeypatch.setattr(r, "get_default_provider_spec", lambda: default)
-
-    active = target.provider_for(provider_id)
-    # Mirrors the inline gate in chat()/chat_stream().
-    use_router = (
-        active is not None and getattr(active, "provider_type", None) != "anthropic"
-    )
-    assert use_router is expect_router

@@ -942,7 +942,6 @@ export default function Chat({
           <div className="cm-line">
             <span className={`cm-ctx ${ctxState}`} title="Estimated context usage for the next request">
               {estimatedTokens.toLocaleString()} / {CONTEXT_WINDOW / 1000}k tokens
-              {estimatedTokens > 150000 && <span className="cm-warn"> · auto-summarizes on send</span>}
             </span>
             {costEstimate && (
               <span className="cm-cost" title={costTitle}>
@@ -1131,7 +1130,6 @@ export default function Chat({
           <div className="cs-ctx">
             <span className={`cs-ctx-label ${ctxState}`}>
               Context {exactTokens != null ? '' : '~'}{estimatedTokens.toLocaleString()} / {CONTEXT_WINDOW.toLocaleString()} tokens
-              {estimatedTokens > 150000 && ' · auto-summarizes on next send'}
             </span>
             <div className="cs-bar"><span className={`cs-bar-fill ${ctxState}`} style={{ width: `${ctxPct}%` }} /></div>
             <span className="cs-ctx-sub">Output max {maxTokens.toLocaleString()} tokens</span>

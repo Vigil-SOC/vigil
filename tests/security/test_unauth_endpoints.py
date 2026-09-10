@@ -106,7 +106,6 @@ PROTECTED_ROUTES = [
             "max_tokens": 1,
         },
     ),
-    ("POST", "/api/claude/analyze-finding?finding_id=auth-gate-test", None),
     ("GET", "/api/webhooks/", None),
     (
         "POST",
@@ -197,25 +196,6 @@ def test_internal_route_says_so_when_no_secret_is_configured(
 
     monkeypatch.setattr(internal_auth, "get_secret", lambda name: None)
     assert app.request(method, path, json=body).status_code == 503
-
-
-def test_unauthenticated_claude_upload_file_is_rejected(app):
-    """The Claude file upload helper must not read files before auth."""
-    response = app.post(
-        "/api/claude/upload-file",
-        files={
-            "file": (
-                "auth-test.txt",
-                b"synthetic auth gate test\n",
-                "text/plain",
-            )
-        },
-    )
-
-    assert response.status_code in (401, 403), (
-        f"POST /api/claude/upload-file returned {response.status_code} "
-        f"(body: {response.text[:200]})"
-    )
 
 
 def test_vstrike_inbound_without_bearer_uses_api_key_gate(app):
