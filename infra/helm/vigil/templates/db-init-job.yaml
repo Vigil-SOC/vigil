@@ -131,6 +131,16 @@ spec:
               apply {{ . | quote }}
               {{- end }}
 
+              # vigil_app logs in with the password the apps already hold; the
+              # SQL file cannot contain a literal.
+              pw="${PGPASSWORD:-}"
+              if [ -z "$pw" ]; then
+                echo "ERROR: PGPASSWORD is empty; cannot set vigil_app password." >&2
+                exit 1
+              fi
+              echo "setting vigil_app password"
+              psql -v ON_ERROR_STOP=1 --set=pw="$pw" -c "ALTER ROLE vigil_app PASSWORD :'pw'"
+
               echo "Database initialization complete."
           volumeMounts:
             - name: sql

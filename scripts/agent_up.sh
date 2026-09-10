@@ -31,7 +31,7 @@ export VIGIL_TOOLS_TOKEN="$AGENT_INTERNAL_TOKEN"
 export POSTGRES_HOST="${POSTGRES_HOST:-localhost}"
 export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 export POSTGRES_DB="${POSTGRES_DB:-deeptempo_soc}"
-export POSTGRES_USER="${POSTGRES_USER:-deeptempo}"
+export POSTGRES_USER="${POSTGRES_USER:-vigil_app}"
 export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}"
 export REDIS_URL="${REDIS_URL:-redis://localhost:6379/0}"
 
