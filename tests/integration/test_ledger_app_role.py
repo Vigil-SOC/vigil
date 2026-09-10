@@ -146,7 +146,14 @@ def test_force_terminal_appends_as_vigil_app(app_engine, monkeypatch):
         _insert_run(conn, run_id)
         conn.commit()
 
-    monkeypatch.setattr(run_cancel, "get_db_session", sessionmaker(bind=app_engine))
+    Session = sessionmaker(bind=app_engine)
+
+    def _as_app():
+        session = Session()
+        assert session.execute(text("SELECT current_user")).scalar() == "vigil_app"
+        return session
+
+    monkeypatch.setattr(run_cancel, "get_db_session", _as_app)
 
     assert run_cancel.force_terminal(str(run_id), "stopped from the console") is True
 
