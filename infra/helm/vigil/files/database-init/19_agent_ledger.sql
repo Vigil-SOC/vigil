@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS agent_events (
 );
 
 COMMENT ON TABLE agent_events IS
-    'Append-only ledger owned solely by the agent layer; the projection is folded from these rows and never stored.';
+    'Append-only ledger owned solely by the agent layer; vigil_app may SELECT and INSERT only. The projection is folded from these rows and never stored.';
 
 COMMENT ON COLUMN agent_events.snapshot IS
     'The digest presented to the lead, selected only by replay and never by the fold.';

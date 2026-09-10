@@ -76,7 +76,7 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=deeptempo_soc
-      - POSTGRES_USER=deeptempo
+      - POSTGRES_USER=vigil_app
       - POSTGRES_PASSWORD=deeptempo_secure_password_change_me
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=http://bifrost:8080

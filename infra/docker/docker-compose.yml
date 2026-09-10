@@ -8,7 +8,7 @@ x-agent-env: &agent-env
   - POSTGRES_HOST=postgres
   - POSTGRES_PORT=5432
   - POSTGRES_DB=deeptempo_soc
-  - POSTGRES_USER=deeptempo
+  - POSTGRES_USER=vigil_app
   - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
   - REDIS_URL=redis://redis:6379/0
   # The four /internal endpoints. Each defaults to localhost:6987 in-process,
@@ -153,7 +153,7 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=deeptempo_soc
-      - POSTGRES_USER=deeptempo
+      - POSTGRES_USER=vigil_app
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -197,7 +197,7 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=deeptempo_soc
-      - POSTGRES_USER=deeptempo
+      - POSTGRES_USER=vigil_app
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       # AI
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
@@ -296,7 +296,7 @@ services:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
       - POSTGRES_DB=deeptempo_soc
-      - POSTGRES_USER=deeptempo
+      - POSTGRES_USER=vigil_app
       - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
