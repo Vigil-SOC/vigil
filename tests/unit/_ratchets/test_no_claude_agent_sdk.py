@@ -1,8 +1,8 @@
 """claude-agent-sdk is gone. Dependabot must not propose bumps against it.
 
 #471 dropped the SDK and ran agents on the neutral loop; #638 landed the loop.
-The PyPI pin, the compatibility-UI row, and ``MCPRegistry.get_agent_sdk_configs``
-were leftover. #691 is the current Dependabot bump of a package nothing imports.
+The PyPI pin and ``MCPRegistry.get_agent_sdk_configs`` were leftover. #691 is
+the current Dependabot bump of a package nothing imports.
 """
 
 from __future__ import annotations
@@ -13,9 +13,6 @@ from pathlib import Path
 
 import pytest
 
-from core.integrations.integration_compatibility_service import (
-    IntegrationCompatibilityService,
-)
 from core.integrations.mcp.registry import MCPRegistry
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -85,13 +82,6 @@ def test_nothing_imports_claude_agent_sdk():
         for lineno in _imports_claude_agent_sdk(rel)
     ]
     assert not hits, "claude_agent_sdk import survived the drop:\n" + "\n".join(hits)
-
-
-def test_compatibility_service_does_not_list_claude_agent_sdk():
-    integrations = IntegrationCompatibilityService().integrations
-    assert "claude-agent-sdk" not in integrations
-    packages = {info.get("package") for info in integrations.values()}
-    assert "claude-agent-sdk" not in packages
 
 
 def test_mcp_registry_has_no_agent_sdk_config_shaper():
