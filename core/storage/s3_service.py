@@ -1,8 +1,6 @@
-"""S3 service for reading findings and cases from AWS S3 buckets."""
+"""S3 client for listing and downloading objects for ingestion."""
 
-import json
 import logging
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import boto3
@@ -151,82 +149,6 @@ class S3Service:
             logger.error(f"Error listing S3 files (detailed): {e}")
             return []
 
-    def get_findings(self, key: str = "findings.json") -> List[Dict]:
-        """
-        Get findings from S3.
-
-        Args:
-            key: S3 object key (default: "findings.json")
-
-        Returns:
-            List of finding dictionaries
-        """
-        if not self.s3_client:
-            return []
-
-        try:
-            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
-            content = response["Body"].read().decode("utf-8")
-            data = json.loads(content)
-
-            # Handle both formats: {"findings": [...]} or [...]
-            if isinstance(data, dict) and "findings" in data:
-                return data["findings"]
-            elif isinstance(data, list):
-                return data
-            else:
-                logger.error(f"Unexpected findings format in S3: {type(data)}")
-                return []
-
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "Unknown")
-            if error_code == "NoSuchKey":
-                logger.warning(f"Findings file not found in S3: {key}")
-            else:
-                logger.error(f"Error reading findings from S3: {e}")
-            return []
-        except Exception as e:
-            logger.error(f"Error reading findings from S3: {e}")
-            return []
-
-    def get_cases(self, key: str = "cases.json") -> List[Dict]:
-        """
-        Get cases from S3.
-
-        Args:
-            key: S3 object key (default: "cases.json")
-
-        Returns:
-            List of case dictionaries
-        """
-        if not self.s3_client:
-            return []
-
-        try:
-            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=key)
-            content = response["Body"].read().decode("utf-8")
-            data = json.loads(content)
-
-            # Handle both formats: {"cases": [...]} or [...]
-            if isinstance(data, dict) and "cases" in data:
-                return data["cases"]
-            elif isinstance(data, list):
-                return data
-            else:
-                logger.error(f"Unexpected cases format in S3: {type(data)}")
-                return []
-
-        except ClientError as e:
-            error_code = e.response.get("Error", {}).get("Code", "Unknown")
-            if error_code == "NoSuchKey":
-                logger.warning(f"Cases file not found in S3: {key}")
-            else:
-                logger.error(f"Error reading cases from S3: {e}")
-            return []
-        except Exception as e:
-            logger.error(f"Error reading cases from S3: {e}")
-            return []
-
     def get_file(self, key: str) -> Optional[bytes]:
         """
         Get any file from S3 as bytes.
@@ -246,25 +168,3 @@ class S3Service:
         except Exception as e:
             logger.error(f"Error reading file from S3: {e}")
             return None
-
-    def upload_file(self, local_path: Path, s3_key: str) -> bool:
-        """
-        Upload a file to S3.
-
-        Args:
-            local_path: Local file path
-            s3_key: S3 object key
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.s3_client:
-            return False
-
-        try:
-            self.s3_client.upload_file(str(local_path), self.bucket_name, s3_key)
-            logger.info(f"Uploaded {local_path} to s3://{self.bucket_name}/{s3_key}")
-            return True
-        except Exception as e:
-            logger.error(f"Error uploading file to S3: {e}")
-            return False

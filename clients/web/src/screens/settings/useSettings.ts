@@ -947,8 +947,6 @@ export interface S3Config {
   access_key_id: string
   secret_access_key: string
   session_token: string
-  findings_path: string
-  cases_path: string
   parquet_prefix: string
   configured: boolean
 }
@@ -961,8 +959,6 @@ const S3_DEFAULTS: S3Config = {
   access_key_id: '',
   secret_access_key: '',
   session_token: '',
-  findings_path: 'findings.json',
-  cases_path: 'cases.json',
   parquet_prefix: '',
   configured: false,
 }

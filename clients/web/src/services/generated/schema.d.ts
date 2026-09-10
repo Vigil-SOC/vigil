@@ -4208,55 +4208,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/ingest/s3-status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get S3 Status
-         * @description Get S3 connection status.
-         *
-         *     Returns:
-         *         S3 configuration and connection status
-         */
-        get: operations["get_api_ingest_s3-status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/ingest/sync-s3": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Sync From S3
-         * @description Sync findings and cases from AWS S3.
-         *
-         *     Requires S3 to be configured in settings.
-         *     Fetches data from the configured S3 bucket and syncs to local storage.
-         *
-         *     Returns:
-         *         Sync status and statistics
-         */
-        post: operations["post_api_ingest_sync-s3"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/ingest/sync-s3-folder": {
         parameters: {
             query?: never;
@@ -9660,16 +9611,6 @@ export interface components {
             aws_profile: string;
             /** Bucket Name */
             bucket_name: string;
-            /**
-             * Cases Path
-             * @default cases.json
-             */
-            cases_path: string;
-            /**
-             * Findings Path
-             * @default findings.json
-             */
-            findings_path: string;
             /**
              * Parquet Prefix
              * @default
@@ -17380,7 +17321,6 @@ export interface operations {
                 limit?: number;
                 sort_by?: string;
                 sort_order?: string;
-                force_refresh?: boolean;
             };
             header?: {
                 authorization?: string | null;
@@ -17868,68 +17808,6 @@ export interface operations {
             query?: {
                 prefix?: string | null;
             };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "get_api_ingest_s3-status": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_ingest_sync-s3": {
-        parameters: {
-            query?: never;
             header?: {
                 authorization?: string | null;
             };
