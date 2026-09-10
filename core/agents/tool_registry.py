@@ -195,6 +195,7 @@ _SECURITY_TOOLS = frozenset(
         "get_coverage_stats",
         "get_detection_count",
         "lint_detections",
+        "reconstruct_run",
     }
 )
 

@@ -200,6 +200,8 @@ class DatabaseService:
         offset: int = 0,
         sort_by: str = "timestamp",
         sort_order: str = "desc",
+        timestamp_start: Optional[datetime] = None,
+        timestamp_end: Optional[datetime] = None,
     ) -> List[Finding]:
         """
         Get findings with optional filters, search, and pagination.
@@ -233,6 +235,10 @@ class DatabaseService:
                 filters.append(Finding.anomaly_score >= min_anomaly_score)
             if status:
                 filters.append(Finding.status == status)
+            if timestamp_start is not None:
+                filters.append(Finding.timestamp >= timestamp_start)
+            if timestamp_end is not None:
+                filters.append(Finding.timestamp <= timestamp_end)
             if search_query:
                 from sqlalchemy import String, cast
 

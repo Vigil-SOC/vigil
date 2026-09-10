@@ -13,6 +13,8 @@ import yaml
 
 from core.config import _safe_home
 from core.detections.lint import lint_sigma
+from core.detections.reconstruction import reconstruct, span_for_steps
+from core.storage.database_data_service import DatabaseDataService
 
 
 class SecurityDetectionsTools:
@@ -531,6 +533,20 @@ class SecurityDetectionsTools:
         run on ``add_source`` / clone; community corpora stay importable.
         """
         return lint_sigma(rule_yaml=rule_yaml, source_path=source_path)
+
+    async def reconstruct_run(self, steps: List[Dict], **_kwargs: object) -> Dict:
+        """Correlate an action trace to ingested Findings; return per-step verdicts.
+
+        Extra kwargs (including ``limit`` injected by ``/internal/tools/invoke``)
+        are ignored so this does not freeze a later execute-tool JSON shape.
+        """
+        span = span_for_steps(steps)
+        findings = DatabaseDataService().get_findings(
+            limit=10000,
+            timestamp_start=span[0] if span else None,
+            timestamp_end=span[1] if span else None,
+        )
+        return reconstruct(steps, findings)
 
 
 # Global instance for reuse

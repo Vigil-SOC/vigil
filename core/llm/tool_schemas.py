@@ -108,6 +108,21 @@ SECURITY_DETECTION_TOOLS = [
             },
         },
     },
+    {
+        "name": "reconstruct_run",
+        "description": "Reconstruct a red-run action trace into per-step detection verdicts. Correlates each step to ingested Findings by host, entity, and time. Verdict is rule, loglm, both, or missed. Cite matching Finding ids. Unknown keys on a step are ignored.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Action-trace steps. Join keys are host/entity/time (hostname, src_ip, user, started_at/ended_at or timestamp). Unknown keys are ignored.",
+                }
+            },
+            "required": ["steps"],
+        },
+    },
 ]
 
 # DeepTempo Findings Tools (Already implemented in backend)
