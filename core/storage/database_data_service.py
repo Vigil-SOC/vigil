@@ -117,6 +117,8 @@ class DatabaseDataService:
         search_query: Optional[str] = None,
         sort_by: str = "timestamp",
         sort_order: str = "desc",
+        timestamp_start: Optional[datetime] = None,
+        timestamp_end: Optional[datetime] = None,
     ) -> List[Dict]:
         if self._demo_mode and self._demo_service:
             return self._demo_service.get_findings(limit)
@@ -133,6 +135,8 @@ class DatabaseDataService:
                     offset=offset,
                     sort_by=sort_by,
                     sort_order=sort_order,
+                    timestamp_start=timestamp_start,
+                    timestamp_end=timestamp_end,
                 )
                 return FindingSchema.dump_many(findings)
             except Exception as e:

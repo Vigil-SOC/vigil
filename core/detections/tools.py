@@ -13,7 +13,7 @@ import yaml
 
 from core.config import _safe_home
 from core.detections.lint import lint_sigma
-from core.detections.reconstruction import reconstruct
+from core.detections.reconstruction import reconstruct, span_for_steps
 from core.storage.database_data_service import DatabaseDataService
 
 
@@ -540,7 +540,12 @@ class SecurityDetectionsTools:
         Extra kwargs (including ``limit`` injected by ``/internal/tools/invoke``)
         are ignored so this does not freeze a later execute-tool JSON shape.
         """
-        findings = DatabaseDataService().get_findings(limit=10000)
+        span = span_for_steps(steps)
+        findings = DatabaseDataService().get_findings(
+            limit=10000,
+            timestamp_start=span[0] if span else None,
+            timestamp_end=span[1] if span else None,
+        )
         return reconstruct(steps, findings)
 
 

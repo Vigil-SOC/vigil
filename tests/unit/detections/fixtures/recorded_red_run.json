@@ -27,6 +27,13 @@
       "hostname": "ws01.corp.local",
       "src_ip": "10.0.1.50",
       "technique_id": "T1021.002"
+    },
+    {
+      "id": "step-4",
+      "started_at": "2026-09-10T12:20:00Z",
+      "ended_at": "2026-09-10T12:22:00Z",
+      "src_ip": "10.0.2.80",
+      "technique_id": "T1047"
     }
   ],
   "findings": [
@@ -69,6 +76,13 @@
       "description": "Credential dump with no hostname",
       "entity_context": { "usernames": ["administrator"] },
       "mitre_predictions": { "T1003.001": 0.9 }
+    },
+    {
+      "finding_id": "loglm-wmi-seq",
+      "data_source": "loglm",
+      "timestamp": "2026-09-10T12:21:00Z",
+      "description": "Anomalous WMI sequence",
+      "entity_context": { "src_ip": "10.0.2.80" }
     }
   ]
 }

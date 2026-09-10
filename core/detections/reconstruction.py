@@ -36,6 +36,25 @@ def reconstruct(steps: Any, findings: Any) -> Dict[str, Any]:
     return {"steps": results}
 
 
+def span_for_steps(steps: Any) -> Optional[Tuple[datetime, datetime]]:
+    """Smallest window covering every step that has a parseable time range."""
+    if not isinstance(steps, list):
+        return None
+    starts: List[datetime] = []
+    ends: List[datetime] = []
+    for raw in steps:
+        if not isinstance(raw, dict):
+            continue
+        window = _window(raw)
+        if window is None:
+            continue
+        starts.append(window[0])
+        ends.append(window[1])
+    if not starts:
+        return None
+    return min(starts), max(ends)
+
+
 def _reconstruct_step(
     index: int, raw: Any, findings: List[Dict[str, Any]]
 ) -> Dict[str, Any]:
