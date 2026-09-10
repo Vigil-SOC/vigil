@@ -84,10 +84,12 @@
       "evidence": [],
       "executed_at": null,
       "execution_result": null,
+      "idempotency_key": null,
       "parameters": {},
       "reason": null,
       "rejection_reason": null,
       "requires_approval": false,
+      "reversibility": null,
       "status": null,
       "target": null,
       "title": null,
@@ -112,12 +114,14 @@
       "execution_result": {
         "sample": "execution_result-value"
       },
+      "idempotency_key": "idempotency_key-value",
       "parameters": {
         "sample": "parameters-value"
       },
       "reason": "reason-value",
       "rejection_reason": "rejection_reason-value",
       "requires_approval": true,
+      "reversibility": "reversibility-value",
       "status": "status-value",
       "target": "target-value",
       "title": "title-value",

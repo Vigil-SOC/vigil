@@ -14,6 +14,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -302,10 +303,24 @@ class ApprovalAction(Base):
         nullable=True,
     )
     workflow_phase_id: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Irreversible rows always need a human; default keeps isolate/block auto-approve.
+    reversibility: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="reversible", server_default="reversible"
+    )
+    idempotency_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         Index("idx_approval_actions_status_created", "status", "created_at"),
         Index("idx_approval_actions_workflow_run", "workflow_run_id"),
+        # Unique among non-failed rows so a failed isolate can be retried (#827).
+        Index(
+            "uq_approval_actions_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text(
+                "idempotency_key IS NOT NULL AND status <> 'failed'"
+            ),
+        ),
     )
 
 
