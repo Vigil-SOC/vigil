@@ -81,7 +81,7 @@ export function parseRunId(argv: readonly string[]): string | undefined {
     if (arg === undefined) throw new Error(USAGE);
     if (arg === "--run-id") {
       const value = argv[i + 1];
-      if (value === undefined || value.startsWith("-")) throw new Error(USAGE);
+      if (value === undefined || value === "" || value.startsWith("-")) throw new Error(USAGE);
       runId = value;
       i += 1;
       continue;
