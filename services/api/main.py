@@ -416,7 +416,7 @@ def _build_services(app: FastAPI):
 
 
 async def _startup(app: FastAPI):
-    """Initialize database, MCP tools and check integration compatibility on startup."""
+    """Initialize database and MCP tools on startup."""
     logger.info("=" * 60)
     logger.info("Starting Vigil SOC Backend")
     logger.info("=" * 60)
