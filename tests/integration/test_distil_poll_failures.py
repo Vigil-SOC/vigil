@@ -38,6 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # episodic half and not the ledger, so both are applied rather than assumed.
 DDL = (
     "19_agent_ledger.sql",
+    "31_agent_ledger_hash_chain.sql",
     "26_episodic_memory.sql",
     "29_episodic_distil_failures.sql",
 )

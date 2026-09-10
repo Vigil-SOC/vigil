@@ -37,6 +37,7 @@ def _redis_url() -> str:
 # 0001), so nothing else creates them for a test.
 AGENT_DDL = (
     "19_agent_ledger.sql",
+    "31_agent_ledger_hash_chain.sql",
     "20_agent_directives.sql",
     "21_agent_run_leases.sql",
 )
