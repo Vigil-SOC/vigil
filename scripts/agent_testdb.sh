@@ -25,7 +25,7 @@ until docker exec "$NAME" pg_isready -U vigil -d vigil_test >/dev/null 2>&1; do 
 
 # Only the agent layer's own tables: these tests touch no other schema, and the
 # rest of infra/database/init assumes an ordering this does not need.
-for sql in 19_agent_ledger 20_agent_directives 21_agent_run_leases; do
+for sql in 19_agent_ledger 31_agent_ledger_hash_chain 20_agent_directives 21_agent_run_leases; do
   docker exec -i "$NAME" psql -q -U vigil -d vigil_test \
     -c "SET client_min_messages = warning" -f - < "infra/database/init/$sql.sql" >/dev/null
 done

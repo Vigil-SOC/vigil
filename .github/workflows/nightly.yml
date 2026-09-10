@@ -107,6 +107,7 @@ jobs:
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
             -f infra/database/init/19_agent_ledger.sql \
+            -f infra/database/init/31_agent_ledger_hash_chain.sql \
             -f infra/database/init/20_agent_directives.sql \
             -f infra/database/init/21_agent_run_leases.sql
       

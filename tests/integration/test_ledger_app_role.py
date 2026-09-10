@@ -84,6 +84,7 @@ def app_engine():
     password = _parts()["password"]
     with owner.connect() as conn:
         _apply_sql(conn, "19_agent_ledger.sql")
+        _apply_sql(conn, "31_agent_ledger_hash_chain.sql")
         _apply_sql(conn, "30_vigil_app_role.sql")
         escaped = password.replace("'", "''")
         conn.exec_driver_sql(f"ALTER ROLE vigil_app PASSWORD '{escaped}'")
