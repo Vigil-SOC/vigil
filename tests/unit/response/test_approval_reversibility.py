@@ -125,3 +125,52 @@ class TestIsolationIdempotency:
         assert action is not None
         assert action.idempotency_key == "isolate_host:10.0.9.9"
         assert action.status == ActionStatus.EXECUTED.value
+
+    def test_rejected_isolate_is_not_executed_on_retry(self):
+        response = AutonomousResponseService()
+        response.approval_service.force_manual_approval = False
+        executions: list[str] = []
+        escalations: list[str] = []
+
+        def _fake_execute(ip_address, hostname, reason, confidence):
+            executions.append(ip_address)
+            return {"success": True, "ip_address": ip_address}
+
+        response._execute_isolation = _fake_execute  # type: ignore[method-assign]
+        response.register_escalation_callback(
+            lambda data, severity, action_type: escalations.append(data["action_id"])
+        )
+
+        first = response.create_isolation_action(
+            ip_address="10.0.8.8",
+            hostname="ws-8",
+            confidence=0.70,
+            reason="c2",
+            evidence=["ev-1"],
+            correlation_data={
+                "indicators": ["c2_communication"],
+                "reasoning": ["beacon"],
+            },
+        )
+        assert first["status"] == "pending_approval"
+        rejected = response.approval_service.reject_action(
+            first["action_id"], reason="false positive"
+        )
+        assert rejected is not None
+        assert rejected.status == ActionStatus.REJECTED.value
+
+        second = response.create_isolation_action(
+            ip_address="10.0.8.8",
+            hostname="ws-8",
+            confidence=0.70,
+            reason="c2",
+            evidence=["ev-1"],
+            correlation_data={
+                "indicators": ["c2_communication"],
+                "reasoning": ["beacon"],
+            },
+        )
+        assert second["action_id"] == first["action_id"]
+        assert second["status"] == ActionStatus.REJECTED.value
+        assert executions == []
+        assert escalations == [first["action_id"]]
