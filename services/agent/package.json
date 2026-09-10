@@ -14,7 +14,8 @@
     "test:integration": "vitest run tests/integration",
     "build": "tsc -p tsconfig.build.json",
     "worker": "tsx worker.ts",
-    "serve": "tsx serve.ts"
+    "serve": "tsx serve.ts",
+    "ledger:verify": "tsx ledger/verify.ts"
   },
   "dependencies": {
     "ajv": "^8.20.0",
