@@ -45,7 +45,6 @@ def get_findings(
     limit: int = Query(100, ge=1, le=1000),
     sort_by: str = Query("timestamp"),
     sort_order: str = Query("desc"),
-    force_refresh: bool = Query(False),
 ):
     """
     Get findings with optional filters, search, and server-side pagination.
@@ -53,14 +52,6 @@ def get_findings(
     Returns:
         Paginated list of findings with total count and has_more flag.
     """
-    if force_refresh and data_service.is_s3_configured():
-        logger.info("Force refresh triggered - syncing from S3")
-        success, message, stats = data_service.sync_from_s3()
-        if success:
-            logger.info(f"S3 sync completed: {message}")
-        else:
-            logger.warning(f"S3 sync failed or partial: {message}")
-
     cluster_id_str = str(cluster_id) if cluster_id is not None else None
 
     total = data_service.count_findings(

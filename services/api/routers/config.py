@@ -60,8 +60,6 @@ class S3Config(BaseModel):
     access_key_id: str = ""
     secret_access_key: str = ""
     session_token: str = ""
-    findings_path: str = "findings.json"
-    cases_path: str = "cases.json"
     parquet_prefix: str = ""
 
 
@@ -304,8 +302,6 @@ async def get_s3_config():
                 "configured": True,
                 "bucket_name": config.get("bucket_name"),
                 "region": config.get("region"),
-                "findings_path": config.get("findings_path"),
-                "cases_path": config.get("cases_path"),
                 "parquet_prefix": config.get("parquet_prefix", ""),
                 "auth_method": config.get("auth_method", "credentials"),
                 "aws_profile": config.get("aws_profile", ""),
@@ -320,8 +316,6 @@ async def get_s3_config():
                     "configured": True,
                     "bucket_name": config.get("bucket_name"),
                     "region": config.get("region"),
-                    "findings_path": config.get("findings_path"),
-                    "cases_path": config.get("cases_path"),
                     "parquet_prefix": config.get("parquet_prefix", ""),
                     "auth_method": config.get("auth_method", "credentials"),
                     "aws_profile": config.get("aws_profile", ""),
@@ -363,8 +357,6 @@ async def set_s3_config(config: S3Config):
     config_data = {
         "bucket_name": bucket_name,
         "region": config.region,
-        "findings_path": config.findings_path,
-        "cases_path": config.cases_path,
         "parquet_prefix": parquet_prefix,
         "auth_method": config.auth_method,
         "aws_profile": config.aws_profile,
@@ -571,24 +563,13 @@ def test_s3_connection():
     success, message = s3_service.test_connection()
 
     if success:
-        # Try to list files as an additional test
-        findings_path = cfg.get("findings_path", "findings.json")
-        cases_path = cfg.get("cases_path", "cases.json")
-
         files = s3_service.list_files()
-        has_findings = findings_path in files
-        has_cases = cases_path in files
-
         return {
             "success": True,
             "message": message,
             "bucket": cfg.get("bucket_name"),
             "region": cfg.get("region", "us-east-1"),
             "files_found": len(files),
-            "findings_file_exists": has_findings,
-            "cases_file_exists": has_cases,
-            "expected_findings_path": findings_path,
-            "expected_cases_path": cases_path,
         }
     else:
         return {

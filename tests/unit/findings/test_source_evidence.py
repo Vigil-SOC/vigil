@@ -199,9 +199,6 @@ class _FakeDataService:
     def __init__(self, finding):
         self.finding = finding
 
-    def is_s3_configured(self):
-        return False
-
     def count_findings(self, **_kwargs):
         return 1
 
@@ -227,7 +224,6 @@ def test_findings_list_omits_payload_while_detail_retains_it(monkeypatch):
         limit=100,
         sort_by="timestamp",
         sort_order="desc",
-        force_refresh=False,
     )
     detail_response = findings_api.get_finding("f-source-1")
 

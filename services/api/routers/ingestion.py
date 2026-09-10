@@ -6,7 +6,7 @@ Handles uploading and ingesting findings/cases from various file formats:
 - CSV files
 - JSONL (JSON Lines) files
 - Parquet files
-- S3 sync
+- S3 objects (by key or prefix)
 """
 
 import asyncio
@@ -30,7 +30,6 @@ from core.ingestion.ingestion_jobs import (
 )
 from core.ingestion.ingestion_service import IngestionService
 from core.routing import Auth, RouterMeta
-from core.storage.database_data_service import DatabaseDataService
 
 logger = logging.getLogger(__name__)
 
@@ -323,39 +322,6 @@ async def get_csv_template(data_type: str):
         )
 
 
-@router.post("/sync-s3")
-def sync_from_s3():
-    """
-    Sync findings and cases from AWS S3.
-
-    Requires S3 to be configured in settings.
-    Fetches data from the configured S3 bucket and syncs to local storage.
-
-    Returns:
-        Sync status and statistics
-    """
-    data_service = DatabaseDataService()
-
-    # Check if S3 is configured
-    if not data_service.is_s3_configured():
-        raise HTTPException(
-            status_code=400,
-            detail="S3 is not configured. Please configure S3 in Settings first.",
-        )
-
-    # Perform sync
-    logger.info("Starting S3 sync via API endpoint")
-    success, message, stats = data_service.sync_from_s3()
-
-    return {
-        "success": success,
-        "message": message,
-        "findings_synced": stats.get("findings_synced", 0),
-        "cases_synced": stats.get("cases_synced", 0),
-        "errors": stats.get("errors", []),
-    }
-
-
 @router.post("/sync-s3-folder", response_model=IngestionStats)
 @router.post("/sync-s3-parquet", response_model=IngestionStats, include_in_schema=False)
 def sync_s3_folder(prefix: Optional[str] = Query(None)):
@@ -378,9 +344,8 @@ def sync_s3_folder(prefix: Optional[str] = Query(None)):
     Returns:
         Ingestion statistics
     """
-    data_service = DatabaseDataService()
-
-    if not data_service.is_s3_configured():
+    s3 = _get_s3_service()
+    if s3 is None:
         raise HTTPException(
             status_code=400,
             detail="S3 is not configured. Please configure S3 in Settings first.",
@@ -396,9 +361,7 @@ def sync_s3_folder(prefix: Optional[str] = Query(None)):
     logger.info(f"Starting S3 folder sync with prefix='{prefix}'")
 
     ingestion_service = IngestionService()
-    stats = ingestion_service.ingest_s3_folder(
-        s3_service=data_service._s3_service, prefix=prefix
-    )
+    stats = ingestion_service.ingest_s3_folder(s3_service=s3, prefix=prefix)
 
     success, summary = summarize_stats(stats)
 
@@ -433,8 +396,8 @@ def _get_s3_service():
     """
     Build an S3Service directly from saved config.
 
-    Unlike DatabaseDataService.is_s3_configured() this skips the head_bucket
-    test so it works with IAM policies that only grant list/get permissions.
+    Skips head_bucket so it works with IAM policies that only grant
+    list/get permissions.
     """
     from core.secrets_manager import get_secret
     from core.storage.config_service import get_config_service
@@ -570,33 +533,3 @@ def ingest_s3_file(request: S3FileIngestRequest):
         success=success,
         message=message,
     )
-
-
-@router.get("/s3-status")
-def get_s3_status():
-    """
-    Get S3 connection status.
-
-    Returns:
-        S3 configuration and connection status
-    """
-    try:
-        data_service = DatabaseDataService()
-
-        # Check if S3 is configured
-        is_configured = data_service.is_s3_configured()
-
-        if is_configured:
-            # Test connection
-            success, message = data_service._s3_service.test_connection()
-            return {"configured": True, "connected": success, "message": message}
-        else:
-            return {
-                "configured": False,
-                "connected": False,
-                "message": "S3 is not configured. Configure in Settings to enable S3 sync.",
-            }
-
-    except Exception as e:
-        logger.error(f"Error checking S3 status: {e}")
-        return {"configured": False, "connected": False, "error": str(e)}

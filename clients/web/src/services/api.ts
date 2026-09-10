@@ -166,7 +166,6 @@ export const findingsApi = {
     cluster_id?: number
     min_anomaly_score?: number
     limit?: number
-    force_refresh?: boolean
   }) => api.get('/findings/', { params }),
   
   getById: (id: string) => api.get(`/findings/${id}`),
@@ -194,7 +193,6 @@ export const casesApi = {
   getAll: (params?: {
     status?: string
     priority?: string
-    force_refresh?: boolean
   }) => api.get<Schema<'CaseListResponse'>>('/cases/', { params }),
 
   getById: (id: string) => api.get<Schema<'CaseSchema'>>(`/cases/${id}`),
@@ -539,8 +537,6 @@ export const configApi = {
     access_key_id?: string
     secret_access_key?: string
     session_token?: string
-    findings_path?: string
-    cases_path?: string
     parquet_prefix?: string
   }) => api.post('/config/s3', data),
   
