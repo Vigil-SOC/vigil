@@ -534,7 +534,7 @@ async def summarize_conversation(request: SummarizeRequest):
     Returns a single summary message that preserves key context.
     """
 
-    claude_service = ClaudeService(enable_thinking=False)
+    claude_service = ClaudeService()
 
     if not claude_service.has_api_key():
         _raise_no_provider()

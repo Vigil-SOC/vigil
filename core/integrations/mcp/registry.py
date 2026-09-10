@@ -16,7 +16,7 @@ class MCPRegistry:
     """
     Central registry that tracks active MCP servers and their available tools.
 
-    Used by ClaudeService and agents to dynamically discover what tools
+    Used by agents to dynamically discover what tools
     are available at runtime, enabling automatic enrichment from active
     MCP integrations (like security-detections, threat intel, etc.)
     """
