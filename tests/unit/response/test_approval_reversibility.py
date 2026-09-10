@@ -100,7 +100,10 @@ class TestIsolationIdempotency:
             confidence=0.95,
             reason="c2",
             evidence=["ev-1"],
-            correlation_data={"indicators": ["c2_communication"], "reasoning": ["beacon"]},
+            correlation_data={
+                "indicators": ["c2_communication"],
+                "reasoning": ["beacon"],
+            },
         )
         second = response.create_isolation_action(
             ip_address="10.0.9.9",
@@ -108,7 +111,10 @@ class TestIsolationIdempotency:
             confidence=0.95,
             reason="c2",
             evidence=["ev-1"],
-            correlation_data={"indicators": ["c2_communication"], "reasoning": ["beacon"]},
+            correlation_data={
+                "indicators": ["c2_communication"],
+                "reasoning": ["beacon"],
+            },
         )
 
         assert first["status"] == "executed"

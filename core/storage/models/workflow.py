@@ -317,9 +317,7 @@ class ApprovalAction(Base):
             "uq_approval_actions_idempotency_key",
             "idempotency_key",
             unique=True,
-            postgresql_where=text(
-                "idempotency_key IS NOT NULL AND status <> 'failed'"
-            ),
+            postgresql_where=text("idempotency_key IS NOT NULL AND status <> 'failed'"),
         ),
     )
 
