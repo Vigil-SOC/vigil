@@ -380,9 +380,6 @@ def _build_services(app: FastAPI):
     from core.config import is_demo_mode
     from core.detections.detection_rules_service import DetectionRulesService
     from core.integrations.integration_bridge_service import IntegrationBridgeService
-    from core.integrations.integration_compatibility_service import (
-        IntegrationCompatibilityService,
-    )
     from core.integrations.mcp.client import build_mcp_client, set_process_mcp_client
     from core.integrations.mcp.registry import MCPRegistry
     from core.platform.demo_data_service import DemoDataService
@@ -399,7 +396,6 @@ def _build_services(app: FastAPI):
     app.state.custom_workflows = CustomWorkflowService()
     app.state.detection_rules = DetectionRulesService()
     app.state.integration_bridge = IntegrationBridgeService()
-    app.state.integration_compat = IntegrationCompatibilityService()
     app.state.mcp_registry = MCPRegistry()
     app.state.workflow_runs = WorkflowRunService()
 
@@ -576,34 +572,6 @@ async def _startup(app: FastAPI):
         logger.warning(f"Database modules not available: {e}")
     except Exception as e:
         logger.error(f"Error during storage initialization: {e}")
-
-    # Check integration compatibility
-    logger.info("Checking integration compatibility...")
-    try:
-        compat_service = app.state.integration_compat
-        system_info = compat_service.get_system_info()
-        logger.info(
-            f"System: Python {system_info['python_version']} on {system_info['platform']}"
-        )
-
-        # Log compatibility issues
-        statuses = compat_service.get_all_statuses()
-        incompatible = [
-            k for k, v in statuses.items() if v.get("status") == "incompatible"
-        ]
-        not_installed = [
-            k for k, v in statuses.items() if v.get("status") == "not_installed"
-        ]
-
-        if incompatible:
-            logger.warning(f"Incompatible integrations: {', '.join(incompatible)}")
-        if not_installed:
-            logger.info(f"Not installed integrations: {', '.join(not_installed)}")
-
-        installed_count = sum(1 for v in statuses.values() if v.get("installed"))
-        logger.info(f"Integration status: {installed_count}/{len(statuses)} installed")
-    except Exception as e:
-        logger.error(f"Error checking compatibility: {e}")
 
     if _testing:
         logger.info(
