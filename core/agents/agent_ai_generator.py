@@ -63,7 +63,6 @@ class AgentAIGenerator:
                 message=user_prompt,
                 system_prompt=system_prompt,
                 max_tokens=4096,
-                enable_thinking=False,
             )
         except Exception as e:
             logger.exception("Agent generation call failed")

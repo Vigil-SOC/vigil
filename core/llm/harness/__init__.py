@@ -1,1 +1,1 @@
-# The multi-turn agent loop: tool execution, approval gating, streaming.
+# One-shot Anthropic completions. The multi-turn loop lives in the agent layer.
