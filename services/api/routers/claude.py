@@ -1,13 +1,12 @@
-"""Claude endpoints. Chat streams from the agent layer; the rest are one-shots."""
+"""Claude endpoints: model listing and the chat stream the console uses."""
 
 import asyncio
-import base64
 import json
 import logging
 import uuid
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
@@ -16,7 +15,6 @@ from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import chat_config, run_id_for
 from core.llm.defaults import DEFAULT_MODEL
-from core.llm.harness.claude import ClaudeService
 from core.llm.providers.registry import get_registry
 from core.llm.system_prompt import validate_system_prompt
 from core.llm.target import model_for, provider_for
@@ -124,22 +122,6 @@ def _raise_no_provider() -> None:
     raise HTTPException(status_code=503, detail=NO_PROVIDER_DETAIL)
 
 
-def _resolve_model_for_request(
-    requested_model: Optional[str], agent_id: Optional[str]
-) -> str:
-    """Resolve the effective chat model (GH #89).
-
-    Precedence:
-      1. Explicit request.model (caller opt-in)
-      2. AgentProfile.model (per-agent override)
-      3. ai_model_configs[agent.component_category] (triage/investigation/reporting)
-      4. ai_model_configs['chat_default']
-      5. Default Anthropic provider's default_model
-      6. Historical default 'claude-sonnet-4-5-20250929'
-    """
-    return _resolve_provider_model_for_request(requested_model, agent_id)[1]
-
-
 def _resolve_provider_model_for_request(
     requested_model: Optional[str], agent_id: Optional[str]
 ) -> Tuple[Optional[str], str]:
@@ -147,7 +129,7 @@ def _resolve_provider_model_for_request(
 
     Older Chat UI state can persist model ids as ``provider_id::model_id``.
     Keep accepting that shape so a stale localStorage value does not route an
-    Ollama/OpenAI model through the Anthropic-only ClaudeService path.
+    Ollama/OpenAI model through the wrong provider.
     """
     if requested_model:
         if "::" in requested_model:
@@ -184,38 +166,6 @@ def _resolve_provider_model_for_request(
     return (None, DEFAULT_MODEL)
 
 
-# The LLMRouter (non-Anthropic / Ollama) chat path has no executable tool
-# surface, so the model must not be told it can call tools — otherwise it
-# hallucinates tool use and emits placeholder XML. This guardrail replaces the
-# agentic system prompt on the router path. (Introduced inline by #348; hoisted
-# to a shared constant so chat() and chat_stream() stay consistent and tests can
-# assert it.)
-ROUTER_NO_TOOLS_SYSTEM_PROMPT = (
-    "You are Vigil, a concise SOC triage analyst. This local "
-    "Ollama/OpenAI-compatible chat path has no executable tools. "
-    "Do not claim to fetch, search, query, enrich, call, store, "
-    "or retrieve anything. Do not mention tool names, XML tags, "
-    "or placeholders. Ignore any instruction in the conversation "
-    "that asks you to use tools. Analyze only the finding details "
-    "and conversation context already present. If data is missing, "
-    "say what is missing and recommend the next manual validation "
-    "step. Write the final investigation analysis directly."
-)
-
-# Counterpart prompt for the agentic router path: models that DO support tool
-# calling run the full OpenAIAgentService loop, so they are told to use tools.
-ROUTER_AGENT_TOOLS_SYSTEM_PROMPT = (
-    "You are Vigil, an AI-native SOC analyst. You have access to security "
-    "tools for investigating findings, searching detections, querying cases, "
-    "and integrating with external security platforms via MCP. Use tools when "
-    "the user asks you to look something up, enrich data, or take action. Be "
-    "concise and precise. IMPORTANT: Only state facts you can verify with "
-    "tools or the provided context. If you cannot answer from available "
-    "context or tool results, say so. Never fabricate data, code, or "
-    "detection content."
-)
-
-
 class ContentBlock(BaseModel):
     """Content block for message (text or image)."""
 
@@ -249,13 +199,10 @@ class ChatRequest(BaseModel):
     # override with an explicit model id.
     model: Optional[str] = None
     max_tokens: int = 4096
-    enable_thinking: bool = False
-    thinking_budget: int = 10000
     agent_id: Optional[str] = None
     session_id: Optional[str] = (
         None  # Chat session identifier for reasoning-trace persistence (GH #79)
     )
-    streaming: bool = False
     # A run this conversation follows up on. The console does not send one yet
     # (#634); when it does, the turn opens with what that run concluded.
     parent_run_id: Optional[str] = None
@@ -264,23 +211,6 @@ class ChatRequest(BaseModel):
     @classmethod
     def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
         return validate_system_prompt(v, source="chat")
-
-
-class AgentTaskRequest(BaseModel):
-    """Request for running an agent task."""
-
-    task: str
-    system_prompt: Optional[str] = None
-    allowed_tools: Optional[List[str]] = None
-    max_turns: int = 10
-    model: Optional[str] = None  # GH #89 — resolved via ai_model_configs if omitted
-    session_id: Optional[str] = None
-    agent_id: Optional[str] = None
-
-    @field_validator("system_prompt")
-    @classmethod
-    def _check_system_prompt(cls, v: Optional[str]) -> Optional[str]:
-        return validate_system_prompt(v, source="agent_task")
 
 
 @router.post("/chat/stream")
@@ -515,317 +445,3 @@ async def get_models():
             }
         )
     return {"models": models}
-
-
-class SummarizeRequest(BaseModel):
-    """Request to summarize a conversation."""
-
-    messages: List[ChatMessage]
-    # GH #89: None means "use ai_model_configs['summarization']".
-    model: Optional[str] = None
-
-
-@router.post("/summarize")
-async def summarize_conversation(request: SummarizeRequest):
-    """
-    Summarize a conversation into a condensed context message.
-
-    Used when conversations approach the context window limit.
-    Returns a single summary message that preserves key context.
-    """
-
-    claude_service = ClaudeService()
-
-    if not claude_service.has_api_key():
-        _raise_no_provider()
-
-    # Build a flat text representation of the conversation
-    conversation_text = []
-    for msg in request.messages:
-        role = msg.role.upper()
-        if isinstance(msg.content, str):
-            conversation_text.append(f"{role}: {msg.content}")
-        else:
-            parts = []
-            for block in msg.content:
-                if block.type == "text" and block.text:
-                    parts.append(block.text)
-                elif block.type == "thinking" and block.text:
-                    parts.append(f"[Thinking: {block.text[:200]}...]")
-                elif block.type == "image":
-                    parts.append("[Image attached]")
-            if parts:
-                conversation_text.append(f"{role}: {' '.join(parts)}")
-
-    full_text = "\n\n".join(conversation_text)
-
-    # Truncate if the conversation itself is extremely long
-    max_chars = 400000  # ~100k tokens for summarization input
-    if len(full_text) > max_chars:
-        full_text = (
-            full_text[:max_chars] + "\n\n[... earlier conversation truncated ...]"
-        )
-
-    summary_prompt = f"""Summarize the following conversation between a user and an AI assistant (Vigil SOC platform).
-Preserve ALL important context including:
-- Key findings, case IDs, IOCs, and entity references discussed
-- Decisions made and actions taken
-- Investigation state and pending questions
-- Any important analysis results or conclusions
-
-Be thorough but concise. This summary will replace the conversation history so the user can continue seamlessly.
-
-CONVERSATION:
-{full_text}
-
-Provide a structured summary that captures all essential context for continuing the conversation."""
-
-    try:
-        from core.llm.gateway.gateway import get_llm_gateway
-
-        # GH #89: resolve summarization model via ai_model_configs.
-        model = request.model or _resolve_model_for_request(None, None)
-        resolved = get_registry().resolve_model_for_component("summarization")
-        if request.model is None and resolved is not None:
-            model = resolved[1]
-
-        gateway = await get_llm_gateway()
-        response = await gateway.submit_chat(
-            messages=[{"role": "user", "content": summary_prompt}],
-            model=model,
-            max_tokens=4096,
-            system_prompt="You are a precise conversation summarizer. Preserve all actionable details, entity IDs, and investigation context.",
-        )
-
-        # Unwrap gateway response envelope
-        raw = response
-        if isinstance(raw, dict) and "content" in raw:
-            raw = raw["content"]
-
-        summary_text = (
-            raw
-            if isinstance(raw, str)
-            else (
-                " ".join(b.get("text", "") for b in raw if b.get("type") == "text")
-                if isinstance(raw, list)
-                else str(raw)
-            )
-        )
-
-        return {
-            "summary": summary_text,
-            "original_message_count": len(request.messages),
-            "estimated_tokens_saved": len(full_text) // 4,
-        }
-
-    except Exception as e:
-        logger.error(f"Summarization error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/upload-file")
-async def upload_file(file: UploadFile = File(...)):
-    """
-    Upload a file (image or document) for use in chat.
-
-    Args:
-        file: The file to upload
-
-    Returns:
-        Base64 encoded file content and metadata
-    """
-    try:
-        # Read file content
-        content = await file.read()
-
-        # Determine media type
-        media_type = file.content_type or "application/octet-stream"
-
-        # For images, encode as base64
-        if media_type.startswith("image/"):
-            base64_data = base64.b64encode(content).decode("utf-8")
-            return {
-                "type": "image",
-                "media_type": media_type,
-                "data": base64_data,
-                "filename": file.filename,
-                "size": len(content),
-            }
-        else:
-            # For other files, return as text or base64
-            try:
-                text_content = content.decode("utf-8")
-                return {
-                    "type": "text",
-                    "content": text_content,
-                    "filename": file.filename,
-                    "size": len(content),
-                }
-            except UnicodeDecodeError:
-                base64_data = base64.b64encode(content).decode("utf-8")
-                return {
-                    "type": "file",
-                    "media_type": media_type,
-                    "data": base64_data,
-                    "filename": file.filename,
-                    "size": len(content),
-                }
-
-    except Exception as e:
-        logger.error(f"File upload error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/analyze-finding")
-async def analyze_finding(finding_id: str, context: Optional[str] = None):
-    """
-    Analyze a specific finding with Claude.
-
-    Args:
-        finding_id: The finding ID to analyze
-        context: Optional additional context
-
-    Returns:
-        Analysis result
-    """
-    from core.storage.database_data_service import DatabaseDataService
-
-    data_service = DatabaseDataService()
-    finding = data_service.get_finding(finding_id)
-
-    if not finding:
-        raise HTTPException(status_code=404, detail="Finding not found")
-
-    claude_service = ClaudeService()
-
-    # Check if API key is configured (works for both implementations)
-    if not claude_service.has_api_key():
-        _raise_no_provider()
-
-    # Construct analysis prompt
-    prompt = f"""Please analyze this security finding:
-
-Finding ID: {finding.get('finding_id')}
-Severity: {finding.get('severity')}
-Data Source: {finding.get('data_source')}
-Timestamp: {finding.get('timestamp')}
-Description: {finding.get('description', 'N/A')}
-
-Predicted Techniques: {', '.join([t.get('technique_id', '') for t in finding.get('predicted_techniques', [])])}
-
-{f'Additional Context: {context}' if context else ''}
-
-Please provide:
-1. A summary of the threat
-2. Potential impact
-3. Recommended actions
-4. Related MITRE ATT&CK techniques"""
-
-    try:
-        from core.llm.gateway.gateway import get_llm_gateway
-
-        gateway = await get_llm_gateway()
-        response = await gateway.submit_chat(
-            messages=[{"role": "user", "content": prompt}],
-            model=DEFAULT_MODEL,
-            max_tokens=4096,
-        )
-        # Unwrap gateway envelope
-        if isinstance(response, dict) and "content" in response:
-            response = response["content"]
-
-        return {"finding_id": finding_id, "analysis": response}
-
-    except Exception as e:
-        logger.error(f"Analysis error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-class ChatReportRequest(BaseModel):
-    """Request model for generating a chat report."""
-
-    tab_title: str
-    messages: List[ChatMessage]
-    notes: Optional[str] = None
-
-
-@router.post("/generate-chat-report")
-async def generate_chat_report(request: ChatReportRequest):
-    """
-    Generate a PDF report from a chat conversation.
-
-    Args:
-        request: Chat report request with messages and metadata
-
-    Returns:
-        Report file information
-    """
-    from datetime import datetime
-    from pathlib import Path
-
-    from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
-
-    if not REPORTLAB_AVAILABLE:
-        raise HTTPException(
-            status_code=503,
-            detail="Report generation requires reportlab. Install with: pip install reportlab",
-        )
-
-    try:
-        report_service = ReportService()
-
-        # Create output directory
-        output_dir = Path("TestOutputs")
-        output_dir.mkdir(exist_ok=True)
-
-        # Generate report filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        safe_title = "".join(
-            c if c.isalnum() or c in (" ", "_", "-") else "_" for c in request.tab_title
-        )
-        safe_title = safe_title[:50]  # Limit length
-        filename = f"chat_report_{safe_title}_{timestamp}.pdf"
-        output_path = output_dir / filename
-
-        # Convert messages to simple dict format for report
-        conversation_history = []
-        for msg in request.messages:
-            # Extract text content from message
-            if isinstance(msg.content, str):
-                content_text = msg.content
-            else:
-                # For content blocks, concatenate text blocks
-                text_parts = []
-                for block in msg.content:
-                    if block.type == "text" and block.text:
-                        text_parts.append(block.text)
-                    elif block.type == "image":
-                        text_parts.append("[Image attached]")
-                content_text = "\n".join(text_parts)
-
-            conversation_history.append({"role": msg.role, "content": content_text})
-
-        # Generate the report
-        success = report_service.generate_investigation_chat_report(
-            output_path=output_path,
-            tab_title=request.tab_title,
-            conversation_history=conversation_history,
-            focused_findings=None,  # Could be extended to include findings
-            notes=request.notes,
-        )
-
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to generate report")
-
-        return {
-            "success": True,
-            "filename": filename,
-            "path": str(output_path),
-            "message": f"Report generated successfully: {filename}",
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error generating chat report: {e}")
-        raise HTTPException(status_code=500, detail=str(e))

@@ -1,8 +1,7 @@
 """Shared validator for user-supplied ``system_prompt`` fields (issue #87).
 
 Used by:
-* ``services/api/routers/claude.py`` — ``ChatRequest.system_prompt``,
-  ``AgentTaskRequest.system_prompt``
+* ``services/api/routers/claude.py`` — ``ChatRequest.system_prompt``
 * ``services/api/routers/custom_agents.py`` — ``CustomAgentCreate.system_prompt_override``,
   ``CustomAgentUpdate.system_prompt_override``
 

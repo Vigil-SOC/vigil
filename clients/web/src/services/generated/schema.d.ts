@@ -2583,33 +2583,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude/analyze-finding": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Analyze Finding
-         * @description Analyze a specific finding with Claude.
-         *
-         *     Args:
-         *         finding_id: The finding ID to analyze
-         *         context: Optional additional context
-         *
-         *     Returns:
-         *         Analysis result
-         */
-        post: operations["post_api_claude_analyze-finding"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/claude/chat/stream": {
         parameters: {
             query?: never;
@@ -2624,32 +2597,6 @@ export interface paths {
          * @description Stream a chat turn from the agent layer, holding this wire contract.
          */
         post: operations["post_api_claude_chat_stream"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/claude/generate-chat-report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Generate Chat Report
-         * @description Generate a PDF report from a chat conversation.
-         *
-         *     Args:
-         *         request: Chat report request with messages and metadata
-         *
-         *     Returns:
-         *         Report file information
-         */
-        post: operations["post_api_claude_generate-chat-report"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2679,55 +2626,6 @@ export interface paths {
         get: operations["get_api_claude_models"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/claude/summarize": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Summarize Conversation
-         * @description Summarize a conversation into a condensed context message.
-         *
-         *     Used when conversations approach the context window limit.
-         *     Returns a single summary message that preserves key context.
-         */
-        post: operations["post_api_claude_summarize"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/claude/upload-file": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Upload File
-         * @description Upload a file (image or document) for use in chat.
-         *
-         *     Args:
-         *         file: The file to upload
-         *
-         *     Returns:
-         *         Base64 encoded file content and metadata
-         */
-        post: operations["post_api_claude_upload-file"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7370,11 +7268,6 @@ export interface components {
             /** Format */
             format?: string | null;
         };
-        /** Body_upload_file_api_claude_upload_file_post */
-        Body_upload_file_api_claude_upload_file_post: {
-            /** File */
-            file: string;
-        };
         /**
          * BootstrapRequest
          * @description First-admin details.
@@ -8067,29 +7960,12 @@ export interface components {
             role: string;
         };
         /**
-         * ChatReportRequest
-         * @description Request model for generating a chat report.
-         */
-        ChatReportRequest: {
-            /** Messages */
-            messages: components["schemas"]["ChatMessage"][];
-            /** Notes */
-            notes?: string | null;
-            /** Tab Title */
-            tab_title: string;
-        };
-        /**
          * ChatRequest
          * @description Chat request model.
          */
         ChatRequest: {
             /** Agent Id */
             agent_id?: string | null;
-            /**
-             * Enable Thinking
-             * @default false
-             */
-            enable_thinking: boolean;
             /**
              * Max Tokens
              * @default 4096
@@ -8103,18 +7979,8 @@ export interface components {
             parent_run_id?: string | null;
             /** Session Id */
             session_id?: string | null;
-            /**
-             * Streaming
-             * @default false
-             */
-            streaming: boolean;
             /** System Prompt */
             system_prompt?: string | null;
-            /**
-             * Thinking Budget
-             * @default 10000
-             */
-            thinking_budget: number;
         };
         /** CheckpointRaised */
         CheckpointRaised: {
@@ -10070,16 +9936,6 @@ export interface components {
              * @description Estimated time saved by AI
              */
             time_saved_minutes?: number | null;
-        };
-        /**
-         * SummarizeRequest
-         * @description Request to summarize a conversation.
-         */
-        SummarizeRequest: {
-            /** Messages */
-            messages: components["schemas"]["ChatMessage"][];
-            /** Model */
-            model?: string | null;
         };
         /**
          * TaskAdd
@@ -15169,40 +15025,6 @@ export interface operations {
             };
         };
     };
-    "post_api_claude_analyze-finding": {
-        parameters: {
-            query: {
-                finding_id: string;
-                context?: string | null;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     post_api_claude_chat_stream: {
         parameters: {
             query?: never;
@@ -15238,41 +15060,6 @@ export interface operations {
             };
         };
     };
-    "post_api_claude_generate-chat-report": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ChatReportRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_api_claude_models: {
         parameters: {
             query?: never;
@@ -15283,76 +15070,6 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_claude_summarize: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SummarizeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_claude_upload-file": {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_upload_file_api_claude_upload_file_post"];
-            };
-        };
         responses: {
             /** @description Successful Response */
             200: {
