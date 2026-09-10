@@ -4,5 +4,6 @@
     "dockerfile": "Dockerfile"
   },
   "user": "ubuntu",
-  "start": "sudo service docker start"
+  "install": "sudo python3 -m pip install --break-system-packages --upgrade pip && sudo python3 -m pip install --break-system-packages -r requirements.lock -r requirements-dev.txt && npm ci --prefix clients/web && npm ci --prefix services/agent",
+  "start": "bash -lc 'set -euo pipefail; sudo service docker start; docker compose -f infra/docker/docker-compose.yml up -d postgres redis; for i in $(seq 1 60); do if docker exec deeptempo-postgres pg_isready -U deeptempo -d deeptempo_soc >/dev/null 2>&1 && docker exec deeptempo-redis redis-cli ping 2>/dev/null | grep -q PONG; then exit 0; fi; sleep 1; done; echo \"postgres/redis did not become ready\" >&2; exit 1'"
 }
