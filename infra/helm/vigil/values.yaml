@@ -417,6 +417,7 @@ dbInit:
     - 27_episodic_read_log.sql
     - 28_case_closure_actor.sql
     - 29_episodic_distil_failures.sql
+    - 30_approval_action_reversibility.sql
     - 30_vigil_app_role.sql
   resources:
     requests:

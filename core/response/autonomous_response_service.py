@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 from core.agents.builtins import AgentId
-from core.response.approval_service import ActionType, ApprovalService
+from core.response.approval_service import ActionStatus, ActionType, ApprovalService
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -335,8 +335,7 @@ Please review and approve/reject in the SOC dashboard.
             Action result
         """
         try:
-            # Create pending action
-            action = self.approval_service.create_action(
+            action, inserted = self.approval_service._put_action(
                 action_type=ActionType.ISOLATE_HOST,
                 title=f"Isolate Host: {hostname or ip_address}",
                 description=f"Network isolation of compromised host based on correlated detections.\n\n"
@@ -348,10 +347,29 @@ Please review and approve/reject in the SOC dashboard.
                 evidence=evidence,
                 created_by=AgentId.AUTO_RESPONDER.value,
                 parameters={"hostname": hostname, "correlation": correlation_data},
+                idempotency_key=f"{ActionType.ISOLATE_HOST.value}:{ip_address}",
             )
 
+            if not inserted:
+                if action.status == ActionStatus.EXECUTED.value:
+                    return {
+                        "status": "executed",
+                        "action_id": action.action_id,
+                        "message": f"Host {hostname or ip_address} already isolated",
+                        "confidence": action.confidence,
+                        "result": action.execution_result,
+                    }
+                return {
+                    "status": action.status,
+                    "action_id": action.action_id,
+                    "message": f"Isolation already recorded for {hostname or ip_address}",
+                    "confidence": action.confidence,
+                    "requires_approval": action.requires_approval,
+                    "result": action.execution_result,
+                }
+
             # Check if auto-approved (confidence >= 0.90)
-            if action.status == "approved":
+            if action.status == ActionStatus.APPROVED.value:
                 logger.info(
                     f"Action {action.action_id} auto-approved (confidence: {confidence:.2%})"
                 )

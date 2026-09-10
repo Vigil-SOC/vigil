@@ -38,6 +38,8 @@ def _action(action_id="ACT-1", workflow_run_id=None):
         parameters={},
         workflow_run_id=workflow_run_id,
         workflow_phase_id=None,
+        reversibility="reversible",
+        idempotency_key=None,
     )
 
 

@@ -144,6 +144,8 @@ class ApprovalActionSchema(ORMSchema):
     parameters: JsonDict = Field(default_factory=dict)
     workflow_run_id: Optional[str] = None
     workflow_phase_id: Optional[str] = None
+    reversibility: Optional[str] = None
+    idempotency_key: Optional[str] = None
 
 
 class InvestigationSchema(ORMSchema):

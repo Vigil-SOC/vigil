@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
@@ -57,6 +57,13 @@ class ActionStatus(Enum):
     FAILED = "failed"
 
 
+class Reversibility(Enum):
+    """Whether an executed action can be undone."""
+
+    REVERSIBLE = "reversible"
+    IRREVERSIBLE = "irreversible"
+
+
 @dataclass
 class PendingAction:
     """Represents a pending action awaiting approval.
@@ -86,6 +93,8 @@ class PendingAction:
     # #128 — workflow phase approvals link back here.
     workflow_run_id: Optional[str] = None
     workflow_phase_id: Optional[str] = None
+    reversibility: str = Reversibility.REVERSIBLE.value
+    idempotency_key: Optional[str] = None
 
 
 def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
@@ -110,7 +119,19 @@ def _row_to_pending(row: ApprovalActionRow) -> PendingAction:
         parameters=dict(row.parameters or {}),
         workflow_run_id=row.workflow_run_id,
         workflow_phase_id=row.workflow_phase_id,
+        reversibility=row.reversibility or Reversibility.REVERSIBLE.value,
+        idempotency_key=row.idempotency_key,
     )
+
+
+def _nonfailed_by_key(session, key: str) -> Optional[ApprovalActionRow]:
+    """The live row for ``key``, if any. Failed rows are excluded so they can retry."""
+    return session.execute(
+        select(ApprovalActionRow)
+        .where(ApprovalActionRow.idempotency_key == key)
+        .where(ApprovalActionRow.status != ActionStatus.FAILED.value)
+        .limit(1)
+    ).scalar_one_or_none()
 
 
 class ApprovalService:
@@ -253,17 +274,66 @@ class ApprovalService:
         parameters: Optional[Dict] = None,
         workflow_run_id: Optional[str] = None,
         workflow_phase_id: Optional[str] = None,
+        reversibility: Reversibility = Reversibility.REVERSIBLE,
+        idempotency_key: Optional[str] = None,
     ) -> PendingAction:
         """Create a new pending action.
 
         Workflow phase approvals pass ``workflow_run_id`` and
         ``workflow_phase_id`` so the approvals UI / resume endpoint can
         link back to the paused run.
+
+        Irreversible actions always require approval. A second call with
+        the same ``idempotency_key`` returns the existing non-failed row.
         """
+        action, _inserted = self._put_action(
+            action_type=action_type,
+            title=title,
+            description=description,
+            target=target,
+            confidence=confidence,
+            reason=reason,
+            evidence=evidence,
+            created_by=created_by,
+            parameters=parameters,
+            workflow_run_id=workflow_run_id,
+            workflow_phase_id=workflow_phase_id,
+            reversibility=reversibility,
+            idempotency_key=idempotency_key,
+        )
+        return action
+
+    def _put_action(
+        self,
+        action_type: ActionType,
+        title: str,
+        description: str,
+        target: str,
+        confidence: float,
+        reason: str,
+        evidence: List[str],
+        created_by: str = "system",
+        parameters: Optional[Dict] = None,
+        workflow_run_id: Optional[str] = None,
+        workflow_phase_id: Optional[str] = None,
+        reversibility: Reversibility = Reversibility.REVERSIBLE,
+        idempotency_key: Optional[str] = None,
+    ) -> tuple[PendingAction, bool]:
+        """Insert an approval row, or return the existing non-failed one.
+
+        The bool is True when this call inserted. Isolation uses it so a
+        reused approved/pending row is not executed or escalated again.
+        """
+        key = idempotency_key or None
+
         if self.force_manual_approval:
             requires_approval = True
-        else:
+        elif reversibility is Reversibility.IRREVERSIBLE:
+            requires_approval = True
+        elif reversibility is Reversibility.REVERSIBLE:
             requires_approval = confidence < 0.90
+        else:
+            raise ValueError(f"Unknown reversibility: {reversibility}")
 
         action_id = f"action-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
         status = (
@@ -275,6 +345,10 @@ class ApprovalService:
         try:
             db = get_db_manager()
             with db.session_scope() as session:
+                if key:
+                    existing = _nonfailed_by_key(session, key)
+                    if existing is not None:
+                        return _row_to_pending(existing), False
                 row = ApprovalActionRow(
                     action_id=action_id,
                     action_type=action_type.value,
@@ -291,6 +365,8 @@ class ApprovalService:
                     parameters=dict(parameters or {}),
                     workflow_run_id=workflow_run_id,
                     workflow_phase_id=workflow_phase_id,
+                    reversibility=reversibility.value,
+                    idempotency_key=key,
                 )
                 session.add(row)
                 session.flush()
@@ -301,7 +377,16 @@ class ApprovalService:
                 title,
                 confidence,
             )
-            return pending
+            return pending, True
+        except IntegrityError:
+            if not key:
+                raise
+            db = get_db_manager()
+            with db.session_scope() as session:
+                existing = _nonfailed_by_key(session, key)
+            if existing is None:
+                raise
+            return _row_to_pending(existing), False
         except SQLAlchemyError as e:
             logger.error("DB error creating action: %s", e)
             raise
