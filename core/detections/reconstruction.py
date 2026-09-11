@@ -267,21 +267,6 @@ def _naive_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-_STEP_KEYS = (
-    "started_at",
-    "start",
-    "start_time",
-    "timestamp",
-    "hostname",
-    "host",
-    "computer_name",
-    "src_ip",
-    "src_ips",
-    "user",
-    "id",
-    "step_id",
-    "technique_id",
-)
 _EVIDENCE_KEYS = (
     "hostname",
     "host",
@@ -425,7 +410,11 @@ def _steps_from_result(item: Any) -> List[Dict[str, Any]]:
     if isinstance(rows, list) and ("ok" in item or "rowCount" in item):
         return _steps_from_rows(rows)
     if isinstance(item.get("steps"), list):
-        return [row for row in item["steps"] if isinstance(row, dict)]
+        return [
+            row
+            for row in item["steps"]
+            if isinstance(row, dict) and _looks_like_step(row)
+        ]
     if _looks_like_step(item):
         return [item]
     return []
@@ -438,11 +427,17 @@ def _steps_from_rows(rows: List[Any]) -> List[Dict[str, Any]]:
             continue
         nested = row.get("steps")
         if isinstance(nested, list):
-            steps.extend(step for step in nested if isinstance(step, dict))
+            steps.extend(
+                step
+                for step in nested
+                if isinstance(step, dict) and _looks_like_step(step)
+            )
         elif _looks_like_step(row):
             steps.append(row)
     return steps
 
 
 def _looks_like_step(row: Dict[str, Any]) -> bool:
-    return any(key in row for key in _STEP_KEYS)
+    # Coverage groups by technique_id; other tool rows must not enter the trace.
+    tid = row.get("technique_id")
+    return isinstance(tid, str) and bool(tid.strip())

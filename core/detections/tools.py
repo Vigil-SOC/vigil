@@ -265,8 +265,12 @@ class SecurityDetectionsTools:
         are ignored. A run id or action trace is the report path, not catalog
         counts mixed into the same rows.
         """
-        if isinstance(steps, list) or run_id:
-            return await self._run_coverage(run_id=run_id, steps=steps)
+        trace_given = isinstance(steps, list)
+        if (trace_given and steps) or run_id or (trace_given and not techniques):
+            return await self._run_coverage(
+                run_id=run_id,
+                steps=steps if trace_given else None,
+            )
         if techniques is None:
             return {
                 "error": "techniques is required unless run_id or steps is provided"
@@ -301,8 +305,9 @@ class SecurityDetectionsTools:
         return coverage
 
     async def _run_coverage(self, run_id: Optional[str], steps: Any) -> Dict:
-        trace: List = steps if isinstance(steps, list) else []
-        if not isinstance(steps, list) and run_id:
+        if isinstance(steps, list) and steps:
+            trace: List = steps
+        elif run_id:
             projection = await read_projection(run_id)
             if projection is None:
                 return {
@@ -311,6 +316,8 @@ class SecurityDetectionsTools:
                     "error": "no readable run",
                 }
             trace = steps_from_dispatch_results(projection.get("results"))
+        else:
+            trace = steps if isinstance(steps, list) else []
         reconstructed = await self.reconstruct_run(steps=trace)
         report = coverage_report(trace, reconstructed)
         if run_id:
