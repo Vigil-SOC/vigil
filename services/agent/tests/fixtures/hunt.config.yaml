@@ -48,15 +48,6 @@ tools:
       properties:
         query: { type: string }
         severity: { type: string }
-  - id: nearest_neighbors
-    kind: remote
-    provides: similar_findings
-    description: findings whose embeddings sit closest to a given one
-    parameters:
-      type: object
-      required: [finding_id]
-      properties:
-        finding_id: { type: string }
   - id: lookup_indicators
     kind: remote
     provides: indicator_lookup

@@ -226,16 +226,14 @@ roles:
   workers:
     threat_hunter:
       description: broad behavioural hunting across the detected signal and the raw telemetry behind it
-      needs: [findings_search, similar_findings, telemetry_search, entity_recall]
+      needs: [findings_search, telemetry_search, entity_recall]
       prompt: |
         You have two surfaces and they answer different questions.
 
         Vigil's findings are what detection already scored: one record per alert
         or anomaly, carrying a severity, an anomaly score, predicted ATT&CK
         techniques and the entities involved. Search it to learn what has already
-        been noticed. Given one record that matters, ask for its nearest
-        neighbours: the embedding finds records that look like it whether or not
-        they share a field, which no keyword query would return.
+        been noticed.
 
         The telemetry search, when this deployment has one, reaches the raw
         records behind those findings, in the SIEM's own query language. Go there

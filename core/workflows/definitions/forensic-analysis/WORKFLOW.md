@@ -16,7 +16,7 @@ phases:
   - id: evidence-acquisition
     agent: forensics
     name: "Evidence Acquisition & Preservation"
-    tools: [get_finding, list_findings, nearest_neighbors, recall_entity]
+    tools: [get_finding, list_findings, recall_entity]
     instructions: |
       Acquire all evidence via tools without modifying originals, establish chain
       of custody, create an artifact inventory and reconstruct a master timeline.
@@ -29,11 +29,9 @@ phases:
          - Note the state of the evidence at the time of acquisition
       3. Build an artifact inventory: all files, logs, memory captures and
          network captures referenced
-      4. Use `nearest_neighbors` to discover related findings via embedding
-         similarity
-      5. Reconstruct a master timeline from all available timestamps
-      6. Extract initial IOCs: file hashes, IPs, domains, file paths, registry keys
-      7. Identify artifacts requiring deeper analysis (suspicious binaries,
+      4. Reconstruct a master timeline from all available timestamps
+      5. Extract initial IOCs: file hashes, IPs, domains, file paths, registry keys
+      6. Identify artifacts requiring deeper analysis (suspicious binaries,
          encrypted files, anomalous logs)
 
       The chain of custody is the product here, not a formality: an artifact you

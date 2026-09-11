@@ -113,7 +113,6 @@ CAPABILITIES: Dict[str, Tuple[Candidate, ...]] = {
         Candidate("virustotal", ("get_ip_report", "get_domain_report")),
     ),
     "findings_search": (Candidate(None, ("search_findings",)),),
-    "similar_findings": (Candidate(None, ("nearest_neighbors",)),),
     # One candidate and no fallback: episodic memory is Vigil's own tier, so a
     # deployment either carries it or has no history to offer.
     "entity_recall": (Candidate(None, ("recall_entity",)),),
@@ -128,7 +127,6 @@ CAPABILITY_BOUNDS: Dict[str, Dict[str, int]] = {
     "telemetry_search": {"timeout_ms": 120_000, "max_rows": 500},
     "indicator_lookup": {"timeout_ms": 60_000, "max_rows": 200},
     "findings_search": {"timeout_ms": 30_000, "max_rows": 200},
-    "similar_findings": {"timeout_ms": 30_000, "max_rows": 200},
     # A read of our own Postgres, so the findings timeout is generous. The row
     # cap is stated because the bounds model requires one, not because it bites:
     # recall answers with one envelope, and the injected `limit` is in
@@ -327,7 +325,6 @@ def resolve(
 # boundary for the same reason RUN_KINDS is, and held to it by a ratchet.
 HUNT_CAPABILITIES = (
     "findings_search",
-    "similar_findings",
     "telemetry_search",
     "indicator_lookup",
     # Bound on the run rather than granted to every role: `needs` in the arch is

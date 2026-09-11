@@ -17,7 +17,7 @@ phases:
   - id: evidence-gathering
     agent: investigator
     name: "Cloud Evidence Gathering"
-    tools: [get_finding, list_findings, nearest_neighbors, search_detections, recall_entity]
+    tools: [get_finding, list_findings, search_detections, recall_entity]
     instructions: |
       Root-cause analysis in cloud environments: collect audit logs, enumerate
       affected resources, and determine control-plane vs data-plane scope.
@@ -40,8 +40,7 @@ phases:
          OAuth token grants, SAML/SSO sign-ins, conditional access failures
       7. Identify the initial access vector: compromised credentials, leaked
          keys, instance metadata service abuse, supply chain, misconfigured bucket
-      8. Use `nearest_neighbors` to find related findings via embedding similarity
-      9. Document the evidence chain with cloud-native identifiers (ARNs,
+      8. Document the evidence chain with cloud-native identifiers (ARNs,
          resource IDs, subscription IDs)
 
       Where a log source was not enabled, that is a visibility gap and belongs in
@@ -50,7 +49,7 @@ phases:
   - id: correlation
     agent: correlator
     name: "Cross-Cloud Correlation"
-    tools: [list_findings, create_case, get_technique_rollup, nearest_neighbors, recall_entity]
+    tools: [list_findings, create_case, get_technique_rollup, recall_entity]
     instructions: |
       Link cloud events across providers, accounts and tenants. Identify identity
       blast-radius and cross-account or cross-tenant pivot attempts.

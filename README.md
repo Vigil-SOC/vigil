@@ -79,10 +79,10 @@ phases:
   - id: investigate
     agent: investigator
     name: "Investigate"
-    tools: [get_finding, nearest_neighbors, search_detections]
+    tools: [get_finding, search_detections]
     instructions: |
-      Use nearest_neighbors to find similar reports. Correlate with detection
-      rules. Build an evidence timeline. Hand on the timeline and related findings.
+      Correlate with detection rules. Build an evidence timeline. Hand on the
+      timeline and related findings.
 
   - id: contain
     agent: responder

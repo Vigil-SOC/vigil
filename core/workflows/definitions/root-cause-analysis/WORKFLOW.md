@@ -93,7 +93,7 @@ phases:
   - id: threat_hunter
     agent: threat_hunter
     name: "Endpoint reconstruction"
-    tools: [findings_search, similar_findings, telemetry_search]
+    tools: [findings_search, telemetry_search]
     instructions: |
       Walk the host backward: process lineage (which parent spawned the confirmed
       malicious child), file-create events (what wrote the payload and where), and

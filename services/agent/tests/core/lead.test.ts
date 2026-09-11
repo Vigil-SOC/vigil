@@ -250,7 +250,7 @@ describe("an arch drives the loop", () => {
     expect(grantsOf(specFor("hunt", "hunt.playbook.yaml", "hunt.config.yaml"))).toEqual({
       lead: ["expand"],
       critic: [],
-      threat_hunter: ["search_findings", "nearest_neighbors", "splunk_search"],
+      threat_hunter: ["search_findings", "splunk_search"],
       network_analyst: ["splunk_search", "search_findings"],
       threat_intel: ["lookup_indicators"],
     });
