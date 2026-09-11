@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import { streamFetch, aiDecisionsApi, approvalsApi } from '../services/api'
+import { streamFetch, aiDecisionsApi, approvalsApi, timelineApi } from '../services/api'
 
 vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -99,10 +99,17 @@ vi.mock('../services/api', () => ({
     getFindingsByTechnique: () => Promise.resolve({ data: { findings: [] } }),
   },
   timelineApi: {
-    getTimelineRange: () =>
-      Promise.resolve({
-        data: { events: [{ id: 'finding-f-1', start: '2026-06-12T11:36:33Z', type: 'finding', severity: 'medium', metadata: { finding_id: 'f-1' } }] },
-      }),
+    getTimelineRange: vi.fn((params: { start?: string; end?: string } = {}) => {
+      const events = [
+        { id: 'finding-f-1', start: '2026-06-12T11:36:33Z', type: 'finding', severity: 'medium', metadata: { finding_id: 'f-1' } },
+        { id: 'finding-f-2', start: '2026-06-13T11:36:33Z', type: 'finding', severity: 'high', metadata: { finding_id: 'f-2' } },
+      ]
+      const start = params.start ? Date.parse(params.start) : Number.NEGATIVE_INFINITY
+      const end = params.end ? Date.parse(params.end) : Number.POSITIVE_INFINITY
+      return Promise.resolve({
+        data: { events: events.filter((event) => Date.parse(event.start) >= start && Date.parse(event.start) <= end) },
+      })
+    }),
   },
   aiDecisionsApi: {
     getPendingFeedback: () =>

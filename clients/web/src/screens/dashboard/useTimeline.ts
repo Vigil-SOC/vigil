@@ -18,17 +18,28 @@ const sevOf = (s?: string): TimelineEvent['sev'] => {
 }
 const kindOf = (t?: string): TimelineKind => (t === 'case' ? 'case' : t === 'alert' ? 'alert' : 'finding')
 
-export function useTimeline() {
+export function useTimeline(start?: string, end?: string, enabled = true) {
   const [events, setEvents] = useState<TimelineEvent[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
+
+    if (!enabled) {
+      setEvents([])
+      setPhase('ready')
+      setError(null)
+      return () => {
+        cancelled = true
+      }
+    }
+
     setPhase('loading')
     setError(null)
+    setEvents([])
     timelineApi
-      .getTimelineRange({ limit: 200 })
+      .getTimelineRange({ limit: 200, start, end })
       .then((res) => {
         if (cancelled) return
         const list = (res.data?.events || []) as RangeEvent[]
@@ -53,7 +64,7 @@ export function useTimeline() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [start, end, enabled])
 
   return { events, phase, error }
 }

@@ -414,6 +414,12 @@ function AttackTab() {
 
 const DAY = 86400000
 
+function calendarDayIso(value: string, endOfDay = false): string | undefined {
+  if (!value) return undefined
+  const date = new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00'}`)
+  return Number.isNaN(date.getTime()) ? undefined : date.toISOString()
+}
+
 interface TLBar {
   e: TimelineEvent
   left: number
@@ -494,6 +500,8 @@ function computeLayout(events: TimelineEvent[], zoom: number, containerW: number
 
 function TimelineTab() {
   const [filter, setFilter] = useState<'all' | 'finding'>('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [speed, setSpeed] = useState(1)
   const [zoom, setZoom] = useState(1)
   const [playing, setPlaying] = useState(false)
@@ -511,8 +519,13 @@ function TimelineTab() {
   const speedRef = useRef(1)
   const downRef = useRef(false)
 
-  const { events: tlEvents, phase: tlPhase } = useTimeline()
+  const dateStart = calendarDayIso(dateFrom)
+  const dateEnd = calendarDayIso(dateTo, true)
+  const validDateRange = !dateFrom || !dateTo || dateFrom <= dateTo
+  const hasDateFilter = Boolean(dateFrom || dateTo)
+  const { events: tlEvents, phase: tlPhase } = useTimeline(dateStart, dateEnd, validDateRange)
   const events = useMemo(() => tlEvents.filter((e) => filter === 'all' || e.kind === 'finding'), [tlEvents, filter])
+  const eventCountLabel = `${events.length} event${events.length === 1 ? '' : 's'}`
   const layout = useMemo(() => computeLayout(events, zoom, containerW), [events, zoom, containerW])
   const layoutRef = useRef(layout)
   layoutRef.current = layout
@@ -616,6 +629,23 @@ function TimelineTab() {
     engagedRef.current = false
     setFilter(f)
   }
+  const resetTimelineState = () => {
+    pause()
+    engagedRef.current = false
+  }
+  const changeDateFrom = (value: string) => {
+    resetTimelineState()
+    setDateFrom(value)
+  }
+  const changeDateTo = (value: string) => {
+    resetTimelineState()
+    setDateTo(value)
+  }
+  const clearDateRange = () => {
+    resetTimelineState()
+    setDateFrom('')
+    setDateTo('')
+  }
   const setZoomF = (f: number) => setZoom((z) => Math.max(1, Math.min(12, z * f)))
   const fit = () => {
     pause()
@@ -645,7 +675,38 @@ function TimelineTab() {
           <button className={filter === 'all' ? 'active' : ''} onClick={() => changeFilter('all')}>All</button>
           <button className={filter === 'finding' ? 'active' : ''} onClick={() => changeFilter('finding')}>finding</button>
         </div>
-        <span className="tl-count">{tlPhase === 'loading' ? 'Loading…' : `${events.length} events`}</span>
+        <span className="tl-count">{tlPhase === 'loading' ? 'Loading…' : eventCountLabel}</span>
+        <div className="tl-date-filter" role="group" aria-label="Timeline date range">
+          <span className="tl-date-filter-title">Date range</span>
+          <label className="tl-date-field">
+            <span>From</span>
+            <input
+              type="date"
+              aria-label="Timeline start date"
+              aria-invalid={!validDateRange}
+              max={dateTo || undefined}
+              value={dateFrom}
+              onChange={(e) => changeDateFrom(e.target.value)}
+            />
+          </label>
+          <label className="tl-date-field">
+            <span>To</span>
+            <input
+              type="date"
+              aria-label="Timeline end date"
+              aria-invalid={!validDateRange}
+              min={dateFrom || undefined}
+              value={dateTo}
+              onChange={(e) => changeDateTo(e.target.value)}
+            />
+          </label>
+          {hasDateFilter && (
+            <button type="button" className="tl-date-clear" onClick={clearDateRange}>Clear</button>
+          )}
+          {!validDateRange && (
+            <span className="tl-date-error" role="alert">Start date must be on or before end date.</span>
+          )}
+        </div>
         <div className="grow" />
         <button className="tl-iconbtn" title="Zoom in" onClick={() => setZoomF(1.5)}><Icon name="zoomIn" /></button>
         <button className="tl-iconbtn" title="Zoom out" onClick={() => setZoomF(1 / 1.5)}><Icon name="zoomOut" /></button>
@@ -664,9 +725,9 @@ function TimelineTab() {
       {tlPhase === 'ready' && events.length === 0 && (
         <EmptyState
           icon="clock"
-          title={filter === 'finding' ? 'No finding events in this window' : 'No timeline events yet'}
-          body={filter === 'finding' ? 'Switch to All events or load findings with timestamps.' : 'Create cases or ingest findings to build an investigation timeline.'}
-          primary={filter === 'finding' ? { label: 'Show all events', onClick: () => changeFilter('all'), icon: 'filter' } : undefined}
+          title={!validDateRange ? 'Invalid date range' : hasDateFilter ? 'No events match this date range' : filter === 'finding' ? 'No finding events in this window' : 'No timeline events yet'}
+          body={!validDateRange ? 'Choose a start date on or before the end date.' : hasDateFilter ? 'Try a wider date range or clear the filter.' : filter === 'finding' ? 'Switch to All events or load findings with timestamps.' : 'Create cases or ingest findings to build an investigation timeline.'}
+          primary={!validDateRange || hasDateFilter ? { label: 'Clear date range', onClick: clearDateRange, icon: 'filter' } : filter === 'finding' ? { label: 'Show all events', onClick: () => changeFilter('all'), icon: 'filter' } : undefined}
         />
       )}
       <div className="tl-scroll" ref={scrollRef}>
