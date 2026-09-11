@@ -8,8 +8,9 @@ Verdicts: rule | loglm | both | missed. LogLM-origin is ``data_source ==
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Literal, Optional, Set, Tuple
 
 Verdict = Literal["rule", "loglm", "both", "missed"]
 
@@ -299,20 +300,21 @@ def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]
     if not isinstance(records, list) or not isinstance(trace, list):
         return {"techniques": []}
 
-    by_id: Dict[Any, Dict[str, Any]] = {}
+    by_id: Dict[Any, Deque[Dict[str, Any]]] = defaultdict(deque)
     by_index: Dict[Any, Dict[str, Any]] = {}
     for record in records:
         if not isinstance(record, dict):
             continue
         step_id = record.get("id")
         if step_id not in (None, ""):
-            by_id[step_id] = record
+            by_id[step_id].append(record)
         by_index[record.get("index")] = record
 
+    used: Set[int] = set()
     grouped: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
     for index, raw in enumerate(trace):
-        record = _joined_record(raw, index, by_id, by_index)
+        record = _joined_record(raw, index, by_id, by_index, used)
         if record is None:
             continue
         tid = raw.get("technique_id") if isinstance(raw, dict) else None
@@ -345,15 +347,27 @@ def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]
 def _joined_record(
     raw: Any,
     index: int,
-    by_id: Dict[Any, Dict[str, Any]],
+    by_id: Dict[Any, Deque[Dict[str, Any]]],
     by_index: Dict[Any, Dict[str, Any]],
+    used: Set[int],
 ) -> Optional[Dict[str, Any]]:
     step_id = None
     if isinstance(raw, dict):
         step_id = raw.get("id") or raw.get("step_id")
-    if step_id not in (None, "") and step_id in by_id:
-        return by_id[step_id]
-    return by_index.get(index)
+    if step_id not in (None, ""):
+        queue = by_id.get(step_id)
+        while queue:
+            candidate = queue.popleft()
+            marker = id(candidate)
+            if marker in used:
+                continue
+            used.add(marker)
+            return candidate
+    candidate = by_index.get(index)
+    if candidate is not None and id(candidate) not in used:
+        used.add(id(candidate))
+        return candidate
+    return None
 
 
 def _layer_verdict(verdicts: List[Any]) -> Verdict:

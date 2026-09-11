@@ -45,6 +45,31 @@ def test_groups_reconstructed_steps_by_technique_id_join_by_step_id():
     assert missed[0]["citations"] == []
 
 
+def test_duplicate_step_ids_join_in_order_not_last_write():
+    trace = [
+        {"id": "s1", "technique_id": "T1003.001", "hostname": "dc01.corp.local"},
+        {"id": "s1", "technique_id": "T1003.001", "hostname": "dc02.corp.local"},
+    ]
+    reconstructed = {
+        "steps": [
+            {"id": "s1", "index": 0, "verdict": "missed", "citations": []},
+            {
+                "id": "s1",
+                "index": 1,
+                "verdict": "rule",
+                "citations": [{"finding_id": "elastic-lsass"}],
+            },
+        ]
+    }
+    report = coverage_report(trace, reconstructed)
+    row = _by_technique(report)["T1003.001"]
+    assert [step["verdict"] for step in row["steps"]] == ["missed", "rule"]
+    assert row["verdict"] == "rule"
+    assert len(row["missed"]) == 1
+    assert row["missed"][0]["hostname"] == "dc01.corp.local"
+    assert row["missed"][0]["index"] == 0
+
+
 def test_join_by_step_id_not_reconstructed_index():
     recorded = _recorded()
     reconstructed = reconstruct(recorded["steps"], recorded["findings"])
