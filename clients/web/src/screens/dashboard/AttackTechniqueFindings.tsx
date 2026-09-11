@@ -24,7 +24,7 @@ function verdictLabel(verdict: LayerVerdict): string {
 }
 
 function stepHost(step: MissedStep): string {
-  return step.hostname || step.host || step.computer_name || '—'
+  return step.hostname || step.host || step.computer_name || step.src_ip || '—'
 }
 
 export default function AttackTechniqueFindings({
