@@ -51,6 +51,8 @@ NOT_SETTINGS = {
     "VSTRIKE_USERNAME",
     # Integration endpoints and options consumed inside MCP server child
     # processes, whose config protocol is the environment they are spawned with.
+    "ATOMIC_RED_TEAM_ATOMICS_PATH",
+    "ATOMIC_RED_TEAM_RUNNER_PATH",
     "CLOUDFORCE_ONE_COLLECTION_IDS",
     "CLOUDFORCE_ONE_TAXII_SERVER_URL",
     "CRIBL_URL",
