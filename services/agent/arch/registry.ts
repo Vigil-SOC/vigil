@@ -3,6 +3,7 @@ import type { AgentEvent, RunKind } from "../contracts/events.js";
 import type { Notes } from "../core/memory.js";
 import type { State } from "../core/seams.js";
 import { SpecError, type Owned } from "../core/spec.js";
+import { composeProjection } from "../workflows/compose/projection.js";
 import { huntDistil } from "../workflows/hunt/distil.js";
 import type { HuntKinds } from "../workflows/hunt/ledger.js";
 import { huntProjection } from "../workflows/hunt/projection.js";
@@ -71,7 +72,13 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   },
   // No actions: nothing emits one. A step ends when its agent answers, and the run
   // ends when the list does, so there is no verb for a model to choose or to halt on.
-  compose: { arch: packaged("compose.yaml"), workflow: "compose", actions: [], halts: [] },
+  compose: {
+    arch: packaged("compose.yaml"),
+    workflow: "compose",
+    actions: [],
+    halts: [],
+    projection: composeProjection,
+  },
   // No actions: the lead answers in prose, so there is no emission to constrain.
   // Served over SSE by serve.ts rather than the queue, so drive() never sees it.
   chat: { arch: packaged("chat.yaml"), workflow: "lead", actions: [], halts: [] },
