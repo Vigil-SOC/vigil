@@ -6,6 +6,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 
+from core.detections.tools import get_security_detection_tools
 from core.routing import Auth, RouterMeta
 from core.storage.database_data_service import DatabaseDataService
 from core.threat_intel.mitre_lookup import (
@@ -101,21 +102,58 @@ def get_attack_layer():
 
 
 @router.get("/techniques/rollup")
-def get_technique_rollup(
+async def get_technique_rollup(
     min_confidence: float = 0.0,
     time_range: str = Query("all", pattern="^(24h|7d|30d|all)$"),
+    run_id: Optional[str] = None,
 ):
     """
-    Get rollup of ATT&CK techniques across all findings.
+    Get rollup of ATT&CK techniques across all findings, or a run coverage report.
 
     Args:
-        min_confidence: Minimum confidence threshold
+        min_confidence: Minimum confidence threshold (occurrence rollup only).
         time_range: Optional time window — '24h', '7d', '30d', or 'all' (default).
+        run_id: Optional agent run id. When present, reconstruct that run on read
+            and return per-technique verdicts; occurrence counts are unchanged
+            when omitted.
 
     Returns:
-        Technique statistics sorted by occurrence count, including
-        human-readable technique name and tactic per row.
+        Technique statistics sorted by occurrence count, or coverage rows with
+        layer verdicts and missed-step evidence when a run is selected.
     """
+    if run_id:
+        return await _coverage_rollup(run_id)
+    return occurrence_rollup(min_confidence=min_confidence, time_range=time_range)
+
+
+async def _coverage_rollup(run_id: str) -> dict:
+    report = await get_security_detection_tools().analyze_coverage(run_id=run_id)
+    techniques = []
+    for row in report.get("techniques") or []:
+        tid = row.get("technique_id") or ""
+        resolved_id, name, tactic = resolve_technique(tid)
+        techniques.append(
+            {
+                **row,
+                "technique_id": resolved_id or tid,
+                "technique_name": name,
+                "tactic": tactic,
+            }
+        )
+    body: dict = {
+        "run_id": run_id,
+        "total_techniques": len(techniques),
+        "techniques": techniques,
+    }
+    if report.get("error"):
+        body["error"] = report["error"]
+    return body
+
+
+def occurrence_rollup(
+    min_confidence: float = 0.0,
+    time_range: str = "all",
+):
     if data_service.is_using_database():
         start_time = end_time = None
         if time_range != "all":

@@ -4,7 +4,7 @@ import { Pie, Hbars } from '../../shared/charts'
 import { useFindings, useDashboardKpis } from './useFindings'
 import type { Finding } from '../../data/data'
 import { formatFindingScore } from '../../data/mappers'
-import { useAttack } from './useAttack'
+import { useAttack, type LayerVerdict } from './useAttack'
 import { useTimeline } from './useTimeline'
 import { EmptyState, FilterButton, FilterGroup } from '../../shared/ui'
 import { DataTable, useTableSort, searchRows, sortRows, ColumnPicker } from '../../shared/DataTable'
@@ -295,48 +295,104 @@ function sevB(n: number, cls: string) {
   return n ? <span className={`scount ${cls}`}>{n}</span> : <span className="scount zero">·</span>
 }
 
+function verdictLabel(verdict: LayerVerdict): string {
+  switch (verdict) {
+    case 'rule':
+      return 'rule'
+    case 'loglm':
+      return 'LogLM'
+    case 'both':
+      return 'both'
+    case 'missed':
+      return 'missed'
+    default: {
+      const _exhaustive: never = verdict
+      return _exhaustive
+    }
+  }
+}
+
 function AttackTab() {
   const [range, setRange] = useState('All')
   const [conf, setConf] = useState(0)
+  const [runDraft, setRunDraft] = useState('')
+  const [runId, setRunId] = useState('')
   const [expanded, setExpanded] = useState<string | null>(null)
-  const { data, phase, error, reload } = useAttack(conf, range)
+  const { data, phase, error, reload } = useAttack(conf, range, runId)
   const toggle = (id: string) => setExpanded((cur) => (cur === id ? null : id))
+  const applyRun = () => {
+    setExpanded(null)
+    setRunId(runDraft.trim())
+  }
 
   const techniques = data?.techniques ?? []
+  const coverage = Boolean(data?.coverage && runId)
   const k = data?.kpis ?? { techniques: 0, detections: 0, critical: 0, high: 0 }
+  const caught = techniques.filter((t) => t.verdict && t.verdict !== 'missed').length
+  const missed = techniques.filter((t) => t.verdict === 'missed').length
+  const ruleLayer = techniques.filter((t) => t.verdict === 'rule' || t.verdict === 'both').length
   const tacticDist = data?.tacticDist ?? []
   const maxTac = Math.max(1, ...tacticDist.map((t) => t[1]))
   const tac = tacticDist.slice(0, 6).map((t) => ({ label: t[0], val: t[1], pct: Math.round((t[1] / maxTac) * 100) }))
   const sevList = data?.sevDist ?? []
   const sevTotal = sevList.reduce((a, s) => a + s[1], 0)
   const sevSegs = sevList.map((s) => ({ v: sevTotal ? s[1] / sevTotal : 0, color: s[2] }))
+  const cols = coverage ? 6 : 9
 
   return (
     <>
       <div className="grid grid-cols-4 border-b border-line">
-        <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Unique Techniques</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{k.techniques}</span></div><span className="text-xs text-tx-faint">observed across findings</span></div>
-        <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Total Detections</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{k.detections}</span></div><span className="text-xs text-tx-faint">mapped to ATT&CK</span></div>
-        <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Critical Severity</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-crit">{k.critical}</span></div><span className="text-xs text-tx-faint">detections by severity</span></div>
-        <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">High Severity</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-high">{k.high}</span></div><span className="text-xs text-tx-faint">detections by severity</span></div>
+        {coverage ? (
+          <>
+            <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Techniques</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{k.techniques}</span></div><span className="text-xs text-tx-faint">in this run</span></div>
+            <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Caught</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{caught}</span></div><span className="text-xs text-tx-faint">not missed</span></div>
+            <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Missed</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-crit">{missed}</span></div><span className="text-xs text-tx-faint">no correlated finding</span></div>
+            <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Rule layer</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{ruleLayer}</span></div><span className="text-xs text-tx-faint">rule or both</span></div>
+          </>
+        ) : (
+          <>
+            <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Unique Techniques</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{k.techniques}</span></div><span className="text-xs text-tx-faint">observed across findings</span></div>
+            <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Total Detections</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1]">{k.detections}</span></div><span className="text-xs text-tx-faint">mapped to ATT&CK</span></div>
+            <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">Critical Severity</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-crit">{k.critical}</span></div><span className="text-xs text-tx-faint">detections by severity</span></div>
+            <div className="relative flex flex-col gap-[3px] px-[22px] py-4 border-r border-line-soft last:border-r-0"><span className="text-[11px] font-semibold tracking-[0.07em] uppercase text-tx-3 truncate">High Severity</span><div className="flex items-baseline gap-2.5"><span className="text-[30px] font-semibold tracking-[-0.02em] leading-[1.1] text-high">{k.high}</span></div><span className="text-xs text-tx-faint">detections by severity</span></div>
+          </>
+        )}
       </div>
 
       <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
-        <span className="bar-cap">Time range</span>
-        <div className="range-tabs">
-          {['24h', '7d', '30d', 'All'].map((r) => (
-            <button key={r} className={range === r ? 'active' : ''} onClick={() => setRange(r)}>{r}</button>
-          ))}
-        </div>
+        <span className="bar-cap">Run</span>
+        <input
+          className="field-input coverage-run-input"
+          value={runDraft}
+          placeholder="run id (optional)"
+          aria-label="Coverage run id"
+          onChange={(e) => setRunDraft(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') applyRun() }}
+        />
+        <button className="btn ghost" onClick={applyRun}>Show coverage</button>
+        {runId && (
+          <button className="btn ghost" onClick={() => { setRunDraft(''); setRunId(''); setExpanded(null) }}>Clear</button>
+        )}
         <div className="flex-1" />
-        <div className="conf-ctrl">
-          <span className="bar-cap">Min confidence</span>
-          <input type="range" min={0} max={0.99} step={0.01} value={conf} className="conf-range" aria-label="Minimum confidence threshold" onChange={(e) => setConf(parseFloat(e.target.value))} />
-          <span className="mono" style={{ color: 'var(--tx-2)', fontSize: '12.5px' }}>{conf.toFixed(2)}</span>
-        </div>
+        {!coverage && (
+          <>
+            <span className="bar-cap">Time range</span>
+            <div className="range-tabs">
+              {['24h', '7d', '30d', 'All'].map((r) => (
+                <button key={r} className={range === r ? 'active' : ''} onClick={() => setRange(r)}>{r}</button>
+              ))}
+            </div>
+            <div className="conf-ctrl">
+              <span className="bar-cap">Min confidence</span>
+              <input type="range" min={0} max={0.99} step={0.01} value={conf} className="conf-range" aria-label="Minimum confidence threshold" onChange={(e) => setConf(parseFloat(e.target.value))} />
+              <span className="mono" style={{ color: 'var(--tx-2)', fontSize: '12.5px' }}>{conf.toFixed(2)}</span>
+            </div>
+          </>
+        )}
         <button className="btn ghost icon" title="Refresh" onClick={reload}><Icon name="refresh" /></button>
       </div>
 
-      {/* charts row — tactics distribution + severity split, side by side */}
+      {!coverage && (
       <div className="flex gap-4 items-stretch px-[22px] pt-5 pb-4">
         <div className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden flex-[1.4] min-w-0 flex flex-col">
           <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft"><h3 className="text-[14.5px]">Tactics distribution</h3></div>
@@ -355,51 +411,71 @@ function AttackTab() {
           </div>
         </div>
       </div>
+      )}
 
-      {/* full-width techniques table — the deep-dive */}
-      <div className="px-[22px] pb-6">
+      <div className="px-[22px] pb-6" style={coverage ? { paddingTop: 20 } : undefined}>
         <div className="bg-panel border border-line rounded-lg shadow-panel overflow-hidden">
           <div className="flex items-center gap-2.5 px-[18px] py-[15px] border-b border-line-soft">
-            <h3 className="text-[14.5px]">Techniques by occurrence</h3>
+            <h3 className="text-[14.5px]">{coverage ? 'Techniques by layer' : 'Techniques by occurrence'}</h3>
             <span className="flex-1" />
-            <span className="text-xs text-tx-3">{techniques.length} techniques · click a row for findings</span>
+            <span className="text-xs text-tx-3">
+              {coverage
+                ? `${techniques.length} techniques · click a row for missed-step evidence`
+                : `${techniques.length} techniques · click a row for findings`}
+            </span>
           </div>
           <div className="table-wrap list-scroll list-scroll-attack">
             <table className="tbl attack-tbl">
               <thead>
                 <tr>
-                  <th>ID</th><th>Name</th><th>Tactic</th>
-                  <th>Total</th><th>Critical</th><th>High</th><th>Medium</th><th>Low</th><th />
+                  {coverage ? (
+                    <><th>ID</th><th>Name</th><th>Tactic</th><th>Verdict</th><th>Missed</th><th /></>
+                  ) : (
+                    <><th>ID</th><th>Name</th><th>Tactic</th>
+                    <th>Total</th><th>Critical</th><th>High</th><th>Medium</th><th>Low</th><th /></>
+                  )}
                 </tr>
               </thead>
               <tbody>
                 {phase === 'loading' && (
-                  <tr><td colSpan={9}><EmptyState loading table compact icon="graph" title="Loading techniques…" /></td></tr>
+                  <tr><td colSpan={cols}><EmptyState loading table compact icon="graph" title="Loading techniques…" /></td></tr>
                 )}
                 {phase === 'error' && (
-                  <tr><td colSpan={9}><EmptyState error table icon="alert" title="Couldn’t load ATT&CK data" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></td></tr>
+                  <tr><td colSpan={cols}><EmptyState error table icon="alert" title="Couldn’t load ATT&CK data" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></td></tr>
                 )}
-                {phase === 'ready' && techniques.length === 0 && (
-                  <tr><td colSpan={9}><EmptyState table icon="filter" title="No techniques at this confidence threshold" body="Lower the confidence threshold or load findings with ATT&CK mappings." /></td></tr>
+                {phase === 'ready' && data?.runError && (
+                  <tr><td colSpan={cols}><EmptyState table icon="alert" title="Couldn’t read that run" body={data.runError} /></td></tr>
                 )}
-                {phase === 'ready' && techniques.map((t) => (
+                {phase === 'ready' && !data?.runError && techniques.length === 0 && (
+                  <tr><td colSpan={cols}><EmptyState table icon="filter" title={coverage ? 'No techniques on this run' : 'No techniques at this confidence threshold'} body={coverage ? 'The run has no action-trace steps with a technique id.' : 'Lower the confidence threshold or load findings with ATT&CK mappings.'} /></td></tr>
+                )}
+                {phase === 'ready' && !data?.runError && techniques.map((t) => (
                   <Fragment key={t.id}>
                     <tr className={`clickable${expanded === t.id ? ' expanded' : ''}`} onClick={() => toggle(t.id)}>
                       <td><span className="id-cell">{t.id}</span></td>
                       <td>{t.name}</td>
                       <td><span className="tactic-chip">{t.tactic}</span></td>
-                      <td><span className="tot-badge">{t.total}</span></td>
-                      <td>{sevB(t.c, 'c')}</td><td>{sevB(t.h, 'h')}</td><td>{sevB(t.m, 'm')}</td><td>{sevB(t.l, 'l')}</td>
+                      {coverage ? (
+                        <>
+                          <td>{t.verdict ? <span className={`coverage-verdict ${t.verdict}`}>{verdictLabel(t.verdict)}</span> : '—'}</td>
+                          <td><span className="tot-badge">{t.missed?.length ?? 0}</span></td>
+                        </>
+                      ) : (
+                        <>
+                          <td><span className="tot-badge">{t.total}</span></td>
+                          <td>{sevB(t.c, 'c')}</td><td>{sevB(t.h, 'h')}</td><td>{sevB(t.m, 'm')}</td><td>{sevB(t.l, 'l')}</td>
+                        </>
+                      )}
                       <td>
                         <span className="row-act">
-                          <button title={expanded === t.id ? 'Hide findings' : 'Show findings'} onClick={(e) => { e.stopPropagation(); toggle(t.id) }}>
+                          <button title={expanded === t.id ? (coverage ? 'Hide coverage' : 'Hide findings') : (coverage ? 'Show missed steps' : 'Show findings')} onClick={(e) => { e.stopPropagation(); toggle(t.id) }}>
                             <span className="caret" style={{ transform: expanded === t.id ? 'rotate(180deg)' : undefined }}><Icon name="chevD" size={14} /></span>
                           </button>
                         </span>
                       </td>
                     </tr>
                     {expanded === t.id && (
-                      <tr className="tech-expand"><td colSpan={9}><AttackTechniqueFindings techniqueId={t.id} /></td></tr>
+                      <tr className="tech-expand"><td colSpan={cols}><AttackTechniqueFindings techniqueId={t.id} coverage={coverage ? t : undefined} /></td></tr>
                     )}
                   </Fragment>
                 ))}

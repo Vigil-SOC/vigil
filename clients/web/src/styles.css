@@ -6239,6 +6239,47 @@
       background: var(--bg);
    }
 
+   .coverage-run-input {
+      width: 280px;
+      font-family: var(--mono);
+      font-size: 12.5px;
+   }
+
+   .coverage-verdict {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      font-weight: 600;
+      border: 1px solid var(--line);
+      text-transform: lowercase;
+   }
+
+   .coverage-verdict.rule {
+      color: var(--ok);
+      border-color: var(--ok);
+   }
+
+   .coverage-verdict.loglm {
+      color: var(--high);
+      border-color: var(--high);
+   }
+
+   .coverage-verdict.both {
+      color: var(--med);
+      border-color: var(--med);
+   }
+
+   .coverage-verdict.missed {
+      color: var(--crit);
+      border-color: var(--crit);
+   }
+
+   .coverage-cite {
+      font-size: 12.5px;
+   }
+
    /* error-boundary fallback */
    .screen-error {
       display: flex;
