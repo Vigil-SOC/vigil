@@ -833,15 +833,18 @@ export interface paths {
         };
         /**
          * Get Technique Rollup
-         * @description Get rollup of ATT&CK techniques across all findings.
+         * @description Get rollup of ATT&CK techniques across all findings, or a run coverage report.
          *
          *     Args:
-         *         min_confidence: Minimum confidence threshold
+         *         min_confidence: Minimum confidence threshold (occurrence rollup only).
          *         time_range: Optional time window — '24h', '7d', '30d', or 'all' (default).
+         *         run_id: Optional agent run id. When present, reconstruct that run on read
+         *             and return per-technique verdicts; occurrence counts are unchanged
+         *             when omitted.
          *
          *     Returns:
-         *         Technique statistics sorted by occurrence count, including
-         *         human-readable technique name and tactic per row.
+         *         Technique statistics sorted by occurrence count, or coverage rows with
+         *         layer verdicts and missed-step evidence when a run is selected.
          */
         get: operations["get_api_attack_techniques_rollup"];
         put?: never;
@@ -12124,6 +12127,7 @@ export interface operations {
             query?: {
                 min_confidence?: number;
                 time_range?: string;
+                run_id?: string | null;
             };
             header?: {
                 authorization?: string | null;

@@ -7,13 +7,19 @@ import os
 import re
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import yaml
 
+from core.agents.projections import read_projection
 from core.config import _safe_home
 from core.detections.lint import lint_sigma
-from core.detections.reconstruction import reconstruct, span_for_steps
+from core.detections.reconstruction import (
+    coverage_report,
+    reconstruct,
+    span_for_steps,
+    steps_from_dispatch_results,
+)
 from core.storage.database_data_service import DatabaseDataService
 
 
@@ -246,16 +252,30 @@ class SecurityDetectionsTools:
         print(f"  Elastic: {len(self.detections_by_source['elastic'])}")
         print(f"  KQL: {len(self.detections_by_source['kql'])}")
 
-    async def analyze_coverage(self, techniques: List[str]) -> Dict:
-        """
-        Analyze detection coverage for MITRE ATT&CK techniques.
+    async def analyze_coverage(
+        self,
+        techniques: Optional[List[str]] = None,
+        run_id: Optional[str] = None,
+        steps: Any = None,
+        **_kwargs: object,
+    ) -> Dict:
+        """Catalog counts for techniques, or a run report when run_id / steps is set.
 
-        Args:
-            techniques: List of MITRE technique IDs (e.g., ["T1059.001", "T1071.001"])
-
-        Returns:
-            Dictionary mapping technique IDs to coverage information
+        Extra kwargs (including ``limit`` injected by ``/internal/tools/invoke``)
+        are ignored. A run id or action trace is the report path, not catalog
+        counts mixed into the same rows.
         """
+        trace_given = isinstance(steps, list)
+        if (trace_given and steps) or run_id or (trace_given and not techniques):
+            return await self._run_coverage(
+                run_id=run_id,
+                steps=steps if trace_given else None,
+            )
+        if techniques is None:
+            return {
+                "error": "techniques is required unless run_id or steps is provided"
+            }
+
         self._load_detections()
 
         coverage = {}
@@ -283,6 +303,26 @@ class SecurityDetectionsTools:
             }
 
         return coverage
+
+    async def _run_coverage(self, run_id: Optional[str], steps: Any) -> Dict:
+        if isinstance(steps, list) and steps:
+            trace: List = steps
+        elif run_id:
+            projection = await read_projection(run_id)
+            if projection is None:
+                return {
+                    "run_id": run_id,
+                    "techniques": [],
+                    "error": "no readable run",
+                }
+            trace = steps_from_dispatch_results(projection.get("results"))
+        else:
+            trace = steps if isinstance(steps, list) else []
+        reconstructed = await self.reconstruct_run(steps=trace)
+        report = coverage_report(trace, reconstructed)
+        if run_id:
+            report["run_id"] = run_id
+        return report
 
     async def search_detections(
         self, query: str, source_type: Optional[str] = None, limit: int = 20

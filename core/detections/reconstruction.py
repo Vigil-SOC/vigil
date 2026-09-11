@@ -8,8 +8,9 @@ Verdicts: rule | loglm | both | missed. LogLM-origin is ``data_source ==
 
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Literal, Optional, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Literal, Optional, Set, Tuple
 
 Verdict = Literal["rule", "loglm", "both", "missed"]
 
@@ -265,3 +266,192 @@ def _naive_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value
     return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+_EVIDENCE_KEYS = (
+    "hostname",
+    "host",
+    "computer_name",
+    "src_ip",
+    "user",
+    "command",
+)
+
+
+def steps_from_dispatch_results(results: Any) -> List[Dict[str, Any]]:
+    """Pull action-trace steps out of journaled gated-execute ToolResults."""
+    if isinstance(results, dict):
+        held = results.get("results")
+        if isinstance(held, list):
+            results = held
+        else:
+            return _steps_from_result(results)
+    if not isinstance(results, list):
+        return []
+    out: List[Dict[str, Any]] = []
+    for item in results:
+        out.extend(_steps_from_result(item))
+    return out
+
+
+def coverage_report(trace: Any, reconstructed: Dict[str, Any]) -> Dict[str, Any]:
+    """Group reconstructed verdicts by technique_id; join on step id / index."""
+    records = reconstructed.get("steps") if isinstance(reconstructed, dict) else None
+    if not isinstance(records, list) or not isinstance(trace, list):
+        return {"techniques": []}
+
+    by_id: Dict[Any, Deque[Dict[str, Any]]] = defaultdict(deque)
+    by_index: Dict[Any, Dict[str, Any]] = {}
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        step_id = record.get("id")
+        if step_id not in (None, ""):
+            by_id[step_id].append(record)
+        by_index[record.get("index")] = record
+
+    used: Set[int] = set()
+    grouped: Dict[str, Dict[str, Any]] = {}
+    order: List[str] = []
+    for index, raw in enumerate(trace):
+        record = _joined_record(raw, index, by_id, by_index, used)
+        if record is None:
+            continue
+        tid = raw.get("technique_id") if isinstance(raw, dict) else None
+        if not isinstance(tid, str) or not tid.strip():
+            continue
+        tid = tid.strip().upper()
+        if tid not in grouped:
+            grouped[tid] = {"technique_id": tid, "steps": [], "missed": []}
+            order.append(tid)
+        grouped[tid]["steps"].append(record)
+        if record.get("verdict") == "missed":
+            grouped[tid]["missed"].append(_missed_step(raw, record))
+
+    techniques = []
+    for tid in order:
+        group = grouped[tid]
+        techniques.append(
+            {
+                "technique_id": tid,
+                "verdict": _layer_verdict(
+                    [step.get("verdict") for step in group["steps"]]
+                ),
+                "steps": group["steps"],
+                "missed": group["missed"],
+            }
+        )
+    return {"techniques": techniques}
+
+
+def _joined_record(
+    raw: Any,
+    index: int,
+    by_id: Dict[Any, Deque[Dict[str, Any]]],
+    by_index: Dict[Any, Dict[str, Any]],
+    used: Set[int],
+) -> Optional[Dict[str, Any]]:
+    step_id = None
+    if isinstance(raw, dict):
+        step_id = raw.get("id") or raw.get("step_id")
+    if step_id not in (None, ""):
+        queue = by_id.get(step_id)
+        while queue:
+            candidate = queue.popleft()
+            marker = id(candidate)
+            if marker in used:
+                continue
+            used.add(marker)
+            return candidate
+    candidate = by_index.get(index)
+    if candidate is not None and id(candidate) not in used:
+        used.add(id(candidate))
+        return candidate
+    return None
+
+
+def _layer_verdict(verdicts: List[Any]) -> Verdict:
+    has_rule = False
+    has_loglm = False
+    for verdict in verdicts:
+        rule, loglm = _step_layers(verdict)
+        has_rule = has_rule or rule
+        has_loglm = has_loglm or loglm
+    if has_rule and has_loglm:
+        return "both"
+    if has_loglm:
+        return "loglm"
+    if has_rule:
+        return "rule"
+    return "missed"
+
+
+def _step_layers(verdict: Any) -> Tuple[bool, bool]:
+    if verdict == "rule":
+        return True, False
+    if verdict == "loglm":
+        return False, True
+    if verdict == "both":
+        return True, True
+    if verdict == "missed":
+        return False, False
+    return False, False
+
+
+def _missed_step(raw: Any, record: Dict[str, Any]) -> Dict[str, Any]:
+    missed: Dict[str, Any] = {
+        "index": record.get("index"),
+        "citations": record.get("citations") or [],
+    }
+    step_id = record.get("id")
+    if step_id not in (None, ""):
+        missed["id"] = step_id
+    if not isinstance(raw, dict):
+        return missed
+    for key in _EVIDENCE_KEYS:
+        value = raw.get(key)
+        if isinstance(value, str) and value.strip():
+            missed[key] = value
+    return missed
+
+
+def _steps_from_result(item: Any) -> List[Dict[str, Any]]:
+    if isinstance(item, list):
+        return _steps_from_rows(item)
+    if not isinstance(item, dict):
+        return []
+    rows = item.get("rows")
+    if isinstance(rows, list) and ("ok" in item or "rowCount" in item):
+        return _steps_from_rows(rows)
+    if isinstance(item.get("steps"), list):
+        return [
+            row
+            for row in item["steps"]
+            if isinstance(row, dict) and _looks_like_step(row)
+        ]
+    if _looks_like_step(item):
+        return [item]
+    return []
+
+
+def _steps_from_rows(rows: List[Any]) -> List[Dict[str, Any]]:
+    steps: List[Dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        nested = row.get("steps")
+        if isinstance(nested, list):
+            steps.extend(
+                step
+                for step in nested
+                if isinstance(step, dict) and _looks_like_step(step)
+            )
+        elif _looks_like_step(row):
+            steps.append(row)
+    return steps
+
+
+def _looks_like_step(row: Dict[str, Any]) -> bool:
+    # Coverage groups by technique_id; other tool rows must not enter the trace.
+    tid = row.get("technique_id")
+    return isinstance(tid, str) and bool(tid.strip())

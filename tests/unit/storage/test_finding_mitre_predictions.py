@@ -102,7 +102,7 @@ def test_attck_readers_fall_back_to_finding_maps_without_a_database(monkeypatch)
 
     by_tech = attack_router.get_findings_by_technique("T1071.001")
     layer = attack_router.get_attack_layer()
-    rollup = attack_router.get_technique_rollup(time_range="all")
+    rollup = attack_router.occurrence_rollup(time_range="all")
     tactics = attack_router.get_tactics_summary()
 
     service.get_findings_by_technique.assert_not_called()
@@ -123,7 +123,7 @@ def test_rollup_layer_and_tactics_query_child_table(monkeypatch):
     monkeypatch.setattr(attack_router, "data_service", service)
 
     layer = attack_router.get_attack_layer()
-    rollup = attack_router.get_technique_rollup()
+    rollup = attack_router.occurrence_rollup()
     tactics = attack_router.get_tactics_summary()
 
     service.get_findings.assert_not_called()
@@ -131,3 +131,32 @@ def test_rollup_layer_and_tactics_query_child_table(monkeypatch):
     assert rollup["total_techniques"] == 1
     assert rollup["techniques"][0]["count"] == 2
     assert tactics["tactics"][0]["count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_rollup_run_id_returns_coverage_not_occurrence(monkeypatch):
+    async def fake_analyze(**kwargs):
+        assert kwargs == {"run_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}
+        return {
+            "run_id": kwargs["run_id"],
+            "techniques": [
+                {
+                    "technique_id": "T1059.001",
+                    "verdict": "rule",
+                    "steps": [],
+                    "missed": [{"id": "step-2", "index": 1, "citations": []}],
+                }
+            ],
+        }
+
+    class _Tools:
+        analyze_coverage = staticmethod(fake_analyze)
+
+    monkeypatch.setattr(attack_router, "get_security_detection_tools", lambda: _Tools())
+    result = await attack_router.get_technique_rollup(
+        run_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    )
+    assert result["total_techniques"] == 1
+    assert result["techniques"][0]["verdict"] == "rule"
+    assert "count" not in result["techniques"][0]
+    assert result["techniques"][0]["missed"][0]["id"] == "step-2"

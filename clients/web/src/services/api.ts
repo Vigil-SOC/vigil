@@ -868,8 +868,18 @@ export const timesketchApi = {
 export const attackApi = {
   getLayer: () => api.get('/attack/layer'),
   
-  getTechniqueRollup: (min_confidence: number = 0.0, time_range: string = 'all') =>
-    api.get('/attack/techniques/rollup', { params: { min_confidence, time_range } }),
+  getTechniqueRollup: (
+    min_confidence: number = 0.0,
+    time_range: string = 'all',
+    run_id?: string,
+  ) =>
+    api.get('/attack/techniques/rollup', {
+      params: {
+        min_confidence,
+        time_range,
+        ...(run_id ? { run_id } : {}),
+      },
+    }),
   
   getFindingsByTechnique: (technique_id: string) =>
     api.get(`/attack/techniques/${technique_id}/findings`),

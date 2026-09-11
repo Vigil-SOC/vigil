@@ -12,17 +12,25 @@ from core.memory.recall_contract import RECALL_PARAMETERS, RECALL_TOOL
 SECURITY_DETECTION_TOOLS = [
     {
         "name": "analyze_coverage",
-        "description": "Analyze detection coverage for MITRE ATT&CK techniques. Returns count and list of detections covering each technique across Sigma, Splunk, Elastic, and KQL formats. Use this to understand what detections exist for specific techniques.",
+        "description": "Analyze detection coverage for MITRE ATT&CK techniques, or report per-technique layer verdicts for a sanctioned run. Pass techniques for catalog counts (Sigma / Splunk / Elastic / KQL). Pass run_id or an action-trace steps list for the run report: reconstruct on read, group by technique_id, verdicts rule | loglm | both | missed. Do not mix the two.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "techniques": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of MITRE technique IDs (e.g., ['T1059.001', 'T1071.001'])",
-                }
+                    "description": "List of MITRE technique IDs (e.g., ['T1059.001', 'T1071.001']). Catalog path; omit when reporting a run.",
+                },
+                "run_id": {
+                    "type": "string",
+                    "description": "Agent run id. Asks the agent layer for journaled execute traces, then reconstructs. Report path, not catalog counts.",
+                },
+                "steps": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Action-trace steps (same shape as reconstruct_run). Report path without a ledger.",
+                },
             },
-            "required": ["techniques"],
         },
     },
     {

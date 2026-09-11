@@ -3,6 +3,7 @@ import { archFor } from "../../arch/registry.js";
 import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { TOOL_APPROVAL } from "../../core/loop.js";
 import { InProcessState } from "../../core/state.js";
+import { composeProjection } from "../../workflows/compose/projection.js";
 import { leadProjection } from "../../workflows/lead/projection.js";
 import type { LeadKinds } from "../../workflows/lead/workflow.js";
 
@@ -114,6 +115,10 @@ describe("the registry says which kinds can be read", () => {
     expect(archFor("investigate").projection).toBeTypeOf("function");
   });
 
+  it("gives compose a thin fold of gated execute results", () => {
+    expect(archFor("compose").projection).toBeTypeOf("function");
+  });
+
   it("gives chat none, because a conversation is the transcript the client holds", () => {
     expect(archFor("chat").projection).toBeUndefined();
   });
@@ -124,5 +129,55 @@ describe("the registry says which kinds can be read", () => {
     const events = (await state.read(RUN)) as readonly AgentEvent<Record<never, never>>[];
 
     expect(archFor("investigate").projection!(RUN, events)).toEqual(leadProjection(RUN, await state.read(RUN)));
+  });
+});
+
+describe("compose projection", () => {
+  const executeResult = {
+    ok: true as const,
+    rows: [{ id: "step-1", technique_id: "T1059.001" }],
+    rowCount: 1,
+    capped: false,
+    sourceSystem: "vigil",
+  };
+
+  it("returns journaled execute results and skips phase-level dispatches", () => {
+    const events = [
+      {
+        run_id: RUN,
+        run_kind: "compose" as const,
+        seq: 0,
+        ts: "2026-09-10T00:00:00Z",
+        kind: "dispatch" as const,
+        payload: {
+          dispatch_id: "phase-1",
+          agent_id: "analyst",
+          status: "complete" as const,
+          question_id: null,
+          failure_reason: null,
+        },
+        schema_version: 1,
+      },
+      {
+        run_id: RUN,
+        run_kind: "compose" as const,
+        seq: 1,
+        ts: "2026-09-10T00:00:00Z",
+        kind: "dispatch" as const,
+        payload: {
+          dispatch_id: "apr-execute",
+          agent_id: "analyst",
+          status: "complete" as const,
+          question_id: null,
+          failure_reason: null,
+          result: executeResult,
+        },
+        schema_version: 1,
+      },
+    ] as const;
+
+    const folded = composeProjection(RUN, events);
+    expect(folded).toEqual({ run_id: RUN, results: [executeResult] });
+    expect(archFor("compose").projection!(RUN, events)).toEqual(folded);
   });
 });
