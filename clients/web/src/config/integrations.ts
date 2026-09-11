@@ -2792,6 +2792,32 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     ],
     docs_url: 'https://capev2.readthedocs.io/en/latest/usage/api.html',
   },
+  {
+    id: 'atomic-red-team',
+    name: 'Atomic Red Team',
+    category: 'Forensics & Analysis',
+    description: 'Invoke one Atomic Red Team technique against a named range or staging replica. Operator installs the runner; Vigil does not vendor the atomics repo.',
+    functionality_type: 'Adversary Emulation',
+    fields: [
+      {
+        name: 'runner_path',
+        label: 'Runner path',
+        type: 'text',
+        required: true,
+        placeholder: '/usr/local/bin/art-runner',
+        helpText: 'Operator-installed executable. Invoked as `<runner> --technique <id>` with optional `--atomics-path`.',
+      },
+      {
+        name: 'atomics_path',
+        label: 'Atomics path',
+        type: 'text',
+        required: false,
+        placeholder: '/opt/atomic-red-team/atomics',
+        helpText: 'Directory of Atomic YAML tests. Leave empty if the runner has its own default.',
+      },
+    ],
+    docs_url: 'https://github.com/redcanaryco/atomic-red-team',
+  },
 
   {
     id: 'timesketch',

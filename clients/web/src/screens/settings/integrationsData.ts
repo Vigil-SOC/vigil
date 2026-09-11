@@ -49,6 +49,7 @@ export const MCP_CATEGORIES: McpCategory[] = [
   { label: 'Network Security', servers: ['vstrike'] },
   { label: 'Incident Management', servers: ['jira', 'pagerduty', 'slack', 'microsoft-teams'] },
   { label: 'Sandbox / Analysis', servers: ['joe-sandbox', 'hybrid-analysis', 'anyrun', 'url-analysis', 'ip-geolocation'] },
+  { label: 'Adversary Emulation', servers: ['atomic-red-team'] },
 ]
 
 export const SERVER_DESCRIPTIONS = new Map(Object.entries({
@@ -87,6 +88,7 @@ export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   anyrun: 'Interactive malware sandbox for real-time analysis with process monitoring and network capture.',
   'url-analysis': 'Analyze suspicious URLs for phishing indicators, redirects, and malicious content.',
   'ip-geolocation': 'Look up geographic location, ISP, and organization info for IP addresses during investigations.',
+  'atomic-red-team': 'Invoke one Atomic Red Team technique against a named range. Disabled until toggled; saving config does not run the runner.',
 }))
 
 export function prettyServerName(name: string): string {

@@ -341,6 +341,15 @@
       }
     },
 
+    "atomic-red-team": {
+      "command": "python3",
+      "args": ["core/integrations/atomic_red_team/tool.py"],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "ATOMIC_RED_TEAM_RUNNER_PATH": "${ATOMIC_RED_TEAM_RUNNER_PATH}"
+      }
+    },
+
     "ip-geolocation": {
       "command": "python3",
       "args": ["core/integrations/ip_geolocation/tool.py"],
