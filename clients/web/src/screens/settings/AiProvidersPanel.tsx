@@ -224,7 +224,7 @@ export default function AiProvidersPanel({ notify }: SectionProps) {
                           <td>
                             <div className="flex flex-col">
                               <span>{k.name}</span>
-                              {!k.enabled && <span className="text-xs text-tx-3">Disabled</span>}
+                              {k.enabled === false && <span className="text-xs text-tx-3">Disabled</span>}
                             </div>
                           </td>
                           <td className="font-mono text-xs">

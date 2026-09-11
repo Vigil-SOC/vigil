@@ -147,3 +147,31 @@ describe('the models a key is fenced to', () => {
     expect(payload.value).toBeUndefined()
   })
 })
+
+/* Bifrost omits `enabled` from its read shape entirely. That is not an
+   omitempty elision -- the same payload serialises `use_for_batch_api: false`
+   and `use_anthropic_endpoints: false` -- so `!k.enabled` was true for every
+   key the gateway returned, and every key rendered as "Disabled". */
+describe('the “Disabled” badge', () => {
+  const expand = async () => {
+    fireEvent.click(screen.getByTitle('Expand'))
+    await screen.findByText('anthropic-key')
+  }
+
+  it('stays hidden for a key Bifrost returns without an `enabled` field', async () => {
+    const withoutEnabled: Record<string, unknown> = { ...FENCED }
+    delete withoutEnabled.enabled
+
+    await mount([withoutEnabled], ['claude-sonnet-5'])
+    await expand()
+
+    expect(screen.queryByText('Disabled')).not.toBeInTheDocument()
+  })
+
+  it('still shows for a key that was explicitly disabled', async () => {
+    await mount([{ ...FENCED, enabled: false }], ['claude-sonnet-5'])
+    await expand()
+
+    expect(screen.getByText('Disabled')).toBeInTheDocument()
+  })
+})
