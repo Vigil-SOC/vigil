@@ -79,10 +79,10 @@ phases:
   - id: investigate
     agent: investigator
     name: "Investigate"
-    tools: [get_finding, nearest_neighbors, search_detections]
+    tools: [get_finding, search_detections]
     instructions: |
-      Use nearest_neighbors to find similar reports. Correlate with detection
-      rules. Build an evidence timeline. Hand on the timeline and related findings.
+      Correlate with detection rules. Build an evidence timeline. Hand on the
+      timeline and related findings.
 
   - id: contain
     agent: responder
@@ -419,7 +419,7 @@ Claude: ✓ Added finding to case
         ✓ Tagged with T1021.001 (RDP)
 
 You: "Find similar findings and add them all to this case"
-Claude: ✓ Found 3 similar findings via embedding search
+Claude: ✓ Found 3 similar findings via list_findings
         ✓ Added f-002, f-003, f-004 to case
         ✓ Updated timeline with lateral movement progression
 ```

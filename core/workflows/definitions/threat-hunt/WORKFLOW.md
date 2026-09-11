@@ -104,7 +104,7 @@ phases:
   - id: threat_hunter
     agent: threat_hunter
     name: "Behavioural hunting"
-    tools: [search_findings, nearest_neighbors, telemetry_search]
+    tools: [search_findings, telemetry_search]
     instructions: |
       Broad behavioural hunting across the signal detection already scored and the
       telemetry behind it. "Nothing matched" is a finding about visibility, not a

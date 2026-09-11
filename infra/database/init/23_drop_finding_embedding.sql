@@ -1,9 +1,8 @@
 -- Drop the findings embedding column + its HNSW index.
 --
--- Similarity is delegated to the source that owns the vector
--- (core/findings/similarity.py); Vigil no longer stores a per-finding
--- embedding. A cross-source vector column was low-signal anyway — only LogLM
--- ever supplied a real vector; every other source wrote placeholder zeros.
+-- Vigil no longer stores a per-finding embedding. A cross-source vector
+-- column was low-signal anyway — only LogLM ever supplied a real vector;
+-- every other source wrote placeholder zeros.
 --
 -- A NEW migration file (not edits to 17_loglm_setup.sql) is what reaches
 -- existing deployments: dbInit only runs a filename it hasn't applied before.

@@ -1,9 +1,8 @@
 -- LogLM feature setup: the loglm.view role grant.
 --
 -- This file once also provisioned a pgvector embedding column/index on
--- findings. Vigil no longer stores per-finding embeddings — similarity is
--- delegated to the owning source (core/findings/similarity.py) — so that half
--- was removed and the column/index are dropped by 23_drop_finding_embedding.sql.
+-- findings. Vigil no longer stores per-finding embeddings; the column/index
+-- are dropped by 23_drop_finding_embedding.sql.
 --
 -- Kept as a NEW migration file rather than edits to 01/06 on purpose: the
 -- dbInit path only runs a file whose name it hasn't applied before, so edits to

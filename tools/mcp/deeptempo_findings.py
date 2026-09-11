@@ -5,7 +5,6 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING, Iterator, Optional
 
-import numpy as np
 from mcp.server.mcpserver import MCPServer
 
 from core.agents.projections import pack_completed_hunts
@@ -20,21 +19,15 @@ mcp = MCPServer("deeptempo-findings")
 _data_service = None
 
 
-class NumpyEncoder(json.JSONEncoder):
+class _JsonEncoder(json.JSONEncoder):
     def default(self, obj):
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
         if isinstance(obj, datetime):
             return obj.isoformat() + "Z"
         return super().default(obj)
 
 
 def jdump(obj, indent=2):
-    return json.dumps(obj, cls=NumpyEncoder, indent=indent)
+    return json.dumps(obj, cls=_JsonEncoder, indent=indent)
 
 
 def get_data_service():
@@ -57,11 +50,6 @@ def load_findings():
     except Exception as e:
         logger.error(f"Error loading findings via DatabaseDataService: {e}")
         return []
-
-
-def cosine_sim(a, b):
-    a, b = np.array(a), np.array(b)
-    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
 def get_db():
@@ -93,9 +81,7 @@ def list_findings(
                 f for f in findings if f.get("anomaly_score", 0) >= min_anomaly_score
             ]
 
-        results = [
-            {k: v for k, v in f.items() if k != "embedding"} for f in findings[:limit]
-        ]
+        results = findings[:limit]
         return jdump(
             {"total": len(findings), "returned": len(results), "findings": results}
         )
@@ -115,9 +101,7 @@ def get_finding(finding_id: str, **kwargs) -> str:
         finding = data_service.get_finding(finding_id)
 
         if finding:
-            # Remove embedding from response for cleaner output
-            result = {k: v for k, v in finding.items() if k != "embedding"}
-            return jdump(result)
+            return jdump(finding)
 
         return jdump({"error": f"Finding {finding_id} not found"})
     except Exception as e:
@@ -135,39 +119,6 @@ async def list_completed_hunts(
     """Return completed threat-hunt projections for an assessment window."""
     try:
         return jdump(await pack_completed_hunts(start=start, end=end, limit=limit))
-    except Exception as e:
-        return jdump({"error": str(e)})
-
-
-@mcp.tool()
-def nearest_neighbors(finding_id: str, k: int = 10, **kwargs) -> str:
-    try:
-        findings = load_findings()
-        seed = next((f for f in findings if f.get("finding_id") == finding_id), None)
-
-        if not seed or "embedding" not in seed:
-            return jdump(
-                {"error": f"Finding {finding_id} not found or has no embedding"}
-            )
-
-        sims = []
-        for f in findings:
-            if f.get("finding_id") != finding_id and "embedding" in f:
-                sims.append(
-                    {
-                        "finding_id": f["finding_id"],
-                        "similarity": round(
-                            cosine_sim(seed["embedding"], f["embedding"]), 4
-                        ),
-                        "cluster_id": f.get("cluster_id"),
-                        "severity": f.get("severity"),
-                        "data_source": f.get("data_source"),
-                        "anomaly_score": float(f.get("anomaly_score", 0)),
-                    }
-                )
-
-        sims.sort(key=lambda x: x["similarity"], reverse=True)
-        return jdump({"seed_finding": finding_id, "neighbors": sims[:k]})
     except Exception as e:
         return jdump({"error": str(e)})
 

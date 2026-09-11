@@ -37,18 +37,17 @@ phases:
   - id: investigation
     agent: investigator
     name: "Deep Investigation"
-    tools: [get_finding, list_findings, nearest_neighbors, search_detections, recall_entity]
+    tools: [get_finding, list_findings, search_detections, recall_entity]
     instructions: |
       Root cause analysis, evidence collection, timeline reconstruction and
       cross-source correlation.
 
       1. Retrieve full finding details and related context
-      2. Use `nearest_neighbors` to find similar findings via embedding similarity
-      3. Search detection rules for matching patterns
-      4. Reconstruct the timeline of events
-      5. Identify all affected entities: IPs, hostnames, user accounts, file hashes
-      6. Determine the attack vector and root cause
-      7. Document the chain of evidence
+      2. Search detection rules for matching patterns
+      3. Reconstruct the timeline of events
+      4. Identify all affected entities: IPs, hostnames, user accounts, file hashes
+      5. Determine the attack vector and root cause
+      6. Document the chain of evidence
 
       Hand on the root cause, attack vector, affected entities, evidence chain,
       related findings and timeline.

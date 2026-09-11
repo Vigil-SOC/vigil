@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts
-from core.findings.similarity import similar_findings
 from core.memory.recall_contract import RECALL_TOOL
 
 logger = logging.getLogger(__name__)
@@ -168,7 +167,6 @@ _DATA_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
     "search_findings": lambda data, args: _page(data, args, search=True),
     "get_findings_stats": _findings_stats,
     "get_finding": lambda data, args: data.get_finding(**args),
-    "nearest_neighbors": lambda data, args: similar_findings(data, **args),
     "list_cases": _list_cases,
     "get_case": lambda data, args: data.get_case(**args),
     "create_case": _create_case,

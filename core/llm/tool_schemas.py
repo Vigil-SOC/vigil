@@ -227,25 +227,6 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
-        "name": "nearest_neighbors",
-        "description": "Find similar findings via the source system's own similarity search. Use this to identify related incidents or patterns.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "finding_id": {
-                    "type": "string",
-                    "description": "Reference finding ID to find neighbors for",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Number of similar findings to return",
-                    "default": 10,
-                },
-            },
-            "required": ["finding_id"],
-        },
-    },
-    {
         "name": "list_cases",
         "description": "List investigation cases with optional filters. Returns active and closed cases.",
         "input_schema": {

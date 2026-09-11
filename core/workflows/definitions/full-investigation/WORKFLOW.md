@@ -16,19 +16,17 @@ phases:
   - id: evidence-gathering
     agent: investigator
     name: "Evidence Gathering"
-    tools: [get_finding, list_findings, nearest_neighbors, search_detections, recall_entity]
+    tools: [get_finding, list_findings, search_detections, recall_entity]
     instructions: |
       Retrieve finding details, collect surrounding context, reconstruct the
       timeline and identify all entities.
 
       1. Retrieve the target finding(s) via `get_finding`
-      2. Use `nearest_neighbors` to discover related findings via embedding
-         similarity
-      3. Search detection rules for matching patterns and coverage
-      4. Build an entity inventory: all IPs, hostnames, user accounts and file
+      2. Search detection rules for matching patterns and coverage
+      3. Build an entity inventory: all IPs, hostnames, user accounts and file
          hashes encountered
-      5. Reconstruct an initial timeline from available timestamps
-      6. Collect all evidence artifacts for the later steps
+      4. Reconstruct an initial timeline from available timestamps
+      5. Collect all evidence artifacts for the later steps
 
       Hand on the entity inventory, the evidence collection, the initial
       timeline and the related findings.
@@ -57,7 +55,7 @@ phases:
   - id: correlation
     agent: correlator
     name: "Cross-Signal Correlation"
-    tools: [list_findings, create_case, get_technique_rollup, nearest_neighbors, recall_entity]
+    tools: [list_findings, create_case, get_technique_rollup, recall_entity]
     instructions: |
       Link related alerts across time, entity and technique dimensions. Identify
       attack chains and campaigns.
