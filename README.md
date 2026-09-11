@@ -419,7 +419,7 @@ Claude: ✓ Added finding to case
         ✓ Tagged with T1021.001 (RDP)
 
 You: "Find similar findings and add them all to this case"
-Claude: ✓ Found 3 similar findings via embedding search
+Claude: ✓ Found 3 similar findings via list_findings
         ✓ Added f-002, f-003, f-004 to case
         ✓ Updated timeline with lateral movement progression
 ```
