@@ -43,7 +43,10 @@ export interface BifrostKey {
   models: string[]
   blacklisted_models?: string[]
   weight: number
-  enabled: boolean
+  /** Absent from Bifrost's read shape — only a write carries it. Test
+      `enabled === false`, never `!enabled`: the latter reads every key the
+      gateway returns as disabled. */
+  enabled?: boolean
   /** Bifrost's own verdict: "success", "unknown", "list_models_failed", ... */
   status?: string
   description?: string
