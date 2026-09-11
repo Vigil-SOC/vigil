@@ -346,7 +346,7 @@
       "args": ["core/integrations/atomic_red_team/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "ATOMIC_RED_TEAM_RUNNER_PATH": "${ATOMIC_RED_TEAM_RUNNER_PATH}"
+        "_setup_note": "Operator-installed Atomic Red Team runner. Configure runner_path (and optional atomics_path) in Settings → Integrations. The execute tool refuses without environment_id. Disabled by default; saving config does not invoke the runner."
       }
     },
 

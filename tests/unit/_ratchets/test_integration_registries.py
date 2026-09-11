@@ -236,3 +236,18 @@ def test_elastic_mcp_config_declares_no_required_env_placeholders():
         if not k.startswith("_")
     }
     assert extract_required_env_vars(env, list(elastic.get("args") or [])) == []
+
+
+@pytest.mark.unit
+def test_atomic_red_team_mcp_config_declares_no_required_env_placeholders():
+    """runner_path is a non-secret Settings field. A ${ATOMIC_RED_TEAM_RUNNER_PATH}
+    placeholder would keep the server dormant after a UI save, because
+    split_secrets never writes that name."""
+    servers = json.loads(_MCP_CONFIG.read_text())["mcpServers"]
+    art = servers["atomic-red-team"]
+    env = {
+        k: str(v)
+        for k, v in (art.get("env") or {}).items()
+        if not k.startswith("_")
+    }
+    assert extract_required_env_vars(env, list(art.get("args") or [])) == []
