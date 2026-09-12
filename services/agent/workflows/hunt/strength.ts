@@ -41,7 +41,11 @@ export function openGaps(projection: Projection, hypothesisId: string): number {
   for (const dispatch of projection.dispatches.values()) {
     if (dispatch.target_hypothesis_id !== hypothesisId) continue;
     if (dispatch.status === "complete") answered.add(gapKey(dispatch));
-    if (dispatch.status === "failed") unanswered.add(gapKey(dispatch));
+    // Counting our own ceiling would mean a hunt that ran out of money also loses the
+    // ability to conclude once it is extended.
+    if (dispatch.status === "failed" && (dispatch.refusal_reason ?? null) === null) {
+      unanswered.add(gapKey(dispatch));
+    }
   }
 
   for (const record of projection.evidence.values()) {

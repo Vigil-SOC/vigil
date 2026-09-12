@@ -46,15 +46,92 @@ export function sanitizeQuestion(text: string): string {
   return scrub(text, QUESTION_CAP).replace(/\s+/g, " ").trim();
 }
 
-// The payload reaches the lead verbatim, through both the expand tool and the
-// EXPAND action, so its content is scrubbed and not merely capped. Scrubbing the
-function scrubPayload(payload: Record<string, unknown>): Record<string, unknown> {
-  const text = scrub(JSON.stringify(payload ?? {}), PAYLOAD_CAP);
-  try {
-    return JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    return { truncated: text };
+const sizeOf = (value: unknown): number => JSON.stringify(value)?.length ?? 0;
+
+// No cap here: a record is shrunk below by dropping what it can afford to lose.
+function scrubDeep(value: unknown): unknown {
+  if (typeof value === "string") return scrub(value, Number.POSITIVE_INFINITY);
+  if (Array.isArray(value)) return value.map(scrubDeep);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, held]) => [key, scrubDeep(held)]));
   }
+  return value;
+}
+
+interface Site {
+  parent: Record<string, unknown> | unknown[];
+  key: string | number;
+  value: unknown;
+}
+
+function nests(node: unknown): boolean {
+  if (Array.isArray(node)) return true;
+  if (node !== null && typeof node === "object") return Object.values(node).some(nests);
+  return false;
+}
+
+// An array holding no further arrays is rows rather than structure, so it is what the
+// caller may shrink: dropping from the container above would drop whole queries.
+function sitesIn(node: unknown, rows: Site[], prose: Site[]): void {
+  const visit = (parent: Record<string, unknown> | unknown[], key: string | number, value: unknown): void => {
+    if (typeof value === "string") {
+      prose.push({ parent, key, value });
+      return;
+    }
+    if (Array.isArray(value)) {
+      if (!value.some(nests)) rows.push({ parent, key, value });
+      else value.forEach((held, at) => visit(value, at, held));
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const [held, inner] of Object.entries(value)) visit(value as Record<string, unknown>, held, inner);
+    }
+  };
+
+  if (node !== null && typeof node === "object") {
+    for (const [key, value] of Object.entries(node)) visit(node as Record<string, unknown>, key, value);
+  }
+}
+
+// Shrunk rather than clamped whole: cutting serialised JSON at a character lands mid-token,
+// so the parse this used to do could never succeed and every payload over the cap collapsed
+// into one unreadable key -- losing its entities, and a null check's survives flag with them.
+function scrubPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  const held = scrubDeep(payload ?? {}) as Record<string, unknown>;
+  if (sizeOf(held) <= PAYLOAD_CAP) return held;
+
+  for (let guard = 0; sizeOf(held) > PAYLOAD_CAP && guard < 500; guard += 1) {
+    const rows: Site[] = [];
+    const prose: Site[] = [];
+    sitesIn(held, rows, prose);
+
+    // Biggest first, whichever kind. Preferring rows as a class would empty a 25-id list
+    // a verdict rests on while pages of prose sat beside it untouched.
+    const site = [...rows.filter((one) => (one.value as unknown[]).length > 0), ...prose]
+      .sort((left, right) => sizeOf(right.value) - sizeOf(left.value))[0];
+    if (site === undefined) break;
+
+    if (Array.isArray(site.value)) {
+      const rowsHeld = site.value;
+      const keep = Math.floor(rowsHeld.length / 2);
+      const dropped = rowsHeld.length - keep;
+      rowsHeld.length = keep;
+      if (!Array.isArray(site.parent) && typeof site.key === "string") {
+        const at = `${site.key}_dropped`;
+        site.parent[at] = ((site.parent[at] as number | undefined) ?? 0) + dropped;
+      }
+      continue;
+    }
+
+    const text = site.value as string;
+    if (text.length <= 1) break;
+    // Halved, not cut to the remaining budget: that would spend the whole loss on one field.
+    (site.parent as Record<string, unknown>)[site.key as string] = clamp(text, Math.max(1, Math.floor(text.length / 2)));
+  }
+
+  // Kept so no record reaches the lead unscrubbed.
+  if (sizeOf(held) > PAYLOAD_CAP) return { truncated: scrub(JSON.stringify(held), PAYLOAD_CAP) };
+  return held;
 }
 
 // Worker output is model text derived from attacker-controlled telemetry. The
