@@ -98,7 +98,7 @@ def resolve_component(component: str) -> Optional[Tuple[str, str]]:
     from core.llm.providers.registry import get_registry
 
     try:
-        resolved = get_registry().resolve_for_component(component)
+        resolved = get_registry().resolve_model_for_component(component)
     except Exception as exc:  # noqa: BLE001
         logger.warning("model assignment lookup failed for %s: %s", component, exc)
         return None
