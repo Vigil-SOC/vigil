@@ -44,7 +44,8 @@ export interface SpendPayload {
 // unpriced is a ceiling that cannot be measured rather than one that was reached.
 export type Refusal =
   | { reason: "calls_exhausted"; used: number; limit: number }
-  | { reason: "cost_exhausted"; used_usd: number; limit_usd: number }
+  // Held against the sum, carried apart so a stated bill is never a figure nobody was charged.
+  | { reason: "cost_exhausted"; used_usd: number; limit_usd: number; in_flight_usd?: number }
   | { reason: "wall_exhausted"; used_ms: number; limit_ms: number }
   | { reason: "unpriced"; calls: number };
 

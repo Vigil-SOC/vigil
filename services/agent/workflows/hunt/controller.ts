@@ -1967,25 +1967,30 @@ export class HuntController {
     const settled = this.ledger.projection.dispatches.get(result.dispatch_id)?.status;
     if (settled === undefined || settled === "complete") return [];
 
+    // contracts/tool.ts forbids recording a refusal as a visibility gap. Handed back
+    // below instead, so an extension finds the question on the frontier.
+    const refused = result.failed && (result.refusal_reason ?? null) !== null;
+
     // A failed worker is evidence about visibility, not a lost turn, and the rows it
     // did gather come too.
-    const records = result.failed
-      ? [
-          {
-            source_system: "dispatcher",
-            // The reason stays out of the summary and in the payload: it is our plumbing,
-            // and the lead only needs to know a query could not be run.
-            summary: "a query the hunt wanted could not be run",
-            payload: { failure_reason: result.failure_reason },
-            salience: "routine" as const,
-            why_notable: "a blind spot in what this run could see, not a finding",
-            provenance: TOOL_FAILURE,
-            attacker_influenceable: false,
-            instruction_like: false,
-          },
-          ...result.evidence,
-        ]
-      : result.evidence;
+    const records =
+      result.failed && !refused
+        ? [
+            {
+              source_system: "dispatcher",
+              // The reason stays out of the summary and in the payload: it is our plumbing,
+              // and the lead only needs to know a query could not be run.
+              summary: "a query the hunt wanted could not be run",
+              payload: { failure_reason: result.failure_reason },
+              salience: "routine" as const,
+              why_notable: "a blind spot in what this run could see, not a finding",
+              provenance: TOOL_FAILURE,
+              attacker_influenceable: false,
+              instruction_like: false,
+            },
+            ...result.evidence,
+          ]
+        : result.evidence;
 
     const appended = this.appendEvidence(records, iteration, result.dispatch_id);
 
@@ -2002,9 +2007,17 @@ export class HuntController {
     this.ledger.patch("dispatch", result.dispatch_id, {
       status: result.failed ? "failed" : "complete",
       failure_reason: result.failed ? result.failure_reason : null,
+      refusal_reason: result.failed ? (result.refusal_reason ?? null) : null,
       cost_usd: result.cost_usd,
       calls: result.calls ?? [],
     });
+
+    // A lead is closed when taken so it is not re-issued every iteration -- but a refused
+    // dispatch has no next iteration, since the run parks.
+    const takenBack = this.ledger.projection.dispatches.get(result.dispatch_id)?.question_id ?? null;
+    if (refused && takenBack !== null) {
+      this.ledger.patch("question", takenBack, { status: "open" });
+    }
     // A gap record is a fact about visibility, not a finding, so it counts as neither
     // evidence appended nor something worth enriching. Salvaged rows are telemetry, and do.
     return appended.filter((record) => record.provenance !== TOOL_FAILURE);

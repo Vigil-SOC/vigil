@@ -418,7 +418,13 @@ class Run<T, Kinds extends Record<string, unknown>> {
   }
 
   private exhausted(refusal: Refusal): Outcome<T> {
-    const reason = `the budget refused another iteration: ${refusal.reason}`;
+    // Without this a run refused at $14.20 of $15.00 reads as a premature stop.
+    const committed =
+      refusal.reason === "cost_exhausted" && (refusal.in_flight_usd ?? 0) > 0
+        ? ` ($${refusal.used_usd.toFixed(4)} spent of $${refusal.limit_usd.toFixed(2)}, ` +
+          `with $${refusal.in_flight_usd!.toFixed(4)} committed to calls still open)`
+        : "";
+    const reason = `the budget refused another iteration: ${refusal.reason}${committed}`;
     return { ...this.done("failed", null, reason), refusal };
   }
 

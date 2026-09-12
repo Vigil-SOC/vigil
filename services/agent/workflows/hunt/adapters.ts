@@ -212,8 +212,8 @@ export const WORKER = "worker";
 // since no role has said what they mean and they must not read as a vouched-for finding.
 export const UNSUMMARISED = "unsummarised";
 
-// Characters of gathered output one salvage record may carry. Trimmed here because the
-// digest would flatten an over-long payload to a string and cost the entities in it.
+// The whole serialised record, not its rows alone: budgeting only what is droppable is
+// how a record built to fit still arrived over the sanitiser's cap.
 const SALVAGE_BUDGET = 6_000;
 
 // A dispatch whose write-up failed still ran its queries, so they are kept as evidence
@@ -223,14 +223,14 @@ export function salvaged(attempts: readonly Attempt[]): WorkerEvidence[] {
   if (kept.length === 0) return [];
 
   const systems = [...new Set(kept.map(({ result }) => (result.ok ? result.sourceSystem : "")))].filter((one) => one);
-  let spent = 0;
+  let spent = kept.reduce((total, { tool, args }) => total + JSON.stringify({ tool, query: args }).length, 0);
   const gathered = kept.map(({ tool, args, result }) => {
     const rows = result.ok ? result.rows : [];
     const text = JSON.stringify(rows);
     // Queries are never dropped — they are what an analyst re-runs. Rows are, past the
     // budget, and the record says so rather than appearing to be all of them.
-    const room = spent < SALVAGE_BUDGET;
-    spent += text.length;
+    const room = spent + text.length <= SALVAGE_BUDGET;
+    spent += room ? text.length : 0;
     return { tool, query: args, ...(room ? { rows } : { rows_dropped: rows.length }) };
   });
 
@@ -368,6 +368,7 @@ export function workerDispatcher(options: AdapterOptions): WorkerDispatcher {
           calls: callsOf(outcome.calls),
           failed: true,
           failure_reason: outcome.reason,
+          refusal_reason: outcome.refusal?.reason ?? null,
           cost_usd,
         };
       }

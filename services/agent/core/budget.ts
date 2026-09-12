@@ -122,6 +122,10 @@ class Pool implements Budget {
   private cost: number;
   private tokens: TokenCounts;
   private unpriced = 0;
+  // Workers run concurrently, so calls that cleared the ceiling but have not billed count too.
+  private inFlight = 0;
+  // Not this.calls, which counts a call before it returns.
+  private recorded: number;
   private readonly started: number;
   // Whether anything was meant to price these calls. noPrices is the deliberate
   // "nobody to ask", and a run that asked for no pricing is not a run in the dark.
@@ -136,6 +140,7 @@ class Pool implements Budget {
   ) {
     this.calls = seed.spent.calls;
     this.cost = seed.spent.cost_usd;
+    this.recorded = seed.spent.calls;
     this.tokens = seed.spent.tokens;
     // The run's own start, not this process's: a resume that restarted the clock
     // would hand a killed run a fresh wall-time allowance on every attempt.
@@ -175,13 +180,24 @@ class Pool implements Budget {
     if (refusal !== null) return refusal;
 
     this.calls += 1;
+    this.inFlight += 1;
     return null;
   }
 
   record(payload: SpendPayload): void {
     this.tokens = addTokens(this.tokens, payload.tokens);
+    this.recorded += 1;
+    // burn settles on the error path too, so a record without a beginCall is possible.
+    this.inFlight = Math.max(0, this.inFlight - 1);
     if (payload.cost_usd === null) this.unpriced += 1;
     else this.cost += payload.cost_usd;
+  }
+
+  // Zero until something records: the lead's turn settles before workers fan out, so an
+  // unreserved first call costs at most one call.
+  private get reserved(): number {
+    if (this.inFlight === 0 || this.recorded === 0) return 0;
+    return this.inFlight * (this.cost / this.recorded);
   }
 
   // The backend catalog's rates, never a second copy of it. Null rather than zero
@@ -195,6 +211,8 @@ class Pool implements Budget {
   // against max_cost_usd either way. Every deployment takes this arm today.
   private async overspent(): Promise<Refusal | null> {
     const reported = await this.quota.spent();
+    const in_flight_usd = this.reserved;
+    const promised = in_flight_usd > 0 ? { in_flight_usd } : {};
     if (reported === null) {
       const limit_usd = this.limits.max_cost_usd;
       // A ceiling nothing can measure is not one: cost never grows, so the comparison
@@ -202,14 +220,14 @@ class Pool implements Budget {
       if (this.priced && Number.isFinite(limit_usd) && this.unpriced >= UNPRICED_TOLERANCE) {
         return { reason: "unpriced", calls: this.unpriced };
       }
-      if (this.cost < limit_usd) return null;
-      return { reason: "cost_exhausted", used_usd: this.cost, limit_usd };
+      if (this.cost + in_flight_usd < limit_usd) return null;
+      return { reason: "cost_exhausted", used_usd: this.cost, limit_usd, ...promised };
     }
 
     // The gateway prices, so where it and the fold disagree it is the authority.
     this.cost = reported.used_usd;
     const limit_usd = Math.min(this.limits.max_cost_usd, reported.limit_usd);
-    if (reported.used_usd < limit_usd) return null;
-    return { reason: "cost_exhausted", used_usd: reported.used_usd, limit_usd };
+    if (reported.used_usd + in_flight_usd < limit_usd) return null;
+    return { reason: "cost_exhausted", used_usd: reported.used_usd, limit_usd, ...promised };
   }
 }
