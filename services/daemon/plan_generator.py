@@ -458,9 +458,14 @@ def generate_initial_state(
     }
 
 
-def generate_initial_context(findings: List[Dict[str, Any]]) -> str:
+def generate_initial_context(
+    findings: List[Dict[str, Any]], case_id: Optional[str] = None
+) -> str:
     """Generate the initial context.md with trigger finding summaries."""
-    lines = ["# Investigation Context", "", "## Trigger Findings", ""]
+    lines = ["# Investigation Context", ""]
+    if case_id:
+        lines.extend([f"case_id: {case_id}", ""])
+    lines.extend(["## Trigger Findings", ""])
 
     for f in findings[:5]:
         fid = f.get("finding_id", "unknown")

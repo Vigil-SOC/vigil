@@ -199,7 +199,12 @@ function openingKeys(spec: RunSpec): readonly string[] {
 // should know. The fold that replaces it with a digest is a later slice.
 function brief(spec: RunSpec): string {
   const objectives = spec.objectives.map((line) => `- ${line}`).join("\n");
-  const parts = [`Run: ${spec.name}`, objectives && `Objectives:\n${objectives}`, spec.narrative];
+  const parts = [
+    `Run: ${spec.name}`,
+    spec.prompt && `## What this run is about\n\n${spec.prompt}`,
+    objectives && `Objectives:\n${objectives}`,
+    spec.narrative,
+  ];
   return parts.filter((part) => part).join("\n\n");
 }
 

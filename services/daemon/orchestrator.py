@@ -370,7 +370,7 @@ class Orchestrator:
         self.workdir.write_state(inv_id, state)
 
         self.workdir.write_file(
-            inv_id, "context.md", generate_initial_context(findings)
+            inv_id, "context.md", generate_initial_context(findings, case_id)
         )
         # What this run is about, so the harness's keyed read has something to ask
         # on. Written even when empty: an investigation whose findings name no
