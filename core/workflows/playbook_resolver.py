@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
 from core.llm.defaults import DEFAULT_MODEL
 
 if TYPE_CHECKING:
@@ -278,6 +279,13 @@ def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
         phase["tools"] = [tool for tool in phase["tools"] if tool in declared]
 
 
+# Only ART execute is gated. The id must be one config.tools actually carries:
+# spec.ts refuses an approvals name that is not declared. Native and MCP-flattened
+# spellings both count; whichever resolved is the one that goes on the list.
+def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
+    return [tool["id"] for tool in tools if tool["id"] in EXECUTE_IDS]
+
+
 def resolve(
     workflow_id: str,
     model: Optional[str] = None,
@@ -321,9 +329,10 @@ def resolve(
         "budgets": _budgets(phases),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
-        # Empty by design: a phase stops for a human through its own checkpoint,
-        # which is a property of the step rather than of a tool it happens to call.
-        "approvals": [],
+        # ART execute parks until a human approves. Other grants, and a compose
+        # that never received execute, stay ungated. A phase checkpoint is
+        # separate (approval_required on the step) and is not a substitute.
+        "approvals": _approvals_of(tools),
         "thresholds": {},
     }
 
