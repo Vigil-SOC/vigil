@@ -206,6 +206,10 @@ services:
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       # Redis (LLM queue)
       - REDIS_URL=redis://redis:6379/0
+      # Same seam as backend. localhost:6989 is the host-run default; without
+      # these, _read_fold cannot reach agent-serve and completed runs stay executing.
+      - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:-}
+      - AGENT_URL=http://agent-serve:6989
       # Polling intervals (seconds)
       - DAEMON_SPLUNK_POLL_INTERVAL=${DAEMON_SPLUNK_POLL_INTERVAL:-300}
       - DAEMON_CROWDSTRIKE_POLL_INTERVAL=${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
