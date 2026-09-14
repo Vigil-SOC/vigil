@@ -80,58 +80,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/agents/agents/investigate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Start Investigation
-         * @description Start an investigation on a finding with a specific agent.
-         *
-         *     Args:
-         *         request: Investigation request with finding ID and agent
-         *
-         *     Returns:
-         *         Investigation prompt and agent details
-         */
-        post: operations["post_api_agents_agents_investigate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agents/agents/set-current": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Set Current Agent
-         * @description Set the current active agent.
-         *
-         *     Args:
-         *         agent_id: The agent ID to set as current
-         *
-         *     Returns:
-         *         Success status
-         */
-        post: operations["post_api_agents_agents_set-current"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/agents/agents/{agent_id}": {
         parameters: {
             query?: never;
@@ -142,12 +90,6 @@ export interface paths {
         /**
          * Get Agent
          * @description Get details for a specific agent.
-         *
-         *     Args:
-         *         agent_id: The agent ID
-         *
-         *     Returns:
-         *         Agent details
          */
         get: operations["get_api_agents_agents_agent_id"];
         put?: never;
@@ -8755,21 +8697,6 @@ export interface components {
              */
             workflow_id: string;
         };
-        /**
-         * InvestigationRequest
-         * @description Request to start an investigation with an agent.
-         */
-        InvestigationRequest: {
-            /** Additional Context */
-            additional_context?: string | null;
-            /**
-             * Agent Id
-             * @default investigator
-             */
-            agent_id: string | null;
-            /** Finding Id */
-            finding_id: string;
-        };
         /** InvokeRequest */
         InvokeRequest: {
             /** Args */
@@ -10685,74 +10612,6 @@ export interface operations {
     get_api_agents_agents: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_agents_agents_investigate: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["InvestigationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_agents_agents_set-current": {
-        parameters: {
-            query: {
-                agent_id: string;
-            };
             header?: {
                 authorization?: string | null;
             };

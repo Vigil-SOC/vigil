@@ -2,14 +2,11 @@
 
 Each built-in is a plain record shaped like a ``custom_agents`` row so
 built-ins and customs build through the same path
-(``core.agents.manager.SOCAgentLibrary.build_profile``). The old split
-structures (``_BUILTIN_COMPONENT_CATEGORY`` and the task-routing keyword
-table) are folded into each record as ``component_category`` and
-``task_keywords``; the decision-log action id (GH #476) is folded in the
-same way as ``decision_id``.
+(``core.agents.manager.SOCAgentLibrary.build_profile``). The decision-log
+action id (GH #476) is folded in as ``decision_id``.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional
 
@@ -43,9 +40,6 @@ class AgentId(str, Enum):
 ORCHESTRATOR_ACTOR = "orchestrator"
 ORCHESTRATION_DECISION_ID = "orchestration"
 
-# Fallback whenever a caller names no agent, and the landing agent for a new session.
-DEFAULT_AGENT_ID = AgentId.INVESTIGATOR.value
-
 
 @dataclass
 class AgentProfile:
@@ -78,11 +72,6 @@ class AgentProfile:
     # Custom agents have no action of their own, so they log under their
     # agent id (build_profile falls back to the row id).
     decision_id: str = ""
-    # #482 — task-routing keywords, folded in from the old get_agent_by_task
-    # table. AgentManager.get_agent_by_task matches these against a free-text
-    # task. Built-ins carry their keywords; customs default to none (they
-    # never win task routing).
-    task_keywords: List[str] = field(default_factory=list)
 
 
 BUILTIN_AGENTS = [
@@ -90,7 +79,6 @@ BUILTIN_AGENTS = [
         "id": "triage",
         "decision_id": "triage",
         "component_category": "triage",
-        "task_keywords": ["triage", "prioritize", "quick"],
         "role": "Triage Agent specializing in rapid alert assessment",
         "name": "Triage Agent",
         "icon": "T",
@@ -118,7 +106,6 @@ BUILTIN_AGENTS = [
         "id": "investigator",
         "decision_id": "investigation",
         "component_category": "investigation",
-        "task_keywords": ["investigate", "deep dive", "analyze"],
         "role": "Investigation Agent specializing in thorough security investigations",
         "name": "Investigation Agent",
         "icon": "I",
@@ -150,7 +137,6 @@ BUILTIN_AGENTS = [
         "id": "threat_hunter",
         "decision_id": "threat_hunt",
         "component_category": "investigation",
-        "task_keywords": ["hunt", "proactive", "search"],
         "role": "Threat Hunter specializing in proactive threat detection",
         "name": "Threat Hunter",
         "icon": "H",
@@ -179,7 +165,6 @@ BUILTIN_AGENTS = [
         "id": "correlator",
         "decision_id": "correlation",
         "component_category": "investigation",
-        "task_keywords": ["correlate", "relate", "connect", "pattern"],
         "role": "Correlation Agent specializing in cross-signal analysis",
         "name": "Correlation Agent",
         "icon": "C",
@@ -209,7 +194,6 @@ BUILTIN_AGENTS = [
         "id": "responder",
         "decision_id": "response",
         "component_category": "investigation",
-        "task_keywords": ["respond", "contain", "remediate"],
         "role": "Response Agent specializing in incident response",
         "name": "Response Agent",
         "icon": "R",
@@ -244,14 +228,6 @@ Confidence scoring:
         "id": "reporter",
         "decision_id": "reporting",
         "component_category": "reporting",
-        "task_keywords": [
-            "report",
-            "summary",
-            "document",
-            "board brief",
-            "board report",
-            "risk posture",
-        ],
         "role": "Reporting Agent specializing in clear communication",
         "name": "Reporting Agent",
         "icon": "W",
@@ -308,7 +284,6 @@ Confidence scoring:
         "id": "mitre_analyst",
         "decision_id": "mitre_mapping",
         "component_category": "investigation",
-        "task_keywords": ["mitre", "att&ck", "technique", "tactic"],
         "role": "MITRE ATT&CK Analyst specializing in attack pattern analysis",
         "name": "MITRE ATT&CK Analyst",
         "icon": "M",
@@ -337,7 +312,6 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
         "id": "forensics",
         "decision_id": "forensics",
         "component_category": "investigation",
-        "task_keywords": ["forensic", "artifact", "evidence"],
         "role": "Forensics Agent specializing in digital forensics",
         "name": "Forensics Agent",
         "icon": "F",
@@ -362,7 +336,6 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
         "id": "threat_intel",
         "decision_id": "threat_intel",
         "component_category": "investigation",
-        "task_keywords": ["threat intel", "intelligence", "actor"],
         "role": "Threat Intelligence Agent specializing in intelligence analysis",
         "name": "Threat Intel Agent",
         "icon": "TI",
@@ -393,7 +366,6 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
         "id": "compliance",
         "decision_id": "compliance",
         "component_category": "investigation",
-        "task_keywords": ["compliance", "policy", "regulation"],
         "role": "Compliance Agent specializing in regulatory compliance",
         "name": "Compliance Agent",
         "icon": "CP",
@@ -423,7 +395,6 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
         "id": "malware_analyst",
         "decision_id": "malware_analysis",
         "component_category": "investigation",
-        "task_keywords": ["malware", "virus", "trojan", "ransomware"],
         "role": "Malware Analyst specializing in malware analysis",
         "name": "Malware Analyst",
         "icon": "MA",
@@ -470,7 +441,6 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
         "id": "network_analyst",
         "decision_id": "network_analysis",
         "component_category": "investigation",
-        "task_keywords": ["network", "traffic", "packet", "flow"],
         "role": "Network Analyst specializing in network security",
         "name": "Network Analyst",
         "icon": "NA",
@@ -505,7 +475,6 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
         "id": "auto_responder",
         "decision_id": "auto_response",
         "component_category": "investigation",
-        "task_keywords": [],
         "role": "Autonomous Response Agent specializing in automatic threat response",
         "name": "Auto-Response Agent",
         "icon": "AR",

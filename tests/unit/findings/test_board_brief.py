@@ -250,46 +250,6 @@ class TestReporterAgentConfig:
 
 
 # ---------------------------------------------------------------------------
-# Tests — Agent routing
-# ---------------------------------------------------------------------------
-
-class TestAgentRouting:
-    """Verify keyword routing selects Reporter for board brief requests."""
-
-    def test_board_brief_routes_to_reporter(self):
-        """'board brief' keyword should route to the reporter agent."""
-        from core.agents.manager import AgentManager
-        mgr = AgentManager()
-        agent = mgr.get_agent_by_task("Generate board brief")
-        assert agent is not None
-        assert agent.id == "reporter"
-
-    def test_board_report_routes_to_reporter(self):
-        """'board report' keyword should route to the reporter agent."""
-        from core.agents.manager import AgentManager
-        mgr = AgentManager()
-        agent = mgr.get_agent_by_task("Create board report")
-        assert agent is not None
-        assert agent.id == "reporter"
-
-    def test_risk_posture_routes_to_reporter(self):
-        """'risk posture' keyword should route to the reporter agent."""
-        from core.agents.manager import AgentManager
-        mgr = AgentManager()
-        agent = mgr.get_agent_by_task("Generate risk posture report")
-        assert agent is not None
-        assert agent.id == "reporter"
-
-    def test_existing_report_routing_preserved(self):
-        """Existing 'report' and 'summary' keywords must still work."""
-        from core.agents.manager import AgentManager
-        mgr = AgentManager()
-        assert mgr.get_agent_by_task("Write a report").id == "reporter"
-        assert mgr.get_agent_by_task("Generate summary").id == "reporter"
-        assert mgr.get_agent_by_task("Document the findings").id == "reporter"
-
-
-# ---------------------------------------------------------------------------
 # Tests — Board brief template
 # ---------------------------------------------------------------------------
 

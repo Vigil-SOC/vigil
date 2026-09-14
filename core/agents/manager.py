@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, List, Optional
 
-from core.agents.builtins import BUILTIN_AGENTS, DEFAULT_AGENT_ID, AgentProfile
+from core.agents.builtins import BUILTIN_AGENTS, AgentProfile
 from core.agents.prompts import prompt_for_row
 
 logger = logging.getLogger(__name__)
@@ -48,8 +48,6 @@ class SOCAgentLibrary:
             # GH #476 — built-ins carry their action id; custom agents have no
             # action of their own, so they log under their agent id.
             decision_id=(row.get("decision_id") or row["id"]),
-            # #482 — task-routing keywords; built-ins carry them, customs don't.
-            task_keywords=list(row.get("task_keywords") or []),
         )
 
     @staticmethod
@@ -64,7 +62,6 @@ CUSTOM_AGENT_ID_PREFIX = "custom-"
 class AgentManager:
     def __init__(self):
         self.agents = SOCAgentLibrary.get_all_agents()
-        self.current_agent_id = DEFAULT_AGENT_ID
         # Load DB-backed custom agents at startup so /agents/agents returns
         # a unified list without waiting for a later CRUD call to trigger
         # refresh. Failures (DB not ready) are logged inside the helper,
@@ -110,12 +107,6 @@ class AgentManager:
             logger.warning(f"Unable to refresh custom agents from DB: {e}")
             return 0
 
-    def set_current_agent(self, agent_id: str) -> bool:
-        if agent_id in self.agents:
-            self.current_agent_id = agent_id
-            return True
-        return False
-
     def get_agent_list(self) -> List[Dict]:
         return [
             {
@@ -129,13 +120,3 @@ class AgentManager:
             }
             for a in self.agents.values()
         ]
-
-    def get_agent_by_task(self, task: str) -> Optional[AgentProfile]:
-        # Match the free-text task against each agent's task_keywords, in
-        # agent order (built-ins first, customs last). Customs carry no
-        # keywords, so they never win — same behavior as the old inline table.
-        t = task.lower()
-        for profile in self.agents.values():
-            if profile.task_keywords and any(kw in t for kw in profile.task_keywords):
-                return profile
-        return self.agents[DEFAULT_AGENT_ID]

@@ -409,17 +409,6 @@ export const claudeApi = {
 
 export const agentsApi = {
   listAgents: () => api.get('/agents/agents'),
-  
-  getAgent: (agent_id: string) => api.get(`/agents/agents/${agent_id}`),
-  
-  setCurrentAgent: (agent_id: string) => 
-    api.post('/agents/agents/set-current', null, { params: { agent_id } }),
-  
-  startInvestigation: (data: {
-    finding_id: string
-    agent_id?: string
-    additional_context?: string
-  }) => api.post('/agents/agents/investigate', data, { timeout: LLM_TIMEOUT }),
 
   listCustom: () => api.get('/agents/custom'),
   getCustom: (agent_id: string) => api.get(`/agents/custom/${agent_id}`),

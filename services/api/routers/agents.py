@@ -1,12 +1,7 @@
 """Agents API endpoints for SOC agent management."""
 
-import logging
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
 
-from core.agents.builtins import DEFAULT_AGENT_ID
 from core.agents.manager import CUSTOM_AGENT_ID_PREFIX, AgentManager
 from core.routing import Auth, RouterMeta
 
@@ -17,7 +12,6 @@ ROUTER_META = RouterMeta(
     tags=["agents"],
     auth=Auth.REQUIRED,
 )
-logger = logging.getLogger(__name__)
 
 # Global agent manager instance
 agent_manager = AgentManager()
@@ -38,14 +32,6 @@ def _resolve_agent(agent_id: str):
     return None
 
 
-class InvestigationRequest(BaseModel):
-    """Request to start an investigation with an agent."""
-
-    finding_id: str
-    agent_id: Optional[str] = DEFAULT_AGENT_ID
-    additional_context: Optional[str] = None
-
-
 @router.get("/agents")
 async def list_agents():
     """Get list of all available SOC agents (built-ins + DB-backed customs).
@@ -58,21 +44,12 @@ async def list_agents():
     # Cheap best-effort refresh. Failures leave the existing cache in
     # place — you'd still get the built-in list back.
     agent_manager.refresh_custom_agents()
-    agents = agent_manager.get_agent_list()
-    return {"agents": agents, "current_agent": agent_manager.current_agent_id}
+    return {"agents": agent_manager.get_agent_list()}
 
 
 @router.get("/agents/{agent_id}")
 async def get_agent(agent_id: str):
-    """
-    Get details for a specific agent.
-
-    Args:
-        agent_id: The agent ID
-
-    Returns:
-        Agent details
-    """
+    """Get details for a specific agent."""
     agent = _resolve_agent(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
@@ -88,92 +65,3 @@ async def get_agent(agent_id: str):
         "max_tokens": agent.max_tokens,
         "enable_thinking": agent.enable_thinking,
     }
-
-
-@router.post("/agents/set-current")
-async def set_current_agent(agent_id: str):
-    """
-    Set the current active agent.
-
-    Args:
-        agent_id: The agent ID to set as current
-
-    Returns:
-        Success status
-    """
-    success = agent_manager.set_current_agent(agent_id)
-    if not success:
-        raise HTTPException(status_code=404, detail=f"Agent not found: {agent_id}")
-
-    return {"success": True, "current_agent": agent_manager.current_agent_id}
-
-
-@router.post("/agents/investigate")
-async def start_investigation(request: InvestigationRequest):
-    """
-    Start an investigation on a finding with a specific agent.
-
-    Args:
-        request: Investigation request with finding ID and agent
-
-    Returns:
-        Investigation prompt and agent details
-    """
-    from core.storage.database_data_service import DatabaseDataService
-
-    try:
-        # Get the finding
-        data_service = DatabaseDataService()
-        finding = data_service.get_finding(request.finding_id)
-
-        if not finding:
-            raise HTTPException(
-                status_code=404, detail=f"Finding not found: {request.finding_id}"
-            )
-
-        # Get the agent
-        agent = _resolve_agent(request.agent_id)
-        if not agent:
-            raise HTTPException(
-                status_code=404, detail=f"Agent not found: {request.agent_id}"
-            )
-
-        # Construct investigation prompt
-        techniques = finding.get("predicted_techniques", [])
-        technique_str = (
-            ", ".join([t.get("technique_id", "") for t in techniques])
-            if techniques
-            else "None"
-        )
-
-        prompt = f"""Please investigate this security finding:
-
-**Finding ID:** {finding.get('finding_id')}
-**Severity:** {finding.get('severity')}
-**Data Source:** {finding.get('data_source')}
-**Timestamp:** {finding.get('timestamp')}
-**Anomaly Score:** {finding.get('anomaly_score', 'N/A')}
-**Description:** {finding.get('description', 'N/A')}
-**Predicted MITRE ATT&CK Techniques:** {technique_str}
-
-{f'**Additional Context:** {request.additional_context}' if request.additional_context else ''}
-
-Please conduct a thorough investigation of this finding. Use your available tools to gather more information, correlate with other findings, and provide your analysis."""
-
-        return {
-            "prompt": prompt,
-            "agent": {
-                "id": agent.id,
-                "name": agent.name,
-                "icon": agent.icon,
-                "color": agent.color,
-                "system_prompt": agent.system_prompt,
-            },
-            "finding": finding,
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error starting investigation: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
