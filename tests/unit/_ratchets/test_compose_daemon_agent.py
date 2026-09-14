@@ -25,7 +25,9 @@ AGENT_TOKEN = "AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:-}"
 
 def _env(service: str) -> list[str]:
     raw = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))
-    return list(((raw or {}).get("services") or {}).get(service, {}).get("environment") or [])
+    return list(
+        ((raw or {}).get("services") or {}).get(service, {}).get("environment") or []
+    )
 
 
 def test_soc_daemon_shares_backend_agent_seam() -> None:
@@ -33,9 +35,9 @@ def test_soc_daemon_shares_backend_agent_seam() -> None:
     daemon = _env("soc-daemon")
     assert AGENT_URL in backend
     assert AGENT_TOKEN in backend
-    assert AGENT_URL in daemon, (
-        "soc-daemon is missing AGENT_URL; completed runs will never reconcile"
-    )
-    assert AGENT_TOKEN in daemon, (
-        "soc-daemon is missing AGENT_INTERNAL_TOKEN; projection reads will 401"
-    )
+    assert (
+        AGENT_URL in daemon
+    ), "soc-daemon is missing AGENT_URL; completed runs will never reconcile"
+    assert (
+        AGENT_TOKEN in daemon
+    ), "soc-daemon is missing AGENT_INTERNAL_TOKEN; projection reads will 401"
