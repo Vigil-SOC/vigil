@@ -420,6 +420,7 @@ dbInit:
     - 30_approval_action_reversibility.sql
     - 30_vigil_app_role.sql
     - 31_agent_ledger_hash_chain.sql
+    - 32_drop_attack_layers.sql
   resources:
     requests:
       cpu: 50m

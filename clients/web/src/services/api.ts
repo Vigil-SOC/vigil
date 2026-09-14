@@ -866,8 +866,6 @@ export const timesketchApi = {
 }
 
 export const attackApi = {
-  getLayer: () => api.get('/attack/layer'),
-  
   getTechniqueRollup: (
     min_confidence: number = 0.0,
     time_range: string = 'all',

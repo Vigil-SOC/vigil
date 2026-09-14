@@ -36,7 +36,6 @@ from core.storage.models.case_entities import (
     SLAPolicy,
 )
 from core.storage.models.config import (
-    AttackLayer,
     ConfigAuditLog,
     FederationSource,
     IntegrationConfig,
@@ -71,7 +70,6 @@ __all__ = [
     "AIDecisionLog",
     "AIModelConfig",
     "ApprovalAction",
-    "AttackLayer",
     "Base",
     "Case",
     "CaseAttachment",

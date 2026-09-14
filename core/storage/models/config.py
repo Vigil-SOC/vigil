@@ -56,43 +56,6 @@ class SketchMapping(Base):
     )
 
 
-class AttackLayer(Base):
-    """ATT&CK Navigator layer storage."""
-
-    __tablename__ = "attack_layers"
-
-    # Primary key
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-
-    # Layer information
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    layer_data: Mapped[dict] = mapped_column(JSONB, nullable=False)
-
-    # Association with case (optional)
-    case_id: Mapped[Optional[str]] = mapped_column(
-        String(50), ForeignKey("cases.case_id", ondelete="SET NULL"), nullable=True
-    )
-
-    # Timestamps
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        default=utcnow,
-        onupdate=utcnow,
-        server_default="now()",
-    )
-
-    # Indexes
-    __table_args__ = (
-        Index("idx_attack_layer_case_id", "case_id"),
-        Index("idx_attack_layer_created_at", "created_at"),
-    )
-
-
 class SystemConfig(Base):
     """
     System Configuration - Stores system-wide configuration settings.

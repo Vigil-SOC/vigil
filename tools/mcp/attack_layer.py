@@ -23,11 +23,6 @@ def get_db():
 async def handle_list_tools():
     return [
         types.Tool(
-            name="get_attack_layer",
-            description="Get MITRE ATT&CK Navigator layer",
-            inputSchema={"type": "object", "properties": {}, "required": []},
-        ),
-        types.Tool(
             name="get_technique_rollup",
             description="Get technique stats across findings",
             inputSchema={
@@ -69,17 +64,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
         return result({"error": f"Database error: {e}"})
 
     try:
-        if name == "get_attack_layer":
-            layer = {
-                "name": "DeepTempo Findings",
-                "version": "4.5",
-                "domain": "enterprise-attack",
-                "description": "ATT&CK techniques from findings",
-                "techniques": [],
-            }
-            return result({"success": True, "layer": layer})
-
-        elif name == "get_technique_rollup":
+        if name == "get_technique_rollup":
             min_conf = arguments.get("min_confidence", 0.0) if arguments else 0.0
             findings = db.get_findings(limit=1000)
 

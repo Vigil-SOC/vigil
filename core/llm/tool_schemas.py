@@ -381,21 +381,6 @@ DEEPTEMPO_FINDING_TOOLS = [
 # Attack Layer Tools
 ATTACK_LAYER_TOOLS = [
     {
-        "name": "get_attack_layer",
-        "description": "Get MITRE ATT&CK Navigator layer JSON showing coverage of techniques. Use this to visualize detection coverage in ATT&CK Navigator.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "layer_type": {
-                    "type": "string",
-                    "enum": ["coverage", "findings", "detections"],
-                    "description": "Type of layer to generate",
-                    "default": "coverage",
-                }
-            },
-        },
-    },
-    {
         "name": "get_technique_rollup",
         "description": "Get rollup statistics for MITRE techniques showing finding counts and severity distribution.",
         "input_schema": {

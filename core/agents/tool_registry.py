@@ -122,19 +122,6 @@ def _add_resolution_step(data: Any, args: Args) -> Args:
     return {"success": True, "case_id": args["case_id"], "total_steps": len(steps)}
 
 
-def _attack_layer(data: Any, args: Args) -> Args:
-    return {
-        "success": True,
-        "layer": {
-            "name": "DeepTempo Findings",
-            "version": "4.5",
-            "domain": "enterprise-attack",
-            "description": "ATT&CK techniques from findings",
-            "techniques": [],
-        },
-    }
-
-
 def _technique_rollup(data: Any, args: Args) -> Args:
     floor = args.get("min_confidence", 0.0)
     counts: Dict[str, int] = {}
@@ -175,7 +162,6 @@ _DATA_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
     ),
     "update_case": _update_case,
     "add_resolution_step": _add_resolution_step,
-    "get_attack_layer": _attack_layer,
     "get_technique_rollup": _technique_rollup,
 }
 
