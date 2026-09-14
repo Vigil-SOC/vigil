@@ -9071,16 +9071,6 @@ export interface components {
          */
         OrchestratorSettingsConfig: {
             /**
-             * Agent Loop Delay
-             * @default 2
-             */
-            agent_loop_delay: number;
-            /**
-             * Auto Assign Findings
-             * @default true
-             */
-            auto_assign_findings: boolean;
-            /**
              * Auto Assign Severities
              * @default [
              *       "critical",
@@ -9088,16 +9078,6 @@ export interface components {
              *     ]
              */
             auto_assign_severities: string[];
-            /**
-             * Context Max Chars
-             * @default 10000
-             */
-            context_max_chars: number;
-            /**
-             * Dedup Window Minutes
-             * @default 30
-             */
-            dedup_window_minutes: number;
             /**
              * Dry Run
              * @default false
@@ -9134,25 +9114,10 @@ export interface components {
              */
             max_runtime_per_investigation: number;
             /**
-             * Max Total Daily Cost
-             * @default 100
-             */
-            max_total_daily_cost: number;
-            /**
              * Max Total Hourly Cost
              * @default 20
              */
             max_total_hourly_cost: number;
-            /**
-             * Plan Model
-             * @default claude-sonnet-4-6
-             */
-            plan_model: string;
-            /**
-             * Review Model
-             * @default claude-sonnet-4-6
-             */
-            review_model: string;
             /**
              * Stale Threshold
              * @default 300

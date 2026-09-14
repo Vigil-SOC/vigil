@@ -557,21 +557,14 @@ export const configApi = {
   setOrchestrator: (data: {
     enabled: boolean
     dry_run: boolean
-    auto_assign_findings: boolean
     auto_assign_severities: string[]
     max_concurrent_agents: number
     max_iterations_per_agent: number
     max_runtime_per_investigation: number
     max_cost_per_investigation: number
     max_total_hourly_cost: number
-    max_total_daily_cost: number
     loop_interval: number
-    agent_loop_delay: number
     stale_threshold: number
-    dedup_window_minutes: number
-    context_max_chars: number
-    plan_model: string
-    review_model: string
     workdir_base: string
   }) => api.post('/config/orchestrator', data),
 }

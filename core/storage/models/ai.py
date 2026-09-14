@@ -196,7 +196,7 @@ class AIModelConfig(Base):
     """Per-component AI model assignment (GH #89).
 
     Each row maps a logical component (chat_default, triage, investigation,
-    orchestrator_plan, orchestrator_review, summarization, reporting) to a
+    summarization, reporting) to a
     (provider, model) pair. Components without a row fall back to the
     `chat_default` row; if that is missing, callers fall back to the
     default Anthropic provider's default_model.

@@ -15,14 +15,6 @@ export const COMPONENT_LABELS: Record<string, { label: string; description: stri
     label: 'Investigation Agents',
     description: 'Investigator, Threat Hunter, Correlator, etc. — the heavy lifters.',
   },
-  orchestrator_plan: {
-    label: 'Orchestrator — Planning',
-    description: 'Generates the investigation plan from the initial finding.',
-  },
-  orchestrator_review: {
-    label: 'Orchestrator — Review',
-    description: 'Reviews and approves sub-agent output at the end of an investigation.',
-  },
   summarization: {
     label: 'Context Summarization',
     description: 'Compresses long conversations — a cheap model is usually fine.',

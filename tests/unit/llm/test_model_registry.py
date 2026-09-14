@@ -32,13 +32,11 @@ pytestmark = pytest.mark.unit
 # ---------------------------------------------------------------------------
 
 
-def test_components_enum_includes_all_seven():
+def test_components_enum():
     expected = {
         "chat_default",
         "triage",
         "investigation",
-        "orchestrator_plan",
-        "orchestrator_review",
         "summarization",
         "reporting",
     }

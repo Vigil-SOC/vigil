@@ -5,8 +5,7 @@ The orchestrator runs three loops:
   2. Supervision loop: monitors running agents, detects stuck/runaway ones
   3. Review loop: evaluates completed investigations, approves or requests rework
 
-It does NOT maintain a persistent Claude conversation. It calls Claude
-only for judgment calls (skill selection for ambiguous cases, review evaluation).
+It does NOT maintain a persistent Claude conversation.
 All routine operations are pure Python logic.
 """
 
@@ -116,7 +115,6 @@ class Orchestrator:
         self.investigation_queue: asyncio.Queue = asyncio.Queue()
 
         self._data_service = None
-        self._claude_service = None
         self._hourly_costs: List[Dict] = []
 
         self.stats = {

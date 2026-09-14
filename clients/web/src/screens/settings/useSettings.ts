@@ -333,42 +333,28 @@ export function useUsers() {
 export interface OrchestratorConfig {
   enabled: boolean
   dry_run: boolean
-  auto_assign_findings: boolean
   auto_assign_severities: string[]
   max_concurrent_agents: number
   max_iterations_per_agent: number
   max_runtime_per_investigation: number
   max_cost_per_investigation: number
   max_total_hourly_cost: number
-  max_total_daily_cost: number
   loop_interval: number
-  agent_loop_delay: number
   stale_threshold: number
-  dedup_window_minutes: number
-  context_max_chars: number
-  plan_model: string
-  review_model: string
   workdir_base: string
 }
 
 export const ORCHESTRATOR_DEFAULTS: OrchestratorConfig = {
   enabled: true,
   dry_run: false,
-  auto_assign_findings: true,
   auto_assign_severities: ['critical', 'high'],
   max_concurrent_agents: 3,
   max_iterations_per_agent: 50,
   max_runtime_per_investigation: 3600,
   max_cost_per_investigation: 5.0,
   max_total_hourly_cost: 20.0,
-  max_total_daily_cost: 100.0,
   loop_interval: 60,
-  agent_loop_delay: 2,
   stale_threshold: 300,
-  dedup_window_minutes: 30,
-  context_max_chars: 10000,
-  plan_model: 'claude-sonnet-4-5-20250929',
-  review_model: 'claude-sonnet-4-5-20250929',
   workdir_base: 'data/investigations',
 }
 
@@ -382,7 +368,6 @@ export interface OrchestratorStatus {
 export function useOrchestrator() {
   const [config, setConfig] = useState<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
   const [status, setStatus] = useState<OrchestratorStatus | null>(null)
-  const [models, setModels] = useState<AIModelInfo[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
   const reload = useCallback(() => setReloadKey((k) => k + 1), [])
@@ -393,13 +378,11 @@ export function useOrchestrator() {
     Promise.all([
       configApi.getOrchestrator().catch(() => ({ data: ORCHESTRATOR_DEFAULTS })),
       orchestratorApi.getStatus().catch(() => ({ data: null })),
-      aiConfigApi.listModels().catch(() => ({ data: { models: [] } })),
     ])
-      .then(([cfgRes, statusRes, modelsRes]) => {
+      .then(([cfgRes, statusRes]) => {
         if (cancelled) return
         setConfig({ ...ORCHESTRATOR_DEFAULTS, ...(cfgRes.data as Partial<OrchestratorConfig>) })
         setStatus((statusRes.data as OrchestratorStatus | null) ?? null)
-        setModels((modelsRes.data as { models?: AIModelInfo[] })?.models || [])
         setPhase('ready')
       })
       .catch(() => {
@@ -416,7 +399,7 @@ export function useOrchestrator() {
     [],
   )
 
-  return { config, setConfig, status, models, phase, reload, save, purgeAll }
+  return { config, setConfig, status, phase, reload, save, purgeAll }
 }
 
 export interface StorageInfo {

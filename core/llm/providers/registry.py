@@ -77,8 +77,6 @@ COMPONENTS: Tuple[str, ...] = (
     "chat_default",
     "triage",
     "investigation",
-    "orchestrator_plan",
-    "orchestrator_review",
     "summarization",
     "reporting",
 )
