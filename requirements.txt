@@ -110,7 +110,7 @@ opentelemetry-exporter-otlp-proto-http>=1.25.0
 opentelemetry-exporter-prometheus>=0.46b0
 opentelemetry-instrumentation-fastapi>=0.46b0
 opentelemetry-instrumentation-sqlalchemy>=0.46b0
-opentelemetry-instrumentation-redis>=0.46b0
+opentelemetry-instrumentation-redis>=0.65b0
 opentelemetry-instrumentation-logging>=0.46b0
 opentelemetry-semantic-conventions-ai>=0.5.1
 
