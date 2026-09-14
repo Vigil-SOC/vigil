@@ -264,6 +264,20 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
+        "name": "case_records",
+        "description": "Read the case records held for an investigation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "type": "string",
+                    "description": "The case whose records to read.",
+                }
+            },
+            "required": ["case_id"],
+        },
+    },
+    {
         "name": "create_case",
         "description": "Create a new investigation case. Use this to organize related findings into a case for tracking and investigation.",
         "input_schema": {

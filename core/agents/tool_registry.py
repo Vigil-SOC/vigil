@@ -105,6 +105,32 @@ def _update_case(data: Any, args: Args) -> Args:
     return {"success": data.update_case(case_id, **args), "case_id": case_id}
 
 
+# Missing case or empty records must still be a result: an error here parks the
+# lead before it can start. Empty sections are the answer, not refused.
+def _case_records(args: Args) -> Args:
+    from core.cases.case_records_service import list_escalations, list_tasks
+    from core.storage.schemas.case_entities import CaseEscalationSchema, CaseTaskSchema
+    from core.storage.unit_of_work import unit_of_work
+
+    case_id = str(args.get("case_id") or "")
+    try:
+        tasks = CaseTaskSchema.dump_many(list_tasks(case_id))
+    except Exception:
+        logger.exception("Listing tasks for case %s failed; reporting none", case_id)
+        tasks = []
+    try:
+        with unit_of_work() as session:
+            escalations = CaseEscalationSchema.dump_many(
+                list_escalations(session, case_id)
+            )
+    except Exception:
+        logger.exception(
+            "Listing escalations for case %s failed; reporting none", case_id
+        )
+        escalations = []
+    return {"tasks": tasks, "escalations": escalations}
+
+
 def _add_resolution_step(data: Any, args: Args) -> Args:
     case = data.get_case(args["case_id"])
     if not case:
@@ -281,6 +307,9 @@ async def execute_backend_tool(
     skill = _skill_result(tool_name, args, skill_index)
     if skill is not None:
         return skill
+
+    if tool_name == "case_records":
+        return _case_records(args), True
 
     if tool_name in _DATA_TOOLS:
         from core.storage.database_data_service import DatabaseDataService
