@@ -178,9 +178,18 @@ def _candidate_names(capability: str) -> Tuple[str, ...]:
 # An agent's prompt is rendered now rather than read from a file: the memory block
 # depends on the agent's own grant, so a stored copy would describe another agent.
 def _prompt_for(agent_id: str) -> str:
-    from core.agents.manager import SOCAgentLibrary
+    from core.agents.manager import (
+        CUSTOM_AGENT_ID_PREFIX,
+        AgentManager,
+        SOCAgentLibrary,
+    )
 
+    # Built-in hit: catalog, no I/O. custom- miss: AgentManager refreshes from
+    # the DB in __init__ — the same seam as routers.agents._resolve_agent.
+    # SOCAgentLibrary stays the builtins catalog.
     profile = SOCAgentLibrary.get_agent(agent_id)
+    if profile is None and agent_id and agent_id.startswith(CUSTOM_AGENT_ID_PREFIX):
+        profile = AgentManager().agents.get(agent_id)
     if profile is None:
         raise UnknownPlaybook(f"phase names agent {agent_id}, which does not exist")
     return profile.system_prompt
