@@ -2,7 +2,10 @@ import { DEFAULT_PARK_MS, type BudgetLimits, type Refusal } from "../../contract
 // Type-only, so the cycle with the spec loader is erased at compile time.
 import type { HuntSpec } from "./config.js";
 
-export type RefusalReason = Refusal["reason"];
+// Who stopped a dispatch, when it was not the estate. A refusal is our own governor
+// declining to pay; interrupted is the run losing its lease or an operator halting it.
+// Neither says anything about what the estate could show us.
+export type StoppedBy = Refusal["reason"] | "interrupted";
 
 
 
@@ -342,7 +345,7 @@ export interface DispatchRecord {
   failure_reason: string | null;
   // Null when the estate is what failed -- the distinction CONTEXT.md draws on
   // Visibility Gap. Absent on older ledgers, which folds to that same reading.
-  refusal_reason?: RefusalReason | null;
+  stopped_by?: StoppedBy | null;
   // What the worker spent and what it ran. Both land on the completion patch,
   // since the row is journaled before the worker starts.
   cost_usd: number;
@@ -485,7 +488,7 @@ export interface DispatchResult {
   questions?: string[];
   failed: boolean;
   failure_reason: string;
-  refusal_reason?: RefusalReason | null;
+  stopped_by?: StoppedBy | null;
   // Required, including on the failure path: a worker that burned tokens and
   // then died still spent them, and hunt.cost_usd is the budget counter.
   cost_usd: number;

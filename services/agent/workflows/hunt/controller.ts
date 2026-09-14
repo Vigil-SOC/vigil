@@ -31,7 +31,7 @@ import type {
 } from "./ports.js";
 import { narrativeOf } from "./render.js";
 import { buildReport, renderCaseFile } from "./report.js";
-import { sanitize, sanitizeQuestion } from "./sanitize.js";
+import { criticPayload, sanitize, sanitizeQuestion } from "./sanitize.js";
 import {
   DEFAULT_DISPATCH,
   unboundCapabilities,
@@ -1178,7 +1178,7 @@ export class HuntController {
       return;
     }
 
-    const unmet = unmetPredicates(strength, this.verdicts);
+    const unmet = unmetPredicates(strength, this.verdicts, { projection: this.ledger.projection, hypothesisId });
     if (unmet.length > 0) {
       journalNote(
         this.ledger,
@@ -1380,12 +1380,12 @@ export class HuntController {
         evidence: [],
         failed: true,
         failure_reason: "interrupted before the worker returned",
+        // The estate was never asked, so this is not a blind spot in what the run
+        // could see. reap already hands the lead back below.
+        stopped_by: "interrupted",
         // Whatever the interrupted worker spent went with it; nothing is known.
         cost_usd: 0,
       });
-      if (dispatch.question_id !== null) {
-        this.ledger.patch("question", dispatch.question_id, { status: "open" });
-      }
     }
     return stale.length;
   }
@@ -1667,7 +1667,10 @@ export class HuntController {
         {
           source_system: CRITIC_SOURCE_SYSTEM,
           summary: `strongest benign explanation: ${nullCheck.strongest_benign_explanation}`,
-          payload: {
+          // Built to fit rather than left for the sanitiser to fit: everything here but
+          // the prose is what a verdict reads, and a trimmer choosing between an id list
+          // and a page of reasoning has no way to know which one carries the answer.
+          payload: criticPayload({
             hypothesis_id: hypothesisId,
             survives: nullCheck.survives,
             // What the argument was made against, so a later verdict can tell a
@@ -1678,7 +1681,7 @@ export class HuntController {
             model_id: nullCheck.model_id,
             prompt_version: nullCheck.prompt_version,
             cost_usd: nullCheck.cost_usd,
-          },
+          }),
           salience: "notable",
           why_notable: nullCheck.rationale,
           provenance: NULL_CHECK_PROVENANCE,
@@ -1709,7 +1712,7 @@ export class HuntController {
       return `${hypothesisId} inconclusive (gap-locked)`;
     }
 
-    const unmet = unmetPredicates(strength, this.verdicts);
+    const unmet = unmetPredicates(strength, this.verdicts, { projection: this.ledger.projection, hypothesisId });
     if (unmet.length > 0) return `${hypothesisId} stays active: ${unmet.join("; ")}`;
 
     // The verdict, computed here and only here. Under "ask" it is carried in the
@@ -1967,14 +1970,14 @@ export class HuntController {
     const settled = this.ledger.projection.dispatches.get(result.dispatch_id)?.status;
     if (settled === undefined || settled === "complete") return [];
 
-    // contracts/tool.ts forbids recording a refusal as a visibility gap. Handed back
-    // below instead, so an extension finds the question on the frontier.
-    const refused = result.failed && (result.refusal_reason ?? null) !== null;
+    // contracts/tool.ts forbids recording our own stop as a visibility gap. The lead is
+    // handed back below instead, so an extension finds the question on the frontier.
+    const ours = result.failed && (result.stopped_by ?? null) !== null;
 
     // A failed worker is evidence about visibility, not a lost turn, and the rows it
     // did gather come too.
     const records =
-      result.failed && !refused
+      result.failed && !ours
         ? [
             {
               source_system: "dispatcher",
@@ -2007,15 +2010,15 @@ export class HuntController {
     this.ledger.patch("dispatch", result.dispatch_id, {
       status: result.failed ? "failed" : "complete",
       failure_reason: result.failed ? result.failure_reason : null,
-      refusal_reason: result.failed ? (result.refusal_reason ?? null) : null,
+      stopped_by: result.failed ? (result.stopped_by ?? null) : null,
       cost_usd: result.cost_usd,
       calls: result.calls ?? [],
     });
 
-    // A lead is closed when taken so it is not re-issued every iteration -- but a refused
-    // dispatch has no next iteration, since the run parks.
+    // A lead is closed when taken so it is not re-issued every iteration -- but a dispatch
+    // we stopped ourselves has no next iteration, since the run parks.
     const takenBack = this.ledger.projection.dispatches.get(result.dispatch_id)?.question_id ?? null;
-    if (refused && takenBack !== null) {
+    if (ours && takenBack !== null) {
       this.ledger.patch("question", takenBack, { status: "open" });
     }
     // A gap record is a fact about visibility, not a finding, so it counts as neither

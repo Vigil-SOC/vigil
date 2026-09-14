@@ -184,6 +184,13 @@ class Pool implements Budget {
     return null;
   }
 
+  // A reserved call that never settles: the provider died before pricing, or the turn
+  // was abandoned between yields. Without this the reservation stands for the life of
+  // the run and quietly shrinks every later ceiling check.
+  release(): void {
+    this.inFlight = Math.max(0, this.inFlight - 1);
+  }
+
   record(payload: SpendPayload): void {
     this.tokens = addTokens(this.tokens, payload.tokens);
     this.recorded += 1;

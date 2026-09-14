@@ -1,6 +1,7 @@
 import type { Projection } from "./ledger.js";
 import type { Verdicts } from "./config.js";
 import type { DispatchRecord, EvidenceRecord, EvidenceStrength, LinkRelation } from "./types.js";
+import { DROPPED } from "./sanitize.js";
 
 export const NULL_CHECK_PROVENANCE = "null_check";
 export const CRITIC_SOURCE_SYSTEM = "critic";
@@ -42,8 +43,9 @@ export function openGaps(projection: Projection, hypothesisId: string): number {
     if (dispatch.target_hypothesis_id !== hypothesisId) continue;
     if (dispatch.status === "complete") answered.add(gapKey(dispatch));
     // Counting our own ceiling would mean a hunt that ran out of money also loses the
-    // ability to conclude once it is extended.
-    if (dispatch.status === "failed" && (dispatch.refusal_reason ?? null) === null) {
+    // ability to conclude once it is extended, and counting an operator's stop would
+    // do the same to a hunt somebody paused.
+    if (dispatch.status === "failed" && (dispatch.stopped_by ?? null) === null) {
       unanswered.add(gapKey(dispatch));
     }
   }
@@ -74,9 +76,33 @@ function survivedDisconfirmation(projection: Projection, hypothesisId: string, l
   const checks = nullChecksFor(projection, hypothesisId);
   const latest = checks[checks.length - 1];
   if (latest === undefined || latest.payload["survives"] !== true) return false;
+  if (arguedWasCut(latest)) return false;
 
   const argued = new Set((latest.payload["argued_evidence_ids"] as string[] | undefined) ?? []);
   return linked.every((evidenceId) => argued.has(evidenceId));
+}
+
+// A list the sanitiser shortened, which is not a list the critic did not argue against.
+// Both fail the predicate -- unsure is not cleared -- but they are told apart so the
+// report does not say the benign explanation stood when the critic ruled it out.
+function arguedWasCut(check: EvidenceRecord): boolean {
+  const dropped = check.payload[`argued_evidence_ids${DROPPED}`];
+  return (typeof dropped === "number" && dropped > 0) || check.payload["argued_evidence_ids"] === undefined;
+}
+
+// Why the disconfirmation predicate failed, for a report that would otherwise report
+// our own trimming as the critic's finding.
+export function disconfirmationUnmet(projection: Projection, hypothesisId: string): string {
+  const checks = nullChecksFor(projection, hypothesisId);
+  const latest = checks[checks.length - 1];
+  if (latest === undefined) return "no argue-the-null pass was run against it";
+  if (latest.payload["survives"] !== true) {
+    return "the strongest benign explanation was not ruled out against everything now linked to it";
+  }
+  if (arguedWasCut(latest)) {
+    return "the critic ruled the benign explanation out, but its record of what it argued against was too large to keep in full";
+  }
+  return "the strongest benign explanation was not ruled out against everything now linked to it";
 }
 
 // Distinct techniques evidence bearing on this hypothesis actually cited, not
@@ -130,10 +156,21 @@ export function evidenceStrength(projection: Projection, hypothesisId: string): 
 }
 
 // Every predicate a verdict fails, so "not proven" is never a bare no.
-export function unmetPredicates(strength: EvidenceStrength, verdicts: Verdicts): string[] {
+// why is the projection and hypothesis the strength was read from, where the caller has
+// them: without it a predicate that failed because we trimmed the critic's record reads
+// as the critic having found against the hypothesis.
+export function unmetPredicates(
+  strength: EvidenceStrength,
+  verdicts: Verdicts,
+  why?: { projection: Projection; hypothesisId: string },
+): string[] {
   const unmet: string[] = [];
   if (!strength.survived_disconfirmation) {
-    unmet.push("the strongest benign explanation was not ruled out against everything now linked to it");
+    unmet.push(
+      why === undefined
+        ? "the strongest benign explanation was not ruled out against everything now linked to it"
+        : disconfirmationUnmet(why.projection, why.hypothesisId),
+    );
   }
   if (strength.corroborating_sources < verdicts.min_corroborating_sources) {
     unmet.push(

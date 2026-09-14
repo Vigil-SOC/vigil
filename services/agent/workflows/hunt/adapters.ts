@@ -368,7 +368,7 @@ export function workerDispatcher(options: AdapterOptions): WorkerDispatcher {
           calls: callsOf(outcome.calls),
           failed: true,
           failure_reason: outcome.reason,
-          refusal_reason: outcome.refusal?.reason ?? null,
+          stopped_by: outcome.refusal?.reason ?? null,
           cost_usd,
         };
       }

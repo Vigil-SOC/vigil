@@ -357,6 +357,12 @@ class Run<T, Kinds extends Record<string, unknown>> {
     const tool_calls: ToolCall[] = [];
     let content = "";
     let billed = false;
+    let settled = false;
+    const settle = async (tokens: TokenCounts): Promise<SpendPayload> => {
+      const payload = await this.settle(tokens);
+      settled = true;
+      return payload;
+    };
 
     try {
       for await (const event of this.harness.provider.stream({ ...request, ...signal })) {
@@ -366,14 +372,18 @@ class Run<T, Kinds extends Record<string, unknown>> {
           yield event;
         } else {
           billed = true;
-          yield { type: "usage", payload: await this.settle(event.tokens) };
+          yield { type: "usage", payload: await settle(event.tokens) };
         }
       }
     } catch (error) {
       // Only when the provider died without reporting: it carries what it burned
       // precisely so a failure before the usage event is not spend the pool loses.
-      if (!billed) await this.settle(error instanceof ProviderError ? error.tokens : ZERO_TOKENS);
+      if (!billed) await settle(error instanceof ProviderError ? error.tokens : ZERO_TOKENS);
       throw error;
+    } finally {
+      // beginCall held this call against the ceiling and nothing else hands it back:
+      // pricing can fail, and an abandoned generator never reaches either arm above.
+      if (!settled) this.harness.budget.release?.();
     }
 
     return { content, tool_calls };

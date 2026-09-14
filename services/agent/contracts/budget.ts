@@ -70,6 +70,10 @@ export interface Budget {
   // pool stays the single authority on what a run may still spend.
   raise(limits: Partial<BudgetLimits>): void;
   record(payload: SpendPayload): void;
+  // Hands back a call that beginCall held against the ceiling and record never settled.
+  // Optional so a test double need not implement it; the pool's own reservation is the
+  // only thing that leaks without it, and it leaks closed -- the run parks early.
+  release?(): void;
   // What a call cost, for the ledger and for max_cost_usd. Here rather than on the
   // harness because this object already owns the ceiling and the running total.
   priceOf(modelId: string, providerType: string, tokens: TokenCounts): Promise<Priced>;
