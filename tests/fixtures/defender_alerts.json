@@ -1,0 +1,36 @@
+[
+  {
+    "id": "da637552173936382409",
+    "title": "Suspicious PowerShell command line",
+    "description": "",
+    "severity": "High",
+    "status": "New",
+    "category": "Execution",
+    "threatFamilyName": "Emotet",
+    "alertCreationTime": "2026-04-13T14:30:00.000Z",
+    "machineId": "machine-abc",
+    "detectionSource": "WindowsDefenderAtp",
+    "mitreTechniques": ["T1059.001", "T1204.002"],
+    "evidence": [
+      {
+        "entityType": "Ip",
+        "ipAddress": "198.51.100.42"
+      },
+      {
+        "entityType": "User",
+        "userPrincipalName": "jsmith@corp.example"
+      },
+      {
+        "entityType": "Machine",
+        "deviceDnsName": "WORKSTATION-01.corp.example"
+      },
+      {
+        "entityType": "File",
+        "fileName": "payload.docm",
+        "sha256": "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899",
+        "sha1": "ddeeff00112233445566778899aabbccddee",
+        "md5": "112233445566778899aabbccddeeff00"
+      }
+    ]
+  }
+]
