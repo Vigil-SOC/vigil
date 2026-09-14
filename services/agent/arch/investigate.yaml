@@ -14,7 +14,7 @@ digest:
 
 roles:
   lead:
-    tools: [case_records]
+    tools: [case_records, get_finding]
     prompt: |
       You are the analyst on a single open case. You work the case yourself:
       there is no one to dispatch to, and no one to check your reasoning.

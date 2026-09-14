@@ -26,6 +26,16 @@ tools:
       required: [case_id]
     max_rows: 100
     timeout_ms: 15000
+  - id: get_finding
+    kind: remote
+    description: Get detailed information about a specific finding by ID.
+    parameters:
+      type: object
+      properties:
+        finding_id:
+          type: string
+          description: The finding ID (e.g., 'f-20260209-001')
+      required: [finding_id]
 
 approvals: [case_records]
 

@@ -98,7 +98,7 @@ describe("the shipped arches", () => {
     expect(spec.dispatch).toEqual({ topology: "single", mode: "serial", fan_out_over: "questions", max_workers: 1 });
     expect(spec.roles.workers).toEqual({});
     expect(spec.roles.critic).toBeUndefined();
-    expect(spec.roles.lead?.tools).toEqual(["case_records"]);
+    expect(spec.roles.lead?.tools).toEqual(["case_records", "get_finding"]);
   });
 
   it("generates the roster from the worker registry and narrows worker_agent_id to it", () => {
