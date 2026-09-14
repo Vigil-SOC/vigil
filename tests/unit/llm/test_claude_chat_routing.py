@@ -30,6 +30,8 @@ for _p in (str(REPO),):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import core.llm.providers.registry as registry_mod  # noqa: E402
+import core.llm.router.router as router_mod  # noqa: E402
 from core.llm import target  # noqa: E402
 from core.llm.router.router import ProviderSpec  # noqa: E402
 
@@ -213,3 +215,27 @@ def test_claude_model_kept_for_anthropic_provider():
 
 def test_none_requested_uses_provider_default():
     assert target.model_for(_spec(), None) == AN_OLLAMA_MODEL
+
+
+# --- target.resolve_component ----------------------------------------------
+
+
+def test_resolve_component_returns_registry_assignment_after_provider_lookup(
+    monkeypatch,
+):
+    # Settings → AI Config writes (provider_id, model_id). Playbook resolution
+    # needs the Bifrost pair (provider_type, model) after looking that row up.
+    class _Reg:
+        def resolve_model_for_component(self, component):
+            assert component == "investigation"
+            return ("ollama-local", AN_OLLAMA_MODEL)
+
+    oll = _spec()
+    monkeypatch.setattr(registry_mod, "get_registry", lambda: _Reg())
+    monkeypatch.setattr(
+        router_mod,
+        "get_provider_spec",
+        lambda pid: oll if pid == "ollama-local" else None,
+    )
+    monkeypatch.setattr(router_mod, "get_default_provider_spec", lambda: None)
+    assert target.resolve_component("investigation") == ("ollama", AN_OLLAMA_MODEL)
