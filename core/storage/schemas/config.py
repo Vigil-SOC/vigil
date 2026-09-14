@@ -116,4 +116,3 @@ class SketchMappingSchema(ORMSchema):
     sketch_name: Optional[str] = None
     sketch_url: Optional[str] = None
     created_at: OptDateTime = None
-
