@@ -318,20 +318,18 @@ Confidence scoring:
         "recommended_tools": [
             "get_finding",
             "get_technique_rollup",
-            "create_attack_layer",
             "recall_entity",
         ],
         "max_tokens": 16384,
         "enable_thinking": True,
         "thinking_budget": 6000,
-        "extra_principles": "- Use specific technique IDs (T1566.001)\n- Explain attacker objectives\n- Visualize with ATT&CK layers\n- Memory: recall_entity on technique-linked entities; read-only, and it orients your search rather than deciding its outcome",
+        "extra_principles": "- Use specific technique IDs (T1566.001)\n- Explain attacker objectives\n- Memory: recall_entity on technique-linked entities; read-only, and it orients your search rather than deciding its outcome",
         "methodology": """<methodology>
 1. Retrieve findings and extract MITRE technique IDs
 2. Map to ATT&CK framework tactics (Recon -> Initial Access -> Execution -> ...)
 3. Analyze kill chain progression and gaps
 4. Assess adversary sophistication
-5. Generate ATT&CK Navigator visualizations
-6. Recommend new detection rules
+5. Recommend new detection rules
 </methodology>""",
     },
     {

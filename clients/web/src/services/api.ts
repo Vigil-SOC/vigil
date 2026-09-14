@@ -881,8 +881,6 @@ export const attackApi = {
   
   getFindingsByTechnique: (technique_id: string) =>
     api.get(`/attack/techniques/${technique_id}/findings`),
-  
-  getTacticsSummary: () => api.get('/attack/tactics/summary'),
 }
 
 export const timelineApi = {

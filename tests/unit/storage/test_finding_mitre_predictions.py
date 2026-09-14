@@ -101,36 +101,26 @@ def test_attck_readers_fall_back_to_finding_maps_without_a_database(monkeypatch)
     monkeypatch.setattr(attack_router, "data_service", service)
 
     by_tech = attack_router.get_findings_by_technique("T1071.001")
-    layer = attack_router.get_attack_layer()
     rollup = attack_router.occurrence_rollup(time_range="all")
-    tactics = attack_router.get_tactics_summary()
 
     service.get_findings_by_technique.assert_not_called()
     assert by_tech["total"] == 1
-    assert layer["techniques"][0]["techniqueID"] == "T1071.001"
     assert rollup["techniques"][0]["count"] == 1
-    assert tactics["tactics"][0]["count"] == 1
 
 
-def test_rollup_layer_and_tactics_query_child_table(monkeypatch):
+def test_rollup_queries_child_table(monkeypatch):
     service = MagicMock()
     service.is_using_database.return_value = True
-    service.get_technique_max_confidence.return_value = {"T1071.001": 0.9}
     service.get_technique_severity_counts.return_value = [
         ("T1071.001", "high", 2),
     ]
-    service.get_technique_occurrence_counts.return_value = {"T1071.001": 2}
     monkeypatch.setattr(attack_router, "data_service", service)
 
-    layer = attack_router.get_attack_layer()
     rollup = attack_router.occurrence_rollup()
-    tactics = attack_router.get_tactics_summary()
 
     service.get_findings.assert_not_called()
-    assert layer["techniques"][0]["techniqueID"] == "T1071.001"
     assert rollup["total_techniques"] == 1
     assert rollup["techniques"][0]["count"] == 2
-    assert tactics["tactics"][0]["count"] == 2
 
 
 @pytest.mark.asyncio

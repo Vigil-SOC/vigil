@@ -27,7 +27,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Map to MITRE ATT&CK",
-            "description": "Map discovered TTPs, create ATT&CK Navigator layer",
+            "description": "Map discovered TTPs to MITRE ATT&CK",
         },
         {
             "title": "Containment & Response",

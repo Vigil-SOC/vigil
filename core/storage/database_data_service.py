@@ -210,15 +210,6 @@ class DatabaseDataService:
             logger.error(f"Error getting findings by technique from DB: {e}")
             return []
 
-    def get_technique_max_confidence(self) -> Dict[str, float]:
-        if not self._db_available or not self._db_service:
-            return {}
-        try:
-            return self._db_service.get_technique_max_confidence()
-        except Exception as e:
-            logger.error(f"Error getting technique max confidence from DB: {e}")
-            return {}
-
     def get_technique_severity_counts(
         self,
         min_confidence: float = 0.0,
@@ -236,15 +227,6 @@ class DatabaseDataService:
         except Exception as e:
             logger.error(f"Error getting technique severity counts from DB: {e}")
             return []
-
-    def get_technique_occurrence_counts(self) -> Dict[str, int]:
-        if not self._db_available or not self._db_service:
-            return {}
-        try:
-            return self._db_service.get_technique_occurrence_counts()
-        except Exception as e:
-            logger.error(f"Error getting technique occurrence counts from DB: {e}")
-            return {}
 
     def create_finding(self, finding_data: Dict) -> Optional[Dict]:
         if self._demo_mode and self._demo_service:

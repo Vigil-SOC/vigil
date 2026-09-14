@@ -92,7 +92,6 @@ const fs = require('fs');
       'deeptempo-findings',
       'tempo-flow', 
       'approval',
-      'attack-layer',
       'github',
       'crowdstrike',
       'sentinelone',

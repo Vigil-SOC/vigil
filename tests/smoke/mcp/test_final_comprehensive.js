@@ -159,7 +159,6 @@ const fs = require('fs');
       'deeptempo-findings',
       'tempo-flow',
       'approval',
-      'attack-layer'
     ];
     
     const mentionedTools = toolNames.filter(tool => 

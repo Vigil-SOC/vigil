@@ -34,7 +34,7 @@ phases:
   - id: attack-mapping
     agent: mitre_analyst
     name: "ATT&CK Mapping"
-    tools: [get_technique_rollup, create_attack_layer, get_finding, recall_entity]
+    tools: [get_technique_rollup, get_finding, recall_entity]
     instructions: |
       Map all findings to MITRE ATT&CK techniques, assess kill chain progression
       and identify detection gaps.
@@ -45,11 +45,10 @@ phases:
       3. Assess kill chain progression -- how far has the attacker advanced?
       4. Identify gaps in the kill chain (missing visibility)
       5. Evaluate adversary sophistication based on TTPs
-      6. Generate an ATT&CK Navigator layer visualisation
-      7. Recommend detection rules for coverage gaps
+      6. Recommend detection rules for coverage gaps
 
       Hand on the technique IDs with confidence, the kill chain stage, the
-      Navigator layer, the coverage gaps and the sophistication profile. A gap
+      coverage gaps and the sophistication profile. A gap
       in visibility is a finding in its own right: say where you could not look.
 
   - id: correlation
@@ -98,14 +97,13 @@ phases:
   - id: report
     agent: reporter
     name: "Comprehensive Report"
-    tools: [get_case, list_findings, create_attack_layer, recall_entity]
+    tools: [get_case, list_findings, recall_entity]
     instructions: |
       Assemble the full investigation report from every artifact the earlier
       steps produced.
 
       1. Compile all step outputs into a structured narrative
-      2. Generate the final MITRE ATT&CK Navigator layer
-      3. Structure the report:
+      2. Structure the report:
          - **Executive Summary:** business impact, risk assessment
          - **Investigation Timeline:** chronological reconstruction
          - **MITRE ATT&CK Analysis:** techniques, tactics, kill chain

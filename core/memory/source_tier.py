@@ -60,12 +60,11 @@ DEFAULT_TIER = SourceTier.FEED
 # enrichment, which sets `source_system` to an unbounded `chain.id` and so
 # cannot be enumerated here — it takes the default.
 #
-# The two reference servers cannot arrive on either path today: they write no
-# findings, and a worker naming one collapses to `undeclared` first. They are
+# security-detections cannot arrive on either path today: it writes no
+# findings, and a worker naming it collapses to `undeclared` first. It is
 # listed because AC 4 asks for the guard, and a guard is meant to have no hits
 # in healthy data.
 _NOT_EVIDENCE: Set[str] = {
-    "attack-layer",
     "security-detections",
     "critic",
     "operator",

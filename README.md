@@ -372,7 +372,7 @@ cd clients/desktop && npm run dist
 - **Case Management** — Full lifecycle tracking with PDF reports
 - **Approval Workflow** — Human-in-the-loop with confidence-based automation (auto-approve above 0.90, require review below 0.85)
 - **AI Enrichment** — Automatic threat analysis cached per finding
-- **MITRE ATT&CK** — Technique mapping and Navigator layer visualization
+- **MITRE ATT&CK** — Technique mapping on the ATT&CK tab
 
 ## Project Structure
 

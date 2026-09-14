@@ -104,14 +104,13 @@ phases:
   - id: report
     agent: reporter
     name: "Forensic Report"
-    tools: [get_case, list_findings, create_attack_layer, recall_entity]
+    tools: [get_case, list_findings, recall_entity]
     instructions: |
       Produce an audit-ready forensic report with executive summary, technical
       findings, evidence chain and legal-grade documentation.
 
       1. Compile all step outputs, maintaining chain-of-custody integrity
-      2. Generate a MITRE ATT&CK Navigator layer for every technique identified
-      3. Structure the report:
+      2. Structure the report:
          - **Executive Summary:** incident overview, impact and risk in plain language
          - **Chain of Custody:** complete evidence handling documentation
          - **Evidence Inventory:** all artifacts examined, with metadata

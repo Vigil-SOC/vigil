@@ -35,12 +35,6 @@
       "cwd": "${workspaceFolder}"
     },
 
-    "attack-layer": {
-      "command": "python3",
-      "args": ["tools/mcp/attack_layer.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
     "security-detections": {
       "command": "npx",
       "args": ["-y", "security-detections-mcp@3.3.0"],
