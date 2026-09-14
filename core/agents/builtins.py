@@ -319,17 +319,18 @@ Confidence scoring:
             "get_finding",
             "get_technique_rollup",
             "recall_entity",
+            "atomic_red_team_execute",
+            "identify_gaps",
+            "analyze_coverage",
+            "list_findings",
+            "reconstruct_run",
         ],
         "max_tokens": 16384,
         "enable_thinking": True,
         "thinking_budget": 6000,
-        "extra_principles": "- Use specific technique IDs (T1566.001)\n- Explain attacker objectives\n- Memory: recall_entity on technique-linked entities; read-only, and it orients your search rather than deciding its outcome",
+        "extra_principles": "- Use specific technique IDs (T1566.001)\n- Explain attacker objectives\n- Execute only via the gated Atomic Red Team tool; a call parks until a human approves\n- Memory: recall_entity on technique-linked entities; read-only, and it orients your search rather than deciding its outcome",
         "methodology": """<methodology>
-1. Retrieve findings and extract MITRE technique IDs
-2. Map to ATT&CK framework tactics (Recon -> Initial Access -> Execution -> ...)
-3. Analyze kill chain progression and gaps
-4. Assess adversary sophistication
-5. Recommend new detection rules
+Given an environment_id and a goal, assess coverage, execute only via the gated tool, reconstruct, and report. Coverage, gaps, findings, reconstruction, and execute are available together — pick what the goal needs; there is no prescribed order.
 </methodology>""",
     },
     {

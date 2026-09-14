@@ -22,6 +22,8 @@ from core.llm.chat_layers import _declare, _is_destructive_mcp
         "host_unisolate",
         "okta_revoke_session",
         "aws_terminate_instance",
+        "atomic_red_team_execute",
+        "atomic-red-team_atomic_red_team_execute",
     ],
 )
 def test_direct_action_tools_are_destructive(name):
@@ -40,6 +42,8 @@ def test_direct_action_tools_are_destructive(name):
         "virustotal_get_ip_report",
         "shodan_search_host",
         "splunk_query",
+        # ``execute`` is not a destructive verb: ART is dropped by id so this stays.
+        "splunk-selfhosted_splunk_execute",
     ],
 )
 def test_read_only_tools_are_not_destructive(name):
@@ -70,3 +74,39 @@ def test_declare_drops_blank_description_mcp_tool():
     # "[server] " prefix), so the emptiness guard drops it.
     declared = {t["id"] for t in _declare(None, [_mcp("shodan_host", description="")])}
     assert "shodan_host" not in declared
+
+
+@pytest.mark.unit
+def test_declare_drops_art_execute_but_keeps_splunk_execute():
+    declared = {
+        t["id"]
+        for t in _declare(
+            None,
+            [
+                _mcp("atomic_red_team_execute"),
+                _mcp("atomic-red-team_atomic_red_team_execute"),
+                _mcp("splunk-selfhosted_splunk_execute"),
+            ],
+        )
+    }
+    assert "atomic_red_team_execute" not in declared
+    assert "atomic-red-team_atomic_red_team_execute" not in declared
+    assert "splunk-selfhosted_splunk_execute" in declared
+
+
+@pytest.mark.unit
+def test_chat_config_keeps_approvals_empty_when_art_is_connected():
+    import yaml
+
+    from core.llm.chat_layers import chat_config
+
+    config = yaml.safe_load(
+        chat_config(
+            "m",
+            mcp_tools=[_mcp("atomic-red-team_atomic_red_team_execute")],
+        )
+    )
+    assert config["approvals"] == []
+    assert "atomic-red-team_atomic_red_team_execute" not in {
+        tool["id"] for tool in config["tools"]
+    }
