@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.deps import provide_approvals, provide_workflows
-from core.response.approvals_router import router as approvals_router
+from core.api.v1.approvals_router import router as approvals_router
 
 
 def _action(action_id="ACT-1", workflow_run_id=None):

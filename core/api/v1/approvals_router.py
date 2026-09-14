@@ -19,9 +19,14 @@ from core.routing import Auth, RouterMeta
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
-    prefix="/api",
+    # Versioned contract surface. The whole approvals router is external — every
+    # route is a durable record or an act on it (list, get, approve, reject) —
+    # so it moves wholesale rather than splitting. Routes carry the full
+    # ``/approvals`` path, so the prefix is the version root, not ``/api/v1/approvals``.
+    prefix="/api/v1",
     tags=["approvals"],
     auth=Auth.REQUIRED,
+    legacy_prefixes=("/api",),
 )
 logger = logging.getLogger(__name__)
 
