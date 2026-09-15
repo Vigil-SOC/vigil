@@ -3,7 +3,7 @@
 Builds every model in ``database.models`` twice — once with every column
 populated, once bare — without touching a database. Transient SQLAlchemy
 objects are enough to exercise serialization, which matters because these
-models use Postgres ARRAY/JSONB/pgvector and cannot be created on SQLite.
+models use Postgres ARRAY/JSONB and cannot be created on SQLite.
 
 The bare ("empty") variant is the interesting one: it pins the ``or []`` /
 ``or {}`` / ``float(x or 0)`` coercions that turn NULL columns into empty

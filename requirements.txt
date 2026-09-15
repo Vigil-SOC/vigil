@@ -35,7 +35,6 @@ email-validator>=2.0.0
 # Database
 sqlalchemy>=2.0.52
 psycopg2-binary>=2.9.12
-pgvector>=0.3.0  # pgvector column type + <=> ANN for finding embeddings
 
 # Optional proxy hops in front of the metadata DB and DB-shaped
 # integrations (Settings → System → Database, plus per-integration

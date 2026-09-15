@@ -247,8 +247,8 @@ agentServe:
 postgresql:
   enabled: true
   image:
-    repository: pgvector/pgvector
-    tag: "pg16"
+    repository: postgres
+    tag: "16-alpine"
     pullPolicy: IfNotPresent
   auth:
     database: deeptempo_soc
@@ -383,8 +383,8 @@ dbInit:
   enabled: true
   image:
     # Uses the same image as Postgres so psql is available.
-    repository: pgvector/pgvector
-    tag: "pg16"
+    repository: postgres
+    tag: "16-alpine"
     pullPolicy: IfNotPresent
   # Explicit ordering — files added under infra/database/init/ will NOT auto-run.
   # Update this list when new init SQL lands.

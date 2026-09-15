@@ -104,7 +104,7 @@ def _make_poller():
 
 
 def _stub_database_data_service():
-    """Avoid importing the real DB stack (pgvector, etc.) during unit tests."""
+    """Avoid importing the real DB stack (SQLAlchemy, psycopg2) during unit tests."""
     module = types.ModuleType("core.storage.database_data_service")
     module.DatabaseDataService = MagicMock(name="DatabaseDataService")
     return patch.dict(sys.modules, {"core.storage.database_data_service": module})

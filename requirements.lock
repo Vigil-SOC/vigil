@@ -249,8 +249,6 @@ packaging==26.3
     #   pytest
 paramiko==5.0.0
     # via sshtunnel
-pgvector==0.5.0
-    # via -r requirements.txt
 pillow==12.3.0
     # via reportlab
 pluggy==1.6.0

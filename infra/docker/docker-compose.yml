@@ -39,9 +39,9 @@ x-agent-env: &agent-env
 
 services:
   postgres:
-    # pgvector-capable image (findings.embedding uses vector(768) + HNSW).
-    # The stock postgres:16 image does NOT ship the `vector` extension.
-    image: pgvector/pgvector:pg16
+    # Stock Postgres, matching db-seed and the desktop stack. The schema only
+    # needs uuid-ossp and pg_trgm; the pgvector store was LogLM's and is gone.
+    image: postgres:16-alpine
     container_name: deeptempo-postgres
     environment:
       POSTGRES_DB: deeptempo_soc
