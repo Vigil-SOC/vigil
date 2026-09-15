@@ -1,5 +1,5 @@
-# Start an agent run and report its outcome. POST enqueues plain JSON and writes
-# nothing; GET makes only the two reads Python is permitted against agent_events.
+# Agent runs — the frozen /api/v1/agent-runs surface: start, list, get, steer.
+# "Runs" in 1.0 means agent runs (not workflow runs); see core/api/v1/README.md.
 
 from __future__ import annotations
 
@@ -30,9 +30,10 @@ from core.routing import Auth, RouterMeta, UnitOfWorkSession
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
-    prefix="/api/agent-runs",
+    prefix="/api/v1/agent-runs",
     tags=["agent-runs"],
     auth=Auth.REQUIRED,
+    legacy_prefixes=("/api/agent-runs",),
 )
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,54 @@ class RunStatusResponse(BaseModel):
     reason: Optional[str] = None
 
 
+class RunListItem(BaseModel):
+    run_id: Optional[str] = None
+    run_kind: Optional[str] = Field(
+        default=None, description="hunt, lead, compose, ... — from the run's trigger."
+    )
+    status: Optional[str] = None
+    triggered_by: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class RunListResponse(BaseModel):
+    runs: list[RunListItem]
+    count: int = Field(..., description="Number of runs in this page.")
+
+
+# List agent runs newest-first from workflow_runs (filtered to source=agent);
+# per-run detail is GET /{run_id}, which reads the ledger. See README.
+@router.get("", response_model=RunListResponse)
+def list_runs(
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> RunListResponse:
+    from core.workflows.workflow_run_service import WorkflowRunService
+
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    rows = WorkflowRunService().list_runs(
+        workflow_source="agent",
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    items = [
+        RunListItem(
+            run_id=r.get("run_id"),
+            run_kind=(r.get("trigger_context") or {}).get("run_kind"),
+            status=r.get("status"),
+            triggered_by=r.get("triggered_by"),
+            started_at=(str(r["started_at"]) if r.get("started_at") else None),
+            finished_at=(str(r["finished_at"]) if r.get("finished_at") else None),
+        )
+        for r in rows
+    ]
+    return RunListResponse(runs=items, count=len(items))
+
+
 # Mint a run id and enqueue it. The worker opens the ledger, not this call.
 @router.post("", response_model=StartRunResponse, status_code=202)
 async def start_run(request: StartRunRequest) -> StartRunResponse:
@@ -85,10 +134,8 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
     if request.overrides is not None:
         payload["overrides"] = request.overrides
 
-    # approval_actions.workflow_run_id references workflow_runs, so a run with no
-    # row there cannot raise an answerable checkpoint: the announce 500s and the
-    # parked run waits out max_park_ms with nobody able to see it. Best-effort,
-    # like every other write to that table -- the ledger is the record.
+    # Best-effort: without a workflow_runs row a parked run cannot raise an
+    # answerable checkpoint. Like every write to that table, the ledger is truth.
     _begin_run_row(run_id, request)
 
     job = build_start_job(

@@ -20,7 +20,7 @@ from core.findings.source_evidence import (
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 _FINDINGS_SPEC = importlib.util.spec_from_file_location(
-    "source_evidence_findings_api", REPO / "services" / "api" / "routers" / "findings.py"
+    "source_evidence_findings_api", REPO / "core" / "api" / "v1" / "findings_router.py"
 )
 assert _FINDINGS_SPEC and _FINDINGS_SPEC.loader
 findings_api = importlib.util.module_from_spec(_FINDINGS_SPEC)

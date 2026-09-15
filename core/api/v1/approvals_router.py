@@ -19,9 +19,14 @@ from core.routing import Auth, RouterMeta
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
-    prefix="/api",
+    # Versioned contract surface. The whole approvals router is external — every
+    # route is a durable record or an act on it (list, get, approve, reject) —
+    # so it moves wholesale rather than splitting. Routes carry the full
+    # ``/approvals`` path, so the prefix is the version root, not ``/api/v1/approvals``.
+    prefix="/api/v1",
     tags=["approvals"],
     auth=Auth.REQUIRED,
+    legacy_prefixes=("/api",),
 )
 logger = logging.getLogger(__name__)
 
@@ -44,6 +49,47 @@ class RejectRequest(BaseModel):
         default=None,
         description="Identity of the rejecting analyst. Defaults to 'analyst'.",
     )
+
+
+class PendingActionResponse(BaseModel):
+    """Frozen shape of an approval action (mirrors ``_pending_to_dict``).
+
+    Value types are permissive where the underlying dataclass carries open JSON
+    (evidence, parameters, execution_result); the key set is the promise.
+    """
+
+    action_id: Optional[str] = None
+    action_type: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    target: Optional[Any] = None
+    confidence: Optional[float] = None
+    reason: Optional[str] = None
+    evidence: Optional[Any] = None
+    created_at: Optional[str] = None
+    created_by: Optional[str] = None
+    requires_approval: Optional[bool] = None
+    status: Optional[str] = None
+    approved_at: Optional[str] = None
+    approved_by: Optional[str] = None
+    executed_at: Optional[str] = None
+    execution_result: Optional[Any] = None
+    rejection_reason: Optional[str] = None
+    parameters: Optional[Any] = None
+    workflow_run_id: Optional[str] = None
+    workflow_phase_id: Optional[str] = None
+    reversibility: Optional[str] = None
+    idempotency_key: Optional[str] = None
+
+
+class ApprovalListResponse(BaseModel):
+    count: int
+    actions: List[PendingActionResponse] = Field(default_factory=list)
+
+
+class ApprovalActionResult(BaseModel):
+    action: PendingActionResponse
+    resume_result: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -84,7 +130,7 @@ def _pending_to_dict(action: Any) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/approvals")
+@router.get("/approvals", response_model=ApprovalListResponse)
 async def list_approvals(
     status: Optional[str] = Query(
         default=None,
@@ -130,7 +176,7 @@ async def list_pending_approvals(
     return {"actions": [_pending_to_dict(a) for a in actions]}
 
 
-@router.get("/approvals/{action_id}")
+@router.get("/approvals/{action_id}", response_model=PendingActionResponse)
 async def get_approval(
     action_id: str,
     service: ApprovalService = Depends(provide_approvals),
@@ -142,7 +188,7 @@ async def get_approval(
     return _pending_to_dict(action)
 
 
-@router.post("/approvals/{action_id}/approve")
+@router.post("/approvals/{action_id}/approve", response_model=ApprovalActionResult)
 async def approve_action(
     action_id: str,
     request: ApproveRequest,
@@ -177,7 +223,7 @@ async def approve_action(
     return response
 
 
-@router.post("/approvals/{action_id}/reject")
+@router.post("/approvals/{action_id}/reject", response_model=ApprovalActionResult)
 async def reject_action(
     action_id: str,
     request: RejectRequest,

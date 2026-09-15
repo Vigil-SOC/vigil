@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCOPED = (
     "services/agent",
     "core/agents/queue.py",
-    "core/agents/agent_runs_router.py",
+    "core/api/v1/agent_runs_router.py",
     "core/agents/tool_registry.py",
     "core/agents/tools_router.py",
     "core/llm/cost/rates.py",
