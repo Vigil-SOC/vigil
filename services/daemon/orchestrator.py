@@ -57,12 +57,13 @@ except Exception:
     _tracer = None  # type: ignore[assignment]
     _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
-from core.agents.queue import build_start_job, enqueue_run
+from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
 from core.integrations.mcp.client import process_mcp_client
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
 from core.workflows.hypothesis_subjects import kept_subjects
+from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
     count_steps,
     generate_case_review_context,
@@ -100,6 +101,7 @@ class Orchestrator:
         config: OrchestratorConfig,
         approvals: Optional[ApprovalService] = None,
         mcp_client=None,
+        workflows: Optional[WorkflowsService] = None,
     ):
         self.config = config
         self._enabled = config.enabled
@@ -108,6 +110,8 @@ class Orchestrator:
         self._mcp_client = (
             mcp_client if mcp_client is not None else process_mcp_client()
         )
+        # Read for the run_kind a definition declares; the file cache needs no DB.
+        self._workflows = workflows or WorkflowsService()
 
         self.workdir = WorkdirManager(config.workdir_base)
         self.shared_intel = SharedIntelligence()
@@ -665,6 +669,20 @@ class Orchestrator:
     def _recall_keys(self, inv_id: str) -> List[str]:
         return normalise_keys(self._read_sidecar_json(inv_id, "recall_keys.json"))
 
+    # The kind the definition *declares*, not WorkflowDefinition.run_kind: that
+    # property defaults to compose, and a daemon-opened investigation on a
+    # definition that says nothing is the lead loop, as it has always been. A
+    # kind outside RUN_KINDS is refused, not coerced: the caller's except marks
+    # the investigation failed rather than queueing a run no worker has a loop for.
+    def _declared_run_kind(self, workflow_id: str) -> str:
+        workflow = self._workflows.get_workflow(workflow_id)
+        declared = workflow.metadata.get("run_kind") if workflow else None
+        if not declared:
+            return "investigate"
+        if declared not in RUN_KINDS:
+            raise ValueError(f"{workflow_id} declares unknown run_kind {declared!r}")
+        return str(declared)
+
     async def _enqueue_investigation(self, inv_record: Dict) -> None:
         inv_id = inv_record["investigation_id"]
         run_id = inv_record.get("run_id") or run_id_for(inv_id)
@@ -702,7 +720,10 @@ class Orchestrator:
 
         try:
             job = build_start_job(
-                run_id, "investigate", request, enqueued_by="orchestrator"
+                run_id,
+                self._declared_run_kind(inv_record["workflow_id"]),
+                request,
+                enqueued_by="orchestrator",
             )
             await enqueue_run(job)
         except Exception as exc:  # noqa: BLE001 — a queue that refuses is not a crash
