@@ -69,6 +69,15 @@ function scrubDeep(value: unknown): unknown {
 // dropped whole and its room handed to the fields that can use it.
 const VIABLE = " [truncated 000000 chars]".length + 8;
 
+// What a marker costs to write, quotes, colon, comma and a count included. Reserved
+// before room is shared rather than added after: a record fitted to exactly the cap
+// and then handed a marker is over it, and the pass that follows frees one small
+// field and spends the same again on the marker that field's absence forces. That is
+// a fixed point above the cap, and it ends at the backstop -- the collapse this
+// fitting exists to prevent.
+const COUNT = 10;
+const OMITTED_COST = OMITTED.length + COUNT;
+
 // Nothing survived here, which is not the same as an empty object: a caller that
 // kept one would be reporting a field it no longer holds.
 const GONE = Symbol("gone");
@@ -178,7 +187,10 @@ function fit(value: unknown, room: number, entire = false): unknown {
     const entries = Object.entries(value);
     const held = shareAmong(
       entries.map(([key, one]) => {
-        const overhead = key.length + 4;
+        // A list that loses rows is charged for saying so, so the count it writes
+        // comes out of its own share rather than off the top of the record.
+        const marker = Array.isArray(one) ? key.length + DROPPED.length + COUNT : 0;
+        const overhead = key.length + 4 + marker;
         const want = sizeOf(one) + overhead;
         const whole = typeof one !== "string" && !nests(one) && typeof one !== "object";
         return {
@@ -188,7 +200,7 @@ function fit(value: unknown, room: number, entire = false): unknown {
           fit: (share: number) => fit(one, share),
         };
       }),
-      room - 2,
+      room - 2 - OMITTED_COST,
     );
 
     const out: Record<string, unknown> = {};
@@ -221,16 +233,43 @@ function scrubPayload(payload: Record<string, unknown>): Record<string, unknown>
   if (sizeOf(held) <= PAYLOAD_CAP) return held;
 
   // More than one pass because the first pays for markers and dropped-counts it could
-  // not know about until it had written them. It settles in two.
-  for (let pass = 0; pass < 3 && sizeOf(held) > PAYLOAD_CAP; pass += 1) {
-    const fitted = fit(held, PAYLOAD_CAP);
-    if (fitted === GONE) break;
+  // not know about until it had written them. Each pass that lands over the cap cuts
+  // the room by what it overshot: asking again for the room that just failed writes
+  // the same markers and lands in the same place, so a record can sit just above the
+  // cap however often it is asked. Cutting the room is what makes the loop converge
+  // rather than merely repeat.
+  let room = PAYLOAD_CAP;
+  for (let pass = 0; pass < 5 && sizeOf(held) > PAYLOAD_CAP; pass += 1) {
+    const fitted = fit(held, room);
+    // Nothing here could be kept whole. At the top of a record there is no sibling to
+    // hand the room to, so the count of what went is the honest answer -- and a far
+    // better one than a backstop holding JSON that no longer parses.
+    if (fitted === GONE) return { [OMITTED]: Object.keys(held).length };
     held = fitted as Record<string, unknown>;
+    const over = sizeOf(held) - PAYLOAD_CAP;
+    if (over <= 0) break;
+    room -= over + MARGIN;
+    if (room <= 0) break;
   }
 
   // Kept so no record reaches the lead unscrubbed. Nothing observed reaches it.
-  if (sizeOf(held) > PAYLOAD_CAP) return { truncated: scrub(JSON.stringify(held), PAYLOAD_CAP) };
+  if (sizeOf(held) > PAYLOAD_CAP) return backstop(held);
   return held;
+}
+
+// Measured on the record rather than on the text it holds. JSON.stringify escapes
+// every quote of a serialised payload, so a string clamped to the cap wraps to half
+// again as much -- which is how the last resort came to exceed the one limit it
+// exists to enforce.
+function backstop(held: unknown): Record<string, unknown> {
+  const text = scrub(JSON.stringify(held), Number.POSITIVE_INFINITY);
+  let keep = PAYLOAD_CAP;
+  let out: Record<string, unknown> = { truncated: clamp(text, keep) };
+  while (sizeOf(out) > PAYLOAD_CAP && keep > 1) {
+    keep = Math.max(1, Math.floor((keep * PAYLOAD_CAP) / sizeOf(out)) - VIABLE);
+    out = { truncated: clamp(text, keep) };
+  }
+  return out;
 }
 
 // The critic's record, built to fit rather than left for scrubPayload to fit. Its

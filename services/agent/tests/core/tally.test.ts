@@ -207,6 +207,7 @@ function broke(): Budget {
     beginCall: async () => ({ reason: "calls_exhausted", used: 0, limit: 0 }),
     record: () => {},
     raise: () => {},
+    release: () => {},
     priceOf: async () => ({ cost_usd: null, source: null }),
   };
 }

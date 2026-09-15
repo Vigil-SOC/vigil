@@ -102,23 +102,39 @@ function folds(name: string): unknown {
 // The second deliberate divergence, and the same kind as lastPerPair: the goldens are
 // what the old implementation produced, and its backlog listed only parked leads. A run
 // stopped by its own ceiling hands its leads back open, so hunt-462b6e9d6d56 -- a real
-// budget_terminated run -- reported an empty frontier while 82 leads sat on it. The
-// backlog is compared on its own below rather than the goldens being rewritten.
+// budget_terminated run -- reported an empty frontier while 82 leads sat on it.
+//
+// Set aside from the structural comparison and then checked against the golden's own
+// backlog plus exactly the leads left open, rather than simply dropped: more than one
+// run moved, and dropping the field would have left the other nine backlogs compared
+// against nothing at all.
 function withoutBacklog(folded: Record<string, unknown>): Record<string, unknown> {
   const report = folded["report"] as Record<string, unknown>;
   const { backlog: _dropped, ...rest } = report;
   return { ...folded, report: rest };
 }
 
+function backlogIds(folded: Record<string, unknown>): string[] {
+  const report = folded["report"] as Record<string, unknown>;
+  const backlog = (report["backlog"] ?? []) as { question_id: string }[];
+  return backlog.map((one) => one.question_id).sort();
+}
+
 describe("the derived folds survive the move too", () => {
   it.each(RUNS)("%s derives the digest, strength and report the file ledger did", (name) => {
-    expect(withoutBacklog(folds(name) as Record<string, unknown>)).toEqual(
-      withoutBacklog(renamedGolden(JSON.parse(gunzipped(`${name}.folds.json.gz`))) as Record<string, unknown>),
-    );
+    const mine = folds(name) as Record<string, unknown>;
+    const golden = renamedGolden(JSON.parse(gunzipped(`${name}.folds.json.gz`))) as Record<string, unknown>;
+    expect(withoutBacklog(mine)).toEqual(withoutBacklog(golden));
+
+    // Every lead the golden listed, and every lead still open, and nothing else: the
+    // backlog stays exactly compared on all ten runs instead of excused on all ten.
+    const view = fold(asHarnessEvents(gunzipped(`${name}.jsonl.gz`), name));
+    const open = [...view.questions.values()].filter((one) => one.status === "open");
+    expect(backlogIds(mine)).toEqual([...backlogIds(golden), ...open.map((one) => one.question_id)].sort());
   });
 
-  // The backlog the comparison above sets aside, on the one run where it moved. The
-  // parked leads are still asserted, so this is not a weaker check than the golden's.
+  // Named because it is the headline case: a real budget-stopped run whose report told
+  // an operator the frontier was clear while 82 leads sat on it.
   it("lists the leads a budget-stopped run left on the frontier", () => {
     const view = fold(asHarnessEvents(gunzipped("hunt-462b6e9d6d56.jsonl.gz"), "hunt-462b6e9d6d56"));
     const open = [...view.questions.values()].filter((one) => one.status === "open");
