@@ -1,6 +1,50 @@
 {
   "components": {
     "schemas": {
+      "ApprovalActionResult": {
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/PendingActionResponse"
+          },
+          "resume_result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resume Result"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ApprovalActionResult",
+        "type": "object"
+      },
+      "ApprovalListResponse": {
+        "properties": {
+          "actions": {
+            "items": {
+              "$ref": "#/components/schemas/PendingActionResponse"
+            },
+            "title": "Actions",
+            "type": "array"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "ApprovalListResponse",
+        "type": "object"
+      },
       "ApproveRequest": {
         "properties": {
           "approved_by": {
@@ -17,6 +61,46 @@
           }
         },
         "title": "ApproveRequest",
+        "type": "object"
+      },
+      "BreachedCasesResponse": {
+        "properties": {
+          "breached_cases": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Breached Cases",
+            "type": "array"
+          }
+        },
+        "title": "BreachedCasesResponse",
+        "type": "object"
+      },
+      "ByPriorityResponse": {
+        "properties": {
+          "priority_breakdown": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Priority Breakdown",
+            "type": "object"
+          }
+        },
+        "title": "ByPriorityResponse",
+        "type": "object"
+      },
+      "ByStatusResponse": {
+        "properties": {
+          "status_breakdown": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Status Breakdown",
+            "type": "object"
+          }
+        },
+        "title": "ByStatusResponse",
         "type": "object"
       },
       "CaseCloseResponse": {
@@ -705,6 +789,48 @@
         "title": "CaseMergeResponse",
         "type": "object"
       },
+      "CaseMetricsSummaryResponse": {
+        "properties": {
+          "critical_cases": {
+            "title": "Critical Cases",
+            "type": "integer"
+          },
+          "open_cases": {
+            "title": "Open Cases",
+            "type": "integer"
+          },
+          "priority_breakdown": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Priority Breakdown",
+            "type": "object"
+          },
+          "resolved_cases": {
+            "title": "Resolved Cases",
+            "type": "integer"
+          },
+          "status_breakdown": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Status Breakdown",
+            "type": "object"
+          },
+          "total_cases": {
+            "title": "Total Cases",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_cases",
+          "open_cases",
+          "resolved_cases",
+          "critical_cases"
+        ],
+        "title": "CaseMetricsSummaryResponse",
+        "type": "object"
+      },
       "CaseSchema": {
         "description": "Default shape \u2014 findings referenced by id.",
         "properties": {
@@ -1229,6 +1355,60 @@
         "title": "EvidenceAdd",
         "type": "object"
       },
+      "FindingExportResponse": {
+        "properties": {
+          "file_path": {
+            "title": "File Path",
+            "type": "string"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "success",
+          "file_path"
+        ],
+        "title": "FindingExportResponse",
+        "type": "object"
+      },
+      "FindingListResponse": {
+        "properties": {
+          "findings": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "offset",
+          "limit",
+          "has_more"
+        ],
+        "title": "FindingListResponse",
+        "type": "object"
+      },
       "FindingUpdate": {
         "description": "Schema for updating a finding.",
         "properties": {
@@ -1333,6 +1513,58 @@
           }
         },
         "title": "FindingUpdate",
+        "type": "object"
+      },
+      "FindingUpdateResponse": {
+        "properties": {
+          "finding": {
+            "additionalProperties": true,
+            "title": "Finding",
+            "type": "object"
+          },
+          "success": {
+            "title": "Success",
+            "type": "boolean"
+          },
+          "updated_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Updated Fields",
+            "type": "array"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "title": "FindingUpdateResponse",
+        "type": "object"
+      },
+      "FindingsSummaryResponse": {
+        "properties": {
+          "by_data_source": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Data Source",
+            "type": "object"
+          },
+          "by_severity": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By Severity",
+            "type": "object"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total"
+        ],
+        "title": "FindingsSummaryResponse",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -1460,6 +1692,353 @@
           "source_case_id"
         ],
         "title": "MergeRequest",
+        "type": "object"
+      },
+      "MttdResponse": {
+        "properties": {
+          "average_mttd_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Mttd Hours"
+          },
+          "average_mttd_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Mttd Seconds"
+          },
+          "mttd_by_priority": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Mttd By Priority",
+            "type": "object"
+          },
+          "total_cases": {
+            "title": "Total Cases",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_cases"
+        ],
+        "title": "MttdResponse",
+        "type": "object"
+      },
+      "MttrResponse": {
+        "properties": {
+          "average_mttr_hours": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Mttr Hours"
+          },
+          "average_mttr_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Mttr Seconds"
+          },
+          "mttr_by_priority": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Mttr By Priority",
+            "type": "object"
+          },
+          "total_cases": {
+            "title": "Total Cases",
+            "type": "integer"
+          },
+          "trend_data": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Trend Data",
+            "type": "array"
+          }
+        },
+        "required": [
+          "total_cases"
+        ],
+        "title": "MttrResponse",
+        "type": "object"
+      },
+      "PendingActionResponse": {
+        "description": "Frozen shape of an approval action (mirrors ``_pending_to_dict``).\n\nValue types are permissive where the underlying dataclass carries open JSON\n(evidence, parameters, execution_result); the key set is the promise.",
+        "properties": {
+          "action_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Id"
+          },
+          "action_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action Type"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "approved_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved By"
+          },
+          "confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confidence"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "evidence": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence"
+          },
+          "executed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executed At"
+          },
+          "execution_result": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Result"
+          },
+          "idempotency_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotency Key"
+          },
+          "parameters": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason"
+          },
+          "requires_approval": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requires Approval"
+          },
+          "reversibility": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reversibility"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "target": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Target"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "workflow_phase_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Phase Id"
+          },
+          "workflow_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Run Id"
+          }
+        },
+        "title": "PendingActionResponse",
         "type": "object"
       },
       "RejectRequest": {
@@ -1870,6 +2449,27 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WorkflowListResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "workflows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Workflows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "WorkflowListResponse",
+        "type": "object"
       }
     }
   },
@@ -2145,7 +2745,6 @@
     },
     "/api/v1/approvals": {
       "get": {
-        "description": "List approval actions, newest first.",
         "operationId": "get_api_v1_approvals",
         "parameters": [
           {
@@ -2217,7 +2816,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalListResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2241,7 +2842,6 @@
     },
     "/api/v1/approvals/pending": {
       "get": {
-        "description": "Shortcut: only actions with ``status=pending`` and\n``requires_approval=True``. Used by the AI Decisions approvals tab.",
         "operationId": "get_api_v1_approvals_pending",
         "parameters": [
           {
@@ -2299,7 +2899,6 @@
     },
     "/api/v1/approvals/{action_id}": {
       "get": {
-        "description": "Fetch a single approval action.",
         "operationId": "get_api_v1_approvals_action_id",
         "parameters": [
           {
@@ -2332,7 +2931,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/PendingActionResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2356,7 +2957,6 @@
     },
     "/api/v1/approvals/{action_id}/approve": {
       "post": {
-        "description": "Approve a pending action.\n\nIf the action is linked to a paused workflow run, the run resumes\nautomatically and the resume result is included in the response.",
         "operationId": "post_api_v1_approvals_action_id_approve",
         "parameters": [
           {
@@ -2399,7 +2999,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalActionResult"
+                }
               }
             },
             "description": "Successful Response"
@@ -2423,7 +3025,6 @@
     },
     "/api/v1/approvals/{action_id}/reject": {
       "post": {
-        "description": "Reject a pending action.\n\nIf the action is linked to a paused workflow run, the run is\ncancelled with the supplied reason.",
         "operationId": "post_api_v1_approvals_action_id_reject",
         "parameters": [
           {
@@ -2466,7 +3067,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalActionResult"
+                }
               }
             },
             "description": "Successful Response"
@@ -2490,7 +3093,6 @@
     },
     "/api/v1/cases/": {
       "get": {
-        "description": "Get all cases with optional filters.\n\nArgs:\n    status: Filter by status\n    priority: Filter by priority\n\nReturns:\n    List of cases",
         "operationId": "get_api_v1_cases",
         "parameters": [
           {
@@ -2570,7 +3172,6 @@
         ]
       },
       "post": {
-        "description": "Create a new case.\n\nArgs:\n    case_data: Case creation data\n\nReturns:\n    Created case",
         "operationId": "post_api_v1_cases",
         "parameters": [
           {
@@ -2630,7 +3231,6 @@
     },
     "/api/v1/cases/metrics/breached": {
       "get": {
-        "description": "Get all cases with SLA breaches.\n\nReturns:\n    List of breached cases",
         "operationId": "get_api_v1_cases_metrics_breached",
         "parameters": [
           {
@@ -2654,7 +3254,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/BreachedCasesResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2678,7 +3280,6 @@
     },
     "/api/v1/cases/metrics/by-priority": {
       "get": {
-        "description": "Get case counts by priority.\n\nArgs:\n    start_date: Start date filter\n    end_date: End date filter\n\nReturns:\n    Case counts broken down by priority",
         "operationId": "get_api_v1_cases_metrics_by-priority",
         "parameters": [
           {
@@ -2736,7 +3337,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ByPriorityResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2760,7 +3363,6 @@
     },
     "/api/v1/cases/metrics/by-status": {
       "get": {
-        "description": "Get case counts by status.\n\nArgs:\n    start_date: Start date filter\n    end_date: End date filter\n\nReturns:\n    Case counts broken down by status",
         "operationId": "get_api_v1_cases_metrics_by-status",
         "parameters": [
           {
@@ -2818,7 +3420,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ByStatusResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2842,7 +3446,6 @@
     },
     "/api/v1/cases/metrics/mttd": {
       "get": {
-        "description": "Get Mean Time To Detect metrics.\n\nArgs:\n    start_date: Start date filter\n    end_date: End date filter\n    priority: Filter by priority\n\nReturns:\n    MTTD metrics by priority",
         "operationId": "get_api_v1_cases_metrics_mttd",
         "parameters": [
           {
@@ -2916,7 +3519,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MttdResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -2940,7 +3545,6 @@
     },
     "/api/v1/cases/metrics/mttr": {
       "get": {
-        "description": "Get Mean Time To Resolve metrics.\n\nArgs:\n    start_date: Start date filter\n    end_date: End date filter\n    priority: Filter by priority\n\nReturns:\n    MTTR metrics by priority and trend data",
         "operationId": "get_api_v1_cases_metrics_mttr",
         "parameters": [
           {
@@ -3014,7 +3618,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/MttrResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3038,7 +3644,6 @@
     },
     "/api/v1/cases/metrics/summary": {
       "get": {
-        "description": "Get summary metrics for cases.\n\nArgs:\n    start_date: Start date filter\n    end_date: End date filter\n\nReturns:\n    Summary metrics including total cases, open cases, etc.",
         "operationId": "get_api_v1_cases_metrics_summary",
         "parameters": [
           {
@@ -3096,7 +3701,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/CaseMetricsSummaryResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -3120,7 +3727,6 @@
     },
     "/api/v1/cases/search": {
       "post": {
-        "description": "Advanced case search.",
         "operationId": "post_api_v1_cases_search",
         "parameters": [
           {
@@ -3180,7 +3786,6 @@
     },
     "/api/v1/cases/stats/summary": {
       "get": {
-        "description": "Get summary statistics for cases.\n\nReturns:\n    Summary statistics",
         "operationId": "get_api_v1_cases_stats_summary",
         "parameters": [
           {
@@ -3230,7 +3835,6 @@
     },
     "/api/v1/cases/{case_id}": {
       "get": {
-        "description": "Get a specific case by ID.\n\nArgs:\n    case_id: The case ID\n\nReturns:\n    Case details",
         "operationId": "get_api_v1_cases_case_id",
         "parameters": [
           {
@@ -3287,7 +3891,6 @@
         ]
       },
       "patch": {
-        "description": "Update an existing case.\n\nArgs:\n    case_id: The case ID\n    case_data: Case update data\n\nReturns:\n    Success status",
         "operationId": "patch_api_v1_cases_case_id",
         "parameters": [
           {
@@ -3356,7 +3959,6 @@
     },
     "/api/v1/cases/{case_id}/close": {
       "post": {
-        "description": "Close case with closure metadata.",
         "operationId": "post_api_v1_cases_case_id_close",
         "parameters": [
           {
@@ -3425,7 +4027,6 @@
     },
     "/api/v1/cases/{case_id}/evidence": {
       "get": {
-        "description": "Get all evidence for case.",
         "operationId": "get_api_v1_cases_case_id_evidence",
         "parameters": [
           {
@@ -3498,7 +4099,6 @@
         ]
       },
       "post": {
-        "description": "Add evidence to case.",
         "operationId": "post_api_v1_cases_case_id_evidence",
         "parameters": [
           {
@@ -3567,7 +4167,6 @@
     },
     "/api/v1/cases/{case_id}/findings/{finding_id}": {
       "delete": {
-        "description": "Remove a finding from a case.\n\nArgs:\n    case_id: The case ID\n    finding_id: The finding ID to remove\n\nReturns:\n    Updated case",
         "operationId": "delete_api_v1_cases_case_id_findings_finding_id",
         "parameters": [
           {
@@ -3633,7 +4232,6 @@
         ]
       },
       "post": {
-        "description": "Add a finding to a case.\n\nArgs:\n    case_id: The case ID\n    finding_id: The finding ID to add\n\nReturns:\n    Updated case",
         "operationId": "post_api_v1_cases_case_id_findings_finding_id",
         "parameters": [
           {
@@ -3701,7 +4299,6 @@
     },
     "/api/v1/cases/{case_id}/iocs": {
       "get": {
-        "description": "Get all IOCs for case.",
         "operationId": "get_api_v1_cases_case_id_iocs",
         "parameters": [
           {
@@ -3774,7 +4371,6 @@
         ]
       },
       "post": {
-        "description": "Add IOC to case.",
         "operationId": "post_api_v1_cases_case_id_iocs",
         "parameters": [
           {
@@ -3843,7 +4439,6 @@
     },
     "/api/v1/cases/{case_id}/iocs/bulk": {
       "post": {
-        "description": "Bulk add IOCs to case.",
         "operationId": "post_api_v1_cases_case_id_iocs_bulk",
         "parameters": [
           {
@@ -3912,7 +4507,6 @@
     },
     "/api/v1/cases/{case_id}/iocs/export": {
       "get": {
-        "description": "Export IOCs (json, csv, or stix).",
         "operationId": "get_api_v1_cases_case_id_iocs_export",
         "parameters": [
           {
@@ -3981,7 +4575,6 @@
     },
     "/api/v1/cases/{case_id}/merge": {
       "post": {
-        "description": "Merge source case into target case.\n\nMoves all findings, timeline entries, activities, IOCs, evidence, tasks,\nand comments from the source case into the target. The source case is\nclosed with a note and linked via a 'merged_into' relationship.",
         "operationId": "post_api_v1_cases_case_id_merge",
         "parameters": [
           {
@@ -4050,7 +4643,6 @@
     },
     "/api/v1/findings/": {
       "get": {
-        "description": "Get findings with optional filters, search, and server-side pagination.\n\nReturns:\n    Paginated list of findings with total count and has_more flag.",
         "operationId": "get_api_v1_findings",
         "parameters": [
           {
@@ -4215,7 +4807,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FindingListResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4272,7 +4866,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FindingExportResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4296,7 +4892,6 @@
     },
     "/api/v1/findings/stats/summary": {
       "get": {
-        "description": "Get summary statistics for findings.\n\nReturns:\n    Summary statistics",
         "operationId": "get_api_v1_findings_stats_summary",
         "parameters": [
           {
@@ -4320,7 +4915,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FindingsSummaryResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4344,7 +4941,6 @@
     },
     "/api/v1/findings/{finding_id}": {
       "get": {
-        "description": "Get a specific finding by ID.\n\nArgs:\n    finding_id: The finding ID\n\nReturns:\n    Finding details",
         "operationId": "get_api_v1_findings_finding_id",
         "parameters": [
           {
@@ -4399,7 +4995,6 @@
         ]
       },
       "patch": {
-        "description": "Update/enrich an existing finding.\n\nAdd or update information on a finding, including MITRE ATT&CK technique\nmappings, severity, and other metadata.\n\nArgs:\n    finding_id: The finding ID to update\n    update: Fields to update\n\nReturns:\n    Updated finding",
         "operationId": "patch_api_v1_findings_finding_id",
         "parameters": [
           {
@@ -4442,7 +5037,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FindingUpdateResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4466,7 +5063,6 @@
     },
     "/api/v1/workflows/": {
       "get": {
-        "description": "List all available workflows (file-based + database-backed custom).\n\nReturns:\n    { workflows: [...], count: int }",
         "operationId": "get_api_v1_workflows",
         "parameters": [
           {
@@ -4490,7 +5086,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowListResponse"
+                }
               }
             },
             "description": "Successful Response"
@@ -4514,7 +5112,6 @@
     },
     "/api/v1/workflows/{workflow_id}": {
       "get": {
-        "description": "Get full details for a specific workflow (custom or file-based).",
         "operationId": "get_api_v1_workflows_workflow_id",
         "parameters": [
           {

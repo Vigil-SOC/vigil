@@ -11,7 +11,7 @@ act:
     python scripts/generate_api_v1_contract.py
 
 That is the whole point: a change to the contract cannot land as a side effect
-of an unrelated PR (see #854, where a cleanup silently rewrote contract files).
+of an unrelated PR (a cleanup PR once silently rewrote contract files).
 """
 
 from __future__ import annotations

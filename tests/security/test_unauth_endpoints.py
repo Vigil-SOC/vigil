@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from services.api import main as backend_main  # noqa: E402
 from core.config import get_settings  # noqa: E402
 from services.api.middleware import auth as auth_module  # noqa: E402
+from core.auth import current_user as current_user_module  # noqa: E402  (DEV_MODE lives here)
 
 pytestmark = pytest.mark.unit
 
@@ -38,7 +39,7 @@ pytestmark = pytest.mark.unit
 def app():
     """Build a TestClient with auth force-enabled regardless of DEV_MODE.
 
-    Two places have to be forced, not one. ``services.api.middleware.auth``
+    Two places have to be forced, not one. ``core.auth.current_user``
     reads a module-level ``DEV_MODE`` captured at import, so patching the
     attribute is enough there. Routers that carry their own dev-mode bypass
     — the VStrike inbound receiver is the current one — instead call
@@ -53,8 +54,8 @@ def app():
     every test, and function-scoped autouse runs after this module-scoped
     fixture, so a patched instance is discarded before the request runs.
     """
-    prev = auth_module.DEV_MODE
-    auth_module.DEV_MODE = False
+    prev = current_user_module.DEV_MODE
+    current_user_module.DEV_MODE = False
     prev_env = os.environ.get("DEV_MODE")
     os.environ["DEV_MODE"] = "false"
     get_settings.cache_clear()
@@ -62,7 +63,7 @@ def app():
         with TestClient(backend_main.app) as c:
             yield c
     finally:
-        auth_module.DEV_MODE = prev
+        current_user_module.DEV_MODE = prev
         if prev_env is None:
             os.environ.pop("DEV_MODE", None)
         else:
@@ -133,6 +134,14 @@ PROTECTED_ROUTES = [
     ("POST", "/api/integrations/vstrike/network-graph", {"network_id": "test"}),
     ("POST", "/api/integrations/vstrike/ui/legend-apply", {"legend_run_id": "test"}),
     ("POST", "/api/integrations/vstrike/ui/rightpanel-focus", None),
+    # Versioned contract surface — the frozen /api/v1 routes must enforce auth
+    # too (the epic is "auth on by default"). One per resource.
+    ("GET", "/api/v1/findings/", None),
+    ("GET", "/api/v1/cases/", None),
+    ("GET", "/api/v1/approvals", None),
+    ("GET", "/api/v1/agent-runs", None),
+    ("GET", "/api/v1/workflows/", None),
+    ("GET", "/api/v1/cases/metrics/mttr", None),
 ]
 
 

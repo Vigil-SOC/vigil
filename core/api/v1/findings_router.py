@@ -16,7 +16,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.config import vigil_path
 from core.findings.source_evidence import (
@@ -51,7 +51,34 @@ class FindingUpdate(BaseModel):
     evidence_links: Optional[List[str]] = None
 
 
-@router.get("/")
+
+
+class FindingListResponse(BaseModel):
+    findings: List[Dict[str, Any]] = Field(default_factory=list)
+    total: int
+    offset: int
+    limit: int
+    has_more: bool
+
+
+class FindingsSummaryResponse(BaseModel):
+    total: int
+    by_severity: Dict[str, int] = Field(default_factory=dict)
+    by_data_source: Dict[str, int] = Field(default_factory=dict)
+
+
+class FindingExportResponse(BaseModel):
+    success: bool
+    file_path: str
+
+
+class FindingUpdateResponse(BaseModel):
+    success: bool
+    finding: Dict[str, Any] = Field(default_factory=dict)
+    updated_fields: List[str] = Field(default_factory=list)
+
+
+@router.get("/", response_model=FindingListResponse)
 def get_findings(
     severity: Optional[str] = Query(None),
     data_source: Optional[str] = Query(None),
@@ -106,6 +133,9 @@ def get_findings(
     }
 
 
+# No response_model: returns the normalized finding record verbatim. Its
+# shape is owned by FindingSchema (with ORM-parity tests); forcing a model
+# here would strip the normalized source_evidence. Snapshot pins the op.
 @router.get("/{finding_id}")
 def get_finding(finding_id: str):
     """
@@ -123,7 +153,7 @@ def get_finding(finding_id: str):
     return normalize_finding_source_evidence(finding)
 
 
-@router.get("/stats/summary")
+@router.get("/stats/summary", response_model=FindingsSummaryResponse)
 def get_findings_summary():
     """
     Get summary statistics for findings.
@@ -151,7 +181,7 @@ def get_findings_summary():
     }
 
 
-@router.post("/export")
+@router.post("/export", response_model=FindingExportResponse)
 def export_findings(output_format: str = "json"):
     output_dir = vigil_path("exports", write=True)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -166,7 +196,7 @@ def export_findings(output_format: str = "json"):
     raise HTTPException(status_code=500, detail="Export failed")
 
 
-@router.patch("/{finding_id}")
+@router.patch("/{finding_id}", response_model=FindingUpdateResponse)
 def update_finding(finding_id: str, update: FindingUpdate):
     """
     Update/enrich an existing finding.

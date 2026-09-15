@@ -3,7 +3,7 @@
 The entire /api/v1 port rests on one behaviour: a contract router is served at
 both its versioned path and its pre-version path, by the *same* handler. The
 shadow-guard test only compares prefix strings; this exercises the real routing
-so 37 frozen paths are not resting on behaviour nothing runs.
+so the frozen paths (31 paths, 38 ops) are not resting on behaviour nothing runs.
 """
 
 from __future__ import annotations

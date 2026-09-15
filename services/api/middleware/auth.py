@@ -1,27 +1,18 @@
 """
 Authentication Middleware - JWT validation and RBAC enforcement.
 
-Provides middleware for FastAPI to validate JWT tokens and check permissions.
-Supports DEV_MODE for bypassing authentication during development.
+The active-user dependency and permission checks. Current-user resolution and
+the DEV_MODE bypass live in ``core.auth.current_user`` (so contract routers can
+depend on them without a ``core -> services`` import); ``get_current_user`` is
+re-exported here for existing importers.
 """
-
-import logging
 
 from fastapi import Depends, HTTPException, status
 
 from core.auth.auth_service import AuthService
+from core.auth.current_user import get_current_user  # noqa: F401  (re-export)
 from core.storage.models import User
 
-# get_current_user / _get_dev_user / DEV_MODE moved to core.auth.current_user so
-# the versioned contract routers (core.api.v1.*) can depend on them without a
-# core -> services import. Re-exported here so existing importers are unchanged.
-from core.auth.current_user import (  # noqa: F401  (re-export)
-    DEV_MODE,
-    _get_dev_user,
-    get_current_user,
-)
-
-logger = logging.getLogger(__name__)
 
 async def get_current_active_user(
     current_user: User = Depends(get_current_user),

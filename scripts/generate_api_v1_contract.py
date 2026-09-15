@@ -83,7 +83,10 @@ def build_contract(app: Any) -> dict:
             if method.lower() in HTTP_METHODS and isinstance(op, dict):
                 if op.get(BETA_FLAG) is True:
                     continue  # versioned but not frozen
-                kept[method] = op
+                # Drop the handler docstring: it is prose, not contract, and
+                # pinning it turns a docstring typo into a red "contract drifted"
+                # build. Paths, params and shapes are the promise, not wording.
+                kept[method] = {k: v for k, v in op.items() if k != "description"}
             elif method.lower() not in HTTP_METHODS:
                 kept[method] = op  # parameters/summary at the path level
         if any(m.lower() in HTTP_METHODS for m in kept):

@@ -9,7 +9,10 @@ reaches outside `core/`: the **agent layer**'s vocabulary is here because its
 terms collide with the domains' rather than sitting apart from them. A third
 grouping, the **versioned API surface** (`core/api/v1/`), sits above the
 capability domains: it composes them into the frozen HTTP contract and imports
-domains freely, but nothing else imports it.
+domains freely. The reverse edge is narrow and deliberate: a console router may
+import back a contract schema it shares (e.g. `FindingUpdate`) or delegate to a
+v1 handler (the workflows catalog), always `services -> core` or `core -> core`;
+the shared-infrastructure tier must not import it (`.importlinter`).
 
 ## Language
 

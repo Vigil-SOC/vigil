@@ -1,15 +1,5 @@
-"""Agent runs — versioned contract surface (``/api/v1/agent-runs``).
-
-The frozen run surface: start a run, list runs, read one run's status, and
-steer a live run. "Runs" in the 1.0 contract means agent runs (this router),
-not workflow-orchestration runs and not the harness write-back at
-``/internal/runs``. Mounted at both ``/api/v1/agent-runs`` and (for now)
-``/api/agent-runs``.
-
-POST enqueues plain JSON and writes nothing to the ledger; GET makes only the
-two reads Python is permitted against agent_events; the list reads run rows from
-workflow_runs (where every API-started agent run writes a row), newest first.
-"""
+# Agent runs — the frozen /api/v1/agent-runs surface: start, list, get, steer.
+# "Runs" in 1.0 means agent runs (not workflow runs); see core/api/v1/README.md.
 
 from __future__ import annotations
 
@@ -94,11 +84,8 @@ class RunListResponse(BaseModel):
     count: int = Field(..., description="Number of runs in this page.")
 
 
-# List agent runs, newest first. Reads the run rows in workflow_runs (every
-# API-started agent run writes one via _begin_run_row), filtered to the agent
-# source so this is the run history the console's "recently concluded
-# investigations" view and an external caller both read. Full per-run detail is
-# GET /{run_id}, which reads the ledger.
+# List agent runs newest-first from workflow_runs (filtered to source=agent);
+# per-run detail is GET /{run_id}, which reads the ledger. See README.
 @router.get("", response_model=RunListResponse)
 def list_runs(
     status: Optional[str] = None,
@@ -147,10 +134,8 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
     if request.overrides is not None:
         payload["overrides"] = request.overrides
 
-    # approval_actions.workflow_run_id references workflow_runs, so a run with no
-    # row there cannot raise an answerable checkpoint: the announce 500s and the
-    # parked run waits out max_park_ms with nobody able to see it. Best-effort,
-    # like every other write to that table -- the ledger is the record.
+    # Best-effort: without a workflow_runs row a parked run cannot raise an
+    # answerable checkpoint. Like every write to that table, the ledger is truth.
     _begin_run_row(run_id, request)
 
     job = build_start_job(

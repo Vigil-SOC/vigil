@@ -19,13 +19,20 @@ console router imports it back (services stays; core -> core is fine).
 """
 
 import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from core.deps import provide_mcp_registry, provide_workflows
 from core.routing import Auth, RouterMeta
 from core.workflows.workflows_service import WorkflowsService
+
+
+class WorkflowListResponse(BaseModel):
+    workflows: List[Dict[str, Any]] = Field(default_factory=list)
+    count: int
+
 
 router = APIRouter()
 
@@ -97,7 +104,7 @@ def _pricing() -> Dict[str, Any]:
     return {"model": DEFAULT_MODEL, "source": source}
 
 
-@router.get("/")
+@router.get("/", response_model=WorkflowListResponse)
 async def list_workflows(service: WorkflowsService = Depends(provide_workflows)):
     """
     List all available workflows (file-based + database-backed custom).
@@ -109,6 +116,9 @@ async def list_workflows(service: WorkflowsService = Depends(provide_workflows))
     return {"workflows": workflows, "count": len(workflows)}
 
 
+# No response_model: returns the workflow definition verbatim, plus the
+# conditional hunt-preflight fields (see the NOTE below, tracked separately).
+# A strict model would strip them and vary by kind; the snapshot pins the op.
 @router.get("/{workflow_id}")
 async def get_workflow(
     workflow_id: str,
