@@ -128,6 +128,21 @@ describe("the fold and the replay are unmoved by it", () => {
     expect(report.reproduced).toBe(report.decisions.length);
   });
 
+  // What Postgres does to the recorded digest: jsonb keeps no key order, so a
+  // ledger read back from the store presents the same digest in different bytes.
+  it("reads a recorded digest with its keys reordered as the same digest", () => {
+    const reordered = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(reordered);
+      if (typeof value !== "object" || value === null) return value;
+      const entries = Object.entries(value as Record<string, unknown>).sort(([a], [b]) => (a > b ? -1 : 1));
+      return Object.fromEntries(entries.map(([key, held]) => [key, reordered(held)]));
+    };
+    const stored = LOG.map((event) =>
+      event.kind === "decision" ? { ...event, payload: { ...event.payload, digest_presented: reordered(event.payload.digest_presented) } } : event,
+    ) as HuntEvent[];
+    expect(replay(stored).decisions.filter((decision) => decision.mismatch !== null)).toEqual([]);
+  });
+
   it("rebuilds each digest exactly, with no inferred prefix", () => {
     expect(replay(LOG).inexact).toBe(0);
   });
