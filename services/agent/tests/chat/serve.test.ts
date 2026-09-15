@@ -195,6 +195,21 @@ describe("replaying what the hunt lead was shown", () => {
     expect((await get(`/runs/${RUN}/replay`)).status).toBe(404);
     expect((await get("/runs/5a2c2d3e-0000-4000-8000-00000000dead/replay")).status).toBe(404);
   });
+
+  it("502s a hunt-like ledger the fold refuses, rather than hanging", async () => {
+    await listen([]);
+    const [opened] = recordedHunt();
+    await state.append(HUNT, [opened!, { ...opened!, kind: "not-a-kind" as never }]);
+    expect((await get(`/runs/${HUNT}/replay`)).status).toBe(502);
+  });
+
+  // Taking a query here did not loosen the siblings: they still match the raw url.
+  it("leaves the other GET routes refusing a query string", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    expect((await get(`/runs/${HUNT}/projection?decision_id=x`)).status).toBe(404);
+    expect((await get(`/runs/${HUNT}/projection`)).status).toBe(200);
+  });
 });
 
 describe("the spec a chat request assembles", () => {

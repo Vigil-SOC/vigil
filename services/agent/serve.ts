@@ -14,7 +14,7 @@ import { runChat, type Turn } from "./workflows/chat/workflow.js";
 import { harnessFor, type HarnessFactory } from "./harness.js";
 import { narrateRun } from "./workflows/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
-import { replay } from "./workflows/hunt/replay.js";
+import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
 
 const CHAT = "/chat/stream";
 // GET /runs/<id>/projection -- what a supervisor outside this process reads.
@@ -178,7 +178,14 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   const opened = events[0];
   if (opened === undefined || !isHuntLike(opened.run_kind)) return refuse(res, 404, `no hunt to replay: ${runId}`);
 
-  const report = replay(events as readonly HuntEvent[]);
+  let report: ReplayReport;
+  try {
+    report = replay(events as readonly HuntEvent[]);
+  } catch (error) {
+    // Hunt-like is not the same as foldable: a ledger fold() refuses is a 502, as
+    // writeNarrative answers, rather than a rejection nothing catches.
+    return refuse(res, 502, error instanceof Error ? error.message : String(error));
+  }
   if (decisionId !== null) {
     const one = report.decisions.filter((decision) => decision.decision_id === decisionId);
     if (one.length === 0) return refuse(res, 404, `no such decision in ${runId}: ${decisionId}`);
@@ -228,9 +235,17 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       const asked = req.method === "POST" ? NARRATE.exec(url) : null;
       if (asked !== null) return writeNarrative(state, asked[1] as string, res, build);
 
-      const { pathname, searchParams } = new URL(url, "http://local");
-      const replayed = req.method === "GET" ? REPLAY.exec(pathname) : null;
-      if (replayed !== null) return readReplay(state, replayed[1] as string, searchParams.get("decision_id"), res);
+      // Parsed rather than matched raw because this route takes a query. Node accepts
+      // request-targets URL rejects (absolute-form with a bad host), so a throw here
+      // is a 400 rather than an unhandled rejection.
+      let parsed: URL;
+      try {
+        parsed = new URL(url, "http://local");
+      } catch {
+        return refuse(res, 400, `not a request path: ${url}`);
+      }
+      const replayed = req.method === "GET" ? REPLAY.exec(parsed.pathname) : null;
+      if (replayed !== null) return readReplay(state, replayed[1] as string, parsed.searchParams.get("decision_id"), res);
 
       return refuse(res, 404, `no such route: ${req.method} ${url}`);
     })();
