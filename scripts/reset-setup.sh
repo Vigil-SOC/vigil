@@ -48,8 +48,9 @@
 #   BIFROST_URL   Gateway admin API root, used only by the --bifrost fallback
 #                 below (default: http://localhost:8080)
 #
-# Auth: assumes DEV_MODE=true (auth bypassed). Set VIGIL_TOKEN to send a
-# Bearer token if you run against an authenticated backend.
+# Auth: the backend requires a login unless DEV_MODE=true. Either set
+# VIGIL_TOKEN to a bearer token, or set VIGIL_USERNAME and VIGIL_PASSWORD and
+# this script signs in for you. Against a bypassed backend neither is needed.
 #
 # DB step: --providers may need to clear a stale default flag directly in
 # Postgres (the API can't unset or delete the last default of a type). This
@@ -86,6 +87,32 @@ AUTH=()
 # --- prerequisites --------------------------------------------------------
 command -v curl   >/dev/null 2>&1 || { echo "curl is required"   >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "python3 is required" >&2; exit 1; }
+
+# --- authentication -------------------------------------------------------
+# No token, but credentials: sign in and use the access token the login
+# returns. Kept to the bearer flow rather than the cookie flow so every call
+# below stays a plain curl with one header.
+if [ -z "${VIGIL_TOKEN:-}" ] && [ -n "${VIGIL_USERNAME:-}" ] && [ -n "${VIGIL_PASSWORD:-}" ]; then
+    login_body=$(curl -fsS -X POST -H 'Content-Type: application/json' \
+        -d "{\"username_or_email\":\"${VIGIL_USERNAME}\",\"password\":\"${VIGIL_PASSWORD}\"}" \
+        "$B/auth/login") || {
+        echo "Login failed for ${VIGIL_USERNAME} at $B/auth/login" >&2
+        exit 1
+    }
+    VIGIL_TOKEN=$(printf '%s' "$login_body" \
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))')
+    [ -n "$VIGIL_TOKEN" ] || { echo "Login returned no access_token" >&2; exit 1; }
+    AUTH=(-H "Authorization: Bearer ${VIGIL_TOKEN}")
+fi
+
+# Fail here, with something actionable, rather than at the first mystery 401
+# partway through a reset.
+auth_probe=$(curl -s -o /dev/null -w '%{http_code}' "${AUTH[@]}" "$B/auth/me" || true)
+if [ "$auth_probe" = "401" ] || [ "$auth_probe" = "403" ]; then
+    echo "Not authenticated against $B (HTTP $auth_probe)." >&2
+    echo "Set VIGIL_TOKEN, or set VIGIL_USERNAME and VIGIL_PASSWORD and re-run." >&2
+    exit 1
+fi
 
 get()  { curl -fsS "${AUTH[@]}" "$B$1"; }
 del()  { curl -fsS "${AUTH[@]}" -X DELETE "$B$1"; }

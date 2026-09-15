@@ -10,6 +10,7 @@ import ExtensionHost from '../extensions/ExtensionHost'
 import { accentVars } from '../shared/accent'
 import { bgVars, isDarkBase } from './bg'
 import Chat from './Chat'
+import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
 import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
@@ -300,6 +301,7 @@ function SocConsoleInner() {
             )
           })}
           <div className="nav-spacer" />
+          <DevModeWarning />
           <UserMenu />
         </nav>
 

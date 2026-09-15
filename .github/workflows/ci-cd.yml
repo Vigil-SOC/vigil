@@ -474,7 +474,10 @@ jobs:
           - 6379:6379
     env:
       TESTING: "true"
-      DEV_MODE: "true"
+      # The suite runs the way an install runs. The bypass was only ever here
+      # because auth_service raises at import without a signing secret.
+      DEV_MODE: "false"
+      JWT_SECRET_KEY: "ci-only-signing-secret-not-for-any-real-use"
       SECRET_KEY: "test-secret-key"
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"

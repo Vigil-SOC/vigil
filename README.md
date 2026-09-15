@@ -176,14 +176,16 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 - **Git**
 - An LLM provider key. Vigil supports Anthropic Claude (default), OpenAI, and Ollama (local) — configure providers in Settings → AI Config. See the [Bifrost gateway](https://vigilsoc.org/docs/bifrost/) notes for the multi-provider setup. *(optional for initial testing)*
 
-### Default Login Credentials
+### First Login
 
-| | |
-|---|---|
-| **Username** | `admin` |
-| **Password** | `admin123` |
+There are no default credentials. The first time you open Vigil it sees an
+empty instance and asks you to create an admin account with a password you
+choose; once that account exists, the offer closes permanently.
 
-> Change these in production!
+To work locally without logging in, set `DEV_MODE=true` in `.env`. It prints a
+banner naming everything it unlocks on every startup, and the console carries a
+warning stripe. Run it bound to anything but loopback and the banner escalates,
+because at that point anyone who can reach the host is an administrator.
 
 ### Manual Install
 
@@ -249,9 +251,10 @@ troubleshooting.
 # Terminal 1: Start database (Docker must be running)
 cd docker && docker-compose up -d postgres
 
-# Terminal 2: Initialize admin user and generate demo data
+# Terminal 2: Generate demo data. There is no admin to create here - Vigil
+# asks you to create one, with a password you choose, the first time you
+# open it.
 source venv/bin/activate
-python scripts/init_default_user.py
 python scripts/demo.py
 
 # Terminal 3: Start backend

@@ -84,8 +84,9 @@ A report we can reproduce is a report we can fix in days instead of weeks:
 - **Version** — release tag, commit SHA, or image digest.
 - **Reproduction** — minimal steps, a request/response pair, a curl invocation,
   a proof-of-concept, or a failing test. Include your `DEV_MODE` setting: with
-  `DEV_MODE=true` all authentication is bypassed by design, and findings that
-  depend on it are not vulnerabilities (see [Out of scope](#out-of-scope)).
+  `DEV_MODE=true` all authentication is bypassed by design (it is off by
+  default), and findings that depend on it are not vulnerabilities (see
+  [Out of scope](#out-of-scope)).
 - **Deployment shape** — docker-compose, Helm, desktop app, or bare `uvicorn`.
 - **Attribution** — how you want to be credited, or that you prefer to stay
   anonymous.
@@ -208,13 +209,15 @@ Anything in this repository that a deployment actually runs:
 Not vulnerabilities. Reports on these will be closed with a pointer back here:
 
 - **`DEV_MODE=true` bypassing authentication.** That is its documented purpose.
-  It defaults to `false` in `core/config.py`, and `env.example` ships `true`
-  only for local development. See [DEV_MODE](https://vigilsoc.org/docs/dev-mode/).
-- **Default credentials in development material** — the `admin` / `admin123`
-  dev login and the default PostgreSQL password in
-  `infra/docker/docker-compose.yml`. Both are documented as
-  must-change-before-production in
-  [production security](https://vigilsoc.org/docs/production-security/).
+  It defaults to `false` in both `core/config.py` and `env.example`, so a fresh
+  install requires a login; turning it on is a deliberate act, and it announces
+  itself on every startup — louder still when the service is bound to an address
+  the network can reach.
+- **The default PostgreSQL password** in `infra/docker/docker-compose.yml`,
+  documented as must-change-before-production in
+  [production security](https://vigilsoc.org/docs/production-security/). Vigil
+  seeds no user account: the first admin is created through the console, with a
+  password whoever installs it chooses.
 - **Placeholder values in `env.example`.** They are a template, not a
   configuration.
 - **Findings that require a misconfiguration we already document as unsafe** —

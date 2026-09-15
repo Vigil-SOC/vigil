@@ -19,9 +19,12 @@ project_root = str(_repo_root)
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+from core.auth.dev_mode import announce_dev_mode
 from core.config import get_settings, validate_settings_or_exit
 
 validate_settings_or_exit()
+# Before any socket is bound: if authentication is off, say so.
+announce_dev_mode()
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware

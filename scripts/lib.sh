@@ -380,3 +380,18 @@ wait_for_postgres() {
     echo "Warning: PostgreSQL may not be ready" >&2
     return 1
 }
+
+# Mint the JWT signing secret an authenticated backend needs, once, and export
+# it. Persisted beside the encrypted secret store rather than regenerated:
+# a new secret invalidates every live session. A value the caller already set
+# wins — the desktop app supplies its own.
+ensure_jwt_secret() {
+    [ -n "${JWT_SECRET_KEY:-}" ] && return 0
+    local jwt_file="$HOME/.vigil/jwt_secret"
+    if [ ! -s "$jwt_file" ]; then
+        mkdir -p "$HOME/.vigil" && chmod 700 "$HOME/.vigil" 2>/dev/null || true
+        (umask 177; { openssl rand -base64 48 2>/dev/null || head -c 48 /dev/urandom | base64; } \
+            | tr -d '\n' > "$jwt_file")
+    fi
+    export JWT_SECRET_KEY="$(cat "$jwt_file")"
+}
