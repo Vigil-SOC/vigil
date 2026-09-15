@@ -76,14 +76,14 @@ logger = logging.getLogger(__name__)
 # Re-deriving is delete-then-insert, so a bump that now yields fewer rows leaves
 # none behind. Stamped on the marker, and the poll re-offers everything stamped
 # with any other value.
-DISTIL_MAPPING_VERSION = 1
+DISTIL_MAPPING_VERSION = 2
 
 # The other side's version: the wire schema of the payload this understands,
 # which `DISTIL_SCHEMA_VERSION` in services/agent/workflows/hunt/distil.ts
 # stamps. A newer one is refused rather than mis-mapped -- a field that changed
 # meaning is worse read optimistically than not read at all, and the marker's
 # absence brings the investigation back next tick.
-SUPPORTED_SCHEMA_VERSION = 1
+SUPPORTED_SCHEMA_VERSION = 2
 
 # Only hunts are distilled today. A Case closure writes its own Verdict from the
 # Case, not from a ledger, and no other run kind concludes anything.
@@ -370,6 +370,19 @@ def _sources_of(
     return rows
 
 
+def _techniques_of(conclusion: Mapping[str, Any]) -> List[str]:
+    """Distinct T-IDs the conclusion cited, in order; ``[]`` when it names none.
+
+    A schema-1 payload carries no field at all, and that is read as none rather
+    than refused: the column's empty default already says known-to-be-none.
+    """
+    seen: List[str] = []
+    for technique in conclusion.get("techniques") or []:
+        if isinstance(technique, str) and technique.strip() and technique not in seen:
+            seen.append(technique)
+    return seen
+
+
 def _sighting_rows(concluded: Concluded) -> List[Dict[str, Any]]:
     payload, investigation_id = concluded.payload, concluded.investigation_id
     rows: List[Dict[str, Any]] = []
@@ -465,6 +478,7 @@ def _conclusion_rows(
                     "outcome": outcome.value,
                     "rationale": rationale,
                     "subject_entities": subjects,
+                    "techniques": _techniques_of(conclusion),
                     "attacker_influenceable_only": bool(
                         conclusion.get("attacker_influenceable_only")
                     ),
