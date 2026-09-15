@@ -2,6 +2,8 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# python-is-python3: CI's setup-python puts `python` on PATH and the workflows
+# call it bare (`python scripts/check_one_loop.py`, `python -c ...init_database()`).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -12,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
+    python-is-python3 \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
