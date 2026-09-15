@@ -184,8 +184,24 @@ services:
     networks:
       - deeptempo-network
 
+  # ─── Daemon layer (--profile daemon) ──────────────────────────────────────
+  # Default `up` is the investigation set: postgres, db-seed, redis, bifrost,
+  # backend, agent-worker, agent-serve. Incident response never touches these
+  # two: workflows enqueue BullMQ `agent-runs` to agent-worker and AGENT_URL is
+  # agent-serve. soc-daemon (federation + auto-enrich) and llm-worker (ARQ
+  # drain) share one profile because the daemon's processor is the ARQ
+  # producer that matters (#902).
+  #
+  # Known default-set side effect: services/api/routers/analytics.py ->
+  # AIInsightsService.submit_insights also enqueues to ARQ. Without
+  # `--profile daemon` the Analytics AI-insights panel stays empty/stale — the
+  # background refresh times out and logs, the endpoint still returns.
+  # `compose up -d soc-daemon` by name still works (Compose enables a named
+  # service's profiles automatically).
+
   # SOC Daemon - Autonomous monitoring and response
   soc-daemon:
+    profiles: [daemon]
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.daemon
@@ -285,6 +301,7 @@ services:
 
   # ARQ Worker - Processes LLM requests from the queue
   llm-worker:
+    profiles: [daemon]
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.backend
