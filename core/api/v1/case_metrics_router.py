@@ -1,4 +1,15 @@
-"""Case Metrics API endpoints."""
+"""Case metrics — versioned contract surface (``/api/v1/cases/metrics``).
+
+Reporting numbers about cases (MTTR, MTTD, breach counts, breakdowns). Six are
+frozen; six composite/rollup reads are marked beta via ``openapi_extra`` and are
+excluded from the contract snapshot — their shape may change while the feature
+matures. Beta still ships and returns data; it is a "do not rely on this yet"
+label, not a hidden route.
+
+Frozen: by-priority, by-status, breached, mttr, mttd, summary.
+Beta:   dashboard, sla-compliance, velocity, analyst/{id}, analyst-performance,
+        calculate/{id} (a recompute action, not a read).
+"""
 
 from datetime import datetime
 from typing import Optional
@@ -14,14 +25,20 @@ from core.storage.schemas import CaseMetricsSchema
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
-    prefix="/api/cases/metrics",
+    prefix="/api/v1/cases/metrics",
     tags=["case-metrics"],
     auth=Auth.REQUIRED,
+    legacy_prefixes=("/api/cases/metrics",),
 )
+
+# Routes marked with this are in the versioned tree but NOT part of the frozen
+# contract: composite rollups whose shape will change as reporting matures. The
+# /api/v1/** contract snapshot excludes any operation carrying x-vigil-beta.
+_BETA = {"openapi_extra": {"x-vigil-beta": True}}
 metrics_service = CaseMetricsService()
 
 
-@router.get("/dashboard")
+@router.get("/dashboard", **_BETA)
 async def get_dashboard(
     start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
 ):
@@ -39,7 +56,7 @@ async def get_dashboard(
     return metrics
 
 
-@router.get("/sla-compliance")
+@router.get("/sla-compliance", **_BETA)
 async def get_sla_compliance(
     start_date: Optional[datetime] = None, end_date: Optional[datetime] = None
 ):
@@ -58,7 +75,7 @@ async def get_sla_compliance(
     return report
 
 
-@router.get("/analyst/{analyst_id}")
+@router.get("/analyst/{analyst_id}", **_BETA)
 async def get_analyst_performance(
     analyst_id: str,
     start_date: Optional[datetime] = None,
@@ -172,7 +189,7 @@ async def get_mttr(
     }
 
 
-@router.get("/velocity")
+@router.get("/velocity", **_BETA)
 async def get_velocity(days: int = 30):
     """
     Get case velocity (opened vs closed).
@@ -187,7 +204,7 @@ async def get_velocity(days: int = 30):
     return velocity
 
 
-@router.post("/calculate/{case_id}")
+@router.post("/calculate/{case_id}", **_BETA)
 async def calculate_case_metrics(case_id: str):
     """
     Calculate/update metrics for a case.
@@ -400,7 +417,7 @@ async def get_by_status(
     return {"status_breakdown": status_breakdown}
 
 
-@router.get("/analyst-performance")
+@router.get("/analyst-performance", **_BETA)
 async def get_all_analyst_performance(
     session: UnitOfWorkSession,
     start_date: Optional[datetime] = None,

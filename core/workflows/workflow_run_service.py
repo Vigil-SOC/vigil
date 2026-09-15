@@ -144,6 +144,7 @@ class WorkflowRunService:
         self,
         *,
         workflow_id: Optional[str] = None,
+        workflow_source: Optional[str] = None,
         status: Optional[str] = None,
         started_at: Optional[datetime] = None,
         finished_at: Optional[datetime] = None,
@@ -154,9 +155,10 @@ class WorkflowRunService:
         """List runs, newest first. Does not include the (potentially
         large) ``result_summary`` field — use ``get_run`` for detail.
 
-        ``started_at`` is an inclusive lower bound on when the run
-        started. ``finished_after`` / ``finished_at`` bound when it
-        finished (inclusive).
+        ``workflow_source`` filters by how the run was started (e.g. "agent"
+        for runs enqueued through the agent-runs API). ``started_at`` is an
+        inclusive lower bound on when the run started. ``finished_after`` /
+        ``finished_at`` bound when it finished (inclusive).
         """
         try:
             db = get_db_manager()
@@ -166,6 +168,8 @@ class WorkflowRunService:
                 stmt = select(WorkflowRun).where(WorkflowRun.deleted_at.is_(None))
                 if workflow_id:
                     stmt = stmt.where(WorkflowRun.workflow_id == workflow_id)
+                if workflow_source:
+                    stmt = stmt.where(WorkflowRun.workflow_source == workflow_source)
                 if status:
                     stmt = stmt.where(WorkflowRun.status == status)
                 if started_at is not None:

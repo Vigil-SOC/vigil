@@ -6,15 +6,14 @@ its path and response shape stay stable across all 1.x releases. Everything
 else (the console's own wiring) stays on the unversioned routers under
 `services/api/routers/` and `core/<domain>/`.
 
-Related issue: #860.
-
 ## Why a folder, not a decorator
 
-Membership is decided by **where the code lives**, so it can be enforced. A
-`CODEOWNERS` rule on `core/api/v1/` forces a maintainer review on every
-contract change; nothing can require review based on a decorator buried in a
-mixed file. Putting a route in the contract is then a deliberate act — you move
-a file into this folder — not one stray line in a PR about something else.
+Membership is decided by **where the code lives**, so it is visible and
+guardable. The contract snapshot test pins exactly this package's routes and
+shapes; a decorator buried in a mixed file is not a set anything can snapshot or
+review as a unit. Putting a route in the contract is then a deliberate act — you
+move a file into this folder — not one stray line in a PR about something else,
+and a reviewer sees what is promised by reading the tree.
 
 ## How dual-mounting works
 
@@ -90,11 +89,28 @@ catalog `GET /{workflow_id}` would otherwise shadow `GET /workflows/custom`.)
 | approvals  | done          | 5 / 5      | whole router is contract; moved wholesale    |
 | cases      | done          | 16 / 40    | record + lifecycle (close/merge) + findings link + evidence + iocs. OUT (ruled): delete-all, delete-case, activities, resolution-steps, generate-report, chain-of-custody, sla ×4, comments ×4, watchers ×3, tasks ×3, relationships ×2, escalate ×2. (40 routes, not 39 — first sweep missed the nested chain-of-custody route.) |
 | workflows  | done          | 2 / 16     | catalog only (list + get); runs are agent-runs, not workflow runs. Additive v1 + console delegates (see below) |
-| runs       | todo          | agent-runs | RULED: runs = agent runs (`/api/agent-runs`), not workflow runs; also build the missing `list_runs` |
+| runs (agent-runs) | done   | 4/3       | whole move of the 3 routes (start/get/directives) + built `GET /api/v1/agent-runs` (`list_runs`, reads workflow_runs filtered to source=agent). Frozen run surface = agent runs, not workflow runs or `/internal/runs` |
 | analytics  | deferred      | —          | RULED: not frozen now (routes exist but shape will churn)     |
-| cases/metrics | blocked    | 6 / 12     | ruling: under cases; 6 freeze, 6 beta        |
+| cases/metrics | done       | 6 / 12     | all 12 under `/api/v1/cases/metrics`; 6 frozen, 6 marked `x-vigil-beta` (excluded from the contract snapshot). Frozen: by-priority, by-status, breached, mttr, mttd, summary |
 | verdicts   | deferred      | build      | no routes exist yet                          |
 | learning   | deferred      | build      | no routes exist yet                          |
 
 Doc lists 7 frozen resources; we ship the 5 that exist and note verdicts +
 learning as a known gap.
+
+## Enforcement (the contract snapshot)
+
+`core/api/v1/contract.snapshot.json` is the committed promise: the paths,
+operations and referenced schema shapes of `/api/v1/**`, minus any operation
+carrying `x-vigil-beta`. `scripts/generate_api_v1_contract.py` builds it from
+the live app (deterministic: stable operation ids, transitive schema closure);
+`tests/unit/api/test_api_v1_contract.py` rebuilds it and fails if it differs
+from the committed file. A change to a frozen route or shape is therefore a red
+build, not a silent edit — to change the contract on purpose, run the generator
+and commit the diff. This is narrower than `schema.d.ts` (whole spec, must stay
+free to move for the console) and stricter than `test_openapi_spec_stability.py`
+(prefixes only).
+
+To mark a versioned-but-not-frozen route, pass
+`openapi_extra={"x-vigil-beta": True}` on its decorator; it stays under
+`/api/v1` and out of the snapshot until its shape settles.

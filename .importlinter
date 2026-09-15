@@ -26,6 +26,7 @@ source_modules =
     core.platform
 forbidden_modules =
     core.agents
+    core.api
     core.auth
     core.cases
     core.chat

@@ -1,5 +1,15 @@
-# Start an agent run and report its outcome. POST enqueues plain JSON and writes
-# nothing; GET makes only the two reads Python is permitted against agent_events.
+"""Agent runs — versioned contract surface (``/api/v1/agent-runs``).
+
+The frozen run surface: start a run, list runs, read one run's status, and
+steer a live run. "Runs" in the 1.0 contract means agent runs (this router),
+not workflow-orchestration runs and not the harness write-back at
+``/internal/runs``. Mounted at both ``/api/v1/agent-runs`` and (for now)
+``/api/agent-runs``.
+
+POST enqueues plain JSON and writes nothing to the ledger; GET makes only the
+two reads Python is permitted against agent_events; the list reads run rows from
+workflow_runs (where every API-started agent run writes a row), newest first.
+"""
 
 from __future__ import annotations
 
@@ -30,9 +40,10 @@ from core.routing import Auth, RouterMeta, UnitOfWorkSession
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
-    prefix="/api/agent-runs",
+    prefix="/api/v1/agent-runs",
     tags=["agent-runs"],
     auth=Auth.REQUIRED,
+    legacy_prefixes=("/api/agent-runs",),
 )
 logger = logging.getLogger(__name__)
 
@@ -65,6 +76,57 @@ class RunStatusResponse(BaseModel):
     )
     outcome: Optional[str] = None
     reason: Optional[str] = None
+
+
+class RunListItem(BaseModel):
+    run_id: Optional[str] = None
+    run_kind: Optional[str] = Field(
+        default=None, description="hunt, lead, compose, ... — from the run's trigger."
+    )
+    status: Optional[str] = None
+    triggered_by: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class RunListResponse(BaseModel):
+    runs: list[RunListItem]
+    count: int = Field(..., description="Number of runs in this page.")
+
+
+# List agent runs, newest first. Reads the run rows in workflow_runs (every
+# API-started agent run writes one via _begin_run_row), filtered to the agent
+# source so this is the run history the console's "recently concluded
+# investigations" view and an external caller both read. Full per-run detail is
+# GET /{run_id}, which reads the ledger.
+@router.get("", response_model=RunListResponse)
+def list_runs(
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> RunListResponse:
+    from core.workflows.workflow_run_service import WorkflowRunService
+
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    rows = WorkflowRunService().list_runs(
+        workflow_source="agent",
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    items = [
+        RunListItem(
+            run_id=r.get("run_id"),
+            run_kind=(r.get("trigger_context") or {}).get("run_kind"),
+            status=r.get("status"),
+            triggered_by=r.get("triggered_by"),
+            started_at=(str(r["started_at"]) if r.get("started_at") else None),
+            finished_at=(str(r["finished_at"]) if r.get("finished_at") else None),
+        )
+        for r in rows
+    ]
+    return RunListResponse(runs=items, count=len(items))
 
 
 # Mint a run id and enqueue it. The worker opens the ledger, not this call.

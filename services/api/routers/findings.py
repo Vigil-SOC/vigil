@@ -1,6 +1,6 @@
 """Findings — unversioned operator/console endpoints.
 
-The frozen read and record-update surface lives in ``core/api/v1/findings.py``
+The frozen read and record-update surface lives in ``core/api/v1/findings_router.py``
 and is mounted at both ``/api/v1/findings`` and (for now) ``/api/findings``.
 This module keeps the routes that are *not* part of that contract: AI
 enrichment generation and the destructive wipe. They remain under

@@ -283,7 +283,7 @@ class TestTheTurnBudget:
 # call, which is correct and arrives too late to be useful.
 class TestThePricingPreflight:
     def test_answers_how_confidently_the_model_resolved(self):
-        from core.workflows.workflows_router import _pricing
+        from core.api.v1.workflows_router import _pricing
 
         reported = _pricing()
         assert reported["model"]
@@ -291,7 +291,7 @@ class TestThePricingPreflight:
 
     def test_calls_a_model_no_rate_table_carries_unknown(self, monkeypatch):
         import core.llm.defaults as defaults
-        from core.workflows import workflows_router
+        from core.api.v1 import workflows_router
 
         monkeypatch.setattr(defaults, "DEFAULT_MODEL", "groq/some-model-nobody-priced")
         assert workflows_router._pricing()["source"] == "unknown"

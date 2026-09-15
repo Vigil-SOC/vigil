@@ -124,6 +124,12 @@ async def get_workflow(
             status_code=404,
             detail=f"Workflow not found: {workflow_id}",
         )
+    # NOTE (contract smell, tracked): capabilities/pricing/budgets are agent-run
+    # preflight, not catalog data — they describe *executing* a hunt, not the
+    # workflow definition. They ride here to feed the console's start-a-hunt
+    # modal. Safe to move later without breaking the freeze: this endpoint has no
+    # response_model, so the contract snapshot pins the operation, not these
+    # fields. Follow-up: move hunt preflight off the catalog endpoint.
     # Only a hunt has turns to budget or capabilities to be missing. Answered
     # here so the console says both before the operator spends anything.
     if _is_hunt(service, workflow_id):

@@ -46,7 +46,7 @@ from core.storage.schemas.case_api import (
     CaseSummaryResponse,
 )
 from core.time import utcnow
-from services.api.middleware.auth import get_current_user
+from core.auth.current_user import get_current_user
 
 router = APIRouter()
 
