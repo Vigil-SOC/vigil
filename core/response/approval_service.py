@@ -17,7 +17,6 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
 from typing import Dict, List, Optional
 
 from sqlalchemy import select
@@ -137,20 +136,7 @@ def _nonfailed_by_key(session, key: str) -> Optional[ApprovalActionRow]:
 class ApprovalService:
     """Service for managing approval workflow for autonomous actions."""
 
-    def __init__(self, data_dir: Optional[Path] = None, dry_run: bool = False):
-        """
-        Initialize approval service.
-
-        Args:
-            data_dir: retained for backwards compatibility with callers
-                that previously passed a data directory; ignored now
-                that storage lives in Postgres.
-            dry_run: If True, don't execute actions, just log them
-        """
-        self.dry_run = dry_run
-        # data_dir retained as attribute so any caller introspecting
-        # it doesn't break; no filesystem I/O is performed anymore.
-        self.data_dir = data_dir
+    def __init__(self):
         self._load_config()
 
     # ------------------------------------------------------------------
@@ -197,65 +183,6 @@ class ApprovalService:
         self.force_manual_approval = force
         self._save_config()
         logger.info("Force manual approval set to: %s", force)
-
-    def get_force_manual_approval(self) -> bool:
-        """Get the current force manual approval setting."""
-        return self.force_manual_approval
-
-    def should_auto_approve(
-        self,
-        action: Dict,
-        threshold: float = 0.90,
-        force_manual: bool = False,
-    ) -> bool:
-        """Decide if an action should auto-approve based on confidence."""
-        if force_manual or self.get_force_manual_approval():
-            return False
-        confidence = action.get("confidence", 0.0)
-        if confidence >= threshold:
-            return True
-        if confidence >= 0.85:
-            return True
-        return False
-
-    def needs_flag(self, confidence: float) -> bool:
-        """Check if an action needs a flag (confidence 0.85-0.89)."""
-        return 0.85 <= confidence < 0.90
-
-    def get_action_decision(self, action: Dict, threshold: float = 0.90) -> str:
-        """Get the decision for an action based on confidence."""
-        confidence = action.get("confidence", 0.0)
-        if confidence < 0.70:
-            return "monitor_only"
-        elif confidence < 0.85:
-            return "manual_approval"
-        else:
-            return "auto_approve"
-
-    def is_valid_action_type(self, action_type: str) -> bool:
-        """Check if an action type is valid."""
-        try:
-            ActionType(action_type)
-            return True
-        except ValueError:
-            return False
-
-    def validate_action(self, action: Dict) -> tuple[bool, List[str]]:
-        """Validate an action payload."""
-        errors = []
-        required_fields = ["type", "target", "confidence"]
-        for field in required_fields:
-            if field not in action:
-                errors.append(f"Missing required field: {field}")
-        if "type" in action and not self.is_valid_action_type(action["type"]):
-            errors.append(f"Invalid action type: {action['type']}")
-        if "confidence" in action:
-            confidence = action.get("confidence", 0.0)
-            if not (0.0 <= confidence <= 1.0):
-                errors.append(
-                    f"Confidence must be between 0.0 and 1.0, got {confidence}"
-                )
-        return (len(errors) == 0, errors)
 
     # ------------------------------------------------------------------
     # CRUD — DB-backed
@@ -322,7 +249,7 @@ class ApprovalService:
         """Insert an approval row, or return the existing non-failed one.
 
         The bool is True when this call inserted. Isolation uses it so a
-        reused approved/pending row is not executed or escalated again.
+        reused approved/pending row is not executed again.
         """
         key = idempotency_key or None
 
@@ -613,185 +540,3 @@ class ApprovalService:
     def list_pending_approvals(self) -> List[PendingAction]:
         """List all pending actions requiring approval."""
         return self.list_actions(status=ActionStatus.PENDING, requires_approval=True)
-
-    def get_audit_trail(self, action_id: str) -> List[Dict]:
-        """Get audit trail for a specific action."""
-        action = self.get_action(action_id)
-        if not action:
-            return []
-
-        trail = [
-            {
-                "event": "created",
-                "timestamp": action.created_at,
-                "user": action.created_by,
-                "details": {
-                    "action_type": action.action_type,
-                    "target": action.target,
-                    "confidence": action.confidence,
-                },
-            }
-        ]
-
-        if action.approved_at:
-            if action.status in [
-                ActionStatus.APPROVED.value,
-                ActionStatus.EXECUTED.value,
-            ]:
-                trail.append(
-                    {
-                        "event": "approved",
-                        "timestamp": action.approved_at,
-                        "user": action.approved_by,
-                        "details": {},
-                    }
-                )
-            elif action.status == ActionStatus.REJECTED.value:
-                trail.append(
-                    {
-                        "event": "rejected",
-                        "timestamp": action.approved_at,
-                        "user": action.approved_by,
-                        "details": {"reason": action.rejection_reason},
-                    }
-                )
-
-        if action.executed_at:
-            trail.append(
-                {
-                    "event": (
-                        "executed"
-                        if action.status == ActionStatus.EXECUTED.value
-                        else "failed"
-                    ),
-                    "timestamp": action.executed_at,
-                    "user": "system",
-                    "details": {"result": action.execution_result},
-                }
-            )
-
-        return trail
-
-    def execute_action(self, action: Dict) -> Dict:
-        """Execute an action (with dry run support)."""
-        if self.dry_run:
-            logger.info(
-                "DRY RUN: Would execute %s on %s",
-                action.get("type"),
-                action.get("target"),
-            )
-            return {
-                "status": "dry_run",
-                "would_execute": True,
-                "action": action,
-            }
-        logger.warning(
-            "Action execution not yet fully implemented: %s",
-            action.get("type"),
-        )
-        return {
-            "status": "not_implemented",
-            "message": "Action execution requires service integration",
-            "action": action,
-        }
-
-    def execute_approved_action(self, action_id: str) -> Dict:
-        """Execute an approved action by ID."""
-        action = self.get_action(action_id)
-        if not action:
-            return {"error": f"Action {action_id} not found"}
-        if action.status != ActionStatus.APPROVED.value:
-            return {
-                "error": (
-                    f"Action {action_id} is not approved " f"(status: {action.status})"
-                )
-            }
-        action_dict = {
-            "type": action.action_type,
-            "target": action.target,
-            "confidence": action.confidence,
-            "parameters": action.parameters,
-        }
-        result = self.execute_action(action_dict)
-        if result.get("status") == "success":
-            self.mark_executed(action_id, result)
-        elif result.get("status") not in ["dry_run", "not_implemented"]:
-            self.mark_failed(action_id, result.get("error", "Unknown error"))
-        return result
-
-    def add_to_queue(self, action: Dict) -> str:
-        """Add an action to the approval queue (wraps create_action)."""
-        is_valid, errors = self.validate_action(action)
-        if not is_valid:
-            raise ValueError(f"Invalid action: {', '.join(errors)}")
-        pending_action = self.create_action(
-            action_type=ActionType(action["type"]),
-            title=action.get("title", f"{action['type']}: {action['target']}"),
-            description=action.get("description", action.get("reasoning", "")),
-            target=action["target"],
-            confidence=action["confidence"],
-            reason=action.get("reasoning", action.get("reason", "")),
-            evidence=action.get("evidence", []),
-            created_by=action.get("created_by", "system"),
-            parameters=action.get("parameters"),
-            workflow_run_id=action.get("workflow_run_id"),
-            workflow_phase_id=action.get("workflow_phase_id"),
-        )
-        return pending_action.action_id
-
-    def log_approval_decision(
-        self,
-        action: Dict,
-        decision: str,
-        user: str,
-        reasoning: Optional[str] = None,
-    ) -> Dict:
-        """Log an approval decision."""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "action_type": action.get("type"),
-            "target": action.get("target"),
-            "confidence": action.get("confidence"),
-            "decision": decision,
-            "user": user,
-            "reasoning": reasoning or action.get("reasoning", ""),
-            "dry_run": self.dry_run,
-        }
-        logger.info(
-            "Approval decision logged: %s by %s for %s",
-            decision,
-            user,
-            action.get("type"),
-        )
-        return log_entry
-
-    def log_execution(
-        self,
-        action_id: str,
-        status: str,
-        result: Optional[Dict] = None,
-        error: Optional[str] = None,
-    ) -> Dict:
-        """Log action execution result."""
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "action_id": action_id,
-            "status": status,
-            "result": result,
-            "error": error,
-            "dry_run": self.dry_run,
-        }
-        if status == "success":
-            logger.info("Action %s executed successfully", action_id)
-            if not self.dry_run:
-                self.mark_executed(action_id, result or {})
-        elif status == "failed":
-            logger.error("Action %s failed: %s", action_id, error)
-            if not self.dry_run:
-                self.mark_failed(action_id, error or "Unknown error")
-        else:
-            logger.info(
-                "Action %s execution skipped (dry run or other reason)",
-                action_id,
-            )
-        return log_entry

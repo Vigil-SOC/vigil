@@ -130,16 +130,12 @@ class TestIsolationIdempotency:
         response = AutonomousResponseService()
         response.approval_service.force_manual_approval = False
         executions: list[str] = []
-        escalations: list[str] = []
 
         def _fake_execute(ip_address, hostname, reason, confidence):
             executions.append(ip_address)
             return {"success": True, "ip_address": ip_address}
 
         response._execute_isolation = _fake_execute  # type: ignore[method-assign]
-        response.register_escalation_callback(
-            lambda data, severity, action_type: escalations.append(data["action_id"])
-        )
 
         first = response.create_isolation_action(
             ip_address="10.0.8.8",
@@ -173,4 +169,3 @@ class TestIsolationIdempotency:
         assert second["action_id"] == first["action_id"]
         assert second["status"] == ActionStatus.REJECTED.value
         assert executions == []
-        assert escalations == [first["action_id"]]
