@@ -6663,6 +6663,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/runs/{run_id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Replay Workflow Run
+         * @description Rebuild what each decision of a hunt was shown and compare it to the record.
+         *
+         *     Not part of the polled run detail: this folds the whole ledger on the agent
+         *     side, so it is answered only when an operator asks. Serve decides what is
+         *     hunt-like; a run with nothing to replay is a 404 here too.
+         */
+        get: operations["get_api_workflows_runs_run_id_replay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/runs/{run_id}/resume": {
         parameters: {
             query?: never;
@@ -21814,6 +21838,41 @@ export interface operations {
     post_api_workflows_runs_run_id_narrate: {
         parameters: {
             query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_workflows_runs_run_id_replay: {
+        parameters: {
+            query?: {
+                decision_id?: string | null;
+            };
             header?: {
                 authorization?: string | null;
             };
