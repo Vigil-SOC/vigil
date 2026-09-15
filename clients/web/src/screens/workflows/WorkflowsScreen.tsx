@@ -5,9 +5,7 @@ import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills } from './useWorkflowsData'
 import { workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft } from '../../services/api'
-import { skillsApi, SKILL_CATEGORIES, type SkillCategory, type SkillDraft } from '../../services/skillsApi'
 import WorkflowBuilder from './WorkflowBuilder'
-import type { Skill } from '../../data/appData'
 import type { ConsoleScreenProps } from '../../shared/types'
 
 type WfTab = 'workflows' | 'agents' | 'skills'
@@ -2797,189 +2795,31 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
 }
 
 function SkillsTab() {
-  const { rows, phase, error, reload, toggleActive } = useSkills()
-  const [building, setBuilding] = useState(false)
-  const [toDelete, setToDelete] = useState<Skill | null>(null)
-  const [importErr, setImportErr] = useState<string | null>(null)
-  const [importing, setImporting] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  const onImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = '' // allow re-selecting the same file
-    if (!file) return
-    setImporting(true)
-    setImportErr(null)
-    skillsApi
-      .importZip(file)
-      .then(() => reload())
-      .catch((err) => setImportErr(errMsg(err)))
-      .finally(() => setImporting(false))
-  }
+  const { rows, phase, error, reload } = useSkills()
 
   return (
     <>
       <div className="flex items-start gap-4 flex-wrap px-[22px] pt-5 pb-[6px]">
         <div className="flex-1 min-w-[200px]"><h2 className="text-[19px]">Skills</h2>
-          <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Reusable, parameterized capabilities agents and workflows can invoke.</p></div>
+          <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Capabilities loaded as files from the repository or a mounted skills directory. Edit them there; this list is read-only.</p></div>
         <div className="flex items-center gap-2.5 flex-wrap">
           <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
-          <button className="btn ghost" disabled={importing} onClick={() => fileRef.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import Zip'}</button>
-          <input ref={fileRef} type="file" accept=".zip,application/zip" hidden onChange={onImport} />
-          <button className="btn primary" onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build Skill</button>
         </div>
       </div>
-      {importErr && <div className="px-[22px] text-[12.5px]" style={{ color: 'var(--crit)' }}>Import failed: {importErr}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
-      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills yet" body="Build or import reusable capabilities that agents and workflows can invoke." primary={{ label: 'Build skill', onClick: () => setBuilding(true), icon: 'sparkle' }} secondary={{ label: 'Import Zip', onClick: () => fileRef.current?.click(), icon: 'upload' }} /></StateMsg>}
+      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
         <div className="grid gap-4 px-[22px] pt-[14px] pb-6 [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))]">
           {rows.map((s) => (
-            <div className="flex flex-col gap-[9px] bg-panel border border-line rounded-lg p-[18px] shadow-panel transition-[border-color,transform] duration-150 hover:border-[#2e3744] hover:-translate-y-0.5" key={s.id}>
-              <div className="flex items-start gap-2.5">
-                <h3 className="text-base flex-1 min-w-0">{s.name}</h3>
-                <span className={`sk-tag ${s.cat}`}>{s.cat === 'custom' ? 'custom' : 'built-in'}</span>
-              </div>
-              <div className="text-[11.5px] text-tx-3 mono">{s.id} · {s.v}</div>
+            <div className="flex flex-col gap-[9px] bg-panel border border-line rounded-lg p-[18px] shadow-panel" key={s.id}>
+              <h3 className="text-base min-w-0">{s.name}</h3>
+              {s.source && <div className="text-[11.5px] text-tx-3 mono break-all">{s.source}</div>}
               <p className="text-[13px] text-tx-2 leading-[1.5] flex-1">{s.desc}</p>
-              <div className="flex items-center gap-2.5 mt-1.5">
-                <span
-                  className={`sk-toggle${s.active ? ' on' : ''}`}
-                  role="switch"
-                  aria-checked={s.active}
-                  aria-label={`${s.active ? 'Deactivate' : 'Activate'} ${s.name}`}
-                  tabIndex={0}
-                  onClick={() => toggleActive(s.id)}
-                  onKeyDown={activateOnKey(() => toggleActive(s.id))}
-                ><span className="kn" /></span>
-                <span className="text-[12.5px] text-tx-2">{s.active ? 'Active' : 'Inactive'}</span>
-                <button className="sk-del" title="Delete skill" onClick={() => setToDelete(s)}><Icon name="trash" /></button>
-              </div>
             </div>
           ))}
         </div>
       )}
-      {building && <BuildSkillModal onClose={() => setBuilding(false)} onCreated={() => { setBuilding(false); reload() }} />}
-      {toDelete && <SkillDeleteModal skill={toDelete} onClose={() => setToDelete(null)} onDeleted={() => { setToDelete(null); reload() }} />}
     </>
-  )
-}
-
-function SkillDeleteModal({ skill, onClose, onDeleted }: { skill: Skill; onClose: () => void; onDeleted: () => void }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const del = () => {
-    setBusy(true)
-    setError(null)
-    skillsApi.remove(skill.id).then(onDeleted).catch((e) => { setError(errMsg(e)); setBusy(false) })
-  }
-  return (
-    <Popup open onClose={onClose} title="Delete skill" width={460}>
-      <div className="flex flex-col gap-3.5">
-        <p className="text-[13px] text-tx-2 leading-[1.5]">Delete <strong>{skill.name}</strong>? This permanently removes the skill.</p>
-        {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
-        <div className="flex justify-end gap-2.5 pt-1">
-          <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn danger" disabled={busy} style={{ opacity: busy ? 0.5 : 1 }} onClick={del}><Icon name="trash" /> {busy ? 'Deleting…' : 'Delete'}</button>
-        </div>
-      </div>
-    </Popup>
-  )
-}
-
-/** describe it, answer any clarifying question, then
-    review the generated draft and save it. Wraps skillsApi.generate + create. */
-function BuildSkillModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [description, setDescription] = useState('')
-  const [category, setCategory] = useState<SkillCategory>('custom')
-  const [history, setHistory] = useState<{ role: string; content: string }[] | null>(null)
-  const [clarify, setClarify] = useState<string | null>(null) // pending question from the AI
-  const [answer, setAnswer] = useState('')
-  const [draft, setDraft] = useState<SkillDraft | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const runGenerate = (userResponse?: string) => {
-    setBusy(true)
-    setError(null)
-    skillsApi
-      .generate({
-        description: description.trim(),
-        category,
-        conversation_history: history,
-        user_response: userResponse ?? null,
-      })
-      .then((res) => {
-        if (!res.success) { setError(res.error || res.message || 'Generation failed'); return }
-        setHistory(res.conversation_history || history)
-        if (res.needs_clarification) {
-          setClarify(res.message || 'The builder needs more detail.')
-          setDraft(null)
-        } else if (res.skill) {
-          setClarify(null)
-          setAnswer('')
-          setDraft(res.skill)
-        }
-      })
-      .catch((e) => setError(errMsg(e)))
-      .finally(() => setBusy(false))
-  }
-
-  const save = () => {
-    if (!draft) return
-    setBusy(true)
-    setError(null)
-    skillsApi.create(draft).then(onCreated).catch((e) => { setError(errMsg(e)); setBusy(false) })
-  }
-
-  return (
-    <Popup open onClose={onClose} title="Build skill" width={620}>
-      <div className="flex flex-col gap-3.5">
-        <Field label="Describe the skill" value={description} onChange={setDescription} textarea placeholder="e.g. Enrich an IP with reputation, WHOIS and passive DNS, returning a normalized verdict." />
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] uppercase tracking-[0.06em] text-tx-3">Category</span>
-          <select className="w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-none focus:border-accent-line" value={category} onChange={(e) => setCategory(e.target.value as SkillCategory)}>
-            {SKILL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </label>
-
-        {clarify && (
-          <div className="flex flex-col gap-2 border border-line rounded-[8px] p-3 bg-bg">
-            <span className="text-[11px] uppercase tracking-[0.06em] text-tx-3 flex items-center gap-1.5"><Icon name="reason" size={13} /> The builder needs more detail</span>
-            <p className="text-[13px] text-tx-2 leading-[1.5]">{clarify}</p>
-            <Field label="Your answer" value={answer} onChange={setAnswer} textarea />
-            <div className="flex justify-end">
-              <button className="btn primary" disabled={!answer.trim() || busy} style={{ opacity: !answer.trim() || busy ? 0.5 : 1 }} onClick={() => runGenerate(answer.trim())}>{busy ? 'Thinking…' : 'Send answer'}</button>
-            </div>
-          </div>
-        )}
-
-        {draft && (
-          <div className="flex flex-col gap-2 border border-line rounded-[8px] p-3 bg-bg">
-            <div className="flex items-center gap-2">
-              <span className="text-[14px] font-semibold flex-1">{draft.name}</span>
-              <span className="sk-tag custom">{draft.category}</span>
-            </div>
-            {draft.description && <p className="text-[13px] text-tx-2 leading-[1.5]">{draft.description}</p>}
-            {draft.required_tools?.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {draft.required_tools.map((t) => <span key={t} className="font-mono text-[11px] text-tx-2 bg-panel border border-line-soft rounded-[6px] px-2 py-0.5">{t}</span>)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
-        <div className="flex justify-end gap-2.5 pt-1">
-          <button className="btn ghost" onClick={onClose}>Cancel</button>
-          {draft ? (
-            <button className="btn primary" disabled={busy} style={{ opacity: busy ? 0.5 : 1 }} onClick={save}><Icon name="check2" /> {busy ? 'Saving…' : 'Create skill'}</button>
-          ) : (
-            <button className="btn primary" disabled={!description.trim() || busy || !!clarify} style={{ opacity: !description.trim() || busy || !!clarify ? 0.5 : 1 }} onClick={() => runGenerate()}><Icon name="sparkle" /> {busy ? 'Generating…' : 'Generate'}</button>
-          )}
-        </div>
-      </div>
-    </Popup>
   )
 }

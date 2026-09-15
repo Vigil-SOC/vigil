@@ -60,10 +60,9 @@ export interface AgentTemplate {
 }
 
 export interface Skill {
-  name: string
   id: string
-  v: string
-  cat: 'custom' | 'builtin'
-  active: boolean
+  name: string
   desc: string
+  /** path of the skill file when the API provides it */
+  source?: string
 }

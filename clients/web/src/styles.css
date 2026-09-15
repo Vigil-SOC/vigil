@@ -3856,27 +3856,6 @@
       min-width: 0;
    }
 
-   .sk-tag {
-      font-size: 11px;
-      font-weight: 600;
-      padding: 2px 9px;
-      border-radius: 6px;
-      white-space: nowrap;
-      flex: 0 0 auto;
-   }
-
-   .sk-tag.custom {
-      background: var(--accent-dim);
-      color: var(--accent-2);
-      border: 1px solid var(--accent-line);
-   }
-
-   .sk-tag.builtin {
-      background: var(--bg-3);
-      color: var(--tx-3);
-      border: 1px solid var(--line);
-   }
-
    .sk-id {
       font-size: 11.5px;
       color: var(--tx-3);
@@ -3932,29 +3911,6 @@
    .sk-toggle.on .kn {
       transform: translateX(16px);
       background: #fff;
-   }
-
-   .sk-del {
-      width: 32px;
-      height: 32px;
-      border-radius: 8px;
-      border: 1px solid var(--line);
-      background: transparent;
-      color: var(--tx-faint);
-      display: grid;
-      place-items: center;
-      margin-left: auto;
-   }
-
-   .sk-del:hover {
-      color: var(--crit);
-      border-color: var(--crit);
-      background: var(--crit-dim);
-   }
-
-   .sk-del svg {
-      width: 16px;
-      height: 16px;
    }
 
    /* ---------- AI Decisions ---------- */

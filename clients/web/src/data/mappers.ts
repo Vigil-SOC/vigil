@@ -323,24 +323,20 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
   }
 }
 
+/** Accepts the current DB row (skill_id, …) and the future file-loader shape (name, source_path). */
 export interface ApiSkill {
-  skill_id: string
+  skill_id?: string
   name: string
   description?: string | null
-  category?: string
-  version?: number
-  is_active?: boolean
-  created_by?: string | null
+  source_path?: string | null
+  path?: string | null
 }
 
 export function mapApiSkill(s: ApiSkill): Skill {
   return {
+    id: s.skill_id ?? s.name,
     name: s.name,
-    id: s.skill_id,
-    v: `v${s.version ?? 1}`,
-    // 'custom' keeps the accent tag; every built-in category folds to neutral
-    cat: s.category === 'custom' ? 'custom' : 'builtin',
-    active: s.is_active ?? false,
     desc: s.description || '',
+    source: s.source_path ?? s.path ?? undefined,
   }
 }
