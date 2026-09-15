@@ -4,7 +4,24 @@ import {
   MISSING_FINDING_SEVERITY,
   MISSING_FINDING_TIME,
 } from './data'
-import { formatFindingScore, mapApiFinding } from './mappers'
+import { formatFindingScore, mapApiFinding, mapApiSkill } from './mappers'
+
+describe('mapApiSkill', () => {
+  it('maps the current DB row and ignores retired fields', () => {
+    expect(
+      mapApiSkill({ skill_id: 's-1', name: 'IP Enrichment', description: 'Enrich an IP.', category: 'enrichment', version: 2, is_active: false }),
+    ).toEqual({ id: 's-1', name: 'IP Enrichment', desc: 'Enrich an IP.', source: undefined })
+  })
+
+  it('maps the file-loader shape, keying by name and surfacing the source path', () => {
+    expect(mapApiSkill({ name: 'triage', description: null, source_path: 'skills/triage/SKILL.md' })).toEqual({
+      id: 'triage',
+      name: 'triage',
+      desc: '',
+      source: 'skills/triage/SKILL.md',
+    })
+  })
+})
 
 describe('mapApiFinding missing source fields', () => {
   it('round-trips null score, severity, and timestamp to the console labels', () => {

@@ -7,6 +7,7 @@ import {
   type Finding,
 } from './data'
 import type { Schema } from '../services/apiTypes'
+import type { ApiSkill } from '../services/skillsApi'
 import {
   prettyHandle,
   type Workflow,
@@ -321,15 +322,6 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
     tools: a.recommended_tools?.length,
     custom: a.id.startsWith('custom-'),
   }
-}
-
-/** Accepts the current DB row (skill_id, …) and the future file-loader shape (name, source_path). */
-export interface ApiSkill {
-  skill_id?: string
-  name: string
-  description?: string | null
-  source_path?: string | null
-  path?: string | null
 }
 
 export function mapApiSkill(s: ApiSkill): Skill {

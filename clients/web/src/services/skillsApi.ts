@@ -8,12 +8,18 @@ import { basePath } from '../config/basePath'
  * console lists them and nothing more (epic #882, decision 7).
  */
 
-/** Tolerates both the current DB row and the future file-loader shape. */
-export interface Skill {
+/**
+ * Wire row from GET /api/skills. Tolerates both the current DB row
+ * (skill_id, category, version, is_active) and the future file-loader shape
+ * (name, description, source_path). `path` is a placeholder for whatever
+ * field name the loader settles on; #928 regenerates the real type.
+ */
+export interface ApiSkill {
   skill_id?: string
   name: string
   description?: string | null
   source_path?: string | null
+  path?: string | null
   category?: string
   version?: number
   is_active?: boolean
@@ -33,5 +39,5 @@ client.interceptors.request.use((config) => {
 })
 
 export const skillsApi = {
-  list: () => client.get<Skill[]>('').then((r) => r.data),
+  list: () => client.get<ApiSkill[]>('').then((r) => r.data),
 }
