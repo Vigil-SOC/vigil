@@ -199,8 +199,10 @@ async def _list_completed_hunts(args: Args) -> Any:
 
 # None from the read is "nothing to replay"; a model needs a body, not null.
 async def _replay_hunt(args: Args) -> Any:
-    run_id = str(args.get("run_id") or "")
-    report = await read_replay(run_id, args.get("decision_id") or None)
+    run_id = args.get("run_id")
+    if not run_id:
+        raise TypeError("replay_hunt is missing a required argument: run_id")
+    report = await read_replay(str(run_id), args.get("decision_id") or None)
     return (
         report
         if report is not None
