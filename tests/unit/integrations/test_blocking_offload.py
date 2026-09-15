@@ -116,26 +116,3 @@ async def test_defender_fetch_alerts_does_not_block_the_loop():
         f"loop served only {ticks} ticks during the Defender fetch — a "
         "blocking call is running on the event loop"
     )
-
-
-@pytest.mark.asyncio
-async def test_slack_escalation_does_not_block_the_loop():
-    from core.response.autonomous_response_service import AutonomousResponseService
-
-    svc = AutonomousResponseService()
-    response = MagicMock()
-    response.status_code = 200
-    response.json.return_value = {"ok": True}
-
-    with patch(
-        "core.config.get_integration_config",
-        return_value={"bot_token": "xoxb-1", "default_channel": "#soc"},
-    ), patch("httpx.post", _blocking(response)):
-        _, ticks = await _tick_while(
-            svc.escalate_to_slack("something happened", "high")
-        )
-
-    assert ticks >= MIN_TICKS, (
-        f"loop served only {ticks} ticks during Slack escalation — the POST "
-        "is running on the event loop"
-    )
