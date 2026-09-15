@@ -6,9 +6,10 @@
 -- known-to-be-none, never unknown. This is a column on the Verdict and not a
 -- Technique entity -- `ENTITY_KEY_TYPES` does not grow and recall is unchanged.
 --
--- Added here rather than in 26_episodic_memory.sql, which the init job treats
--- as already applied. Existing rows default to empty; the Distil's version bump
--- re-derives every hunt, and a Case-authored Verdict cites none.
+-- Added here rather than in 26_episodic_memory.sql: the Helm init job records
+-- each file once it has run, so an ALTER edited into 26 would never reach a
+-- cluster that already applied it. Existing rows default to empty; the Distil's
+-- version bump re-derives every hunt, and a Case-authored Verdict cites none.
 ALTER TABLE episodic_verdicts
     ADD COLUMN IF NOT EXISTS techniques text[] NOT NULL DEFAULT ARRAY[]::text[];
 

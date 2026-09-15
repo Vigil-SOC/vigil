@@ -421,6 +421,7 @@ dbInit:
     - 30_vigil_app_role.sql
     - 31_agent_ledger_hash_chain.sql
     - 32_drop_attack_layers.sql
+    - 33_episodic_verdict_techniques.sql
   resources:
     requests:
       cpu: 50m

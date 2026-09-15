@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DISTIL_SCHEMA_VERSION, huntDistil } from "../../workflows/hunt/distil.js";
+import { NULL_CHECK_PROVENANCE } from "../../workflows/hunt/strength.js";
 import { evidenceOn, newLedger, relate } from "../support/hunt.js";
 
 describe("huntDistil carries the techniques the evidence cited", () => {
@@ -20,36 +21,40 @@ describe("huntDistil carries the techniques the evidence cited", () => {
     expect(byId.get(credential)!.techniques).toEqual([]);
   });
 
-  it("ignores a technique named by a `neither` link or by the harness's own records", async () => {
+  it("counts a `weakens` citation and ignores `neither` links and the harness's own records", async () => {
     const { ledger, runId, hypothesisIds } = await newLedger();
     const hypothesisId = hypothesisIds[0]!;
     evidenceOn(ledger, hypothesisId, { source: "dns", relation: "neither", attackTechnique: "T1568" });
+    evidenceOn(ledger, hypothesisId, { source: "endpoint", relation: "weakens", attackTechnique: "T1059.001" });
 
-    // A failed dispatch is the harness talking, and must not reach a Verdict
-    // even when a link says it supports the claim.
-    const failed = "ev-failed";
-    ledger.append({
-      kind: "evidence",
-      payload: {
-        evidence_id: failed,
-        dispatch_id: null,
-        iteration: 1,
-        source_system: "dispatcher",
-        summary: "worker failed: timeout",
-        payload: {},
-        salience: "routine",
-        why_notable: "",
-        provenance: "tool_failure",
-        attacker_influenceable: false,
-        instruction_like: false,
-        entities: [],
-        captured_at: new Date().toISOString(),
-        attack_technique: "T1071.001",
-      },
-    });
-    relate(ledger, failed, hypothesisId, "supports");
+    // A failed dispatch and the critic's benign case are the harness talking,
+    // and must not reach a Verdict even when a link says they bear on the claim.
+    const harness = (evidenceId: string, source_system: string, provenance: string) =>
+      ledger.append({
+        kind: "evidence",
+        payload: {
+          evidence_id: evidenceId,
+          dispatch_id: null,
+          iteration: 1,
+          source_system,
+          summary: `${source_system} spoke`,
+          payload: {},
+          salience: "routine",
+          why_notable: "",
+          provenance,
+          attacker_influenceable: false,
+          instruction_like: false,
+          entities: [],
+          captured_at: new Date().toISOString(),
+          attack_technique: "T1071.001",
+        },
+      });
+    harness("ev-failed", "dispatcher", "tool_failure");
+    relate(ledger, "ev-failed", hypothesisId, "supports");
+    harness("ev-critic", "critic", NULL_CHECK_PROVENANCE);
+    relate(ledger, "ev-critic", hypothesisId, "weakens");
 
     const [conclusion] = huntDistil(runId, ledger.log).conclusions;
-    expect(conclusion!.techniques).toEqual([]);
+    expect(conclusion!.techniques).toEqual(["T1059.001"]);
   });
 });
