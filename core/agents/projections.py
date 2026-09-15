@@ -103,6 +103,33 @@ async def write_narrative(run_id: str) -> Dict[str, Any]:
     return response.json()
 
 
+async def read_replay(
+    run_id: str, decision_id: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """Rebuild what each decision of hunt ``run_id`` was shown, from its ledger.
+
+    None is serve's 404: nothing hunt-like to replay, or an unknown decision.
+    Anything else that is not a report raises, because an operator clicked
+    Replay and is owed the reason, unlike the polled projection reads.
+    """
+    import httpx
+
+    url = agent_route(f"/runs/{run_id}/replay")
+    params = {"decision_id": decision_id} if decision_id else None
+    try:
+        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
+            response = await client.get(url, headers=_headers(), params=params)
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
+
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        detail = response.text[:400]
+        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
+    return response.json()
+
+
 THREAT_HUNT_WORKFLOW_ID = "threat-hunt"
 PROJECTION_READ_CONCURRENCY = 8
 

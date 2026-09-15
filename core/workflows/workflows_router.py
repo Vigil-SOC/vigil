@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.agents.projections import read_projection
+from core.agents.projections import read_projection, read_replay
 from core.deps import (
     provide_approvals,
     provide_custom_workflows,
@@ -539,6 +539,32 @@ async def narrate_workflow_run(
 
     await _restate_summary(run_id, run_service)
     return {"success": True, "narrative": narrative}
+
+
+@router.get("/workflows/runs/{run_id}/replay")
+async def replay_workflow_run(
+    run_id: str,
+    decision_id: Optional[str] = None,
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+):
+    """Rebuild what each decision of a hunt was shown and compare it to the record.
+
+    Not part of the polled run detail: this folds the whole ledger on the agent
+    side, so it is answered only when an operator asks. Serve decides what is
+    hunt-like; a run with nothing to replay is a 404 here too.
+    """
+    if not run_service.get_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        report = await read_replay(run_id, decision_id)
+    except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
+        logger.error("could not replay run %s: %s", run_id, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    if report is None:
+        raise HTTPException(
+            status_code=404, detail=f"Nothing to replay for run: {run_id}"
+        )
+    return report
 
 
 # result_summary was rendered with the account this rewrite supersedes. The console

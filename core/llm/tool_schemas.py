@@ -390,6 +390,30 @@ DEEPTEMPO_FINDING_TOOLS = [
             "required": ["start", "end"],
         },
     },
+    {
+        "name": "replay_hunt",
+        "description": (
+            "Replay a completed threat hunt: for each decision the hunt lead "
+            "took, the digest it was shown is rebuilt from the ledger and "
+            "compared with the one recorded (rebuilt, recorded, mismatch), "
+            "alongside what memory recalled for the hunt. Pass decision_id "
+            "to narrow the report to one decision."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string",
+                    "description": "Workflow run id of the hunt (a uuid)",
+                },
+                "decision_id": {
+                    "type": "string",
+                    "description": "Replay only this decision",
+                },
+            },
+            "required": ["run_id"],
+        },
+    },
 ]
 
 # Attack Layer Tools

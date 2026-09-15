@@ -8,7 +8,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from core.agents.projections import pack_completed_hunts
+from core.agents.projections import pack_completed_hunts, read_replay
 from core.memory.recall_contract import RECALL_TOOL
 
 logger = logging.getLogger(__name__)
@@ -197,6 +197,17 @@ async def _list_completed_hunts(args: Args) -> Any:
     return await pack_completed_hunts(**allowed)
 
 
+# None from the read is "nothing to replay"; a model needs a body, not null.
+async def _replay_hunt(args: Args) -> Any:
+    run_id = str(args.get("run_id") or "")
+    report = await read_replay(run_id, args.get("decision_id") or None)
+    return (
+        report
+        if report is not None
+        else {"error": f"Nothing to replay for run {run_id}"}
+    )
+
+
 _SECURITY_TOOLS = frozenset(
     {
         "analyze_coverage",
@@ -318,6 +329,9 @@ async def execute_backend_tool(
 
     if tool_name == "list_completed_hunts":
         return await _list_completed_hunts(args), True
+
+    if tool_name == "replay_hunt":
+        return await _replay_hunt(args), True
 
     if tool_name in _SECURITY_TOOLS:
         from core.detections.tools import get_security_detection_tools
