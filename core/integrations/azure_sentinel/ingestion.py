@@ -42,10 +42,25 @@ class AzureSentinelIngestion(SIEMIngestionService):
         Returns:
             List of raw incident dictionaries
         """
+        # A missing Azure SDK used to be swallowed by the blanket
+        # `except ImportError: return []` below, which made "azure-identity was
+        # never installed" indistinguishable from "there were no incidents".
+        # Raise here instead, with an install hint, so the failure is visible.
+        # This import happens outside the try/except Exception block below so
+        # the RuntimeError is not itself swallowed back into an empty list;
+        # SIEMIngestionAdapter already isolates per-source exceptions, so one
+        # broken source still cannot take the poller down.
         try:
             from azure.identity import ClientSecretCredential
             from azure.mgmt.securityinsight import SecurityInsights
+        except ImportError as exc:
+            raise RuntimeError(
+                "Azure SDK not installed for the Azure Sentinel integration "
+                f"({exc}). Install: pip install azure-mgmt-securityinsight "
+                "azure-identity"
+            ) from exc
 
+        try:
             # Get config
             tenant_id = self.config.get("tenant_id")
             client_id = self.config.get("client_id")
@@ -139,11 +154,6 @@ class AzureSentinelIngestion(SIEMIngestionService):
             logger.info(f"Fetched {len(incidents)} incidents from Azure Sentinel")
             return incidents
 
-        except ImportError:
-            logger.error(
-                "Azure SDK not installed. Install: pip install azure-mgmt-securityinsight azure-identity"
-            )
-            return []
         except Exception as e:
             logger.error(f"Error fetching Azure Sentinel incidents: {e}")
             return []
