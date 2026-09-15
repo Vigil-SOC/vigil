@@ -11,20 +11,15 @@ from core.auth.auth_service import AuthService
 from core.cases import case_records_service
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
-from core.cases.case_ioc_service import CaseIOCService
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
 from core.cases.case_sla_service import CaseSLAService
-from core.cases.closure import ClosedByKind, ClosureCategory
 from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
 from core.storage.models import User
 from core.storage.schemas import (
-    CaseClosureInfoSchema,
     CaseCommentSchema,
     CaseEscalationSchema,
-    CaseEvidenceSchema,
-    CaseIOCSchema,
     CaseRelationshipSchema,
     CaseSchema,
     CaseSLASchema,
@@ -33,21 +28,12 @@ from core.storage.schemas import (
     CaseWatcherSchema,
 )
 from core.storage.schemas.case_api import (
-    CaseCloseResponse,
     CaseCommentsResponse,
     CaseEscalationsResponse,
-    CaseEvidenceListResponse,
-    CaseIOCBulkResponse,
-    CaseIOCExportResponse,
-    CaseIOCListResponse,
-    CaseListResponse,
-    CaseMergeResponse,
     CasePurgeResponse,
     CaseRelationshipsResponse,
     CaseReportResponse,
-    CaseSearchResponse,
     CaseSuccessResponse,
-    CaseSummaryResponse,
     CaseTasksResponse,
     CaseWatchersResponse,
 )
@@ -573,5 +559,3 @@ async def get_escalations(case_id: str, session: UnitOfWorkSession):
 
 
 # Advanced Search
-
-

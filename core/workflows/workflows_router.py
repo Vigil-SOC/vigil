@@ -9,9 +9,9 @@ from pydantic import BaseModel, Field
 from core.agents.projections import read_projection
 from core.api.v1.workflows_router import (
     _is_hunt,
-    get_workflow as _v1_get_workflow,
-    list_workflows as _v1_list_workflows,
 )
+from core.api.v1.workflows_router import get_workflow as _v1_get_workflow
+from core.api.v1.workflows_router import list_workflows as _v1_list_workflows
 from core.deps import (
     provide_approvals,
     provide_custom_workflows,

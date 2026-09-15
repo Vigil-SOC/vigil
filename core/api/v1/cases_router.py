@@ -15,14 +15,14 @@ contract); the console router does not use them.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel
 
+from core.auth.current_user import get_current_user
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
-from core.cases.case_sla_service import CaseSLAService
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
@@ -46,7 +46,6 @@ from core.storage.schemas.case_api import (
     CaseSummaryResponse,
 )
 from core.time import utcnow
-from core.auth.current_user import get_current_user
 
 router = APIRouter()
 
@@ -158,6 +157,7 @@ class CaseCreate(BaseModel):
     priority: str = "medium"
     status: str = "open"
 
+
 class CaseUpdate(BaseModel):
     """Case update request."""
 
@@ -167,6 +167,7 @@ class CaseUpdate(BaseModel):
     priority: Optional[str] = None
     notes: Optional[str] = None
     assignee: Optional[str] = None
+
 
 class EvidenceAdd(BaseModel):
     """Add evidence to case."""
@@ -179,6 +180,7 @@ class EvidenceAdd(BaseModel):
     source: Optional[str] = None
     tags: Optional[List[str]] = None
 
+
 class IOCAdd(BaseModel):
     """Add IOC to case."""
 
@@ -190,10 +192,12 @@ class IOCAdd(BaseModel):
     tags: Optional[List[str]] = None
     context: Optional[str] = None
 
+
 class IOCBulkAdd(BaseModel):
     """Bulk add IOCs."""
 
     iocs: List[Dict]
+
 
 class ClosureInfo(BaseModel):
     """Close case with metadata.
@@ -212,11 +216,13 @@ class ClosureInfo(BaseModel):
     false_positive_reason: Optional[str] = None
     closure_notes: Optional[str] = None
 
+
 class MergeRequest(BaseModel):
     """Merge another case into this one."""
 
     source_case_id: str
     merged_by: str = "system"
+
 
 class SearchRequest(BaseModel):
     """Advanced search request."""
@@ -231,6 +237,7 @@ class SearchRequest(BaseModel):
     created_before: Optional[datetime] = None
     limit: int = 100
     offset: int = 0
+
 
 @router.get("/", response_model=CaseListResponse)
 async def get_cases(status: Optional[str] = None, priority: Optional[str] = None):
@@ -254,6 +261,7 @@ async def get_cases(status: Optional[str] = None, priority: Optional[str] = None
 
     return {"cases": cases, "total": len(cases)}
 
+
 @router.get("/{case_id}", response_model=CaseSchema)
 async def get_case(case_id: str):
     """
@@ -269,6 +277,7 @@ async def get_case(case_id: str):
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
     return case
+
 
 @router.post("/", response_model=CaseSchema)
 async def create_case(case_data: CaseCreate):
@@ -315,6 +324,7 @@ async def create_case(case_data: CaseCreate):
         logger.warning(f"Failed to auto-assign SLA to case {case.get('case_id')}: {e}")
 
     return case
+
 
 @router.patch("/{case_id}", response_model=CaseSuccessResponse)
 async def update_case(
@@ -381,6 +391,7 @@ async def update_case(
 
     return {"success": True}
 
+
 @router.post("/{case_id}/findings/{finding_id}", response_model=CaseSchema)
 async def add_finding_to_case(case_id: str, finding_id: str):
     """
@@ -406,6 +417,7 @@ async def add_finding_to_case(case_id: str, finding_id: str):
 
     return data_service.get_case(case_id)
 
+
 @router.delete("/{case_id}/findings/{finding_id}", response_model=CaseSchema)
 async def remove_finding_from_case(case_id: str, finding_id: str):
     """
@@ -430,6 +442,7 @@ async def remove_finding_from_case(case_id: str, finding_id: str):
             raise HTTPException(status_code=500, detail="Failed to remove finding")
 
     return data_service.get_case(case_id)
+
 
 @router.get("/stats/summary", response_model=CaseSummaryResponse)
 async def get_cases_summary():
@@ -459,6 +472,7 @@ async def get_cases_summary():
         "by_priority": priority_counts,
     }
 
+
 @router.post("/{case_id}/evidence", response_model=CaseEvidenceSchema)
 async def add_evidence(case_id: str, data: EvidenceAdd):
     """Add evidence to case."""
@@ -477,12 +491,14 @@ async def add_evidence(case_id: str, data: EvidenceAdd):
         raise HTTPException(status_code=500, detail="Failed to add evidence")
     return CaseEvidenceSchema.dump(evidence)
 
+
 @router.get("/{case_id}/evidence", response_model=CaseEvidenceListResponse)
 async def get_evidence(case_id: str, evidence_type: Optional[str] = None):
     """Get all evidence for case."""
     evidence_service = CaseEvidenceService()
     evidence_list = evidence_service.get_case_evidence(case_id, evidence_type)
     return {"evidence": CaseEvidenceSchema.dump_many(evidence_list)}
+
 
 @router.post("/{case_id}/iocs", response_model=CaseIOCSchema)
 async def add_ioc(case_id: str, data: IOCAdd):
@@ -502,6 +518,7 @@ async def add_ioc(case_id: str, data: IOCAdd):
         raise HTTPException(status_code=500, detail="Failed to add IOC")
     return CaseIOCSchema.dump(ioc)
 
+
 @router.get("/{case_id}/iocs", response_model=CaseIOCListResponse)
 async def get_iocs(case_id: str, ioc_type: Optional[str] = None):
     """Get all IOCs for case."""
@@ -509,12 +526,14 @@ async def get_iocs(case_id: str, ioc_type: Optional[str] = None):
     iocs = ioc_service.get_case_iocs(case_id, ioc_type)
     return {"iocs": CaseIOCSchema.dump_many(iocs)}
 
+
 @router.post("/{case_id}/iocs/bulk", response_model=CaseIOCBulkResponse)
 async def bulk_add_iocs(case_id: str, data: IOCBulkAdd):
     """Bulk add IOCs to case."""
     ioc_service = CaseIOCService()
     count = ioc_service.bulk_add_iocs(case_id, data.iocs)
     return {"added": count}
+
 
 @router.get("/{case_id}/iocs/export", response_model=CaseIOCExportResponse)
 async def export_iocs(case_id: str, format: str = "json"):
@@ -530,6 +549,7 @@ async def export_iocs(case_id: str, format: str = "json"):
     else:
         content = ioc_service.export_iocs_json(case_id)
         return {"format": "json", "content": content}
+
 
 @router.post("/{case_id}/close", response_model=CaseCloseResponse)
 async def close_case(
@@ -567,6 +587,7 @@ async def close_case(
     asyncio.ensure_future(_sync_upstream_status(case_id, "closed"))
     return {"success": True, "closure": CaseClosureInfoSchema.dump(closure)}
 
+
 @router.post("/{case_id}/merge", response_model=CaseMergeResponse)
 async def merge_cases(case_id: str, data: MergeRequest):
     """Merge source case into target case.
@@ -594,6 +615,7 @@ async def merge_cases(case_id: str, data: MergeRequest):
         "source_case_status": "closed",
         "message": f"Case {data.source_case_id} merged into {case_id}",
     }
+
 
 @router.post("/search", response_model=CaseSearchResponse)
 async def search_cases(data: SearchRequest):

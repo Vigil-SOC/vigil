@@ -51,8 +51,6 @@ class RejectRequest(BaseModel):
     )
 
 
-
-
 class PendingActionResponse(BaseModel):
     """Frozen shape of an approval action (mirrors ``_pending_to_dict``).
 

@@ -51,8 +51,6 @@ class FindingUpdate(BaseModel):
     evidence_links: Optional[List[str]] = None
 
 
-
-
 class FindingListResponse(BaseModel):
     findings: List[Dict[str, Any]] = Field(default_factory=list)
     total: int

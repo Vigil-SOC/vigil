@@ -12,7 +12,7 @@ are unaffected.
 import logging
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException, Request, status
+from fastapi import Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME

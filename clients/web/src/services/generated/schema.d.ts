@@ -8080,6 +8080,21 @@ export interface components {
             /** Updated Before */
             updated_before?: string | null;
         };
+        /** ApprovalActionResult */
+        ApprovalActionResult: {
+            action: components["schemas"]["PendingActionResponse"];
+            /** Resume Result */
+            resume_result?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ApprovalListResponse */
+        ApprovalListResponse: {
+            /** Actions */
+            actions?: components["schemas"]["PendingActionResponse"][];
+            /** Count */
+            count: number;
+        };
         /** ApproveRequest */
         ApproveRequest: {
             /**
@@ -8171,6 +8186,13 @@ export interface components {
             /** Timeout Ms */
             timeout_ms: number;
         };
+        /** BreachedCasesResponse */
+        BreachedCasesResponse: {
+            /** Breached Cases */
+            breached_cases?: {
+                [key: string]: unknown;
+            }[];
+        };
         /** BudgetSettingsResponse */
         BudgetSettingsResponse: {
             /**
@@ -8222,6 +8244,20 @@ export interface components {
             };
             /** Finding Ids */
             finding_ids: string[];
+        };
+        /** ByPriorityResponse */
+        ByPriorityResponse: {
+            /** Priority Breakdown */
+            priority_breakdown?: {
+                [key: string]: number;
+            };
+        };
+        /** ByStatusResponse */
+        ByStatusResponse: {
+            /** Status Breakdown */
+            status_breakdown?: {
+                [key: string]: number;
+            };
         };
         /** CaseCloseResponse */
         CaseCloseResponse: {
@@ -8486,6 +8522,25 @@ export interface components {
             /** Success */
             success: boolean;
             target_case?: components["schemas"]["CaseSchema"] | null;
+        };
+        /** CaseMetricsSummaryResponse */
+        CaseMetricsSummaryResponse: {
+            /** Critical Cases */
+            critical_cases: number;
+            /** Open Cases */
+            open_cases: number;
+            /** Priority Breakdown */
+            priority_breakdown?: {
+                [key: string]: number;
+            };
+            /** Resolved Cases */
+            resolved_cases: number;
+            /** Status Breakdown */
+            status_breakdown?: {
+                [key: string]: number;
+            };
+            /** Total Cases */
+            total_cases: number;
         };
         /** CasePurgeResponse */
         CasePurgeResponse: {
@@ -9410,6 +9465,28 @@ export interface components {
             /** Min Severity */
             min_severity?: string | null;
         };
+        /** FindingExportResponse */
+        FindingExportResponse: {
+            /** File Path */
+            file_path: string;
+            /** Success */
+            success: boolean;
+        };
+        /** FindingListResponse */
+        FindingListResponse: {
+            /** Findings */
+            findings?: {
+                [key: string]: unknown;
+            }[];
+            /** Has More */
+            has_more: boolean;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
         /**
          * FindingUpdate
          * @description Schema for updating a finding.
@@ -9437,6 +9514,30 @@ export interface components {
             severity?: string | null;
             /** Status */
             status?: string | null;
+        };
+        /** FindingUpdateResponse */
+        FindingUpdateResponse: {
+            /** Finding */
+            finding?: {
+                [key: string]: unknown;
+            };
+            /** Success */
+            success: boolean;
+            /** Updated Fields */
+            updated_fields?: string[];
+        };
+        /** FindingsSummaryResponse */
+        FindingsSummaryResponse: {
+            /** By Data Source */
+            by_data_source?: {
+                [key: string]: number;
+            };
+            /** By Severity */
+            by_severity?: {
+                [key: string]: number;
+            };
+            /** Total */
+            total: number;
         };
         /**
          * ForkAgentRequest
@@ -9981,6 +10082,36 @@ export interface components {
             /** Models */
             models: components["schemas"]["ModelInfoResponse"][];
         };
+        /** MttdResponse */
+        MttdResponse: {
+            /** Average Mttd Hours */
+            average_mttd_hours?: number | null;
+            /** Average Mttd Seconds */
+            average_mttd_seconds?: number | null;
+            /** Mttd By Priority */
+            mttd_by_priority?: {
+                [key: string]: number | null;
+            };
+            /** Total Cases */
+            total_cases: number;
+        };
+        /** MttrResponse */
+        MttrResponse: {
+            /** Average Mttr Hours */
+            average_mttr_hours?: number | null;
+            /** Average Mttr Seconds */
+            average_mttr_seconds?: number | null;
+            /** Mttr By Priority */
+            mttr_by_priority?: {
+                [key: string]: number | null;
+            };
+            /** Total Cases */
+            total_cases: number;
+            /** Trend Data */
+            trend_data?: {
+                [key: string]: unknown;
+            }[];
+        };
         /**
          * OrchestratorSettingsConfig
          * @description Orchestrator configuration for autonomous investigations.
@@ -10100,6 +10231,59 @@ export interface components {
              * Format: email
              */
             email: string;
+        };
+        /**
+         * PendingActionResponse
+         * @description Frozen shape of an approval action (mirrors ``_pending_to_dict``).
+         *
+         *     Value types are permissive where the underlying dataclass carries open JSON
+         *     (evidence, parameters, execution_result); the key set is the promise.
+         */
+        PendingActionResponse: {
+            /** Action Id */
+            action_id?: string | null;
+            /** Action Type */
+            action_type?: string | null;
+            /** Approved At */
+            approved_at?: string | null;
+            /** Approved By */
+            approved_by?: string | null;
+            /** Confidence */
+            confidence?: number | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Created By */
+            created_by?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Evidence */
+            evidence?: unknown | null;
+            /** Executed At */
+            executed_at?: string | null;
+            /** Execution Result */
+            execution_result?: unknown | null;
+            /** Idempotency Key */
+            idempotency_key?: string | null;
+            /** Parameters */
+            parameters?: unknown | null;
+            /** Reason */
+            reason?: string | null;
+            /** Rejection Reason */
+            rejection_reason?: string | null;
+            /** Requires Approval */
+            requires_approval?: boolean | null;
+            /** Reversibility */
+            reversibility?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Target */
+            target?: unknown | null;
+            /** Title */
+            title?: string | null;
+            /** Workflow Phase Id */
+            workflow_phase_id?: string | null;
+            /** Workflow Run Id */
+            workflow_run_id?: string | null;
         };
         /** PhaseUpdate */
         PhaseUpdate: {
@@ -11466,6 +11650,15 @@ export interface components {
         WorkflowGenerateRequest: {
             /** Description */
             description: string;
+        };
+        /** WorkflowListResponse */
+        WorkflowListResponse: {
+            /** Count */
+            count: number;
+            /** Workflows */
+            workflows?: {
+                [key: string]: unknown;
+            }[];
         };
         /** WorkflowPhaseSchema */
         WorkflowPhaseSchema: {
@@ -12835,7 +13028,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApprovalListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -12903,7 +13096,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PendingActionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -12940,7 +13133,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApprovalActionResult"];
                 };
             };
             /** @description Validation Error */
@@ -12977,7 +13170,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApprovalActionResult"];
                 };
             };
             /** @description Validation Error */
@@ -13915,7 +14108,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BreachedCasesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -13949,7 +14142,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ByPriorityResponse"];
                 };
             };
             /** @description Validation Error */
@@ -13983,7 +14176,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ByStatusResponse"];
                 };
             };
             /** @description Validation Error */
@@ -14085,7 +14278,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MttdResponse"];
                 };
             };
             /** @description Validation Error */
@@ -14120,7 +14313,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MttrResponse"];
                 };
             };
             /** @description Validation Error */
@@ -14188,7 +14381,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CaseMetricsSummaryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -17988,7 +18181,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -18087,7 +18280,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingExportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -18118,7 +18311,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingsSummaryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -18188,7 +18381,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingUpdateResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22616,7 +22809,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApprovalListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22684,7 +22877,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["PendingActionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22721,7 +22914,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApprovalActionResult"];
                 };
             };
             /** @description Validation Error */
@@ -22758,7 +22951,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ApprovalActionResult"];
                 };
             };
             /** @description Validation Error */
@@ -22928,7 +23121,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["BreachedCasesResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22962,7 +23155,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ByPriorityResponse"];
                 };
             };
             /** @description Validation Error */
@@ -22996,7 +23189,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["ByStatusResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23098,7 +23291,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MttdResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23133,7 +23326,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MttrResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23201,7 +23394,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["CaseMetricsSummaryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23771,7 +23964,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingListResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23804,7 +23997,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingExportResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23835,7 +24028,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingsSummaryResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23905,7 +24098,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingUpdateResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23936,7 +24129,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WorkflowListResponse"];
                 };
             };
             /** @description Validation Error */

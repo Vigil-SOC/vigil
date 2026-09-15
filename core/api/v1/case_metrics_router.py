@@ -78,6 +78,7 @@ class ByPriorityResponse(BaseModel):
 class ByStatusResponse(BaseModel):
     status_breakdown: Dict[str, int] = Field(default_factory=dict)
 
+
 metrics_service = CaseMetricsService()
 
 
