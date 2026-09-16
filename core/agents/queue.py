@@ -25,7 +25,7 @@ JOB_SCHEMA_VERSION = 1
 
 DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 
-RUN_KINDS = ("hunt", "root_cause", "investigate", "compose", "chat")
+RUN_KINDS = ("hunt", "root_cause", "adjudicate", "investigate", "compose", "chat")
 
 # BullMQ defaults to one attempt, so a job that throws is permanently failed and
 # nothing rescues it: the watchdog sweeps lapsed lease rows, and a job that died on

@@ -35,10 +35,10 @@ export interface ArchEntry {
   distil?: (runId: string, events: readonly AgentEvent<Record<never, never>>[]) => unknown;
 }
 
-// The hunt lead-loop, minus its arch prompt. Both `hunt` and `root_cause` run this
-// exact loop — same actions, halts, ownership, projection and notes — and differ only
-// in the arch that frames the lead's job, so the shared mechanics live here and drift
-// between the two kinds is impossible rather than a two-place edit to remember.
+// The hunt lead-loop, minus its arch prompt. `hunt`, `root_cause` and `adjudicate`
+// run this exact loop — same actions, halts, ownership, projection and notes — and
+// differ only in the arch that frames the lead's job, so the shared mechanics live
+// here and drift between the kinds is impossible rather than a three-place edit.
 // notes/projection are retyped here because this is the one place that already knows
 // the kind, the same trade the worker makes when it hands a ledger to a workflow.
 const HUNT_LOOP: Omit<ArchEntry, "arch"> = {
@@ -63,6 +63,11 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
   // lead's job as tracing a confirmed compromise to its origin. Sharing HUNT_LOOP
   // keeps the kind honest rather than borrowing "hunt".
   root_cause: { arch: packaged("rootcause.yaml"), ...HUNT_LOOP },
+  // adjudicate is a hunt run as a second opinion: the lead is shown a finding
+  // intake admitted and the workflow intake chose, tests the stated intent against
+  // the seeded benign account, and proposes a workflow without starting one. Same
+  // HUNT_LOOP, no distil for the reason given above.
+  adjudicate: { arch: packaged("adjudicate.yaml"), ...HUNT_LOOP },
   investigate: {
     arch: packaged("investigate.yaml"),
     workflow: "lead",
