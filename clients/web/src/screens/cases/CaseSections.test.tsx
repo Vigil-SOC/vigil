@@ -155,7 +155,7 @@ describe('ActivityCard', () => {
       </MemoryRouter>,
     )
 
-    const links = screen.getAllByRole('link', { name: 'Open run' })
+    const links = screen.getAllByRole('link', { name: /Open run/ })
     expect(links).toHaveLength(1)
     expect(links[0]).toHaveAttribute('href', '/workflows?run=run-abc')
     expect(screen.getByText('Status changed')).toBeInTheDocument()

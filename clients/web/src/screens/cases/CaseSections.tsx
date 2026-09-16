@@ -782,7 +782,7 @@ export function ActivityCard({ activities }: { activities: Activity[] }) {
               <div className="text-tx-2">{a.description || '—'}</div>
               <div className="text-xs text-tx-faint mt-[2px]">
                 {a.activity_type || 'event'} · {fmtDT(a.timestamp)}
-                {runId && <> · <Link className="text-accent-2 hover:underline" to={`/workflows?run=${encodeURIComponent(runId)}`}>Open run</Link></>}
+                {runId && <> · <Link className="text-accent-2 hover:underline" aria-label={`Open run ${runId}`} to={`/workflows?run=${encodeURIComponent(runId)}`}>Open run</Link></>}
               </div>
             </div>
           )

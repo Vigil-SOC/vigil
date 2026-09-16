@@ -39,7 +39,7 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && (runId ? <RunView runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog goSettings={goSettings} />)}
+      {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab />}
       {tab === 'skills' && <SkillsTab />}
     </>
@@ -47,13 +47,20 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
 }
 
 /** One run reached by URL rather than through History. Same hook and panel as
- *  RunRow, so the run polls while in flight and stops at terminal. */
+ *  RunRow, so the run polls while in flight and stops at terminal. Keyed on the
+ *  id by the caller, so a new ?run= starts clean rather than over the old detail.
+ *  Watching stops on error: with no seed status the hook would otherwise keep
+ *  polling a run that does not exist. */
 function RunView({ runId, onBack }: { runId: string; onBack: () => void }) {
-  const { detail, dphase, setDphase, load } = useRunDetail(runId, true)
+  const [watching, setWatching] = useState(true)
+  const { detail, dphase, setDphase, load } = useRunDetail(runId, watching)
   useEffect(() => {
     setDphase('loading')
     void load()
   }, [load, setDphase])
+  useEffect(() => {
+    if (dphase === 'error') setWatching(false)
+  }, [dphase])
   return (
     <>
       <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
@@ -62,7 +69,7 @@ function RunView({ runId, onBack }: { runId: string; onBack: () => void }) {
       </div>
       <div className="px-[22px] py-5">
         {dphase === 'loading' && <div className="muted">Loading run detail…</div>}
-        {dphase === 'error' && <div className="muted">No run found with id {runId}.</div>}
+        {dphase === 'error' && <div className="muted">Couldn’t load run {runId}. It may have been removed, or the id may be wrong.</div>}
         {dphase === 'ready' && detail && <RunDetail d={detail} onSteered={load} />}
       </div>
     </>
