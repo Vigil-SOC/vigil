@@ -1,4 +1,5 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
@@ -12,6 +13,10 @@ type WfTab = 'workflows' | 'agents' | 'skills'
 
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<WfTab>('workflows')
+  // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const runId = searchParams.get('run')
+  const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   const tabs: [WfTab, string][] = [
     ['workflows', 'Workflows'],
     ['agents', 'Agents'],
@@ -34,9 +39,32 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && <WorkflowCatalog goSettings={goSettings} />}
+      {tab === 'workflows' && (runId ? <RunView runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab />}
       {tab === 'skills' && <SkillsTab />}
+    </>
+  )
+}
+
+/** One run reached by URL rather than through History. Same hook and panel as
+ *  RunRow, so the run polls while in flight and stops at terminal. */
+function RunView({ runId, onBack }: { runId: string; onBack: () => void }) {
+  const { detail, dphase, setDphase, load } = useRunDetail(runId, true)
+  useEffect(() => {
+    setDphase('loading')
+    void load()
+  }, [load, setDphase])
+  return (
+    <>
+      <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
+        <button className="btn ghost" onClick={onBack}><Icon name="chevL" size={13} /> All workflows</button>
+        <span className="mono text-[11.5px] text-tx-3">{runId}</span>
+      </div>
+      <div className="px-[22px] py-5">
+        {dphase === 'loading' && <div className="muted">Loading run detail…</div>}
+        {dphase === 'error' && <div className="muted">No run found with id {runId}.</div>}
+        {dphase === 'ready' && detail && <RunDetail d={detail} onSteered={load} />}
+      </div>
     </>
   )
 }
