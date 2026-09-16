@@ -124,7 +124,7 @@ def _extract_observables(pattern: str) -> Iterable[Tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 # The same shape core/detections/tools.py scans rules with.
-_TECHNIQUE_ID = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
+_TECHNIQUE_ID = re.compile(r"\bT\d{4}(?:\.\d{3})?\b", re.ASCII)
 
 # `_STIX_TO_VIGIL_TYPE` speaks the threat_indicators vocabulary, which splits
 # hashes by algorithm; Entity Keys have one `hash` type. `entity_key()` does not
@@ -149,24 +149,31 @@ if _UNMAPPED or _OFF_VOCABULARY:
 
 
 def _ordered_unique(values: Iterable[str]) -> List[str]:
+    seen = set()
     out: List[str] = []
     for value in values:
-        if value and value not in out:
+        if value and value not in seen:
+            seen.add(value)
             out.append(value)
     return out
 
 
 def _stix_objects(text: str) -> Optional[List[Dict[str, Any]]]:
-    """The objects of a STIX bundle, or None when the text is not one."""
+    """The objects of a STIX bundle, or None when the text is not one.
+
+    A list holding no objects at all (``["seen 8.8.8.8"]``) is not a bundle
+    either, and falls through to the text scan like any other JSON.
+    """
     try:
         data = json.loads(text)
-    except ValueError:
+    except (ValueError, RecursionError):  # deeply nested garbage recurses
         return None
     if isinstance(data, dict):
         data = data.get("objects")
     if not isinstance(data, list):
         return None
-    return [obj for obj in data if isinstance(obj, dict)]
+    objects = [obj for obj in data if isinstance(obj, dict)]
+    return objects or None
 
 
 def _attack_pattern_ids(obj: Dict[str, Any]) -> Iterable[str]:
@@ -200,7 +207,9 @@ def parse_report(text: str) -> Dict[str, List[str]]:
     for obj in objects:
         kind = obj.get("type")
         if kind == "indicator":
-            for vigil_type, value in _extract_observables(str(obj.get("pattern", ""))):
+            for vigil_type, value in _extract_observables(
+                str(obj.get("pattern") or "")
+            ):
                 entity_type = _INDICATOR_TO_ENTITY_TYPE.get(vigil_type)
                 if entity_type:
                     keys.append(entity_key(entity_type, value))

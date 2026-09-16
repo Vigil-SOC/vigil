@@ -101,12 +101,14 @@ def normalise_keys(keys: object) -> List[str]:
 # services/agent/workflows/hunt/entities.ts. Same patterns, same well-formed
 # checks, so a pasted report and a hunt's evidence agree on what is an entity.
 # re.ASCII because JS `\b`, `\d` and `[a-z]` are ASCII-only; Python's default
-# Unicode classes would match wider and the two would drift.
+# Unicode classes would match wider and the two would drift. JS `\s` is the
+# exception — it is Unicode even without the `u` flag — so it is spelled out.
 _FLAGS = re.IGNORECASE | re.ASCII
+_JS_WS = "\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
 _TEXT_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
-    ("arn", re.compile(r"\barn:aws:[a-z0-9-]*:[^\s\"',]*", _FLAGS)),
+    ("arn", re.compile(rf"\barn:aws:[a-z0-9-]*:[^\"',{_JS_WS}]*", _FLAGS)),
     ("aws_key", re.compile(r"\b(?:AKIA|ASIA|AIDA|AROA)[0-9A-Z]{16}\b", re.ASCII)),
-    ("url", re.compile(r"\bhttps?://[^\s\"'<>]+", _FLAGS)),
+    ("url", re.compile(rf"\bhttps?://[^\"'<>{_JS_WS}]+", _FLAGS)),
     ("email", re.compile(r"\b[a-z0-9._%+-]+@(?:[a-z0-9-]+\.)+[a-z]{2,24}\b", _FLAGS)),
     ("hash", re.compile(r"\b(?:[0-9a-f]{64}|[0-9a-f]{40}|[0-9a-f]{32})\b", _FLAGS)),
     ("ip", re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", re.ASCII)),
@@ -116,7 +118,7 @@ _TEXT_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
         re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}\b", _FLAGS),
     ),
 )
-_VERSION_WORD = re.compile(r"\b(?:v|ver|version|release|build)[\s.:=]*$", _FLAGS)
+_VERSION_WORD = re.compile(rf"\b(?:v|ver|version|release|build)[.:={_JS_WS}]*$", _FLAGS)
 _TRAILING_PUNCT = re.compile(r"[.,;)]+$")
 _HASH = re.compile(r"^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$")
 

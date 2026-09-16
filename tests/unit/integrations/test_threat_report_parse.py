@@ -78,13 +78,37 @@ def test_plain_text_follows_hunt_extractor_well_formed_rules():
     assert text_entity_keys("host evil.com.") == ["domain:evil.com"]
 
 
-@pytest.mark.parametrize("text", ["", "   ", "{not json", '{"foo": 1}', "[]", "42"])
+def test_url_stops_at_unicode_whitespace_like_the_hunt_extractor():
+    assert text_entity_keys("see http://evil.com/x\u00a0tail") == [
+        "url:http://evil.com/x",
+        "domain:evil.com",
+    ]
+
+
+@pytest.mark.parametrize(
+    "text", ["", "   ", "{not json", '{"foo": 1}', "[]", "42", "[" * 100_000]
+)
 def test_empty_or_unrecognised_input_gives_empty_lists(text):
     assert parse_report(text) == {"entity_keys": [], "techniques": []}
 
 
-def test_unrecognised_json_falls_through_to_text():
-    assert parse_report('{"note": "seen 8.8.8.8 with T1566"}') == {
+@pytest.mark.parametrize(
+    "text", ['{"note": "seen 8.8.8.8 with T1566"}', '["seen 8.8.8.8 with T1566"]']
+)
+def test_unrecognised_json_falls_through_to_text(text):
+    assert parse_report(text) == {
         "entity_keys": ["ip:8.8.8.8"],
         "techniques": ["T1566"],
     }
+
+
+def test_attack_pattern_keeps_only_technique_ids():
+    obj = {
+        "type": "attack-pattern",
+        "external_references": [
+            {"source_name": "mitre-attack", "external_id": "TA0011"},
+            {"source_name": "mitre-attack", "external_id": "T1071"},
+            "not-a-reference",
+        ],
+    }
+    assert parse_report(json.dumps([obj]))["techniques"] == ["T1071"]
