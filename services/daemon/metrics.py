@@ -218,11 +218,11 @@ class MetricsServer:
         self.orchestrator = None
 
     @property
-    def _health_port(self) -> int:
+    def health_port(self) -> int:
         return DAEMON_HEALTH_PORT
 
     @property
-    def _metrics_port(self) -> int:
+    def metrics_port(self) -> int:
         return DAEMON_METRICS_PORT
 
     async def run(self, shutdown_event: asyncio.Event):
@@ -235,21 +235,27 @@ class MetricsServer:
         metrics_app.router.add_get("/metrics", self._handle_metrics)
 
         runners = []
-        for app, port, label in (
-            (health_app, self._health_port, "Health"),
-            (metrics_app, self._metrics_port, "Prometheus"),
-        ):
-            runner = web.AppRunner(app)
-            await runner.setup()
-            runners.append(runner)
-            logger.info("%s server starting on port %d", label, port)
-            await web.TCPSite(runner, "0.0.0.0", port).start()
+        try:
+            for app, port, label in (
+                (health_app, self.health_port, "Health"),
+                (metrics_app, self.metrics_port, "Prometheus"),
+            ):
+                runner = web.AppRunner(app)
+                await runner.setup()
+                runners.append(runner)
+                logger.info("%s server starting on port %d", label, port)
+                await web.TCPSite(runner, "0.0.0.0", port).start()
 
-        await shutdown_event.wait()
-
-        for runner in runners:
-            await runner.cleanup()
-        logger.info("Health and Prometheus servers stopped")
+            await shutdown_event.wait()
+        except Exception:
+            # A failed second bind must not leave the first listener orphaned;
+            # log here because main.py gathers with return_exceptions=True.
+            logger.exception("Health/Prometheus server failed")
+            raise
+        finally:
+            for runner in runners:
+                await runner.cleanup()
+            logger.info("Health and Prometheus servers stopped")
 
     async def _handle_metrics(self, request: web.Request) -> web.Response:
         """Prometheus text for the default registry (OTEL reader lives there)."""

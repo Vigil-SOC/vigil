@@ -241,14 +241,14 @@ def _do_init(service_name: str) -> None:
     from opentelemetry.exporter.prometheus import PrometheusMetricReader
     from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
+    # OTLP first: constructing PrometheusMetricReader registers on REGISTRY, so
+    # anything that can raise happens before that side effect.
+    otlp_reader = PeriodicExportingMetricReader(
+        OTLPMetricExporter(endpoint=endpoint, insecure=True)
+    )
     meter_provider = MeterProvider(
         resource=resource,
-        metric_readers=[
-            PrometheusMetricReader(),
-            PeriodicExportingMetricReader(
-                OTLPMetricExporter(endpoint=endpoint, insecure=True)
-            ),
-        ],
+        metric_readers=[PrometheusMetricReader(), otlp_reader],
     )
     metrics.set_meter_provider(meter_provider)
     _meter_provider = meter_provider

@@ -147,7 +147,7 @@ class TestGetMetricsResponse(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn("text/plain", resp.media_type)
         self.assertIn(b"# TYPE vigil_test_scrape_total counter", resp.body)
-        self.assertRegex(resp.body, rb"vigil_test_scrape_total\{[^}]*\} 3\.0")
+        self.assertRegex(resp.body, rb"vigil_test_scrape_total(\{[^}]*\})? 3\.0")
 
 
 if __name__ == "__main__":

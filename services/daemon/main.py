@@ -185,8 +185,8 @@ class SOCDaemon:
             )
             logger.info(
                 "Metrics server started (health :%d, prometheus :%d)",
-                self._metrics_server._health_port,
-                self._metrics_server._metrics_port,
+                self._metrics_server.health_port,
+                self._metrics_server.metrics_port,
             )
 
         logger.info("SOC Daemon fully operational")

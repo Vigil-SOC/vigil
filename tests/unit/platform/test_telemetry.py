@@ -135,11 +135,11 @@ class TestMeterProviderReaders:
         from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
         tel = _reload_telemetry()
-        # The global providers can only be set once per process; keep the
-        # test's providers out of them.
-        with patch.dict(os.environ, {"VIGIL_OTEL_ENABLED": "true"}), patch.object(
-            otel_metrics, "set_meter_provider"
-        ), patch.object(otel_trace, "set_tracer_provider"):
+        # _do_init is called directly (it does not read the flag). The global
+        # providers can only be set once per process; keep the test's out.
+        with patch.object(otel_metrics, "set_meter_provider"), patch.object(
+            otel_trace, "set_tracer_provider"
+        ):
             tel._do_init("svc")
         try:
             readers = list(tel._meter_provider._all_metric_readers)
