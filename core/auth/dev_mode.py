@@ -20,6 +20,7 @@ address the network can reach announces that too, in its own right, because
 that is the case where the setting stops being a local convenience.
 """
 
+import ipaddress
 import logging
 import sys
 
@@ -27,8 +28,9 @@ from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-# Addresses that reach only this machine.
-LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", ""})
+# Names that reach only this machine. Numeric addresses are not listed: the
+# loopback range is wider than 127.0.0.1 and ipaddress already knows it.
+_LOOPBACK_NAMES = frozenset({"localhost"})
 
 # The gates DEV_MODE opens, in the order the banner lists them.
 BYPASSED_GATES = (
@@ -40,8 +42,57 @@ _BANNER_WIDTH = 74
 
 
 def is_exposed(bind_host: str) -> bool:
-    """Is this address reachable from somewhere other than this machine?"""
-    return (bind_host or "").strip().lower() not in LOOPBACK_HOSTS
+    """Is this address reachable from somewhere other than this machine?
+
+    Anything not known to be local counts as exposed — an unset host (uvicorn's
+    "every interface", not loopback) and a name this process cannot resolve
+    alike. The two mistakes available here are not symmetrical: calling a
+    loopback bind exposed prints a banner someone can dismiss in a second, and
+    calling an exposed bind loopback is a silence that outlives the session.
+    """
+    host = (bind_host or "").strip().lower()
+    if not host:
+        return True
+    if host in _LOOPBACK_NAMES:
+        return False
+    try:
+        # strip("[]") for the bracketed IPv6 form a --host argument can carry.
+        return not ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return True
+
+
+def bind_host_from_argv() -> str | None:
+    """The address on this process's own command line, if it carries one.
+
+    BIND_HOST is what the launchers export and what ``Settings`` reads, but
+    ``uvicorn --host 0.0.0.0`` typed by hand exports nothing. Without this the
+    banner would fall back to the unset default and call that run loopback --
+    wrong in the one direction where being wrong costs something.
+    """
+    args = list(sys.argv)
+    for index, arg in enumerate(args):
+        if arg == "--host" and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith("--host="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def resolve_bind_host() -> str:
+    """The address this process will listen on, as closely as it can be known.
+
+    The command line wins: uvicorn binds what it was passed, whatever the
+    environment says. Otherwise BIND_HOST, which every launcher in the repo
+    exports before starting the server.
+    """
+    from_argv = bind_host_from_argv()
+    return from_argv if from_argv is not None else get_settings().bind_host
+
+
+def _describe(bind_host: str) -> str:
+    """The address as the banner should name it, never as an empty space."""
+    return bind_host or "every interface (no host set)"
 
 
 def _banner(bind_host: str) -> str:
@@ -52,7 +103,7 @@ def _banner(bind_host: str) -> str:
 
     if exposed:
         lines += [
-            f"  AND IT IS LISTENING ON {bind_host}, WHICH IS NOT LOOPBACK.",
+            f"  AND IT IS LISTENING ON {_describe(bind_host)}, WHICH IS NOT LOOPBACK.",
             "  Anyone who can route to this host has full administrative access",
             "  to it. No password, no token, no audit trail worth the name.",
             "",
@@ -69,7 +120,7 @@ def _banner(bind_host: str) -> str:
         ]
     else:
         lines += [
-            f"  Bound to {bind_host or '127.0.0.1'} (loopback — this machine only).",
+            f"  Bound to {bind_host} (loopback — this machine only).",
             "  Set DEV_MODE=false in .env to require a login.",
         ]
 
@@ -88,17 +139,18 @@ def announce_dev_mode() -> None:
     if not settings.dev_mode:
         return
 
-    exposed = is_exposed(settings.bind_host)
+    bind_host = resolve_bind_host()
+    exposed = is_exposed(bind_host)
 
     # Auditable in whatever collects this service's logs: one event per startup,
     # under a stable name, carrying what was opened and whether it is exposed.
     logger.warning(
         "security.dev_mode_enabled: authentication bypassed on %s%s",
-        settings.bind_host,
+        bind_host,
         " (REACHABLE FROM THE NETWORK)" if exposed else "",
         extra={
             "event": "security.dev_mode_enabled",
-            "bind_host": settings.bind_host,
+            "bind_host": bind_host,
             "exposed": exposed,
             "bypassed_gates": list(BYPASSED_GATES),
         },
@@ -107,4 +159,4 @@ def announce_dev_mode() -> None:
     # stderr as well as the log: a container's logs are the only surface some
     # deployments have, and a WARNING can be filtered out by a log level nobody
     # remembers setting.
-    print(_banner(settings.bind_host), file=sys.stderr)
+    print(_banner(bind_host), file=sys.stderr)

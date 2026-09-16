@@ -26,12 +26,14 @@ from pathlib import Path
 
 import pytest
 
-from core.auth.dev_mode import BYPASSED_GATES
+from core.auth.dev_mode import BYPASSED_GATES, is_exposed
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _import_api(**env_overrides: str) -> subprocess.CompletedProcess[str]:
+def _import_api(
+    *argv: str, **env_overrides: str
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env.pop("DEV_MODE", None)
     env.pop("BIND_HOST", None)
@@ -45,7 +47,7 @@ def _import_api(**env_overrides: str) -> subprocess.CompletedProcess[str]:
         else str(REPO_ROOT)
     )
     return subprocess.run(
-        [sys.executable, "-c", "import services.api.main"],
+        [sys.executable, "-c", "import services.api.main", *argv],
         cwd=REPO_ROOT,
         env=env,
         text=True,
@@ -53,6 +55,48 @@ def _import_api(**env_overrides: str) -> subprocess.CompletedProcess[str]:
         check=False,
         timeout=120,
     )
+
+
+# Every file a fresh install copies from. They document one bypass between them.
+ENV_EXAMPLES = (
+    REPO_ROOT / "env.example",
+    REPO_ROOT / "clients" / "web" / "env.development.example",
+)
+
+
+# Not part of what an install ships: build output, dependencies, local state.
+UNSHIPPED_DIRS = frozenset(
+    {
+        ".git",
+        ".pytest_cache",
+        "__pycache__",
+        "build",
+        "coverage",
+        "dist",
+        "htmlcov",
+        "node_modules",
+        "venv",
+        ".venv",
+    }
+)
+
+# Files that name the password without offering it to anyone:
+CREDENTIAL_SWEEP_ALLOWED = frozenset(
+    {
+        # a breach wordlist — it is supposed to contain weak passwords
+        REPO_ROOT / "data" / "common_passwords.txt",
+        # types a password into a login form; creates no account
+        REPO_ROOT
+        / "clients"
+        / "web"
+        / "src"
+        / "screens"
+        / "login"
+        / "LoginScreen.test.tsx",
+        # this file
+        Path(__file__).resolve(),
+    }
+)
 
 
 class TestShippedConfiguration:
@@ -66,16 +110,35 @@ class TestShippedConfiguration:
         )
         assert "\nDEV_MODE=true\n" not in text
 
-    def test_env_example_does_not_point_at_a_file_that_does_not_exist(self):
-        text = (REPO_ROOT / "env.example").read_text()
+    def test_no_env_example_points_at_a_file_that_does_not_exist(self):
+        """Both files describe the same bypass, so both can dangle."""
+        if (REPO_ROOT / "DEV_MODE.md").exists():
+            return
 
-        assert "DEV_MODE.md" not in text or (REPO_ROOT / "DEV_MODE.md").exists()
+        offenders = [
+            path.relative_to(REPO_ROOT)
+            for path in ENV_EXAMPLES
+            if "DEV_MODE.md" in path.read_text()
+        ]
 
-    def test_no_script_creates_an_account_with_a_password_we_chose(self):
-        """A known default credential is the same hole wherever it is written."""
+        assert not offenders, f"reference to a file that does not exist in: {offenders}"
+
+    def test_nothing_shipped_creates_or_announces_a_password_we_chose(self):
+        """A known default credential is the same hole wherever it is written.
+
+        The whole tree, not just ``scripts/``: the last one to survive a sweep
+        of the scripts was a helm NOTES.txt telling operators to log in with a
+        password nothing had set.
+        """
         offenders = []
-        for path in (REPO_ROOT / "scripts").rglob("*.py"):
-            if "admin123" in path.read_text():
+        for path in REPO_ROOT.rglob("*"):
+            if not path.is_file() or path in CREDENTIAL_SWEEP_ALLOWED:
+                continue
+            if set(path.relative_to(REPO_ROOT).parts) & UNSHIPPED_DIRS:
+                continue
+            if path.stat().st_size > 1_000_000:
+                continue
+            if "admin123" in path.read_text(errors="ignore"):
                 offenders.append(path.relative_to(REPO_ROOT))
 
         assert not offenders, f"default credentials still shipped in: {offenders}"
@@ -123,3 +186,77 @@ class TestAnExposedBypassIsLouderStill:
         assert result.returncode == 0, result.stderr
         assert "DEV_MODE IS ON" in result.stderr
         assert "NOT LOOPBACK" not in result.stderr
+
+    @pytest.mark.parametrize("flag", ["--host 0.0.0.0", "--host=0.0.0.0"])
+    def test_an_address_typed_on_the_command_line_counts(self, flag: str):
+        """`uvicorn --host 0.0.0.0` exports no BIND_HOST, and used to read as
+        loopback — the banner reassuring the one person who needed warning."""
+        result = _import_api(*flag.split(), DEV_MODE="true")
+
+        assert result.returncode == 0, result.stderr
+        assert "NOT LOOPBACK" in result.stderr
+        assert "0.0.0.0" in result.stderr
+
+    def test_the_command_line_wins_over_the_environment(self):
+        """uvicorn binds what it was passed, so that is what the banner reports."""
+        result = _import_api("--host", "127.0.0.1", DEV_MODE="true", BIND_HOST="0.0.0.0")
+
+        assert result.returncode == 0, result.stderr
+        assert "DEV_MODE IS ON" in result.stderr
+        assert "NOT LOOPBACK" not in result.stderr
+
+
+class TestWhatCountsAsLoopback:
+    """The classifier behind the exposed/loopback split.
+
+    Driven directly rather than through a subprocess: the interesting cases are
+    addresses no launcher in this repo passes, and each one costs a process.
+    """
+
+    @pytest.mark.parametrize(
+        "bind_host",
+        [
+            "127.0.0.1",
+            "::1",
+            "localhost",
+            "LOCALHOST",
+            "  127.0.0.1  ",
+            # The rest of 127/8 is loopback too, and a set of three strings
+            # called this exposed.
+            "127.0.0.2",
+            "127.255.255.254",
+            # The IPv4-mapped form, as an IPv6 socket reports a v4 loopback.
+            "::ffff:127.0.0.1",
+            "[::1]",
+        ],
+    )
+    def test_addresses_that_reach_only_this_machine(self, bind_host: str):
+        assert is_exposed(bind_host) is False
+
+    @pytest.mark.parametrize(
+        "bind_host",
+        [
+            "0.0.0.0",
+            "::",
+            "10.0.0.5",
+            "192.168.1.20",
+            # Unset is uvicorn's "every interface", not loopback. Classing it
+            # loopback silenced the exposure line on the one bind that most
+            # needs it.
+            "",
+            "   ",
+            # A name this process cannot resolve tells us nothing, and nothing
+            # is not evidence of local.
+            "soc-box.internal",
+        ],
+    )
+    def test_addresses_that_are_not_known_to_be_local(self, bind_host: str):
+        assert is_exposed(bind_host) is True
+
+    def test_an_unset_bind_is_announced_by_name_not_by_a_gap(self):
+        """The banner has to name the address it is warning about."""
+        result = _import_api(DEV_MODE="true", BIND_HOST="")
+
+        assert result.returncode == 0, result.stderr
+        assert "NOT LOOPBACK" in result.stderr
+        assert "every interface" in result.stderr

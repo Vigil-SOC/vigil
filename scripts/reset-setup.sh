@@ -108,11 +108,25 @@ fi
 # Fail here, with something actionable, rather than at the first mystery 401
 # partway through a reset.
 auth_probe=$(curl -s -o /dev/null -w '%{http_code}' "${AUTH[@]}" "$B/auth/me" || true)
-if [ "$auth_probe" = "401" ] || [ "$auth_probe" = "403" ]; then
-    echo "Not authenticated against $B (HTTP $auth_probe)." >&2
-    echo "Set VIGIL_TOKEN, or set VIGIL_USERNAME and VIGIL_PASSWORD and re-run." >&2
-    exit 1
-fi
+case "$auth_probe" in
+    2*) ;;
+    401|403)
+        echo "Not authenticated against $B (HTTP $auth_probe)." >&2
+        echo "Set VIGIL_TOKEN, or set VIGIL_USERNAME and VIGIL_PASSWORD and re-run." >&2
+        exit 1
+        ;;
+    000)
+        # curl's code for never reaching anything. Listing only the 4xx here
+        # sent a dead backend down the mystery-failure path this check exists
+        # to replace.
+        echo "No answer from $B — is the API running?" >&2
+        exit 1
+        ;;
+    *)
+        echo "Unexpected HTTP $auth_probe from $B/auth/me; not continuing." >&2
+        exit 1
+        ;;
+esac
 
 get()  { curl -fsS "${AUTH[@]}" "$B$1"; }
 del()  { curl -fsS "${AUTH[@]}" -X DELETE "$B$1"; }

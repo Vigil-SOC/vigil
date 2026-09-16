@@ -12,8 +12,6 @@ via unit tests in tests/unit/ against the underlying services.
 
 import os
 
-# DEV_MODE bypasses the real DB for endpoints that resolve current_user.
-os.environ.setdefault("DEV_MODE", "true")
 # Deterministic secret so JWT issuance during tests is reproducible.
 os.environ.setdefault(
     "JWT_SECRET_KEY", "integration-test-secret-not-for-production-use-12345"

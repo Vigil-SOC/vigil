@@ -7,7 +7,6 @@ are exercised.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Dict, Optional
@@ -17,32 +16,14 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-# Importing the router pulls in auth_service, which raises at import time if
-# DEV_MODE is false and JWT_SECRET_KEY is unset. Default to dev for tests.
-os.environ.setdefault("DEV_MODE", "true")
-
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from core.routing import request_unit_of_work
-from core.storage.models import LLMProviderConfig, User
-from services.api.middleware.auth import get_current_active_user
+from core.storage.models import LLMProviderConfig
 from services.api.routers.llm_providers import router as llm_providers_router
 
 pytestmark = pytest.mark.unit
-
-
-def _fake_admin_user() -> User:
-    """Stand-in admin user for tests that bypass real JWT/cookie auth."""
-    return User(
-        user_id="test-admin",
-        username="test-admin",
-        email="admin@test.local",
-        password_hash="",
-        role_id="admin-role",
-        is_active=True,
-        mfa_enabled=False,
-    )
 
 
 class _FakeQuery:
@@ -117,7 +98,7 @@ def session() -> _FakeSession:
 
 
 @pytest.fixture()
-def client(session):
+def client(session, authenticate_app):
     app = FastAPI()
     app.include_router(llm_providers_router, prefix="/api/llm/providers")
 
@@ -125,15 +106,9 @@ def client(session):
         return session
 
     app.dependency_overrides[request_unit_of_work] = _get_session
-    # Bypass cookie/JWT auth for unit tests — the security-coverage tests
-    # in tests/security/ exercise the real path.
-    app.dependency_overrides[get_current_active_user] = _fake_admin_user
-
-    # Permission checks read DEV_MODE at call time; force-allow in tests.
-    with patch(
-        "core.auth.auth_service.AuthService.check_permission",
-        return_value=True,
-    ):
+    # Signed in as admin by the shared fixture — the real cookie/JWT path is
+    # what tests/security/ exercises.
+    with authenticate_app(app):
         yield TestClient(app)
 
 

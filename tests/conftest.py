@@ -9,7 +9,11 @@
 
 import os
 
-os.environ.setdefault("DEV_MODE", "false")
+# Set, not setdefault: a developer with DEV_MODE=true exported would otherwise
+# run the whole suite bypassed — including tests/security/, whose job is to
+# prove the unauthenticated routes are the only unauthenticated routes. A suite
+# that quietly stops testing the thing it is named after is worse than no suite.
+os.environ["DEV_MODE"] = "false"
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-signing-secret-not-for-any-real-use")
 os.environ["VIGIL_DISABLE_DOTENV"] = "1"
 
@@ -48,7 +52,7 @@ def authenticate_app():
     from contextlib import contextmanager
 
     @contextmanager
-    def _authenticate(app, *, permissions: bool = True):
+    def _authenticate(app):
         from core.auth.auth_service import AuthService
         from core.storage.models import User
         from services.api.middleware.auth import (
@@ -70,7 +74,7 @@ def authenticate_app():
         original = AuthService.check_permission
         app.dependency_overrides[get_current_user] = lambda: admin
         app.dependency_overrides[get_current_active_user] = lambda: admin
-        AuthService.check_permission = staticmethod(lambda *a, **k: permissions)
+        AuthService.check_permission = staticmethod(lambda *a, **k: True)
         try:
             yield admin
         finally:

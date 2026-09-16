@@ -59,9 +59,9 @@ load_env
 [ -n "$_CALLER_BIND_HOST" ] && BIND_HOST="$_CALLER_BIND_HOST"
 export BIND_HOST="${BIND_HOST:-127.0.0.1}"
 
-# Authenticated runs fail closed without a signing secret. A .env written by
-# setup_dev.sh already carries one; this covers a .env copied from env.example
-# by hand, which would otherwise die at import with nothing started.
+# Authenticated runs fail closed without a signing secret. setup_dev.sh mints
+# one, but a .env copied from env.example by hand never went through it, and
+# that would otherwise die at import with nothing started.
 [ "${DEV_MODE:-}" = "true" ] || ensure_jwt_secret
 
 # `bifrost` only resolves inside the compose network. Rewrite before starting

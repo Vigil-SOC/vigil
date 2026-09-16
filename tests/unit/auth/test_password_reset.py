@@ -5,10 +5,6 @@ Redis-backed single-use enforcement is mocked so tests run without a live
 cache. The signature + expiry logic is pure itsdangerous and runs as-is.
 """
 
-import os
-
-os.environ.setdefault("DEV_MODE", "true")
-
 import asyncio
 from unittest.mock import AsyncMock, patch
 

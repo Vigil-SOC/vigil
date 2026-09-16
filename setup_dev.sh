@@ -24,6 +24,12 @@ if [ ! -f "$REPO_ROOT/.env" ]; then
     NEW_ENV=1
 fi
 
+# An authenticated backend raises at import without a signing secret, and the
+# .env just written asks for authentication. Minted here so a fresh setup has
+# one before anything tries to start: persisted at ~/.vigil/jwt_secret, reused
+# on every later run, and never written into .env.
+ensure_jwt_secret
+
 # Python
 ensure_venv
 install_python_deps
