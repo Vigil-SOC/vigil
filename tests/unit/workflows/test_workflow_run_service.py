@@ -133,10 +133,10 @@ class TestBeginAndFinalize:
     def test_finalize_counts_outcome_by_run_kind_from_trigger_context(
         self, service, clean_runs, monkeypatch
     ):
-        import core.workflows.workflow_run_service as mod
-
         counter = MagicMock()
-        monkeypatch.setattr(mod, "_runs_finished", counter)
+        monkeypatch.setattr(
+            "core.workflows.workflow_run_service._runs_finished", counter
+        )
         run_id = service.begin_run(
             workflow_id="test-wf-kind",
             workflow_name="Test WF",

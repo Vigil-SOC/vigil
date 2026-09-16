@@ -153,15 +153,13 @@ class WorkflowRunService:
                 if row.started_at is not None:
                     delta = now - row.started_at
                     row.duration_ms = int(delta.total_seconds() * 1000)
-            # After the commit, so a write that fails is not counted as an outcome.
-            _runs_finished_counter().add(
-                1, {"run_kind": str(run_kind), "status": status}
-            )
-            logger.info("Workflow run finalised: %s -> %s", run_id, status)
-            return True
         except SQLAlchemyError as e:
             logger.warning("Could not finalise workflow run %s: %s", run_id, e)
             return False
+        # After the commit, so a write that fails is not counted as an outcome.
+        _runs_finished_counter().add(1, {"run_kind": str(run_kind), "status": status})
+        logger.info("Workflow run finalised: %s -> %s", run_id, status)
+        return True
 
     def list_runs(
         self,

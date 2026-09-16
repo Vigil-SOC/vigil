@@ -34,7 +34,8 @@ class _FakeMeter:
         return self.counters.setdefault(name, _FakeCounter())
 
     def create_observable_gauge(self, name, callbacks=(), **_):
-        self.gauges[name] = list(callbacks)
+        # Accumulates, so a second registration would show up as a second callback.
+        self.gauges.setdefault(name, []).extend(callbacks)
         return object()
 
 
