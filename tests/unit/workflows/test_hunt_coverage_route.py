@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 from core.memory import hunt_coverage
 from core.workflows import workflows_router as router
@@ -13,10 +14,13 @@ from core.workflows.workflows_service import WorkflowsService
 pytestmark = pytest.mark.unit
 
 IP = "ip:203.0.113.7"
+PATH = "/api/workflows/threat-hunt/coverage"
 
 
 @pytest.fixture
-def prior_hunts(monkeypatch):
+def client(monkeypatch):
+    """The workflows router alone, mounted as the app mounts it, over a patched
+    prior-hunts read. Any reach for execute_workflow fails the test."""
     monkeypatch.setattr(
         hunt_coverage,
         "list_prior_hunts",
@@ -33,15 +37,21 @@ def prior_hunts(monkeypatch):
 
     monkeypatch.setattr(WorkflowsService, "execute_workflow", _forbidden)
 
+    app = FastAPI()
+    app.include_router(router.router, prefix=router.ROUTER_META.prefix)
+    return TestClient(app)
 
-@pytest.mark.asyncio
-async def test_plain_text_report_is_uncovered_with_a_proposal(prior_hunts):
-    payload = router.HuntCoverageRequest(
-        report="Phishing infrastructure at 203.0.113.7 delivering T1566 lures"
+
+def test_plain_text_report_is_uncovered_with_a_proposal(client):
+    response = client.post(
+        PATH,
+        json={
+            "report": "Phishing infrastructure at 203.0.113.7 delivering T1566 lures"
+        },
     )
 
-    result = await router.check_hunt_coverage(payload)
-
+    assert response.status_code == 200
+    result = response.json()
     assert result["status"] == "uncovered"
     assert result["keys"] == [IP]
     assert result["techniques"] == ["T1566"]
@@ -50,9 +60,14 @@ async def test_plain_text_report_is_uncovered_with_a_proposal(prior_hunts):
     }
 
 
-@pytest.mark.asyncio
-async def test_an_empty_ask_is_a_400(prior_hunts):
-    with pytest.raises(HTTPException) as refused:
-        await router.check_hunt_coverage(router.HuntCoverageRequest(report=""))
+def test_an_empty_ask_is_a_400(client):
+    response = client.post(PATH, json={"report": "   "})
 
-    assert refused.value.status_code == 400
+    assert response.status_code == 400
+    assert "nothing to check" in response.json()["detail"]
+
+
+def test_a_malformed_body_is_refused_before_the_classifier(client):
+    response = client.post(PATH, json={"entity_keys": "ip:203.0.113.7"})
+
+    assert response.status_code == 422

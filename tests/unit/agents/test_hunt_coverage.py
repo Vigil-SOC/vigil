@@ -120,6 +120,16 @@ def test_unknown_keys_are_uncovered_with_an_executable_proposal(
     assert request.hypothesis_subjects == {request.hypothesis: [IP]}
 
 
+def test_proposal_hypothesis_stays_one_line_whatever_the_key_carries(monkeypatch):
+    _install(monkeypatch)
+
+    result = check_coverage(entity_keys=["host:web\n01"])
+
+    hypothesis = result["proposal"]["hypothesis"]
+    assert "\n" not in hypothesis
+    assert result["proposal"]["hypothesis_subjects"] == {hypothesis: ["host:web\n01"]}
+
+
 def test_report_text_is_parsed_and_merged_with_given_keys(monkeypatch):
     asked = _install(monkeypatch, parsed={"entity_keys": [IP], "techniques": ["T1071"]})
 

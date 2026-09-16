@@ -45,9 +45,11 @@ def build_proposal(keys: Sequence[str], techniques: Sequence[str]) -> Dict[str, 
         parts.append(f"indicators {', '.join(keys)}")
     if techniques:
         parts.append(f"techniques {', '.join(techniques)}")
-    hypothesis = (
+    # One line: execute_workflow reads each hypothesis as a line of text, so a
+    # key carrying a newline would split the statement from its subjects.
+    hypothesis = " ".join(
         f"Activity from the reported {' and '.join(parts)} is present in the "
-        "environment"
+        "environment".split()
     )
     return {
         "hypothesis": hypothesis,
