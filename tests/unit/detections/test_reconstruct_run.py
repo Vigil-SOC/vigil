@@ -10,10 +10,14 @@ import pytest
 
 from core.detections.reconstruction import reconstruct
 from core.detections.tools import SecurityDetectionsTools
+from tests.unit.detections.fixtures.art_trace import recorded_steps
 
 pytestmark = pytest.mark.unit
 
 FIXTURE = Path(__file__).parent / "fixtures" / "recorded_red_run.json"
+
+# Fixture step order: T1059.001 (ws01), T1003.001 (dc01), T1021.002 (ws01), T1047 (ws02).
+PS, LSASS, SMB, WMI = 0, 1, 2, 3
 
 
 def _recorded():
@@ -24,16 +28,20 @@ def _verdicts(result: dict) -> list[str]:
     return [step["verdict"] for step in result["steps"]]
 
 
+def test_fixture_steps_are_what_execute_atomic_emits():
+    # Drift guard: the committed trace must equal the tool's own output.
+    assert _recorded()["steps"] == recorded_steps()
+
+
 def test_recorded_run_missed_when_window_has_no_entity_time_overlap():
     recorded = _recorded()
     result = reconstruct(recorded["steps"], recorded["findings"])
 
-    by_id = {step["id"]: step for step in result["steps"]}
-    missed = by_id["step-2"]
+    missed = result["steps"][LSASS]
     assert missed["verdict"] == "missed"
     assert missed["citations"] == []
 
-    empty_window = by_id["step-3"]
+    empty_window = result["steps"][SMB]
     assert empty_window["verdict"] == "missed"
     assert empty_window["citations"] == []
 
@@ -41,7 +49,7 @@ def test_recorded_run_missed_when_window_has_no_entity_time_overlap():
 def test_recorded_run_loglm_when_only_loglm_hits_the_step():
     recorded = _recorded()
     result = reconstruct(recorded["steps"], recorded["findings"])
-    step = next(item for item in result["steps"] if item["id"] == "step-4")
+    step = result["steps"][WMI]
     assert step["verdict"] == "loglm"
     assert [item["finding_id"] for item in step["citations"]] == ["loglm-wmi-seq"]
 
@@ -50,7 +58,7 @@ def test_recorded_run_both_when_rule_and_loglm_hit_the_same_step():
     recorded = _recorded()
     result = reconstruct(recorded["steps"], recorded["findings"])
 
-    step = next(item for item in result["steps"] if item["id"] == "step-1")
+    step = result["steps"][PS]
     assert step["verdict"] == "both"
     cited = {item["finding_id"]: item for item in step["citations"]}
     assert set(cited) == {"elastic-enc-ps", "loglm-seq-1"}
@@ -68,17 +76,57 @@ def test_no_loglm_findings_never_emits_loglm():
 
     assert "loglm" not in _verdicts(result)
     assert "both" not in _verdicts(result)
-    by_id = {step["id"]: step for step in result["steps"]}
-    assert by_id["step-1"]["verdict"] == "rule"
-    assert by_id["step-2"]["verdict"] == "missed"
-    assert by_id["step-4"]["verdict"] == "missed"
+    assert _verdicts(result) == ["rule", "missed", "missed", "missed"]
 
 
 def test_unknown_step_keys_are_ignored_and_do_not_join_on_technique_id():
     recorded = _recorded()
     result = reconstruct(recorded["steps"], recorded["findings"])
-    step = next(item for item in result["steps"] if item["id"] == "step-2")
-    assert step["verdict"] == "missed"
+    # elastic-lsass-other-host predicts T1003.001 in the window but on another host.
+    assert result["steps"][LSASS]["verdict"] == "missed"
+
+
+def test_src_ip_only_step_joins_a_loglm_finding_by_ip():
+    steps = [
+        {
+            "id": "step-4",
+            "technique_id": "T1047",
+            "src_ip": "10.0.2.80",
+            "started_at": "2026-09-10T12:20:00Z",
+            "ended_at": "2026-09-10T12:22:00Z",
+        }
+    ]
+    findings = [
+        {
+            "finding_id": "loglm-wmi-ip",
+            "data_source": "loglm",
+            "timestamp": "2026-09-10T12:21:00Z",
+            "entity_context": {"src_ip": "10.0.2.80"},
+        }
+    ]
+    result = reconstruct(steps, findings)
+    assert result["steps"][0]["id"] == "step-4"
+    assert result["steps"][0]["verdict"] == "loglm"
+
+
+def test_user_only_step_joins_a_rule_finding_by_user():
+    steps = [
+        {
+            "technique_id": "T1078",
+            "user": "JSmith",
+            "started_at": "2026-09-10T12:00:00Z",
+            "ended_at": "2026-09-10T12:05:00Z",
+        }
+    ]
+    findings = [
+        {
+            "finding_id": "elastic-user",
+            "data_source": "elastic",
+            "timestamp": "2026-09-10T12:01:00Z",
+            "entity_context": {"usernames": ["jsmith"]},
+        }
+    ]
+    assert _verdicts(reconstruct(steps, findings)) == ["rule"]
 
 
 @pytest.mark.asyncio

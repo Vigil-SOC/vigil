@@ -340,7 +340,7 @@ describe("the approval gate", () => {
 
 describe("the ART execute approval gate", () => {
   const ART_ID = "atomic_red_team_execute";
-  const ARGS = '{"technique":"T1059.001","environment_id":"range-1"}';
+  const ARGS = '{"technique":"T1059.001","environment_id":"range-1","hostname":"ws01.corp.local"}';
   const ART = toolReturning(ART_ID, {
     ok: true,
     rows: [{ exit: 0 }],
