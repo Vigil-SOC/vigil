@@ -342,12 +342,17 @@ class Orchestrator:
             return
 
         inv_id = overlapping[0]
-        self._append_trigger_id(inv_id, finding_id)
-        logger.info(
-            f"Finding {finding_id} overlaps investigation {inv_id}; no case, appended to trigger_ids"
-        )
+        if self._append_trigger_id(inv_id, finding_id):
+            logger.info(
+                f"Finding {finding_id} overlaps investigation {inv_id}; no case, appended to trigger_ids"
+            )
+        else:
+            logger.warning(
+                f"Finding {finding_id} overlaps investigation {inv_id} but could not be appended to its trigger_ids"
+            )
 
-    def _append_trigger_id(self, inv_id: str, finding_id: str):
+    def _append_trigger_id(self, inv_id: str, finding_id: str) -> bool:
+        """Idempotent; ``False`` when the row is missing or the write failed."""
         try:
             from core.storage.connection import get_db_manager
             from core.storage.models import Investigation
@@ -358,12 +363,16 @@ class Orchestrator:
                     .filter_by(investigation_id=inv_id)
                     .first()
                 )
-                current = list(inv.trigger_ids or []) if inv else None
-                if current is not None and finding_id not in current:
+                if not inv:
+                    return False
+                current = list(inv.trigger_ids or [])
+                if finding_id not in current:
                     # Reassign, not append: JSONB lists are not change-tracked in place.
                     inv.trigger_ids = [*current, finding_id]
+                return True
         except Exception as e:
             logger.error(f"Failed to append trigger id to investigation {inv_id}: {e}")
+            return False
 
     def _open_case_for_finding(
         self, finding: Dict, workflow_id: str, priority: str
