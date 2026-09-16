@@ -9785,7 +9785,7 @@ export interface components {
             prompt: string;
             /**
              * Run Kind
-             * @description One of hunt, root_cause, investigate, compose, chat.
+             * @description One of hunt, root_cause, adjudicate, investigate, compose, chat.
              * @default hunt
              */
             run_kind: string;
