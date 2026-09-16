@@ -90,9 +90,11 @@ def normalise_techniques(techniques: Iterable[str]) -> List[str]:
 
 
 def _iso(value: Any) -> Any:
+    """ISO-8601 with ``Z``, whether the tier hands back a datetime or a string
+    (``list_runs`` has already serialised its rows)."""
     if isinstance(value, datetime):
-        return value.isoformat().replace("+00:00", "Z")
-    return value
+        value = value.isoformat()
+    return value.replace("+00:00", "Z") if isinstance(value, str) else value
 
 
 def _concluded(
