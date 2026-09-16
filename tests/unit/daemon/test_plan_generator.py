@@ -18,6 +18,7 @@ def test_case_management_step_attaches_to_the_admitted_case(workflow_id):
     plan = generate_plan("inv-1", workflow_id, [{"finding_id": "f-1"}], "c-42")
     assert "or create new case" not in plan
     assert "list_cases" not in plan
+    assert "to the case named by case_id in this plan" in plan
     assert "case_id: c-42" in plan
 
 

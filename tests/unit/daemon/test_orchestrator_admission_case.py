@@ -63,6 +63,8 @@ async def test_a_failed_case_create_still_launches_without_one():
 
     await orch._create_investigation_for_finding(FINDING, None)
 
+    data_service.create_case.assert_called_once()
+    orch._create_investigation.assert_awaited_once()
     assert orch._create_investigation.await_args.kwargs["case_id"] is None
 
 
@@ -72,4 +74,5 @@ async def test_no_data_service_still_launches_without_a_case():
 
     await orch._create_investigation_for_finding(FINDING, None)
 
+    orch._create_investigation.assert_awaited_once()
     assert orch._create_investigation.await_args.kwargs["case_id"] is None
