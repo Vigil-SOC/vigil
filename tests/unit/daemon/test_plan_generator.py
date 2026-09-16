@@ -19,7 +19,19 @@ def test_case_management_step_attaches_to_the_admitted_case(workflow_id):
     assert "or create new case" not in plan
     assert "list_cases" not in plan
     assert "to the case named by case_id in this plan" in plan
+    assert "create_case" not in plan
     assert "case_id: c-42" in plan
+
+
+@pytest.mark.parametrize(
+    "workflow_id", [w for w in WORKFLOW_STEP_MAP if w != "case-review"] + ["unknown"]
+)
+def test_case_management_step_creates_a_case_when_admission_left_none(workflow_id):
+    plan = generate_plan("inv-1", workflow_id, [{"finding_id": "f-1"}])
+    assert "case_id: pending" in plan
+    assert "to the case named by case_id in this plan" not in plan
+    assert "list_cases" not in plan
+    assert "create one with create_case" in plan
 
 
 def test_includes_case_id_when_the_investigation_has_one():

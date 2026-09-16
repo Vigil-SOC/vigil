@@ -156,6 +156,16 @@ WORKFLOW_STEP_MAP = {
     ],
 }
 
+# #920 opened the case at admission and told the agent to file into it. When
+# that create fails, generate_plan still writes ``case_id: pending`` — a name,
+# not a row. The step below is swapped in so the agent mints a case instead of
+# attaching to one that does not exist.
+_CASE_MANAGEMENT_WHEN_PENDING = (
+    "No case was opened at admission; create one with create_case, then attach "
+    "related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to it"
+)
+
+
 DEFAULT_STEPS = [
     {
         "title": "Initial Assessment",
@@ -305,8 +315,11 @@ def generate_plan(
     lines.append("")
 
     for i, step in enumerate(steps, 1):
+        description = step["description"]
+        if step["title"] == "Case Management" and not case_id:
+            description = _CASE_MANAGEMENT_WHEN_PENDING
         lines.append(f"### Step {i}: {step['title']} [pending]")
-        lines.append(f"- {step['description']}")
+        lines.append(f"- {description}")
         lines.append("")
 
     lines.append("## Blockers")
