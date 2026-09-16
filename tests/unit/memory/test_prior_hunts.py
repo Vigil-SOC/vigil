@@ -14,8 +14,14 @@ import pytest
 
 from core.memory import prior_hunts, recall
 from core.memory.prior_hunts import list_prior_hunts
-from core.storage.models import EpisodicDistilMarker, EpisodicVerdict, WorkflowRun
-from core.workflows.workflow_run_service import LIST_RUNS_MAX, WorkflowRunService
+from core.storage.models import (
+    EpisodicDistilMarker,
+    EpisodicReadLog,
+    EpisodicVerdict,
+    WorkflowRun,
+)
+from core.workflows import workflow_run_service
+from core.workflows.workflow_run_service import WorkflowRunService
 
 pytestmark = [pytest.mark.unit, pytest.mark.database, pytest.mark.external_service]
 
@@ -27,6 +33,8 @@ ORIGIN = UUID("11111111-2222-3333-4444-555555555555")
 def session(episodic_session, monkeypatch):
     # The listing is a separate read from recall (epic #886, decision 3); any
     # route back through it would inherit the per-key cap this exists to avoid.
+    # Patching alone is not proof -- a name bound at import escapes it -- so the
+    # module's globals and the read log are checked too, below.
     def forbidden(*args, **kwargs):
         raise AssertionError("recall_entity was called")
 
@@ -35,7 +43,12 @@ def session(episodic_session, monkeypatch):
     episodic_session.query(EpisodicDistilMarker).delete()
     episodic_session.query(WorkflowRun).delete()
     episodic_session.commit()
-    return episodic_session
+    yield episodic_session
+    assert not any(
+        getattr(value, "__module__", None) == recall.__name__
+        for value in vars(prior_hunts).values()
+    ), "prior_hunts imports from recall"
+    assert episodic_session.query(EpisodicReadLog).count() == 0
 
 
 def verdict(db, keys, techniques=(), *, investigation, concluded=EPOCH, marker=None):
@@ -71,7 +84,7 @@ def verdict(db, keys, techniques=(), *, investigation, concluded=EPOCH, marker=N
         )
 
 
-def run(db, run_id, *, status="running", **context):
+def run(db, run_id, *, status="running", started=datetime(2026, 8, 2), **context):
     db.add(
         WorkflowRun(
             run_id=run_id,
@@ -79,7 +92,7 @@ def run(db, run_id, *, status="running", **context):
             workflow_name="Threat hunt",
             status=status,
             trigger_context={"run_kind": "hunt", **context},
-            started_at=datetime(2026, 8, 2),
+            started_at=started,
         )
     )
 
@@ -133,9 +146,18 @@ def test_in_flight_matches_declared_subjects_and_hypothesis_text_only(session):
         hypothesis="Beaconing from 10.0.0.7 (T1071.001)",
         hypothesis_subjects={"Beaconing from 10.0.0.7 (T1071.001)": ["ip:10.0.0.7"]},
     )
-    run(session, "wfr-paused", status="paused", hypothesis="T1566 phishing wave")
+    # Older, and paused: it must still sort by start time, not by status page.
+    run(
+        session,
+        "wfr-paused",
+        status="paused",
+        started=datetime(2026, 8, 1),
+        hypothesis="T1566 phishing wave",
+    )
     # A scheduled hunt declares nothing, so nothing about it can match.
     run(session, "wfr-scheduled", hypothesis="", hypothesis_subjects={})
+    # T1566 inside T15661 is a different id, not a hit.
+    run(session, "wfr-near-miss", hypothesis="looks like T15661 to me")
     run(
         session,
         "wfr-done",
@@ -146,10 +168,14 @@ def test_in_flight_matches_declared_subjects_and_hypothesis_text_only(session):
 
     result = list_prior_hunts(["ip:10.0.0.7"], ["T1566"], runs=WorkflowRunService())
 
+    assert [row["run_id"] for row in result["in_flight"]] == [
+        "wfr-declared",
+        "wfr-paused",
+    ]
     by_id = {row["run_id"]: row for row in result["in_flight"]}
-    assert set(by_id) == {"wfr-declared", "wfr-paused"}
     assert by_id["wfr-declared"]["matched_keys"] == ["ip:10.0.0.7"]
     assert by_id["wfr-declared"]["matched_techniques"] == []
+    assert by_id["wfr-declared"]["started_at"] == "2026-08-02T00:00:00Z"
     assert by_id["wfr-paused"]["status"] == "paused"
     assert by_id["wfr-paused"]["matched_techniques"] == ["T1566"]
 
@@ -170,6 +196,8 @@ def test_no_match_and_nothing_asked_are_empty_lists(session):
 
 
 def test_concluded_rows_are_capped_newest_first(session, monkeypatch):
+    # The runs listing's ceiling, not one of memory's own.
+    assert prior_hunts.LIST_RUNS_MAX is workflow_run_service.LIST_RUNS_MAX
     monkeypatch.setattr(prior_hunts, "LIST_RUNS_MAX", 3)
     for index in range(5):
         verdict(
@@ -183,4 +211,3 @@ def test_concluded_rows_are_capped_newest_first(session, monkeypatch):
     rows = list_prior_hunts(["ip:10.0.0.7"])["concluded"]
 
     assert [r["investigation_id"] for r in rows] == ["hunt-0", "hunt-1", "hunt-2"]
-    assert LIST_RUNS_MAX == 200

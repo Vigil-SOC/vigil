@@ -21,7 +21,7 @@ read -- subjects are not on ``HypothesisStanding``.
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence
 
 from sqlalchemy import Text as SAText
@@ -90,10 +90,10 @@ def normalise_techniques(techniques: Iterable[str]) -> List[str]:
 
 
 def _iso(value: Any) -> Any:
-    """ISO-8601 with ``Z``, whether the tier hands back a datetime or a string
-    (``list_runs`` has already serialised its rows)."""
+    """ISO-8601 in UTC with ``Z``, whether the tier hands back a datetime or a
+    string (``list_runs`` has already serialised its rows)."""
     if isinstance(value, datetime):
-        value = value.isoformat()
+        value = (value.astimezone(timezone.utc) if value.tzinfo else value).isoformat()
     return value.replace("+00:00", "Z") if isinstance(value, str) else value
 
 
@@ -146,8 +146,18 @@ def _in_flight_match(
     declared = set(_declared_subjects(context))
     matched_keys = sorted(key for key in keys if key in declared)
 
-    hypothesis = str(context.get("hypothesis") or "").upper()
-    matched_techniques = sorted(t for t in techniques if t in hypothesis)
+    hypothesis = context.get("hypothesis")
+    if not isinstance(hypothesis, str):
+        hypothesis = ""
+    # Whole-token, so T1566 is not found inside T15661. A parent id still matches
+    # a sub-technique in prose (T1071 in "T1071.001") -- a hypothesis is text the
+    # operator wrote, not a cited list, and the concluded side's exact overlap
+    # cannot be reproduced against it.
+    matched_techniques = sorted(
+        t
+        for t in techniques
+        if re.search(rf"\b{re.escape(t)}\b", hypothesis, re.IGNORECASE)
+    )
 
     if not matched_keys and not matched_techniques:
         return None
@@ -155,7 +165,7 @@ def _in_flight_match(
         "run_id": run.get("run_id"),
         "status": run.get("status"),
         "started_at": _iso(run.get("started_at")),
-        "hypothesis": context.get("hypothesis") or "",
+        "hypothesis": hypothesis,
         "matched_keys": matched_keys,
         "matched_techniques": matched_techniques,
     }
@@ -172,7 +182,11 @@ def _in_flight(
             hit = _in_flight_match(run, keys, techniques)
             if hit is not None:
                 hits.append(hit)
-    return hits
+    # One order across both statuses rather than two newest-first pages laid
+    # end to end, and the same ceiling as the concluded half.
+    hits.sort(key=lambda hit: (hit["started_at"] or "", hit["run_id"] or ""))
+    hits.reverse()
+    return hits[:LIST_RUNS_MAX]
 
 
 def list_prior_hunts(
