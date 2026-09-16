@@ -1,7 +1,7 @@
 /* The hunt panel. Everything asserted here is data the projection already
    carried and the console used to throw away: gaps, checkpoints, escalations
    and the report itself were reachable only as prose, and only after terminal. */
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { RunDetail } from './WorkflowsScreen'
 
@@ -9,7 +9,7 @@ vi.mock('../../services/api', () => ({
   workflowApi: {
     steer: vi.fn(() => Promise.resolve({ data: {} })),
     cancelRun: vi.fn(() => Promise.resolve({ data: {} })),
-    getReplay: vi.fn(() => Promise.resolve({ data: {} })),
+    getReplay: vi.fn(() => Promise.resolve({ data: { hunt_id: 'run-1', decisions: [], reproduced: 0, inexact: 0, recalled: [] } })),
   },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
   findingsApi: { getAll: vi.fn(() => Promise.resolve({ data: { findings: [] } })) },
@@ -1045,10 +1045,15 @@ describe('opening a move for the digest it was shown', () => {
     ...over,
   })
 
+  beforeEach(async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.getReplay).mockClear()
+  })
+
   it('fetches that one decision once and shows the recorded digest with a match chip', async () => {
     const { workflowApi } = await import('../../services/api')
     vi.mocked(workflowApi.getReplay).mockResolvedValueOnce({ data: report() } as never)
-    renderPanel({ hunt: hunt({ moves }) })
+    const { rerender } = renderPanel({ hunt: hunt({ moves }) })
     tabTo(/Moves/)
     fireEvent.click(screen.getByText(/start on the flow telemetry/))
 
@@ -1056,21 +1061,28 @@ describe('opening a move for the digest it was shown', () => {
     expect(workflowApi.getReplay).toHaveBeenCalledWith('run-1', 'dec-1')
     expect(await screen.findByText(/reached one external host every 60 seconds/)).toBeInTheDocument()
     expect(screen.getByText('rebuild matches the record')).toBeInTheDocument()
-    expect(screen.getByText(/1,440 flows to 45.77.53.176/)).toBeInTheDocument()
-    expect(screen.getByText(/10.0.0.5 was benign in inv-7/)).toBeInTheDocument()
+    expect(screen.getByText(/1,440 flows to 45\.77\.53\.176/)).toBeInTheDocument()
+    expect(screen.getByText(/10\.0\.0\.5 was benign in inv-7/)).toBeInTheDocument()
     expect(screen.getByText(/not a live re-read of memory/)).toBeInTheDocument()
+
+    // The poll hands down a fresh projection; the open digest stays and is not re-asked for.
+    const later = [{ decision_id: 'dec-2', iteration: 2, action: 'VALIDATE', rationale: 'put it to a verdict' }, ...moves]
+    rerender(<RunDetail d={detail({ hunt: hunt({ moves: later }) })} onSteered={() => {}} />)
+    expect(screen.getByText(/put it to a verdict/)).toBeInTheDocument()
+    expect(screen.getByText(/reached one external host every 60 seconds/)).toBeInTheDocument()
+    expect(workflowApi.getReplay).toHaveBeenCalledTimes(1)
   })
 
   it('says how the rebuild differs, and that an inferred prefix may be why', async () => {
     const { workflowApi } = await import('../../services/api')
     vi.mocked(workflowApi.getReplay).mockResolvedValueOnce({
-      data: report({ decisions: [{ ...report().decisions[0], exact: false, mismatch: 'narrative differs' }], recalled: [] }),
+      data: report({ decisions: [{ ...report().decisions[0], exact: false, mismatch: 'rebuilt digest differs from the one presented' }], recalled: [] }),
     } as never)
     renderPanel({ hunt: hunt({ moves }) })
     tabTo(/Moves/)
     fireEvent.click(screen.getByText(/start on the flow telemetry/))
 
-    expect(await screen.findByText(/rebuild differs: narrative differs/)).toBeInTheDocument()
+    expect(await screen.findByText('rebuilt digest differs from the one presented')).toBeInTheDocument()
     expect(screen.getByText(/prefix inferred/)).toBeInTheDocument()
     expect(screen.getByText(/Nothing recalled/)).toBeInTheDocument()
   })

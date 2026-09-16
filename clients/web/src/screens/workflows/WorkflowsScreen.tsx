@@ -1544,15 +1544,20 @@ function HuntMoves({ runId, moves }: { runId: string; moves: HuntMove[] }) {
           <tbody>
             {moves.map((m) => (
               <Fragment key={m.decision_id}>
-                <tr
-                  className={`clickable${opened?.id === m.decision_id ? ' sel' : ''}`}
-                  tabIndex={0}
-                  aria-expanded={opened?.id === m.decision_id}
-                  onClick={() => pick(m.decision_id)}
-                  onKeyDown={activateOnKey(() => pick(m.decision_id))}
-                >
+                {/* The row takes the click; the action is the control a keyboard reaches,
+                    so the table keeps its own semantics rather than posing as a button. */}
+                <tr className={`clickable${opened?.id === m.decision_id ? ' sel' : ''}`} onClick={() => pick(m.decision_id)}>
                   <td className="muted tight">{m.iteration}</td>
-                  <td className="tight mono text-[11px]">{m.action}</td>
+                  <td className="tight">
+                    <button
+                      className="btn ghost mono text-[11px]"
+                      aria-expanded={opened?.id === m.decision_id}
+                      title="Show what the lead was looking at when it decided this."
+                      onClick={(e) => { e.stopPropagation(); pick(m.decision_id) }}
+                    >
+                      {m.action}
+                    </button>
+                  </td>
                   <td>
                     {m.rationale}
                     {m.query_intent && <div className="muted text-[11px] mt-0.5">asked: {m.query_intent}</div>}
@@ -1605,7 +1610,7 @@ function MoveDigest({ opened }: { opened: OpenedMove }) {
         <h4 style={{ margin: 0 }}>What the lead was shown at turn {decision.iteration}</h4>
         {decision.mismatch === null
           ? <span className="chip sel" style={{ fontSize: 10 }}>rebuild matches the record</span>
-          : <span className="chip" style={{ fontSize: 10, color: 'var(--high)' }} title={decision.mismatch}>rebuild differs: {decision.mismatch}</span>}
+          : <span className="chip" style={{ fontSize: 10, color: 'var(--high)' }}>{decision.mismatch}</span>}
         {!decision.exact && (
           <span className="muted text-[11px]">prefix inferred — the ledger predates digest_seq, so a difference may be the boundary rather than drift</span>
         )}
@@ -1636,28 +1641,32 @@ function MoveDigest({ opened }: { opened: OpenedMove }) {
         </div>
       )}
 
-      {seen.recent_evidence.length > 0 && (
+      {(seen.recent_evidence.length > 0 || seen.omitted.count > 0) && (
         <div style={{ marginTop: 10 }}>
           <h4>Recent evidence ({seen.recent_evidence.length}{seen.omitted.count > 0 && `, ${seen.omitted.count} routine omitted`})</h4>
-          <div className="table-wrap">
-            <table className="tbl">
-              <tbody>
-                {seen.recent_evidence.map((one) => (
-                  <tr key={one.evidence_id}>
-                    <td className="muted tight">{one.source_system || '—'}</td>
-                    <td>
-                      {one.summary}
-                      {one.why_notable && <div className="muted text-[11px]">{one.why_notable}</div>}
-                      <div className="text-[11px] mt-0.5 flex gap-2 flex-wrap">
-                        <span className="muted">{one.salience}</span>
-                        {one.instruction_like && <span style={{ color: 'var(--crit)' }}>reads as instruction</span>}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {seen.recent_evidence.length === 0
+            ? <div className="muted text-[12px]">Every record in the window was routine; the lead saw only the count.</div>
+            : (
+              <div className="table-wrap">
+                <table className="tbl">
+                  <tbody>
+                    {seen.recent_evidence.map((one) => (
+                      <tr key={one.evidence_id}>
+                        <td className="muted tight">{one.source_system || '—'}</td>
+                        <td>
+                          {one.summary}
+                          {one.why_notable && <div className="muted text-[11px]">{one.why_notable}</div>}
+                          <div className="text-[11px] mt-0.5 flex gap-2 flex-wrap">
+                            <span className="muted">{one.salience}</span>
+                            {one.instruction_like && <span style={{ color: 'var(--crit)' }}>reads as instruction</span>}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
         </div>
       )}
 
