@@ -245,6 +245,7 @@ class Settings(BaseSettings):
     # proposal goes stale in days (#675).
     daemon_approval_expiry_days: int = 7
     daemon_metrics_enabled: bool = True
+    daemon_metrics_port: int = 9090
     daemon_health_host: str = "localhost"
     daemon_health_port: int = 9091
 

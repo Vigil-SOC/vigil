@@ -230,29 +230,26 @@ def _do_init(service_name: str) -> None:
     _tracer_provider = tracer_provider
 
     # --- MeterProvider ---
-    try:
-        from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    # Two readers, not either/or. The Prometheus reader registers its collector
+    # on prometheus_client's default REGISTRY, which is what the backend
+    # /metrics route and the daemon's :9090 listener serve. The OTLP reader
+    # pushes to the collector so processes with no HTTP port (llm-worker)
+    # still appear on the collector's Prometheus exporter.
+    from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+        OTLPMetricExporter,
+    )
+    from opentelemetry.exporter.prometheus import PrometheusMetricReader
+    from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 
-        metric_reader = PrometheusMetricReader()
-        logger.debug("Using PrometheusMetricReader on port 9090")
-    except Exception:
-        try:
-            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
-                OTLPMetricExporter,
-            )
-            from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-
-            metric_reader = PeriodicExportingMetricReader(
+    meter_provider = MeterProvider(
+        resource=resource,
+        metric_readers=[
+            PrometheusMetricReader(),
+            PeriodicExportingMetricReader(
                 OTLPMetricExporter(endpoint=endpoint, insecure=True)
-            )
-        except Exception:
-            metric_reader = None
-
-    meter_kwargs: dict = {"resource": resource}
-    if metric_reader is not None:
-        meter_kwargs["metric_readers"] = [metric_reader]
-
-    meter_provider = MeterProvider(**meter_kwargs)
+            ),
+        ],
+    )
     metrics.set_meter_provider(meter_provider)
     _meter_provider = meter_provider
 

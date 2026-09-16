@@ -29,11 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from core.platform.monitoring import (
-    PROMETHEUS_AVAILABLE,
-    get_metrics_response,
-    init_sentry,
-)
+from core.platform.monitoring import get_metrics_response, init_sentry
 from core.version import __version__
 from services.api.discovery import mount_routers
 from services.api.errors import register_exception_handlers
@@ -71,9 +67,6 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset(
         "/api/integrations/vstrike/findings",
     }
 )
-
-if PROMETHEUS_AVAILABLE:
-    from core.platform.monitoring import PrometheusMiddleware
 
 # Initialize telemetry before creating the FastAPI app so instrumentation
 # is registered before the first request handler is defined.
@@ -180,9 +173,6 @@ app.add_middleware(CSRFMiddleware)
 # responses too (CORSMiddleware short-circuits OPTIONS without calling inner
 # middleware, so anything added before CORS would be skipped on preflight).
 app.add_middleware(SecurityHeadersMiddleware)
-
-if PROMETHEUS_AVAILABLE:
-    app.add_middleware(PrometheusMiddleware)
 
 # Mount every discovered router — colocated in core/<domain>/ or parked in
 # services/api/routers/ (issues #478, #488). Each module declares its

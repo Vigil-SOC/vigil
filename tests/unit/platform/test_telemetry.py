@@ -121,6 +121,37 @@ class TestTelemetryInitFailure:
             span.end()
 
 
+class TestMeterProviderReaders:
+    """_do_init attaches both readers — Prometheus for the scrape, OTLP push
+    for processes with no HTTP port — never one as a fallback for the other."""
+
+    def test_both_readers_attached(self):
+        from opentelemetry import metrics as otel_metrics
+        from opentelemetry import trace as otel_trace
+        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import (
+            OTLPMetricExporter,
+        )
+        from opentelemetry.exporter.prometheus import PrometheusMetricReader
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+
+        tel = _reload_telemetry()
+        # The global providers can only be set once per process; keep the
+        # test's providers out of them.
+        with patch.dict(os.environ, {"VIGIL_OTEL_ENABLED": "true"}), patch.object(
+            otel_metrics, "set_meter_provider"
+        ), patch.object(otel_trace, "set_tracer_provider"):
+            tel._do_init("svc")
+        try:
+            readers = list(tel._meter_provider._all_metric_readers)
+            assert len(readers) == 2
+            prom = [r for r in readers if isinstance(r, PrometheusMetricReader)]
+            otlp = [r for r in readers if isinstance(r, PeriodicExportingMetricReader)]
+            assert len(prom) == 1 and len(otlp) == 1
+            assert isinstance(otlp[0]._exporter, OTLPMetricExporter)
+        finally:
+            tel.shutdown()
+
+
 # ---------------------------------------------------------------------------
 # Investigation ID context var
 # ---------------------------------------------------------------------------

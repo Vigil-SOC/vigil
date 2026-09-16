@@ -183,7 +183,11 @@ class SOCDaemon:
             tasks.append(
                 asyncio.create_task(self._metrics_server.run(self._shutdown_event))
             )
-            logger.info(f"Metrics server started on port {self.config.metrics.port}")
+            logger.info(
+                "Metrics server started (health :%d, prometheus :%d)",
+                self._metrics_server._health_port,
+                self._metrics_server._metrics_port,
+            )
 
         logger.info("SOC Daemon fully operational")
 

@@ -166,6 +166,10 @@ services:
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       - AGENT_URL=http://agent-serve:6989
+      # Metrics: GET /metrics on :6987 serves the OTEL registry once the flag is
+      # on; the OTLP push needs the collector from --profile observability.
+      - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - PYTHONUNBUFFERED=1
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
       - SSL_CERT_FILE
@@ -251,6 +255,10 @@ services:
       # Metrics / Health
       - DAEMON_METRICS_ENABLED=${DAEMON_METRICS_ENABLED:-true}
       - DAEMON_HEALTH_PORT=${DAEMON_HEALTH_PORT:-9091}
+      - DAEMON_METRICS_PORT=${DAEMON_METRICS_PORT:-9090}
+      # Observability (see backend)
+      - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       # Webhook
       - DAEMON_WEBHOOK_ENABLED=${DAEMON_WEBHOOK_ENABLED:-true}
       - DAEMON_WEBHOOK_PORT=${DAEMON_WEBHOOK_PORT:-8081}
@@ -286,7 +294,7 @@ services:
       - KAFKA_SESSION_TIMEOUT_MS=${KAFKA_SESSION_TIMEOUT_MS:-30000}
     ports:
       - "8081:8081"  # Webhook ingestion
-      - "9090:9090"  # Prometheus /metrics (OTEL PrometheusMetricReader)
+      - "9090:9090"  # Prometheus /metrics (DAEMON_METRICS_PORT)
       - "9091:9091"  # Health /health + /status
     depends_on:
       postgres:
@@ -324,6 +332,10 @@ services:
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       - REDIS_URL=redis://redis:6379/0
+      # No HTTP port here: worker metrics reach Prometheus through the OTLP
+      # push to the collector, scraped at otel-collector:8889.
+      - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - PYTHONUNBUFFERED=1
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
       - SSL_CERT_FILE
