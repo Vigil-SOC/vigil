@@ -86,6 +86,20 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && agent-browser install --with-deps \
     && rm -rf /root/.agent-browser /var/lib/apt/lists/*
 
+# The CLI serves its own usage guide via `agent-browser skills get core`, which
+# its discovery stub tells agents to read first. The binary finds that content
+# in the npm package's `skill-data/` next to it; the release asset ships none,
+# so `skills` fails with "Skills directory not found". Fetch `skill-data/` from
+# the same tag and point the CLI at it.
+RUN AB_VERSION=v0.36.0 \
+    && mkdir -p /usr/local/share/agent-browser \
+    && curl --retry 3 --retry-delay 5 -fsSL \
+       "https://github.com/vercel-labs/agent-browser/archive/refs/tags/${AB_VERSION}.tar.gz" \
+       | tar -xz -C /usr/local/share/agent-browser --strip-components=1 \
+             "agent-browser-${AB_VERSION#v}/skill-data" \
+    && AGENT_BROWSER_SKILLS_DIR=/usr/local/share/agent-browser/skill-data agent-browser skills get core >/dev/null
+ENV AGENT_BROWSER_SKILLS_DIR=/usr/local/share/agent-browser/skill-data
+
 # Chrome's user-namespace sandbox is unavailable under Ubuntu 24.04's AppArmor
 # defaults and inside VMs; without this every launch dies before DevTools starts.
 ENV AGENT_BROWSER_ARGS="--no-sandbox"
