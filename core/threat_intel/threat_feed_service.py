@@ -8,11 +8,15 @@ no-op.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from core.memory.entity_keys import entity_key, text_entity_keys
+from core.memory.recall_contract import ENTITY_KEY_TYPES
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -113,6 +117,99 @@ def _extract_observables(pattern: str) -> Iterable[Tuple[str, str]]:
             logger.debug("Skipping unrecognized STIX pattern key: %s", key)
             continue
         yield vigil_type, value
+
+
+# ---------------------------------------------------------------------------
+# Operator-dropped reports: STIX bundle or plain text -> Entity Keys + T-IDs
+# ---------------------------------------------------------------------------
+
+# The same shape core/detections/tools.py scans rules with.
+_TECHNIQUE_ID = re.compile(r"\bT\d{4}(?:\.\d{3})?\b")
+
+# `_STIX_TO_VIGIL_TYPE` speaks the threat_indicators vocabulary, which splits
+# hashes by algorithm; Entity Keys have one `hash` type. `entity_key()` does not
+# check the type, so an unmapped `hash_md5:...` would mint a key no Verdict
+# ever matches.
+_INDICATOR_TO_ENTITY_TYPE: Dict[str, str] = {
+    "ip": "ip",
+    "domain": "domain",
+    "url": "url",
+    "email": "email",
+    "hash_md5": "hash",
+    "hash_sha1": "hash",
+    "hash_sha256": "hash",
+}
+_UNMAPPED = set(_STIX_TO_VIGIL_TYPE.values()) - set(_INDICATOR_TO_ENTITY_TYPE)
+_OFF_VOCABULARY = set(_INDICATOR_TO_ENTITY_TYPE.values()) - set(ENTITY_KEY_TYPES)
+if _UNMAPPED or _OFF_VOCABULARY:
+    raise ImportError(
+        f"STIX indicator types {sorted(_UNMAPPED)} map onto no Entity Key type and "
+        f"{sorted(_OFF_VOCABULARY)} are outside ENTITY_KEY_TYPES"
+    )
+
+
+def _ordered_unique(values: Iterable[str]) -> List[str]:
+    out: List[str] = []
+    for value in values:
+        if value and value not in out:
+            out.append(value)
+    return out
+
+
+def _stix_objects(text: str) -> Optional[List[Dict[str, Any]]]:
+    """The objects of a STIX bundle, or None when the text is not one."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if isinstance(data, dict):
+        data = data.get("objects")
+    if not isinstance(data, list):
+        return None
+    return [obj for obj in data if isinstance(obj, dict)]
+
+
+def _attack_pattern_ids(obj: Dict[str, Any]) -> Iterable[str]:
+    for ref in obj.get("external_references") or []:
+        if not isinstance(ref, dict) or ref.get("source_name") != "mitre-attack":
+            continue
+        external_id = str(ref.get("external_id") or "")
+        if _TECHNIQUE_ID.fullmatch(external_id):
+            yield external_id
+
+
+def parse_report(text: str) -> Dict[str, List[str]]:
+    """Entity Keys and ATT&CK technique ids from a STIX bundle or a text report.
+
+    A bundle is a JSON list of objects or ``{"objects": [...]}``. Anything else
+    — unparseable JSON, JSON of another shape — is scanned as plain text with
+    the hunt extractor's patterns. Never raises: empty in, empty lists out.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return {"entity_keys": [], "techniques": []}
+
+    objects = _stix_objects(text)
+    if objects is None:
+        return {
+            "entity_keys": text_entity_keys(text),
+            "techniques": _ordered_unique(_TECHNIQUE_ID.findall(text)),
+        }
+
+    keys: List[str] = []
+    techniques: List[str] = []
+    for obj in objects:
+        kind = obj.get("type")
+        if kind == "indicator":
+            for vigil_type, value in _extract_observables(str(obj.get("pattern", ""))):
+                entity_type = _INDICATOR_TO_ENTITY_TYPE.get(vigil_type)
+                if entity_type:
+                    keys.append(entity_key(entity_type, value))
+        elif kind == "attack-pattern":
+            techniques.extend(_attack_pattern_ids(obj))
+    return {
+        "entity_keys": _ordered_unique(keys),
+        "techniques": _ordered_unique(techniques),
+    }
 
 
 def _parse_dt(value: Any) -> Optional[datetime]:
