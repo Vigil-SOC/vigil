@@ -69,21 +69,26 @@ def _record_dispatch_metrics(
     """
     try:
         provider = result["provider"]
+        # Usage fields may be None from some Bifrost-fronted providers.
+        input_tokens = int(result["input_tokens"] or 0)
+        output_tokens = int(result["output_tokens"] or 0)
+        cache_read = int(result["cache_read_tokens"] or 0)
+        cache_creation = int(result["cache_creation_tokens"] or 0)
         cost_usd = compute_call_cost(
             model,
             provider,
-            result["input_tokens"],
-            result["output_tokens"],
-            cache_read_tokens=result["cache_read_tokens"],
-            cache_creation_tokens=result["cache_creation_tokens"],
+            input_tokens,
+            output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
         )
         record_llm_call(
             model=model,
             provider=provider,
-            input_tokens=result["input_tokens"],
-            output_tokens=result["output_tokens"],
-            cache_read_tokens=result["cache_read_tokens"],
-            cache_creation_tokens=result["cache_creation_tokens"],
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
             duration_s=duration_s,
             cost_usd=cost_usd,
         )

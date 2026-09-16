@@ -445,6 +445,8 @@ def _collect_points(reader):
     """{metric_name: [(attributes_dict, value)]} from an InMemoryMetricReader."""
     out = {}
     data = reader.get_metrics_data()
+    if data is None:  # nothing recorded yet
+        return out
     for rm in data.resource_metrics:
         for sm in rm.scope_metrics:
             for metric in sm.metrics:
@@ -539,7 +541,7 @@ class TestRecordLLMCall:
         )
         assert tel._genai_metrics is None
 
-    def test_never_raises(self):
+    def test_never_raises_when_instrument_creation_fails(self):
         import core.telemetry as tel
 
         tel._genai_metrics = None
@@ -547,10 +549,40 @@ class TestRecordLLMCall:
             tel, "create_genai_metrics", side_effect=RuntimeError("boom")
         ):
             tel.record_llm_call(
-                model=None,
-                provider=None,
-                input_tokens="bad",  # type: ignore[arg-type]
-                output_tokens=0,
+                model="m",
+                provider="p",
+                input_tokens=1,
+                output_tokens=1,
                 duration_s=0.0,
                 cost_usd=0.0,
             )
+
+    def test_bad_values_skip_the_whole_record(self, reader):
+        """A non-numeric field must neither raise nor leave a partial record."""
+        from core.telemetry import record_llm_call
+
+        record_llm_call(
+            model=None,
+            provider=None,
+            input_tokens="bad",  # type: ignore[arg-type]
+            output_tokens=0,
+            duration_s=0.0,
+            cost_usd=0.0,
+        )
+        assert _collect_points(reader) == {}
+
+    def test_fallback_meter_not_cached_even_when_initialized(self, reader):
+        """get_meter() can hand back the no-op meter after init if the SDK
+        misbehaves; that must not be pinned as the process-wide instruments."""
+        import core.telemetry as tel
+
+        with patch.object(tel, "get_meter", return_value=tel._FallbackNoOpMeter()):
+            tel.record_llm_call(
+                model="m",
+                provider="p",
+                input_tokens=1,
+                output_tokens=1,
+                duration_s=0.0,
+                cost_usd=0.0,
+            )
+        assert tel._genai_metrics is None

@@ -402,26 +402,31 @@ def record_llm_call(
     """
     global _genai_metrics
     try:
+        # Normalise everything before touching any instrument so a bad value
+        # skips the whole record rather than leaving the four out of step.
+        tokens = {
+            "input": int(input_tokens or 0),
+            "output": int(output_tokens or 0),
+            "cache_read": int(cache_read_tokens or 0),
+            "cache_creation": int(cache_creation_tokens or 0),
+        }
+        duration = max(float(duration_s or 0.0), 0.0)
+        cost = max(float(cost_usd or 0.0), 0.0)
+        attrs = {"model": model or "unknown", "provider": provider or "unknown"}
+
         metrics = _genai_metrics
         if metrics is None:
-            metrics = create_genai_metrics(get_meter("vigil.llm"))
-            if _initialized:
+            meter = get_meter("vigil.llm")
+            metrics = create_genai_metrics(meter)
+            if _initialized and not isinstance(meter, _FallbackNoOpMeter):
                 _genai_metrics = metrics
 
-        attrs = {"model": model or "unknown", "provider": provider or "unknown"}
         metrics["llm_calls"].add(1, attrs)
-        metrics["llm_duration"].record(max(float(duration_s), 0.0), attrs)
-        metrics["llm_cost_usd"].add(max(float(cost_usd), 0.0), attrs)
-        for token_type, count in (
-            ("input", input_tokens),
-            ("output", output_tokens),
-            ("cache_read", cache_read_tokens),
-            ("cache_creation", cache_creation_tokens),
-        ):
+        metrics["llm_duration"].record(duration, attrs)
+        metrics["llm_cost_usd"].add(cost, attrs)
+        for token_type, count in tokens.items():
             if count:
-                metrics["llm_tokens"].add(
-                    int(count), {**attrs, "token_type": token_type}
-                )
+                metrics["llm_tokens"].add(count, {**attrs, "token_type": token_type})
     except Exception:
         pass
 

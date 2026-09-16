@@ -423,12 +423,18 @@ class ClaudeService:
         duration_s = time.monotonic() - started
         usage = getattr(response, "usage", None)
         response_model = getattr(response, "model", model)
-        input_tokens = getattr(usage, "input_tokens", 0) if usage else 0
-        output_tokens = getattr(usage, "output_tokens", 0) if usage else 0
+        input_tokens = (getattr(usage, "input_tokens", 0) or 0) if usage else 0
+        output_tokens = (getattr(usage, "output_tokens", 0) or 0) if usage else 0
+        cache_read = (getattr(usage, "cache_read_input_tokens", 0) or 0) if usage else 0
+        cache_creation = (
+            (getattr(usage, "cache_creation_input_tokens", 0) or 0) if usage else 0
+        )
         # Priced once and shared by the log row and the GenAI instruments
         # (#894); a second compute_call_cost would re-fire the
         # pricing-unknown counter for uncatalogued models.
-        cost_usd = self._call_cost(response_model, input_tokens, output_tokens)
+        cost_usd = self._call_cost(
+            response_model, input_tokens, output_tokens, cache_read, cache_creation
+        )
         self._persist_interaction(
             session_id=session_id,
             agent_id=agent_id,
@@ -442,6 +448,8 @@ class ClaudeService:
             stop_reason=getattr(response, "stop_reason", None),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
             duration_ms=int(duration_s * 1000),
             cost_usd=cost_usd,
         )
@@ -452,6 +460,8 @@ class ClaudeService:
             provider="anthropic",
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
             duration_s=duration_s,
             cost_usd=cost_usd,
         )

@@ -249,7 +249,12 @@ class TestChatRecordsGenAIMetrics:
         response = SimpleNamespace(
             model="claude-sonnet-4-5-20250929",
             stop_reason="end_turn",
-            usage=SimpleNamespace(input_tokens=120, output_tokens=30),
+            usage=SimpleNamespace(
+                input_tokens=120,
+                output_tokens=30,
+                cache_read_input_tokens=50,
+                cache_creation_input_tokens=10,
+            ),
             content=[SimpleNamespace(type="text", text="hi there")],
         )
         svc = self._svc(response)
@@ -264,12 +269,20 @@ class TestChatRecordsGenAIMetrics:
             out = svc.chat("hello", model="claude-sonnet-4-5-20250929")
 
         assert out == "hi there"
-        cost.assert_called_once()
+        cost.assert_called_once_with(
+            "claude-sonnet-4-5-20250929",
+            "anthropic",
+            120,
+            30,
+            cache_read_tokens=50,
+            cache_creation_tokens=10,
+        )
         record.assert_called_once()
         kw = record.call_args.kwargs
         assert kw["model"] == "claude-sonnet-4-5-20250929"
         assert kw["provider"] == "anthropic"
         assert (kw["input_tokens"], kw["output_tokens"]) == (120, 30)
+        assert (kw["cache_read_tokens"], kw["cache_creation_tokens"]) == (50, 10)
         assert kw["cost_usd"] == 0.005
         # The log row reuses the same price rather than recomputing it.
         assert persist.call_args.kwargs["cost_usd"] == 0.005

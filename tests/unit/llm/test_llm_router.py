@@ -244,7 +244,7 @@ async def test_dispatch_bifrost_openai_extracts_cache_read_tokens():
 @pytest.mark.asyncio
 async def test_dispatch_bifrost_records_genai_metrics_once():
     """#894: one successful dispatch records exactly once, with the returned
-    usage, the priced cost, and only model/provider as identity."""
+    usage and the priced cost (attribute shape is covered in test_telemetry)."""
     router = LLMRouter(bifrost_url="http://test-bifrost:8080")
     fake_resp = SimpleNamespace(
         choices=[
