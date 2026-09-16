@@ -100,11 +100,18 @@ def client(empty_install, monkeypatch_module, tmp_path_factory):
 
     get_settings.cache_clear()
 
+    # The manager is a process-wide singleton built on first use. Under the
+    # whole integration suite an earlier module has already asked for one, so
+    # it holds CI's job-wide POSTGRES_DB and not the variables set above —
+    # which is why this passes run alone and fails in CI. Drop it here, and
+    # again on the way out so the next module builds its own.
+    from core.storage.connection import get_db_manager, reset_db_manager
+
+    reset_db_manager()
+
     # Refuse to run against anything but the database this test was handed.
     # These tests TRUNCATE users; pointed at a real install that is destructive,
     # and the failure mode is silent because the API answers perfectly well.
-    from core.storage.connection import get_db_manager
-
     resolved = make_url(get_db_manager().config.get_database_url())
     assert resolved.database == url.database, (
         f"refusing to run: the API resolved database {resolved.database!r}, "
@@ -117,6 +124,8 @@ def client(empty_install, monkeypatch_module, tmp_path_factory):
 
     with TestClient(app) as c:
         yield c
+
+    reset_db_manager()
 
 
 @pytest.fixture(scope="module")

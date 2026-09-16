@@ -724,6 +724,27 @@ def get_db_manager() -> DatabaseManager:
     return _db_manager
 
 
+def reset_db_manager() -> None:
+    """Drop the global manager so the next caller builds one from current env.
+
+    The manager reads its connection settings once, when it is first asked
+    for, and every later caller gets that same instance. A process that
+    retargets the database after something has already touched it therefore
+    keeps talking to the old one — silently, because the stale manager
+    answers perfectly well. Tests that point the API at their own database
+    need this the way they need ``get_settings.cache_clear()``, and for the
+    same reason.
+    """
+    global _db_manager
+    if _db_manager is not None:
+        _db_manager.close()
+        _db_manager = None
+    # The module global is not the only cache: ``__new__`` keeps a class-level
+    # instance and ``__init__`` skips its body once ``_initialized`` is set, so
+    # clearing the global alone hands back the same object with its old config.
+    DatabaseManager._instance = None
+
+
 def get_db_session() -> Session:
     """
     Get a new database session.
