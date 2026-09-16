@@ -383,7 +383,7 @@ def _build_services(app: FastAPI):
     from core.integrations.mcp.client import build_mcp_client, set_process_mcp_client
     from core.integrations.mcp.registry import MCPRegistry
     from core.platform.demo_data_service import DemoDataService
-    from core.response.approval_service import ApprovalService
+    from core.response.approval_service import ApprovalService, register_pending_gauge
     from core.workflows.custom_workflow_service import CustomWorkflowService
     from core.workflows.workflow_ai_generator import WorkflowAIGenerator
     from core.workflows.workflow_run_service import WorkflowRunService
@@ -393,6 +393,7 @@ def _build_services(app: FastAPI):
     set_process_mcp_client(app.state.mcp_client)
 
     app.state.approvals = ApprovalService()
+    register_pending_gauge(app.state.approvals)
     app.state.custom_workflows = CustomWorkflowService()
     app.state.detection_rules = DetectionRulesService()
     app.state.integration_bridge = IntegrationBridgeService()

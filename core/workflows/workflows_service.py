@@ -522,7 +522,9 @@ class WorkflowsService:
             workflow_name=workflow.name,
             workflow_source=workflow_dict.get("source", "file"),
             workflow_version=workflow_dict.get("version"),
-            trigger_context=dict(parameters or {}),
+            # run_kind rides along so finalize_run can label the outcome without a
+            # column: the same value the start job below carries.
+            trigger_context={**dict(parameters or {}), "run_kind": workflow.run_kind},
             triggered_by=triggered_by,
             run_id=new_run_id(),
         )

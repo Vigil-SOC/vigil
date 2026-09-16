@@ -18,17 +18,47 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
+from opentelemetry.metrics import Observation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
+from core.telemetry import get_meter
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+_pending_gauge: Any = None
+
+
+def register_pending_gauge(service: "ApprovalService") -> None:
+    """Export the approval queue depth as an observable gauge, once per process.
+
+    Not in ``__init__``: the service is constructed in many places and each
+    registration would stack another callback onto the same instrument. The
+    caller that owns the process-wide instance (API boot) calls this.
+    """
+    global _pending_gauge
+    if _pending_gauge is not None:
+        return
+
+    def _observe(_options: Any) -> Iterable[Observation]:
+        try:
+            return [Observation(len(service.list_pending_approvals()))]
+        except Exception as e:  # a DB outage drops the sample, not the process
+            logger.debug("approvals.pending observation failed: %s", e)
+            return []
+
+    _pending_gauge = get_meter("vigil.response.approvals").create_observable_gauge(
+        "vigil.approvals.pending",
+        callbacks=[_observe],
+        description="Actions awaiting approval",
+        unit="1",
+    )
 
 
 class ActionType(Enum):
