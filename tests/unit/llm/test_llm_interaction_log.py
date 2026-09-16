@@ -226,3 +226,50 @@ class TestPersistInteractionRobustness:
             output_tokens=1,
             duration_ms=10,
         )
+
+
+class TestChatRecordsGenAIMetrics:
+    """#894: the direct-SDK path records once, priced once, next to the log row."""
+
+    def _svc(self, response):
+        from unittest.mock import MagicMock
+
+        from core.llm.harness.claude import ClaudeService
+
+        svc = ClaudeService.__new__(ClaudeService)
+        svc.api_key = "k"
+        svc.client = MagicMock()
+        svc.client.messages.create.return_value = response
+        return svc
+
+    def test_chat_records_once_and_prices_once(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        response = SimpleNamespace(
+            model="claude-sonnet-4-5-20250929",
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=120, output_tokens=30),
+            content=[SimpleNamespace(type="text", text="hi there")],
+        )
+        svc = self._svc(response)
+
+        with patch(
+            "core.llm.harness.claude.compute_call_cost", return_value=0.005
+        ) as cost, patch(
+            "core.llm.harness.claude.record_llm_call"
+        ) as record, patch.object(
+            svc, "_persist_interaction"
+        ) as persist:
+            out = svc.chat("hello", model="claude-sonnet-4-5-20250929")
+
+        assert out == "hi there"
+        cost.assert_called_once()
+        record.assert_called_once()
+        kw = record.call_args.kwargs
+        assert kw["model"] == "claude-sonnet-4-5-20250929"
+        assert kw["provider"] == "anthropic"
+        assert (kw["input_tokens"], kw["output_tokens"]) == (120, 30)
+        assert kw["cost_usd"] == 0.005
+        # The log row reuses the same price rather than recomputing it.
+        assert persist.call_args.kwargs["cost_usd"] == 0.005

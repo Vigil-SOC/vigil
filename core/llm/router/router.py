@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from core.config import get_settings
+from core.llm.cost.calls import compute_call_cost
 from core.llm.router.format import (
     anthropic_messages_to_openai,
     anthropic_tools_to_openai,
@@ -16,6 +18,7 @@ from core.llm.security import (
     wrap_tool_result,
 )
 from core.secrets import get_secret
+from core.telemetry import record_llm_call
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,39 @@ def _bifrost_url() -> str:
 
 def _block_on_injection() -> bool:
     return get_settings().prompt_injection_block
+
+
+def _record_dispatch_metrics(
+    result: Dict[str, Any], model: str, duration_s: float
+) -> None:
+    """Price the returned usage and record it on the GenAI instruments (#894).
+
+    Uses the requested bare ``model`` rather than ``resp.model``: the pricing
+    catalog is keyed by it, and Bifrost may echo a ``provider/model`` string.
+    Never raises — this sits on the worker/daemon request path.
+    """
+    try:
+        provider = result["provider"]
+        cost_usd = compute_call_cost(
+            model,
+            provider,
+            result["input_tokens"],
+            result["output_tokens"],
+            cache_read_tokens=result["cache_read_tokens"],
+            cache_creation_tokens=result["cache_creation_tokens"],
+        )
+        record_llm_call(
+            model=model,
+            provider=provider,
+            input_tokens=result["input_tokens"],
+            output_tokens=result["output_tokens"],
+            cache_read_tokens=result["cache_read_tokens"],
+            cache_creation_tokens=result["cache_creation_tokens"],
+            duration_s=duration_s,
+            cost_usd=cost_usd,
+        )
+    except Exception:
+        pass
 
 
 def _normalize_openai_tool_calls(tool_calls: Any) -> Optional[List[Dict[str, Any]]]:
@@ -320,7 +356,9 @@ class LLMRouter:
             kwargs["extra_headers"] = extra_headers
 
         try:
+            started = time.monotonic()
             resp = await client.chat.completions.create(**kwargs)
+            duration_s = time.monotonic() - started
             choice = resp.choices[0].message
             usage = getattr(resp, "usage", None)
             # OpenAI exposes prompt-cache hits via usage.prompt_tokens_details.cached_tokens.
@@ -335,7 +373,7 @@ class LLMRouter:
                 details = getattr(usage, "prompt_tokens_details", None)
                 if details is not None:
                     cache_read = getattr(details, "cached_tokens", 0) or 0
-            return {
+            result = {
                 "content": choice.content or "",
                 # Normalize OpenAI tool-call objects to {id, name, input} dicts
                 # so _adapt_router_result_to_raw can build Anthropic tool_use
@@ -352,6 +390,8 @@ class LLMRouter:
                 "provider": provider.provider_type,
                 "path": "bifrost",
             }
+            _record_dispatch_metrics(result, model, duration_s)
+            return result
         finally:
             # AsyncOpenAI holds an httpx connection pool; close it so file
             # descriptors / connections don't leak per call (chat()'s

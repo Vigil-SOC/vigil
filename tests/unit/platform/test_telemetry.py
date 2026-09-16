@@ -434,3 +434,123 @@ class TestFallbackNoOps:
         meter.create_observable_gauge("g")
         u = meter.create_up_down_counter("u")
         u.add(-1)
+
+
+# ---------------------------------------------------------------------------
+# record_llm_call — the GenAI instruments (#894)
+# ---------------------------------------------------------------------------
+
+
+def _collect_points(reader):
+    """{metric_name: [(attributes_dict, value)]} from an InMemoryMetricReader."""
+    out = {}
+    data = reader.get_metrics_data()
+    for rm in data.resource_metrics:
+        for sm in rm.scope_metrics:
+            for metric in sm.metrics:
+                for pt in metric.data.data_points:
+                    value = getattr(pt, "value", None)
+                    if value is None:  # histogram
+                        value = pt.sum
+                    out.setdefault(metric.name, []).append((dict(pt.attributes), value))
+    return out
+
+
+class TestRecordLLMCall:
+    @pytest.fixture
+    def reader(self):
+        from opentelemetry import metrics as otel_metrics
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+
+        tel = _reload_telemetry()
+        reader = InMemoryMetricReader()
+        provider = MeterProvider(metric_readers=[reader])
+        # The global provider can only be set once per process; go through the
+        # module's own accessor instead.
+        with patch.object(otel_metrics, "get_meter", provider.get_meter):
+            tel._initialized = True
+            tel._genai_metrics = None
+            yield reader
+        tel._genai_metrics = None
+        tel._initialized = False
+        provider.shutdown()
+
+    def test_one_call_hits_all_four_instruments(self, reader):
+        from core.telemetry import record_llm_call
+
+        record_llm_call(
+            model="gpt-4o-mini",
+            provider="openai",
+            input_tokens=100,
+            output_tokens=40,
+            cache_read_tokens=25,
+            duration_s=1.5,
+            cost_usd=0.0042,
+        )
+        points = _collect_points(reader)
+        base = {"model": "gpt-4o-mini", "provider": "openai"}
+
+        assert points["vigil.llm.calls.total"] == [(base, 1)]
+        assert points["vigil.llm.duration.seconds"] == [(base, 1.5)]
+        assert points["vigil.llm.cost.usd.total"] == [(base, 0.0042)]
+        tokens = {p[0]["token_type"]: p[1] for p in points["vigil.llm.tokens.total"]}
+        assert tokens == {"input": 100, "output": 40, "cache_read": 25}
+        # Only model/provider(/token_type) — no ids, no content.
+        for pts in points.values():
+            for attrs, _ in pts:
+                assert set(attrs) <= {"model", "provider", "token_type"}
+
+    def test_instruments_cached_once_initialized(self, reader):
+        import core.telemetry as tel
+
+        tel.record_llm_call(
+            model="m",
+            provider="p",
+            input_tokens=1,
+            output_tokens=1,
+            duration_s=0.1,
+            cost_usd=0.0,
+        )
+        first = tel._genai_metrics
+        tel.record_llm_call(
+            model="m",
+            provider="p",
+            input_tokens=1,
+            output_tokens=1,
+            duration_s=0.1,
+            cost_usd=0.0,
+        )
+        assert first is not None and tel._genai_metrics is first
+        points = _collect_points(reader)
+        assert points["vigil.llm.calls.total"][0][1] == 2
+
+    def test_noop_meter_is_never_cached_before_init(self):
+        """Recording before init_telemetry() must not pin the no-op meter."""
+        tel = _reload_telemetry()
+        tel._genai_metrics = None
+        tel.record_llm_call(
+            model="m",
+            provider="p",
+            input_tokens=1,
+            output_tokens=1,
+            duration_s=0.1,
+            cost_usd=0.0,
+        )
+        assert tel._genai_metrics is None
+
+    def test_never_raises(self):
+        import core.telemetry as tel
+
+        tel._genai_metrics = None
+        with patch.object(
+            tel, "create_genai_metrics", side_effect=RuntimeError("boom")
+        ):
+            tel.record_llm_call(
+                model=None,
+                provider=None,
+                input_tokens="bad",  # type: ignore[arg-type]
+                output_tokens=0,
+                duration_s=0.0,
+                cost_usd=0.0,
+            )
