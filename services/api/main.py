@@ -121,11 +121,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # route. Registered before the routers so every mounted route inherits it.
 register_exception_handlers(app)
 
-# Instrument FastAPI with OTEL tracing (health + metrics endpoints excluded)
+# Instrument FastAPI with OTEL tracing and http.server.* metrics (health +
+# metrics endpoints excluded). This is the HTTP signal on /metrics; there is
+# no prometheus_client middleware alongside it.
 try:
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentation
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-    FastAPIInstrumentation().instrument_app(
+    FastAPIInstrumentor().instrument_app(
         app,
         excluded_urls="api/health,metrics",
     )
