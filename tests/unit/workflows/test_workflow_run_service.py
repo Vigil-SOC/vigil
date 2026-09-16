@@ -10,6 +10,7 @@ cleanly if not.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -57,7 +58,9 @@ def clean_runs():
 
     def _clear():
         with get_db_manager().session_scope() as s:
-            s.execute(text("DELETE FROM workflow_runs WHERE workflow_id LIKE 'test-wf-%'"))
+            s.execute(
+                text("DELETE FROM workflow_runs WHERE workflow_id LIKE 'test-wf-%'")
+            )
 
     _clear()
     yield
@@ -126,6 +129,23 @@ class TestBeginAndFinalize:
         row = service.get_run(run_id)
         assert row["status"] == "failed"
         assert "RuntimeError" in (row["error"] or "")
+
+    def test_finalize_counts_outcome_by_run_kind_from_trigger_context(
+        self, service, clean_runs, monkeypatch
+    ):
+        import core.workflows.workflow_run_service as mod
+
+        counter = MagicMock()
+        monkeypatch.setattr(mod, "_runs_finished", counter)
+        run_id = service.begin_run(
+            workflow_id="test-wf-kind",
+            workflow_name="Test WF",
+            trigger_context={"run_kind": "investigate"},
+        )
+        assert service.finalize_run(run_id, status="cancelled") is True
+        counter.add.assert_called_once_with(
+            1, {"run_kind": "investigate", "status": "cancelled"}
+        )
 
     def test_finalize_rejects_bad_status(self, service, clean_runs):
         run_id = service.begin_run(

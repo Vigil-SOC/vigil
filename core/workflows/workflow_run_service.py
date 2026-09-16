@@ -11,12 +11,28 @@ from sqlalchemy.exc import SQLAlchemyError
 from core.storage.connection import get_db_manager
 from core.storage.models import WorkflowRun, WorkflowRunPhase
 from core.storage.schemas import WorkflowRunPhaseSchema, WorkflowRunSchema
+from core.telemetry import get_meter
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
 # Same ceiling as GET /workflows/{workflow_id}/runs.
 LIST_RUNS_MAX = 200
+
+_runs_finished: Any = None
+
+
+def _runs_finished_counter() -> Any:
+    """Created on first use: ``get_meter`` before ``init_telemetry`` is a
+    permanent no-op, and this module is imported at API boot."""
+    global _runs_finished
+    if _runs_finished is None:
+        _runs_finished = get_meter("vigil.workflows.runs").create_counter(
+            "vigil.runs.finished",
+            description="Workflow runs reaching a terminal status, by run_kind",
+            unit="1",
+        )
+    return _runs_finished
 
 
 def generate_run_id() -> str:
@@ -119,6 +135,9 @@ class WorkflowRunService:
                 if row is None:
                     logger.warning("finalize_run: unknown run %s", run_id)
                     return False
+                # Only runs begun via the agent-runs or workflows start routes
+                # carry it; anything else is labelled rather than dropped.
+                run_kind = (row.trigger_context or {}).get("run_kind") or "unknown"
                 now = utcnow()
                 row.status = status
                 row.finished_at = now
@@ -134,6 +153,10 @@ class WorkflowRunService:
                 if row.started_at is not None:
                     delta = now - row.started_at
                     row.duration_ms = int(delta.total_seconds() * 1000)
+            # After the commit, so a write that fails is not counted as an outcome.
+            _runs_finished_counter().add(
+                1, {"run_kind": str(run_kind), "status": status}
+            )
             logger.info("Workflow run finalised: %s -> %s", run_id, status)
             return True
         except SQLAlchemyError as e:
