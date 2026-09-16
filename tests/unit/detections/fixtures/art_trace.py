@@ -61,7 +61,7 @@ def recorded_steps() -> List[Dict[str, Any]]:
     original_now = art._now
     art._now = lambda: next(clock)
     try:
-        return [
+        steps = [
             art.execute_atomic(
                 {"technique": tid, "environment_id": ENVIRONMENT_ID, "hostname": host},
                 CONFIG,
@@ -71,6 +71,9 @@ def recorded_steps() -> List[Dict[str, Any]]:
         ]
     finally:
         art._now = original_now
+    # Two _now() calls per step; a leftover stamp means the tool's clock use moved.
+    assert next(clock, None) is None
+    return steps
 
 
 if __name__ == "__main__":

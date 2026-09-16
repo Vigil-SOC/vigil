@@ -136,7 +136,12 @@ def test_duplicate_step_ids_join_in_order_not_last_write():
 def test_join_by_step_id_not_reconstructed_index():
     trace = [
         {"id": "step-1", "technique_id": "T1059.001", "hostname": "ws01.corp.local"},
-        {"id": "step-2", "technique_id": "T1003.001", "hostname": "dc01.corp.local"},
+        {
+            "id": "step-2",
+            "technique_id": "T1003.001",
+            "hostname": "dc01.corp.local",
+            "src_ip": "10.0.1.10",
+        },
     ]
     # Records arrive in the opposite order from the trace; the id must win.
     shuffled = [
@@ -154,6 +159,7 @@ def test_join_by_step_id_not_reconstructed_index():
     missed = rows["T1003.001"]["missed"]
     assert missed[0]["id"] == "step-2"
     assert missed[0]["hostname"] == "dc01.corp.local"
+    assert missed[0]["src_ip"] == "10.0.1.10"
 
 
 def test_no_loglm_findings_never_emits_loglm_on_the_report():
@@ -187,7 +193,7 @@ def test_dispatch_rows_without_technique_id_are_not_trace_steps():
     siem_row = {"id": "siem-1", "timestamp": "2020-01-01T00:00:00Z", "hostname": "siem"}
     results = [{**_envelope([siem_row, *recorded["steps"]]), "sourceSystem": "splunk"}]
     steps = steps_from_dispatch_results(results)
-    assert all("id" not in step for step in steps)
+    assert len(steps) == 4 and siem_row not in steps
     assert [step["technique_id"] for step in steps] == TECHNIQUES
 
 

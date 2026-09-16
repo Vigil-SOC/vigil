@@ -16,7 +16,7 @@ pytestmark = pytest.mark.unit
 
 FIXTURE = Path(__file__).parent / "fixtures" / "recorded_red_run.json"
 
-# Fixture step order: T1059.001 (ws01), T1003.001 (dc01), T1021.002 (ws01), T1047 (ws02).
+# Step order: T1059.001 (ws01), T1003.001 (dc01), T1021.002 (ws01), T1047 (ws02).
 PS, LSASS, SMB, WMI = 0, 1, 2, 3
 
 

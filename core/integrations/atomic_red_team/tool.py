@@ -1,9 +1,11 @@
 """Atomic Red Team MCP server (stdio).
 
-Thin invoke of one Atomic technique against a named ``environment_id``.
-The operator installs the runner; this slice does not vendor the atomics
-repo. The execute tool's JSON is the interface — an action trace, not
-fabricated sensor events and not a ledger write.
+Thin invoke of one Atomic technique on a named ``hostname`` inside a named
+``environment_id``. The operator installs the runner, which must accept
+``--technique`` and ``--hostname``; this slice does not vendor the atomics
+repo. The execute tool's JSON is the interface — an action-trace step in the
+spelling ``core.detections.reconstruction`` joins on, not fabricated sensor
+events and not a ledger write.
 
 Config comes from the descriptor: ``runner_path`` and ``atomics_path``
 from the stored integration config under the ``atomic-red-team`` id.

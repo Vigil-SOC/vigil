@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -89,7 +90,7 @@ class TestExecuteAtomic:
 
     def test_timeout_keeps_the_step_shape(self):
         def slow_run(argv, **_kwargs):
-            raise art.subprocess.TimeoutExpired(argv, art.RUNNER_TIMEOUT)
+            raise subprocess.TimeoutExpired(argv, art.RUNNER_TIMEOUT)
 
         out = art.execute_atomic(
             {"technique": "T1047", "environment_id": "range-1", "hostname": "ws02"},
