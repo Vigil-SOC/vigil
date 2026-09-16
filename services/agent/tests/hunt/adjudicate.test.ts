@@ -1,6 +1,9 @@
+import { Ajv } from "ajv";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
 import type { AgentEvent } from "../../contracts/events.js";
+import { buildSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
 import { BACKWARD_NULL_HYPOTHESIS, BASE_RATE_PROVENANCE, startHunt } from "../../workflows/hunt/controller.js";
 import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
@@ -28,6 +31,18 @@ const ADJUDICATED: Decision & { proposed_workflow: string } = {
   proposed_workflow: "incident-response",
 };
 
+// The lead schema as the loader hands it to the model, so what the scripted lead
+// emits below is held to the same shape a real one would be.
+const FIXTURES = join(import.meta.dirname, "..", "fixtures");
+const leadSchema = () => {
+  const entry = archFor("adjudicate");
+  const spec = buildSpec(
+    { arch: entry.arch, playbook: join(FIXTURES, "hunt.playbook.yaml"), config: join(FIXTURES, "hunt.config.yaml") },
+    entry.actions,
+  );
+  return new Ajv({ allErrors: true, strict: false }).compile(spec.roles.lead!.output_schema!);
+};
+
 async function adjudication() {
   const state = new InProcessState<HuntKinds>();
   const queue = new InProcessDirectiveQueue();
@@ -36,6 +51,18 @@ async function adjudication() {
   const ledger = await startHunt(state, queue, runId, spec, "test", "adjudicate");
   return { state, runId, ledger };
 }
+
+describe("what the adjudicate lead may emit", () => {
+  // Escalation is refused at the schema, not by the loop: HUNT_LOOP still handles
+  // HANDOFF_IR for hunt and root_cause, so this arch's enum is the one guard.
+  it("carries proposed_workflow on CONCLUDE and refuses HANDOFF_IR", () => {
+    const valid = leadSchema();
+    expect(valid({ ...ADJUDICATED, evidence_citations: [] })).toBe(true);
+    expect(valid({ action: "HANDOFF_IR", rationale: "escalate", evidence_citations: [], target_hypothesis_id: "h-1" })).toBe(false);
+    // Optional: a lead that names the workflow only in prose has still adjudicated.
+    expect(valid({ action: "CONCLUDE", rationale: "none; intake was wrong", evidence_citations: [] })).toBe(true);
+  });
+});
 
 describe("a scripted adjudication runs the hunt loop end to end", () => {
   it("is stamped with its own kind and seeded with the forward null", async () => {
@@ -90,8 +117,6 @@ describe("a scripted adjudication runs the hunt loop end to end", () => {
     const concluded = ledger.projection.decisions.at(-1)!.decision as Decision & { proposed_workflow?: string };
     expect(concluded.action).toBe("CONCLUDE");
     expect(concluded.proposed_workflow).toBe("incident-response");
-    // And no handoff: the lead proposes, it does not escalate.
-    expect(ledger.log.some((event) => event.kind === "handoff")).toBe(false);
 
     await ledger.flush();
     const events = await state.read(runId);
