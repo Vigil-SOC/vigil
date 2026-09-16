@@ -4,7 +4,7 @@ import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills } from './useWorkflowsData'
-import { workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft } from '../../services/api'
+import { workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
 import type { ConsoleScreenProps } from '../../shared/types'
 
@@ -1262,7 +1262,7 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
       {shown === 'memory' && memory !== null && <HuntMemory recall={memory} />}
       {shown === 'hyp' && <HuntStandings hunt={hunt} />}
       {shown === 'evidence' && <HuntEvidenceTable found={found} total={hunt.evidence_count} />}
-      {shown === 'moves' && <HuntMoves moves={moves} />}
+      {shown === 'moves' && <HuntMoves runId={d.run_id} moves={moves} />}
       {shown === 'frontier' && <HuntFrontier runId={d.run_id} frontier={frontier} inFlight={IN_FLIGHT.includes(d.status)} />}
       {shown === 'gaps' && <HuntGaps gaps={gaps} />}
       {shown === 'esc' && (
@@ -1518,43 +1518,171 @@ export function refusalReason(rejection: string): string {
   return complaint.length > 160 ? `${complaint.slice(0, 160)}…` : complaint
 }
 
+/** One move opened for its digest. Replay folds the whole ledger, so it is asked for
+ *  on the click and held here; the poll that refreshes `moves` never touches it. */
+interface OpenedMove { id: string; report: ReplayReport | null; failed: string | null }
+
 /** Every move the lead made and why — the only account of what a turn decided, and
- *  of a turn that stalled. */
-function HuntMoves({ moves }: { moves: HuntMove[] }) {
+ *  of a turn that stalled. Choosing one shows what the lead was looking at when it
+ *  decided. */
+function HuntMoves({ runId, moves }: { runId: string; moves: HuntMove[] }) {
+  const [opened, setOpened] = useState<OpenedMove | null>(null)
+  const pick = (decisionId: string) => {
+    if (opened?.id === decisionId) { setOpened(null); return }
+    setOpened({ id: decisionId, report: null, failed: null })
+    workflowApi
+      .getReplay(runId, decisionId)
+      .then((r) => setOpened((held) => (held?.id === decisionId ? { ...held, report: r.data } : held)))
+      .catch((e) => setOpened((held) => (held?.id === decisionId ? { ...held, failed: errMsg(e) } : held)))
+  }
   return (
     <div style={{ marginTop: 12 }}>
-      <div className="muted text-[11.5px] mb-2">Newest first. One decision per turn; a turn may re-ask after a refused emission.</div>
+      <div className="muted text-[11.5px] mb-2">Newest first. One decision per turn; a turn may re-ask after a refused emission. Choose a move to see what the lead was shown.</div>
       <div className="table-wrap">
         <table className="tbl">
           <thead><tr><th className="tight">Turn</th><th className="tight">Move</th><th>Why</th><th className="tight">On</th></tr></thead>
           <tbody>
             {moves.map((m) => (
-              <tr key={m.decision_id}>
-                <td className="muted tight">{m.iteration}</td>
-                <td className="tight mono text-[11px]">{m.action}</td>
-                <td>
-                  {m.rationale}
-                  {m.query_intent && <div className="muted text-[11px] mt-0.5">asked: {m.query_intent}</div>}
-                  {/* The entity and the worker live here rather than in On: an ip or a
-                      role name in a tight column wrapped a character to a line. */}
-                  {(m.target_entity || m.worker_agent_id) && (
-                    <div className="flex gap-1.5 flex-wrap mt-1">
-                      {m.target_entity && <span className="chip mono" style={{ fontSize: 10 }}>{m.target_entity}</span>}
-                      {m.worker_agent_id && <span className="chip" style={{ fontSize: 10 }}>{m.worker_agent_id}</span>}
-                    </div>
-                  )}
-                  {!!m.rejected_attempts?.length && (
-                    <div className="text-[11px] mt-1" style={{ color: 'var(--high)' }}>
-                      {m.rejected_attempts.length} emission(s) refused first — {refusalReason(m.rejected_attempts[0]!)}
-                    </div>
-                  )}
-                </td>
-                <td className="tight"><Hyp id={m.target_hypothesis_id} /></td>
-              </tr>
+              <Fragment key={m.decision_id}>
+                <tr
+                  className={`clickable${opened?.id === m.decision_id ? ' sel' : ''}`}
+                  tabIndex={0}
+                  aria-expanded={opened?.id === m.decision_id}
+                  onClick={() => pick(m.decision_id)}
+                  onKeyDown={activateOnKey(() => pick(m.decision_id))}
+                >
+                  <td className="muted tight">{m.iteration}</td>
+                  <td className="tight mono text-[11px]">{m.action}</td>
+                  <td>
+                    {m.rationale}
+                    {m.query_intent && <div className="muted text-[11px] mt-0.5">asked: {m.query_intent}</div>}
+                    {/* The entity and the worker live here rather than in On: an ip or a
+                        role name in a tight column wrapped a character to a line. */}
+                    {(m.target_entity || m.worker_agent_id) && (
+                      <div className="flex gap-1.5 flex-wrap mt-1">
+                        {m.target_entity && <span className="chip mono" style={{ fontSize: 10 }}>{m.target_entity}</span>}
+                        {m.worker_agent_id && <span className="chip" style={{ fontSize: 10 }}>{m.worker_agent_id}</span>}
+                      </div>
+                    )}
+                    {!!m.rejected_attempts?.length && (
+                      <div className="text-[11px] mt-1" style={{ color: 'var(--high)' }}>
+                        {m.rejected_attempts.length} emission(s) refused first — {refusalReason(m.rejected_attempts[0]!)}
+                      </div>
+                    )}
+                  </td>
+                  <td className="tight"><Hyp id={m.target_hypothesis_id} /></td>
+                </tr>
+                {opened?.id === m.decision_id && (
+                  <tr>
+                    <td colSpan={4} style={{ background: 'var(--bg-2)' }}><MoveDigest opened={opened} /></td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+/** The digest one decision was shown, as the record has it, and whether folding the
+ *  ledger again reproduces it. The recorded half is rendered — that is what the lead
+ *  read — and the rebuilt half is what the mismatch line speaks for. */
+function MoveDigest({ opened }: { opened: OpenedMove }) {
+  if (opened.failed !== null) {
+    return <div className="text-[12px] py-1" style={{ color: 'var(--high)' }}>Could not read what this move was shown — {opened.failed}</div>
+  }
+  const decision = opened.report?.decisions[0]
+  if (opened.report === null) return <div className="muted text-[12px] py-1">Rebuilding the digest from the ledger…</div>
+  if (decision === undefined) return <div className="muted text-[12px] py-1">Replay returned nothing for this decision.</div>
+
+  const seen = decision.recorded
+  const recalled = opened.report.recalled
+  return (
+    <div className="py-1" style={{ whiteSpace: 'normal' }}>
+      <div className="flex gap-1.5 items-center flex-wrap mb-2">
+        <h4 style={{ margin: 0 }}>What the lead was shown at turn {decision.iteration}</h4>
+        {decision.mismatch === null
+          ? <span className="chip sel" style={{ fontSize: 10 }}>rebuild matches the record</span>
+          : <span className="chip" style={{ fontSize: 10, color: 'var(--high)' }} title={decision.mismatch}>rebuild differs: {decision.mismatch}</span>}
+        {!decision.exact && (
+          <span className="muted text-[11px]">prefix inferred — the ledger predates digest_seq, so a difference may be the boundary rather than drift</span>
+        )}
+      </div>
+
+      <div className="text-[12.5px]">{seen.narrative || <span className="muted">No narrative was in the digest.</span>}</div>
+      <div className="muted text-[11px] mt-1">
+        focus {seen.focus.entity ? <span className="mono">{seen.focus.entity}</span> : 'no entity'} · <Hyp id={seen.focus.hypothesis} />
+        {' '}· {seen.budget_remaining.iterations} turn(s) and ${seen.budget_remaining.cost_usd.toFixed(2)} left
+      </div>
+
+      {seen.hypotheses.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <h4>Beliefs as they stood ({seen.hypotheses.length})</h4>
+          <div className="table-wrap">
+            <table className="tbl">
+              <tbody>
+                {seen.hypotheses.map((h) => (
+                  <tr key={h.hypothesis_id}>
+                    <td className="tight"><Hyp id={h.hypothesis_id} /></td>
+                    <td>{h.statement}</td>
+                    <td className="tight" style={{ color: hypothesisColor(h.status) }}>{h.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {seen.recent_evidence.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <h4>Recent evidence ({seen.recent_evidence.length}{seen.omitted.count > 0 && `, ${seen.omitted.count} routine omitted`})</h4>
+          <div className="table-wrap">
+            <table className="tbl">
+              <tbody>
+                {seen.recent_evidence.map((one) => (
+                  <tr key={one.evidence_id}>
+                    <td className="muted tight">{one.source_system || '—'}</td>
+                    <td>
+                      {one.summary}
+                      {one.why_notable && <div className="muted text-[11px]">{one.why_notable}</div>}
+                      <div className="text-[11px] mt-0.5 flex gap-2 flex-wrap">
+                        <span className="muted">{one.salience}</span>
+                        {one.instruction_like && <span style={{ color: 'var(--crit)' }}>reads as instruction</span>}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {seen.open_questions.length > 0 && <DigestList title="Open questions" rows={seen.open_questions} />}
+      {seen.directives.length > 0 && <DigestList title="Operator directives" rows={seen.directives} />}
+      {seen.notes.length > 0 && <DigestList title="Notes" rows={seen.notes} />}
+
+      <div style={{ marginTop: 10 }}>
+        <h4>Recalled from earlier investigations ({recalled.length})</h4>
+        <div className="muted text-[11.5px] mb-1">
+          Read off the run's own recall event — the record it opened on, not a live re-read of memory.
+        </div>
+        {recalled.length === 0
+          ? <div className="muted text-[12px]">Nothing recalled: the run never read memory, or the read could not be served.</div>
+          : <ul className="text-[12px]" style={{ paddingLeft: 18, margin: 0 }}>{recalled.map((row, at) => <li key={at}>{row}</li>)}</ul>}
+      </div>
+    </div>
+  )
+}
+
+function DigestList({ title, rows }: { title: string; rows: string[] }) {
+  return (
+    <div style={{ marginTop: 10 }}>
+      <h4>{title} ({rows.length})</h4>
+      <ul className="text-[12px]" style={{ paddingLeft: 18, margin: 0 }}>{rows.map((row, at) => <li key={at}>{row}</li>)}</ul>
     </div>
   )
 }

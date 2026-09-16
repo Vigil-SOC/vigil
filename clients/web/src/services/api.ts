@@ -946,6 +946,41 @@ export interface WorkflowPhase {
   parallel_group?: string | null
 }
 
+/** What a hunt lead was shown before one decision. Mirrors `Digest` in
+ *  services/agent/workflows/hunt/types.ts; only what the console renders is typed. */
+export interface ReplayDigest {
+  iteration: number
+  narrative: string
+  hypotheses: { hypothesis_id: string; statement: string; status: string }[]
+  recent_evidence: { evidence_id: string; source_system: string; summary: string; salience: string; why_notable: string; instruction_like: boolean }[]
+  focus: { entity: string | null; hypothesis: string | null }
+  omitted: { count: number; evidence_ids: string[] }
+  open_questions: string[]
+  budget_remaining: { iterations: number; cost_usd: number }
+  directives: string[]
+  notes: string[]
+}
+export interface ReplayedDecision {
+  decision_id: string
+  iteration: number
+  action: string
+  target: string | null
+  cost_usd: number
+  /** False when the ledger predates digest_seq and the prefix had to be inferred. */
+  exact: boolean
+  rebuilt: ReplayDigest
+  recorded: ReplayDigest
+  mismatch: string | null
+}
+export interface ReplayReport {
+  hunt_id: string
+  decisions: ReplayedDecision[]
+  reproduced: number
+  inexact: number
+  /** Read off the run's own recall event, not a live memory read. */
+  recalled: string[]
+}
+
 export const workflowApi = {
   listAll: () => api.get('/workflows'),
   get: (id: string) => api.get(`/workflows/${id}`),
@@ -964,6 +999,10 @@ export const workflowApi = {
   listRuns: (id: string, params: { limit?: number; offset?: number; status?: string } = {}) =>
     api.get(`/workflows/${id}/runs`, { params }),
   getRun: (runId: string) => api.get(`/workflows/runs/${runId}`),
+  // What one decision was shown, rebuilt against the record. Folds the whole ledger on
+  // the agent side, so it is asked for on a click and never on the getRun poll.
+  getReplay: (runId: string, decisionId: string) =>
+    api.get<ReplayReport>(`/workflows/runs/${runId}/replay`, { params: { decision_id: decisionId } }),
   // Hides a finished run from History. The row and its ledger stay: what the
   // agents did is still auditable by run_id after an operator tidies the list.
   deleteRun: (runId: string) => api.delete(`/workflows/runs/${runId}`),
