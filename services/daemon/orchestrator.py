@@ -65,6 +65,7 @@ from core.response.checkpoints import raise_for_checkpoint
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
+    _infer_title,
     count_steps,
     generate_case_review_context,
     generate_case_review_plan,
@@ -309,13 +310,40 @@ class Orchestrator:
             action=f"assign_workflow:{workflow_id}",
             confidence=0.85,
         )
+        priority = severity or "medium"
+        # The case opens here, at admission, so the run has one to attach evidence
+        # to from its first step. Failing to open one is logged, not fatal: the
+        # investigation still launches, as it did before cases were opened here.
+        case_id = self._open_case_for_finding(finding, workflow_id, priority)
         await self._create_investigation(
             workflow_id=workflow_id,
             findings=[finding],
             trigger_type="finding",
-            priority=severity or "medium",
+            priority=priority,
+            case_id=case_id,
             shutdown_event=shutdown_event,
         )
+
+    def _open_case_for_finding(
+        self, finding: Dict, workflow_id: str, priority: str
+    ) -> Optional[str]:
+        """Open a case for an admitted finding; ``None`` when one could not be."""
+        finding_id = finding.get("finding_id", "unknown")
+        if not self._data_service:
+            logger.warning(
+                f"No data service; finding {finding_id} launches without a case"
+            )
+            return None
+        case = self._data_service.create_case(
+            _infer_title(finding, workflow_id), [finding_id], priority=priority
+        )
+        case_id = (case or {}).get("case_id")
+        if not case_id:
+            logger.warning(
+                f"Case creation failed for finding {finding_id}; launching without a case"
+            )
+            return None
+        return case_id
 
     async def _create_manual_investigation(
         self, item: Dict, shutdown_event: asyncio.Event

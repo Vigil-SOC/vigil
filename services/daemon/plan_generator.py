@@ -35,7 +35,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Case Management",
-            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+            "description": "Attach related findings (add_finding_to_case), IOCs, timeline entries (add_case_timeline_entry), and MITRE techniques to the case named by case_id in this plan",
         },
         {
             "title": "Document & Report",
@@ -65,7 +65,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Case Management",
-            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+            "description": "Attach related findings (add_finding_to_case), IOCs, timeline entries (add_case_timeline_entry), and MITRE techniques to the case named by case_id in this plan",
         },
         {
             "title": "Final Report",
@@ -95,7 +95,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Case Management",
-            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+            "description": "Attach related findings (add_finding_to_case), IOCs, timeline entries (add_case_timeline_entry), and MITRE techniques to the case named by case_id in this plan",
         },
         {
             "title": "Hunt Report",
@@ -125,7 +125,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Case Management",
-            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+            "description": "Attach related findings (add_finding_to_case), IOCs, timeline entries (add_case_timeline_entry), and MITRE techniques to the case named by case_id in this plan",
         },
         {
             "title": "Forensic Report",
@@ -169,7 +169,7 @@ DEFAULT_STEPS = [
     {"title": "Response", "description": "Propose containment and response actions"},
     {
         "title": "Case Management",
-        "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+        "description": "Attach related findings (add_finding_to_case), IOCs, timeline entries (add_case_timeline_entry), and MITRE techniques to the case named by case_id in this plan",
     },
     {"title": "Report", "description": "Document findings and submit for review"},
 ]
