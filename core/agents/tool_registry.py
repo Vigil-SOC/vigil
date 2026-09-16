@@ -267,8 +267,23 @@ def _recall(args: Args) -> Any:
     return recall_entity(args)
 
 
+# Report in, one of three answers out (#903). Reads only; never starts a hunt.
+def _check_hunt_coverage(args: Args) -> Any:
+    from core.memory.hunt_coverage import check_coverage
+
+    try:
+        return check_coverage(
+            report=args.get("report"),
+            entity_keys=args.get("entity_keys") or (),
+            techniques=args.get("techniques") or (),
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
 _MEMORY_TOOLS: Dict[str, Callable[[Args], Any]] = {
     RECALL_TOOL: _recall,
+    "check_hunt_coverage": _check_hunt_coverage,
 }
 
 _APPROVAL_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {

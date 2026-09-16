@@ -6711,6 +6711,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/threat-hunt/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Hunt Coverage
+         * @description Say whether a threat report is already hunted: ``running``, ``concluded``
+         *     or ``uncovered``. Read-only -- the caller decides whether to POST the
+         *     returned ``proposal`` to ``/workflows/threat-hunt/execute``.
+         *
+         *     The same function as the ``check_hunt_coverage`` agent tool, imported here
+         *     so the router does not pull a database session factory in at import.
+         */
+        post: operations["post_api_workflows_threat-hunt_coverage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/{workflow_id}": {
         parameters: {
             query?: never;
@@ -8570,6 +8595,18 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * HuntCoverageRequest
+         * @description A threat report and/or what was already extracted from it (#903).
+         */
+        HuntCoverageRequest: {
+            /** Entity Keys */
+            entity_keys?: string[];
+            /** Report */
+            report?: string | null;
+            /** Techniques */
+            techniques?: string[];
         };
         /**
          * IOCAdd
@@ -21917,6 +21954,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["WorkflowRunResumeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_workflows_threat-hunt_coverage": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HuntCoverageRequest"];
             };
         };
         responses: {

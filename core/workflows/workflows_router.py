@@ -68,6 +68,14 @@ class WorkflowExecuteRequest(BaseModel):
     approve_hypotheses: Optional[bool] = None
 
 
+class HuntCoverageRequest(BaseModel):
+    """A threat report and/or what was already extracted from it (#903)."""
+
+    report: Optional[str] = None
+    entity_keys: List[str] = Field(default_factory=list)
+    techniques: List[str] = Field(default_factory=list)
+
+
 class WorkflowPhaseSchema(BaseModel):
     phase_id: Optional[str] = None
     order: Optional[int] = None
@@ -264,6 +272,32 @@ async def generate_workflow(
             detail=result.get("error") or "Workflow generation failed",
         )
     return {"draft": result["draft"]}
+
+
+# -----------------------------------------------------------------------------
+# Hunt coverage (#903)
+# -----------------------------------------------------------------------------
+
+
+@router.post("/workflows/threat-hunt/coverage")
+async def check_hunt_coverage(payload: HuntCoverageRequest):
+    """Say whether a threat report is already hunted: ``running``, ``concluded``
+    or ``uncovered``. Read-only -- the caller decides whether to POST the
+    returned ``proposal`` to ``/workflows/threat-hunt/execute``.
+
+    The same function as the ``check_hunt_coverage`` agent tool, imported here
+    so the router does not pull a database session factory in at import.
+    """
+    from core.memory.hunt_coverage import check_coverage
+
+    try:
+        return check_coverage(
+            report=payload.report,
+            entity_keys=payload.entity_keys,
+            techniques=payload.techniques,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 # -----------------------------------------------------------------------------

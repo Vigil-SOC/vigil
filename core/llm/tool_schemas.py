@@ -561,7 +561,40 @@ MEMORY_TOOLS = [
             "`unknown`."
         ),
         "input_schema": RECALL_PARAMETERS,
-    }
+    },
+    {
+        "name": "check_hunt_coverage",
+        "description": (
+            "Before proposing a hunt from a threat report, ask whether one already "
+            "covers it. Pass the report text (STIX bundle or plain text) and/or "
+            "already-extracted Entity Keys (`type:value`) and ATT&CK technique ids. "
+            "Answers `running` (a hunt is on it now; extend that run via "
+            "POST /api/agent-runs/{run_id}/directives kind `extend`), `concluded` "
+            "(a past hunt reached a Verdict; rows carry outcome, date and "
+            "origin_run_id) or `uncovered`. The last two include a `proposal` body "
+            "for POST /api/workflows/threat-hunt/execute. Matched and unmatched "
+            "keys and techniques are listed. Read-only: this never starts a hunt."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "report": {
+                    "type": "string",
+                    "description": "The report: a STIX 2.x bundle or plain text",
+                },
+                "entity_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Entity Keys already extracted, as `type:value`",
+                },
+                "techniques": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "ATT&CK technique ids already extracted (T1566)",
+                },
+            },
+        },
+    },
 ]
 
 # Combine all tools
