@@ -341,15 +341,11 @@ class Orchestrator:
         """Create an investigation for a finding, with dedup checks."""
         finding_id = finding.get("finding_id", "unknown")
         raw_severity = finding.get("severity")
-        # No severity is not below-threshold: LogLM rows arrive unrated, and
-        # shedding them would drop the least-trusted case. Leave the trigger queued.
+        # Unrated stays queued for the ranking sibling. Rated findings are not
+        # shed: Gate 1 already filtered the offer.
         if raw_severity is None or not str(raw_severity).strip():
             return
         severity = str(raw_severity).lower()
-
-        if severity not in self.config.auto_assign_severities:
-            self._decide_trigger(trigger_id, state="shed", reason="below_threshold")
-            return
 
         overlapping = self.shared_intel.check_overlap(finding)
         if overlapping:

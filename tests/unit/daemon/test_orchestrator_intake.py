@@ -1,7 +1,7 @@
 """Every trigger offered to the orchestrator is a row (#918).
 
 Producers insert; the intake tick reads queued
-rows oldest-first; below-threshold is shed; overlap is merged after attach.
+rows oldest-first; rated findings launch or merge; overlap is merged after attach.
 """
 
 from __future__ import annotations
@@ -76,15 +76,16 @@ def test_lift_copies_nested_enrichment_keys_select_workflow_reads():
 
 
 @pytest.mark.asyncio
-async def test_below_threshold_ends_shed_and_opens_nothing():
+async def test_a_medium_finding_launches_and_is_not_shed():
     orch = _orchestrator()
 
     await orch._create_investigation_for_finding(MEDIUM, None, trigger_id=7)
 
-    orch._decide_trigger.assert_called_once_with(
-        7, state="shed", reason="below_threshold"
-    )
-    orch._create_investigation.assert_not_awaited()
+    orch._create_investigation.assert_awaited_once()
+    kwargs = orch._create_investigation.await_args.kwargs
+    assert kwargs["trigger_id"] == 7
+    assert kwargs["priority"] == "medium"
+    orch._decide_trigger.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -136,6 +137,20 @@ async def test_overlap_ends_merged_with_the_case_it_joined():
     )
     orch._create_investigation.assert_not_awaited()
     orch._log_ai_decision.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_medium_finding_that_overlaps_merges_instead_of_shedding():
+    orch = _orchestrator()
+    orch.shared_intel.check_overlap.return_value = ["inv-1"]
+
+    await orch._create_investigation_for_finding(MEDIUM, None, trigger_id=8)
+
+    orch._attach_finding_to_overlap.assert_called_once_with("f-med", ["inv-1"])
+    orch._decide_trigger.assert_called_once_with(
+        8, state="merged", reason="overlaps_open_work", merged_into="case-1"
+    )
+    orch._create_investigation.assert_not_awaited()
 
 
 @pytest.mark.asyncio
