@@ -423,3 +423,92 @@ def lookup_indicators(
         for row in rows:
             out.setdefault(row.indicator_value, ThreatIndicatorSchema.dump(row))
     return out
+
+
+# ---------------------------------------------------------------------------
+# Hunt proposals from recent feed rows (#905). Proposes; never starts a hunt.
+# ---------------------------------------------------------------------------
+
+# How many recent rows one call classifies. A code constant, not a setting: the
+# cap bounds the per-key coverage reads, and a feed poll rarely upserts more.
+RECENT_INDICATOR_LIMIT = 200
+
+
+def _recent_indicators(limit: int) -> List[Dict[str, Any]]:
+    """The newest ``threat_indicators`` rows by ``last_seen``, dumped."""
+    try:
+        from core.storage.connection import get_db_manager
+        from core.storage.models import ThreatIndicator
+        from core.storage.schemas import ThreatIndicatorSchema
+    except Exception as e:  # noqa: BLE001
+        logger.debug("ThreatIndicator read unavailable: %s", e)
+        return []
+    db = get_db_manager()
+    with db.session_scope() as session:
+        rows = (
+            session.query(ThreatIndicator)
+            .order_by(ThreatIndicator.last_seen.desc(), ThreatIndicator.id.desc())
+            .limit(limit)
+            .all()
+        )
+        return [ThreatIndicatorSchema.dump(row) for row in rows]
+
+
+def propose_hunts_from_recent_indicators(
+    limit: int = RECENT_INDICATOR_LIMIT,
+) -> Dict[str, Any]:
+    """Recent feed indicators nobody has hunted, each with an executable proposal.
+
+    The second caller of ``check_coverage`` (epic #886, decision 9): read the
+    rows the poller upserted, mint one Entity Key per row, and ask the same
+    classifier ``check_hunt_coverage`` uses. Classified per key, not per
+    batch -- one in-flight hunt would otherwise make every indicator
+    ``running``. Rows whose key is ``running`` or ``concluded`` are counted and
+    omitted; types with no Entity Key type are skipped rather than minted
+    off-vocabulary. Nothing here opens a hunt.
+    """
+    # Deferred: hunt_coverage imports parse_report from this module.
+    from core.memory.hunt_coverage import check_coverage
+
+    limit = max(1, min(int(limit), RECENT_INDICATOR_LIMIT))
+    rows = _recent_indicators(limit)
+    counts = {"rows": len(rows), "skipped": 0, "running": 0, "concluded": 0}
+    proposals: List[Dict[str, Any]] = []
+    seen: set = set()
+    for row in rows:
+        entity_type = _INDICATOR_TO_ENTITY_TYPE.get(str(row.get("indicator_type")))
+        value = row.get("indicator_value")
+        if not entity_type or not value:
+            counts["skipped"] += 1
+            continue
+        key = entity_key(entity_type, str(value))
+        if key in seen:  # the same IOC from two feeds is one question
+            continue
+        seen.add(key)
+        try:
+            coverage = check_coverage(entity_keys=[key])
+        except ValueError:  # the key normalised away to nothing
+            counts["skipped"] += 1
+            continue
+        status = coverage["status"]
+        if status != "uncovered":
+            counts[status] += 1
+            continue
+        proposals.append(
+            {
+                "entity_key": key,
+                "indicator": {
+                    "indicator_type": row.get("indicator_type"),
+                    "indicator_value": value,
+                    "source": row.get("source"),
+                    "last_seen": _isoformat(row.get("last_seen")),
+                },
+                "proposal": coverage["proposal"],
+                "execute": coverage["execute"],
+            }
+        )
+    return {"limit": limit, "checked": len(seen), **counts, "proposals": proposals}
+
+
+def _isoformat(value: Any) -> Optional[str]:
+    return value.isoformat() if isinstance(value, datetime) else value

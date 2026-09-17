@@ -300,6 +300,19 @@ async def check_hunt_coverage(payload: HuntCoverageRequest):
         raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
+@router.get("/workflows/threat-hunt/feed-proposals")
+async def propose_feed_hunts(limit: int = 200):
+    """Recent feed indicators nobody has hunted, each with a ``proposal`` body
+    for ``/workflows/threat-hunt/execute`` (#905). Read-only, like the
+    coverage route above and the ``propose_feed_hunts`` agent tool.
+    """
+    from core.threat_intel.threat_feed_service import (
+        propose_hunts_from_recent_indicators,
+    )
+
+    return propose_hunts_from_recent_indicators(limit=limit)
+
+
 # -----------------------------------------------------------------------------
 # Parameterized discovery/execution routes (keep at bottom so specific paths
 # like /workflows/custom and /workflows/reload match first)

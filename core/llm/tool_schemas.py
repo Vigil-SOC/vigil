@@ -538,7 +538,33 @@ THREAT_INTEL_TOOLS = [
             },
             "required": ["values"],
         },
-    }
+    },
+    {
+        "name": "propose_feed_hunts",
+        "description": (
+            "Which recently fed threat indicators has nobody hunted? Reads the "
+            "newest rows of Vigil's threat-indicator database and runs each "
+            "through the same coverage check as `check_hunt_coverage`. Returns "
+            "one entry per uncovered indicator with its Entity Key, the feed row "
+            "(type, value, source, last_seen) and a `proposal` body for "
+            "POST /api/workflows/threat-hunt/execute; indicators already "
+            "`running` or `concluded` are counted and omitted. Read-only: this "
+            "never starts a hunt."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "How many of the most recent indicators to classify "
+                        "(capped at 200)"
+                    ),
+                    "default": 200,
+                },
+            },
+        },
+    },
 ]
 
 # Episodic memory (#732). Reading it is a backend tool rather than an MCP server

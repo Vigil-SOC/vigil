@@ -349,6 +349,7 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
             "cf_lookup_domain_threat",
             "recall_entity",
             "check_hunt_coverage",
+            "propose_feed_hunts",
         ],
         "max_tokens": 16384,
         "enable_thinking": True,
