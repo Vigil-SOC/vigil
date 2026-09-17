@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
 from core.auth.auth_service import AuthService
-from core.cases import case_records_service
+from core.cases import case_journal_service, case_records_service
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
@@ -379,26 +379,17 @@ async def add_case_activity(case_id: str, activity: ActivityAdd):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
+    if not data_service.get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # Get or initialize activities list
-    activities = case.get("activities", [])
-
-    # Add new activity
-    new_activity = {
-        "timestamp": utcnow().isoformat() + "Z",
-        "activity_type": activity.activity_type,
-        "description": activity.description,
-        "details": activity.details or {},
-    }
-    activities.append(new_activity)
-
-    # Update case
-    success = data_service.update_case(case_id, activities=activities)
-
-    if not success:
+    added = case_journal_service.append_activity(
+        data_service,
+        case_id,
+        activity_type=activity.activity_type,
+        description=activity.description,
+        details=activity.details,
+    )
+    if added is None:
         raise HTTPException(status_code=500, detail="Failed to add activity")
 
     return data_service.get_case(case_id)
@@ -416,26 +407,17 @@ async def add_resolution_step(case_id: str, step: ResolutionStepAdd):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
+    if not data_service.get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # Get or initialize resolution steps list
-    resolution_steps = case.get("resolution_steps", [])
-
-    # Add new step
-    new_step = {
-        "timestamp": utcnow().isoformat() + "Z",
-        "description": step.description,
-        "action_taken": step.action_taken,
-        "result": step.result,
-    }
-    resolution_steps.append(new_step)
-
-    # Update case
-    success = data_service.update_case(case_id, resolution_steps=resolution_steps)
-
-    if not success:
+    added = case_journal_service.append_resolution_step(
+        data_service,
+        case_id,
+        description=step.description,
+        action_taken=step.action_taken,
+        result=step.result,
+    )
+    if added is None:
         raise HTTPException(status_code=500, detail="Failed to add resolution step")
 
     return data_service.get_case(case_id)
@@ -453,16 +435,11 @@ async def add_finding_to_case(case_id: str, finding_id: str):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    finding_ids = case.get("finding_ids", [])
-    if finding_id not in finding_ids:
-        finding_ids.append(finding_id)
-        success = data_service.update_case(case_id, finding_ids=finding_ids)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to add finding")
+    linked = case_journal_service.link_finding(data_service, case_id, finding_id)
+    if linked is None:
+        if not data_service.get_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
+        raise HTTPException(status_code=500, detail="Failed to add finding")
 
     return data_service.get_case(case_id)
 
@@ -479,16 +456,11 @@ async def remove_finding_from_case(case_id: str, finding_id: str):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    finding_ids = case.get("finding_ids", [])
-    if finding_id in finding_ids:
-        finding_ids.remove(finding_id)
-        success = data_service.update_case(case_id, finding_ids=finding_ids)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to remove finding")
+    unlinked = case_journal_service.unlink_finding(data_service, case_id, finding_id)
+    if unlinked is None:
+        if not data_service.get_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
+        raise HTTPException(status_code=500, detail="Failed to remove finding")
 
     return data_service.get_case(case_id)
 

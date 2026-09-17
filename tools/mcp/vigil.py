@@ -1,6 +1,5 @@
 import json
 import logging
-import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from typing import TYPE_CHECKING, Iterator, Optional
@@ -50,13 +49,6 @@ def load_findings():
     except Exception as e:
         logger.error(f"Error loading findings via DatabaseDataService: {e}")
         return []
-
-
-def get_db():
-    """Get DatabaseService for direct database operations."""
-    from core.storage.service import DatabaseService
-
-    return DatabaseService()
 
 
 @mcp.tool()
@@ -171,20 +163,27 @@ def list_cases(
     **kwargs,
 ) -> str:
     try:
-        db = get_db()
-        cases = db.get_cases(status=status, priority=priority, limit=limit)
+        cases = get_data_service().get_cases()
+        # Filtered here rather than in the query, which is what GET /api/v1/cases
+        # does; doing it the other way would be a second answer to what "status"
+        # means.
+        if status:
+            cases = [c for c in cases if c.get("status") == status]
+        if priority:
+            cases = [c for c in cases if c.get("priority") == priority]
+
         results = [
             {
-                "case_id": c.case_id,
-                "title": c.title,
-                "status": c.status,
-                "priority": c.priority,
-                "assignee": c.assignee,
-                "finding_count": len(c.findings) if hasattr(c, "findings") else 0,
-                "created_at": c.created_at,
-                "updated_at": c.updated_at,
+                "case_id": c.get("case_id"),
+                "title": c.get("title"),
+                "status": c.get("status"),
+                "priority": c.get("priority"),
+                "assignee": c.get("assignee"),
+                "finding_count": len(c.get("findings") or []),
+                "created_at": c.get("created_at"),
+                "updated_at": c.get("updated_at"),
             }
-            for c in cases
+            for c in cases[:limit]
         ]
         return jdump({"total": len(results), "cases": results})
     except Exception as e:
@@ -194,38 +193,41 @@ def list_cases(
 @mcp.tool()
 def get_case(case_id: str, **kwargs) -> str:
     try:
-        db = get_db()
-        case = db.get_case(case_id, include_findings=True)
+        case = get_data_service().get_case(case_id)
         if not case:
             return jdump({"error": f"Case {case_id} not found"})
 
         result = {
-            "case_id": case.case_id,
-            "title": case.title,
-            "description": case.description,
-            "status": case.status,
-            "priority": case.priority,
-            "assignee": case.assignee,
-            "tags": case.tags or [],
-            "notes": case.notes or [],
-            "timeline": case.timeline or [],
-            "activities": case.activities or [],
-            "resolution_steps": case.resolution_steps or [],
-            "mitre_techniques": case.mitre_techniques or [],
-            "created_at": case.created_at,
-            "updated_at": case.updated_at,
+            key: case.get(key) or default
+            for key, default in (
+                ("case_id", None),
+                ("title", None),
+                ("description", None),
+                ("status", None),
+                ("priority", None),
+                ("assignee", None),
+                ("tags", []),
+                ("notes", []),
+                ("timeline", []),
+                ("activities", []),
+                ("resolution_steps", []),
+                ("mitre_techniques", []),
+                ("created_at", None),
+                ("updated_at", None),
+            )
         }
-        if hasattr(case, "findings"):
+        findings = case.get("findings")
+        if findings is not None:
             result["findings"] = [
                 {
-                    "finding_id": f.finding_id,
-                    "severity": f.severity,
-                    "data_source": f.data_source,
-                    "anomaly_score": float(f.anomaly_score or 0),
-                    "timestamp": f.timestamp,
-                    "status": f.status,
+                    "finding_id": f.get("finding_id"),
+                    "severity": f.get("severity"),
+                    "data_source": f.get("data_source"),
+                    "anomaly_score": float(f.get("anomaly_score") or 0),
+                    "timestamp": f.get("timestamp"),
+                    "status": f.get("status"),
                 }
-                for f in case.findings
+                for f in findings
             ]
         return jdump(result)
     except Exception as e:
@@ -244,26 +246,36 @@ def create_case(
     **kwargs,
 ) -> str:
     try:
-        db = get_db()
-        case_id = f"case-{utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
-        case = db.create_case(
-            case_id=case_id,
+        service = get_data_service()
+        # The id is the service's to mint, so a Case opened through a tool and a
+        # Case opened through the route are named the same way.
+        case = service.create_case(
             title=title,
             finding_ids=finding_ids,
+            priority=priority,
             description=description,
             status=status,
-            priority=priority,
-            assignee=assignee,
-            tags=tags or [],
         )
         if not case:
             return jdump({"error": "Failed to create case"})
+
+        # create_case carries what a Case is opened with; assignee and tags are
+        # edits to one, and are applied as edits rather than by widening it.
+        edits = {}
+        if assignee is not None:
+            edits["assignee"] = assignee
+        if tags:
+            edits["tags"] = tags
+        if edits:
+            service.update_case(case["case_id"], **edits)
+            case = service.get_case(case["case_id"]) or case
+
         return jdump(
             {
                 "success": True,
-                "case_id": case.case_id,
-                "title": case.title,
-                "status": case.status,
+                "case_id": case.get("case_id"),
+                "title": case.get("title"),
+                "status": case.get("status"),
                 "finding_count": len(finding_ids),
             }
         )
@@ -352,8 +364,8 @@ def update_case(
     **kwargs,
 ) -> str:
     try:
-        db = get_db()
-        case = db.get_case(case_id)
+        service = get_data_service()
+        case = service.get_case(case_id)
         if not case:
             return jdump({"error": f"Case {case_id} not found"})
 
@@ -369,12 +381,12 @@ def update_case(
         if assignee:
             updates["assignee"] = assignee
         if add_note:
-            notes = case.notes or []
+            notes = case.get("notes") or []
             notes.append({"timestamp": utcnow().isoformat() + "Z", "note": add_note})
             updates["notes"] = notes
 
-        was_closed = (case.status or "").strip() == "closed"
-        if not db.update_case(case_id, **updates):
+        was_closed = (case.get("status") or "").strip() == "closed"
+        if not service.update_case(case_id, **updates):
             return jdump({"error": "Failed to update case"})
 
         # The status edit is a close, so it records one -- the same fact the
@@ -395,12 +407,23 @@ def update_case(
 @mcp.tool()
 def add_finding_to_case(case_id: str, finding_id: str, **kwargs) -> str:
     try:
-        db = get_db()
-        if db.add_finding_to_case(case_id, finding_id):
-            return jdump(
-                {"success": True, "message": f"Added {finding_id} to {case_id}"}
-            )
-        return jdump({"error": "Failed to add finding"})
+        from core.cases import case_journal_service
+
+        linked = case_journal_service.link_finding(
+            get_data_service(), case_id, finding_id
+        )
+        if linked is None:
+            return jdump({"error": f"Failed to add {finding_id} to {case_id}"})
+        return jdump(
+            {
+                "success": True,
+                "message": (
+                    f"Added {finding_id} to {case_id}"
+                    if linked
+                    else f"{finding_id} was already on {case_id}"
+                ),
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -408,12 +431,23 @@ def add_finding_to_case(case_id: str, finding_id: str, **kwargs) -> str:
 @mcp.tool()
 def remove_finding_from_case(case_id: str, finding_id: str, **kwargs) -> str:
     try:
-        db = get_db()
-        if db.remove_finding_from_case(case_id, finding_id):
-            return jdump(
-                {"success": True, "message": f"Removed {finding_id} from {case_id}"}
-            )
-        return jdump({"error": "Failed to remove finding"})
+        from core.cases import case_journal_service
+
+        unlinked = case_journal_service.unlink_finding(
+            get_data_service(), case_id, finding_id
+        )
+        if unlinked is None:
+            return jdump({"error": f"Failed to remove {finding_id} from {case_id}"})
+        return jdump(
+            {
+                "success": True,
+                "message": (
+                    f"Removed {finding_id} from {case_id}"
+                    if unlinked
+                    else f"{finding_id} was not on {case_id}"
+                ),
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -442,29 +476,24 @@ def add_case_activity(
                           {"host": "workstation-42", "action": "network_isolation"})
     """
     try:
-        db = get_db()
-        case = db.get_case(case_id)
-        if not case:
-            return jdump({"error": f"Case {case_id} not found"})
+        from core.cases import case_journal_service
 
-        activities = case.activities or []
-        new_activity = {
-            "timestamp": utcnow().isoformat() + "Z",
-            "activity_type": activity_type,
-            "description": description,
-            "details": details or {},
-        }
-        activities.append(new_activity)
-
-        if db.update_case(case_id, activities=activities):
-            return jdump(
-                {
-                    "success": True,
-                    "message": f"Added {activity_type} activity to {case_id}",
-                    "activity": new_activity,
-                }
-            )
-        return jdump({"error": "Failed to add activity"})
+        entry = case_journal_service.append_activity(
+            get_data_service(),
+            case_id,
+            activity_type=activity_type,
+            description=description,
+            details=details,
+        )
+        if entry is None:
+            return jdump({"error": f"Failed to add activity to {case_id}"})
+        return jdump(
+            {
+                "success": True,
+                "message": f"Added {activity_type} activity to {case_id}",
+                "activity": entry,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -494,32 +523,25 @@ def add_case_timeline_entry(
         - add_case_timeline_entry("case-123", "Analyst began investigation", event_type="investigation")
     """
     try:
-        db = get_db()
-        case = db.get_case(case_id)
-        if not case:
-            return jdump({"error": f"Case {case_id} not found"})
+        from core.cases import case_journal_service
 
-        timeline = case.timeline or []
-        new_entry = {
-            "timestamp": event_time or (utcnow().isoformat() + "Z"),
-            "event_type": event_type,
-            "description": event_description,
-            "details": details or {},
-        }
-        timeline.append(new_entry)
-
-        # Sort timeline by timestamp
-        timeline.sort(key=lambda x: x["timestamp"])
-
-        if db.update_case(case_id, timeline=timeline):
-            return jdump(
-                {
-                    "success": True,
-                    "message": f"Added timeline entry to {case_id}",
-                    "entry": new_entry,
-                }
-            )
-        return jdump({"error": "Failed to add timeline entry"})
+        entry = case_journal_service.append_timeline_entry(
+            get_data_service(),
+            case_id,
+            event_description=event_description,
+            event_time=event_time,
+            event_type=event_type,
+            details=details,
+        )
+        if entry is None:
+            return jdump({"error": f"Failed to add timeline entry to {case_id}"})
+        return jdump(
+            {
+                "success": True,
+                "message": f"Added timeline entry to {case_id}",
+                "entry": entry,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -537,26 +559,21 @@ def add_case_mitre_techniques(case_id: str, technique_ids: list, **kwargs) -> st
         add_case_mitre_techniques("case-123", ["T1071.001", "T1059.001", "T1048.003"])
     """
     try:
-        db = get_db()
-        case = db.get_case(case_id)
-        if not case:
-            return jdump({"error": f"Case {case_id} not found"})
+        from core.cases import case_journal_service
 
-        existing_techniques = set(case.mitre_techniques or [])
-        new_techniques = set(technique_ids)
-        combined_techniques = list(existing_techniques.union(new_techniques))
-
-        if db.update_case(case_id, mitre_techniques=combined_techniques):
-            added = list(new_techniques - existing_techniques)
-            return jdump(
-                {
-                    "success": True,
-                    "message": f"Added {len(added)} new techniques to {case_id}",
-                    "added_techniques": added,
-                    "all_techniques": combined_techniques,
-                }
-            )
-        return jdump({"error": "Failed to add techniques"})
+        merged = case_journal_service.merge_mitre_techniques(
+            get_data_service(), case_id, technique_ids
+        )
+        if merged is None:
+            return jdump({"error": f"Failed to add techniques to {case_id}"})
+        return jdump(
+            {
+                "success": True,
+                "message": f"Added {len(merged['added'])} new techniques to {case_id}",
+                "added_techniques": merged["added"],
+                "all_techniques": merged["all"],
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -584,29 +601,24 @@ def add_resolution_step(
                           "3 workstations successfully isolated")
     """
     try:
-        db = get_db()
-        case = db.get_case(case_id)
-        if not case:
-            return jdump({"error": f"Case {case_id} not found"})
+        from core.cases import case_journal_service
 
-        resolution_steps = case.resolution_steps or []
-        new_step = {
-            "timestamp": utcnow().isoformat() + "Z",
-            "description": description,
-            "action_taken": action_taken,
-            "result": result,
-        }
-        resolution_steps.append(new_step)
-
-        if db.update_case(case_id, resolution_steps=resolution_steps):
-            return jdump(
-                {
-                    "success": True,
-                    "message": f"Added resolution step to {case_id}",
-                    "step": new_step,
-                }
-            )
-        return jdump({"error": "Failed to add resolution step"})
+        step = case_journal_service.append_resolution_step(
+            get_data_service(),
+            case_id,
+            description=description,
+            action_taken=action_taken,
+            result=result,
+        )
+        if step is None:
+            return jdump({"error": f"Failed to add resolution step to {case_id}"})
+        return jdump(
+            {
+                "success": True,
+                "message": f"Added resolution step to {case_id}",
+                "step": step,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -629,9 +641,9 @@ def bulk_add_findings_to_case(
                                 "All findings show lateral movement pattern")
     """
     try:
-        db = get_db()
-        case = db.get_case(case_id)
-        if not case:
+        from core.cases import case_journal_service
+
+        if not get_data_service().get_case(case_id):
             return jdump({"error": f"Case {case_id} not found"})
 
         added = []
@@ -639,7 +651,9 @@ def bulk_add_findings_to_case(
 
         for finding_id in finding_ids:
             try:
-                if db.add_finding_to_case(case_id, finding_id):
+                if case_journal_service.link_finding(
+                    get_data_service(), case_id, finding_id
+                ):
                     added.append(finding_id)
                 else:
                     failed.append(finding_id)
@@ -786,32 +800,31 @@ def add_case_comment(
         - add_case_comment("case-123", "analyst2", "I see the same pattern", parent_comment_id=5)
     """
     try:
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseComment
+        from core.cases.case_collaboration_service import CaseCollaborationService
 
-        session = get_db_session()
-        try:
-            comment = CaseComment(
+        with _service_session() as session:
+            comment = CaseCollaborationService().add_comment(
                 case_id=case_id,
                 author=author,
                 content=content,
                 parent_comment_id=parent_comment_id,
-                is_edited=False,
-                is_deleted=False,
+                session=session,
             )
-            session.add(comment)
-            session.commit()
+            if comment is None:
+                return jdump({"error": f"Could not comment on {case_id}"})
+            # The row is added, not yet flushed, so comment_id is unassigned
+            # until the database supplies it.
+            session.flush()
+            payload = comment.to_dict()
 
-            return jdump(
-                {
-                    "success": True,
-                    "comment_id": comment.comment_id,
-                    "message": f"Added comment to {case_id}",
-                    "comment": comment.to_dict(),
-                }
-            )
-        finally:
-            session.close()
+        return jdump(
+            {
+                "success": True,
+                "comment_id": payload.get("comment_id"),
+                "message": f"Added comment to {case_id}",
+                "comment": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -820,30 +833,21 @@ def add_case_comment(
 def get_case_comments(case_id: str, **kwargs) -> str:
     """Get all comments for a case."""
     try:
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseComment
+        from core.cases.case_collaboration_service import CaseCollaborationService
 
-        session = get_db_session()
-        try:
-            comments = (
-                session.query(CaseComment)
-                .filter(
-                    CaseComment.case_id == case_id,
-                    CaseComment.is_deleted.is_(False),
-                )
-                .order_by(CaseComment.created_at)
-                .all()
+        with _service_session() as session:
+            comments = CaseCollaborationService().get_case_comments(
+                case_id=case_id, session=session
             )
+            payload = [c.to_dict() for c in comments]
 
-            return jdump(
-                {
-                    "case_id": case_id,
-                    "comment_count": len(comments),
-                    "comments": [c.to_dict() for c in comments],
-                }
-            )
-        finally:
-            session.close()
+        return jdump(
+            {
+                "case_id": case_id,
+                "comment_count": len(payload),
+                "comments": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -880,43 +884,33 @@ def add_case_evidence(
                            source="Palo Alto FW", tags=["c2", "exfiltration"])
     """
     try:
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseEvidence
+        from core.cases.case_evidence_service import CaseEvidenceService
 
-        session = get_db_session()
-        try:
-            evidence = CaseEvidence(
+        with _service_session() as session:
+            evidence = CaseEvidenceService().add_evidence(
                 case_id=case_id,
                 evidence_type=evidence_type,
                 name=name,
                 collected_by=collected_by,
-                collected_at=utcnow(),
                 description=description,
                 file_path=file_path,
                 source=source,
-                tags=tags or [],
-                chain_of_custody=[
-                    {
-                        "timestamp": utcnow().isoformat() + "Z",
-                        "action": "collected",
-                        "user": collected_by,
-                        "notes": "Evidence collected and added to case",
-                    }
-                ],
+                tags=tags,
+                session=session,
             )
-            session.add(evidence)
-            session.commit()
+            if evidence is None:
+                return jdump({"error": f"Could not add evidence to {case_id}"})
+            session.flush()
+            payload = evidence.to_dict()
 
-            return jdump(
-                {
-                    "success": True,
-                    "evidence_id": evidence.evidence_id,
-                    "message": f"Added evidence '{name}' to {case_id}",
-                    "evidence": evidence.to_dict(),
-                }
-            )
-        finally:
-            session.close()
+        return jdump(
+            {
+                "success": True,
+                "evidence_id": payload.get("evidence_id"),
+                "message": f"Added evidence '{name}' to {case_id}",
+                "evidence": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -955,38 +949,33 @@ def add_case_ioc(
                       tags=["malware", "ransomware"])
     """
     try:
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseIOC
+        from core.cases.case_ioc_service import CaseIOCService
 
-        session = get_db_session()
-        try:
-            ioc = CaseIOC(
+        with _service_session() as session:
+            ioc = CaseIOCService().add_ioc(
                 case_id=case_id,
                 ioc_type=ioc_type,
                 value=value,
                 threat_level=threat_level,
                 confidence=confidence,
                 source=source,
-                tags=tags or [],
+                tags=tags,
                 context=context,
-                first_seen=utcnow(),
-                last_seen=utcnow(),
-                is_active=True,
-                is_false_positive=False,
+                session=session,
             )
-            session.add(ioc)
-            session.commit()
+            if ioc is None:
+                return jdump({"error": f"Could not add IOC {ioc_type}:{value}"})
+            session.flush()
+            payload = ioc.to_dict()
 
-            return jdump(
-                {
-                    "success": True,
-                    "ioc_id": ioc.ioc_id,
-                    "message": f"Added IOC {ioc_type}:{value} to {case_id}",
-                    "ioc": ioc.to_dict(),
-                }
-            )
-        finally:
-            session.close()
+        return jdump(
+            {
+                "success": True,
+                "ioc_id": payload.get("ioc_id"),
+                "message": f"Added IOC {ioc_type}:{value} to {case_id}",
+                "ioc": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -1009,31 +998,39 @@ def bulk_add_iocs(case_id: str, iocs: list, **kwargs) -> str:
         ])
     """
     try:
+        from core.cases.case_ioc_service import CaseIOCService
+
         added = 0
         failed = 0
         results = []
+        service = CaseIOCService()
 
-        for ioc_data in iocs:
-            try:
-                result = add_case_ioc(
-                    case_id=case_id,
-                    ioc_type=ioc_data.get("ioc_type"),
-                    value=ioc_data.get("value"),
-                    threat_level=ioc_data.get("threat_level"),
-                    confidence=ioc_data.get("confidence"),
-                    source=ioc_data.get("source"),
-                    context=ioc_data.get("context"),
-                    tags=ioc_data.get("tags"),
-                )
-                result_dict = json.loads(result)
-                if result_dict.get("success"):
+        # One transaction for the batch. Calling the single-IOC tool in a loop
+        # opened a transaction per indicator, so a batch could half-land.
+        with _service_session() as session:
+            for ioc_data in iocs:
+                try:
+                    ioc = service.add_ioc(
+                        case_id=case_id,
+                        ioc_type=ioc_data.get("ioc_type"),
+                        value=ioc_data.get("value"),
+                        threat_level=ioc_data.get("threat_level"),
+                        confidence=ioc_data.get("confidence"),
+                        source=ioc_data.get("source"),
+                        tags=ioc_data.get("tags"),
+                        context=ioc_data.get("context"),
+                        session=session,
+                    )
+                    if ioc is None:
+                        failed += 1
+                        results.append({"error": "not added", "ioc": ioc_data})
+                        continue
+                    session.flush()
                     added += 1
-                else:
+                    results.append({"success": True, "ioc": ioc.to_dict()})
+                except Exception as e:
                     failed += 1
-                results.append(result_dict)
-            except Exception as e:
-                failed += 1
-                results.append({"error": str(e), "ioc": ioc_data})
+                    results.append({"error": str(e), "ioc": ioc_data})
 
         return jdump(
             {
@@ -1052,26 +1049,21 @@ def bulk_add_iocs(case_id: str, iocs: list, **kwargs) -> str:
 def get_case_iocs(case_id: str, ioc_type: Optional[str] = None, **kwargs) -> str:
     """Get all IOCs for a case, optionally filtered by type."""
     try:
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseIOC
+        from core.cases.case_ioc_service import CaseIOCService
 
-        session = get_db_session()
-        try:
-            query = session.query(CaseIOC).filter(CaseIOC.case_id == case_id)
-            if ioc_type:
-                query = query.filter(CaseIOC.ioc_type == ioc_type)
-
-            iocs = query.all()
-
-            return jdump(
-                {
-                    "case_id": case_id,
-                    "ioc_count": len(iocs),
-                    "iocs": [ioc.to_dict() for ioc in iocs],
-                }
+        with _service_session() as session:
+            iocs = CaseIOCService().get_case_iocs(
+                case_id=case_id, ioc_type=ioc_type, session=session
             )
-        finally:
-            session.close()
+            payload = [ioc.to_dict() for ioc in iocs]
+
+        return jdump(
+            {
+                "case_id": case_id,
+                "ioc_count": len(payload),
+                "iocs": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -1105,37 +1097,33 @@ def add_case_task(
     try:
         from datetime import datetime
 
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseTask
+        from core.cases import case_records_service
 
-        session = get_db_session()
-        try:
-            task = CaseTask(
-                case_id=case_id,
+        with _service_session() as session:
+            task = case_records_service.add_task(
+                session,
+                case_id,
                 title=title,
                 description=description,
                 assignee=assignee,
                 priority=priority,
-                status="pending",
                 due_date=(
                     datetime.fromisoformat(due_date.replace("Z", "+00:00"))
                     if due_date
                     else None
                 ),
+                checklist_items=None,
             )
-            session.add(task)
-            session.commit()
+            payload = task.to_dict()
 
-            return jdump(
-                {
-                    "success": True,
-                    "task_id": task.task_id,
-                    "message": f"Added task '{title}' to {case_id}",
-                    "task": task.to_dict(),
-                }
-            )
-        finally:
-            session.close()
+        return jdump(
+            {
+                "success": True,
+                "task_id": payload.get("task_id"),
+                "message": f"Added task '{title}' to {case_id}",
+                "task": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -1162,46 +1150,41 @@ def update_case_task(
         - update_case_task(5, status="completed", notes="Malware analysis complete - ransomware variant")
     """
     try:
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseTask
+        from core.cases import case_records_service
 
-        session = get_db_session()
-        try:
-            task = session.query(CaseTask).filter(CaseTask.task_id == task_id).first()
-            if not task:
+        updates = {"status": status, "assignee": assignee}
+        if status == "completed":
+            updates["completed_at"] = utcnow()
+
+        with _service_session() as session:
+            task = case_records_service.update_task(session, task_id, updates)
+            if task is None:
                 return jdump({"error": f"Task {task_id} not found"})
+            payload = task.to_dict()
+            case_id = task.case_id
+            title = task.title
 
-            if status:
-                task.status = status
-                if status == "completed":
-                    task.completed_at = utcnow()
-            if assignee:
-                task.assignee = assignee
-
-            session.commit()
-
-            # Also add activity to the case if status changed
-            if status:
-                add_case_activity(
-                    task.case_id,
-                    "task_update",
-                    f"Task '{task.title}' status changed to {status}",
-                    (
-                        {"task_id": task_id, "notes": notes}
-                        if notes
-                        else {"task_id": task_id}
-                    ),
-                )
-
-            return jdump(
-                {
-                    "success": True,
-                    "message": f"Updated task {task_id}",
-                    "task": task.to_dict(),
-                }
+        # Activity is its own transaction, after the update has committed, so a
+        # failure to record it cannot roll the update back.
+        if status:
+            add_case_activity(
+                case_id,
+                "task_update",
+                f"Task '{title}' status changed to {status}",
+                (
+                    {"task_id": task_id, "notes": notes}
+                    if notes
+                    else {"task_id": task_id}
+                ),
             )
-        finally:
-            session.close()
+
+        return jdump(
+            {
+                "success": True,
+                "message": f"Updated task {task_id}",
+                "task": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -1210,27 +1193,18 @@ def update_case_task(
 def get_case_tasks(case_id: str, **kwargs) -> str:
     """Get all tasks for a case."""
     try:
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseTask
+        from core.cases import case_records_service
 
-        session = get_db_session()
-        try:
-            tasks = (
-                session.query(CaseTask)
-                .filter(CaseTask.case_id == case_id)
-                .order_by(CaseTask.task_order, CaseTask.created_at)
-                .all()
-            )
+        tasks = case_records_service.list_tasks(case_id)
+        payload = [t.to_dict() for t in tasks]
 
-            return jdump(
-                {
-                    "case_id": case_id,
-                    "task_count": len(tasks),
-                    "tasks": [t.to_dict() for t in tasks],
-                }
-            )
-        finally:
-            session.close()
+        return jdump(
+            {
+                "case_id": case_id,
+                "task_count": len(payload),
+                "tasks": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -1261,42 +1235,38 @@ def link_related_cases(
                             notes="case-123 is the parent campaign")
     """
     try:
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseRelationship
+        from core.cases import case_records_service
 
-        session = get_db_session()
-        try:
-            relationship = CaseRelationship(
-                case_id=case_id,
+        with _service_session() as session:
+            relationship = case_records_service.add_relationship(
+                session,
+                case_id,
                 related_case_id=related_case_id,
                 relationship_type=relationship_type,
                 created_by=created_by,
                 notes=notes,
             )
-            session.add(relationship)
-            session.commit()
+            payload = relationship.to_dict()
 
-            # Add activity to both cases
-            add_case_activity(
-                case_id,
-                "case_linked",
-                f"Linked to {related_case_id} ({relationship_type})",
-                {
-                    "related_case_id": related_case_id,
-                    "relationship_type": relationship_type,
-                },
-            )
+        # After the link has committed, so a failure to note it cannot undo it.
+        add_case_activity(
+            case_id,
+            "case_linked",
+            f"Linked to {related_case_id} ({relationship_type})",
+            {
+                "related_case_id": related_case_id,
+                "relationship_type": relationship_type,
+            },
+        )
 
-            return jdump(
-                {
-                    "success": True,
-                    "relationship_id": relationship.relationship_id,
-                    "message": f"Linked {case_id} to {related_case_id} as {relationship_type}",
-                    "relationship": relationship.to_dict(),
-                }
-            )
-        finally:
-            session.close()
+        return jdump(
+            {
+                "success": True,
+                "relationship_id": payload.get("relationship_id"),
+                "message": f"Linked {case_id} to {related_case_id} as {relationship_type}",
+                "relationship": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -1326,45 +1296,45 @@ def escalate_case(
                      urgency_level="critical")
     """
     try:
-        from core.storage.connection import get_db_session
-        from core.storage.models import CaseEscalation
+        from core.cases import case_records_service
+        from core.cases.case_workflow_service import CaseWorkflowService
 
-        session = get_db_session()
-        try:
-            escalation = CaseEscalation(
+        with _service_session() as session:
+            escalated = CaseWorkflowService().escalate_case(
                 case_id=case_id,
                 escalated_from=escalated_from,
                 escalated_to=escalated_to,
                 reason=reason,
                 urgency_level=urgency_level,
-                status="pending",
+                session=session,
             )
-            session.add(escalation)
-            session.commit()
+            if not escalated:
+                return jdump({"error": f"Could not escalate {case_id}"})
 
-            # Add activity
-            add_case_activity(
-                case_id,
-                "escalation",
-                f"Case escalated to {escalated_to}: {reason}",
-                {"escalation_id": escalation.escalation_id, "urgency": urgency_level},
-            )
+            session.flush()
+            # Read back the way POST /{case_id}/escalate does: the service
+            # reports whether it escalated, not which row it wrote.
+            escalations = case_records_service.list_escalations(session, case_id)
+            payload = escalations[-1].to_dict() if escalations else {}
 
-            # Update case priority if critical
-            if urgency_level == "critical":
-                db = get_db()
-                db.update_case(case_id, priority="critical")
+        add_case_activity(
+            case_id,
+            "escalation",
+            f"Case escalated to {escalated_to}: {reason}",
+            {
+                "escalation_id": payload.get("escalation_id"),
+                "urgency": urgency_level,
+            },
+        )
 
-            return jdump(
-                {
-                    "success": True,
-                    "escalation_id": escalation.escalation_id,
-                    "message": f"Escalated {case_id} to {escalated_to}",
-                    "escalation": escalation.to_dict(),
-                }
-            )
-        finally:
-            session.close()
+        return jdump(
+            {
+                "success": True,
+                "escalation_id": payload.get("escalation_id"),
+                "message": f"Escalated {case_id} to {escalated_to}",
+                "escalation": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
@@ -1406,7 +1376,6 @@ def close_case(
     try:
         from core.cases.case_workflow_service import CaseWorkflowService
         from core.cases.closure import ClosedByKind, ClosureCategory
-        from core.storage.connection import get_db_session
 
         # Stated here rather than left to the mapping. An unknown category
         # closes the Case and then reaches memory as nothing -- the Distil has
@@ -1422,8 +1391,7 @@ def close_case(
                 }
             )
 
-        session = get_db_session()
-        try:
+        with _service_session() as session:
             # Through the service rather than writing the rows here. This tool
             # had its own copy of the close, so the SLA clock, the IOC index and
             # anything added to a close later were the service's alone -- and a
@@ -1449,25 +1417,23 @@ def close_case(
                 return jdump({"error": f"Case {case_id} not found"})
 
             payload = closure.to_dict()
-            session.commit()
 
-            # Add final activity
-            add_case_activity(
-                case_id,
-                "case_closed",
-                f"Case closed as {category.value}",
-                {"closure_category": category.value, "closed_by": closed_by},
-            )
+        # After the closure has committed, so a failure to note it cannot
+        # leave a Case that closed and says nothing about it.
+        add_case_activity(
+            case_id,
+            "case_closed",
+            f"Case closed as {category.value}",
+            {"closure_category": category.value, "closed_by": closed_by},
+        )
 
-            return jdump(
-                {
-                    "success": True,
-                    "message": f"Closed {case_id} as {category.value}",
-                    "closure": payload,
-                }
-            )
-        finally:
-            session.close()
+        return jdump(
+            {
+                "success": True,
+                "message": f"Closed {case_id} as {category.value}",
+                "closure": payload,
+            }
+        )
     except Exception as e:
         return jdump({"error": str(e)})
 
