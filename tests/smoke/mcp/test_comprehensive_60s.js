@@ -110,7 +110,7 @@ const fs = require('fs');
       if (/calling|executing|using/i.test(chatContent)) indicators.push('CALLING');
       if (/loading|processing|thinking/i.test(chatContent)) indicators.push('LOADING');
       if (/spinning|⏳|⌛|🔄/.test(chatContent)) indicators.push('SPINNER');
-      if (/deeptempo|approval/i.test(chatContent)) indicators.push('SERVERS');
+      if (/vigil/i.test(chatContent)) indicators.push('SERVERS');
       if (/\d+\s*(connected|total)\s*server/i.test(chatContent)) indicators.push('COUNTS');
       if (/tool|function/i.test(chatContent) && chatContent.includes(message)) indicators.push('TOOL-REF');
       
@@ -164,12 +164,12 @@ const fs = require('fs');
     
     // Analysis
     const hasToolExecution = /calling|executing|using tool|function call/i.test(finalContent);
-    const hasServerNames = /deeptempo-findings|approval/i.test(aiResponse);
+    const hasServerNames = /vigil/i.test(aiResponse);
     const hasConnectionCounts = /\d+\s*(connected|total|available)\s*server/i.test(aiResponse);
     const isDataRich = aiResponse.length > 200;
     const hasLoadingIndicators = /loading|processing|thinking|\.\.\./.test(finalContent);
     
-    const serverMatches = aiResponse.match(/deeptempo-findings|approval|github|crowdstrike|sentinelone/gi) || [];
+    const serverMatches = aiResponse.match(/vigil|github|crowdstrike|sentinelone/gi) || [];
     const uniqueServers = [...new Set(serverMatches.map(s => s.toLowerCase()))];
     
     // Report

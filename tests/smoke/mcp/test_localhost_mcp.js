@@ -98,8 +98,7 @@ const fs = require('fs');
     const hasToolCall = toolCallPattern.test(fullText);
     
     const mcpServerNames = [
-      'deeptempo-findings',
-      'approval',
+      'vigil',
       'search_findings',
       'get_finding_details',
       'create_case',

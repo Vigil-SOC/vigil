@@ -15,17 +15,11 @@
       }
     },
 
-    "_comment_internal": "--- DeepTempo Internal Servers ---",
+    "_comment_internal": "--- Vigil's Own Server ---",
 
-    "deeptempo-findings": {
+    "vigil": {
       "command": "python3",
-      "args": ["tools/mcp/deeptempo_findings.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
-    "approval": {
-      "command": "python3",
-      "args": ["tools/mcp/approval.py"],
+      "args": ["tools/mcp/vigil.py"],
       "cwd": "${workspaceFolder}"
     },
 

@@ -156,8 +156,7 @@ const fs = require('fs');
       'get_finding_details',
       'call_mcp_tool',
       'get_mcp_connection_status',
-      'deeptempo-findings',
-      'approval',
+      'vigil',
     ];
     
     const mentionedTools = toolNames.filter(tool => 

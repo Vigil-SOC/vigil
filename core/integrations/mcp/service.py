@@ -122,7 +122,7 @@ class MCPServer:
         # If no process object, check if the process is running externally
         # by checking for the process by command line arguments
         try:
-            # Extract module name from args (e.g., "tools.deeptempo_findings" -> "deeptempo_findings")
+            # Extract module name from args (e.g., "tools.vigil" -> "vigil")
             module_name = None
             for arg in self.args:
                 if arg.startswith("tools."):
@@ -181,7 +181,7 @@ class MCPServer:
 
     def get_log_path(self) -> Path:
         """Get the log file path for this server."""
-        # Keep hyphens as servers log to files with hyphens (e.g., deeptempo-findings.log)
+        # Keep hyphens as servers log to files with hyphens (e.g., security-detections.log)
         return Path(f"/tmp/{self.name}.log")
 
 
@@ -253,9 +253,8 @@ class MCPService:
 
     # Internal/platform servers that should be on by default
     _DEFAULT_ENABLED = {
-        "deeptempo-findings",
+        "vigil",
         "security-detections",
-        "approval",
         # The self-hosted SIEM a hunt reads through telemetry_search -- the
         # customer's own Splunk, the expected telemetry path, not an optional
         # add-on. Safe to default-on: unset ${SPLUNK_*} placeholders leave it
@@ -324,13 +323,13 @@ class MCPService:
         """
         Detect if a server is FastMCP or stdio-based by checking the module path.
 
-        FastMCP servers: deeptempo_findings
+        FastMCP servers: vigil
         Stdio servers: All others (designed for advanced MCP integration)
         """
         for arg in args:
             # Every in-repo server lives under tools/mcp/.
             if "." in arg and arg.startswith("tools"):
-                fastmcp_tools = ["deeptempo_findings"]
+                fastmcp_tools = ["vigil"]
                 for fastmcp in fastmcp_tools:
                     if fastmcp in arg:
                         return "fastmcp"
@@ -397,7 +396,7 @@ class MCPService:
                     # Inherit the backend's environment so servers that need
                     # runtime config not declared in mcp-config.json can connect
                     # — notably the POSTGRES_* vars DatabaseService reads for
-                    # case/DB tools (deeptempo-findings). Declared config env
+                    # case/DB tools (vigil). Declared config env
                     # entries still take precedence. Required-credential
                     # detection scans the raw config above, not this spawn env,
                     # so dormancy behavior is unchanged.
@@ -491,9 +490,9 @@ class MCPService:
         """Get default server configurations if mcp-config.json is not available."""
         return [
             {
-                "name": "deeptempo-findings",
+                "name": "vigil",
                 "command": python_exe_str,
-                "args": ["-m", "tools.deeptempo_findings"],
+                "args": ["-m", "tools.vigil"],
                 "cwd": project_path_str,
                 "env": {"PYTHONPATH": project_path_str},
                 "server_type": "fastmcp",

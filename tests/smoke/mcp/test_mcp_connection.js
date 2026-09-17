@@ -96,8 +96,7 @@ const { chromium } = require('playwright');
     mcpServers: fullPageText.toLowerCase().includes('servers') ||
                 fullPageText.toLowerCase().includes('connected'),
     serverNames: {
-      'deeptempo-findings': fullPageText.includes('deeptempo-findings'),
-      'approval': fullPageText.includes('approval'),
+      'vigil': fullPageText.includes('vigil'),
     },
     noAccess: fullPageText.toLowerCase().includes('don\'t have access') ||
               fullPageText.toLowerCase().includes('cannot access') ||

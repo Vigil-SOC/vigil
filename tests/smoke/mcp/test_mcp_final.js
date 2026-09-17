@@ -89,8 +89,7 @@ const fs = require('fs');
     
     // Analysis
     const serverNames = [
-      'deeptempo-findings',
-      'approval',
+      'vigil',
       'github',
       'crowdstrike',
       'sentinelone',

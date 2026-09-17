@@ -147,6 +147,9 @@ _KNOWN_DEFAULTED_PREFIXES: Set[str] = {
 # They do not share a tier. A search of someone's logs is an observation;
 # reading our own findings back is a run agreeing with itself.
 _UNDECLARED_SERVERS: Dict[str, SourceTier] = {
+    "vigil": SourceTier.NOT_EVIDENCE,
+    # The name Vigil's own server carried before it was one server. Existing
+    # `source_system` rows cite it, so it is graded rather than migrated away.
     "deeptempo-findings": SourceTier.NOT_EVIDENCE,
     "approval": SourceTier.NOT_EVIDENCE,
     "gcp-secops": SourceTier.TELEMETRY,

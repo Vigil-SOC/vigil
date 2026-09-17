@@ -98,7 +98,7 @@ const fs = require('fs');
       const hasNewContent = chatContent !== previousContent;
       const hasThinking = /thinking|processing|loading|\.\.\./.test(chatContent);
       const hasToolCall = /calling|executing|using tool|get_mcp_connection_status/i.test(chatContent);
-      const hasServerData = /deeptempo|approval|connected|servers/i.test(chatContent);
+      const hasServerData = /vigil|connected|servers/i.test(chatContent);
       
       // Visual indicator
       let icon = '⏳';
@@ -149,7 +149,7 @@ const fs = require('fs');
     const hasThinkingIndicator = /thinking|processing|analyzing|checking/i.test(aiResponse);
     const hasLoadingIndicator = /loading|\.\.\./.test(aiResponse);
     
-    const serverNames = ['deeptempo-findings', 'approval'];
+    const serverNames = ['vigil'];
     const mentionedServers = serverNames.filter(name => aiResponse.toLowerCase().includes(name));
     
     const hasConnectionData = /connected|total.*server|(\d+)\s+server/i.test(aiResponse);

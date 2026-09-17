@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
-mcp = MCPServer("deeptempo-findings")
+mcp = MCPServer("vigil")
 
 _data_service = None
 
@@ -38,7 +38,7 @@ def get_data_service():
 
         _data_service = DatabaseDataService()
         backend_info = _data_service.get_backend_info()
-        logger.info(f"MCP deeptempo-findings using backend: {backend_info['backend']}")
+        logger.info(f"MCP vigil using backend: {backend_info['backend']}")
 
     return _data_service
 
@@ -370,9 +370,7 @@ def update_case(
             updates["assignee"] = assignee
         if add_note:
             notes = case.notes or []
-            notes.append(
-                {"timestamp": utcnow().isoformat() + "Z", "note": add_note}
-            )
+            notes.append({"timestamp": utcnow().isoformat() + "Z", "note": add_note})
             updates["notes"] = notes
 
         was_closed = (case.status or "").strip() == "closed"
@@ -829,7 +827,10 @@ def get_case_comments(case_id: str, **kwargs) -> str:
         try:
             comments = (
                 session.query(CaseComment)
-                .filter(CaseComment.case_id == case_id, CaseComment.is_deleted == False)
+                .filter(
+                    CaseComment.case_id == case_id,
+                    CaseComment.is_deleted.is_(False),
+                )
                 .order_by(CaseComment.created_at)
                 .all()
             )
@@ -1467,6 +1468,193 @@ def close_case(
             )
         finally:
             session.close()
+    except Exception as e:
+        return jdump({"error": str(e)})
+
+
+# --- Approval queue -------------------------------------------------------
+#
+# These five tools were a second server, `approval`, speaking the low-level
+# Server API over its own stdio pipe. They ask the same process for the same
+# database as everything above, so they are tools on this server now. Names,
+# arguments and JSON shape are unchanged: a caller that spoke to `approval`
+# sees the same answers here.
+
+
+def get_approval_svc():
+    from core.response.approval_service import (
+        ActionStatus,
+        ActionType,
+        get_approval_service,
+    )
+
+    return get_approval_service(), ActionType, ActionStatus
+
+
+@mcp.tool()
+def create_approval_action(
+    action_type: str,
+    title: str,
+    description: str,
+    target: str,
+    confidence: float,
+    reason: str,
+    evidence: Optional[list] = None,
+    created_by: str = "agent",
+    **kwargs,
+) -> str:
+    """Submit action to approval queue.
+
+    ``action_type`` is one of isolate_host, block_ip, block_domain,
+    quarantine_file, disable_user, custom.
+
+    ``evidence`` is optional here as it always was in practice: the old
+    server declared it required in the schema and then accepted a call
+    without it, so requiring it now would refuse calls that used to work.
+    """
+    try:
+        svc, ActionType, ActionStatus = get_approval_svc()
+    except Exception as e:
+        return jdump({"error": f"Service error: {e}"})
+
+    try:
+        action = svc.create_action(
+            action_type=ActionType(action_type),
+            title=title,
+            description=description,
+            target=target,
+            confidence=confidence,
+            reason=reason,
+            evidence=evidence or [],
+            created_by=created_by,
+        )
+        msg = f"Action created. Status: {action.status}"
+        if action.status == "approved":
+            msg += f" (auto-approved, conf: {confidence:.0%})"
+        return jdump(
+            {
+                "success": True,
+                "action_id": action.action_id,
+                "status": action.status,
+                "message": msg,
+            }
+        )
+    except Exception as e:
+        return jdump({"error": str(e)})
+
+
+@mcp.tool()
+def list_approval_actions(
+    status: Optional[str] = None,
+    action_type: Optional[str] = None,
+    **kwargs,
+) -> str:
+    """List approval actions.
+
+    ``status`` is one of pending, approved, rejected, executed, failed.
+    """
+    try:
+        svc, ActionType, ActionStatus = get_approval_svc()
+    except Exception as e:
+        return jdump({"error": f"Service error: {e}"})
+
+    try:
+        actions = svc.list_actions(
+            status=ActionStatus(status) if status else None,
+            action_type=ActionType(action_type) if action_type else None,
+        )
+        return jdump(
+            {
+                "success": True,
+                "count": len(actions),
+                "actions": [
+                    {
+                        "action_id": a.action_id,
+                        "action_type": a.action_type,
+                        "title": a.title,
+                        "target": a.target,
+                        "confidence": a.confidence,
+                        "status": a.status,
+                        "created_at": a.created_at,
+                    }
+                    for a in actions
+                ],
+            }
+        )
+    except Exception as e:
+        return jdump({"error": str(e)})
+
+
+@mcp.tool()
+def get_approval_action(action_id: str, **kwargs) -> str:
+    """Get action details."""
+    try:
+        svc, _ActionType, _ActionStatus = get_approval_svc()
+    except Exception as e:
+        return jdump({"error": f"Service error: {e}"})
+
+    try:
+        action = svc.get_action(action_id)
+        if not action:
+            return jdump({"error": f"Action {action_id} not found"})
+        return jdump(
+            {
+                "success": True,
+                "action": {
+                    "action_id": action.action_id,
+                    "action_type": action.action_type,
+                    "title": action.title,
+                    "description": action.description,
+                    "target": action.target,
+                    "confidence": action.confidence,
+                    "reason": action.reason,
+                    "evidence": action.evidence,
+                    "status": action.status,
+                    "created_at": action.created_at,
+                    "approved_at": action.approved_at,
+                    "approved_by": action.approved_by,
+                },
+            }
+        )
+    except Exception as e:
+        return jdump({"error": str(e)})
+
+
+@mcp.tool()
+def approve_action(action_id: str, approved_by: str = "analyst", **kwargs) -> str:
+    """Approve pending action."""
+    try:
+        svc, _ActionType, _ActionStatus = get_approval_svc()
+    except Exception as e:
+        return jdump({"error": f"Service error: {e}"})
+
+    try:
+        action = svc.approve_action(action_id, approved_by)
+        if not action:
+            return jdump({"error": f"Action {action_id} not found"})
+        return jdump({"success": True, "action_id": action_id, "status": action.status})
+    except Exception as e:
+        return jdump({"error": str(e)})
+
+
+@mcp.tool()
+def reject_action(
+    action_id: str,
+    reason: str,
+    rejected_by: str = "analyst",
+    **kwargs,
+) -> str:
+    """Reject pending action."""
+    try:
+        svc, _ActionType, _ActionStatus = get_approval_svc()
+    except Exception as e:
+        return jdump({"error": f"Service error: {e}"})
+
+    try:
+        action = svc.reject_action(action_id, reason, rejected_by)
+        if not action:
+            return jdump({"error": f"Action {action_id} not found"})
+        return jdump({"success": True, "action_id": action_id, "status": action.status})
     except Exception as e:
         return jdump({"error": str(e)})
 
