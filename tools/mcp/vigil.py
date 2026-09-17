@@ -27,21 +27,22 @@ class _JsonEncoder(json.JSONEncoder):
 
 # Who this server acts as when it writes a name into a record.
 #
-# Nothing authenticates a caller here yet: the server is spawned over a pipe by
-# the process it serves, so the only honest answer is that an agent did it.
-# Every tool that used to take the actor as an argument asks this instead --
-# a caller that supplies its own name is not identifying itself, it is choosing
+# Every tool that used to take the actor as an argument asks this instead -- a
+# caller that supplies its own name is not identifying itself, it is choosing
 # what the record will say, and a record of who did something is worth nothing
 # if the doer wrote it.
 #
-# When a caller can be authenticated, this is where that principal arrives, and
-# the tools do not change.
+# Over HTTP a credential identifies the caller at the edge and the principal is
+# that user. Over stdio there is no caller to identify: the server is spawned
+# over a pipe by the process it serves, and an agent did it.
 CALLER_UNAUTHENTICATED = "agent"
 
 
 def caller() -> str:
     """The identity this server writes into a record it makes."""
-    return CALLER_UNAUTHENTICATED
+    from core.integrations.mcp.surface import current_caller
+
+    return current_caller() or CALLER_UNAUTHENTICATED
 
 
 def jdump(obj, indent=2):

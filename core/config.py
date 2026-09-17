@@ -159,6 +159,11 @@ class Settings(BaseSettings):
     vigil_frame_options_enabled: bool = True
     vigil_content_type_options_enabled: bool = True
     vigil_referrer_policy_enabled: bool = True
+    # Vigil's own MCP surface, served over HTTP for callers that are not Vigil.
+    # Off on a fresh install: it is another front door into a SOC, and one
+    # nobody asked for should not be listening. This is the floor an operator
+    # sets before boot; the Settings toggle overrides it at runtime.
+    vigil_mcp_enabled: bool = False
     vigil_csrf_enabled: bool = True
     vigil_csrf_report_only: bool = True
     vigil_csrf_exempt_paths: Optional[str] = None

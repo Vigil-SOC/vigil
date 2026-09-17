@@ -16,12 +16,15 @@ import DataIngestionPanel from './DataIngestion'
 import DetectionRulesPanel from './DetectionRulesPanel'
 import CustomIntegrationBuilder from './CustomIntegrationBuilder'
 import IntegrationWizard from './IntegrationWizard'
+import McpSurfacePanel from './McpSurfacePanel'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 import type { SectionProps } from './types'
 
-type IntegrationsTab = 'servers' | 'ingestion' | 'detection'
+type IntegrationsTab = 'servers' | 'surface' | 'ingestion' | 'detection'
 const TABS: [IntegrationsTab, string][] = [
   ['servers', 'Connectors'],
+  // Connectors are the servers Vigil calls out to; this is the one Vigil is.
+  ['surface', 'Vigil’s MCP Server'],
   ['ingestion', 'Manual Upload'],
   ['detection', 'Detection Rules'],
 ]
@@ -38,6 +41,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
         ))}
       </div>
       {tab === 'servers' && <ServersPanel notify={notify} />}
+      {tab === 'surface' && <McpSurfacePanel notify={notify} />}
       {tab === 'ingestion' && <DataIngestionPanel notify={notify} />}
       {tab === 'detection' && <DetectionRulesPanel notify={notify} />}
     </>
