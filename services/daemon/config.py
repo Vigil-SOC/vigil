@@ -96,10 +96,12 @@ class OrchestratorConfig:
         default_factory=lambda: ["critical", "high"]
     )
     dry_run: bool = False
-    # How long a queued trigger may wait, and the last-quarter promotion
-    # window. Constants, not settings: one policy, not an operator dial.
+    # How long a queued trigger may wait, the last-quarter promotion
+    # window, and the queued depth that warrants one human signal.
+    # Constants, not settings: one policy, not an operator dial.
     intake_ttl_seconds: int = 4 * 3600
     intake_ttl_promote_fraction: float = 0.25
+    intake_surge_depth: int = 20
 
 
 @dataclass

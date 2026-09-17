@@ -5162,6 +5162,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orchestrator/intake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Intake Triggers
+         * @description List intake trigger rows, newest first, with an optional state filter.
+         */
+        get: operations["get_api_orchestrator_intake"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/orchestrator/investigations": {
         parameters: {
             query?: never;
@@ -19251,6 +19271,40 @@ export interface operations {
     post_api_orchestrator_enable: {
         parameters: {
             query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_orchestrator_intake: {
+        parameters: {
+            query?: {
+                state?: string | null;
+                limit?: number;
+            };
             header?: {
                 authorization?: string | null;
             };

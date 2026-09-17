@@ -53,9 +53,27 @@ try:
         description="Stuck agents detected and killed",
         unit="1",
     )
+
+    def _observe_intake_queue_depth(_options: Any):
+        try:
+            from opentelemetry.metrics import Observation
+
+            return [Observation(_count_queued_intake_rows())]
+        except Exception as e:
+            logger.debug("intake queue depth observation failed: %s", e)
+            return []
+
+    _intake_queue_depth = _orch_meter.create_observable_gauge(
+        "soc_daemon_orchestrator_intake_queue_depth",
+        callbacks=[_observe_intake_queue_depth],
+        description="Queued intake triggers waiting for admission",
+        unit="1",
+    )
 except Exception:
     _tracer = None  # type: ignore[assignment]
-    _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = None  # type: ignore[assignment]
+    _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = (
+        _intake_queue_depth
+    ) = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
 from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
 from core.integrations.mcp.client import process_mcp_client
@@ -78,6 +96,14 @@ from services.daemon.shared_intel import SharedIntelligence
 from services.daemon.workdir import WorkdirManager
 
 logger = logging.getLogger(__name__)
+
+
+def _count_queued_intake_rows() -> int:
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+
+    with get_db_manager().session_scope() as session:
+        return session.query(IntakeTrigger).filter_by(state="queued").count()
 
 
 def lift_ai_enrichment(finding: Dict) -> Dict:
@@ -252,6 +278,7 @@ class Orchestrator:
             "dedup_prevented": 0,
             "total_cost_usd": 0.0,
         }
+        self._intake_surge_active = False
 
     @property
     def enabled(self) -> bool:
@@ -397,6 +424,48 @@ class Orchestrator:
             if self._in_flight() >= self.config.max_concurrent_agents:
                 break
             await self._process_intake_row(row, shutdown_event)
+
+        depth = self._queued_intake_depth()
+        if depth is not None:
+            self._record_intake_depth(depth)
+
+    def _queued_intake_depth(self) -> Optional[int]:
+        try:
+            return _count_queued_intake_rows()
+        except Exception as e:
+            logger.error(f"Failed to count intake queue: {e}")
+            return None
+
+    def _record_intake_depth(self, depth: int) -> None:
+        """Notify once when queued depth crosses the surge constant."""
+        threshold = self.config.intake_surge_depth
+        was_active = getattr(self, "_intake_surge_active", False)
+        now_active = depth > threshold
+        self._intake_surge_active = now_active
+        if now_active and not was_active:
+            self._write_intake_surge_notification(depth)
+
+    def _write_intake_surge_notification(self, depth: int) -> None:
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.models import CaseNotification
+
+            with get_db_manager().session_scope() as session:
+                session.add(
+                    CaseNotification(
+                        case_id=None,
+                        user_id="admin",
+                        notification_type="intake_surge",
+                        title="Intake queue surge",
+                        message=f"Intake queue depth is {depth}",
+                        delivery_channel="ui",
+                        priority="high",
+                        notification_metadata={"queue_depth": depth},
+                    )
+                )
+            logger.info("Intake surge notification written at depth %s", depth)
+        except Exception as e:
+            logger.error(f"Failed to create intake surge notification: {e}")
 
     def _resolve_intake_row(self, row: Dict, now: datetime) -> Optional[Dict]:
         """Expire or merge a queued row. Capacity does not wait on this pass."""

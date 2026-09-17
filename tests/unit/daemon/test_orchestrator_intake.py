@@ -47,6 +47,8 @@ def _orchestrator(**extra) -> Orchestrator:
     orch._open_case_for_finding = MagicMock(return_value="case-1")
     orch._attach_finding_to_overlap = MagicMock(return_value="case-1")
     orch._in_flight = MagicMock(return_value=0)
+    orch._queued_intake_depth = MagicMock(return_value=0)
+    orch._intake_surge_active = False
     for key, value in extra.items():
         setattr(orch, key, value)
     return orch
@@ -357,3 +359,71 @@ async def test_scan_findings_inserts_human_ask_rows(monkeypatch):
             },
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_drain_records_queued_depth_after_expire_merge_and_launch():
+    orch = _orchestrator()
+    orch._queued_intake_triggers = MagicMock(return_value=[])
+    orch._queued_intake_depth = MagicMock(return_value=7)
+    orch._record_intake_depth = MagicMock()
+
+    await orch._drain_intake(None)
+
+    orch._queued_intake_depth.assert_called_once()
+    orch._record_intake_depth.assert_called_once_with(7)
+
+
+def test_crossing_depth_notifies_once_until_it_falls_and_re_crosses():
+    orch = _orchestrator()
+    orch.config.intake_surge_depth = 3
+    orch._write_intake_surge_notification = MagicMock()
+
+    orch._record_intake_depth(3)
+    orch._write_intake_surge_notification.assert_not_called()
+
+    orch._record_intake_depth(4)
+    orch._write_intake_surge_notification.assert_called_once_with(4)
+
+    orch._record_intake_depth(9)
+    orch._write_intake_surge_notification.assert_called_once_with(4)
+
+    orch._record_intake_depth(3)
+    orch._write_intake_surge_notification.assert_called_once_with(4)
+
+    orch._record_intake_depth(4)
+    assert orch._write_intake_surge_notification.call_args_list == [
+        ((4,),),
+        ((4,),),
+    ]
+
+
+def test_intake_surge_notification_is_caseless_and_carries_depth(monkeypatch):
+    from core.storage.models import CaseNotification
+
+    added = []
+
+    class Session:
+        def add(self, row):
+            added.append(row)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    db = MagicMock()
+    db.session_scope.return_value = Session()
+    monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
+
+    orch = _orchestrator()
+    orch._write_intake_surge_notification(12)
+
+    assert len(added) == 1
+    notif = added[0]
+    assert isinstance(notif, CaseNotification)
+    assert notif.case_id is None
+    assert notif.notification_type == "intake_surge"
+    assert notif.notification_metadata == {"queue_depth": 12}
+    assert "12" in notif.message
