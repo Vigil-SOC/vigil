@@ -807,10 +807,9 @@ class Orchestrator:
                     if not inv_id:
                         continue
 
-                    last_activity = inv_dict.get("last_activity_at")
+                    # Dump dicts carry "+00:00" strings; `now` is naive UTC.
+                    last_activity = _as_naive_utc(inv_dict.get("last_activity_at"))
                     if last_activity:
-                        if isinstance(last_activity, str):
-                            last_activity = datetime.fromisoformat(last_activity)
                         idle_seconds = (now - last_activity).total_seconds()
                         if idle_seconds > self.config.stale_threshold:
                             logger.warning(
