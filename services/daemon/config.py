@@ -96,6 +96,9 @@ class OrchestratorConfig:
         default_factory=lambda: ["critical", "high"]
     )
     dry_run: bool = False
+    # When on, each admitted detection finding also gets an `adjudicate` run
+    # beside the real one; it executes nothing and opens no investigation.
+    shadow_adjudication: bool = False
     # How long a queued trigger may wait, and the last-quarter promotion
     # window. Constants, not settings: one policy, not an operator dial.
     intake_ttl_seconds: int = 4 * 3600
@@ -195,6 +198,9 @@ class DaemonConfig:
         config.orchestrator.stale_threshold = settings.orchestrator_stale_threshold
         config.orchestrator.workdir_base = settings.orchestrator_workdir
         config.orchestrator.dry_run = settings.orchestrator_dry_run
+        config.orchestrator.shadow_adjudication = (
+            settings.orchestrator_shadow_adjudication
+        )
         config.orchestrator.auto_assign_severities = list(
             settings.orchestrator_auto_severities
         )

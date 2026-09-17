@@ -261,6 +261,8 @@ class Settings(BaseSettings):
     orchestrator_workdir: str = "data/investigations"
     orchestrator_auto_severities: Annotated[List[str], NoDecode] = ["critical", "high"]
     orchestrator_dry_run: bool = False
+    # Shadow mode (#880): every admitted finding also gets an adjudicate run.
+    orchestrator_shadow_adjudication: bool = False
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False

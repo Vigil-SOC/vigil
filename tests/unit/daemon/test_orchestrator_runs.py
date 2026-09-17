@@ -8,6 +8,7 @@ projection the agent layer serves.
 from __future__ import annotations
 
 import sys
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,7 +20,7 @@ sys.path.insert(0, str(REPO))
 from core.agents.projections import run_id_for
 from core.workflows.workflows_service import WorkflowDefinition, WorkflowsService
 from services.daemon.config import OrchestratorConfig
-from services.daemon.orchestrator import Orchestrator
+from services.daemon.orchestrator import Orchestrator, shadow_run_id_for
 from services.daemon.workdir import WorkdirManager
 
 pytestmark = pytest.mark.unit
@@ -236,6 +237,116 @@ class TestEnqueueRunKind:
         status, reason = orch._update_investigation_status.call_args[0][1:3]
         assert status == "failed"
         assert "wander" in reason
+
+
+FINDING = {
+    "finding_id": "f-1",
+    "severity": "high",
+    "description": "three failed logons on FYODOR-L",
+    "entity_context": {"hostnames": ["FYODOR-L"], "usernames": ["fyodor"]},
+    "mitre_predictions": {"T1110": 0.91, "T1078": 0.4},
+}
+
+
+# Shadow mode (#880): a second, independent run over the same finding, journaled
+# beside the real one. Nothing here changes what the real run is handed.
+class TestShadowAdjudication:
+    async def _enqueue(self, orch, record):
+        with patch(
+            "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
+        ) as enqueued, patch(
+            "services.daemon.orchestrator.WorkflowRunService"
+        ) as runs:
+            orch._log_ai_decision = MagicMock()
+            orch._save_investigation = MagicMock()
+            await orch._enqueue_investigation(record)
+        return enqueued, runs.return_value.begin_run
+
+    def _shadowed(self):
+        orch = _orchestrator()
+        orch.config.shadow_adjudication = True
+        return orch
+
+    @pytest.mark.asyncio
+    async def test_off_by_default_enqueues_one_run_and_no_row(self):
+        orch = _orchestrator()
+        assert orch.config.shadow_adjudication is False
+        enqueued, begin_run = await self._enqueue(
+            orch, _record(trigger_type="finding", findings=[FINDING])
+        )
+        enqueued.assert_awaited_once()
+        begin_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_on_enqueues_exactly_one_adjudicate_run_beside_the_real_one(self):
+        orch = self._shadowed()
+        enqueued, begin_run = await self._enqueue(
+            orch, _record(trigger_type="finding", findings=[FINDING])
+        )
+
+        assert enqueued.await_count == 2
+        real, shadow = (call.args[0] for call in enqueued.await_args_list)
+        assert real["run_id"] == run_id_for(INV)
+        assert real["run_kind"] == "investigate"
+        assert shadow["run_kind"] == "adjudicate"
+        assert shadow["run_id"] == shadow_run_id_for(INV)
+        assert shadow["run_id"] != real["run_id"]
+        assert shadow["request"]["playbook"] == "workflow:shadow-adjudication"
+        # The same brief plus one paragraph naming intake's choice; the same keys
+        # and ceilings, so the two opinions were formed over the same inputs.
+        assert shadow["request"]["prompt"].startswith(real["request"]["prompt"])
+        assert "incident-response" in shadow["request"]["prompt"]
+        assert shadow["request"]["recall_keys"] == real["request"]["recall_keys"]
+        assert shadow["request"]["overrides"] == real["request"]["overrides"]
+        # A stated hypothesis, because the definition declares none.
+        (line,) = shadow["request"]["hypotheses"]
+        assert "f-1" in line and "FYODOR-L" in line and "T1110" in line
+        assert "incident-response" in line
+        # The real request is untouched by the copy.
+        assert real["request"]["playbook"] == "workflow:incident-response"
+
+        # One workflow_runs row for the shadow, keyed by its run id, and nothing
+        # else written: no second investigations row, no AIDecisionLog entry.
+        begin_run.assert_called_once()
+        row = begin_run.call_args.kwargs
+        assert row["run_id"] == shadow_run_id_for(INV)
+        assert row["workflow_id"] == "shadow-adjudication"
+        assert row["trigger_context"]["run_kind"] == "adjudicate"
+        assert row["trigger_context"]["investigation_id"] == INV
+        orch._save_investigation.assert_not_called()
+        orch._log_ai_decision.assert_not_called()
+        assert orch._update_investigation_status.call_args[0][1] == "executing"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("trigger_type", ["manual", "scheduled", "case_review"])
+    async def test_only_a_detection_finding_gets_a_shadow(self, trigger_type):
+        orch = self._shadowed()
+        enqueued, begin_run = await self._enqueue(
+            orch, _record(trigger_type=trigger_type, findings=[FINDING])
+        )
+        enqueued.assert_awaited_once()
+        begin_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_shadow_that_cannot_be_queued_leaves_the_real_run_executing(self):
+        orch = self._shadowed()
+        with patch(
+            "services.daemon.orchestrator.enqueue_run",
+            new=AsyncMock(side_effect=[None, RuntimeError("redis down")]),
+        ), patch("services.daemon.orchestrator.WorkflowRunService"):
+            await orch._enqueue_investigation(
+                _record(trigger_type="finding", findings=[FINDING])
+            )
+
+        statuses = [c[0][1] for c in orch._update_investigation_status.call_args_list]
+        assert statuses == ["executing"]
+
+    # The derived id is a uuid like the real one: agent_events.run_id is a uuid
+    # column, so a string suffix on the real id would be refused by the ledger.
+    def test_shadow_run_id_is_a_distinct_deterministic_uuid(self):
+        assert shadow_run_id_for(INV) == shadow_run_id_for(INV)
+        assert shadow_run_id_for(INV) != run_id_for(INV)
+        uuid.UUID(shadow_run_id_for(INV))
 
 
 class TestReconcile:
