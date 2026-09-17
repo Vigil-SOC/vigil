@@ -630,6 +630,8 @@ class Orchestrator:
                     if last_activity:
                         if isinstance(last_activity, str):
                             last_activity = datetime.fromisoformat(last_activity)
+                        if last_activity.tzinfo is not None:
+                            last_activity = last_activity.replace(tzinfo=None)
                         idle_seconds = (now - last_activity).total_seconds()
                         if idle_seconds > self.config.stale_threshold:
                             logger.warning(
