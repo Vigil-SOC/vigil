@@ -92,10 +92,18 @@ async def get_orchestrator_status():
         active = [
             i for i in investigations if i.get("status") in ("assigned", "executing")
         ]
-        queued = [i for i in investigations if i.get("status") == "queued"]
         completed = [i for i in investigations if i.get("status") == "completed"]
         failed = [i for i in investigations if i.get("status") == "failed"]
         review = [i for i in investigations if i.get("status") == "review_submitted"]
+
+        # Waiting room is intake_triggers, not investigations.status="queued".
+        queued = 0
+        try:
+            from services.daemon.orchestrator import _count_queued_intake_rows
+
+            queued = _count_queued_intake_rows()
+        except Exception as e:
+            logger.debug("Intake queue depth for status failed: %s", e)
 
         max_agents = 3
         try:
@@ -112,7 +120,7 @@ async def get_orchestrator_status():
             "enabled": enabled,
             "active_agents": len(active),
             "max_concurrent_agents": max_agents,
-            "queued": len(queued),
+            "queued": queued,
             "completed": len(completed),
             "failed": len(failed),
             "pending_review": len(review),

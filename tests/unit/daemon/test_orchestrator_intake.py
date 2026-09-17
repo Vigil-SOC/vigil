@@ -63,6 +63,12 @@ def test_merged_into_is_wide_enough_for_an_investigation_id():
     )
 
 
+def test_investigation_status_defaults_to_assigned():
+    from core.storage.models import Investigation
+
+    assert Investigation.__table__.c.status.default.arg == "assigned"
+
+
 def test_lift_copies_nested_enrichment_keys_select_workflow_reads():
     finding = {
         "finding_id": "f-1",

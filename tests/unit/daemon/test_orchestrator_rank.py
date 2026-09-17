@@ -362,7 +362,7 @@ async def test_pickup_only_walks_assigned():
     orch._enqueue_investigation = AsyncMock()
     orch._update_investigation_status = MagicMock()
 
-    await orch._pickup_queued_investigations(None)
+    await orch._pickup_assigned_investigations(None)
 
     assert seen == ["assigned"]
     orch._enqueue_investigation.assert_not_awaited()

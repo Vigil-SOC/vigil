@@ -391,7 +391,7 @@ class Orchestrator:
                     continue
 
                 await self._drain_intake(shutdown_event)
-                await self._pickup_queued_investigations(shutdown_event)
+                await self._pickup_assigned_investigations(shutdown_event)
 
             except asyncio.CancelledError:
                 break
@@ -802,7 +802,7 @@ class Orchestrator:
         if not self.config.dry_run and not shutting_down:
             await self._enqueue_investigation(inv_record)
 
-    async def _pickup_queued_investigations(self, shutdown_event: asyncio.Event):
+    async def _pickup_assigned_investigations(self, shutdown_event: asyncio.Event):
         """Re-enqueue assigned investigations after a restart."""
         if self.config.dry_run:
             return

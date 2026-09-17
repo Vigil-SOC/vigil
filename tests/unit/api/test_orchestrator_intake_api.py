@@ -127,3 +127,37 @@ def test_intake_list_does_not_construct_an_orchestrator(client, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["count"] == 3
+
+
+def test_status_queued_is_intake_depth_not_investigation_status(monkeypatch):
+    orch = MagicMock()
+    orch.get_all_investigations.return_value = [
+        {"status": "assigned"},
+        {"status": "queued"},
+        {"status": "completed"},
+    ]
+    orch.get_cost_summary.return_value = {}
+    orch.stats = {}
+    orch.enabled = False
+    monkeypatch.setattr(
+        "services.api.routers.orchestrator._get_orchestrator", lambda: orch
+    )
+    monkeypatch.setattr(
+        "services.daemon.orchestrator._count_queued_intake_rows", lambda: 7
+    )
+    cfg = MagicMock()
+    cfg.get_system_config.return_value = {
+        "enabled": False,
+        "max_concurrent_agents": 3,
+    }
+    monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: cfg)
+
+    app = FastAPI()
+    app.include_router(orchestrator_router, prefix="/api/orchestrator")
+    resp = TestClient(app).get("/api/orchestrator/status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["queued"] == 7
+    assert body["completed"] == 1
+    assert body["active_agents"] == 1
