@@ -1,7 +1,8 @@
 """Every trigger offered to the orchestrator is a row (#918).
 
 Producers insert; the intake tick reads queued
-rows oldest-first; rated findings launch or merge; overlap is merged after attach.
+rows; rated findings launch or merge; overlap is merged after attach.
+Ranking, TTL and slot-wait live in test_orchestrator_rank.py (#922).
 """
 
 from __future__ import annotations
@@ -45,6 +46,7 @@ def _orchestrator(**extra) -> Orchestrator:
     orch._data_service = MagicMock()
     orch._open_case_for_finding = MagicMock(return_value="case-1")
     orch._attach_finding_to_overlap = MagicMock(return_value="case-1")
+    orch._in_flight = MagicMock(return_value=0)
     for key, value in extra.items():
         setattr(orch, key, value)
     return orch
@@ -89,13 +91,14 @@ async def test_a_medium_finding_launches_and_is_not_shed():
 
 
 @pytest.mark.asyncio
-async def test_a_finding_with_no_severity_stays_queued():
+async def test_an_unrated_finding_launches_when_asked():
     orch = _orchestrator()
 
     await orch._create_investigation_for_finding(UNRATED, None, trigger_id=7)
 
+    orch._create_investigation.assert_awaited_once()
+    assert orch._create_investigation.await_args.kwargs["priority"] == "medium"
     orch._decide_trigger.assert_not_called()
-    orch._create_investigation.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -168,7 +171,7 @@ async def test_a_high_detection_launches_through_the_existing_path():
 
 
 @pytest.mark.asyncio
-async def test_drain_is_oldest_first_and_routes_by_kind():
+async def test_drain_routes_detection_and_human_ask():
     orch = _orchestrator()
     orch._queued_intake_triggers = MagicMock(
         return_value=[
@@ -289,3 +292,68 @@ async def test_processor_inserts_a_detection_row(monkeypatch):
 
     assert captured == [{"kind": "detection", "finding_id": "f-1", "priority": "high"}]
     assert processor.stats["queued_for_investigation"] == 1
+
+
+@pytest.mark.asyncio
+async def test_scan_findings_inserts_human_ask_rows(monkeypatch):
+    from types import SimpleNamespace
+
+    from services.api.routers.orchestrator import (
+        ScanFindingsRequest,
+        scan_existing_findings,
+    )
+
+    captured = []
+    monkeypatch.setattr(
+        "services.daemon.orchestrator.insert_intake_trigger",
+        lambda **kwargs: captured.append(kwargs) or 1,
+    )
+
+    inv = SimpleNamespace(trigger_ids=["f-done"])
+    finding_new = SimpleNamespace(finding_id="f-new", severity="high")
+    finding_done = SimpleNamespace(finding_id="f-done", severity="critical")
+
+    class Session:
+        def query(self, model):
+            self.model = model
+            return self
+
+        def filter(self, *a, **k):
+            return self
+
+        def order_by(self, *a):
+            return self
+
+        def all(self):
+            if getattr(self.model, "__name__", "") == "Investigation":
+                return [inv]
+            return [finding_new, finding_done]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    db = MagicMock()
+    db.session_scope.return_value = Session()
+    monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
+
+    result = await scan_existing_findings(
+        ScanFindingsRequest(severities=["critical", "high"])
+    )
+
+    assert result["queued"] == 1
+    assert result["skipped_already_investigated"] == 1
+    assert captured == [
+        {
+            "kind": "human_ask",
+            "priority": "high",
+            "finding_id": "f-new",
+            "payload": {
+                "workflow_id": "incident-response",
+                "finding_ids": ["f-new"],
+                "trigger_type": "scan",
+            },
+        }
+    ]

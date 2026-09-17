@@ -94,6 +94,66 @@ def lift_ai_enrichment(finding: Dict) -> Dict:
     return lifted
 
 
+_SEVERITY_BANDS = ("critical", "high", "medium", "low", "unknown")
+_BAND_RANK = {name: i for i, name in enumerate(_SEVERITY_BANDS)}
+
+
+def _as_naive_utc(value: Any) -> Optional[datetime]:
+    """Parse a dump-string or datetime into the naive UTC ``utcnow`` uses."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if dt.tzinfo is not None:
+        dt = dt.replace(tzinfo=None)
+    return dt
+
+
+def intake_severity_band(
+    kind: Optional[str],
+    *,
+    finding_severity: Optional[str] = None,
+    priority: Optional[str] = None,
+) -> str:
+    """Map a row onto a ranked band. Detection reads the finding; others the row."""
+    raw = finding_severity if kind == "detection" else priority
+    if raw is None or not str(raw).strip():
+        return "unknown"
+    name = str(raw).strip().lower()
+    return name if name in _BAND_RANK else "unknown"
+
+
+def rank_intake_row(
+    row: Dict,
+    *,
+    now: datetime,
+    ttl_seconds: int,
+    promote_fraction: float,
+) -> tuple:
+    """Sort key: last-quarter TTL promotion, then severity band, then oldest.
+
+    Lower sorts first. Never ``ORDER BY`` the severity string: alphabetically
+    ``low`` precedes ``medium``. Detection rows read current finding severity
+    from ``_finding``; ``schedule`` and ``human_ask`` read the row's ``priority``.
+    """
+    created = _as_naive_utc(row.get("created_at")) or datetime.min
+    remaining = ttl_seconds - (now - created).total_seconds()
+    promoted = 0 < remaining <= ttl_seconds * promote_fraction
+    finding = row.get("_finding")
+    finding_severity = finding.get("severity") if isinstance(finding, dict) else None
+    band = intake_severity_band(
+        row.get("kind"),
+        finding_severity=finding_severity,
+        priority=row.get("priority"),
+    )
+    return (0 if promoted else 1, _BAND_RANK[band], created)
+
+
 def insert_intake_trigger(
     *,
     kind: str,
@@ -304,15 +364,71 @@ class Orchestrator:
             await self._sleep(shutdown_event, self.config.loop_interval)
 
     async def _drain_intake(self, shutdown_event: asyncio.Event):
-        """Oldest queued row first; ranking is a sibling."""
+        """Merge and expire every queued row, then launch in rank order while a slot is free."""
+        now = utcnow()
+        launchable: List[Dict] = []
         for row in self._queued_intake_triggers():
+            kept = self._resolve_intake_row(row, now)
+            if kept is not None:
+                launchable.append(kept)
+
+        launchable.sort(
+            key=lambda r: rank_intake_row(
+                r,
+                now=now,
+                ttl_seconds=self.config.intake_ttl_seconds,
+                promote_fraction=self.config.intake_ttl_promote_fraction,
+            )
+        )
+        for row in launchable:
+            if self._in_flight() >= self.config.max_concurrent_agents:
+                break
             await self._process_intake_row(row, shutdown_event)
+
+    def _intake_age_seconds(self, row: Dict, now: datetime) -> float:
+        created = _as_naive_utc(row.get("created_at"))
+        if created is None:
+            return 0.0
+        return (now - created).total_seconds()
+
+    def _resolve_intake_row(self, row: Dict, now: datetime) -> Optional[Dict]:
+        """Expire or merge a queued row. Capacity does not wait on this pass."""
+        if self._intake_age_seconds(row, now) >= self.config.intake_ttl_seconds:
+            self._decide_trigger(row.get("id"), state="expired", reason="ttl_expired")
+            return None
+        if row.get("kind") == "detection":
+            finding = self._hydrate_detection_finding(row)
+            row["_finding"] = finding
+            if finding is not None and self._merge_if_overlaps(finding, row.get("id")):
+                return None
+        return row
+
+    def _merge_if_overlaps(self, finding: Dict, trigger_id: Optional[int]) -> bool:
+        overlapping = self.shared_intel.check_overlap(finding)
+        if not overlapping:
+            return False
+        finding_id = finding.get("finding_id", "unknown")
+        self.stats["dedup_prevented"] += 1
+        if _dedup_prevented is not None:
+            _dedup_prevented.add(1)
+        merged_into = self._attach_finding_to_overlap(finding_id, overlapping)
+        self._decide_trigger(
+            trigger_id,
+            state="merged",
+            reason="overlaps_open_work",
+            merged_into=merged_into,
+        )
+        return True
 
     async def _process_intake_row(self, row: Dict, shutdown_event: asyncio.Event):
         kind = row.get("kind")
         trigger_id = row.get("id")
         if kind == "detection":
-            finding = self._hydrate_detection_finding(row)
+            finding = (
+                row["_finding"]
+                if "_finding" in row
+                else self._hydrate_detection_finding(row)
+            )
             if finding is None:
                 logger.warning(
                     "intake row %s has no finding to launch; leaving queued", trigger_id
@@ -339,26 +455,15 @@ class Orchestrator:
         trigger_id: Optional[int] = None,
     ):
         """Create an investigation for a finding, with dedup checks."""
-        finding_id = finding.get("finding_id", "unknown")
         raw_severity = finding.get("severity")
-        # Unrated stays queued for the ranking sibling. Rated findings are not
-        # shed: Gate 1 already filtered the offer.
+        # Unrated sits in the unknown band for ranking. The launch path itself
+        # does not wait for a rating; Gate 1 already filtered the offer.
         if raw_severity is None or not str(raw_severity).strip():
-            return
-        severity = str(raw_severity).lower()
+            severity = "medium"
+        else:
+            severity = str(raw_severity).lower()
 
-        overlapping = self.shared_intel.check_overlap(finding)
-        if overlapping:
-            self.stats["dedup_prevented"] += 1
-            if _dedup_prevented is not None:
-                _dedup_prevented.add(1)
-            merged_into = self._attach_finding_to_overlap(finding_id, overlapping)
-            self._decide_trigger(
-                trigger_id,
-                state="merged",
-                reason="overlaps_open_work",
-                merged_into=merged_into,
-            )
+        if self._merge_if_overlaps(finding, trigger_id):
             return
 
         workflow_id = select_workflow(finding)
@@ -541,11 +646,7 @@ class Orchestrator:
                 inv_id, "hypothesis_subjects.json", json.dumps(hypothesis_subjects)
             )
 
-        can_start_now = (
-            not self.config.dry_run
-            and shutdown_event
-            and self._in_flight() < self.config.max_concurrent_agents
-        )
+        shutting_down = shutdown_event is not None and shutdown_event.is_set()
 
         # Start root investigation span — will be the parent for all agent spans
         _inv_span = None
@@ -577,7 +678,7 @@ class Orchestrator:
             "trigger_ids": [
                 f.get("finding_id") for f in findings if f.get("finding_id")
             ],
-            "status": "assigned" if can_start_now else "queued",
+            "status": "assigned",
             "workdir": str(workdir),
             "current_step": 1,
             "total_steps": total_steps,
@@ -625,31 +726,27 @@ class Orchestrator:
 
         await self._check_cross_correlations(inv_id)
 
-        if can_start_now:
+        if not self.config.dry_run and not shutting_down:
             await self._enqueue_investigation(inv_record)
-        else:
-            logger.info(f"Agent pool full, {inv_id} queued for pickup")
 
     async def _pickup_queued_investigations(self, shutdown_event: asyncio.Event):
-        """Check database for investigations waiting to be assigned to agents."""
+        """Re-enqueue assigned investigations after a restart."""
         if self.config.dry_run:
             return
 
-        for status in ("assigned", "queued"):
-            investigations = self._get_investigations_by_status(status)
-            for inv in investigations:
-                inv_id = inv.get("investigation_id") or (
-                    inv.investigation_id if hasattr(inv, "investigation_id") else None
-                )
-                if not inv_id:
-                    continue
-                if self._in_flight() >= self.config.max_concurrent_agents:
-                    return
+        for inv in self._get_investigations_by_status("assigned"):
+            inv_id = inv.get("investigation_id") or (
+                inv.investigation_id if hasattr(inv, "investigation_id") else None
+            )
+            if not inv_id:
+                continue
+            if self._in_flight() >= self.config.max_concurrent_agents:
+                return
 
-                self._update_investigation_status(inv_id, "assigned")
-                inv_dict = _inv_as_dict(inv)
-                inv_dict["status"] = "assigned"
-                await self._enqueue_investigation(inv_dict)
+            self._update_investigation_status(inv_id, "assigned")
+            inv_dict = _inv_as_dict(inv)
+            inv_dict["status"] = "assigned"
+            await self._enqueue_investigation(inv_dict)
 
     # -------------------------------------------------------------------------
     # Supervision Loop
@@ -1537,7 +1634,7 @@ class Orchestrator:
                     workflow_id=inv_record["workflow_id"],
                     trigger_type=inv_record["trigger_type"],
                     trigger_ids=inv_record.get("trigger_ids", []),
-                    status=inv_record.get("status", "queued"),
+                    status=inv_record.get("status", "assigned"),
                     workdir=inv_record["workdir"],
                     current_step=inv_record.get("current_step", 0),
                     total_steps=inv_record.get("total_steps", 0),

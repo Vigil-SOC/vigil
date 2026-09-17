@@ -5384,11 +5384,9 @@ export interface paths {
         put?: never;
         /**
          * Scan Existing Findings
-         * @description Scan existing findings in the DB and create investigations for all
-         *     matching ones that haven't been investigated yet.
+         * @description Insert human_ask trigger rows for matching findings not already investigated.
          *
-         *     Concurrency is controlled by the orchestrator's max_concurrent_agents
-         *     setting -- investigations are queued and picked up as agent slots open.
+         *     The intake tick ranks and launches them when a slot is free.
          */
         post: operations["post_api_orchestrator_scan-findings"];
         delete?: never;
