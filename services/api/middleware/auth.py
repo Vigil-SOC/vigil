@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from core.auth.auth_cookies import ACCESS_COOKIE_NAME
 from core.auth.auth_service import AuthService
+from core.auth.mcp_credential_service import looks_like_mcp_token
 from core.auth.token_blacklist import is_token_revoked
 from core.config import get_settings
 from core.routing import UnitOfWorkSession
@@ -115,6 +116,17 @@ async def get_current_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # An MCP credential is not a session. It says a program was given standing
+    # access, not that a person signed in, and it opens the MCP surface alone.
+    # Refused by name rather than as an invalid token, because the holder has a
+    # working credential and needs to know it is working in the wrong place.
+    if looks_like_mcp_token(token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="An MCP credential does not authenticate this API; sign in instead",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
