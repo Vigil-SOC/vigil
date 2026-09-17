@@ -107,7 +107,7 @@ class IntakeTrigger(Base):
         JSONB, nullable=False, default=dict, server_default="{}"
     )
     investigation_id: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
-    merged_into: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    merged_into: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default="now()"
     )

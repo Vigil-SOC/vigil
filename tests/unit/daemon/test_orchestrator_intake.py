@@ -1,6 +1,6 @@
 """Every trigger offered to the orchestrator is a row (#918).
 
-The asyncio.Queue is gone. Producers insert; the intake tick reads queued
+Producers insert; the intake tick reads queued
 rows oldest-first; below-threshold is shed; overlap is merged after attach.
 """
 
@@ -48,6 +48,15 @@ def _orchestrator(**extra) -> Orchestrator:
     for key, value in extra.items():
         setattr(orch, key, value)
     return orch
+
+
+def test_merged_into_is_wide_enough_for_an_investigation_id():
+    from core.storage.models import IntakeTrigger, Investigation
+
+    assert (
+        IntakeTrigger.__table__.c.merged_into.type.length
+        == Investigation.__table__.c.investigation_id.type.length
+    )
 
 
 def test_lift_copies_nested_enrichment_keys_select_workflow_reads():
@@ -188,6 +197,66 @@ async def test_a_failed_cas_creates_no_investigation(tmp_path):
 
     orch.shared_intel.register_investigation.assert_not_called()
     assert orch.stats["investigations_created"] == 0
+
+
+@pytest.mark.asyncio
+async def test_post_investigations_inserts_a_human_ask_the_tick_launches(
+    monkeypatch,
+):
+    from services.api.routers.orchestrator import (
+        InvestigationCreateRequest,
+        create_investigation,
+    )
+
+    captured = []
+    monkeypatch.setattr(
+        "services.daemon.orchestrator.insert_intake_trigger",
+        lambda **kwargs: captured.append(kwargs) or 1,
+    )
+
+    result = await create_investigation(
+        InvestigationCreateRequest(
+            workflow_id="threat-hunt",
+            hypothesis="T1071 on FYODOR-L",
+            priority="low",
+        )
+    )
+
+    assert result["success"] is True
+    assert captured == [
+        {
+            "kind": "human_ask",
+            "priority": "low",
+            "payload": {
+                "workflow_id": "threat-hunt",
+                "finding_ids": [],
+                "case_id": None,
+                "hypothesis": "T1071 on FYODOR-L",
+                "hypothesis_subjects": None,
+            },
+        }
+    ]
+
+    orch = _orchestrator()
+    orch._queued_intake_triggers = MagicMock(
+        return_value=[
+            {
+                "id": 1,
+                "kind": captured[0]["kind"],
+                "priority": captured[0]["priority"],
+                "payload": captured[0]["payload"],
+            }
+        ]
+    )
+
+    await orch._drain_intake(None)
+
+    orch._create_manual_investigation.assert_awaited_once()
+    item = orch._create_manual_investigation.await_args.args[0]
+    assert item["workflow_id"] == "threat-hunt"
+    assert item["hypothesis"] == "T1071 on FYODOR-L"
+    assert item["priority"] == "low"
+    assert orch._create_manual_investigation.await_args.kwargs["trigger_id"] == 1
 
 
 @pytest.mark.asyncio
