@@ -97,7 +97,6 @@ const { chromium } = require('playwright');
                 fullPageText.toLowerCase().includes('connected'),
     serverNames: {
       'deeptempo-findings': fullPageText.includes('deeptempo-findings'),
-      'tempo-flow': fullPageText.includes('tempo-flow'),
       'approval': fullPageText.includes('approval'),
     },
     noAccess: fullPageText.toLowerCase().includes('don\'t have access') ||

@@ -99,7 +99,6 @@ const fs = require('fs');
     
     const mcpServerNames = [
       'deeptempo-findings',
-      'tempo-flow',
       'approval',
       'search_findings',
       'get_finding_details',

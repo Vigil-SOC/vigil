@@ -254,7 +254,6 @@ class MCPService:
     # Internal/platform servers that should be on by default
     _DEFAULT_ENABLED = {
         "deeptempo-findings",
-        "tempo-flow",
         "security-detections",
         "approval",
         # The self-hosted SIEM a hunt reads through telemetry_search -- the

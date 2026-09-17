@@ -27,7 +27,6 @@ export const WIP_SERVERS = new Set([
 export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
   loglm: 'LogLM',
   'deeptempo-findings': 'Findings & Cases',
-  'tempo-flow': 'Agent Workflows',
 }))
 
 export interface McpCategory {
@@ -38,7 +37,7 @@ export interface McpCategory {
 /** Display categories, in order. A server matches the first category whose
     `servers` list contains it; anything unmatched lands in "Other". */
 export const MCP_CATEGORIES: McpCategory[] = [
-  { label: 'Internal / Platform', servers: ['deeptempo-findings', 'tempo-flow', 'approval', 'security-detections'] },
+  { label: 'Internal / Platform', servers: ['deeptempo-findings', 'approval', 'security-detections'] },
   { label: 'DeepTempo', servers: ['loglm'] },
   { label: 'Reference Servers', servers: ['github'] },
   { label: 'EDR / XDR', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
@@ -55,7 +54,6 @@ export const MCP_CATEGORIES: McpCategory[] = [
 export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   firecrawl: 'Web search and page retrieval for an investigation. Retrieved pages are scrubbed and delimited before a model sees them — a page is data, not direction.',
   'deeptempo-findings': 'Core findings and case management. Required for the investigation workflow, case creation, and findings display.',
-  'tempo-flow': 'Orchestrates multi-step agent workflows and playbook execution. Required for automated investigation chains.',
   approval: 'Human-in-the-loop approval queue for response actions (isolate host, block IP, etc.). Prevents the AI from taking destructive actions without analyst review.',
   'security-detections': 'Searches across 30,000+ detection rules (Sigma, Splunk, Elastic, KQL). Powers detection gap analysis and rule recommendations.',
   github: 'Access GitHub repos, issues, PRs, and code search. Useful for looking up detection rule history, IaC configs, or creating remediation issues.',

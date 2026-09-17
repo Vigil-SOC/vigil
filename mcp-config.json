@@ -23,12 +23,6 @@
       "cwd": "${workspaceFolder}"
     },
 
-    "tempo-flow": {
-      "command": "python3",
-      "args": ["tools/mcp/tempo_flow.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
     "approval": {
       "command": "python3",
       "args": ["tools/mcp/approval.py"],

@@ -157,7 +157,6 @@ const fs = require('fs');
       'call_mcp_tool',
       'get_mcp_connection_status',
       'deeptempo-findings',
-      'tempo-flow',
       'approval',
     ];
     

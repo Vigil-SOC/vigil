@@ -150,7 +150,6 @@ const fs = require('fs');
       'create_case',
       'analyze_with_agent',
       'deeptempo-findings',
-      'tempo-flow',
       'approval',
     ];
     
