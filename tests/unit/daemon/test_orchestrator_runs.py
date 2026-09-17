@@ -254,9 +254,7 @@ class TestShadowAdjudication:
     async def _enqueue(self, orch, record):
         with patch(
             "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
-        ) as enqueued, patch(
-            "services.daemon.orchestrator.WorkflowRunService"
-        ) as runs:
+        ) as enqueued, patch("services.daemon.orchestrator.WorkflowRunService") as runs:
             orch._log_ai_decision = MagicMock()
             orch._save_investigation = MagicMock()
             await orch._enqueue_investigation(record)

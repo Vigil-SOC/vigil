@@ -245,12 +245,13 @@ def shadow_hypothesis(finding: Dict, workflow_id: str) -> str:
     nothing on its board, so this is what the adjudicator is handed to test.
     """
     title = finding.get("title") or _infer_title(finding, workflow_id)
-    entities = ", ".join(
-        v for _, v in entity_context_candidates(finding)[:5]
-    ) or "no named entity"
+    entities = (
+        ", ".join(v for _, v in entity_context_candidates(finding)[:5])
+        or "no named entity"
+    )
     mitre = finding.get("mitre_predictions") or {}
     if mitre:
-        top = max(mitre, key=mitre.get)
+        top = max(mitre.items(), key=lambda kv: kv[1])[0]
         _, name, tactic = resolve_technique(top)
         technique = f"{tactic} via {name} ({top})"
     else:
@@ -1042,13 +1043,18 @@ class Orchestrator:
         self._update_investigation_status(inv_id, "executing")
         logger.info("enqueued investigation %s as run %s", inv_id, run_id)
 
-        if self.config.shadow_adjudication and inv_record.get("trigger_type") == "finding":
+        if (
+            self.config.shadow_adjudication
+            and inv_record.get("trigger_type") == "finding"
+        ):
             await self._enqueue_shadow_adjudication(inv_record, request)
 
     # A second opinion beside the real run, never instead of it: whatever fails
     # here is logged and dropped, and the investigation above stays executing.
     # No investigations row and no AIDecisionLog entry -- the ledger is its record.
-    async def _enqueue_shadow_adjudication(self, inv_record: Dict, request: Dict) -> None:
+    async def _enqueue_shadow_adjudication(
+        self, inv_record: Dict, request: Dict
+    ) -> None:
         inv_id = inv_record["investigation_id"]
         findings = inv_record.get("findings") or []
         if not findings:
@@ -1084,8 +1090,12 @@ class Orchestrator:
                 shadow_id, "adjudicate", shadow, enqueued_by="orchestrator"
             )
             await enqueue_run(job)
-        except Exception as exc:  # noqa: BLE001 -- the real run is not the shadow's to fail
-            logger.error("could not enqueue shadow adjudication for %s: %s", inv_id, exc)
+        except (
+            Exception
+        ) as exc:  # noqa: BLE001 -- the real run is not the shadow's to fail
+            logger.error(
+                "could not enqueue shadow adjudication for %s: %s", inv_id, exc
+            )
             return
         logger.info("enqueued shadow adjudication for %s as run %s", inv_id, shadow_id)
 
