@@ -49,18 +49,14 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
 /** One run reached by URL rather than through History. Same hook and panel as
  *  RunRow, so the run polls while in flight and stops at terminal. Keyed on the
  *  id by the caller, so a new ?run= starts clean rather than over the old detail.
- *  Watching stops on error: with no seed status the hook would otherwise keep
- *  polling a run that does not exist. */
+ *  No seed: the hook will not poll until getRun says the run is in flight, so a
+ *  missing run is asked for once. */
 function RunView({ runId, onBack }: { runId: string; onBack: () => void }) {
-  const [watching, setWatching] = useState(true)
-  const { detail, dphase, setDphase, load } = useRunDetail(runId, watching)
+  const { detail, dphase, setDphase, load } = useRunDetail(runId, true)
   useEffect(() => {
     setDphase('loading')
     void load()
   }, [load, setDphase])
-  useEffect(() => {
-    if (dphase === 'error') setWatching(false)
-  }, [dphase])
   return (
     <>
       <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
@@ -1021,8 +1017,11 @@ export function useRunDetail(runId: string, watching: boolean, seed?: string) {
     [runId],
   )
 
-  // Stops itself at a terminal status rather than polling for the session.
-  const live = watching && IN_FLIGHT.includes(detail?.status ?? seed ?? 'running')
+  // Polls only while we know the run is in flight. A missing status is not
+  // treated as running: a deep-link with no seed would otherwise poll a 404
+  // until a later effect stopped it.
+  const status = detail?.status ?? seed
+  const live = Boolean(watching && status && IN_FLIGHT.includes(status))
   useEffect(() => {
     if (!live) return
     const timer = setInterval(() => { void load() }, RUN_POLL_MS)

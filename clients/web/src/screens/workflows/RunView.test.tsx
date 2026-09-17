@@ -67,8 +67,8 @@ describe('/workflows?run=<id>', () => {
 
     expect(await screen.findByText(/Couldn’t load run missing/)).toBeInTheDocument()
 
-    // With no seed status the hook would treat the run as in flight; an unknown
-    // run must not be polled every five seconds for as long as the tab is open.
+    // With no seed status the hook must not invent an in-flight run; an unknown
+    // run is asked for once, not every five seconds for as long as the tab is open.
     const before = vi.mocked(workflowApi.getRun).mock.calls.length
     await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
     expect(vi.mocked(workflowApi.getRun).mock.calls.length).toBe(before)
