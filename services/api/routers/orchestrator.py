@@ -436,20 +436,18 @@ async def review_investigation(investigation_id: str, request: ReviewRequest):
 async def create_investigation(request: InvestigationCreateRequest):
     """Manually create a new investigation."""
     try:
-        orch = _get_orchestrator()
-        if not orch:
-            raise HTTPException(status_code=503, detail="Orchestrator not available")
+        from services.daemon.orchestrator import insert_intake_trigger
 
-        orch.investigation_queue.put_nowait(
-            {
-                "type": "manual",
+        insert_intake_trigger(
+            kind="human_ask",
+            priority=request.priority or "medium",
+            payload={
                 "workflow_id": request.workflow_id,
                 "finding_ids": request.finding_ids,
                 "case_id": request.case_id,
                 "hypothesis": request.hypothesis,
                 "hypothesis_subjects": request.hypothesis_subjects,
-                "priority": request.priority,
-            }
+            },
         )
 
         return {

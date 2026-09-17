@@ -35,7 +35,6 @@ class FindingProcessor:
         self.config = config
         self.input_queue: asyncio.Queue = asyncio.Queue()
         self._response_queue: Optional[asyncio.Queue] = None
-        self._investigation_queue: Optional[asyncio.Queue] = None
 
         # Services (lazy loaded)
         self._data_service = None
@@ -112,10 +111,6 @@ class FindingProcessor:
     def set_response_queue(self, queue: asyncio.Queue):
         """Set the queue for findings requiring response."""
         self._response_queue = queue
-
-    def set_investigation_queue(self, queue: asyncio.Queue):
-        """Set the queue for findings requiring autonomous investigation."""
-        self._investigation_queue = queue
 
     def _init_services(self):
         """Initialize required services."""
@@ -809,13 +804,13 @@ REASONING: [Brief explanation]
                 f"Finding {finding.get('finding_id')} queued for response evaluation"
             )
 
-        if should_respond and self._investigation_queue:
-            await self._investigation_queue.put(
-                {
-                    "type": "finding",
-                    "data": finding,
-                    "timestamp": utcnow().isoformat(),
-                }
+        if should_respond:
+            from services.daemon.orchestrator import insert_intake_trigger
+
+            insert_intake_trigger(
+                kind="detection",
+                finding_id=finding.get("finding_id"),
+                priority=severity or "medium",
             )
             self.stats["queued_for_investigation"] += 1
             logger.info(

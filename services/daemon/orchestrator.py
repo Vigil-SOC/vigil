@@ -80,6 +80,56 @@ from services.daemon.workdir import WorkdirManager
 logger = logging.getLogger(__name__)
 
 
+def lift_ai_enrichment(finding: Dict) -> Dict:
+    """Copy ``ai_enrichment`` keys onto the top level ``select_workflow`` reads."""
+    nested = finding.get("ai_enrichment")
+    if not isinstance(nested, dict) or not nested:
+        return finding
+    from services.daemon.processor import _AI_ANALYSIS_KEYS
+
+    lifted = dict(finding)
+    for key in _AI_ANALYSIS_KEYS:
+        if key in nested and lifted.get(key) is None:
+            lifted[key] = nested[key]
+    return lifted
+
+
+def insert_intake_trigger(
+    *,
+    kind: str,
+    priority: str = "medium",
+    finding_id: Optional[str] = None,
+    payload: Optional[Dict[str, Any]] = None,
+) -> Optional[int]:
+    """Insert a queued trigger. ``None`` when a queued row for this finding already exists."""
+    from sqlalchemy.exc import IntegrityError
+
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+
+    try:
+        with get_db_manager().session_scope() as session:
+            row = IntakeTrigger(
+                kind=kind,
+                state="queued",
+                finding_id=finding_id,
+                priority=priority or "medium",
+                payload=payload or {},
+            )
+            session.add(row)
+            session.flush()
+            return row.id
+    except IntegrityError:
+        logger.info(
+            "intake already has a queued row for finding %s", finding_id or "(none)"
+        )
+        return None
+
+
+class _TriggerAlreadyDecided(Exception):
+    """The CAS on a queued trigger matched zero rows."""
+
+
 def _inv_as_dict(inv):
     """Serialize an investigation to a dict, passing through one already a dict.
 
@@ -116,8 +166,6 @@ class Orchestrator:
 
         self.workdir = WorkdirManager(config.workdir_base)
         self.shared_intel = SharedIntelligence()
-
-        self.investigation_queue: asyncio.Queue = asyncio.Queue()
 
         self._data_service = None
         self._hourly_costs: List[Dict] = []
@@ -238,22 +286,14 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     async def _intake_loop(self, shutdown_event: asyncio.Event):
-        """Consume the investigation queue and create new investigations."""
+        """Drain queued trigger rows and create new investigations."""
         while not shutdown_event.is_set():
             try:
                 if not self._enabled:
                     await self._sleep(shutdown_event, 10)
                     continue
 
-                # Process queued items
-                while not self.investigation_queue.empty():
-                    try:
-                        item = self.investigation_queue.get_nowait()
-                        await self._process_intake_item(item, shutdown_event)
-                    except asyncio.QueueEmpty:
-                        break
-
-                # Also pick up queued investigations from the database
+                await self._drain_intake(shutdown_event)
                 await self._pickup_queued_investigations(shutdown_event)
 
             except asyncio.CancelledError:
@@ -263,26 +303,52 @@ class Orchestrator:
 
             await self._sleep(shutdown_event, self.config.loop_interval)
 
-    async def _process_intake_item(self, item: Dict, shutdown_event: asyncio.Event):
-        """Process a single item from the investigation queue."""
-        item_type = item.get("type")
+    async def _drain_intake(self, shutdown_event: asyncio.Event):
+        """Oldest queued row first; ranking is a sibling."""
+        for row in self._queued_intake_triggers():
+            await self._process_intake_row(row, shutdown_event)
 
-        if item_type == "finding":
-            finding = item.get("data", {})
-            await self._create_investigation_for_finding(finding, shutdown_event)
-        elif item_type == "manual":
-            await self._create_manual_investigation(item, shutdown_event)
+    async def _process_intake_row(self, row: Dict, shutdown_event: asyncio.Event):
+        kind = row.get("kind")
+        trigger_id = row.get("id")
+        if kind == "detection":
+            finding = self._hydrate_detection_finding(row)
+            if finding is None:
+                logger.warning(
+                    "intake row %s has no finding to launch; leaving queued", trigger_id
+                )
+                return
+            await self._create_investigation_for_finding(
+                finding, shutdown_event, trigger_id=trigger_id
+            )
+        elif kind in ("schedule", "human_ask"):
+            item = dict(row.get("payload") or {})
+            item["priority"] = row.get("priority") or item.get("priority") or "medium"
+            if kind == "schedule":
+                item.setdefault("trigger_type", "scheduled")
+            await self._create_manual_investigation(
+                item, shutdown_event, trigger_id=trigger_id
+            )
         else:
-            logger.warning(f"Unknown intake item type: {item_type}")
+            logger.warning(f"Unknown intake kind: {kind}")
 
     async def _create_investigation_for_finding(
-        self, finding: Dict, shutdown_event: asyncio.Event
+        self,
+        finding: Dict,
+        shutdown_event: asyncio.Event,
+        trigger_id: Optional[int] = None,
     ):
         """Create an investigation for a finding, with dedup checks."""
         finding_id = finding.get("finding_id", "unknown")
-        severity = (finding.get("severity") or "").lower()
+        raw_severity = finding.get("severity")
+        # No severity is not below-threshold: LogLM rows arrive unrated, and
+        # shedding them would drop the least-trusted case. Leave the trigger queued.
+        if raw_severity is None or not str(raw_severity).strip():
+            return
+        severity = str(raw_severity).lower()
 
         if severity not in self.config.auto_assign_severities:
+            self._decide_trigger(trigger_id, state="shed", reason="below_threshold")
             return
 
         overlapping = self.shared_intel.check_overlap(finding)
@@ -290,17 +356,16 @@ class Orchestrator:
             self.stats["dedup_prevented"] += 1
             if _dedup_prevented is not None:
                 _dedup_prevented.add(1)
-            self._attach_finding_to_overlap(finding_id, overlapping)
+            merged_into = self._attach_finding_to_overlap(finding_id, overlapping)
+            self._decide_trigger(
+                trigger_id,
+                state="merged",
+                reason="overlaps_open_work",
+                merged_into=merged_into,
+            )
             return
 
         workflow_id = select_workflow(finding)
-        self._log_ai_decision(
-            decision_type="skill_selection",
-            inv_id=finding_id,
-            reasoning=f"Selected workflow '{workflow_id}' for finding {finding_id} (severity={severity}, title={finding.get('title', 'N/A')[:100]})",
-            action=f"assign_workflow:{workflow_id}",
-            confidence=0.85,
-        )
         priority = severity or "medium"
         # The case opens here, at admission, so the run has one to attach evidence
         # to from its first step. Failing to open one is logged, not fatal: the
@@ -313,6 +378,7 @@ class Orchestrator:
             priority=priority,
             case_id=case_id,
             shutdown_event=shutdown_event,
+            trigger_id=trigger_id,
         )
 
     def _attach_finding_to_overlap(self, finding_id: str, overlapping: List[str]):
@@ -322,6 +388,7 @@ class Orchestrator:
         lands in ``case_findings`` where the running agent reads it. When none
         has one (opened before cases were minted at admission), the finding id
         goes onto ``trigger_ids`` of the first instead. Nothing new is opened.
+        Returns the case id, or the investigation id on the fallback path.
         """
         for inv_id in overlapping:
             case_id = (self.get_investigation(inv_id) or {}).get("case_id")
@@ -339,7 +406,7 @@ class Orchestrator:
                 logger.warning(
                     f"Finding {finding_id} overlaps investigation {inv_id} but could not be attached to case {case_id}"
                 )
-            return
+            return case_id
 
         inv_id = overlapping[0]
         if self._append_trigger_id(inv_id, finding_id):
@@ -350,6 +417,7 @@ class Orchestrator:
             logger.warning(
                 f"Finding {finding_id} overlaps investigation {inv_id} but could not be appended to its trigger_ids"
             )
+        return inv_id
 
     def _append_trigger_id(self, inv_id: str, finding_id: str) -> bool:
         """Idempotent; ``False`` when the row is missing or the write failed."""
@@ -396,7 +464,10 @@ class Orchestrator:
         return case_id
 
     async def _create_manual_investigation(
-        self, item: Dict, shutdown_event: asyncio.Event
+        self,
+        item: Dict,
+        shutdown_event: asyncio.Event,
+        trigger_id: Optional[int] = None,
     ):
         """Create an investigation from a manual request."""
         workflow_id = item.get("workflow_id", "incident-response")
@@ -422,6 +493,7 @@ class Orchestrator:
             hypothesis=hypothesis,
             hypothesis_subjects=hypothesis_subjects,
             shutdown_event=shutdown_event,
+            trigger_id=trigger_id,
         )
 
     async def _create_investigation(
@@ -434,6 +506,7 @@ class Orchestrator:
         hypothesis: Optional[str] = None,
         hypothesis_subjects: Optional[Dict[str, List[str]]] = None,
         shutdown_event: Optional[asyncio.Event] = None,
+        trigger_id: Optional[int] = None,
     ):
         """Core investigation creation logic."""
         inv_id = f"inv-{utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
@@ -520,7 +593,15 @@ class Orchestrator:
             "run_id": run_id_for(inv_id),
         }
 
-        self._save_investigation(inv_record)
+        saved = self._save_investigation(inv_record, trigger_id=trigger_id)
+        if not saved:
+            logger.warning(
+                "intake row %s already decided; not launching %s",
+                trigger_id,
+                inv_id,
+            )
+            return
+
         self.shared_intel.register_investigation(inv_id, findings)
         self.stats["investigations_created"] += 1
         if _inv_created is not None:
@@ -1443,11 +1524,15 @@ class Orchestrator:
     # Database Helpers
     # -------------------------------------------------------------------------
 
-    def _save_investigation(self, inv_record: Dict):
-        """Save a new investigation record to the database."""
+    def _save_investigation(
+        self, inv_record: Dict, trigger_id: Optional[int] = None
+    ) -> bool:
+        """Save a new investigation; with a trigger id, CAS it launched in the same transaction."""
         try:
+            from sqlalchemy import update
+
             from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation
+            from core.storage.models import IntakeTrigger, Investigation
 
             with get_db_manager().session_scope() as session:
                 inv = Investigation(
@@ -1468,12 +1553,93 @@ class Orchestrator:
                         "max_cost_usd", self.config.max_cost_per_investigation
                     ),
                     max_runtime_seconds=inv_record.get(
-                        "max_runtime_seconds", self.config.max_runtime_per_investigation
+                        "max_runtime_seconds",
+                        self.config.max_runtime_per_investigation,
                     ),
                 )
                 session.add(inv)
+                if trigger_id is None:
+                    return True
+                session.flush()
+                claimed = session.execute(
+                    update(IntakeTrigger)
+                    .where(
+                        IntakeTrigger.id == trigger_id,
+                        IntakeTrigger.state == "queued",
+                    )
+                    .values(
+                        state="launched",
+                        investigation_id=inv_record["investigation_id"],
+                        decided_at=utcnow(),
+                    )
+                    .returning(IntakeTrigger.id)
+                ).scalar_one_or_none()
+                if claimed is None:
+                    raise _TriggerAlreadyDecided()
+            return True
+        except _TriggerAlreadyDecided:
+            return False
         except Exception as e:
             logger.error(f"Failed to save investigation to DB: {e}")
+            return False
+
+    def _queued_intake_triggers(self) -> List[Dict]:
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.models import IntakeTrigger
+            from core.storage.schemas import IntakeTriggerSchema
+
+            with get_db_manager().session_scope() as session:
+                rows = (
+                    session.query(IntakeTrigger)
+                    .filter_by(state="queued")
+                    .order_by(IntakeTrigger.created_at.asc())
+                    .all()
+                )
+                return IntakeTriggerSchema.dump_many(rows)
+        except Exception as e:
+            logger.error(f"Failed to read intake queue: {e}")
+            return []
+
+    def _hydrate_detection_finding(self, row: Dict) -> Optional[Dict]:
+        finding_id = row.get("finding_id")
+        if not finding_id or not self._data_service:
+            return None
+        finding = self._data_service.get_finding(finding_id)
+        return lift_ai_enrichment(finding) if finding else None
+
+    def _decide_trigger(
+        self,
+        trigger_id: Optional[int],
+        *,
+        state: str,
+        reason: Optional[str] = None,
+        merged_into: Optional[str] = None,
+    ) -> None:
+        if trigger_id is None:
+            return
+        try:
+            from sqlalchemy import update
+
+            from core.storage.connection import get_db_manager
+            from core.storage.models import IntakeTrigger
+
+            with get_db_manager().session_scope() as session:
+                session.execute(
+                    update(IntakeTrigger)
+                    .where(
+                        IntakeTrigger.id == trigger_id,
+                        IntakeTrigger.state == "queued",
+                    )
+                    .values(
+                        state=state,
+                        reason=reason,
+                        merged_into=merged_into,
+                        decided_at=utcnow(),
+                    )
+                )
+        except Exception as e:
+            logger.error(f"Failed to decide intake row {trigger_id}: {e}")
 
     def _get_investigations_by_status(self, status: str) -> List:
         """Query investigations by status from the database."""

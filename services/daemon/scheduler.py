@@ -44,9 +44,6 @@ class TaskScheduler:
         # Services (lazy loaded)
         self._data_service = None
         self._claude_service = None
-        # The orchestrator's intake, handed over by the daemon: a scheduled hunt is
-        # one more item on the queue that already owns the run and its budget.
-        self._investigation_queue: Optional[asyncio.Queue] = None
 
         # Stats
         self.stats = {
@@ -59,10 +56,6 @@ class TaskScheduler:
 
         # Register default tasks
         self._register_default_tasks()
-
-    def set_investigation_queue(self, queue: asyncio.Queue):
-        """Give the scheduler the orchestrator's intake, as the processor has."""
-        self._investigation_queue = queue
 
     def _register_default_tasks(self):
         """Register default scheduled tasks."""
@@ -214,22 +207,18 @@ class TaskScheduler:
         logger.info("Starting scheduled threat hunt...")
         self.stats["threat_hunts"] += 1
 
-        if self._investigation_queue is None:
-            logger.warning(
-                "No investigation queue; the scheduled hunt cannot be opened"
-            )
-            return
-
         hypothesis = self._hunt_hypothesis()
-        await self._investigation_queue.put(
-            {
-                "type": "manual",
+        from services.daemon.orchestrator import insert_intake_trigger
+
+        insert_intake_trigger(
+            kind="schedule",
+            priority="low",
+            payload={
                 "workflow_id": "threat-hunt",
                 "trigger_type": "scheduled",
-                "priority": "low",
                 "finding_ids": [],
                 "hypothesis": hypothesis,
-            }
+            },
         )
         logger.info(
             "Queued a scheduled threat hunt: %s",
