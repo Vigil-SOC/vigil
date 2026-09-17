@@ -15,14 +15,6 @@
       }
     },
 
-    "_comment_internal": "--- Vigil's Own Server ---",
-
-    "vigil": {
-      "command": "python3",
-      "args": ["tools/mcp/vigil.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
     "security-detections": {
       "command": "npx",
       "args": ["-y", "security-detections-mcp@3.3.0"],

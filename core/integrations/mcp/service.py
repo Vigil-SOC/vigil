@@ -251,9 +251,12 @@ class MCPService:
         except Exception as e:
             logger.error(f"Could not save MCP enabled state: {e}")
 
-    # Internal/platform servers that should be on by default
+    # Internal/platform servers that should be on by default.
+    #
+    # Vigil's own server is not here: it is not a server Vigil connects to but
+    # functions in this process, registered by core.integrations.mcp.in_process
+    # and reachable whether or not anything is enabled.
     _DEFAULT_ENABLED = {
-        "vigil",
         "security-detections",
         # The self-hosted SIEM a hunt reads through telemetry_search -- the
         # customer's own Splunk, the expected telemetry path, not an optional
@@ -323,13 +326,13 @@ class MCPService:
         """
         Detect if a server is FastMCP or stdio-based by checking the module path.
 
-        FastMCP servers: vigil
+        FastMCP servers: none in-repo; Vigil's own tools run in this process.
         Stdio servers: All others (designed for advanced MCP integration)
         """
         for arg in args:
             # Every in-repo server lives under tools/mcp/.
             if "." in arg and arg.startswith("tools"):
-                fastmcp_tools = ["vigil"]
+                fastmcp_tools = []
                 for fastmcp in fastmcp_tools:
                     if fastmcp in arg:
                         return "fastmcp"
@@ -489,14 +492,9 @@ class MCPService:
     ) -> List[Dict]:
         """Get default server configurations if mcp-config.json is not available."""
         return [
-            {
-                "name": "vigil",
-                "command": python_exe_str,
-                "args": ["-m", "tools.vigil"],
-                "cwd": project_path_str,
-                "env": {"PYTHONPATH": project_path_str},
-                "server_type": "fastmcp",
-            }
+            # Vigil's own tools are in this process, so there is no in-repo
+            # server to fall back to: an absent config file means no vendor
+            # servers, not a Vigil without tools.
         ]
 
     # NOTE: the former `start_server` / `start_all` / `stop_all` methods were

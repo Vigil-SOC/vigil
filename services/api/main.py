@@ -99,7 +99,10 @@ async def lifespan(app: FastAPI):
     # Built here, not at import: each app carries its own session manager and a
     # manager runs once, so a process that starts the app twice -- a test, a
     # reloader -- needs a new one rather than the same one again.
-    _mcp_gate.app = vigil_mcp.streamable_http_app()
+    # The app serves at ``/mcp`` of its own accord; mounted at ``/mcp`` that
+    # would put the real endpoint at /mcp/mcp. It is the mount that decides
+    # where this is served, so the app itself serves at its root.
+    _mcp_gate.app = vigil_mcp.streamable_http_app(streamable_http_path="/")
 
     async with vigil_mcp.session_manager.run():
         try:

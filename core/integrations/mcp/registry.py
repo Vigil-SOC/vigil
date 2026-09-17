@@ -76,10 +76,20 @@ class MCPRegistry:
         all_tools = []
         seen = set()
 
+        from core.integrations.mcp.surface import VIGIL_SERVER
+
         for server_name in self.get_active_servers():
             for tool in self._tools_cache.get(server_name, []):
-                # Prefix tool name with server name (matching ClaudeService convention)
-                tool_name = f"{server_name}_{tool['name']}"
+                # Prefix tool name with server name (matching ClaudeService
+                # convention). Vigil's own tools are not prefixed: they are the
+                # same tools an external caller reaches at /mcp, and a tool
+                # that answers to two names is two tools to anyone writing
+                # against it.
+                tool_name = (
+                    tool["name"]
+                    if server_name == VIGIL_SERVER
+                    else f"{server_name}_{tool['name']}"
+                )
                 if tool_name in seen:
                     continue
                 seen.add(tool_name)
@@ -288,11 +298,13 @@ def refresh_from_client(registry: MCPRegistry) -> int:
     liveness: ``is_connected`` goes False on any failed call and stays there
     until the next one reconnects, so it is not "unreachable".
     """
+    from core.integrations.mcp import in_process
     from core.integrations.mcp.client import process_mcp_client
 
     mcp_client = process_mcp_client()
     if mcp_client is None:
-        return 0
+        # No vendor client, but Vigil's own tools do not depend on one.
+        return 1 if in_process.register(registry) else 0
     tools_dict = getattr(mcp_client, "tools_cache", None) or {}
     try:
         connected = mcp_client.get_connection_status() or {}
@@ -301,6 +313,15 @@ def refresh_from_client(registry: MCPRegistry) -> int:
         connected = {}
 
     added = 0
+
+    # Vigil's own tools are in this process and need no connection, so they are
+    # not in the client's cache and would otherwise be missing from every
+    # request path that refreshes through here.
+    from core.integrations.mcp import in_process
+
+    if in_process.register(registry):
+        added += 1
+
     for name, tools in tools_dict.items():
         if connected and not connected.get(name, False):
             continue

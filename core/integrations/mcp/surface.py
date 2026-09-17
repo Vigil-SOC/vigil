@@ -29,6 +29,12 @@ logger = logging.getLogger(__name__)
 # The Settings key an operator's toggle writes.
 CONFIG_KEY = "mcp.server_enabled"
 
+# What Vigil's own server is called. It is the one server in the registry that
+# is not a product anyone sells, and the places that treat it differently --
+# its tools are not prefixed, and it is not an integration an operator connects
+# -- say so by naming this rather than the string.
+VIGIL_SERVER = "vigil"
+
 # Who is calling, for the duration of one call. Unset means nothing
 # authenticated a caller -- the stdio path, where the only caller is the
 # process that spawned this one.

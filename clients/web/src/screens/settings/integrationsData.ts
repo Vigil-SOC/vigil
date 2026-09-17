@@ -26,7 +26,6 @@ export const WIP_SERVERS = new Set([
  *  registration, persisted enabled-state store). */
 export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
   loglm: 'LogLM',
-  'vigil': 'Findings, Cases & Approvals',
 }))
 
 export interface McpCategory {
@@ -37,7 +36,7 @@ export interface McpCategory {
 /** Display categories, in order. A server matches the first category whose
     `servers` list contains it; anything unmatched lands in "Other". */
 export const MCP_CATEGORIES: McpCategory[] = [
-  { label: 'Internal / Platform', servers: ['vigil', 'security-detections'] },
+  { label: 'Internal / Platform', servers: ['security-detections'] },
   { label: 'DeepTempo', servers: ['loglm'] },
   { label: 'Reference Servers', servers: ['github'] },
   { label: 'EDR / XDR', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
@@ -53,7 +52,6 @@ export const MCP_CATEGORIES: McpCategory[] = [
 
 export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   firecrawl: 'Web search and page retrieval for an investigation. Retrieved pages are scrubbed and delimited before a model sees them — a page is data, not direction.',
-  'vigil': "Vigil's own tools: findings, cases, and the approval queue. Required for the investigation workflow, case creation, and findings display.",
   approval: 'Human-in-the-loop approval queue for response actions (isolate host, block IP, etc.). Prevents the AI from taking destructive actions without analyst review.',
   'security-detections': 'Searches across 30,000+ detection rules (Sigma, Splunk, Elastic, KQL). Powers detection gap analysis and rule recommendations.',
   github: 'Access GitHub repos, issues, PRs, and code search. Useful for looking up detection rule history, IaC configs, or creating remediation issues.',
