@@ -25,6 +25,25 @@ class _JsonEncoder(json.JSONEncoder):
         return super().default(obj)
 
 
+# Who this server acts as when it writes a name into a record.
+#
+# Nothing authenticates a caller here yet: the server is spawned over a pipe by
+# the process it serves, so the only honest answer is that an agent did it.
+# Every tool that used to take the actor as an argument asks this instead --
+# a caller that supplies its own name is not identifying itself, it is choosing
+# what the record will say, and a record of who did something is worth nothing
+# if the doer wrote it.
+#
+# When a caller can be authenticated, this is where that principal arrives, and
+# the tools do not change.
+CALLER_UNAUTHENTICATED = "agent"
+
+
+def caller() -> str:
+    """The identity this server writes into a record it makes."""
+    return CALLER_UNAUTHENTICATED
+
+
 def jdump(obj, indent=2):
     return json.dumps(obj, cls=_JsonEncoder, indent=indent)
 
@@ -333,7 +352,7 @@ def _record_agent_close(case_id: str) -> None:
     _close_through_the_service(
         case_id,
         closure_category=ClosureCategory.UNSPECIFIED,
-        closed_by="agent",
+        closed_by=caller(),
         closed_by_kind=ClosedByKind.AGENT,
     )
 
@@ -781,7 +800,6 @@ def create_case_from_killchain(
 @mcp.tool()
 def add_case_comment(
     case_id: str,
-    author: str,
     content: str,
     parent_comment_id: Optional[int] = None,
     **kwargs,
@@ -791,13 +809,12 @@ def add_case_comment(
 
     Args:
         case_id: The case ID
-        author: Username of the comment author
         content: Comment text
         parent_comment_id: Optional ID of parent comment for threading
 
     Examples:
-        - add_case_comment("case-123", "analyst1", "Confirmed lateral movement pattern")
-        - add_case_comment("case-123", "analyst2", "I see the same pattern", parent_comment_id=5)
+        - add_case_comment("case-123", "Confirmed lateral movement pattern")
+        - add_case_comment("case-123", "I see the same pattern", parent_comment_id=5)
     """
     try:
         from core.cases.case_collaboration_service import CaseCollaborationService
@@ -805,7 +822,7 @@ def add_case_comment(
         with _service_session() as session:
             comment = CaseCollaborationService().add_comment(
                 case_id=case_id,
-                author=author,
+                author=caller(),
                 content=content,
                 parent_comment_id=parent_comment_id,
                 session=session,
@@ -857,7 +874,6 @@ def add_case_evidence(
     case_id: str,
     evidence_type: str,
     name: str,
-    collected_by: str,
     description: Optional[str] = None,
     file_path: Optional[str] = None,
     source: Optional[str] = None,
@@ -871,16 +887,15 @@ def add_case_evidence(
         case_id: The case ID
         evidence_type: Type (e.g., "file", "log", "network_capture", "memory_dump", "screenshot")
         name: Evidence name
-        collected_by: Who collected it
         description: Optional description
         file_path: Optional file path
         source: Optional source system
         tags: Optional tags list
 
     Examples:
-        - add_case_evidence("case-123", "memory_dump", "host-42-memory.raw", "analyst1",
+        - add_case_evidence("case-123", "memory_dump", "host-42-memory.raw",
                            description="Memory dump from compromised host")
-        - add_case_evidence("case-123", "log", "firewall-logs.txt", "soc-team",
+        - add_case_evidence("case-123", "log", "firewall-logs.txt",
                            source="Palo Alto FW", tags=["c2", "exfiltration"])
     """
     try:
@@ -891,7 +906,7 @@ def add_case_evidence(
                 case_id=case_id,
                 evidence_type=evidence_type,
                 name=name,
-                collected_by=collected_by,
+                collected_by=caller(),
                 description=description,
                 file_path=file_path,
                 source=source,
@@ -1214,7 +1229,6 @@ def link_related_cases(
     case_id: str,
     related_case_id: str,
     relationship_type: str,
-    created_by: str,
     notes: Optional[str] = None,
     **kwargs,
 ) -> str:
@@ -1225,13 +1239,12 @@ def link_related_cases(
         case_id: Primary case ID
         related_case_id: Related case ID
         relationship_type: Type ("duplicate", "related", "parent", "child", "blocks", "blocked_by")
-        created_by: Username of person creating link
         notes: Optional notes about relationship
 
     Examples:
-        - link_related_cases("case-123", "case-124", "related", "analyst1",
+        - link_related_cases("case-123", "case-124", "related",
                             notes="Both cases show same attack pattern")
-        - link_related_cases("case-123", "case-125", "parent", "analyst1",
+        - link_related_cases("case-123", "case-125", "parent",
                             notes="case-123 is the parent campaign")
     """
     try:
@@ -1243,7 +1256,7 @@ def link_related_cases(
                 case_id,
                 related_case_id=related_case_id,
                 relationship_type=relationship_type,
-                created_by=created_by,
+                created_by=caller(),
                 notes=notes,
             )
             payload = relationship.to_dict()
@@ -1274,7 +1287,6 @@ def link_related_cases(
 @mcp.tool()
 def escalate_case(
     case_id: str,
-    escalated_from: str,
     escalated_to: str,
     reason: str,
     urgency_level: str = "high",
@@ -1285,13 +1297,12 @@ def escalate_case(
 
     Args:
         case_id: The case ID
-        escalated_from: Who is escalating (username)
         escalated_to: Who to escalate to (username/team)
         reason: Reason for escalation
         urgency_level: Urgency ("low", "medium", "high", "critical")
 
     Example:
-        escalate_case("case-123", "analyst1", "soc-manager",
+        escalate_case("case-123", "soc-manager",
                      "Suspected APT activity requires management approval",
                      urgency_level="critical")
     """
@@ -1302,7 +1313,7 @@ def escalate_case(
         with _service_session() as session:
             escalated = CaseWorkflowService().escalate_case(
                 case_id=case_id,
-                escalated_from=escalated_from,
+                escalated_from=caller(),
                 escalated_to=escalated_to,
                 reason=reason,
                 urgency_level=urgency_level,
@@ -1343,7 +1354,6 @@ def escalate_case(
 def close_case(
     case_id: str,
     closure_category: str,
-    closed_by: str,
     root_cause: Optional[str] = None,
     lessons_learned: Optional[str] = None,
     recommendations: Optional[str] = None,
@@ -1358,7 +1368,6 @@ def close_case(
     Args:
         case_id: The case ID
         closure_category: Category ("resolved", "false_positive", "duplicate", "unable_to_resolve")
-        closed_by: Who is closing the case
         root_cause: Optional root cause analysis
         lessons_learned: Optional lessons learned
         recommendations: Optional recommendations
@@ -1367,7 +1376,7 @@ def close_case(
         closure_notes: Optional free-text notes on the closure
 
     Example:
-        close_case("case-123", "resolved", "analyst1",
+        close_case("case-123", "resolved",
                   root_cause="Compromised credentials due to phishing",
                   lessons_learned="Need MFA enforcement",
                   recommendations="Deploy MFA to all users, additional phishing training",
@@ -1401,7 +1410,7 @@ def close_case(
                 session,
                 case_id,
                 closure_category=category,
-                closed_by=closed_by,
+                closed_by=caller(),
                 # No authenticated person behind an MCP call. Episodic memory
                 # reads this as Trust, and `analyst` is the one record this
                 # system will not let an agent claim on its own behalf.
@@ -1424,7 +1433,7 @@ def close_case(
             case_id,
             "case_closed",
             f"Case closed as {category.value}",
-            {"closure_category": category.value, "closed_by": closed_by},
+            {"closure_category": category.value, "closed_by": caller()},
         )
 
         return jdump(
@@ -1466,7 +1475,6 @@ def create_approval_action(
     confidence: float,
     reason: str,
     evidence: Optional[list] = None,
-    created_by: str = "agent",
     **kwargs,
 ) -> str:
     """Submit action to approval queue.
@@ -1492,7 +1500,7 @@ def create_approval_action(
             confidence=confidence,
             reason=reason,
             evidence=evidence or [],
-            created_by=created_by,
+            created_by=caller(),
         )
         msg = f"Action created. Status: {action.status}"
         if action.status == "approved":
@@ -1587,7 +1595,7 @@ def get_approval_action(action_id: str, **kwargs) -> str:
 
 
 @mcp.tool()
-def approve_action(action_id: str, approved_by: str = "analyst", **kwargs) -> str:
+def approve_action(action_id: str, **kwargs) -> str:
     """Approve pending action."""
     try:
         svc, _ActionType, _ActionStatus = get_approval_svc()
@@ -1595,7 +1603,7 @@ def approve_action(action_id: str, approved_by: str = "analyst", **kwargs) -> st
         return jdump({"error": f"Service error: {e}"})
 
     try:
-        action = svc.approve_action(action_id, approved_by)
+        action = svc.approve_action(action_id, caller())
         if not action:
             return jdump({"error": f"Action {action_id} not found"})
         return jdump({"success": True, "action_id": action_id, "status": action.status})
@@ -1607,7 +1615,6 @@ def approve_action(action_id: str, approved_by: str = "analyst", **kwargs) -> st
 def reject_action(
     action_id: str,
     reason: str,
-    rejected_by: str = "analyst",
     **kwargs,
 ) -> str:
     """Reject pending action."""
@@ -1617,7 +1624,7 @@ def reject_action(
         return jdump({"error": f"Service error: {e}"})
 
     try:
-        action = svc.reject_action(action_id, reason, rejected_by)
+        action = svc.reject_action(action_id, reason, caller())
         if not action:
             return jdump({"error": f"Action {action_id} not found"})
         return jdump({"success": True, "action_id": action_id, "status": action.status})
