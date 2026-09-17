@@ -258,9 +258,11 @@ def _propose_feed_hunts(args: Args) -> Any:
         propose_hunts_from_recent_indicators,
     )
 
-    return propose_hunts_from_recent_indicators(
-        limit=args.get("limit") or RECENT_INDICATOR_LIMIT
-    )
+    try:
+        limit = int(args.get("limit", RECENT_INDICATOR_LIMIT))
+    except (TypeError, ValueError):
+        return {"error": f"limit must be an integer, got {args.get('limit')!r}"}
+    return propose_hunts_from_recent_indicators(limit=limit)
 
 
 _INTEL_TOOLS: Dict[str, Callable[[Args], Any]] = {

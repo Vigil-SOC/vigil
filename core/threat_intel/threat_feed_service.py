@@ -478,18 +478,15 @@ def propose_hunts_from_recent_indicators(
     for row in rows:
         entity_type = _INDICATOR_TO_ENTITY_TYPE.get(str(row.get("indicator_type")))
         value = row.get("indicator_value")
-        if not entity_type or not value:
+        # entity_key() answers "" for a value that defangs to nothing.
+        key = entity_key(entity_type or "", str(value or ""))
+        if not key:
             counts["skipped"] += 1
             continue
-        key = entity_key(entity_type, str(value))
         if key in seen:  # the same IOC from two feeds is one question
             continue
         seen.add(key)
-        try:
-            coverage = check_coverage(entity_keys=[key])
-        except ValueError:  # the key normalised away to nothing
-            counts["skipped"] += 1
-            continue
+        coverage = check_coverage(entity_keys=[key])
         status = coverage["status"]
         if status != "uncovered":
             counts[status] += 1
@@ -501,14 +498,10 @@ def propose_hunts_from_recent_indicators(
                     "indicator_type": row.get("indicator_type"),
                     "indicator_value": value,
                     "source": row.get("source"),
-                    "last_seen": _isoformat(row.get("last_seen")),
+                    "last_seen": row.get("last_seen"),  # ISO text: dump is json-mode
                 },
                 "proposal": coverage["proposal"],
                 "execute": coverage["execute"],
             }
         )
     return {"limit": limit, "checked": len(seen), **counts, "proposals": proposals}
-
-
-def _isoformat(value: Any) -> Optional[str]:
-    return value.isoformat() if isinstance(value, datetime) else value

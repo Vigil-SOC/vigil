@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -19,7 +17,8 @@ from core.workflows.workflows_service import WorkflowsService
 
 pytestmark = pytest.mark.unit
 
-SEEN = datetime(2026, 9, 16, 12, 0, 0)
+# ThreatIndicatorSchema.dump is json-mode, so rows carry last_seen as ISO text.
+SEEN = "2026-09-16T12:00:00"
 
 
 def _row(indicator_type, value, source="cloudforce_one"):
@@ -73,7 +72,7 @@ def test_uncovered_indicator_is_one_proposal(monkeypatch, no_hunt_started):
         "indicator_type": "ip",
         "indicator_value": "203.0.113.7",
         "source": "cloudforce_one",
-        "last_seen": SEEN.isoformat(),
+        "last_seen": SEEN,
     }
     request = router.WorkflowExecuteRequest(**entry["proposal"])
     assert request.approve_hypotheses is True
@@ -114,13 +113,14 @@ def test_each_key_is_classified_on_its_own_and_once(monkeypatch):
     assert result["proposals"][0]["indicator"]["source"] == "feed_a"
 
 
-def test_unmapped_type_is_skipped_not_minted(monkeypatch):
-    asked = _install(monkeypatch, [_row("asn", "AS64496"), _row("ip", "203.0.113.7")])
+def test_unmapped_type_and_empty_value_are_skipped_not_minted(monkeypatch):
+    rows = [_row("asn", "AS64496"), _row("ip", "   "), _row("ip", "203.0.113.7")]
+    asked = _install(monkeypatch, rows)
 
     result = feed.propose_hunts_from_recent_indicators()
 
     assert asked == [["ip:203.0.113.7"]]
-    assert result["skipped"] == 1
+    assert result["skipped"] == 2 and result["checked"] == 1
     assert len(result["proposals"]) == 1
 
 
@@ -142,6 +142,18 @@ async def test_backend_tool_dispatches_the_proposal(monkeypatch, no_hunt_started
 
     assert handled is True
     assert len(result["proposals"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_backend_tool_reports_a_bad_limit_as_an_error(monkeypatch):
+    _install(monkeypatch, [_row("ip", "203.0.113.7")])
+
+    result, handled = await execute_backend_tool(
+        "propose_feed_hunts", {"limit": "twenty"}
+    )
+
+    assert handled is True
+    assert "limit" in result["error"]
 
 
 def test_route_returns_the_same_shape(monkeypatch, no_hunt_started):
