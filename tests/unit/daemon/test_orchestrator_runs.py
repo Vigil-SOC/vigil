@@ -303,8 +303,9 @@ class TestShadowAdjudication:
         # The real request is untouched by the copy.
         assert real["request"]["playbook"] == "workflow:incident-response"
 
-        # One workflow_runs row for the shadow, keyed by its run id, and nothing
-        # else written: no second investigations row, no AIDecisionLog entry.
+        # One workflow_runs row for the shadow, keyed by its run id. The shadow's
+        # record is the ledger: the enqueue writes no investigations row and no
+        # AIDecisionLog entry, and these guard that it stays so.
         begin_run.assert_called_once()
         row = begin_run.call_args.kwargs
         assert row["run_id"] == shadow_run_id_for(INV)
@@ -315,13 +316,20 @@ class TestShadowAdjudication:
         orch._log_ai_decision.assert_not_called()
         assert orch._update_investigation_status.call_args[0][1] == "executing"
 
+    # Manual, scheduled and case-review investigations get no shadow; nor does a
+    # restart pickup, whose record comes from the row and carries no finding.
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("trigger_type", ["manual", "scheduled", "case_review"])
-    async def test_only_a_detection_finding_gets_a_shadow(self, trigger_type):
-        orch = self._shadowed()
-        enqueued, begin_run = await self._enqueue(
-            orch, _record(trigger_type=trigger_type, findings=[FINDING])
-        )
+    @pytest.mark.parametrize(
+        "record",
+        [
+            _record(trigger_type="manual", findings=[FINDING]),
+            _record(trigger_type="scheduled", findings=[FINDING]),
+            _record(trigger_type="case_review", findings=[FINDING]),
+            _record(trigger_type="finding"),
+        ],
+    )
+    async def test_only_an_admitted_detection_finding_gets_a_shadow(self, record):
+        enqueued, begin_run = await self._enqueue(self._shadowed(), record)
         enqueued.assert_awaited_once()
         begin_run.assert_not_called()
 
@@ -331,13 +339,23 @@ class TestShadowAdjudication:
         with patch(
             "services.daemon.orchestrator.enqueue_run",
             new=AsyncMock(side_effect=[None, RuntimeError("redis down")]),
-        ), patch("services.daemon.orchestrator.WorkflowRunService"):
+        ) as enqueued, patch("services.daemon.orchestrator.WorkflowRunService") as runs:
             await orch._enqueue_investigation(
                 _record(trigger_type="finding", findings=[FINDING])
             )
 
+        # The real run went first and stays executing; the failure is the shadow's.
+        assert enqueued.await_count == 2
+        assert enqueued.await_args_list[0].args[0]["run_kind"] == "investigate"
         statuses = [c[0][1] for c in orch._update_investigation_status.call_args_list]
         assert statuses == ["executing"]
+        # The row written ahead of the enqueue is closed, not left running with
+        # no worker to ever finish it.
+        runs.return_value.begin_run.assert_called_once()
+        finalized = runs.return_value.finalize_run.call_args
+        assert finalized.args[0] == shadow_run_id_for(INV)
+        assert finalized.kwargs["status"] == "failed"
+        assert "redis down" in finalized.kwargs["error"]
 
     # The derived id is a uuid like the real one: agent_events.run_id is a uuid
     # column, so a string suffix on the real id would be refused by the ledger.

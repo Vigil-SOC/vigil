@@ -14,6 +14,7 @@ import copy
 import json
 import logging
 import uuid
+from contextlib import suppress
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -250,15 +251,19 @@ def shadow_hypothesis(finding: Dict, workflow_id: str) -> str:
         or "no named entity"
     )
     mitre = finding.get("mitre_predictions") or {}
+    technique = ""
     if mitre:
         top = max(mitre.items(), key=lambda kv: kv[1])[0]
         _, name, tactic = resolve_technique(top)
-        technique = f"{tactic} via {name} ({top})"
-    else:
-        technique = "no predicted technique"
+        # The lookup table is partial: an id it does not know is named as itself.
+        technique = (
+            f" for {tactic} via {name} ({top})"
+            if tactic != "Unknown"
+            else f" for technique {top}"
+        )
     return (
         f"Finding {finding.get('finding_id', 'unknown')} \"{title}\" on {entities} "
-        f"is a true positive for {technique}, warranting the {workflow_id} workflow."
+        f"is a true positive{technique}, warranting the {workflow_id} workflow."
     )
 
 
@@ -741,7 +746,8 @@ class Orchestrator:
             "otel_traceparent": _tp,
             "run_id": run_id_for(inv_id),
             # Not a column: read at enqueue so the shadow run states its hypothesis
-            # from the finding without a second query. Absent on a restart pickup.
+            # from the finding without a second query. A restart pickup rebuilds
+            # the record from the row, has no finding, and so gets no shadow.
             "findings": findings,
         }
 
@@ -1058,10 +1064,13 @@ class Orchestrator:
         inv_id = inv_record["investigation_id"]
         findings = inv_record.get("findings") or []
         if not findings:
-            logger.warning("no finding in hand for %s; no shadow adjudication", inv_id)
+            # A restart pickup re-enqueues from the DB row, which carries no
+            # finding to state a hypothesis from; the real run goes on alone.
+            logger.info("no finding in hand for %s; no shadow adjudication", inv_id)
             return
         workflow_id = inv_record["workflow_id"]
         shadow_id = shadow_run_id_for(inv_id)
+        runs = WorkflowRunService()
         try:
             shadow = copy.deepcopy(request)
             shadow["playbook"] = f"workflow:{SHADOW_WORKFLOW_ID}"
@@ -1070,11 +1079,13 @@ class Orchestrator:
                 f"Intake admitted this finding and chose the `{workflow_id}` workflow "
                 f"for investigation {inv_id}. Adjudicate that choice; execute nothing."
             )
+            # A detection admission opens over exactly one finding (see
+            # _create_investigation_for_finding), so the first is the finding.
             shadow["hypotheses"] = [shadow_hypothesis(findings[0], workflow_id)]
             shadow["hypothesis_subjects"] = {}
-            # Best-effort, like the API's row for a run it starts: begin_run
-            # returns None on a DB failure rather than raising.
-            WorkflowRunService().begin_run(
+            # Row first, as the API does, so a run the worker parks is visible.
+            # Best-effort: begin_run returns None on a DB failure, not an error.
+            runs.begin_run(
                 run_id=shadow_id,
                 workflow_id=SHADOW_WORKFLOW_ID,
                 workflow_name=SHADOW_WORKFLOW_ID,
@@ -1090,12 +1101,16 @@ class Orchestrator:
                 shadow_id, "adjudicate", shadow, enqueued_by="orchestrator"
             )
             await enqueue_run(job)
-        except (
-            Exception
-        ) as exc:  # noqa: BLE001 -- the real run is not the shadow's to fail
+        # The real run is not the shadow's to fail. The row already written is
+        # closed as failed rather than left running with no worker to finish it.
+        except Exception as exc:  # noqa: BLE001
             logger.error(
                 "could not enqueue shadow adjudication for %s: %s", inv_id, exc
             )
+            with suppress(Exception):
+                runs.finalize_run(
+                    shadow_id, status="failed", error=f"Could not enqueue: {exc}"
+                )
             return
         logger.info("enqueued shadow adjudication for %s as run %s", inv_id, shadow_id)
 
