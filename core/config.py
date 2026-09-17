@@ -259,7 +259,6 @@ class Settings(BaseSettings):
     orchestrator_max_runtime: int = 3600
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
-    orchestrator_auto_severities: Annotated[List[str], NoDecode] = ["critical", "high"]
     orchestrator_dry_run: bool = False
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
@@ -298,7 +297,6 @@ class Settings(BaseSettings):
     @field_validator(
         "extension_connector_allowlist",
         "daemon_escalate_severities",
-        "orchestrator_auto_severities",
         "kafka_topics",
         mode="before",
     )

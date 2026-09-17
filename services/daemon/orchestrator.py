@@ -330,9 +330,6 @@ class Orchestrator:
             logger.info(
                 f"  Max cost/investigation: ${self.config.max_cost_per_investigation}"
             )
-            logger.info(
-                f"  Auto-assign severities: {self.config.auto_assign_severities}"
-            )
             logger.info(f"  Dry run: {self.config.dry_run}")
 
             tasks = [

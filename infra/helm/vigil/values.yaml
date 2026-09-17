@@ -740,7 +740,6 @@ config:
   ORCHESTRATOR_MAX_HOURLY_COST: "20.0"
   ORCHESTRATOR_STALE_THRESHOLD: "300"
   ORCHESTRATOR_WORKDIR: "/app/data/investigations"
-  ORCHESTRATOR_AUTO_SEVERITIES: "critical,high"
   ORCHESTRATOR_DRY_RUN: "false"
 
   # OTEL — disabled by default; turn on when an OTEL collector is reachable.

@@ -16,8 +16,6 @@ import {
 } from './useSettings'
 import type { SectionProps } from './types'
 
-const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low']
-
 type PresetKey = 'conservative' | 'balanced' | 'aggressive'
 type PresetValues = Pick<
   OrchestratorConfig,
@@ -118,13 +116,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
 
   const activePreset = detectActivePreset(config)
 
-  const toggleSeverity = (sev: string) => {
-    const cur = config.auto_assign_severities
-    applyAndSave({
-      auto_assign_severities: cur.includes(sev) ? cur.filter((s) => s !== sev) : [...cur, sev],
-    })
-  }
-
   const numField = (label: string, field: keyof OrchestratorConfig, opts: NumOpts = {}) => {
     const unlimited = Boolean(opts.allowUnlimited) && (config[field] as number) === 0
     return (
@@ -192,24 +183,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           checked={config.dry_run}
           onChange={(v) => applyAndSave({ dry_run: v })}
         />
-
-        <div className="mt-4">
-          <span className="text-[13px] text-tx-2">Auto-investigate severities</span>
-          <div className="flex gap-2 flex-wrap mt-2">
-            {ALL_SEVERITIES.map((sev) => {
-              const on = config.auto_assign_severities.includes(sev)
-              return (
-                <button
-                  key={sev}
-                  className={`chip${on ? ' sel' : ''}`}
-                  onClick={() => toggleSeverity(sev)}
-                >
-                  {sev.charAt(0).toUpperCase() + sev.slice(1)}
-                </button>
-              )
-            })}
-          </div>
-        </div>
       </SettingsCard>
 
       <SettingsCard

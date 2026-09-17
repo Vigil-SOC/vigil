@@ -9077,14 +9077,6 @@ export interface components {
          */
         OrchestratorSettingsConfig: {
             /**
-             * Auto Assign Severities
-             * @default [
-             *       "critical",
-             *       "high"
-             *     ]
-             */
-            auto_assign_severities: string[];
-            /**
              * Dry Run
              * @default false
              */

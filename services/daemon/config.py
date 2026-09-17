@@ -92,9 +92,6 @@ class OrchestratorConfig:
     max_runtime_per_investigation: int = 3600
     stale_threshold: int = 300
     workdir_base: str = "data/investigations"
-    auto_assign_severities: List[str] = field(
-        default_factory=lambda: ["critical", "high"]
-    )
     dry_run: bool = False
     # How long a queued trigger may wait, the last-quarter promotion
     # window, and the queued depth that warrants one human signal.
@@ -197,9 +194,6 @@ class DaemonConfig:
         config.orchestrator.stale_threshold = settings.orchestrator_stale_threshold
         config.orchestrator.workdir_base = settings.orchestrator_workdir
         config.orchestrator.dry_run = settings.orchestrator_dry_run
-        config.orchestrator.auto_assign_severities = list(
-            settings.orchestrator_auto_severities
-        )
 
         config.llm_queue.redis_url = settings.redis_url or DEFAULT_REDIS_URL
         config.llm_queue.max_concurrent_llm_calls = settings.llm_max_concurrent
@@ -239,10 +233,6 @@ class DaemonConfig:
                 for key, cast in field_map.items():
                     if key in db_config:
                         setattr(config.orchestrator, key, cast(db_config[key]))
-                if "auto_assign_severities" in db_config:
-                    val = db_config["auto_assign_severities"]
-                    if isinstance(val, list):
-                        config.orchestrator.auto_assign_severities = val
                 logger.info("Orchestrator config overridden from database settings")
         except Exception as e:
             logger.debug(
