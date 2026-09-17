@@ -78,7 +78,6 @@ def list_findings(
     cluster_id: Optional[str] = None,
     min_anomaly_score: Optional[float] = None,
     limit: int = 50,
-    **kwargs,
 ) -> str:
     try:
         findings = load_findings()
@@ -102,7 +101,7 @@ def list_findings(
 
 
 @mcp.tool()
-def get_finding(finding_id: str, **kwargs) -> str:
+def get_finding(finding_id: str) -> str:
     """
     Get a specific finding by ID.
 
@@ -126,7 +125,6 @@ async def list_completed_hunts(
     start: str,
     end: str,
     limit: int = 200,
-    **kwargs,
 ) -> str:
     """Return completed threat-hunt projections for an assessment window."""
     try:
@@ -136,7 +134,7 @@ async def list_completed_hunts(
 
 
 @mcp.tool()
-async def replay_hunt(run_id: str, decision_id: Optional[str] = None, **kwargs) -> str:
+async def replay_hunt(run_id: str, decision_id: Optional[str] = None) -> str:
     """Rebuild what each decision of a completed hunt was shown (rebuilt, recorded,
     mismatch, recalled). ``decision_id`` narrows the report to one decision."""
     try:
@@ -149,7 +147,7 @@ async def replay_hunt(run_id: str, decision_id: Optional[str] = None, **kwargs) 
 
 
 @mcp.tool()
-def technique_rollup(min_confidence: float = 0.5, **kwargs) -> str:
+def technique_rollup(min_confidence: float = 0.5) -> str:
     try:
         findings = load_findings()
         stats = {}
@@ -180,7 +178,6 @@ def list_cases(
     status: Optional[str] = None,
     priority: Optional[str] = None,
     limit: int = 50,
-    **kwargs,
 ) -> str:
     try:
         cases = get_data_service().get_cases()
@@ -211,7 +208,7 @@ def list_cases(
 
 
 @mcp.tool()
-def get_case(case_id: str, **kwargs) -> str:
+def get_case(case_id: str) -> str:
     try:
         case = get_data_service().get_case(case_id)
         if not case:
@@ -263,7 +260,6 @@ def create_case(
     status: str = "new",
     assignee: Optional[str] = None,
     tags: Optional[list] = None,
-    **kwargs,
 ) -> str:
     try:
         service = get_data_service()
@@ -381,7 +377,6 @@ def update_case(
     priority: Optional[str] = None,
     assignee: Optional[str] = None,
     add_note: Optional[str] = None,
-    **kwargs,
 ) -> str:
     try:
         service = get_data_service()
@@ -425,7 +420,7 @@ def update_case(
 
 
 @mcp.tool()
-def add_finding_to_case(case_id: str, finding_id: str, **kwargs) -> str:
+def add_finding_to_case(case_id: str, finding_id: str) -> str:
     try:
         from core.cases import case_journal_service
 
@@ -449,7 +444,7 @@ def add_finding_to_case(case_id: str, finding_id: str, **kwargs) -> str:
 
 
 @mcp.tool()
-def remove_finding_from_case(case_id: str, finding_id: str, **kwargs) -> str:
+def remove_finding_from_case(case_id: str, finding_id: str) -> str:
     try:
         from core.cases import case_journal_service
 
@@ -478,7 +473,6 @@ def add_case_activity(
     activity_type: str,
     description: str,
     details: Optional[dict] = None,
-    **kwargs,
 ) -> str:
     """
     Add an activity/action to a case. Activities track actions taken during investigation.
@@ -525,7 +519,6 @@ def add_case_timeline_entry(
     event_time: Optional[str] = None,
     event_type: str = "investigation",
     details: Optional[dict] = None,
-    **kwargs,
 ) -> str:
     """
     Add an entry to the case timeline. Timeline tracks chronological events.
@@ -567,7 +560,7 @@ def add_case_timeline_entry(
 
 
 @mcp.tool()
-def add_case_mitre_techniques(case_id: str, technique_ids: list, **kwargs) -> str:
+def add_case_mitre_techniques(case_id: str, technique_ids: list) -> str:
     """
     Add MITRE ATT&CK technique IDs to a case to document the kill chain.
 
@@ -604,7 +597,6 @@ def add_resolution_step(
     description: str,
     action_taken: str,
     result: Optional[str] = None,
-    **kwargs,
 ) -> str:
     """
     Add a resolution/remediation step to a case.
@@ -645,7 +637,7 @@ def add_resolution_step(
 
 @mcp.tool()
 def bulk_add_findings_to_case(
-    case_id: str, finding_ids: list, note: Optional[str] = None, **kwargs
+    case_id: str, finding_ids: list, note: Optional[str] = None
 ) -> str:
     """
     Add multiple findings to a case at once.
@@ -710,7 +702,6 @@ def create_case_from_killchain(
     description: str = "",
     priority: str = "high",
     assignee: Optional[str] = None,
-    **kwargs,
 ) -> str:
     """
     Create a case documenting a kill chain with findings organized by stage.
@@ -803,7 +794,6 @@ def add_case_comment(
     case_id: str,
     content: str,
     parent_comment_id: Optional[int] = None,
-    **kwargs,
 ) -> str:
     """
     Add a comment to a case. Supports threaded discussions.
@@ -848,7 +838,7 @@ def add_case_comment(
 
 
 @mcp.tool()
-def get_case_comments(case_id: str, **kwargs) -> str:
+def get_case_comments(case_id: str) -> str:
     """Get all comments for a case."""
     try:
         from core.cases.case_collaboration_service import CaseCollaborationService
@@ -879,7 +869,6 @@ def add_case_evidence(
     file_path: Optional[str] = None,
     source: Optional[str] = None,
     tags: Optional[list] = None,
-    **kwargs,
 ) -> str:
     """
     Add evidence to a case with chain of custody tracking.
@@ -941,7 +930,6 @@ def add_case_ioc(
     source: Optional[str] = None,
     tags: Optional[list] = None,
     context: Optional[str] = None,
-    **kwargs,
 ) -> str:
     """
     Add an Indicator of Compromise (IOC) to a case.
@@ -997,7 +985,7 @@ def add_case_ioc(
 
 
 @mcp.tool()
-def bulk_add_iocs(case_id: str, iocs: list, **kwargs) -> str:
+def bulk_add_iocs(case_id: str, iocs: list) -> str:
     """
     Bulk add multiple IOCs to a case at once.
 
@@ -1062,7 +1050,7 @@ def bulk_add_iocs(case_id: str, iocs: list, **kwargs) -> str:
 
 
 @mcp.tool()
-def get_case_iocs(case_id: str, ioc_type: Optional[str] = None, **kwargs) -> str:
+def get_case_iocs(case_id: str, ioc_type: Optional[str] = None) -> str:
     """Get all IOCs for a case, optionally filtered by type."""
     try:
         from core.cases.case_ioc_service import CaseIOCService
@@ -1092,7 +1080,6 @@ def add_case_task(
     assignee: Optional[str] = None,
     priority: str = "medium",
     due_date: Optional[str] = None,
-    **kwargs,
 ) -> str:
     """
     Add a task to a case for tracking investigation work.
@@ -1150,7 +1137,6 @@ def update_case_task(
     status: Optional[str] = None,
     assignee: Optional[str] = None,
     notes: Optional[str] = None,
-    **kwargs,
 ) -> str:
     """
     Update a task status.
@@ -1206,7 +1192,7 @@ def update_case_task(
 
 
 @mcp.tool()
-def get_case_tasks(case_id: str, **kwargs) -> str:
+def get_case_tasks(case_id: str) -> str:
     """Get all tasks for a case."""
     try:
         from core.cases import case_records_service
@@ -1231,7 +1217,6 @@ def link_related_cases(
     related_case_id: str,
     relationship_type: str,
     notes: Optional[str] = None,
-    **kwargs,
 ) -> str:
     """
     Link two related cases together.
@@ -1291,7 +1276,6 @@ def escalate_case(
     escalated_to: str,
     reason: str,
     urgency_level: str = "high",
-    **kwargs,
 ) -> str:
     """
     Escalate a case to higher tier or management.
@@ -1361,7 +1345,6 @@ def close_case(
     executive_summary: Optional[str] = None,
     false_positive_reason: Optional[str] = None,
     closure_notes: Optional[str] = None,
-    **kwargs,
 ) -> str:
     """
     Properly close a case with closure metadata.
@@ -1476,7 +1459,6 @@ def create_approval_action(
     confidence: float,
     reason: str,
     evidence: Optional[list] = None,
-    **kwargs,
 ) -> str:
     """Submit action to approval queue.
 
@@ -1522,7 +1504,6 @@ def create_approval_action(
 def list_approval_actions(
     status: Optional[str] = None,
     action_type: Optional[str] = None,
-    **kwargs,
 ) -> str:
     """List approval actions.
 
@@ -1561,7 +1542,7 @@ def list_approval_actions(
 
 
 @mcp.tool()
-def get_approval_action(action_id: str, **kwargs) -> str:
+def get_approval_action(action_id: str) -> str:
     """Get action details."""
     try:
         svc, _ActionType, _ActionStatus = get_approval_svc()
@@ -1596,7 +1577,7 @@ def get_approval_action(action_id: str, **kwargs) -> str:
 
 
 @mcp.tool()
-def approve_action(action_id: str, **kwargs) -> str:
+def approve_action(action_id: str) -> str:
     """Approve pending action."""
     try:
         svc, _ActionType, _ActionStatus = get_approval_svc()
@@ -1616,7 +1597,6 @@ def approve_action(action_id: str, **kwargs) -> str:
 def reject_action(
     action_id: str,
     reason: str,
-    **kwargs,
 ) -> str:
     """Reject pending action."""
     try:
