@@ -66,7 +66,7 @@ def test_uncovered_indicator_is_one_proposal(monkeypatch, no_hunt_started):
     result = feed.propose_hunts_from_recent_indicators()
 
     assert asked == [["ip:203.0.113.7"]]
-    assert result["checked"] == 1 and result["rows"] == 1
+    assert result["checked"] == 1 and result["read"] == 1
     [entry] = result["proposals"]
     assert entry["entity_key"] == "ip:203.0.113.7"
     assert entry["indicator"] == {

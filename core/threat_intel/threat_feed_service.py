@@ -472,7 +472,7 @@ def propose_hunts_from_recent_indicators(
 
     limit = max(1, min(int(limit), RECENT_INDICATOR_LIMIT))
     rows = _recent_indicators(limit)
-    counts = {"rows": len(rows), "skipped": 0, "running": 0, "concluded": 0}
+    counts = {"read": len(rows), "skipped": 0, "running": 0, "concluded": 0}
     proposals: List[Dict[str, Any]] = []
     seen: set = set()
     for row in rows:
