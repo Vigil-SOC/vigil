@@ -11,6 +11,7 @@ import pytest
 from services.daemon.config import DaemonConfig, OrchestratorConfig
 from services.daemon.orchestrator import (
     Orchestrator,
+    intake_age_seconds,
     intake_severity_band,
     rank_intake_row,
 )
@@ -152,6 +153,18 @@ def test_a_row_in_the_promotion_window_beats_a_fresher_critical():
     assert [r["finding_id"] for r in _ordered([fresh_critical, promoted])] == [
         "f-old",
         "f-crit",
+    ]
+
+
+def test_a_row_without_created_at_is_new_not_oldest():
+    undated = _detection("high", finding_id="f-undated")
+    del undated["created_at"]
+    older = _detection("high", age_s=120, finding_id="f-old")
+
+    assert intake_age_seconds(undated, NOW) == 0.0
+    assert [r["finding_id"] for r in _ordered([undated, older])] == [
+        "f-old",
+        "f-undated",
     ]
 
 

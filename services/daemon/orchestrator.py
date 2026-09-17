@@ -114,6 +114,14 @@ def _as_naive_utc(value: Any) -> Optional[datetime]:
     return dt
 
 
+def intake_age_seconds(row: Dict, now: datetime) -> float:
+    """Age of a queued row. Missing ``created_at`` reads as new, not oldest."""
+    created = _as_naive_utc(row.get("created_at"))
+    if created is None:
+        return 0.0
+    return (now - created).total_seconds()
+
+
 def intake_severity_band(
     kind: Optional[str],
     *,
@@ -141,8 +149,8 @@ def rank_intake_row(
     ``low`` precedes ``medium``. Detection rows read current finding severity
     from ``_finding``; ``schedule`` and ``human_ask`` read the row's ``priority``.
     """
-    created = _as_naive_utc(row.get("created_at")) or datetime.min
-    remaining = ttl_seconds - (now - created).total_seconds()
+    age = intake_age_seconds(row, now)
+    remaining = ttl_seconds - age
     promoted = 0 < remaining <= ttl_seconds * promote_fraction
     finding = row.get("_finding")
     finding_severity = finding.get("severity") if isinstance(finding, dict) else None
@@ -151,7 +159,12 @@ def rank_intake_row(
         finding_severity=finding_severity,
         priority=row.get("priority"),
     )
-    return (0 if promoted else 1, _BAND_RANK[band], created)
+    created = _as_naive_utc(row.get("created_at"))
+    return (
+        0 if promoted else 1,
+        _BAND_RANK[band],
+        created if created is not None else now,
+    )
 
 
 def insert_intake_trigger(
@@ -385,15 +398,9 @@ class Orchestrator:
                 break
             await self._process_intake_row(row, shutdown_event)
 
-    def _intake_age_seconds(self, row: Dict, now: datetime) -> float:
-        created = _as_naive_utc(row.get("created_at"))
-        if created is None:
-            return 0.0
-        return (now - created).total_seconds()
-
     def _resolve_intake_row(self, row: Dict, now: datetime) -> Optional[Dict]:
         """Expire or merge a queued row. Capacity does not wait on this pass."""
-        if self._intake_age_seconds(row, now) >= self.config.intake_ttl_seconds:
+        if intake_age_seconds(row, now) >= self.config.intake_ttl_seconds:
             self._decide_trigger(row.get("id"), state="expired", reason="ttl_expired")
             return None
         if row.get("kind") == "detection":
