@@ -77,6 +77,27 @@ def test_load_rescans_stale_config_against_disk(home):
     assert on_disk["Sigma Rules"]["rule_count"] == 1
 
 
+def test_rescan_does_not_rewrite_unchanged_config(home):
+    config = _stale_config(home)
+    before = config.stat().st_mtime_ns
+
+    DetectionRulesService()
+
+    assert config.stat().st_mtime_ns == before
+
+
+def test_malformed_entry_does_not_reset_to_defaults(home):
+    config = _stale_config(home)
+    data = json.loads(config.read_text())
+    data["sources"].append({"id": "odd", "name": "Odd", "format": "sigma"})
+    config.write_text(json.dumps(data))
+
+    service = DetectionRulesService()
+
+    assert [s["id"] for s in service.list_sources()][-1] == "odd"
+    assert len(service.list_sources()) == 5
+
+
 def test_rescan_marks_missing_local_source_as_error(home):
     _stale_config(home)
     service = DetectionRulesService()
