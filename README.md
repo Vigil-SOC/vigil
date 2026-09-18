@@ -148,6 +148,8 @@ cd vigil
 
 > **Note:** Docker must be running before you start. The startup script handles everything else: provisions the Python virtual environment, installs dependencies, starts PostgreSQL, Redis, and the Bifrost LLM gateway in Docker, starts a host Ollama if one is installed (optional — the script continues without it), initializes the database schema and reference data, installs frontend packages, and launches the backend, frontend, and agent layer. No LogLM or cloud API key is needed to reach a running UI.
 
+To run workflows, set `AGENT_INTERNAL_TOKEN` in the `.env` the script creates from `env.example` (generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`). Without it the stack still comes up, but `./start.sh` warns that the agent layer did not start and workflow runs stay queued.
+
 Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full auth is WIP and while it will turn on it is untested. To activate auth set `DEV_MODE=false`; no admin user is seeded, so the first visit to http://localhost:6988 shows a bootstrap screen where you create the admin account.
 
 > **Stable build vs. development build:** The Quick Start above clones `main` —
@@ -271,7 +273,7 @@ export PYTHONPATH="${PWD}:${PYTHONPATH}"
 uvicorn services.api.main:app --host 127.0.0.1 --port 6987 --reload
 
 # Terminal 4: Start the agent layer (drains the agent-runs queue that
-# workflow runs are enqueued to)
+# workflow runs are enqueued to; needs AGENT_INTERNAL_TOKEN set in .env)
 scripts/agent_up.sh
 
 # Terminal 5: Start frontend
