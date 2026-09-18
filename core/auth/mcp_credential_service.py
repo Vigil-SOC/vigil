@@ -108,24 +108,32 @@ def authenticate(token: str, session: Optional[Session] = None) -> Optional[User
     if not looks_like_mcp_token(token):
         return None
 
-    with unit_of_work(session) as session:
-        record = (
-            session.query(McpCredential)
-            .filter(McpCredential.token_hash == _hash(token))
-            .first()
-        )
-        if record is None or not record.is_usable():
-            return None
+    try:
+        with unit_of_work(session) as session:
+            record = (
+                session.query(McpCredential)
+                .filter(McpCredential.token_hash == _hash(token))
+                .first()
+            )
+            if record is None or not record.is_usable():
+                return None
 
-        user = session.query(User).filter(User.user_id == record.user_id).first()
-        if user is None or not user.is_active:
-            return None
+            user = session.query(User).filter(User.user_id == record.user_id).first()
+            if user is None or not user.is_active:
+                return None
 
-        # Written on the way through so an unused credential can be found
-        # later. The Ledger records what was done; this only records that
-        # something was.
-        record.last_used_at = utcnow()
-        return user
+            # Written on the way through so an unused credential can be found
+            # later. The Ledger records what was done; this only records that
+            # something was.
+            record.last_used_at = utcnow()
+            return user
+    except Exception:  # noqa: BLE001 - a database that cannot answer is not a yes
+        # A store this cannot read has not authenticated anybody. Saying so is
+        # a refusal, not an error: the caller is told it is not authenticated,
+        # which is true, rather than being handed a 500 that says the surface
+        # is broken and invites a retry.
+        logger.exception("Could not check an MCP credential; refusing the caller")
+        return None
 
 
 def revoke(credential_id: str, session: Optional[Session] = None) -> bool:

@@ -53,7 +53,7 @@ def _override_mcp(client, fake_client, registry=None):
 
 @pytest.fixture
 def fake_server_known():
-    """Patch mcp_service so ``vigil`` is a known, settable server."""
+    """Patch mcp_service so ``splunk-selfhosted`` is a known, settable server."""
     from services.api.routers import mcp as mcp_api
 
     # Make set_server_enabled succeed (server exists); status is the stdio
@@ -66,7 +66,7 @@ def fake_server_known():
     ), patch.object(
         mcp_api.mcp_service,
         "list_servers",
-        return_value=["vigil", "virustotal"],
+        return_value=["splunk-selfhosted", "virustotal"],
     ):
         yield
 
@@ -85,7 +85,7 @@ class TestEnableTransactional:
 
         with _override_mcp(client, fake_client):
             r = client.put(
-                "/api/mcp/servers/vigil/enabled",
+                "/api/mcp/servers/splunk-selfhosted/enabled",
                 json={"enabled": True},
             )
 
@@ -95,7 +95,7 @@ class TestEnableTransactional:
         assert body["connected"] is True
         assert body["error"] is None
         fake_client.connect_to_server.assert_awaited_once_with(
-            "vigil", persistent=True
+            "splunk-selfhosted", persistent=True
         )
         fake_client.disconnect_from_server.assert_not_called()
 
@@ -131,7 +131,7 @@ class TestEnableTransactional:
 
         with _override_mcp(client, fake_client):
             r = client.put(
-                "/api/mcp/servers/vigil/enabled",
+                "/api/mcp/servers/splunk-selfhosted/enabled",
                 json={"enabled": False},
             )
 
@@ -140,9 +140,7 @@ class TestEnableTransactional:
         assert body["enabled"] is False
         # connected is None when disabling — we didn't attempt a connect.
         assert body["connected"] is None
-        fake_client.disconnect_from_server.assert_awaited_once_with(
-            "vigil"
-        )
+        fake_client.disconnect_from_server.assert_awaited_once_with("splunk-selfhosted")
         fake_client.connect_to_server.assert_not_called()
 
 
@@ -156,7 +154,7 @@ class TestEnableUpdatesRegistry:
         registry = MCPRegistry()
         fake_client = MagicMock()
         fake_client.tools_cache = {
-            "vigil": [
+            "splunk-selfhosted": [
                 {
                     "name": "list_findings",
                     "description": "list them",
@@ -169,19 +167,19 @@ class TestEnableUpdatesRegistry:
 
         with _override_mcp(client, fake_client, registry):
             r = client.put(
-                "/api/mcp/servers/vigil/enabled",
+                "/api/mcp/servers/splunk-selfhosted/enabled",
                 json={"enabled": True},
             )
 
         assert r.status_code == 200, r.text
         assert [t["name"] for t in registry.get_all_tools()] == [
-            "vigil_list_findings"
+            "splunk-selfhosted_list_findings"
         ]
 
     def test_disable_removes_tools_without_refresh(self, client, fake_server_known):
         registry = MCPRegistry()
         registry.register_server(
-            "vigil",
+            "splunk-selfhosted",
             {},
             [{"name": "list_findings", "description": "list them", "inputSchema": {}}],
         )
@@ -190,7 +188,7 @@ class TestEnableUpdatesRegistry:
 
         with _override_mcp(client, fake_client, registry):
             r = client.put(
-                "/api/mcp/servers/vigil/enabled",
+                "/api/mcp/servers/splunk-selfhosted/enabled",
                 json={"enabled": False},
             )
 
@@ -203,7 +201,7 @@ class TestEnableUpdatesRegistry:
         registry = MCPRegistry()
         fake_client = MagicMock()
         fake_client.tools_cache = {
-            "vigil": [
+            "splunk-selfhosted": [
                 {"name": "list_findings", "description": "x", "inputSchema": {}}
             ]
         }
@@ -215,7 +213,7 @@ class TestEnableUpdatesRegistry:
             side_effect=RuntimeError("registry down"),
         ), _override_mcp(client, fake_client, registry):
             r = client.put(
-                "/api/mcp/servers/vigil/enabled",
+                "/api/mcp/servers/splunk-selfhosted/enabled",
                 json={"enabled": True},
             )
 
@@ -232,7 +230,7 @@ class TestDeadEndpointsGone:
     """The broken /start + /stop paths should no longer exist."""
 
     def test_start_endpoint_is_removed(self, client):
-        r = client.post("/api/mcp/servers/vigil/start")
+        r = client.post("/api/mcp/servers/splunk-selfhosted/start")
         # Either 404 (route not registered) or 405 (method not allowed) is
         # acceptable — just never a 500 or 200 from the old broken handler.
         assert r.status_code in (404, 405), r.text
