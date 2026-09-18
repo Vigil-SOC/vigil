@@ -96,14 +96,13 @@ async def get_orchestrator_status():
         failed = [i for i in investigations if i.get("status") == "failed"]
         review = [i for i in investigations if i.get("status") == "review_submitted"]
 
-        # Waiting room is intake_triggers, not investigations.status="queued".
-        queued = 0
-        try:
-            from services.daemon.orchestrator import _count_queued_intake_rows
+        # Waiting room is intake_triggers. Count it here like GET /intake;
+        # swallowing a miss as 0 would look like an empty queue.
+        from core.storage.connection import get_db_manager
+        from core.storage.models import IntakeTrigger
 
-            queued = _count_queued_intake_rows()
-        except Exception as e:
-            logger.debug("Intake queue depth for status failed: %s", e)
+        with get_db_manager().session_scope() as session:
+            queued = session.query(IntakeTrigger).filter_by(state="queued").count()
 
         max_agents = 3
         try:

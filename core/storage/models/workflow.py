@@ -46,7 +46,7 @@ class Investigation(Base):
     # reader. Storage stays JSONB; promoting the column is deferred to #468.
     trigger_ids: Mapped[List[str]] = mapped_column(JSONB, nullable=False, default=list)
 
-    # Admission always writes assigned. queued died with the intake table (#909).
+    # Claim writes assigned. queued died with the intake table (#909).
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="assigned")
 
     workdir: Mapped[str] = mapped_column(String(255), nullable=False)

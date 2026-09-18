@@ -58,6 +58,9 @@ class _Query:
     def all(self):
         return list(self.rows)
 
+    def count(self):
+        return len(self.rows)
+
 
 class _Session:
     def __init__(self, rows):
@@ -129,7 +132,7 @@ def test_intake_list_does_not_construct_an_orchestrator(client, monkeypatch):
     assert resp.json()["count"] == 3
 
 
-def test_status_queued_is_intake_depth_not_investigation_status(monkeypatch):
+def _patch_status_orchestrator(monkeypatch):
     orch = MagicMock()
     orch.get_all_investigations.return_value = [
         {"status": "assigned"},
@@ -142,9 +145,6 @@ def test_status_queued_is_intake_depth_not_investigation_status(monkeypatch):
     monkeypatch.setattr(
         "services.api.routers.orchestrator._get_orchestrator", lambda: orch
     )
-    monkeypatch.setattr(
-        "services.daemon.orchestrator._count_queued_intake_rows", lambda: 7
-    )
     cfg = MagicMock()
     cfg.get_system_config.return_value = {
         "enabled": False,
@@ -152,12 +152,28 @@ def test_status_queued_is_intake_depth_not_investigation_status(monkeypatch):
     }
     monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: cfg)
 
+
+def test_status_queued_is_intake_depth_not_investigation_status(client, monkeypatch):
+    _patch_status_orchestrator(monkeypatch)
+
+    resp = client.get("/api/orchestrator/status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["queued"] == 2
+    assert body["completed"] == 1
+    assert body["active_agents"] == 1
+
+
+def test_status_queued_does_not_report_zero_when_intake_count_fails(monkeypatch):
+    _patch_status_orchestrator(monkeypatch)
+    db = MagicMock()
+    db.session_scope.side_effect = RuntimeError("intake table unreachable")
+    monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
+
     app = FastAPI()
     app.include_router(orchestrator_router, prefix="/api/orchestrator")
     resp = TestClient(app).get("/api/orchestrator/status")
 
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["queued"] == 7
-    assert body["completed"] == 1
-    assert body["active_agents"] == 1
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "intake table unreachable"}

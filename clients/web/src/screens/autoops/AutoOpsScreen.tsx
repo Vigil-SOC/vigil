@@ -17,7 +17,7 @@ interface KpiDef {
 
 const KPIS: KpiDef[] = [
   { key: 'active', label: 'Active Agents', statuses: ['assigned', 'executing'], value: (s) => s.active_agents, color: 'var(--med)', note: 'running now' },
-  { key: 'queued', label: 'Queued', statuses: [], value: (s) => s.queued, note: 'waiting for an agent' },
+  { key: 'queued', label: 'Queued', statuses: [], value: (s) => s.queued, note: 'waiting for a slot' },
   { key: 'review', label: 'Pending Review', statuses: ['review_submitted'], value: (s) => s.pending_review, color: 'var(--high)', note: 'awaiting a human' },
   { key: 'done', label: 'Completed', statuses: ['completed'], value: (s) => s.completed, color: 'var(--ok)', note: 'this session' },
   { key: 'failed', label: 'Failed', statuses: ['failed'], value: (s) => s.failed, color: 'var(--crit)', note: 'errored out' },
