@@ -99,7 +99,6 @@ const { chromium } = require('playwright');
       'deeptempo-findings': fullPageText.includes('deeptempo-findings'),
       'tempo-flow': fullPageText.includes('tempo-flow'),
       'approval': fullPageText.includes('approval'),
-      'attack-layer': fullPageText.includes('attack-layer'),
     },
     noAccess: fullPageText.toLowerCase().includes('don\'t have access') ||
               fullPageText.toLowerCase().includes('cannot access') ||

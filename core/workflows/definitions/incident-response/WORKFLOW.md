@@ -79,14 +79,13 @@ phases:
   - id: report
     agent: reporter
     name: "Document & Report"
-    tools: [get_case, list_findings, create_attack_layer, recall_entity]
+    tools: [get_case, list_findings, recall_entity]
     instructions: |
       Generate an audience-tailored incident report with executive summary,
       technical detail and lessons learned.
 
       1. Gather all data from the prior steps (case, findings, actions taken)
-      2. Generate a MITRE ATT&CK Navigator layer for the incident
-      3. Structure the report with audience-tailored sections:
+      2. Structure the report with audience-tailored sections:
          - **Executive Summary:** business impact in plain language
          - **Technical Details:** evidence chain for the security team
          - **Timeline:** chronological event reconstruction

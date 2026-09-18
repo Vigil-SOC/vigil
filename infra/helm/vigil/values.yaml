@@ -247,8 +247,8 @@ agentServe:
 postgresql:
   enabled: true
   image:
-    repository: pgvector/pgvector
-    tag: "pg16"
+    repository: postgres
+    tag: "16-alpine"
     pullPolicy: IfNotPresent
   auth:
     database: deeptempo_soc
@@ -383,8 +383,8 @@ dbInit:
   enabled: true
   image:
     # Uses the same image as Postgres so psql is available.
-    repository: pgvector/pgvector
-    tag: "pg16"
+    repository: postgres
+    tag: "16-alpine"
     pullPolicy: IfNotPresent
   # Explicit ordering — files added under infra/database/init/ will NOT auto-run.
   # Update this list when new init SQL lands.
@@ -420,6 +420,8 @@ dbInit:
     - 30_approval_action_reversibility.sql
     - 30_vigil_app_role.sql
     - 31_agent_ledger_hash_chain.sql
+    - 32_drop_attack_layers.sql
+    - 33_episodic_verdict_techniques.sql
   resources:
     requests:
       cpu: 50m
@@ -736,17 +738,9 @@ config:
   ORCHESTRATOR_MAX_COST: "5.0"
   ORCHESTRATOR_MAX_RUNTIME: "3600"
   ORCHESTRATOR_MAX_HOURLY_COST: "20.0"
-  ORCHESTRATOR_MAX_DAILY_COST: "100.0"
   ORCHESTRATOR_STALE_THRESHOLD: "300"
   ORCHESTRATOR_WORKDIR: "/app/data/investigations"
-  ORCHESTRATOR_AUTO_ASSIGN: "true"
-  ORCHESTRATOR_AUTO_SEVERITIES: "critical,high"
   ORCHESTRATOR_DRY_RUN: "false"
-  ORCHESTRATOR_DEDUP_WINDOW: "30"
-  ORCHESTRATOR_AGENT_LOOP_DELAY: "2"
-  ORCHESTRATOR_CONTEXT_MAX_CHARS: "10000"
-  ORCHESTRATOR_PLAN_MODEL: "claude-sonnet-4-5-20250929"
-  ORCHESTRATOR_REVIEW_MODEL: "claude-sonnet-4-5-20250929"
 
   # OTEL — disabled by default; turn on when an OTEL collector is reachable.
   VIGIL_OTEL_ENABLED: "false"

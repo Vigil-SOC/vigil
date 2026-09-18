@@ -23,8 +23,7 @@ vi.mock('../../services/api', () => ({
   casesApi: { getAll: vi.fn(() => Promise.resolve({ data: { cases: [] } })) },
 }))
 vi.mock('../../services/skillsApi', () => ({
-  skillsApi: { getAll: vi.fn(() => Promise.resolve({ data: { skills: [] } })) },
-  SKILL_CATEGORIES: [],
+  skillsApi: { list: vi.fn(() => Promise.resolve([])) },
 }))
 
 // huntLike is the backend's own answer about the kind, which is what the dialog

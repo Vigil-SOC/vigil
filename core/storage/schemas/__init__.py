@@ -42,7 +42,6 @@ from core.storage.schemas.case_entities import (
     SLAPolicySchema,
 )
 from core.storage.schemas.config import (
-    AttackLayerSchema,
     ConfigAuditLogSchema,
     FederationSourceSchema,
     IntegrationConfigSchema,
@@ -57,6 +56,7 @@ from core.storage.schemas.workflow import (
     ApprovalActionSchema,
     CustomAgentSchema,
     CustomWorkflowSchema,
+    IntakeTriggerSchema,
     InvestigationLogSchema,
     InvestigationSchema,
     SkillSchema,
@@ -68,7 +68,6 @@ __all__ = [
     "AIDecisionLogSchema",
     "AIModelConfigSchema",
     "ApprovalActionSchema",
-    "AttackLayerSchema",
     "CaseAttachmentSchema",
     "CaseAuditLogSchema",
     "CaseBaseSchema",
@@ -95,6 +94,7 @@ __all__ = [
     "CustomWorkflowSchema",
     "FederationSourceSchema",
     "FindingSchema",
+    "IntakeTriggerSchema",
     "IntegrationConfigSchema",
     "InvestigationLogSchema",
     "InvestigationSchema",

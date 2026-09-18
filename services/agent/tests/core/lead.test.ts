@@ -14,7 +14,7 @@ import { InProcessState } from "../../core/state.js";
 import type { Answers } from "../../core/answers.js";
 import { grantsOf, runLead, type LeadKinds, type LeadOptions } from "../../workflows/lead/workflow.js";
 import { isLead, respondingProvider } from "../support/responding-provider.js";
-import { scriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
+import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 import { countingMemory, RECALL_KEYS } from "../support/recalled.js";
 
 const FIXTURES = join(import.meta.dirname, "..", "fixtures");
@@ -255,7 +255,7 @@ describe("an arch drives the loop", () => {
       threat_intel: ["lookup_indicators"],
     });
     expect(grantsOf(specFor("investigate", "case.playbook.yaml", "case.config.yaml"))).toEqual({
-      lead: ["case_records"],
+      lead: ["case_records", "get_finding"],
     });
   });
 });
@@ -289,5 +289,22 @@ describe("an investigation recalls on the entities it was opened on", () => {
     // Nothing asked, rather than asked and answered nothing: the two have to stay
     // apart, and an unkeyed read here would be the second of them.
     expect(memory.reads()).toEqual([]);
+  });
+});
+
+describe("the lead opening task carries this run's prompt", () => {
+  it("puts spec.prompt under What this run is about so the trigger id is in sight", async () => {
+    const spec = {
+      ...specFor("investigate", "case.playbook.yaml", "case.config.yaml"),
+      prompt: "# Investigation Context\n\n### f-20260215-abc123 (Severity: high)",
+    };
+    const state = new InProcessState<LeadKinds>();
+    const harness = harnessOf(spec, SINGLE, state);
+    await runLead(harness, options("investigate", spec));
+
+    const opening = (harness.provider as ScriptedProvider).requests[0]?.messages.find((message) => message.role === "user");
+    expect(opening?.content).toContain("## What this run is about");
+    expect(opening?.content).toContain("f-20260215-abc123");
+    expect(grantsOf(spec).lead).toEqual(["case_records", "get_finding"]);
   });
 });

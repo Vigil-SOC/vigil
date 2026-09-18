@@ -81,58 +81,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/agents/agents/investigate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Start Investigation
-         * @description Start an investigation on a finding with a specific agent.
-         *
-         *     Args:
-         *         request: Investigation request with finding ID and agent
-         *
-         *     Returns:
-         *         Investigation prompt and agent details
-         */
-        post: operations["post_api_agents_agents_investigate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agents/agents/set-current": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Set Current Agent
-         * @description Set the current active agent.
-         *
-         *     Args:
-         *         agent_id: The agent ID to set as current
-         *
-         *     Returns:
-         *         Success status
-         */
-        post: operations["post_api_agents_agents_set-current"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/agents/agents/{agent_id}": {
         parameters: {
             query?: never;
@@ -143,12 +91,6 @@ export interface paths {
         /**
          * Get Agent
          * @description Get details for a specific agent.
-         *
-         *     Args:
-         *         agent_id: The agent ID
-         *
-         *     Returns:
-         *         Agent details
          */
         get: operations["get_api_agents_agents_agent_id"];
         put?: never;
@@ -771,54 +713,6 @@ export interface paths {
          *     cancelled with the supplied reason.
          */
         post: operations["post_api_approvals_action_id_reject"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/attack/layer": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Attack Layer
-         * @description Get ATT&CK Navigator layer data.
-         *
-         *     Builds an ATT&CK Navigator layer from findings technique predictions.
-         *
-         *     Returns:
-         *         ATT&CK layer JSON
-         */
-        get: operations["get_api_attack_layer"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/attack/tactics/summary": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Tactics Summary
-         * @description Get summary of tactics across all findings.
-         *
-         *     Returns:
-         *         Tactics summary
-         */
-        get: operations["get_api_attack_tactics_summary"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5223,6 +5117,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orchestrator/intake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Intake Triggers
+         * @description List intake trigger rows, newest first, with an optional state filter.
+         */
+        get: operations["get_api_orchestrator_intake"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/orchestrator/investigations": {
         parameters: {
             query?: never;
@@ -5445,11 +5359,9 @@ export interface paths {
         put?: never;
         /**
          * Scan Existing Findings
-         * @description Scan existing findings in the DB and create investigations for all
-         *     matching ones that haven't been investigated yet.
+         * @description Insert human_ask trigger rows for matching findings not already investigated.
          *
-         *     Concurrency is controlled by the orchestrator's max_concurrent_agents
-         *     setting -- investigations are queued and picked up as agent slots open.
+         *     The intake tick ranks and launches them when a slot is free.
          */
         post: operations["post_api_orchestrator_scan-findings"];
         delete?: never;
@@ -7634,6 +7546,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/runs/{run_id}/replay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Replay Workflow Run
+         * @description Rebuild what each decision of a hunt was shown and compare it to the record.
+         *
+         *     Not part of the polled run detail: this folds the whole ledger on the agent
+         *     side, so it is answered only when an operator asks. Serve decides what is
+         *     hunt-like; a run with nothing to replay is a 404 here too.
+         */
+        get: operations["get_api_workflows_runs_run_id_replay"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/runs/{run_id}/resume": {
         parameters: {
             query?: never;
@@ -7652,6 +7588,53 @@ export interface paths {
          *     linked to the run, returns 409.
          */
         post: operations["post_api_workflows_runs_run_id_resume"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/threat-hunt/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Hunt Coverage
+         * @description Say whether a threat report is already hunted: ``running``, ``concluded``
+         *     or ``uncovered``. Read-only -- the caller decides whether to POST the
+         *     returned ``proposal`` to ``/workflows/threat-hunt/execute``.
+         *
+         *     The same function as the ``check_hunt_coverage`` agent tool, imported here
+         *     so the router does not pull a database session factory in at import.
+         */
+        post: operations["post_api_workflows_threat-hunt_coverage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflows/threat-hunt/feed-proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Propose Feed Hunts
+         * @description Recent feed indicators nobody has hunted, each with a ``proposal`` body
+         *     for ``/workflows/threat-hunt/execute`` (#905). Read-only, like the
+         *     coverage route above and the ``propose_feed_hunts`` agent tool.
+         */
+        get: operations["get_api_workflows_threat-hunt_feed-proposals"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -9623,6 +9606,18 @@ export interface components {
             detail?: components["schemas"]["ValidationError"][];
         };
         /**
+         * HuntCoverageRequest
+         * @description A threat report and/or what was already extracted from it (#903).
+         */
+        HuntCoverageRequest: {
+            /** Entity Keys */
+            entity_keys?: string[];
+            /** Report */
+            report?: string | null;
+            /** Techniques */
+            techniques?: string[];
+        };
+        /**
          * IOCAdd
          * @description Add IOC to case.
          */
@@ -9771,21 +9766,6 @@ export interface components {
              * @default incident-response
              */
             workflow_id: string;
-        };
-        /**
-         * InvestigationRequest
-         * @description Request to start an investigation with an agent.
-         */
-        InvestigationRequest: {
-            /** Additional Context */
-            additional_context?: string | null;
-            /**
-             * Agent Id
-             * @default investigator
-             */
-            agent_id: string | null;
-            /** Finding Id */
-            finding_id: string;
         };
         /** InvokeRequest */
         InvokeRequest: {
@@ -10118,34 +10098,6 @@ export interface components {
          */
         OrchestratorSettingsConfig: {
             /**
-             * Agent Loop Delay
-             * @default 2
-             */
-            agent_loop_delay: number;
-            /**
-             * Auto Assign Findings
-             * @default true
-             */
-            auto_assign_findings: boolean;
-            /**
-             * Auto Assign Severities
-             * @default [
-             *       "critical",
-             *       "high"
-             *     ]
-             */
-            auto_assign_severities: string[];
-            /**
-             * Context Max Chars
-             * @default 10000
-             */
-            context_max_chars: number;
-            /**
-             * Dedup Window Minutes
-             * @default 30
-             */
-            dedup_window_minutes: number;
-            /**
              * Dry Run
              * @default false
              */
@@ -10181,25 +10133,10 @@ export interface components {
              */
             max_runtime_per_investigation: number;
             /**
-             * Max Total Daily Cost
-             * @default 100
-             */
-            max_total_daily_cost: number;
-            /**
              * Max Total Hourly Cost
              * @default 20
              */
             max_total_hourly_cost: number;
-            /**
-             * Plan Model
-             * @default claude-sonnet-4-6
-             */
-            plan_model: string;
-            /**
-             * Review Model
-             * @default claude-sonnet-4-6
-             */
-            review_model: string;
             /**
              * Stale Threshold
              * @default 300
@@ -10960,7 +10897,7 @@ export interface components {
             prompt: string;
             /**
              * Run Kind
-             * @description One of hunt, root_cause, investigate, compose, chat.
+             * @description One of hunt, root_cause, adjudicate, investigate, compose, chat.
              * @default hunt
              */
             run_kind: string;
@@ -11892,74 +11829,6 @@ export interface operations {
     get_api_agents_agents: {
         parameters: {
             query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_agents_agents_investigate: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["InvestigationRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    "post_api_agents_agents_set-current": {
-        parameters: {
-            query: {
-                agent_id: string;
-            };
             header?: {
                 authorization?: string | null;
             };
@@ -13171,68 +13040,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApprovalActionResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_attack_layer: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_attack_tactics_summary: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -20630,6 +20437,40 @@ export interface operations {
             };
         };
     };
+    get_api_orchestrator_intake: {
+        parameters: {
+            query?: {
+                state?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_orchestrator_investigations: {
         parameters: {
             query?: {
@@ -24784,6 +24625,41 @@ export interface operations {
             };
         };
     };
+    get_api_workflows_runs_run_id_replay: {
+        parameters: {
+            query?: {
+                decision_id?: string | null;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     post_api_workflows_runs_run_id_resume: {
         parameters: {
             query?: never;
@@ -24800,6 +24676,74 @@ export interface operations {
                 "application/json": components["schemas"]["WorkflowRunResumeRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "post_api_workflows_threat-hunt_coverage": {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HuntCoverageRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_workflows_threat-hunt_feed-proposals": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

@@ -1,6 +1,6 @@
 -- Per-Component AI Model Assignments (GH #89)
--- Maps system components (chat, triage, investigation, orchestrator_plan,
--- orchestrator_review, summarization, reporting) to a (provider, model) pair.
+-- Maps system components (chat, triage, investigation,
+-- summarization, reporting) to a (provider, model) pair.
 -- When a row is absent, the component falls back to `chat_default`.
 
 CREATE TABLE IF NOT EXISTS ai_model_configs (
@@ -31,7 +31,7 @@ CREATE TRIGGER trigger_ai_model_configs_updated_at
 
 COMMENT ON TABLE ai_model_configs IS 'Per-component AI model assignments (GH #89)';
 COMMENT ON COLUMN ai_model_configs.component IS
-    'chat_default | triage | investigation | orchestrator_plan | orchestrator_review | summarization | reporting';
+    'chat_default | triage | investigation | summarization | reporting';
 COMMENT ON COLUMN ai_model_configs.settings IS
     'Component-specific overrides (max_tokens, thinking_budget, temperature)';
 

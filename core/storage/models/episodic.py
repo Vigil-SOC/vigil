@@ -117,6 +117,11 @@ class EpisodicVerdict(Base):
     subject_entities: Mapped[List[str]] = mapped_column(
         ARRAY(Text), nullable=False, server_default=text("ARRAY[]::text[]")
     )
+    # ATT&CK ids the gathered evidence cited, so a coverage check can ask which
+    # hunts bore on a technique. Empty is known-to-be-none; a Case writes none.
+    techniques: Mapped[List[str]] = mapped_column(
+        ARRAY(Text), nullable=False, server_default=text("ARRAY[]::text[]")
+    )
     attacker_influenceable_only: Mapped[bool] = mapped_column(Boolean, nullable=False)
     # Who concluded, as distinct from what the source is.
     trust: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -142,6 +147,11 @@ class EpisodicVerdict(Base):
         Index(
             "idx_episodic_verdicts_subjects",
             "subject_entities",
+            postgresql_using="gin",
+        ),
+        Index(
+            "idx_episodic_verdicts_techniques",
+            "techniques",
             postgresql_using="gin",
         ),
         Index("idx_episodic_verdicts_recall", text("concluded_at DESC"), "id"),

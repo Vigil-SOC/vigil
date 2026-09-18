@@ -17,6 +17,7 @@ REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from core.agents.projections import run_id_for
+from core.workflows.workflows_service import WorkflowDefinition, WorkflowsService
 from services.daemon.config import OrchestratorConfig
 from services.daemon.orchestrator import Orchestrator
 from services.daemon.workdir import WorkdirManager
@@ -24,6 +25,14 @@ from services.daemon.workdir import WorkdirManager
 pytestmark = pytest.mark.unit
 
 INV = "inv-20260812-abc12345"
+DEFINITIONS = REPO / "core" / "workflows" / "definitions"
+
+# The bundled definitions, read rather than listed: what each declares is the
+# fact under test, and a copy of it here would be one edit from disagreeing.
+WORKFLOWS = WorkflowsService(workflows_dir=DEFINITIONS)
+UNDECLARED = sorted(
+    wf.id for wf in WORKFLOWS._cache.values() if not wf.metadata.get("run_kind")
+)
 
 
 def _orchestrator() -> Orchestrator:
@@ -31,6 +40,7 @@ def _orchestrator() -> Orchestrator:
     orch.config = OrchestratorConfig()
     orch.workdir = MagicMock()
     orch.workdir.read_file.return_value = "three failed logons on FYODOR-L"
+    orch._workflows = WORKFLOWS
     orch._update_investigation_status = MagicMock()
     orch._record_progress = MagicMock()
     return orch
@@ -47,6 +57,7 @@ def _opening(tmp_path: Path) -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig(dry_run=True)
     orch.workdir = WorkdirManager(str(tmp_path))
+    orch._workflows = WORKFLOWS
     orch.shared_intel = MagicMock()
     orch.stats = {"investigations_created": 0}
     orch._save_investigation = MagicMock()
@@ -170,6 +181,61 @@ class TestEnqueue:
         status, reason = orch._update_investigation_status.call_args[0][1:3]
         assert status == "failed"
         assert "redis down" in reason
+
+
+# The worker picks its loop from job.run_kind alone, so the kind the definition
+# declares has to be the kind that reaches the queue: the scheduler's nightly
+# threat-hunt ran on the lead loop while this said "investigate" for everyone.
+class TestEnqueueRunKind:
+    async def _enqueued_kind(self, orch, workflow_id):
+        with patch(
+            "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
+        ) as enqueued:
+            await orch._enqueue_investigation(_record(workflow_id=workflow_id))
+        return enqueued.await_args[0][0]["run_kind"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "workflow_id, kind",
+        [("threat-hunt", "hunt"), ("root-cause-analysis", "root_cause")],
+    )
+    async def test_carries_the_kind_the_definition_declares(self, workflow_id, kind):
+        assert WORKFLOWS.get_workflow(workflow_id).metadata["run_kind"] == kind
+        assert await self._enqueued_kind(_orchestrator(), workflow_id) == kind
+
+    # Not WorkflowDefinition.run_kind, which reads compose for these: a daemon
+    # investigation on a definition that declares nothing stays the lead loop.
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("workflow_id", UNDECLARED)
+    async def test_a_definition_that_declares_nothing_stays_investigate(
+        self, workflow_id
+    ):
+        assert await self._enqueued_kind(_orchestrator(), workflow_id) == "investigate"
+
+    @pytest.mark.asyncio
+    async def test_a_definition_that_is_not_found_stays_investigate(self):
+        assert await self._enqueued_kind(_orchestrator(), "no-such-workflow") == (
+            "investigate"
+        )
+
+    # RUN_KINDS is the allow-list: a kind the worker has no loop for fails the
+    # enqueue rather than being coerced into one it did not ask for.
+    @pytest.mark.asyncio
+    async def test_a_kind_outside_the_allow_list_fails_the_enqueue(self):
+        orch = _orchestrator()
+        orch._workflows = MagicMock()
+        orch._workflows.get_workflow.return_value = WorkflowDefinition(
+            "odd", None, {"run_kind": "wander"}, ""
+        )
+        with patch(
+            "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
+        ) as enqueued:
+            await orch._enqueue_investigation(_record(workflow_id="odd"))
+
+        enqueued.assert_not_awaited()
+        status, reason = orch._update_investigation_status.call_args[0][1:3]
+        assert status == "failed"
+        assert "wander" in reason
 
 
 class TestReconcile:

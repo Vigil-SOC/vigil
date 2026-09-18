@@ -212,6 +212,36 @@ class TestBoundsReachTheTool:
         assert seen["max_results"] == 1
         assert "max_count" not in seen
 
+    # get_finding / get_case declare no row cap. Injecting limit made every
+    # point-read invalid_args, and the model retried into the same injection.
+    def test_get_finding_does_not_receive_limit(self, client, monkeypatch):
+        seen: dict = {}
+
+        async def _capture(tool, args):
+            seen["tool"] = tool
+            seen.update(args)
+            return {"finding_id": "f-1"}, True
+
+        monkeypatch.setattr("core.agents.tools_router.execute_backend_tool", _capture)
+        _invoke(client, tool="get_finding", args={"finding_id": "f-1"})
+        assert seen["tool"] == "get_finding"
+        assert seen["finding_id"] == "f-1"
+        assert "limit" not in seen
+
+    def test_get_case_does_not_receive_limit(self, client, monkeypatch):
+        seen: dict = {}
+
+        async def _capture(tool, args):
+            seen["tool"] = tool
+            seen.update(args)
+            return {"case_id": "c-1"}, True
+
+        monkeypatch.setattr("core.agents.tools_router.execute_backend_tool", _capture)
+        _invoke(client, tool="get_case", args={"case_id": "c-1"})
+        assert seen["tool"] == "get_case"
+        assert seen["case_id"] == "c-1"
+        assert "limit" not in seen
+
 
 class TestWhichSystemAnswered:
     """sourceSystem is what a hunt counts corroboration over. Answering "vigil" for

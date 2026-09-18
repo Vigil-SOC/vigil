@@ -13,6 +13,7 @@ from weakref import WeakKeyDictionary
 from bullmq import Queue
 
 from core.config import get_settings
+from core.telemetry import get_meter
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ JOB_SCHEMA_VERSION = 1
 
 DEFAULT_REDIS_URL = "redis://localhost:6379/0"
 
-RUN_KINDS = ("hunt", "root_cause", "investigate", "compose", "chat")
+RUN_KINDS = ("hunt", "root_cause", "adjudicate", "investigate", "compose", "chat")
 
 # BullMQ defaults to one attempt, so a job that throws is permanently failed and
 # nothing rescues it: the watchdog sweeps lapsed lease rows, and a job that died on
@@ -87,6 +88,20 @@ def build_resume_job(
 
 _queues: "WeakKeyDictionary[asyncio.AbstractEventLoop, Queue]" = WeakKeyDictionary()
 
+_runs_started: Any = None
+
+
+# Lazy, not at import: get_meter before init_telemetry hands back a permanent no-op.
+def _runs_started_counter() -> Any:
+    global _runs_started
+    if _runs_started is None:
+        _runs_started = get_meter("vigil.agents.queue").create_counter(
+            "vigil.runs.started",
+            description="Agent runs enqueued to start, by run_kind",
+            unit="1",
+        )
+    return _runs_started
+
 
 # One per event loop, not per call: a Queue per enqueue costs a Redis connection.
 # Keyed by loop because its connection is bound to the one that made it.
@@ -121,6 +136,9 @@ async def enqueue_run(job: Dict[str, Any], job_id: Optional[str] = None) -> str:
             },
         )
         logger.info("enqueued agent run %s (%s)", job["run_id"], job["run_kind"])
+        # A resume re-enters a run that was already counted when it started.
+        if job.get("reason") == "start":
+            _runs_started_counter().add(1, {"run_kind": job["run_kind"]})
         return str(enqueued.id)
     except Exception:
         # A queue that failed is not reused: the next call builds a fresh one

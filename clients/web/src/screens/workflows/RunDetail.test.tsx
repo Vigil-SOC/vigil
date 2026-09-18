@@ -1,7 +1,7 @@
 /* The hunt panel. Everything asserted here is data the projection already
    carried and the console used to throw away: gaps, checkpoints, escalations
    and the report itself were reachable only as prose, and only after terminal. */
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { RunDetail } from './WorkflowsScreen'
 
@@ -9,14 +9,14 @@ vi.mock('../../services/api', () => ({
   workflowApi: {
     steer: vi.fn(() => Promise.resolve({ data: {} })),
     cancelRun: vi.fn(() => Promise.resolve({ data: {} })),
+    getReplay: vi.fn(() => Promise.resolve({ data: { hunt_id: 'run-1', decisions: [], reproduced: 0, inexact: 0, recalled: [] } })),
   },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
   findingsApi: { getAll: vi.fn(() => Promise.resolve({ data: { findings: [] } })) },
   casesApi: { getAll: vi.fn(() => Promise.resolve({ data: { cases: [] } })) },
 }))
 vi.mock('../../services/skillsApi', () => ({
-  skillsApi: { getAll: vi.fn(() => Promise.resolve({ data: { skills: [] } })) },
-  SKILL_CATEGORIES: [],
+  skillsApi: { list: vi.fn(() => Promise.resolve([])) },
 }))
 
 const hunt = (over = {}) => ({
@@ -1016,6 +1016,85 @@ describe('the moves the lead made', () => {
     renderPanel({ hunt: hunt() })
 
     expect(screen.queryByRole('tab', { name: /Moves/ })).toBeNull()
+  })
+})
+
+/* The digest is left off the polled projection on purpose; a chosen move asks for it
+   once, and what comes back is the record, not a live re-read. */
+describe('opening a move for the digest it was shown', () => {
+  const moves = [{ decision_id: 'dec-1', iteration: 1, action: 'INVESTIGATE', rationale: 'start on the flow telemetry' }]
+  const digest = (over = {}) => ({
+    iteration: 1,
+    narrative: 'A workstation reached one external host every 60 seconds.',
+    hypotheses: [{ hypothesis_id: 'h-3431', statement: 'An internal host is beaconing', status: 'active' }],
+    recent_evidence: [{ evidence_id: 'e-1', source_system: 'netflow', summary: '1,440 flows to 45.77.53.176', salience: 'notable', why_notable: 'fixed interval', instruction_like: false }],
+    focus: { entity: 'ip:10.0.0.5', hypothesis: 'h-3431' },
+    omitted: { count: 0, evidence_ids: [] },
+    open_questions: ['what is 45.77.53.176'],
+    budget_remaining: { iterations: 4, cost_usd: 3.5 },
+    directives: [],
+    notes: [],
+    ...over,
+  })
+  const report = (over = {}) => ({
+    hunt_id: 'run-1',
+    decisions: [{ decision_id: 'dec-1', iteration: 1, action: 'INVESTIGATE', target: null, cost_usd: 0.1, exact: true, rebuilt: digest(), recorded: digest(), mismatch: null }],
+    reproduced: 1,
+    inexact: 0,
+    recalled: ['verdict: 10.0.0.5 was benign in inv-7'],
+    ...over,
+  })
+
+  beforeEach(async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.getReplay).mockClear()
+  })
+
+  it('fetches that one decision once and shows the recorded digest with a match chip', async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.getReplay).mockResolvedValueOnce({ data: report() } as never)
+    const { rerender } = renderPanel({ hunt: hunt({ moves }) })
+    tabTo(/Moves/)
+    fireEvent.click(screen.getByText(/start on the flow telemetry/))
+
+    expect(workflowApi.getReplay).toHaveBeenCalledTimes(1)
+    expect(workflowApi.getReplay).toHaveBeenCalledWith('run-1', 'dec-1')
+    expect(await screen.findByText(/reached one external host every 60 seconds/)).toBeInTheDocument()
+    expect(screen.getByText('rebuild matches the record')).toBeInTheDocument()
+    expect(screen.getByText(/1,440 flows to 45\.77\.53\.176/)).toBeInTheDocument()
+    expect(screen.getByText(/10\.0\.0\.5 was benign in inv-7/)).toBeInTheDocument()
+    expect(screen.getByText(/not a live re-read of memory/)).toBeInTheDocument()
+
+    // The poll hands down a fresh projection; the open digest stays and is not re-asked for.
+    const later = [{ decision_id: 'dec-2', iteration: 2, action: 'VALIDATE', rationale: 'put it to a verdict' }, ...moves]
+    rerender(<RunDetail d={detail({ hunt: hunt({ moves: later }) })} onSteered={() => {}} />)
+    expect(screen.getByText(/put it to a verdict/)).toBeInTheDocument()
+    expect(screen.getByText(/reached one external host every 60 seconds/)).toBeInTheDocument()
+    expect(workflowApi.getReplay).toHaveBeenCalledTimes(1)
+  })
+
+  it('says how the rebuild differs, and that an inferred prefix may be why', async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.getReplay).mockResolvedValueOnce({
+      data: report({ decisions: [{ ...report().decisions[0], exact: false, mismatch: 'rebuilt digest differs from the one presented' }], recalled: [] }),
+    } as never)
+    renderPanel({ hunt: hunt({ moves }) })
+    tabTo(/Moves/)
+    fireEvent.click(screen.getByText(/start on the flow telemetry/))
+
+    expect(await screen.findByText('rebuilt digest differs from the one presented')).toBeInTheDocument()
+    expect(screen.getByText(/prefix inferred/)).toBeInTheDocument()
+    expect(screen.getByText(/Nothing recalled/)).toBeInTheDocument()
+  })
+
+  it('reads out a refusal rather than leaving the row blank', async () => {
+    const { workflowApi } = await import('../../services/api')
+    vi.mocked(workflowApi.getReplay).mockRejectedValueOnce({ response: { data: { detail: 'Nothing to replay for run: run-1' } } })
+    renderPanel({ hunt: hunt({ moves }) })
+    tabTo(/Moves/)
+    fireEvent.click(screen.getByText(/start on the flow telemetry/))
+
+    expect(await screen.findByText(/Could not read what this move was shown — Nothing to replay for run: run-1/)).toBeInTheDocument()
   })
 })
 

@@ -36,7 +36,6 @@ from core.storage.models.case_entities import (
     SLAPolicy,
 )
 from core.storage.models.config import (
-    AttackLayer,
     ConfigAuditLog,
     FederationSource,
     IntegrationConfig,
@@ -60,6 +59,7 @@ from core.storage.models.workflow import (
     ApprovalAction,
     CustomAgent,
     CustomWorkflow,
+    IntakeTrigger,
     Investigation,
     InvestigationLog,
     Skill,
@@ -71,7 +71,6 @@ __all__ = [
     "AIDecisionLog",
     "AIModelConfig",
     "ApprovalAction",
-    "AttackLayer",
     "Base",
     "Case",
     "CaseAttachment",
@@ -103,6 +102,7 @@ __all__ = [
     "FederationSource",
     "Finding",
     "FindingMitrePrediction",
+    "IntakeTrigger",
     "IntegrationConfig",
     "Investigation",
     "InvestigationLog",

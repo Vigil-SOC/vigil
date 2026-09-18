@@ -14,8 +14,8 @@ seeds that table. Databases built by ``create_all`` alone — the storage_status
 
 These tests use a scratch database containing *only* the ``roles`` table, taken
 verbatim from ``database/init/06_auth_tables.sql``. ``create_all`` is
-deliberately not used: it needs ``pg_trgm``/``vector`` for the findings GIN
-index, and none of that is relevant to this statement.
+deliberately not used: it needs ``pg_trgm`` for the findings GIN index, and
+none of that is relevant to this statement.
 
 The runner's shared-transaction defect (``scripts/migrate_schema.py:231``, one
 ``engine.begin()`` around all 13 migrations, so a single SQL failure discards the

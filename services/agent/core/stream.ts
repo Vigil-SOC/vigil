@@ -357,6 +357,19 @@ class Run<T, Kinds extends Record<string, unknown>> {
     const tool_calls: ToolCall[] = [];
     let content = "";
     let billed = false;
+    let settled = false;
+    // Flagged between the record and the write, because those are two failures with
+    // one reservation between them. record() is what hands the call back; if the
+    // ledger write then throws, a flag set after both would still be false and the
+    // finally below would hand the same call back twice. Math.max keeps the pool
+    // non-negative, so the symptom is not a crash but a ceiling that quietly shrinks
+    // -- the overrun this release exists to prevent, arriving by the other door.
+    const settle = async (tokens: TokenCounts): Promise<SpendPayload> => {
+      const payload = await this.priced(tokens);
+      settled = true;
+      await this.journal(payload);
+      return payload;
+    };
 
     try {
       for await (const event of this.harness.provider.stream({ ...request, ...signal })) {
@@ -366,14 +379,18 @@ class Run<T, Kinds extends Record<string, unknown>> {
           yield event;
         } else {
           billed = true;
-          yield { type: "usage", payload: await this.settle(event.tokens) };
+          yield { type: "usage", payload: await settle(event.tokens) };
         }
       }
     } catch (error) {
       // Only when the provider died without reporting: it carries what it burned
       // precisely so a failure before the usage event is not spend the pool loses.
-      if (!billed) await this.settle(error instanceof ProviderError ? error.tokens : ZERO_TOKENS);
+      if (!billed) await settle(error instanceof ProviderError ? error.tokens : ZERO_TOKENS);
       throw error;
+    } finally {
+      // beginCall held this call against the ceiling and nothing else hands it back:
+      // pricing can fail, and an abandoned generator never reaches either arm above.
+      if (!settled) this.harness.budget.release();
     }
 
     return { content, tool_calls };
@@ -381,7 +398,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
 
   // Priced before recorded, so the spend fold is in dollars and the pool has something
   // to hold. Null when nothing priced it: an unpriced call is not a free one.
-  private async settle(tokens: TokenCounts): Promise<SpendPayload> {
+  private async priced(tokens: TokenCounts): Promise<SpendPayload> {
     const model_id = this.harness.provider.model;
     const provider_type = this.harness.provider.provider_type;
     const priced = await this.harness.budget.priceOf(model_id, provider_type, tokens);
@@ -395,8 +412,13 @@ class Run<T, Kinds extends Record<string, unknown>> {
     };
     this.harness.budget.record(payload);
     this.spent += payload.cost_usd ?? 0;
-    await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "spend", payload });
     return payload;
+  }
+
+  // Split from the pricing above so the reservation is handed back in one place and
+  // journalled in another: the caller marks the call settled between them.
+  private async journal(payload: SpendPayload): Promise<void> {
+    await this.write({ run_id: this.cfg.run_id, run_kind: this.cfg.run_kind, kind: "spend", payload });
   }
 
   private async park(checkpoint_id: string, tool: string, args: string): Promise<Outcome<T>> {
@@ -418,7 +440,13 @@ class Run<T, Kinds extends Record<string, unknown>> {
   }
 
   private exhausted(refusal: Refusal): Outcome<T> {
-    const reason = `the budget refused another iteration: ${refusal.reason}`;
+    // Without this a run refused at $14.20 of $15.00 reads as a premature stop.
+    const committed =
+      refusal.reason === "cost_exhausted" && (refusal.in_flight_usd ?? 0) > 0
+        ? ` ($${refusal.used_usd.toFixed(4)} spent of $${refusal.limit_usd.toFixed(2)}, ` +
+          `with $${refusal.in_flight_usd!.toFixed(4)} committed to calls still open)`
+        : "";
+    const reason = `the budget refused another iteration: ${refusal.reason}${committed}`;
     return { ...this.done("failed", null, reason), refusal };
   }
 

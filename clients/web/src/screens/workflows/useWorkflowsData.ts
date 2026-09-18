@@ -130,7 +130,7 @@ export function useAgentMeta(): (id: string) => AgentMeta {
   )
 }
 
-/** reusable skills + an optimistic active/inactive toggle persisted to the API */
+/** read-only skills list from GET /api/skills */
 export function useSkills() {
   const [rows, setRows] = useState<Skill[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
@@ -159,22 +159,5 @@ export function useSkills() {
     }
   }, [reloadKey])
 
-  // Optimistic toggle: flip locally, persist, roll back on failure.
-  const toggleActive = useCallback((id: string) => {
-    let next = false
-    setRows((prev) =>
-      prev.map((s) => {
-        if (s.id !== id) return s
-        next = !s.active
-        return { ...s, active: next }
-      })
-    )
-    skillsApi.update(id, { is_active: next }).catch(() => {
-      setRows((prev) =>
-        prev.map((s) => (s.id === id ? { ...s, active: !next } : s))
-      )
-    })
-  }, [])
-
-  return { rows, phase, error, reload, toggleActive }
+  return { rows, phase, error, reload }
 }

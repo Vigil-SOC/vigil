@@ -44,7 +44,6 @@ const AutonomyDialog = ({ onClose, onSaved, onConfigureBudget }: Props) => {
   const caps: [string, number | undefined][] = [
     ['Per investigation', config?.max_cost_per_investigation],
     ['Per hour', config?.max_total_hourly_cost],
-    ['Per day', config?.max_total_daily_cost],
   ]
 
   return (
@@ -55,7 +54,7 @@ const AutonomyDialog = ({ onClose, onSaved, onConfigureBudget }: Props) => {
         arrive — no one has to be watching. It stops at the cost caps below, which you
         can fine-tune anytime in Settings → Auto Investigate.
       </p>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 gap-2">
         {caps.map(([label, val]) => (
           <div key={label} className="rounded-lg border border-line-soft p-3 text-center">
             <div className="text-tx text-base font-semibold">

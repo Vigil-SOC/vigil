@@ -101,7 +101,6 @@ const fs = require('fs');
       'deeptempo-findings',
       'tempo-flow',
       'approval',
-      'attack-layer',
       'search_findings',
       'get_finding_details',
       'create_case',

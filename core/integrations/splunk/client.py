@@ -269,39 +269,6 @@ class SplunkService:
         query = f'search index=* "{ip_address}" | head 1000'
         return self.search(query, earliest_time=self._earliest_from_hours(hours))
 
-    def search_by_hash(self, file_hash: str, hours: int = 24) -> Optional[List[Dict]]:
-        """
-        Search for events related to a file hash.
-
-        Args:
-            file_hash: File hash (MD5, SHA1, or SHA256) to search for
-            hours: Number of hours to look back (default: 24)
-
-        Returns:
-            List of events or None
-        """
-        query = f'search index=* "{file_hash}" | head 1000'
-        return self.search(query, earliest_time=self._earliest_from_hours(hours))
-
-    def search_by_username(
-        self, username: str, hours: int = 24
-    ) -> Optional[List[Dict]]:
-        """
-        Search for events related to a username.
-
-        Args:
-            username: Username to search for
-            hours: Number of hours to look back (default: 24)
-
-        Returns:
-            List of events or None
-        """
-        query = (
-            f'search index=* (user="{username}" OR username="{username}" '
-            f'OR account="{username}") | head 1000'
-        )
-        return self.search(query, earliest_time=self._earliest_from_hours(hours))
-
     def search_by_hostname(
         self, hostname: str, hours: int = 24
     ) -> Optional[List[Dict]]:

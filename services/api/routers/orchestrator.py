@@ -240,6 +240,35 @@ async def list_investigations(status: Optional[str] = Query(None)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_INTAKE_LIST_DEFAULT = 100
+_INTAKE_LIST_MAX = 1000
+
+
+@router.get("/intake")
+async def list_intake_triggers(
+    state: Optional[str] = Query(None),
+    limit: int = Query(_INTAKE_LIST_DEFAULT, ge=1, le=_INTAKE_LIST_MAX),
+):
+    """List intake trigger rows, newest first, with an optional state filter."""
+    # Query the table here. _get_orchestrator() builds a second Orchestrator
+    # in the API process whose in-memory state is never fed.
+    try:
+        from core.storage.connection import get_db_manager
+        from core.storage.models import IntakeTrigger
+        from core.storage.schemas import IntakeTriggerSchema
+
+        with get_db_manager().session_scope() as session:
+            q = session.query(IntakeTrigger)
+            if state:
+                q = q.filter_by(state=state)
+            rows = q.order_by(IntakeTrigger.created_at.desc()).limit(limit).all()
+            triggers = IntakeTriggerSchema.dump_many(rows)
+        return {"triggers": triggers, "count": len(triggers)}
+    except Exception as e:
+        logger.error(f"Error listing intake triggers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/investigations/{investigation_id}")
 async def get_investigation(investigation_id: str):
     """Get detailed information about a specific investigation."""
@@ -436,20 +465,18 @@ async def review_investigation(investigation_id: str, request: ReviewRequest):
 async def create_investigation(request: InvestigationCreateRequest):
     """Manually create a new investigation."""
     try:
-        orch = _get_orchestrator()
-        if not orch:
-            raise HTTPException(status_code=503, detail="Orchestrator not available")
+        from services.daemon.orchestrator import insert_intake_trigger
 
-        orch.investigation_queue.put_nowait(
-            {
-                "type": "manual",
+        insert_intake_trigger(
+            kind="human_ask",
+            priority=request.priority or "medium",
+            payload={
                 "workflow_id": request.workflow_id,
                 "finding_ids": request.finding_ids,
                 "case_id": request.case_id,
                 "hypothesis": request.hypothesis,
                 "hypothesis_subjects": request.hypothesis_subjects,
-                "priority": request.priority,
-            }
+            },
         )
 
         return {
@@ -470,11 +497,9 @@ class ScanFindingsRequest(BaseModel):
 
 @router.post("/scan-findings")
 async def scan_existing_findings(request: ScanFindingsRequest):
-    """Scan existing findings in the DB and create investigations for all
-    matching ones that haven't been investigated yet.
+    """Insert human_ask trigger rows for matching findings not already investigated.
 
-    Concurrency is controlled by the orchestrator's max_concurrent_agents
-    setting -- investigations are queued and picked up as agent slots open.
+    The intake tick ranks and launches them when a slot is free.
     """
     try:
         from core.storage.connection import get_db_manager
@@ -501,42 +526,36 @@ async def scan_existing_findings(request: ScanFindingsRequest):
                 if fid in already_investigated:
                     skipped_existing += 1
                     continue
-                to_investigate.append(
-                    {
-                        "finding_id": fid,
-                        "severity": f.severity,
-                        "title": f.description[:200] if f.description else "",
-                        "data_source": f.data_source,
-                        # The entities the run recalls on, and what cross-investigation
-                        # correlation indexes. Projected away, both read an empty set.
-                        "entity_context": f.entity_context,
-                    }
-                )
+                to_investigate.append({"finding_id": fid, "severity": f.severity})
 
-        orch = _get_orchestrator()
-        created = 0
-        if orch and to_investigate:
-            for finding_data in to_investigate:
-                try:
-                    await orch._create_investigation(
-                        workflow_id="incident-response",
-                        findings=[finding_data],
-                        trigger_type="scan",
-                        priority=finding_data.get("severity", "medium"),
-                        shutdown_event=None,
-                    )
-                    created += 1
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to create investigation for {finding_data.get('finding_id')}: {e}"
-                    )
+        from services.daemon.orchestrator import insert_intake_trigger
+
+        queued = 0
+        for finding_data in to_investigate:
+            try:
+                trigger_id = insert_intake_trigger(
+                    kind="human_ask",
+                    priority=finding_data.get("severity") or "medium",
+                    finding_id=finding_data.get("finding_id"),
+                    payload={
+                        "workflow_id": "incident-response",
+                        "finding_ids": [finding_data["finding_id"]],
+                        "trigger_type": "scan",
+                    },
+                )
+                if trigger_id is not None:
+                    queued += 1
+            except Exception as e:
+                logger.warning(
+                    f"Failed to queue investigation for {finding_data.get('finding_id')}: {e}"
+                )
 
         return {
             "success": True,
-            "created": created,
+            "queued": queued,
             "skipped_already_investigated": skipped_existing,
-            "total_matching": created + skipped_existing,
-            "message": f"Queued {created} investigations (will run up to max_concurrent_agents at a time)"
+            "total_matching": queued + skipped_existing,
+            "message": f"Queued {queued} findings for investigation"
             + (
                 f", {skipped_existing} already investigated" if skipped_existing else ""
             ),

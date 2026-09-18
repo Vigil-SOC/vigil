@@ -45,7 +45,6 @@ from core.storage.schemas.case_entities import (
     SLAPolicySchema,
 )
 from core.storage.schemas.config import (
-    AttackLayerSchema,
     ConfigAuditLogSchema,
     FederationSourceSchema,
     IntegrationConfigSchema,
@@ -190,7 +189,6 @@ SCHEMA_REGISTRY: dict[str, dict] = {
     "SharedIOC": _standard(models.SharedIOC, SharedIOCSchema),
     "ThreatIndicator": _standard(models.ThreatIndicator, ThreatIndicatorSchema),
     "SketchMapping": _standard(models.SketchMapping, SketchMappingSchema),
-    "AttackLayer": _standard(models.AttackLayer, AttackLayerSchema),
 }
 
 

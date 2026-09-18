@@ -20,16 +20,20 @@ logger = logging.getLogger(__name__)
 COMPOSE_RUN_KIND = "compose"
 HUNT_RUN_KIND = "hunt"
 ROOT_CAUSE_RUN_KIND = "root_cause"
-# Both drive the same hypothesis loop and read the same projection: a hunt asks
+ADJUDICATE_RUN_KIND = "adjudicate"
+# All three drive the same hypothesis loop and read the same projection: a hunt asks
 # whether a threat is real, a root-cause run works backward from a confirmed one to
-# how it began. Everything that gates on "is this the hunt loop?" tests this set, so
-# the two stay in lockstep and root-cause never silently loses telemetry_search.
-HUNT_LIKE_RUN_KINDS = frozenset({HUNT_RUN_KIND, ROOT_CAUSE_RUN_KIND})
+# how it began, an adjudication is a shadow second opinion on a finding intake has
+# already admitted. Everything that gates on "is this the hunt loop?" tests this
+# set, so the kinds stay in lockstep and none silently loses telemetry_search.
+HUNT_LIKE_RUN_KINDS = frozenset(
+    {HUNT_RUN_KIND, ROOT_CAUSE_RUN_KIND, ADJUDICATE_RUN_KIND}
+)
 WORKFLOW_SCHEME = "workflow:"
 
 
 def is_hunt_like(run_kind: Optional[str]) -> bool:
-    """True when a run_kind drives the hunt hypothesis loop (hunt or root-cause)."""
+    """True when a run_kind drives the hunt hypothesis loop (hunt, root-cause, adjudicate)."""
     return run_kind in HUNT_LIKE_RUN_KINDS
 
 
@@ -522,7 +526,9 @@ class WorkflowsService:
             workflow_name=workflow.name,
             workflow_source=workflow_dict.get("source", "file"),
             workflow_version=workflow_dict.get("version"),
-            trigger_context=dict(parameters or {}),
+            # run_kind rides along so finalize_run can label the outcome without a
+            # column: the same value the start job below carries.
+            trigger_context={**dict(parameters or {}), "run_kind": workflow.run_kind},
             triggered_by=triggered_by,
             run_id=new_run_id(),
         )

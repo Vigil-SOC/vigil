@@ -129,28 +129,6 @@
       "workflow_run_id": "workflow_run_id-value"
     }
   },
-  "AttackLayer": {
-    "empty.to_dict.default": {
-      "case_id": null,
-      "created_at": null,
-      "description": null,
-      "id": null,
-      "layer_data": null,
-      "name": null,
-      "updated_at": null
-    },
-    "populated.to_dict.default": {
-      "case_id": "case_id-value",
-      "created_at": "2024-03-14T15:09:26.535000+00:00",
-      "description": "description-value",
-      "id": 270,
-      "layer_data": {
-        "sample": "layer_data-value"
-      },
-      "name": "name-value",
-      "updated_at": "2024-03-14T15:09:26.535000+00:00"
-    }
-  },
   "Case": {
     "empty.to_dict.with_finding_ids": {
       "activities": [],

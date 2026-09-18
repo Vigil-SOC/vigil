@@ -27,7 +27,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Map to MITRE ATT&CK",
-            "description": "Map discovered TTPs, create ATT&CK Navigator layer",
+            "description": "Map discovered TTPs to MITRE ATT&CK",
         },
         {
             "title": "Containment & Response",
@@ -35,7 +35,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Case Management",
-            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+            "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
         },
         {
             "title": "Document & Report",
@@ -65,7 +65,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Case Management",
-            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+            "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
         },
         {
             "title": "Final Report",
@@ -95,7 +95,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Case Management",
-            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+            "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
         },
         {
             "title": "Hunt Report",
@@ -125,7 +125,7 @@ WORKFLOW_STEP_MAP = {
         },
         {
             "title": "Case Management",
-            "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+            "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
         },
         {
             "title": "Forensic Report",
@@ -156,6 +156,16 @@ WORKFLOW_STEP_MAP = {
     ],
 }
 
+# #920 opened the case at admission and told the agent to file into it. When
+# that create fails, generate_plan still writes ``case_id: pending`` — a name,
+# not a row. The step below is swapped in so the agent mints a case instead of
+# attaching to one that does not exist.
+_CASE_MANAGEMENT_WHEN_PENDING = (
+    "No case was opened at admission; create one with create_case, then attach "
+    "related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to it"
+)
+
+
 DEFAULT_STEPS = [
     {
         "title": "Initial Assessment",
@@ -169,7 +179,7 @@ DEFAULT_STEPS = [
     {"title": "Response", "description": "Propose containment and response actions"},
     {
         "title": "Case Management",
-        "description": "Check existing cases via list_cases; add findings to matching case or create new case; log IOCs, timeline, and MITRE techniques to the case",
+        "description": "Attach related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to the case named by case_id in this plan",
     },
     {"title": "Report", "description": "Document findings and submit for review"},
 ]
@@ -305,8 +315,11 @@ def generate_plan(
     lines.append("")
 
     for i, step in enumerate(steps, 1):
+        description = step["description"]
+        if step["title"] == "Case Management" and not case_id:
+            description = _CASE_MANAGEMENT_WHEN_PENDING
         lines.append(f"### Step {i}: {step['title']} [pending]")
-        lines.append(f"- {step['description']}")
+        lines.append(f"- {description}")
         lines.append("")
 
     lines.append("## Blockers")
@@ -458,9 +471,14 @@ def generate_initial_state(
     }
 
 
-def generate_initial_context(findings: List[Dict[str, Any]]) -> str:
+def generate_initial_context(
+    findings: List[Dict[str, Any]], case_id: Optional[str] = None
+) -> str:
     """Generate the initial context.md with trigger finding summaries."""
-    lines = ["# Investigation Context", "", "## Trigger Findings", ""]
+    lines = ["# Investigation Context", ""]
+    if case_id:
+        lines.extend([f"case_id: {case_id}", ""])
+    lines.extend(["## Trigger Findings", ""])
 
     for f in findings[:5]:
         fid = f.get("finding_id", "unknown")

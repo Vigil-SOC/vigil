@@ -50,7 +50,7 @@ function loadArchOnly(body: string, handled: readonly string[] = ["EXAMINE", "CO
 
 describe("the registry resolves a run kind to an arch", () => {
   it("registers the shipped arches and nothing else", () => {
-    expect(registeredKinds()).toEqual(["chat", "compose", "hunt", "investigate", "root_cause"]);
+    expect(registeredKinds()).toEqual(["adjudicate", "chat", "compose", "hunt", "investigate", "root_cause"]);
   });
 
   // Adding an agent type is an arch file and an entry. Nothing in the worker
@@ -73,6 +73,7 @@ describe("the registry resolves a run kind to an arch", () => {
   it("answers which kinds run the hunt loop from what they were registered with", () => {
     expect(isHuntLike("hunt")).toBe(true);
     expect(isHuntLike("root_cause")).toBe(true);
+    expect(isHuntLike("adjudicate")).toBe(true);
     expect(isHuntLike("investigate")).toBe(false);
     expect(isHuntLike("compose")).toBe(false);
     expect(isHuntLike("chat")).toBe(false);
@@ -91,6 +92,22 @@ describe("the shipped arches", () => {
     expect(spec.digest["evidence_window"]).toBe(25);
   });
 
+  // The hunt loop with an adjudicator's brief: same workers, critic and fan-out as
+  // threathunt.yaml, a lead that proposes a workflow and may not hand off to IR.
+  it("loads adjudicate.yaml as the hunt fan-out, minus HANDOFF_IR, plus proposed_workflow", () => {
+    const spec = buildSpec({ ...HUNT, arch: archFor("adjudicate").arch }, archFor("adjudicate").actions);
+    expect(spec.arch).toBe("adjudicate");
+    expect(spec.dispatch).toEqual({ topology: "fan_out", mode: "parallel", fan_out_over: "questions", max_workers: 4 });
+    expect(Object.keys(spec.roles.workers)).toEqual(["threat_hunter", "network_analyst", "threat_intel"]);
+    expect(spec.roles.critic).toBeDefined();
+    const properties = spec.roles.lead?.output_schema?.["properties"] as Record<string, { enum?: unknown[] }>;
+    expect(properties["action"]?.enum).not.toContain("HANDOFF_IR");
+    expect(properties["action"]?.enum).toContain("CONCLUDE");
+    expect(properties["proposed_workflow"]).toEqual({ type: ["string", "null"] });
+    expect(spec.roles.lead?.output_schema?.["required"]).not.toContain("proposed_workflow");
+    expect(spec.roles.lead?.prompt).toContain("You execute nothing");
+  });
+
   // The other shape the indirection has to carry: one role, its tools, no fan-out.
   it("loads investigate.yaml as a single lead with no workers and no critic", () => {
     const spec = buildSpec(CASE, archFor("investigate").actions);
@@ -98,7 +115,7 @@ describe("the shipped arches", () => {
     expect(spec.dispatch).toEqual({ topology: "single", mode: "serial", fan_out_over: "questions", max_workers: 1 });
     expect(spec.roles.workers).toEqual({});
     expect(spec.roles.critic).toBeUndefined();
-    expect(spec.roles.lead?.tools).toEqual(["case_records"]);
+    expect(spec.roles.lead?.tools).toEqual(["case_records", "get_finding"]);
   });
 
   it("generates the roster from the worker registry and narrows worker_agent_id to it", () => {

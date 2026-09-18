@@ -44,7 +44,8 @@ export interface SpendPayload {
 // unpriced is a ceiling that cannot be measured rather than one that was reached.
 export type Refusal =
   | { reason: "calls_exhausted"; used: number; limit: number }
-  | { reason: "cost_exhausted"; used_usd: number; limit_usd: number }
+  // Held against the sum, carried apart so a stated bill is never a figure nobody was charged.
+  | { reason: "cost_exhausted"; used_usd: number; limit_usd: number; in_flight_usd?: number }
   | { reason: "wall_exhausted"; used_ms: number; limit_ms: number }
   | { reason: "unpriced"; calls: number };
 
@@ -69,6 +70,12 @@ export interface Budget {
   // pool stays the single authority on what a run may still spend.
   raise(limits: Partial<BudgetLimits>): void;
   record(payload: SpendPayload): void;
+  // Hands back a call that beginCall held against the ceiling and record never settled.
+  // Required, not optional: a reservation never handed back is not one call lost but
+  // one lost for the rest of the run, so every abandoned call shrinks the effective
+  // ceiling a little further. An implementation that has nothing to release can say so
+  // in a line; the next one that forgets would not fail until a ceiling came in low.
+  release(): void;
   // What a call cost, for the ledger and for max_cost_usd. Here rather than on the
   // harness because this object already owns the ceiling and the running total.
   priceOf(modelId: string, providerType: string, tokens: TokenCounts): Promise<Priced>;

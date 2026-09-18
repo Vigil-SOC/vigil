@@ -119,14 +119,23 @@ def failure(
     *,
     reason=DistilFailureReason.FAILED,
     error="connection refused",
-    version=DISTIL_MAPPING_VERSION,
+    version=None,
     now=None,
 ):
     """A failure already on the record, as an earlier tick would have left it.
 
     Reads the row back the way anyone asking "what is stuck" would, rather than
     being handed it: ``record_failure`` writes and returns nothing.
+
+    Stamped with the version of the Distil the key belongs to, because each
+    poll joins on its own; the two only happen to agree when both are 1.
     """
+    if version is None:
+        version = (
+            DISTIL_MAPPING_VERSION
+            if key.kind is InvestigationKind.HUNT
+            else CASE_DISTIL_MAPPING_VERSION
+        )
     record_failure(db, key=key, reason=reason, error=error, version=version, now=now)
     db.flush()
     return db.get(EpisodicDistilFailure, (key.kind.value, key.value))

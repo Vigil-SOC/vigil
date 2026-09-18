@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from core.storage.models import (
     AIDecisionLog,
-    AttackLayer,
     Case,
     CaseAttachment,
     CaseAuditLog,
@@ -150,8 +149,8 @@ def list_escalations(session: Session, case_id: str) -> List[CaseEscalation]:
 def purge_all_cases(session: Session) -> int:
     """Delete every case and its derived records. Returns the case count removed.
 
-    Rows in other tables that merely *reference* a case (investigations, attack
-    layers) are detached rather than deleted — they outlive the case.
+    Rows in other tables that merely *reference* a case (investigations)
+    are detached rather than deleted — they outlive the case.
     """
     count = session.query(Case).count()
 
@@ -166,9 +165,6 @@ def purge_all_cases(session: Session) -> int:
         synchronize_session=False
     )
     session.query(Investigation).filter(Investigation.case_id.isnot(None)).update(
-        {"case_id": None}, synchronize_session=False
-    )
-    session.query(AttackLayer).filter(AttackLayer.case_id.isnot(None)).update(
         {"case_id": None}, synchronize_session=False
     )
     session.query(CaseAuditLog).delete(synchronize_session=False)

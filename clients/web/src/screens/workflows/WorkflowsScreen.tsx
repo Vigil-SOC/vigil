@@ -1,19 +1,22 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills } from './useWorkflowsData'
-import { workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft } from '../../services/api'
-import { skillsApi, SKILL_CATEGORIES, type SkillCategory, type SkillDraft } from '../../services/skillsApi'
+import { workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
-import type { Skill } from '../../data/appData'
 import type { ConsoleScreenProps } from '../../shared/types'
 
 type WfTab = 'workflows' | 'agents' | 'skills'
 
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<WfTab>('workflows')
+  // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const runId = searchParams.get('run')
+  const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   const tabs: [WfTab, string][] = [
     ['workflows', 'Workflows'],
     ['agents', 'Agents'],
@@ -36,9 +39,35 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && <WorkflowCatalog goSettings={goSettings} />}
+      {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab />}
       {tab === 'skills' && <SkillsTab />}
+    </>
+  )
+}
+
+/** One run reached by URL rather than through History. Same hook and panel as
+ *  RunRow, so the run polls while in flight and stops at terminal. Keyed on the
+ *  id by the caller, so a new ?run= starts clean rather than over the old detail.
+ *  No seed: the hook will not poll until getRun says the run is in flight, so a
+ *  missing run is asked for once. */
+function RunView({ runId, onBack }: { runId: string; onBack: () => void }) {
+  const { detail, dphase, setDphase, load } = useRunDetail(runId, true)
+  useEffect(() => {
+    setDphase('loading')
+    void load()
+  }, [load, setDphase])
+  return (
+    <>
+      <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
+        <button className="btn ghost" onClick={onBack}><Icon name="chevL" size={13} /> All workflows</button>
+        <span className="mono text-[11.5px] text-tx-3">{runId}</span>
+      </div>
+      <div className="px-[22px] py-5">
+        {dphase === 'loading' && <div className="muted">Loading run detail…</div>}
+        {dphase === 'error' && <div className="muted">Couldn’t load run {runId}. It may have been removed, or the id may be wrong.</div>}
+        {dphase === 'ready' && detail && <RunDetail d={detail} onSteered={load} />}
+      </div>
     </>
   )
 }
@@ -988,8 +1017,11 @@ export function useRunDetail(runId: string, watching: boolean, seed?: string) {
     [runId],
   )
 
-  // Stops itself at a terminal status rather than polling for the session.
-  const live = watching && IN_FLIGHT.includes(detail?.status ?? seed ?? 'running')
+  // Polls only while we know the run is in flight. A missing status is not
+  // treated as running: a deep-link with no seed would otherwise poll a 404
+  // until a later effect stopped it.
+  const status = detail?.status ?? seed
+  const live = Boolean(watching && status && IN_FLIGHT.includes(status))
   useEffect(() => {
     if (!live) return
     const timer = setInterval(() => { void load() }, RUN_POLL_MS)
@@ -1264,7 +1296,7 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
       {shown === 'memory' && memory !== null && <HuntMemory recall={memory} />}
       {shown === 'hyp' && <HuntStandings hunt={hunt} />}
       {shown === 'evidence' && <HuntEvidenceTable found={found} total={hunt.evidence_count} />}
-      {shown === 'moves' && <HuntMoves moves={moves} />}
+      {shown === 'moves' && <HuntMoves runId={d.run_id} moves={moves} />}
       {shown === 'frontier' && <HuntFrontier runId={d.run_id} frontier={frontier} inFlight={IN_FLIGHT.includes(d.status)} />}
       {shown === 'gaps' && <HuntGaps gaps={gaps} />}
       {shown === 'esc' && (
@@ -1520,43 +1552,180 @@ export function refusalReason(rejection: string): string {
   return complaint.length > 160 ? `${complaint.slice(0, 160)}…` : complaint
 }
 
+/** One move opened for its digest. Replay folds the whole ledger, so it is asked for
+ *  on the click and held here; the poll that refreshes `moves` never touches it. */
+interface OpenedMove { id: string; report: ReplayReport | null; failed: string | null }
+
 /** Every move the lead made and why — the only account of what a turn decided, and
- *  of a turn that stalled. */
-function HuntMoves({ moves }: { moves: HuntMove[] }) {
+ *  of a turn that stalled. Choosing one shows what the lead was looking at when it
+ *  decided. */
+function HuntMoves({ runId, moves }: { runId: string; moves: HuntMove[] }) {
+  const [opened, setOpened] = useState<OpenedMove | null>(null)
+  const pick = (decisionId: string) => {
+    if (opened?.id === decisionId) { setOpened(null); return }
+    setOpened({ id: decisionId, report: null, failed: null })
+    workflowApi
+      .getReplay(runId, decisionId)
+      .then((r) => setOpened((held) => (held?.id === decisionId ? { ...held, report: r.data } : held)))
+      .catch((e) => setOpened((held) => (held?.id === decisionId ? { ...held, failed: errMsg(e) } : held)))
+  }
   return (
     <div style={{ marginTop: 12 }}>
-      <div className="muted text-[11.5px] mb-2">Newest first. One decision per turn; a turn may re-ask after a refused emission.</div>
+      <div className="muted text-[11.5px] mb-2">Newest first. One decision per turn; a turn may re-ask after a refused emission. Choose a move to see what the lead was shown.</div>
       <div className="table-wrap">
         <table className="tbl">
           <thead><tr><th className="tight">Turn</th><th className="tight">Move</th><th>Why</th><th className="tight">On</th></tr></thead>
           <tbody>
             {moves.map((m) => (
-              <tr key={m.decision_id}>
-                <td className="muted tight">{m.iteration}</td>
-                <td className="tight mono text-[11px]">{m.action}</td>
-                <td>
-                  {m.rationale}
-                  {m.query_intent && <div className="muted text-[11px] mt-0.5">asked: {m.query_intent}</div>}
-                  {/* The entity and the worker live here rather than in On: an ip or a
-                      role name in a tight column wrapped a character to a line. */}
-                  {(m.target_entity || m.worker_agent_id) && (
-                    <div className="flex gap-1.5 flex-wrap mt-1">
-                      {m.target_entity && <span className="chip mono" style={{ fontSize: 10 }}>{m.target_entity}</span>}
-                      {m.worker_agent_id && <span className="chip" style={{ fontSize: 10 }}>{m.worker_agent_id}</span>}
-                    </div>
-                  )}
-                  {!!m.rejected_attempts?.length && (
-                    <div className="text-[11px] mt-1" style={{ color: 'var(--high)' }}>
-                      {m.rejected_attempts.length} emission(s) refused first — {refusalReason(m.rejected_attempts[0]!)}
-                    </div>
-                  )}
-                </td>
-                <td className="tight"><Hyp id={m.target_hypothesis_id} /></td>
-              </tr>
+              <Fragment key={m.decision_id}>
+                {/* The row takes the click; the action is the control a keyboard reaches,
+                    so the table keeps its own semantics rather than posing as a button. */}
+                <tr className={`clickable${opened?.id === m.decision_id ? ' sel' : ''}`} onClick={() => pick(m.decision_id)}>
+                  <td className="muted tight">{m.iteration}</td>
+                  <td className="tight">
+                    <button
+                      className="btn ghost mono text-[11px]"
+                      aria-expanded={opened?.id === m.decision_id}
+                      title="Show what the lead was looking at when it decided this."
+                      onClick={(e) => { e.stopPropagation(); pick(m.decision_id) }}
+                    >
+                      {m.action}
+                    </button>
+                  </td>
+                  <td>
+                    {m.rationale}
+                    {m.query_intent && <div className="muted text-[11px] mt-0.5">asked: {m.query_intent}</div>}
+                    {/* The entity and the worker live here rather than in On: an ip or a
+                        role name in a tight column wrapped a character to a line. */}
+                    {(m.target_entity || m.worker_agent_id) && (
+                      <div className="flex gap-1.5 flex-wrap mt-1">
+                        {m.target_entity && <span className="chip mono" style={{ fontSize: 10 }}>{m.target_entity}</span>}
+                        {m.worker_agent_id && <span className="chip" style={{ fontSize: 10 }}>{m.worker_agent_id}</span>}
+                      </div>
+                    )}
+                    {!!m.rejected_attempts?.length && (
+                      <div className="text-[11px] mt-1" style={{ color: 'var(--high)' }}>
+                        {m.rejected_attempts.length} emission(s) refused first — {refusalReason(m.rejected_attempts[0]!)}
+                      </div>
+                    )}
+                  </td>
+                  <td className="tight"><Hyp id={m.target_hypothesis_id} /></td>
+                </tr>
+                {opened?.id === m.decision_id && (
+                  <tr>
+                    <td colSpan={4} style={{ background: 'var(--bg-2)' }}><MoveDigest opened={opened} /></td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+/** The digest one decision was shown, as the record has it, and whether folding the
+ *  ledger again reproduces it. The recorded half is rendered — that is what the lead
+ *  read — and the rebuilt half is what the mismatch line speaks for. */
+function MoveDigest({ opened }: { opened: OpenedMove }) {
+  if (opened.failed !== null) {
+    return <div className="text-[12px] py-1" style={{ color: 'var(--high)' }}>Could not read what this move was shown — {opened.failed}</div>
+  }
+  const decision = opened.report?.decisions[0]
+  if (opened.report === null) return <div className="muted text-[12px] py-1">Rebuilding the digest from the ledger…</div>
+  if (decision === undefined) return <div className="muted text-[12px] py-1">Replay returned nothing for this decision.</div>
+
+  const seen = decision.recorded
+  const recalled = opened.report.recalled
+  return (
+    <div className="py-1" style={{ whiteSpace: 'normal' }}>
+      <div className="flex gap-1.5 items-center flex-wrap mb-2">
+        <h4 style={{ margin: 0 }}>What the lead was shown at turn {decision.iteration}</h4>
+        {decision.mismatch === null
+          ? <span className="chip sel" style={{ fontSize: 10 }}>rebuild matches the record</span>
+          : <span className="chip" style={{ fontSize: 10, color: 'var(--high)' }}>{decision.mismatch}</span>}
+        {!decision.exact && (
+          <span className="muted text-[11px]">prefix inferred — the ledger predates digest_seq, so a difference may be the boundary rather than drift</span>
+        )}
+      </div>
+
+      <div className="text-[12.5px]">{seen.narrative || <span className="muted">No narrative was in the digest.</span>}</div>
+      <div className="muted text-[11px] mt-1">
+        focus {seen.focus.entity ? <span className="mono">{seen.focus.entity}</span> : 'no entity'} · <Hyp id={seen.focus.hypothesis} />
+        {' '}· {seen.budget_remaining.iterations} turn(s) and ${seen.budget_remaining.cost_usd.toFixed(2)} left
+      </div>
+
+      {seen.hypotheses.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <h4>Beliefs as they stood ({seen.hypotheses.length})</h4>
+          <div className="table-wrap">
+            <table className="tbl">
+              <tbody>
+                {seen.hypotheses.map((h) => (
+                  <tr key={h.hypothesis_id}>
+                    <td className="tight"><Hyp id={h.hypothesis_id} /></td>
+                    <td>{h.statement}</td>
+                    <td className="tight" style={{ color: hypothesisColor(h.status) }}>{h.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {(seen.recent_evidence.length > 0 || seen.omitted.count > 0) && (
+        <div style={{ marginTop: 10 }}>
+          <h4>Recent evidence ({seen.recent_evidence.length}{seen.omitted.count > 0 && `, ${seen.omitted.count} routine omitted`})</h4>
+          {seen.recent_evidence.length === 0
+            ? <div className="muted text-[12px]">Every record in the window was routine; the lead saw only the count.</div>
+            : (
+              <div className="table-wrap">
+                <table className="tbl">
+                  <tbody>
+                    {seen.recent_evidence.map((one) => (
+                      <tr key={one.evidence_id}>
+                        <td className="muted tight">{one.source_system || '—'}</td>
+                        <td>
+                          {one.summary}
+                          {one.why_notable && <div className="muted text-[11px]">{one.why_notable}</div>}
+                          <div className="text-[11px] mt-0.5 flex gap-2 flex-wrap">
+                            <span className="muted">{one.salience}</span>
+                            {one.instruction_like && <span style={{ color: 'var(--crit)' }}>reads as instruction</span>}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
+      )}
+
+      {seen.open_questions.length > 0 && <DigestList title="Open questions" rows={seen.open_questions} />}
+      {seen.directives.length > 0 && <DigestList title="Operator directives" rows={seen.directives} />}
+      {seen.notes.length > 0 && <DigestList title="Notes" rows={seen.notes} />}
+
+      <div style={{ marginTop: 10 }}>
+        <h4>Recalled from earlier investigations ({recalled.length})</h4>
+        <div className="muted text-[11.5px] mb-1">
+          Read off the run's own recall event — the record it opened on, not a live re-read of memory.
+        </div>
+        {recalled.length === 0
+          ? <div className="muted text-[12px]">Nothing recalled: the run never read memory, or the read could not be served.</div>
+          : <ul className="text-[12px]" style={{ paddingLeft: 18, margin: 0 }}>{recalled.map((row, at) => <li key={at}>{row}</li>)}</ul>}
+      </div>
+    </div>
+  )
+}
+
+function DigestList({ title, rows }: { title: string; rows: string[] }) {
+  return (
+    <div style={{ marginTop: 10 }}>
+      <h4>{title} ({rows.length})</h4>
+      <ul className="text-[12px]" style={{ paddingLeft: 18, margin: 0 }}>{rows.map((row, at) => <li key={at}>{row}</li>)}</ul>
     </div>
   )
 }
@@ -2797,189 +2966,31 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
 }
 
 function SkillsTab() {
-  const { rows, phase, error, reload, toggleActive } = useSkills()
-  const [building, setBuilding] = useState(false)
-  const [toDelete, setToDelete] = useState<Skill | null>(null)
-  const [importErr, setImportErr] = useState<string | null>(null)
-  const [importing, setImporting] = useState(false)
-  const fileRef = useRef<HTMLInputElement>(null)
-
-  const onImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    e.target.value = '' // allow re-selecting the same file
-    if (!file) return
-    setImporting(true)
-    setImportErr(null)
-    skillsApi
-      .importZip(file)
-      .then(() => reload())
-      .catch((err) => setImportErr(errMsg(err)))
-      .finally(() => setImporting(false))
-  }
+  const { rows, phase, error, reload } = useSkills()
 
   return (
     <>
       <div className="flex items-start gap-4 flex-wrap px-[22px] pt-5 pb-[6px]">
         <div className="flex-1 min-w-[200px]"><h2 className="text-[19px]">Skills</h2>
-          <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Reusable, parameterized capabilities agents and workflows can invoke.</p></div>
+          <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Capabilities loaded as files from the repository or a mounted skills directory. Edit them there; this list is read-only.</p></div>
         <div className="flex items-center gap-2.5 flex-wrap">
           <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
-          <button className="btn ghost" disabled={importing} onClick={() => fileRef.current?.click()}><Icon name="upload" /> {importing ? 'Importing…' : 'Import Zip'}</button>
-          <input ref={fileRef} type="file" accept=".zip,application/zip" hidden onChange={onImport} />
-          <button className="btn primary" onClick={() => setBuilding(true)}><Icon name="sparkle" /> Build Skill</button>
         </div>
       </div>
-      {importErr && <div className="px-[22px] text-[12.5px]" style={{ color: 'var(--crit)' }}>Import failed: {importErr}</div>}
       {phase === 'loading' && <StateMsg><EmptyState loading compact icon="sparkle" title="Loading skills…" /></StateMsg>}
       {phase === 'error' && <StateMsg><EmptyState error icon="alert" title="Couldn’t load skills" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} /></StateMsg>}
-      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills yet" body="Build or import reusable capabilities that agents and workflows can invoke." primary={{ label: 'Build skill', onClick: () => setBuilding(true), icon: 'sparkle' }} secondary={{ label: 'Import Zip', onClick: () => fileRef.current?.click(), icon: 'upload' }} /></StateMsg>}
+      {phase === 'ready' && rows.length === 0 && <StateMsg><EmptyState icon="sparkle" title="No skills found" body="Add skill files to the repository or the mounted skills directory and refresh." primary={{ label: 'Refresh', onClick: reload, icon: 'refresh' }} /></StateMsg>}
       {phase === 'ready' && rows.length > 0 && (
         <div className="grid gap-4 px-[22px] pt-[14px] pb-6 [grid-template-columns:repeat(auto-fill,minmax(360px,1fr))]">
           {rows.map((s) => (
-            <div className="flex flex-col gap-[9px] bg-panel border border-line rounded-lg p-[18px] shadow-panel transition-[border-color,transform] duration-150 hover:border-[#2e3744] hover:-translate-y-0.5" key={s.id}>
-              <div className="flex items-start gap-2.5">
-                <h3 className="text-base flex-1 min-w-0">{s.name}</h3>
-                <span className={`sk-tag ${s.cat}`}>{s.cat === 'custom' ? 'custom' : 'built-in'}</span>
-              </div>
-              <div className="text-[11.5px] text-tx-3 mono">{s.id} · {s.v}</div>
+            <div className="flex flex-col gap-[9px] bg-panel border border-line rounded-lg p-[18px] shadow-panel" key={s.id}>
+              <h3 className="text-base min-w-0">{s.name}</h3>
+              {s.source && <div className="text-[11.5px] text-tx-3 mono break-all">{s.source}</div>}
               <p className="text-[13px] text-tx-2 leading-[1.5] flex-1">{s.desc}</p>
-              <div className="flex items-center gap-2.5 mt-1.5">
-                <span
-                  className={`sk-toggle${s.active ? ' on' : ''}`}
-                  role="switch"
-                  aria-checked={s.active}
-                  aria-label={`${s.active ? 'Deactivate' : 'Activate'} ${s.name}`}
-                  tabIndex={0}
-                  onClick={() => toggleActive(s.id)}
-                  onKeyDown={activateOnKey(() => toggleActive(s.id))}
-                ><span className="kn" /></span>
-                <span className="text-[12.5px] text-tx-2">{s.active ? 'Active' : 'Inactive'}</span>
-                <button className="sk-del" title="Delete skill" onClick={() => setToDelete(s)}><Icon name="trash" /></button>
-              </div>
             </div>
           ))}
         </div>
       )}
-      {building && <BuildSkillModal onClose={() => setBuilding(false)} onCreated={() => { setBuilding(false); reload() }} />}
-      {toDelete && <SkillDeleteModal skill={toDelete} onClose={() => setToDelete(null)} onDeleted={() => { setToDelete(null); reload() }} />}
     </>
-  )
-}
-
-function SkillDeleteModal({ skill, onClose, onDeleted }: { skill: Skill; onClose: () => void; onDeleted: () => void }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const del = () => {
-    setBusy(true)
-    setError(null)
-    skillsApi.remove(skill.id).then(onDeleted).catch((e) => { setError(errMsg(e)); setBusy(false) })
-  }
-  return (
-    <Popup open onClose={onClose} title="Delete skill" width={460}>
-      <div className="flex flex-col gap-3.5">
-        <p className="text-[13px] text-tx-2 leading-[1.5]">Delete <strong>{skill.name}</strong>? This permanently removes the skill.</p>
-        {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
-        <div className="flex justify-end gap-2.5 pt-1">
-          <button className="btn ghost" onClick={onClose}>Cancel</button>
-          <button className="btn danger" disabled={busy} style={{ opacity: busy ? 0.5 : 1 }} onClick={del}><Icon name="trash" /> {busy ? 'Deleting…' : 'Delete'}</button>
-        </div>
-      </div>
-    </Popup>
-  )
-}
-
-/** describe it, answer any clarifying question, then
-    review the generated draft and save it. Wraps skillsApi.generate + create. */
-function BuildSkillModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
-  const [description, setDescription] = useState('')
-  const [category, setCategory] = useState<SkillCategory>('custom')
-  const [history, setHistory] = useState<{ role: string; content: string }[] | null>(null)
-  const [clarify, setClarify] = useState<string | null>(null) // pending question from the AI
-  const [answer, setAnswer] = useState('')
-  const [draft, setDraft] = useState<SkillDraft | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  const runGenerate = (userResponse?: string) => {
-    setBusy(true)
-    setError(null)
-    skillsApi
-      .generate({
-        description: description.trim(),
-        category,
-        conversation_history: history,
-        user_response: userResponse ?? null,
-      })
-      .then((res) => {
-        if (!res.success) { setError(res.error || res.message || 'Generation failed'); return }
-        setHistory(res.conversation_history || history)
-        if (res.needs_clarification) {
-          setClarify(res.message || 'The builder needs more detail.')
-          setDraft(null)
-        } else if (res.skill) {
-          setClarify(null)
-          setAnswer('')
-          setDraft(res.skill)
-        }
-      })
-      .catch((e) => setError(errMsg(e)))
-      .finally(() => setBusy(false))
-  }
-
-  const save = () => {
-    if (!draft) return
-    setBusy(true)
-    setError(null)
-    skillsApi.create(draft).then(onCreated).catch((e) => { setError(errMsg(e)); setBusy(false) })
-  }
-
-  return (
-    <Popup open onClose={onClose} title="Build skill" width={620}>
-      <div className="flex flex-col gap-3.5">
-        <Field label="Describe the skill" value={description} onChange={setDescription} textarea placeholder="e.g. Enrich an IP with reputation, WHOIS and passive DNS, returning a normalized verdict." />
-        <label className="flex flex-col gap-1.5">
-          <span className="text-[11px] uppercase tracking-[0.06em] text-tx-3">Category</span>
-          <select className="w-full bg-bg border border-line rounded-[7px] px-2.5 py-2 text-[13px] text-tx outline-none focus:border-accent-line" value={category} onChange={(e) => setCategory(e.target.value as SkillCategory)}>
-            {SKILL_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </label>
-
-        {clarify && (
-          <div className="flex flex-col gap-2 border border-line rounded-[8px] p-3 bg-bg">
-            <span className="text-[11px] uppercase tracking-[0.06em] text-tx-3 flex items-center gap-1.5"><Icon name="reason" size={13} /> The builder needs more detail</span>
-            <p className="text-[13px] text-tx-2 leading-[1.5]">{clarify}</p>
-            <Field label="Your answer" value={answer} onChange={setAnswer} textarea />
-            <div className="flex justify-end">
-              <button className="btn primary" disabled={!answer.trim() || busy} style={{ opacity: !answer.trim() || busy ? 0.5 : 1 }} onClick={() => runGenerate(answer.trim())}>{busy ? 'Thinking…' : 'Send answer'}</button>
-            </div>
-          </div>
-        )}
-
-        {draft && (
-          <div className="flex flex-col gap-2 border border-line rounded-[8px] p-3 bg-bg">
-            <div className="flex items-center gap-2">
-              <span className="text-[14px] font-semibold flex-1">{draft.name}</span>
-              <span className="sk-tag custom">{draft.category}</span>
-            </div>
-            {draft.description && <p className="text-[13px] text-tx-2 leading-[1.5]">{draft.description}</p>}
-            {draft.required_tools?.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {draft.required_tools.map((t) => <span key={t} className="font-mono text-[11px] text-tx-2 bg-panel border border-line-soft rounded-[6px] px-2 py-0.5">{t}</span>)}
-              </div>
-            )}
-          </div>
-        )}
-
-        {error && <div className="text-[12.5px]" style={{ color: 'var(--crit)' }}>{error}</div>}
-        <div className="flex justify-end gap-2.5 pt-1">
-          <button className="btn ghost" onClick={onClose}>Cancel</button>
-          {draft ? (
-            <button className="btn primary" disabled={busy} style={{ opacity: busy ? 0.5 : 1 }} onClick={save}><Icon name="check2" /> {busy ? 'Saving…' : 'Create skill'}</button>
-          ) : (
-            <button className="btn primary" disabled={!description.trim() || busy || !!clarify} style={{ opacity: !description.trim() || busy || !!clarify ? 0.5 : 1 }} onClick={() => runGenerate()}><Icon name="sparkle" /> {busy ? 'Generating…' : 'Generate'}</button>
-          )}
-        </div>
-      </div>
-    </Popup>
   )
 }

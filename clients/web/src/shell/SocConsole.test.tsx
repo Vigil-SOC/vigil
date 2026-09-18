@@ -167,7 +167,6 @@ vi.mock('../services/skillsApi', () => ({
       Promise.resolve([
         { skill_id: 's-1', name: 'UI Demo Skill', description: 'Demo skill.', category: 'custom', version: 1, is_active: true },
       ]),
-    update: () => Promise.resolve({}),
   },
 }))
 
@@ -275,13 +274,17 @@ describe('SocConsole', () => {
     expect(screen.getByRole('button', { name: /All decisions/ })).toBeInTheDocument()
   })
 
-  it('switches Workflows tabs and loads skills from the API', async () => {
+  it('switches Workflows tabs and loads a read-only skills list from the API', async () => {
     renderConsole()
     fireEvent.click(screen.getByRole('button', { name: 'Workflows & Skills' }))
     fireEvent.click(screen.getByRole('tab', { name: 'Agents' }))
     expect(screen.getByText('SOC Agents')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
     expect(await screen.findByText('UI Demo Skill')).toBeInTheDocument()
+    // Skills are files (#882 decision 7): no build/import/toggle/delete controls
+    expect(screen.queryByRole('button', { name: /Build Skill|Import Zip/ })).toBeNull()
+    expect(screen.queryByRole('switch')).toBeNull()
+    expect(screen.queryByTitle('Delete skill')).toBeNull()
   })
 
   it('opens the chat dock without error', () => {

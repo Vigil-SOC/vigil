@@ -91,6 +91,43 @@ class Investigation(Base):
     )
 
 
+class IntakeTrigger(Base):
+    """A trigger offered to the orchestrator. The row is the queue and its ledger."""
+
+    __tablename__ = "intake_triggers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(20), nullable=False)
+    state: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Pointer, not a snapshot: enrichment keeps moving on the finding row.
+    finding_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")
+    payload: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default="{}"
+    )
+    investigation_id: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    merged_into: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default="now()"
+    )
+    decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index(
+            "idx_intake_triggers_queued_created",
+            "created_at",
+            postgresql_where=text("state = 'queued'"),
+        ),
+        Index(
+            "uq_intake_triggers_queued_finding",
+            "finding_id",
+            unique=True,
+            postgresql_where=text("state = 'queued' AND finding_id IS NOT NULL"),
+        ),
+    )
+
+
 class InvestigationLog(Base):
     """Append-only audit log for investigation agent actions."""
 

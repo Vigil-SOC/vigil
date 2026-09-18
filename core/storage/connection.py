@@ -27,7 +27,6 @@ from core.secrets import get_secret
 # Unused by name, which is the point -- the import is the registration.
 from core.storage.models import (  # noqa: F401
     AIDecisionLog,
-    AttackLayer,
     Base,
     Case,
     CaseAttachment,
@@ -51,6 +50,7 @@ from core.storage.models import (  # noqa: F401
     CustomWorkflow,
     Finding,
     FindingMitrePrediction,
+    IntakeTrigger,
     IntegrationConfig,
     Investigation,
     InvestigationLog,

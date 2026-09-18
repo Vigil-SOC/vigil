@@ -13,7 +13,9 @@ export const EVENT_SCHEMA_VERSION = 1;
 // root-cause reuses the hunt loop (its arch entry declares workflow: "hunt"): a
 // hunt confirms that a threat exists, root-cause works backward from a confirmed
 // one to how it got there. Same machinery, its own kind so it is never mislabelled.
-export const RUN_KINDS = ["hunt", "root_cause", "investigate", "compose", "chat", "tally"] as const;
+// adjudicate is the same loop again, framed as a shadow second opinion on a finding
+// intake already admitted: it proposes a workflow and executes nothing.
+export const RUN_KINDS = ["hunt", "root_cause", "adjudicate", "investigate", "compose", "chat", "tally"] as const;
 export type RunKind = (typeof RUN_KINDS)[number];
 
 // Domain-free, so the harness never imports a workflow's vocabulary.

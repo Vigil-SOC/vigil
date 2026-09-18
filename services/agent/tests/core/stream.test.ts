@@ -338,6 +338,60 @@ describe("the approval gate", () => {
   });
 });
 
+describe("the ART execute approval gate", () => {
+  const ART_ID = "atomic_red_team_execute";
+  const ARGS = '{"technique":"T1059.001","environment_id":"range-1","hostname":"ws01.corp.local"}';
+  const ART = toolReturning(ART_ID, {
+    ok: true,
+    rows: [{ exit: 0 }],
+    rowCount: 1,
+    capped: false,
+    sourceSystem: "test",
+  });
+  const gated = config({ role: "mitre", approvals: new Set([ART_ID]) });
+
+  function artHarness(script: readonly ScriptedTurn[], options: Options = {}): Harness {
+    return harnessOf(script, { tools: [ART], grants: { mitre: [ART_ID] }, ...options });
+  }
+
+  it("parks an unapproved execute call and does not invoke the runner", async () => {
+    let dispatched = 0;
+    const counting: ToolDispatch = {
+      invoke: async (tool, args) => {
+        dispatched += 1;
+        return localDispatch.invoke(tool, args);
+      },
+    };
+    const harness = artHarness([{ calls: [{ tool: ART_ID, args: ARGS }] }], { dispatch: counting });
+    const { seen, outcome } = await watch(gated, harness);
+
+    expect(outcome.status).toBe("waiting_approval");
+    expect(dispatched).toBe(0);
+    expect(outcome.pending).toEqual({ checkpoint_id: approvalId(RUN, ART_ID, ARGS), tool: ART_ID, args: ARGS });
+    expect(seen.at(-1)).toEqual({ type: "approval_required", pending: outcome.pending });
+  });
+
+  it("invokes the runner once after an approval", async () => {
+    const state = new InProcessState();
+    await seed(state, resolution("approve", approvalId(RUN, ART_ID, ARGS)));
+    let dispatched = 0;
+    const counting: ToolDispatch = {
+      invoke: async (tool, args) => {
+        dispatched += 1;
+        return localDispatch.invoke(tool, args);
+      },
+    };
+    const outcome = await outcomeOf(
+      gated,
+      artHarness([{ calls: [{ tool: ART_ID, args: ARGS }] }, { calls: [] }, HALT], { state, dispatch: counting }),
+    );
+
+    expect(outcome.status).toBe("completed");
+    expect(dispatched).toBe(1);
+    expect(outcome.calls[0]?.wrapped.failure).toBeNull();
+  });
+});
+
 describe("the emission", () => {
   it("re-prompts once with the rejected emission as the assistant turn it was", async () => {
     const harness = harnessOf([{ calls: [] }, { emit: { verb: "SHOUT" } }, HALT]);

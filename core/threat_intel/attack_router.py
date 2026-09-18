@@ -1,6 +1,5 @@
 """ATT&CK framework API endpoints."""
 
-import logging
 from datetime import datetime
 from typing import Optional
 
@@ -22,7 +21,6 @@ ROUTER_META = RouterMeta(
     tags=["attack"],
     auth=Auth.REQUIRED,
 )
-logger = logging.getLogger(__name__)
 data_service = DatabaseDataService()
 
 
@@ -43,62 +41,6 @@ def _parse_finding_timestamp(finding: dict) -> Optional[datetime]:
         except ValueError:
             return None
     return None
-
-
-@router.get("/layer")
-def get_attack_layer():
-    """
-    Get ATT&CK Navigator layer data.
-
-    Builds an ATT&CK Navigator layer from findings technique predictions.
-
-    Returns:
-        ATT&CK layer JSON
-    """
-    try:
-        if data_service.is_using_database():
-            technique_scores = data_service.get_technique_max_confidence()
-        else:
-            findings = data_service.get_findings()
-            technique_scores = {}
-            for finding in findings:
-                for tech in iter_techniques(finding):
-                    tid = tech.get("technique_id") or tech.get("id")
-                    confidence = tech.get("confidence", 0) or 0
-                    if tid:
-                        technique_scores[tid] = max(
-                            technique_scores.get(tid, 0), confidence
-                        )
-
-        techniques = [
-            {
-                "techniqueID": tid,
-                "score": round(score * 100),
-                "color": "",
-                "comment": "",
-                "enabled": True,
-            }
-            for tid, score in technique_scores.items()
-        ]
-
-        layer = {
-            "name": "DeepTempo Findings",
-            "version": "4.5",
-            "domain": "enterprise-attack",
-            "description": "ATT&CK techniques detected in findings",
-            "techniques": techniques,
-        }
-
-        return layer
-    except Exception as e:
-        logger.error(f"Error building ATT&CK layer: {e}")
-        return {
-            "name": "DeepTempo Findings",
-            "version": "4.5",
-            "domain": "enterprise-attack",
-            "description": "ATT&CK techniques detected in findings",
-            "techniques": [],
-        }
 
 
 @router.get("/techniques/rollup")
@@ -275,38 +217,4 @@ def get_findings_by_technique(technique_id: str):
         "technique_id": technique_id,
         "findings": matching_findings,
         "total": len(matching_findings),
-    }
-
-
-@router.get("/tactics/summary")
-def get_tactics_summary():
-    """
-    Get summary of tactics across all findings.
-
-    Returns:
-        Tactics summary
-    """
-    if data_service.is_using_database():
-        technique_counts = data_service.get_technique_occurrence_counts()
-        tactic_counts: dict[str, int] = {}
-        for tid, count in technique_counts.items():
-            _tid, _name, tactic = resolve_technique(tid)
-            tactic_counts[tactic] = tactic_counts.get(tactic, 0) + count
-    else:
-        findings = data_service.get_findings()
-        tactic_counts = {}
-        for finding in findings:
-            for tech in iter_techniques(finding):
-                _tid, _name, tactic = resolve_technique(tech)
-                tactic_counts[tactic] = tactic_counts.get(tactic, 0) + 1
-
-    return {
-        "tactics": [
-            {"tactic": tactic, "count": count}
-            for tactic, count in sorted(
-                tactic_counts.items(),
-                key=lambda x: x[1],
-                reverse=True,
-            )
-        ]
     }

@@ -18,7 +18,7 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   docker run -d --name "$NAME" \
     -e POSTGRES_USER=vigil -e POSTGRES_PASSWORD=vigil -e POSTGRES_DB=vigil_test \
-    -p "$PORT:5432" pgvector/pgvector:pg16 >/dev/null
+    -p "$PORT:5432" postgres:16-alpine >/dev/null
 fi
 
 until docker exec "$NAME" pg_isready -U vigil -d vigil_test >/dev/null 2>&1; do sleep 1; done

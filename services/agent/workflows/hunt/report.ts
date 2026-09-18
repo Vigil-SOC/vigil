@@ -160,12 +160,15 @@ export function buildReport(projection: Projection): HuntReport {
     hypotheses,
     gaps,
     parked_hypotheses: hypotheses.filter((hypothesis) => hypothesis.status === "parked"),
+    // Open as well as parked: a run stopped by its own ceiling hands its leads back
+    // open rather than parking them, and a lead nobody can see is a lead nobody
+    // resumes -- which is the whole reason it was handed back.
     backlog: [...projection.questions.values()]
-      .filter((question) => question.status === "parked")
+      .filter((question) => question.status !== "closed")
       .map((question) => ({
         question_id: question.question_id,
         question: question.question,
-        reason: question.closed_reason ?? "",
+        reason: question.closed_reason ?? (question.status === "open" ? "still on the frontier when the hunt stopped" : ""),
       })),
     checkpoints: [...projection.checkpoints.values()].map((checkpoint) => ({
       checkpoint_id: checkpoint.checkpoint_id,

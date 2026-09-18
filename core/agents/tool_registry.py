@@ -8,7 +8,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
-from core.agents.projections import pack_completed_hunts
+from core.agents.projections import pack_completed_hunts, read_replay
 from core.memory.recall_contract import RECALL_TOOL
 
 logger = logging.getLogger(__name__)
@@ -105,6 +105,32 @@ def _update_case(data: Any, args: Args) -> Args:
     return {"success": data.update_case(case_id, **args), "case_id": case_id}
 
 
+# Missing case or empty records must still be a result: an error here parks the
+# lead before it can start. Empty sections are the answer, not refused.
+def _case_records(args: Args) -> Args:
+    from core.cases.case_records_service import list_escalations, list_tasks
+    from core.storage.schemas.case_entities import CaseEscalationSchema, CaseTaskSchema
+    from core.storage.unit_of_work import unit_of_work
+
+    case_id = str(args.get("case_id") or "")
+    try:
+        tasks = CaseTaskSchema.dump_many(list_tasks(case_id))
+    except Exception:
+        logger.exception("Listing tasks for case %s failed; reporting none", case_id)
+        tasks = []
+    try:
+        with unit_of_work() as session:
+            escalations = CaseEscalationSchema.dump_many(
+                list_escalations(session, case_id)
+            )
+    except Exception:
+        logger.exception(
+            "Listing escalations for case %s failed; reporting none", case_id
+        )
+        escalations = []
+    return {"tasks": tasks, "escalations": escalations}
+
+
 def _add_resolution_step(data: Any, args: Args) -> Args:
     case = data.get_case(args["case_id"])
     if not case:
@@ -120,19 +146,6 @@ def _add_resolution_step(data: Any, args: Args) -> Args:
     )
     data.update_case(args["case_id"], resolution_steps=steps)
     return {"success": True, "case_id": args["case_id"], "total_steps": len(steps)}
-
-
-def _attack_layer(data: Any, args: Args) -> Args:
-    return {
-        "success": True,
-        "layer": {
-            "name": "DeepTempo Findings",
-            "version": "4.5",
-            "domain": "enterprise-attack",
-            "description": "ATT&CK techniques from findings",
-            "techniques": [],
-        },
-    }
 
 
 def _technique_rollup(data: Any, args: Args) -> Args:
@@ -175,7 +188,6 @@ _DATA_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
     ),
     "update_case": _update_case,
     "add_resolution_step": _add_resolution_step,
-    "get_attack_layer": _attack_layer,
     "get_technique_rollup": _technique_rollup,
 }
 
@@ -183,6 +195,19 @@ _DATA_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
 async def _list_completed_hunts(args: Args) -> Any:
     allowed = {key: args[key] for key in ("start", "end", "limit") if key in args}
     return await pack_completed_hunts(**allowed)
+
+
+# None from the read is "nothing to replay"; a model needs a body, not null.
+async def _replay_hunt(args: Args) -> Any:
+    run_id = args.get("run_id")
+    if not run_id:
+        raise TypeError("replay_hunt is missing a required argument: run_id")
+    report = await read_replay(str(run_id), args.get("decision_id") or None)
+    return (
+        report
+        if report is not None
+        else {"error": f"Nothing to replay for run {run_id}"}
+    )
 
 
 _SECURITY_TOOLS = frozenset(
@@ -226,8 +251,23 @@ def _indicator_lookup(args: Args) -> Any:
     ]
 
 
+# Recent feed rows through the coverage check (#905). Proposes; never hunts.
+def _propose_feed_hunts(args: Args) -> Any:
+    from core.threat_intel.threat_feed_service import (
+        RECENT_INDICATOR_LIMIT,
+        propose_hunts_from_recent_indicators,
+    )
+
+    try:
+        limit = int(args.get("limit", RECENT_INDICATOR_LIMIT))
+    except (TypeError, ValueError):
+        return {"error": f"limit must be an integer, got {args.get('limit')!r}"}
+    return propose_hunts_from_recent_indicators(limit=limit)
+
+
 _INTEL_TOOLS: Dict[str, Callable[[Args], Any]] = {
     "lookup_indicators": _indicator_lookup,
+    "propose_feed_hunts": _propose_feed_hunts,
 }
 
 
@@ -242,8 +282,23 @@ def _recall(args: Args) -> Any:
     return recall_entity(args)
 
 
+# Report in, one of three answers out (#903). Reads only; never starts a hunt.
+def _check_hunt_coverage(args: Args) -> Any:
+    from core.memory.hunt_coverage import check_coverage
+
+    try:
+        return check_coverage(
+            report=args.get("report"),
+            entity_keys=args.get("entity_keys") or (),
+            techniques=args.get("techniques") or (),
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+
+
 _MEMORY_TOOLS: Dict[str, Callable[[Args], Any]] = {
     RECALL_TOOL: _recall,
+    "check_hunt_coverage": _check_hunt_coverage,
 }
 
 _APPROVAL_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
@@ -296,6 +351,9 @@ async def execute_backend_tool(
     if skill is not None:
         return skill
 
+    if tool_name == "case_records":
+        return _case_records(args), True
+
     if tool_name in _DATA_TOOLS:
         from core.storage.database_data_service import DatabaseDataService
 
@@ -303,6 +361,9 @@ async def execute_backend_tool(
 
     if tool_name == "list_completed_hunts":
         return await _list_completed_hunts(args), True
+
+    if tool_name == "replay_hunt":
+        return await _replay_hunt(args), True
 
     if tool_name in _SECURITY_TOOLS:
         from core.detections.tools import get_security_detection_tools

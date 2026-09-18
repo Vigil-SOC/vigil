@@ -116,15 +116,3 @@ class SketchMappingSchema(ORMSchema):
     sketch_name: Optional[str] = None
     sketch_url: Optional[str] = None
     created_at: OptDateTime = None
-
-
-class AttackLayerSchema(ORMSchema):
-    """AttackLayer."""
-
-    id: Optional[int] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    layer_data: Optional[Any] = None
-    case_id: Optional[str] = None
-    created_at: OptDateTime = None
-    updated_at: OptDateTime = None

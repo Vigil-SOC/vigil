@@ -148,6 +148,22 @@ class ApprovalActionSchema(ORMSchema):
     idempotency_key: Optional[str] = None
 
 
+class IntakeTriggerSchema(ORMSchema):
+    """IntakeTrigger."""
+
+    id: Optional[int] = None
+    kind: Optional[str] = None
+    state: Optional[str] = None
+    reason: Optional[str] = None
+    finding_id: Optional[str] = None
+    priority: Optional[str] = None
+    payload: JsonDict = Field(default_factory=dict)
+    investigation_id: Optional[str] = None
+    merged_into: Optional[str] = None
+    created_at: OptDateTime = None
+    decided_at: OptDateTime = None
+
+
 class InvestigationSchema(ORMSchema):
     """Investigation."""
 

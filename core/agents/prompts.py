@@ -80,7 +80,7 @@ BASE_PROMPT = """You are a SOC {role} in the Vigil SOC platform.
 <available_tools>
 Use MCP tools (server_tool format):
 - Findings: list_findings, get_finding, create_case, update_case
-- ATT&CK: get_technique_rollup, create_attack_layer
+- ATT&CK: get_technique_rollup
 - Approvals: create_approval_action, list_approval_actions
 - Threat Intel: virustotal, shodan, alienvault tools
 </available_tools>

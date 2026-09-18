@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Iterator, Optional
 
 from mcp.server.mcpserver import MCPServer
 
-from core.agents.projections import pack_completed_hunts
+from core.agents.projections import pack_completed_hunts, read_replay
 from core.time import utcnow
 
 if TYPE_CHECKING:
@@ -119,6 +119,19 @@ async def list_completed_hunts(
     """Return completed threat-hunt projections for an assessment window."""
     try:
         return jdump(await pack_completed_hunts(start=start, end=end, limit=limit))
+    except Exception as e:
+        return jdump({"error": str(e)})
+
+
+@mcp.tool()
+async def replay_hunt(run_id: str, decision_id: Optional[str] = None, **kwargs) -> str:
+    """Rebuild what each decision of a completed hunt was shown (rebuilt, recorded,
+    mismatch, recalled). ``decision_id`` narrows the report to one decision."""
+    try:
+        report = await read_replay(run_id, decision_id)
+        if report is None:
+            return jdump({"error": f"Nothing to replay for run {run_id}"})
+        return jdump(report)
     except Exception as e:
         return jdump({"error": str(e)})
 

@@ -1,14 +1,32 @@
+import { readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
 import type { State } from "../../core/seams.js";
 import { chatServer, chatSpec, memoryFor, type ChatRequest } from "../../serve.js";
+import type { ReplayReport } from "../../workflows/hunt/replay.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 import type { ScriptedTurn } from "../support/scripted-provider.js";
 
 const TOKEN = "a-shared-secret";
 const RUN = "5a2c2d3e-0000-4000-8000-000000000989";
+const HUNT = "5a2c2d3e-0000-4000-8000-000000000890";
+const FIXTURE = join(import.meta.dirname, "..", "fixtures", "replay", "hunt-recall.jsonl.gz");
+
+// The recorded hunt, re-keyed: its run_id is not a uuid and the store assigns
+// seq/ts/schema_version itself, so the envelope is stripped back to a NewEvent.
+function recordedHunt(): NewEvent<unknown>[] {
+  return gunzipSync(readFileSync(FIXTURE))
+    .toString("utf8")
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line) as AgentEvent<unknown>)
+    .map(({ seq: _seq, ts: _ts, schema_version: _schema, ...event }) => ({ ...event, run_id: HUNT }));
+}
 
 const CONFIG = `
 model: anthropic/claude-opus-5
@@ -42,6 +60,10 @@ async function post(body: unknown, token = TOKEN, path = "/chat/stream"): Promis
     headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
+}
+
+async function get(path: string, token = TOKEN): Promise<Response> {
+  return fetch(`${base}${path}`, { headers: { authorization: `Bearer ${token}` } });
 }
 
 function framesIn(text: string): unknown[] {
@@ -119,6 +141,74 @@ describe("who may call it", () => {
       body: "{not json",
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe("replaying what the hunt lead was shown", () => {
+  // The route is the live test: the recorded hunt goes in through the store, the
+  // report comes back over HTTP, and it says what recall-replay.test.ts says.
+  it("rebuilds every decision and the recalled rows from the ledger alone", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+
+    const res = await get(`/runs/${HUNT}/replay`);
+    expect(res.status).toBe(200);
+    const report = (await res.json()) as ReplayReport;
+    expect(report.hunt_id).toMatch(/^hunt-/);
+    expect(report.recalled.join("\n")).toContain("192.0.2.10 is a scheduled backup target");
+    expect(report.decisions.length).toBeGreaterThan(1);
+    expect(report.decisions.every((decision) => decision.mismatch === null)).toBe(true);
+    expect(report.reproduced).toBe(report.decisions.length);
+    expect(await state.read(HUNT)).toHaveLength(recordedHunt().length);
+  });
+
+  it("narrows to one decision and keeps the report-level recall", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    const whole = (await get(`/runs/${HUNT}/replay`).then((res) => res.json())) as ReplayReport;
+    const wanted = whole.decisions[1]!;
+
+    const res = await get(`/runs/${HUNT}/replay?decision_id=${wanted.decision_id}`);
+    expect(res.status).toBe(200);
+    const report = (await res.json()) as ReplayReport;
+    expect(report.decisions).toEqual([wanted]);
+    expect(report.reproduced).toBe(1);
+    expect(report.hunt_id).toBe(whole.hunt_id);
+    expect(report.recalled).toEqual(whole.recalled);
+  });
+
+  it("404s a decision the hunt never made", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    expect((await get(`/runs/${HUNT}/replay?decision_id=not-one`)).status).toBe(404);
+  });
+
+  it("refuses a request with no token", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    expect((await get(`/runs/${HUNT}/replay`, "")).status).toBe(401);
+  });
+
+  it("404s a run that is not a hunt, and one that does not exist", async () => {
+    await listen([{ content: "ok" }]);
+    await post(asked()).then((res) => res.text());
+    expect((await get(`/runs/${RUN}/replay`)).status).toBe(404);
+    expect((await get("/runs/5a2c2d3e-0000-4000-8000-00000000dead/replay")).status).toBe(404);
+  });
+
+  it("502s a hunt-like ledger the fold refuses, rather than hanging", async () => {
+    await listen([]);
+    const [opened] = recordedHunt();
+    await state.append(HUNT, [opened!, { ...opened!, kind: "not-a-kind" as never }]);
+    expect((await get(`/runs/${HUNT}/replay`)).status).toBe(502);
+  });
+
+  // Taking a query here did not loosen the siblings: they still match the raw url.
+  it("leaves the other GET routes refusing a query string", async () => {
+    await listen([]);
+    await state.append(HUNT, recordedHunt());
+    expect((await get(`/runs/${HUNT}/projection?decision_id=x`)).status).toBe(404);
+    expect((await get(`/runs/${HUNT}/projection`)).status).toBe(200);
   });
 });
 

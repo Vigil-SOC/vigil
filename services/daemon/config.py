@@ -1,10 +1,9 @@
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List
 
 from core.config import DEFAULT_REDIS_URL, get_settings
 from core.ingestion.kafka_config import KafkaConfig  # re-exported for DaemonConfig
-from core.llm.defaults import DEFAULT_MODEL
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -90,26 +89,16 @@ class OrchestratorConfig:
     max_iterations_per_agent: int = 50
     max_cost_per_investigation: float = 5.0
     max_total_hourly_cost: float = 20.0
-    max_total_daily_cost: float = 100.0
     max_runtime_per_investigation: int = 3600
     stale_threshold: int = 300
     workdir_base: str = "data/investigations"
-    auto_assign_findings: bool = True
-    auto_assign_severities: List[str] = field(
-        default_factory=lambda: ["critical", "high"]
-    )
     dry_run: bool = False
-    dedup_window_minutes: int = 30
-    agent_loop_delay: int = 2
-    context_max_chars: int = 10000
-    plan_model: str = DEFAULT_MODEL
-    review_model: str = DEFAULT_MODEL
-    # Provider that owns plan_model/review_model. Resolved alongside the model
-    # from ai_model_configs so autonomous investigations can run on
-    # non-Anthropic providers (Ollama/OpenAI/Groq). None means "the default
-    # Anthropic provider" and preserves pre-multi-provider behavior.
-    plan_provider_id: Optional[str] = None
-    review_provider_id: Optional[str] = None
+    # How long a queued trigger may wait, the last-quarter promotion
+    # window, and the queued depth that warrants one human signal.
+    # Constants, not settings: one policy, not an operator dial.
+    intake_ttl_seconds: int = 4 * 3600
+    intake_ttl_promote_fraction: float = 0.25
+    intake_surge_depth: int = 20
 
 
 @dataclass
@@ -199,20 +188,12 @@ class DaemonConfig:
         config.orchestrator.max_total_hourly_cost = (
             settings.orchestrator_max_hourly_cost
         )
-        config.orchestrator.max_total_daily_cost = settings.orchestrator_max_daily_cost
         config.orchestrator.max_runtime_per_investigation = (
             settings.orchestrator_max_runtime
         )
         config.orchestrator.stale_threshold = settings.orchestrator_stale_threshold
         config.orchestrator.workdir_base = settings.orchestrator_workdir
-        config.orchestrator.auto_assign_findings = settings.orchestrator_auto_assign
         config.orchestrator.dry_run = settings.orchestrator_dry_run
-        config.orchestrator.dedup_window_minutes = settings.orchestrator_dedup_window
-        config.orchestrator.agent_loop_delay = settings.orchestrator_agent_loop_delay
-        config.orchestrator.context_max_chars = settings.orchestrator_context_max_chars
-        config.orchestrator.auto_assign_severities = list(
-            settings.orchestrator_auto_severities
-        )
 
         config.llm_queue.redis_url = settings.redis_url or DEFAULT_REDIS_URL
         config.llm_queue.max_concurrent_llm_calls = settings.llm_max_concurrent
@@ -244,58 +225,19 @@ class DaemonConfig:
                     "max_iterations_per_agent": int,
                     "max_cost_per_investigation": float,
                     "max_total_hourly_cost": float,
-                    "max_total_daily_cost": float,
                     "max_runtime_per_investigation": int,
                     "stale_threshold": int,
                     "workdir_base": str,
-                    "auto_assign_findings": bool,
                     "dry_run": bool,
-                    "dedup_window_minutes": int,
-                    "agent_loop_delay": int,
-                    "context_max_chars": int,
-                    "plan_model": str,
-                    "review_model": str,
                 }
                 for key, cast in field_map.items():
                     if key in db_config:
                         setattr(config.orchestrator, key, cast(db_config[key]))
-                if "auto_assign_severities" in db_config:
-                    val = db_config["auto_assign_severities"]
-                    if isinstance(val, list):
-                        config.orchestrator.auto_assign_severities = val
                 logger.info("Orchestrator config overridden from database settings")
         except Exception as e:
             logger.debug(
                 f"Could not load orchestrator config from DB (using env/defaults): {e}"
             )
-
-        # GH #89 — ai_model_configs takes precedence over orchestrator.settings
-        # for plan_model/review_model. This is the same override layer that
-        # powers the "Model Assignment" section of the AI Config tab.
-        try:
-            from core.llm.providers.registry import get_registry
-
-            registry = get_registry()
-            plan_pick = registry.resolve_model_for_component("orchestrator_plan")
-            review_pick = registry.resolve_model_for_component("orchestrator_review")
-            # resolve_model_for_component returns (provider_id, model_id). Keep
-            # BOTH: the provider_id is what lets the daemon route a non-Anthropic
-            # model through Bifrost instead of silently assuming Anthropic.
-            if plan_pick is not None:
-                config.orchestrator.plan_provider_id = plan_pick[0]
-                config.orchestrator.plan_model = plan_pick[1]
-            if review_pick is not None:
-                config.orchestrator.review_provider_id = review_pick[0]
-                config.orchestrator.review_model = review_pick[1]
-            if plan_pick or review_pick:
-                logger.info(
-                    "Orchestrator models resolved from ai_model_configs: "
-                    "plan=%s review=%s",
-                    config.orchestrator.plan_model,
-                    config.orchestrator.review_model,
-                )
-        except Exception as e:
-            logger.debug(f"ai_model_configs override skipped: {e}")
 
         # Kafka: merge non-secret DB settings on top of env defaults
         try:

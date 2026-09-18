@@ -114,10 +114,6 @@ class SOCDaemon:
         self._poller.set_output_queue(self._processor.input_queue)
         self._kafka_ingestor.set_output_queue(self._processor.input_queue)
         self._processor.set_response_queue(self._responder.input_queue)
-        self._processor.set_investigation_queue(self._orchestrator.investigation_queue)
-        # The same intake an alert-driven investigation uses, so a scheduled hunt
-        # inherits the orchestrator's budget and reconcile.
-        self._scheduler.set_investigation_queue(self._orchestrator.investigation_queue)
 
         # Wire up metrics server with component references
         if self._metrics_server:
@@ -183,7 +179,11 @@ class SOCDaemon:
             tasks.append(
                 asyncio.create_task(self._metrics_server.run(self._shutdown_event))
             )
-            logger.info(f"Metrics server started on port {self.config.metrics.port}")
+            logger.info(
+                "Metrics server started (health :%d, prometheus :%d)",
+                self._metrics_server.health_port,
+                self._metrics_server.metrics_port,
+            )
 
         logger.info("SOC Daemon fully operational")
 

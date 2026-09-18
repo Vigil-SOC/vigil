@@ -245,6 +245,7 @@ class Settings(BaseSettings):
     # proposal goes stale in days (#675).
     daemon_approval_expiry_days: int = 7
     daemon_metrics_enabled: bool = True
+    daemon_metrics_port: int = 9090
     daemon_health_host: str = "localhost"
     daemon_health_port: int = 9091
 
@@ -255,16 +256,10 @@ class Settings(BaseSettings):
     orchestrator_max_iterations: int = 50
     orchestrator_max_cost: float = 5.0
     orchestrator_max_hourly_cost: float = 20.0
-    orchestrator_max_daily_cost: float = 100.0
     orchestrator_max_runtime: int = 3600
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
-    orchestrator_auto_assign: bool = True
-    orchestrator_auto_severities: Annotated[List[str], NoDecode] = ["critical", "high"]
     orchestrator_dry_run: bool = False
-    orchestrator_dedup_window: int = 30
-    orchestrator_agent_loop_delay: int = 2
-    orchestrator_context_max_chars: int = 10000
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False
@@ -302,7 +297,6 @@ class Settings(BaseSettings):
     @field_validator(
         "extension_connector_allowlist",
         "daemon_escalate_severities",
-        "orchestrator_auto_severities",
         "kafka_topics",
         mode="before",
     )

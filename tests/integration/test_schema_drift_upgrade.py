@@ -122,7 +122,6 @@ def drifted_db(postgres_available):
         # create_all cannot provision from a bare database on its own: the
         # findings GIN index needs pg_trgm or it fails with
         # 'operator class gin_trgm_ops does not exist'.
-        c.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         c.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
         c.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
         c.commit()

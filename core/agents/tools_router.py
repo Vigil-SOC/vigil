@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from core.agents.internal_auth import authorise
 from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, split_tool_name
-from core.agents.tool_registry import execute_backend_tool
+from core.agents.tool_registry import MANIFEST, execute_backend_tool
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
 from core.routing import Auth, RouterMeta
@@ -104,16 +104,34 @@ _ROW_CAP_ARGS = ("limit", "max_results", "max_count")
 # keeps its own number. What ignores the cap is still truncated below.
 #
 # Only names the call already carries are lowered: setting all of them would hand a
-# tool a keyword its signature does not take. "limit" is added when it names none.
-def _bounded(args: Dict[str, Any], max_rows: int) -> Dict[str, Any]:
+# tool a keyword its signature does not take. When the call names none, a cap is
+# attached only if the tool's schema already declares one — get_finding takes
+# finding_id alone, and injecting limit made every point-read invalid_args.
+def _schema_row_caps(tool: str) -> Optional[Tuple[str, ...]]:
+    spec = MANIFEST.get(tool)
+    if spec is None:
+        return None
+    properties = (spec.get("input_schema") or spec.get("inputSchema") or {}).get(
+        "properties"
+    ) or {}
+    return tuple(name for name in _ROW_CAP_ARGS if name in properties)
+
+
+def _bounded(args: Dict[str, Any], max_rows: int, tool: str) -> Dict[str, Any]:
     named = [name for name in _ROW_CAP_ARGS if name in args]
-    if not named:
+    if named:
+        lowered = {
+            name: min(args[name], max_rows) if isinstance(args[name], int) else max_rows
+            for name in named
+        }
+        return {**args, **lowered}
+
+    declared = _schema_row_caps(tool)
+    if declared is None:
         return {**args, "limit": max_rows}
-    lowered = {
-        name: min(args[name], max_rows) if isinstance(args[name], int) else max_rows
-        for name in named
-    }
-    return {**args, **lowered}
+    if not declared:
+        return {**args}
+    return {**args, declared[0]: max_rows}
 
 
 # The telemetry plane the rows came out of, which is what a hunt counts corroboration
@@ -130,7 +148,7 @@ def _source_system(tool: str, registry: MCPRegistry) -> str:
 # does not get a second timeout by virtue of living on the other side.
 async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, str]:
     seconds = body.bounds.timeout_ms / 1000
-    args = _bounded(body.args, body.bounds.max_rows)
+    args = _bounded(body.args, body.bounds.max_rows, body.tool)
 
     result, handled = await asyncio.wait_for(
         execute_backend_tool(body.tool, args), timeout=seconds

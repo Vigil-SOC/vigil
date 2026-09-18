@@ -15,7 +15,7 @@ openai>=1.40.0
 httpx>=0.27.0
 # No longer used by any application code — only the scripts/ utilities.
 requests>=2.34.2
-urllib3>=2.0.0
+urllib3>=2.7.0
 boto3>=1.43.77
 aiohttp>=3.9.0
 
@@ -35,7 +35,6 @@ email-validator>=2.0.0
 # Database
 sqlalchemy>=2.0.52
 psycopg2-binary>=2.9.12
-pgvector>=0.3.0  # pgvector column type + <=> ANN for finding embeddings
 
 # Optional proxy hops in front of the metadata DB and DB-shaped
 # integrations (Settings → System → Database, plus per-integration
@@ -59,7 +58,7 @@ socksio>=1.0.0
 uv>=0.5.0
 
 # Authentication
-bcrypt>=4.2.0
+bcrypt>=5.0.0
 pyjwt>=2.13.0
 pyotp>=2.9.0
 cryptography>=42.0.0
@@ -96,7 +95,7 @@ stix2>=3.0.2
 # PDF report generation (chat reports, case reports). The feature ships in
 # services/api/routers/claude.py → /generate-chat-report; without this dep the endpoint
 # returns 503 even though the feature is wired into the UI.
-reportlab>=5.0.0
+reportlab>=5.0.1
 
 # Monitoring & Observability
 sentry-sdk>=1.40.0
@@ -110,7 +109,7 @@ opentelemetry-exporter-otlp-proto-http>=1.25.0
 opentelemetry-exporter-prometheus>=0.46b0
 opentelemetry-instrumentation-fastapi>=0.46b0
 opentelemetry-instrumentation-sqlalchemy>=0.46b0
-opentelemetry-instrumentation-redis>=0.46b0
+opentelemetry-instrumentation-redis>=0.65b0
 opentelemetry-instrumentation-logging>=0.46b0
 opentelemetry-semantic-conventions-ai>=0.5.1
 

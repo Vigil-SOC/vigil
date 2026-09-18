@@ -14,6 +14,7 @@ import { runChat, type Turn } from "./workflows/chat/workflow.js";
 import { harnessFor, type HarnessFactory } from "./harness.js";
 import { narrateRun } from "./workflows/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
+import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
 
 const CHAT = "/chat/stream";
 // GET /runs/<id>/projection -- what a supervisor outside this process reads.
@@ -21,6 +22,9 @@ const PROJECTION = /^\/runs\/([0-9a-fA-F-]{36})\/projection$/;
 // GET /runs/<id>/distil -- what episodic memory reads once the run has ended.
 const DISTIL = /^\/runs\/([0-9a-fA-F-]{36})\/distil$/;
 const NARRATE = /^\/runs\/([0-9a-fA-F-]{36})\/narrate$/;
+// GET /runs/<id>/replay[?decision_id=...] -- what each decision was shown, rebuilt
+// from the ledger. Matched on the pathname, since this one takes a query.
+const REPLAY = /^\/runs\/([0-9a-fA-F-]{36})\/replay$/;
 // A conversation is prose and a config, not an upload. Anything larger is a
 // mistake or an attack, and either way it is refused before it is parsed.
 const MAX_BODY = 1_000_000;
@@ -167,6 +171,33 @@ async function writeNarrative(state: State, runId: string, res: ServerResponse, 
   }
 }
 
+// What the hunt lead was shown at each decision, rebuilt from the ledger alone: no
+// Memory, no verify, no append. Same gate and narrowing as writeNarrative.
+async function readReplay(state: State, runId: string, decisionId: string | null, res: ServerResponse): Promise<void> {
+  const events = await state.read(runId);
+  const opened = events[0];
+  if (opened === undefined || !isHuntLike(opened.run_kind)) return refuse(res, 404, `no hunt to replay: ${runId}`);
+
+  let report: ReplayReport;
+  try {
+    report = replay(events as readonly HuntEvent[]);
+  } catch (error) {
+    // Hunt-like is not the same as foldable: a ledger fold() refuses is a 502, as
+    // writeNarrative answers, rather than a rejection nothing catches.
+    return refuse(res, 502, error instanceof Error ? error.message : String(error));
+  }
+  if (decisionId !== null) {
+    const one = report.decisions.filter((decision) => decision.decision_id === decisionId);
+    if (one.length === 0) return refuse(res, 404, `no such decision in ${runId}: ${decisionId}`);
+    // Counts follow the filtered list; hunt_id and recalled are report-level and stay.
+    report.decisions = one;
+    report.reproduced = one.filter((decision) => decision.mismatch === null).length;
+    report.inexact = one.filter((decision) => !decision.exact).length;
+  }
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify(report));
+}
+
 async function openChat(state: State, req: IncomingMessage, res: ServerResponse, build: HarnessFactory): Promise<void> {
   let request: ChatRequest;
   try {
@@ -203,6 +234,18 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const asked = req.method === "POST" ? NARRATE.exec(url) : null;
       if (asked !== null) return writeNarrative(state, asked[1] as string, res, build);
+
+      // Parsed rather than matched raw because this route takes a query. Node accepts
+      // request-targets URL rejects (absolute-form with a bad host), so a throw here
+      // is a 400 rather than an unhandled rejection.
+      let parsed: URL;
+      try {
+        parsed = new URL(url, "http://local");
+      } catch {
+        return refuse(res, 400, `not a request path: ${url}`);
+      }
+      const replayed = req.method === "GET" ? REPLAY.exec(parsed.pathname) : null;
+      if (replayed !== null) return readReplay(state, replayed[1] as string, parsed.searchParams.get("decision_id"), res);
 
       return refuse(res, 404, `no such route: ${req.method} ${url}`);
     })();

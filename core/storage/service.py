@@ -426,18 +426,6 @@ class DatabaseService:
                 session.expunge(finding)
             return findings
 
-    @default_on_error(dict)
-    def get_technique_max_confidence(self) -> Dict[str, float]:
-        """Max confidence per technique_id across all prediction rows."""
-        with self.db_manager.session_scope() as session:
-            rows = session.execute(
-                select(
-                    FindingMitrePrediction.technique_id,
-                    func.max(FindingMitrePrediction.confidence),
-                ).group_by(FindingMitrePrediction.technique_id)
-            ).all()
-            return {tid: float(conf) for tid, conf in rows}
-
     @default_on_error(list)
     def get_technique_severity_counts(
         self,
@@ -468,18 +456,6 @@ class DatabaseService:
                 (tid, severity, int(count))
                 for tid, severity, count in session.execute(stmt).all()
             ]
-
-    @default_on_error(dict)
-    def get_technique_occurrence_counts(self) -> Dict[str, int]:
-        """Finding-row counts per technique_id."""
-        with self.db_manager.session_scope() as session:
-            rows = session.execute(
-                select(
-                    FindingMitrePrediction.technique_id,
-                    func.count(),
-                ).group_by(FindingMitrePrediction.technique_id)
-            ).all()
-            return {tid: int(count) for tid, count in rows}
 
     # ========== Case Operations ==========
 

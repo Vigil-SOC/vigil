@@ -2,63 +2,27 @@ import axios from 'axios'
 import { basePath } from '../config/basePath'
 
 /**
- * Client for the Skills API (GitHub issue #82).
+ * Read-only client for the Skills API.
  *
- * Skills are reusable, parameterized SOC capabilities that agents/workflows
- * will eventually invoke. The MVP surface is CRUD + AI-assisted generation.
+ * Skills are files loaded from the repository or a mounted directory; the
+ * console lists them and nothing more (epic #882, decision 7).
  */
 
-export const SKILL_CATEGORIES = [
-  'detection',
-  'enrichment',
-  'response',
-  'reporting',
-  'custom',
-] as const
-
-export type SkillCategory = typeof SKILL_CATEGORIES[number]
-
-export interface SkillDraft {
+/**
+ * Wire row from GET /api/skills. Tolerates both the current DB row
+ * (skill_id, category, version, is_active) and the future file-loader shape
+ * (name, description, source_path). `path` is a placeholder for whatever
+ * field name the loader settles on; #928 regenerates the real type.
+ */
+export interface ApiSkill {
+  skill_id?: string
   name: string
-  description?: string
-  category: SkillCategory
-  input_schema: Record<string, any>
-  output_schema: Record<string, any>
-  required_tools: string[]
-  prompt_template: string
-  execution_steps: Record<string, any>[]
+  description?: string | null
+  source_path?: string | null
+  path?: string | null
+  category?: string
+  version?: number
   is_active?: boolean
-}
-
-export interface Skill extends SkillDraft {
-  skill_id: string
-  created_by?: string | null
-  version: number
-  created_at?: string | null
-  updated_at?: string | null
-}
-
-export interface SkillGenerateRequest {
-  description: string
-  category?: SkillCategory
-  conversation_history?: { role: string; content: string }[] | null
-  user_response?: string | null
-}
-
-export interface SkillGenerateResponse {
-  success: boolean
-  needs_clarification: boolean
-  message?: string
-  conversation_history?: { role: string; content: string }[]
-  skill?: SkillDraft
-  error?: string
-}
-
-export interface SkillImportResult {
-  skill_id: string
-  name: string
-  version: number
-  replaced: boolean
 }
 
 const client = axios.create({
@@ -75,31 +39,5 @@ client.interceptors.request.use((config) => {
 })
 
 export const skillsApi = {
-  generate: (body: SkillGenerateRequest) =>
-    client.post<SkillGenerateResponse>('/generate', body).then((r) => r.data),
-
-  list: (params?: { category?: SkillCategory; is_active?: boolean }) =>
-    client.get<Skill[]>('', { params }).then((r) => r.data),
-
-  get: (skillId: string) =>
-    client.get<Skill>(`/${skillId}`).then((r) => r.data),
-
-  create: (body: SkillDraft & { created_by?: string }) =>
-    client.post<Skill>('', body).then((r) => r.data),
-
-  update: (skillId: string, patch: Partial<SkillDraft>) =>
-    client.put<Skill>(`/${skillId}`, patch).then((r) => r.data),
-
-  remove: (skillId: string) =>
-    client.delete<{ success: boolean; skill_id: string }>(`/${skillId}`).then((r) => r.data),
-
-  importZip: (file: File) => {
-    const form = new FormData()
-    form.append('file', file)
-    return client
-      .post<SkillImportResult>('/import', form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      })
-      .then((r) => r.data)
-  },
+  list: () => client.get<ApiSkill[]>('').then((r) => r.data),
 }

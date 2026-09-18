@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.agents.projections import read_projection
+from core.agents.projections import read_projection, read_replay
 from core.api.v1.workflows_router import (
     _is_hunt,
 )
@@ -71,6 +71,14 @@ class WorkflowExecuteRequest(BaseModel):
     # Whether the hunt stops and asks before it spends. The policy defaults to auto,
     # so a headless run advances with nobody at a terminal.
     approve_hypotheses: Optional[bool] = None
+
+
+class HuntCoverageRequest(BaseModel):
+    """A threat report and/or what was already extracted from it (#903)."""
+
+    report: Optional[str] = None
+    entity_keys: List[str] = Field(default_factory=list)
+    techniques: List[str] = Field(default_factory=list)
 
 
 class WorkflowPhaseSchema(BaseModel):
@@ -268,6 +276,45 @@ async def generate_workflow(
             detail=result.get("error") or "Workflow generation failed",
         )
     return {"draft": result["draft"]}
+
+
+# -----------------------------------------------------------------------------
+# Hunt coverage (#903)
+# -----------------------------------------------------------------------------
+
+
+@router.post("/workflows/threat-hunt/coverage")
+async def check_hunt_coverage(payload: HuntCoverageRequest):
+    """Say whether a threat report is already hunted: ``running``, ``concluded``
+    or ``uncovered``. Read-only -- the caller decides whether to POST the
+    returned ``proposal`` to ``/workflows/threat-hunt/execute``.
+
+    The same function as the ``check_hunt_coverage`` agent tool, imported here
+    so the router does not pull a database session factory in at import.
+    """
+    from core.memory.hunt_coverage import check_coverage
+
+    try:
+        return check_coverage(
+            report=payload.report,
+            entity_keys=payload.entity_keys,
+            techniques=payload.techniques,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.get("/workflows/threat-hunt/feed-proposals")
+async def propose_feed_hunts(limit: int = 200):
+    """Recent feed indicators nobody has hunted, each with a ``proposal`` body
+    for ``/workflows/threat-hunt/execute`` (#905). Read-only, like the
+    coverage route above and the ``propose_feed_hunts`` agent tool.
+    """
+    from core.threat_intel.threat_feed_service import (
+        propose_hunts_from_recent_indicators,
+    )
+
+    return propose_hunts_from_recent_indicators(limit=limit)
 
 
 # -----------------------------------------------------------------------------
@@ -484,6 +531,32 @@ async def narrate_workflow_run(
 
     await _restate_summary(run_id, run_service)
     return {"success": True, "narrative": narrative}
+
+
+@router.get("/workflows/runs/{run_id}/replay")
+async def replay_workflow_run(
+    run_id: str,
+    decision_id: Optional[str] = None,
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+):
+    """Rebuild what each decision of a hunt was shown and compare it to the record.
+
+    Not part of the polled run detail: this folds the whole ledger on the agent
+    side, so it is answered only when an operator asks. Serve decides what is
+    hunt-like; a run with nothing to replay is a 404 here too.
+    """
+    if not run_service.get_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        report = await read_replay(run_id, decision_id)
+    except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
+        logger.error("could not replay run %s: %s", run_id, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    if report is None:
+        raise HTTPException(
+            status_code=404, detail=f"Nothing to replay for run: {run_id}"
+        )
+    return report
 
 
 # result_summary was rendered with the account this rewrite supersedes. The console

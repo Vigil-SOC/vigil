@@ -39,9 +39,9 @@ x-agent-env: &agent-env
 
 services:
   postgres:
-    # pgvector-capable image (findings.embedding uses vector(768) + HNSW).
-    # The stock postgres:16 image does NOT ship the `vector` extension.
-    image: pgvector/pgvector:pg16
+    # Stock Postgres, matching db-seed and the desktop stack. The schema only
+    # needs uuid-ossp and pg_trgm; the pgvector store was LogLM's and is gone.
+    image: postgres:16-alpine
     container_name: deeptempo-postgres
     environment:
       POSTGRES_DB: deeptempo_soc
@@ -166,6 +166,10 @@ services:
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       - AGENT_URL=http://agent-serve:6989
+      # Metrics: GET /metrics on :6987 serves the OTEL registry once the flag is
+      # on; the OTLP push needs the collector from --profile observability.
+      - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - PYTHONUNBUFFERED=1
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
       - SSL_CERT_FILE
@@ -184,8 +188,24 @@ services:
     networks:
       - deeptempo-network
 
+  # ─── Daemon layer (--profile daemon) ──────────────────────────────────────
+  # Default `up` is the investigation set: postgres, db-seed, redis, bifrost,
+  # backend, agent-worker, agent-serve. Incident response never touches these
+  # two: workflows enqueue BullMQ `agent-runs` to agent-worker and AGENT_URL is
+  # agent-serve. soc-daemon (federation + auto-enrich) and llm-worker (ARQ
+  # drain) share one profile because the daemon's processor is the ARQ
+  # producer that matters (#902).
+  #
+  # Known default-set side effect: services/api/routers/analytics.py ->
+  # AIInsightsService.submit_insights also enqueues to ARQ. Without
+  # `--profile daemon` the Analytics AI-insights panel stays empty/stale — the
+  # background refresh times out and logs, the endpoint still returns.
+  # `compose up -d soc-daemon` by name still works (Compose enables a named
+  # service's profiles automatically).
+
   # SOC Daemon - Autonomous monitoring and response
   soc-daemon:
+    profiles: [daemon]
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.daemon
@@ -206,6 +226,10 @@ services:
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       # Redis (LLM queue)
       - REDIS_URL=redis://redis:6379/0
+      # Same seam as backend. localhost:6989 is the host-run default; without
+      # these, _read_fold cannot reach agent-serve and completed runs stay executing.
+      - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:-}
+      - AGENT_URL=http://agent-serve:6989
       # Polling intervals (seconds)
       - DAEMON_SPLUNK_POLL_INTERVAL=${DAEMON_SPLUNK_POLL_INTERVAL:-300}
       - DAEMON_CROWDSTRIKE_POLL_INTERVAL=${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
@@ -231,6 +255,10 @@ services:
       # Metrics / Health
       - DAEMON_METRICS_ENABLED=${DAEMON_METRICS_ENABLED:-true}
       - DAEMON_HEALTH_PORT=${DAEMON_HEALTH_PORT:-9091}
+      - DAEMON_METRICS_PORT=${DAEMON_METRICS_PORT:-9090}
+      # Observability (see backend)
+      - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       # Webhook
       - DAEMON_WEBHOOK_ENABLED=${DAEMON_WEBHOOK_ENABLED:-true}
       - DAEMON_WEBHOOK_PORT=${DAEMON_WEBHOOK_PORT:-8081}
@@ -266,7 +294,7 @@ services:
       - KAFKA_SESSION_TIMEOUT_MS=${KAFKA_SESSION_TIMEOUT_MS:-30000}
     ports:
       - "8081:8081"  # Webhook ingestion
-      - "9090:9090"  # Prometheus /metrics (OTEL PrometheusMetricReader)
+      - "9090:9090"  # Prometheus /metrics (DAEMON_METRICS_PORT)
       - "9091:9091"  # Health /health + /status
     depends_on:
       postgres:
@@ -281,6 +309,7 @@ services:
 
   # ARQ Worker - Processes LLM requests from the queue
   llm-worker:
+    profiles: [daemon]
     build:
       context: ../..
       dockerfile: infra/docker/Dockerfile.backend
@@ -303,6 +332,10 @@ services:
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
       - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
       - REDIS_URL=redis://redis:6379/0
+      # No HTTP port here: worker metrics reach Prometheus through the OTLP
+      # push to the collector, scraped at otel-collector:8889.
+      - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - PYTHONUNBUFFERED=1
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
       - SSL_CERT_FILE

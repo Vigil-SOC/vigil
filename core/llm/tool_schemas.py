@@ -264,6 +264,20 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
+        "name": "case_records",
+        "description": "Read the case records held for an investigation.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "case_id": {
+                    "type": "string",
+                    "description": "The case whose records to read.",
+                }
+            },
+            "required": ["case_id"],
+        },
+    },
+    {
         "name": "create_case",
         "description": "Create a new investigation case. Use this to organize related findings into a case for tracking and investigation.",
         "input_schema": {
@@ -376,25 +390,34 @@ DEEPTEMPO_FINDING_TOOLS = [
             "required": ["start", "end"],
         },
     },
+    {
+        "name": "replay_hunt",
+        "description": (
+            "Replay a completed threat hunt: for each decision the hunt lead "
+            "took, the digest it was shown is rebuilt from the ledger and "
+            "compared with the one recorded (rebuilt, recorded, mismatch), "
+            "alongside what memory recalled for the hunt. Pass decision_id "
+            "to narrow the report to one decision."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "run_id": {
+                    "type": "string",
+                    "description": "Workflow run id of the hunt (a uuid)",
+                },
+                "decision_id": {
+                    "type": "string",
+                    "description": "Replay only this decision",
+                },
+            },
+            "required": ["run_id"],
+        },
+    },
 ]
 
 # Attack Layer Tools
 ATTACK_LAYER_TOOLS = [
-    {
-        "name": "get_attack_layer",
-        "description": "Get MITRE ATT&CK Navigator layer JSON showing coverage of techniques. Use this to visualize detection coverage in ATT&CK Navigator.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "layer_type": {
-                    "type": "string",
-                    "enum": ["coverage", "findings", "detections"],
-                    "description": "Type of layer to generate",
-                    "default": "coverage",
-                }
-            },
-        },
-    },
     {
         "name": "get_technique_rollup",
         "description": "Get rollup statistics for MITRE techniques showing finding counts and severity distribution.",
@@ -515,7 +538,33 @@ THREAT_INTEL_TOOLS = [
             },
             "required": ["values"],
         },
-    }
+    },
+    {
+        "name": "propose_feed_hunts",
+        "description": (
+            "Which recently fed threat indicators has nobody hunted? Reads the "
+            "newest rows of Vigil's threat-indicator database and runs each "
+            "through the same coverage check as `check_hunt_coverage`. Returns "
+            "one entry per uncovered indicator with its Entity Key, the feed row "
+            "(type, value, source, last_seen) and a `proposal` body for "
+            "POST /api/workflows/threat-hunt/execute; indicators already "
+            "`running` or `concluded` are counted and omitted. Read-only: this "
+            "never starts a hunt."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "How many of the most recent indicators to classify "
+                        "(capped at 200)"
+                    ),
+                    "default": 200,
+                },
+            },
+        },
+    },
 ]
 
 # Episodic memory (#732). Reading it is a backend tool rather than an MCP server
@@ -538,7 +587,40 @@ MEMORY_TOOLS = [
             "`unknown`."
         ),
         "input_schema": RECALL_PARAMETERS,
-    }
+    },
+    {
+        "name": "check_hunt_coverage",
+        "description": (
+            "Before proposing a hunt from a threat report, ask whether one already "
+            "covers it. Pass the report text (STIX bundle or plain text) and/or "
+            "already-extracted Entity Keys (`type:value`) and ATT&CK technique ids. "
+            "Answers `running` (a hunt is on it now; extend that run via "
+            "POST /api/agent-runs/{run_id}/directives kind `extend`), `concluded` "
+            "(a past hunt reached a Verdict; rows carry outcome, date and "
+            "origin_run_id) or `uncovered`. The last two include a `proposal` body "
+            "for POST /api/workflows/threat-hunt/execute. Matched and unmatched "
+            "keys and techniques are listed. Read-only: this never starts a hunt."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "report": {
+                    "type": "string",
+                    "description": "The report: a STIX 2.x bundle or plain text",
+                },
+                "entity_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Entity Keys already extracted, as `type:value`",
+                },
+                "techniques": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "ATT&CK technique ids already extracted (T1566)",
+                },
+            },
+        },
+    },
 ]
 
 # Combine all tools

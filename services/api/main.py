@@ -29,11 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
-from core.platform.monitoring import (
-    PROMETHEUS_AVAILABLE,
-    get_metrics_response,
-    init_sentry,
-)
+from core.platform.monitoring import get_metrics_response, init_sentry
 from core.version import __version__
 from services.api.discovery import mount_routers
 from services.api.errors import register_exception_handlers
@@ -71,9 +67,6 @@ PUBLIC_API_PATHS: frozenset[str] = frozenset(
         "/api/integrations/vstrike/findings",
     }
 )
-
-if PROMETHEUS_AVAILABLE:
-    from core.platform.monitoring import PrometheusMiddleware
 
 # Initialize telemetry before creating the FastAPI app so instrumentation
 # is registered before the first request handler is defined.
@@ -128,11 +121,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 # route. Registered before the routers so every mounted route inherits it.
 register_exception_handlers(app)
 
-# Instrument FastAPI with OTEL tracing (health + metrics endpoints excluded)
+# Instrument FastAPI with OTEL tracing and http.server.* metrics (health +
+# metrics endpoints excluded). This is the HTTP signal on /metrics; there is
+# no prometheus_client middleware alongside it.
 try:
-    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentation
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-    FastAPIInstrumentation().instrument_app(
+    FastAPIInstrumentor().instrument_app(
         app,
         excluded_urls="api/health,metrics",
     )
@@ -180,9 +175,6 @@ app.add_middleware(CSRFMiddleware)
 # responses too (CORSMiddleware short-circuits OPTIONS without calling inner
 # middleware, so anything added before CORS would be skipped on preflight).
 app.add_middleware(SecurityHeadersMiddleware)
-
-if PROMETHEUS_AVAILABLE:
-    app.add_middleware(PrometheusMiddleware)
 
 # Mount every discovered router — colocated in core/<domain>/ or parked in
 # services/api/routers/ (issues #478, #488). Each module declares its
@@ -383,7 +375,7 @@ def _build_services(app: FastAPI):
     from core.integrations.mcp.client import build_mcp_client, set_process_mcp_client
     from core.integrations.mcp.registry import MCPRegistry
     from core.platform.demo_data_service import DemoDataService
-    from core.response.approval_service import ApprovalService
+    from core.response.approval_service import ApprovalService, register_pending_gauge
     from core.workflows.custom_workflow_service import CustomWorkflowService
     from core.workflows.workflow_ai_generator import WorkflowAIGenerator
     from core.workflows.workflow_run_service import WorkflowRunService
@@ -393,6 +385,7 @@ def _build_services(app: FastAPI):
     set_process_mcp_client(app.state.mcp_client)
 
     app.state.approvals = ApprovalService()
+    register_pending_gauge(app.state.approvals)
     app.state.custom_workflows = CustomWorkflowService()
     app.state.detection_rules = DetectionRulesService()
     app.state.integration_bridge = IntegrationBridgeService()

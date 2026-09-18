@@ -4,7 +4,6 @@ import { Icon } from '../../shared/icons'
 import {
   Field,
   NumberInput,
-  Select,
   SettingsCard,
   TextInput,
   Toggle,
@@ -17,8 +16,6 @@ import {
 } from './useSettings'
 import type { SectionProps } from './types'
 
-const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low']
-
 type PresetKey = 'conservative' | 'balanced' | 'aggressive'
 type PresetValues = Pick<
   OrchestratorConfig,
@@ -27,7 +24,6 @@ type PresetValues = Pick<
   | 'max_runtime_per_investigation'
   | 'max_cost_per_investigation'
   | 'max_total_hourly_cost'
-  | 'max_total_daily_cost'
 >
 
 const PRESETS = {
@@ -40,31 +36,28 @@ const PRESETS = {
       max_runtime_per_investigation: 1800,
       max_cost_per_investigation: 1.0,
       max_total_hourly_cost: 5.0,
-      max_total_daily_cost: 25.0,
     },
   },
   balanced: {
     label: 'Balanced',
-    summary: 'Recommended · 3 agents · $20/hr · $100/day',
+    summary: 'Recommended · 3 agents · $20/hr',
     values: {
       max_concurrent_agents: 3,
       max_iterations_per_agent: 50,
       max_runtime_per_investigation: 3600,
       max_cost_per_investigation: 5.0,
       max_total_hourly_cost: 20.0,
-      max_total_daily_cost: 100.0,
     },
   },
   aggressive: {
     label: 'Aggressive',
-    summary: 'Broad coverage · 5 agents · $60/hr · $300/day',
+    summary: 'Broad coverage · 5 agents · $60/hr',
     values: {
       max_concurrent_agents: 5,
       max_iterations_per_agent: 100,
       max_runtime_per_investigation: 7200,
       max_cost_per_investigation: 15.0,
       max_total_hourly_cost: 60.0,
-      max_total_daily_cost: 300.0,
     },
   },
 } satisfies Record<PresetKey, { label: string; summary: string; values: PresetValues }>
@@ -88,7 +81,7 @@ interface NumOpts {
 }
 
 export default function AutoInvestigateSection({ notify }: SectionProps) {
-  const { config, setConfig, status, models, phase, save } = useOrchestrator()
+  const { config, setConfig, status, phase, save } = useOrchestrator()
   const lastSaved = useRef<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
   const [advanced, setAdvanced] = useState(false)
 
@@ -123,13 +116,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
 
   const activePreset = detectActivePreset(config)
 
-  const toggleSeverity = (sev: string) => {
-    const cur = config.auto_assign_severities
-    applyAndSave({
-      auto_assign_severities: cur.includes(sev) ? cur.filter((s) => s !== sev) : [...cur, sev],
-    })
-  }
-
   const numField = (label: string, field: keyof OrchestratorConfig, opts: NumOpts = {}) => {
     const unlimited = Boolean(opts.allowUnlimited) && (config[field] as number) === 0
     return (
@@ -159,26 +145,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
             Unlimited
           </span>
         )}
-      </Field>
-    )
-  }
-
-  const modelField = (label: string, field: 'plan_model' | 'review_model', hint: string) => {
-    const current = config[field]
-    const ids = models.map((m) => m.model_id)
-    const shown = !current || ids.includes(current) ? ids : [...ids, current]
-    const options = shown.map((id) => {
-      const info = models.find((m) => m.model_id === id)
-      return { value: id, label: info?.display_name || id }
-    })
-    return (
-      <Field label={label} hint={hint}>
-        <Select
-          value={current}
-          options={options}
-          placeholder={options.length ? 'Select a model…' : 'No models — add a provider in AI Config'}
-          onSelect={(v) => applyAndSave({ [field]: v })}
-        />
       </Field>
     )
   }
@@ -217,29 +183,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           checked={config.dry_run}
           onChange={(v) => applyAndSave({ dry_run: v })}
         />
-        <ToggleRow
-          label="Auto-assign new findings for investigation"
-          checked={config.auto_assign_findings}
-          onChange={(v) => applyAndSave({ auto_assign_findings: v })}
-        />
-
-        <div className="mt-4">
-          <span className="text-[13px] text-tx-2">Auto-investigate severities</span>
-          <div className="flex gap-2 flex-wrap mt-2">
-            {ALL_SEVERITIES.map((sev) => {
-              const on = config.auto_assign_severities.includes(sev)
-              return (
-                <button
-                  key={sev}
-                  className={`chip${on ? ' sel' : ''}`}
-                  onClick={() => toggleSeverity(sev)}
-                >
-                  {sev.charAt(0).toUpperCase() + sev.slice(1)}
-                </button>
-              )
-            })}
-          </div>
-        </div>
       </SettingsCard>
 
       <SettingsCard
@@ -281,7 +224,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
 
       <SettingsCard
         title="Advanced"
-        desc="Fine-tune limits, timing, models, and storage."
+        desc="Fine-tune limits, timing, and storage."
         actions={
           <button className="btn ghost" onClick={() => setAdvanced((a) => !a)}>
             <Icon name={advanced ? 'chevD' : 'chevR'} /> {advanced ? 'Hide' : 'Show'}
@@ -320,9 +263,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
                 {numField('Hourly cost limit', 'max_total_hourly_cost', {
                   min: 1, max: 500, unit: '$', hint: 'Pause intake if exceeded', allowUnlimited: true,
                 })}
-                {numField('Daily cost limit', 'max_total_daily_cost', {
-                  min: 1, max: 1000, unit: '$', hint: 'Hard daily ceiling', allowUnlimited: true,
-                })}
               </div>
             </div>
 
@@ -332,20 +272,15 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               </h4>
               <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
                 {numField('Loop interval', 'loop_interval', { min: 10, max: 600, unit: 's', hint: 'Orchestrator check interval' })}
-                {numField('Agent loop delay', 'agent_loop_delay', { min: 1, max: 30, unit: 's', hint: 'Pause between iterations' })}
                 {numField('Stale threshold', 'stale_threshold', { min: 60, max: 3600, unit: 's', hint: 'Kill idle agents after this' })}
-                {numField('Dedup window', 'dedup_window_minutes', { min: 5, max: 1440, unit: 'min', hint: 'Overlap detection window' })}
-                {numField('Context max chars', 'context_max_chars', { min: 1000, max: 100000, hint: 'Max context.md in prompt' })}
               </div>
             </div>
 
             <div>
               <h4 className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3 mb-2">
-                Models &amp; storage
+                Storage
               </h4>
               <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-                {modelField('Plan model', 'plan_model', 'Model for agent planning')}
-                {modelField('Review model', 'review_model', 'Model for master review')}
                 <Field label="Working directory" hint="Base path for investigation files">
                   <TextInput
                     value={config.workdir_base}

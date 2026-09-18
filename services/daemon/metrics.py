@@ -5,11 +5,12 @@ preserves the existing public interface (record_poll, record_processing,
 get_summary, reset, get_poll_count, get_total_processed) so all callers
 (poller.py, processor.py, responder.py, scheduler.py) need zero changes.
 
-Prometheus-format /metrics is now served on port 9090 by the OTEL
-PrometheusMetricReader initialised in core/telemetry.init_telemetry().
-
-MetricsServer has been narrowed to a health-only server on
-DAEMON_HEALTH_PORT (default 9091) exposing /health and /status.
+MetricsServer runs two listeners: health JSON (/health, /status) on
+DAEMON_HEALTH_PORT (default 9091), and Prometheus text on
+DAEMON_METRICS_PORT (default 9090) at /metrics. The Prometheus listener
+renders prometheus_client's default REGISTRY, which is where the OTEL
+PrometheusMetricReader from core/telemetry.init_telemetry() registers its
+collector — so the OTEL instruments above appear there when the flag is on.
 """
 
 import asyncio
@@ -18,6 +19,7 @@ from collections import defaultdict
 from typing import Any, Dict
 
 from aiohttp import web
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from core.config import get_settings
 from core.time import utcnow
@@ -26,6 +28,7 @@ from services.daemon.config import MetricsConfig
 logger = logging.getLogger(__name__)
 
 DAEMON_HEALTH_PORT = get_settings().daemon_health_port
+DAEMON_METRICS_PORT = get_settings().daemon_metrics_port
 
 
 # ---------------------------------------------------------------------------
@@ -188,17 +191,18 @@ class DaemonMetrics:
 
 
 # ---------------------------------------------------------------------------
-# MetricsServer — health/status only on DAEMON_HEALTH_PORT
-# Prometheus /metrics is served by core/telemetry PrometheusMetricReader on 9090
+# MetricsServer — health/status on DAEMON_HEALTH_PORT, Prometheus on
+# DAEMON_METRICS_PORT
 # ---------------------------------------------------------------------------
 
 
 class MetricsServer:
-    """Health and status HTTP server for the daemon.
+    """Health/status and Prometheus HTTP listeners for the daemon.
 
-    Serves /health and /status on DAEMON_HEALTH_PORT (default 9091).
-    Prometheus metrics are emitted on port 9090 by the OTEL
-    PrometheusMetricReader; this server no longer renders them.
+    /health and /status (JSON) on DAEMON_HEALTH_PORT (default 9091);
+    /metrics (Prometheus text, default registry) on DAEMON_METRICS_PORT
+    (default 9090). Kept on separate ports so the scrape target and the
+    probe target stay distinct.
     """
 
     def __init__(self, config: MetricsConfig):
@@ -214,26 +218,52 @@ class MetricsServer:
         self.orchestrator = None
 
     @property
-    def _health_port(self) -> int:
+    def health_port(self) -> int:
         return DAEMON_HEALTH_PORT
 
+    @property
+    def metrics_port(self) -> int:
+        return DAEMON_METRICS_PORT
+
     async def run(self, shutdown_event: asyncio.Event):
-        """Run the health HTTP server."""
-        app = web.Application()
-        app.router.add_get("/health", self._handle_health)
-        app.router.add_get("/status", self._handle_status)
+        """Run the health and Prometheus HTTP servers until shutdown."""
+        health_app = web.Application()
+        health_app.router.add_get("/health", self._handle_health)
+        health_app.router.add_get("/status", self._handle_status)
 
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", self._health_port)
+        metrics_app = web.Application()
+        metrics_app.router.add_get("/metrics", self._handle_metrics)
 
-        logger.info("Health server starting on port %d", self._health_port)
-        await site.start()
+        runners = []
+        try:
+            for app, port, label in (
+                (health_app, self.health_port, "Health"),
+                (metrics_app, self.metrics_port, "Prometheus"),
+            ):
+                runner = web.AppRunner(app)
+                await runner.setup()
+                runners.append(runner)
+                logger.info("%s server starting on port %d", label, port)
+                await web.TCPSite(runner, "0.0.0.0", port).start()
 
-        await shutdown_event.wait()
+            await shutdown_event.wait()
+        except Exception:
+            # A failed second bind must not leave the first listener orphaned;
+            # log here because main.py gathers with return_exceptions=True.
+            logger.exception("Health/Prometheus server failed")
+            raise
+        finally:
+            for runner in runners:
+                await runner.cleanup()
+            logger.info("Health and Prometheus servers stopped")
 
-        await runner.cleanup()
-        logger.info("Health server stopped")
+    async def _handle_metrics(self, request: web.Request) -> web.Response:
+        """Prometheus text for the default registry (OTEL reader lives there)."""
+        # Header set raw: aiohttp's content_type= rejects the charset parameter
+        # that CONTENT_TYPE_LATEST carries.
+        return web.Response(
+            body=generate_latest(), headers={"Content-Type": CONTENT_TYPE_LATEST}
+        )
 
     async def _handle_health(self, request: web.Request) -> web.Response:
         """Handle health check request."""

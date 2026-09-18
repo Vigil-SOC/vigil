@@ -249,6 +249,53 @@ def test_a_compose_definition_still_resolves_to_phases():
     assert yaml.safe_load(playbook)["phases"]
 
 
+# Investigate lead tools the arch names, whether or not a WORKFLOW.md phase did.
+def test_resolve_declares_case_records_and_get_finding():
+    _, config_text = resolve("incident-response")
+    config = yaml.safe_load(config_text)
+    tools = {tool["id"]: tool for tool in config["tools"]}
+    assert "case_records" in tools
+    assert "get_finding" in tools
+    records = tools["case_records"]
+    assert records["kind"] == "remote"
+    assert records["parameters"]["properties"]["case_id"]["type"] == "string"
+    assert config["approvals"] == []
+    ids = [tool["id"] for tool in config["tools"]]
+    assert ids.count("get_finding") == 1
+    assert ids.count("case_records") == 1
+
+
+def test_resolve_emits_get_finding_when_no_phase_named_it():
+    from core.workflows.workflows_service import WorkflowDefinition
+
+    definition = WorkflowDefinition(
+        workflow_id="bare",
+        file_path="",
+        metadata={
+            "name": "bare",
+            "description": "",
+            "phases": [
+                {
+                    "id": "p1",
+                    "agent": "triage",
+                    "name": "Triage",
+                    "instructions": "look",
+                }
+            ],
+        },
+        body="",
+    )
+
+    class _Workflows:
+        def get_workflow(self, _id):
+            return definition
+
+    _, config_text = resolve("bare", workflows=_Workflows())
+    ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
+    assert "case_records" in ids
+    assert "get_finding" in ids
+
+
 # One number read as both a turn count and a call count ended a hunt three turns
 # into a budget that said twenty-four, so the two ship as separate ceilings.
 class TestTheTurnBudget:

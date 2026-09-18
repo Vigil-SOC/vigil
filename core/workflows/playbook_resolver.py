@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import yaml
 
+from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
 from core.llm.defaults import DEFAULT_MODEL
 
 if TYPE_CHECKING:
@@ -32,6 +33,12 @@ DEFAULT_RUNTIME = {"max_turns": 8, "result_cap": 20_000, "recall_limit": 3}
 EMIT_ATTEMPTS = 2
 
 REMOTE = "remote"
+
+# The investigate arch names these on the lead. Compose phases never declare
+# case_records, and a workflow that omitted get_finding still needs the lead to
+# fetch the finding it was opened on.
+INVESTIGATE_TOOLS = ("case_records", "get_finding")
+CASE_RECORDS_BOUNDS = {"max_rows": 100, "timeout_ms": 15_000}
 
 
 def _tool_catalogue(registry: Optional["MCPRegistry"]) -> Dict[str, Dict[str, Any]]:
@@ -178,9 +185,18 @@ def _candidate_names(capability: str) -> Tuple[str, ...]:
 # An agent's prompt is rendered now rather than read from a file: the memory block
 # depends on the agent's own grant, so a stored copy would describe another agent.
 def _prompt_for(agent_id: str) -> str:
-    from core.agents.manager import SOCAgentLibrary
+    from core.agents.manager import (
+        CUSTOM_AGENT_ID_PREFIX,
+        AgentManager,
+        SOCAgentLibrary,
+    )
 
+    # Built-in hit: catalog, no I/O. custom- miss: AgentManager refreshes from
+    # the DB in __init__ — the same seam as routers.agents._resolve_agent.
+    # SOCAgentLibrary stays the builtins catalog.
     profile = SOCAgentLibrary.get_agent(agent_id)
+    if profile is None and agent_id and agent_id.startswith(CUSTOM_AGENT_ID_PREFIX):
+        profile = AgentManager().agents.get(agent_id)
     if profile is None:
         raise UnknownPlaybook(f"phase names agent {agent_id}, which does not exist")
     return profile.system_prompt
@@ -226,8 +242,9 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
     return resolved
 
 
-# Only what some step may actually call. A catalogue handed to the registry would
-# widen every grant to everything, which is the opposite of deny-by-default.
+# Phase-declared tools, plus the investigate lead's. Extra names on a compose
+# config are harmless — compose grants per phase. A catalogue handed to the
+# registry would widen every grant to everything, which is deny-by-default inverted.
 def _tools_of(
     phases: List[Dict[str, Any]], registry: Optional["MCPRegistry"]
 ) -> List[Dict[str, Any]]:
@@ -237,6 +254,9 @@ def _tools_of(
         for tool in phase["tools"]:
             if tool not in wanted:
                 wanted.append(tool)
+    for name in INVESTIGATE_TOOLS:
+        if name not in wanted:
+            wanted.append(name)
 
     tools: List[Dict[str, Any]] = []
     for name in wanted:
@@ -246,12 +266,14 @@ def _tools_of(
             # does not carry should lose that tool, not fail to run at all.
             logger.warning("playbook names unknown tool %s; dropping it", name)
             continue
+        extra = CASE_RECORDS_BOUNDS if name == "case_records" else {}
         tools.append(
             {
                 "id": name,
                 "kind": REMOTE,
                 "description": entry.get("description", ""),
                 "parameters": entry.get("input_schema") or {},
+                **extra,
             }
         )
     return tools
@@ -267,6 +289,13 @@ def _budgets(phases: List[Dict[str, Any]]) -> Dict[str, Any]:
 def _drop_missing(phases: List[Dict[str, Any]], declared: List[str]) -> None:
     for phase in phases:
         phase["tools"] = [tool for tool in phase["tools"] if tool in declared]
+
+
+# Only ART execute is gated. The id must be one config.tools actually carries:
+# spec.ts refuses an approvals name that is not declared. Native and MCP-flattened
+# spellings both count; whichever resolved is the one that goes on the list.
+def _approvals_of(tools: List[Dict[str, Any]]) -> List[str]:
+    return [tool["id"] for tool in tools if tool["id"] in EXECUTE_IDS]
 
 
 def resolve(
@@ -312,9 +341,10 @@ def resolve(
         "budgets": _budgets(phases),
         "runtime": DEFAULT_RUNTIME,
         "tools": tools,
-        # Empty by design: a phase stops for a human through its own checkpoint,
-        # which is a property of the step rather than of a tool it happens to call.
-        "approvals": [],
+        # ART execute parks until a human approves. Other grants, and a compose
+        # that never received execute, stay ungated. A phase checkpoint is
+        # separate (approval_required on the step) and is not a substitute.
+        "approvals": _approvals_of(tools),
         "thresholds": {},
     }
 

@@ -12,7 +12,7 @@ import type { Entity, EvidenceRecord, HuntOutcome, HypothesisStatus, LinkRelatio
 //
 // Facts, not rows. The status-to-row mapping, the Entity Keys and the Source
 // Tiers are the Python domain's; this bumps when what this side *can* say changes.
-export const DISTIL_SCHEMA_VERSION = 1;
+export const DISTIL_SCHEMA_VERSION = 2;
 
 // A record the hunt gathered, as opposed to one it wrote to itself. The three
 // excluded provenances are the harness talking: `dispatcher` when a query could
@@ -70,6 +70,10 @@ export interface DistilConclusion {
   evidence_count: number;
   attacker_influenceable_only: boolean;
   sources: DistilSource[];
+  // Distinct ATT&CK ids the gathered evidence bearing on this claim cited, not
+  // what the playbook declared it would test. Empty is known-to-be-none, and is
+  // what lets a later coverage check ask "have we hunted T1071.001?".
+  techniques: string[];
   first_seen: string;
   last_seen: string;
   // False when the window fell back to the hunt's own dates because nothing was
@@ -162,6 +166,14 @@ function conclusionsIn(projection: Projection): DistilConclusion[] {
       }
     }
 
+    // Same rule as `citedTechniques`, but over `gathered` rather than every link:
+    // a failed dispatch or the critic's benign case naming a technique must not
+    // put that technique on a Verdict.
+    const techniques = new Set<string>();
+    for (const { relation, record } of gathered) {
+      if (relation !== "neither" && record.attack_technique) techniques.add(record.attack_technique);
+    }
+
     // A gap record's capture time never stands in for having seen something.
     const times = gathered.map(({ record }) => record.captured_at).sort();
     const first = times[0];
@@ -175,6 +187,7 @@ function conclusionsIn(projection: Projection): DistilConclusion[] {
       evidence_count: times.length,
       attacker_influenceable_only: evidenceStrength(projection, hypothesis.hypothesis_id).attacker_influenceable_only,
       sources: [...stances].map(([source_system, stance]) => ({ source_system, stance })),
+      techniques: [...techniques].sort(),
       // A hypothesis that concluded on nothing gathered still has a window, and
       // saying which dates those are is the honest version of leaving it null.
       first_seen: first ?? hunt.created_at,

@@ -1,6 +1,8 @@
 # Prometheus scrape configuration for Vigil SOC
-# Scrapes Prometheus-format metrics from daemon and backend (via OTEL PrometheusMetricReader)
-# and from the OTEL Collector's built-in Prometheus exporter.
+# Scrapes Prometheus-format metrics from daemon and backend (the OTEL
+# PrometheusMetricReader registered on prometheus_client's default registry;
+# populated when VIGIL_OTEL_ENABLED=true) and from the OTEL Collector's
+# built-in Prometheus exporter.
 
 global:
   scrape_interval: 15s
@@ -9,17 +11,17 @@ global:
     cluster: vigil-local
 
 scrape_configs:
-  # SOC Daemon — OTEL PrometheusMetricReader on port 9090
+  # SOC Daemon — /metrics listener on DAEMON_METRICS_PORT (9090)
   - job_name: soc-daemon
     static_configs:
       - targets: ["soc-daemon:9090"]
         labels:
           service: soc-daemon
 
-  # Backend API — OTEL PrometheusMetricReader on port 9090
+  # Backend API — FastAPI GET /metrics on the API port
   - job_name: backend
     static_configs:
-      - targets: ["backend:9090"]
+      - targets: ["backend:6987"]
         labels:
           service: backend
 

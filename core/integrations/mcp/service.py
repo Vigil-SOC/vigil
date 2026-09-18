@@ -257,7 +257,6 @@ class MCPService:
         "tempo-flow",
         "security-detections",
         "approval",
-        "attack-layer",
         # The self-hosted SIEM a hunt reads through telemetry_search -- the
         # customer's own Splunk, the expected telemetry path, not an optional
         # add-on. Safe to default-on: unset ${SPLUNK_*} placeholders leave it
@@ -330,8 +329,7 @@ class MCPService:
         Stdio servers: All others (designed for advanced MCP integration)
         """
         for arg in args:
-            # Every in-repo server lives under tools/ (#632 vendored the four
-            # that were a submodule into tools/mcp/).
+            # Every in-repo server lives under tools/mcp/.
             if "." in arg and arg.startswith("tools"):
                 fastmcp_tools = ["deeptempo_findings"]
                 for fastmcp in fastmcp_tools:

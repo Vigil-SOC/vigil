@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { Icon } from '../../shared/icons'
@@ -766,18 +767,26 @@ export interface Activity {
   description?: string
   activity_type?: string
   timestamp?: string
+  details?: Record<string, unknown>
 }
 export function ActivityCard({ activities }: { activities: Activity[] }) {
   return (
     <SectionCard title="Recent activity" count={`${activities.length}`}>
       <div className="p-[18px] flex flex-col gap-3">
         {activities.length === 0 && <MiniEmpty icon="clock" title="No recent activity" body="Case updates, comments, workflow events, and finding changes will appear here." />}
-        {activities.slice(0, 12).map((a, i) => (
-          <div key={i} className="text-[13px]">
-            <div className="text-tx-2">{a.description || '—'}</div>
-            <div className="text-xs text-tx-faint mt-[2px]">{a.activity_type || 'event'} · {fmtDT(a.timestamp)}</div>
-          </div>
-        ))}
+        {activities.slice(0, 12).map((a, i) => {
+          // The run bridge writes run_id onto report/handoff activities; that id is the whole link.
+          const runId = typeof a.details?.run_id === 'string' ? a.details.run_id : null
+          return (
+            <div key={i} className="text-[13px]">
+              <div className="text-tx-2">{a.description || '—'}</div>
+              <div className="text-xs text-tx-faint mt-[2px]">
+                {a.activity_type || 'event'} · {fmtDT(a.timestamp)}
+                {runId && <> · <Link className="text-accent-2 hover:underline" aria-label={`Open run ${runId}`} to={`/workflows?run=${encodeURIComponent(runId)}`}>Open run</Link></>}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </SectionCard>
   )

@@ -78,7 +78,7 @@ phases:
   - id: attack-mapping
     agent: mitre_analyst
     name: "Cloud ATT&CK Mapping"
-    tools: [get_finding, get_technique_rollup, create_attack_layer, recall_entity]
+    tools: [get_finding, get_technique_rollup, recall_entity]
     instructions: |
       Map cloud TTPs to MITRE ATT&CK, emphasising cloud-specific techniques and
       kill-chain progression in multi-tenant environments.
@@ -101,8 +101,7 @@ phases:
          missing Azure Diagnostics, missing GCP Data Access logs, absent IAM alerting
       5. Evaluate adversary sophistication from the TTPs, from exposed keys and
          public buckets through to metadata service abuse, role chaining and log tampering
-      6. Generate an ATT&CK Navigator layer highlighting the cloud techniques
-      7. Recommend detection rules for the coverage gaps
+      6. Recommend detection rules for the coverage gaps
 
   - id: containment
     agent: responder
@@ -144,14 +143,13 @@ phases:
   - id: report
     agent: reporter
     name: "Cloud Incident Report"
-    tools: [get_case, list_findings, create_attack_layer, recall_entity]
+    tools: [get_case, list_findings, recall_entity]
     instructions: |
       Produce a cloud-focused incident report with executive, technical and
       compliance sections.
 
       1. Gather everything the earlier steps produced
-      2. Generate the final MITRE ATT&CK Navigator layer
-      3. Structure the report:
+      2. Structure the report:
          - **Executive Summary:** business impact in plain language, including
            cloud spend impact, regulatory exposure (GDPR, HIPAA, PCI-DSS, SOC 2)
            and customer or data-subject impact

@@ -1125,21 +1125,13 @@ class OrchestratorSettingsConfig(BaseModel):
     # which already defaults False.
     enabled: bool = False
     dry_run: bool = False
-    auto_assign_findings: bool = True
-    auto_assign_severities: List[str] = ["critical", "high"]
     max_concurrent_agents: int = 3
     max_iterations_per_agent: int = 50
     max_runtime_per_investigation: int = 3600
     max_cost_per_investigation: float = 5.0
     max_total_hourly_cost: float = 20.0
-    max_total_daily_cost: float = 100.0
     loop_interval: int = 60
-    agent_loop_delay: int = 2
     stale_threshold: int = 300
-    dedup_window_minutes: int = 30
-    context_max_chars: int = 10000
-    plan_model: str = DEFAULT_MODEL
-    review_model: str = DEFAULT_MODEL
     workdir_base: str = "data/investigations"
 
 
@@ -1155,7 +1147,7 @@ async def get_orchestrator_config():
 
         if config_value:
             merged = {**ORCHESTRATOR_DEFAULTS, **config_value}
-            return merged
+            return {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
 
         return ORCHESTRATOR_DEFAULTS
     except Exception as e:

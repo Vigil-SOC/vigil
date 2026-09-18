@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
 from core.llm.tool_schemas import ALL_TOOLS
 
 REMOTE = "remote"
@@ -74,7 +75,12 @@ def _is_destructive_mcp(name: str) -> bool:
     read-only lead verb wins outright; otherwise any destructive verb token marks
     it. Deliberately conservative — a spurious drop just means chat recommends the
     action instead of calling it, whereas a missed one is an ungated detonation.
+
+    ART execute is named, not verb-matched: adding ``execute`` to the verb set
+    would also drop ``splunk_execute``.
     """
+    if name in EXECUTE_IDS:
+        return True
     action = name.split("_", 1)[1] if "_" in name else name
     tokens = action.split("_")
     if not tokens:
@@ -117,6 +123,10 @@ def _declare(
     static_names = (
         list(static) if wanted is None else [n for n in wanted if n in static]
     )
+    # Chat has no approval-resume path. Isolate/contain drop via the verb set;
+    # ART execute is an explicit id (native and flattened) so ``execute`` stays
+    # off that set and splunk_execute remains callable.
+    static_names = [n for n in static_names if n not in EXECUTE_IDS]
     mcp_names = [n for n in mcp if n not in static_names and not _is_destructive_mcp(n)]
     names = static_names + mcp_names
     catalogue = {**static, **mcp}
