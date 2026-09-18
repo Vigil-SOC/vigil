@@ -148,7 +148,7 @@ cd vigil
 
 > **Note:** Docker must be running before you start. The startup script handles everything else: provisions the Python virtual environment, installs dependencies, starts PostgreSQL, Redis, and the Bifrost LLM gateway in Docker, starts a host Ollama if one is installed (optional — the script continues without it), initializes the database schema and reference data, installs frontend packages, and launches the backend, frontend, and agent layer. No LogLM or cloud API key is needed to reach a running UI.
 
-To run workflows, set `AGENT_INTERNAL_TOKEN` in the `.env` the script creates from `env.example` (generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`). Without it the stack still comes up, but `./start.sh` warns that the agent layer did not start and workflow runs stay queued.
+To run workflows, set `AGENT_INTERNAL_TOKEN` before the first start: `cp env.example .env`, fill in the token (generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`), then `./start.sh`. Without it the stack still comes up, but `./start.sh` warns that the agent layer did not start and workflow runs stay queued; edit `.env` and rerun.
 
 Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full auth is WIP and while it will turn on it is untested. To activate auth set `DEV_MODE=false`; no admin user is seeded, so the first visit to http://localhost:6988 shows a bootstrap screen where you create the admin account.
 
@@ -213,7 +213,7 @@ uv pip install -r requirements.lock
 # Frontend setup
 cd clients/web
 npm install
-cd ..
+cd ../..
 ```
 
 </details>
@@ -243,7 +243,7 @@ troubleshooting.
 ./start.sh
 
 # OR background mode (frees terminal; logs/ + pidfiles, also starts the
-# SOC daemon and ARQ worker on the host)
+# SOC daemon on the host — the ARQ worker runs in both modes)
 ./start.sh -d
 
 # Add a profiled service (splunk, kafka, pgadmin, jaeger, prometheus,
@@ -262,6 +262,7 @@ docker compose -f infra/docker/docker-compose.yml up -d postgres redis bifrost
 
 # Terminal 2: Initialize the schema and reference data (no admin is seeded;
 # the first visit to the UI is the bootstrap screen)
+[ -f .env ] || cp env.example .env   # then set AGENT_INTERNAL_TOKEN in it
 source venv/bin/activate
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 python scripts/init_schema.py
@@ -273,7 +274,8 @@ export PYTHONPATH="${PWD}:${PYTHONPATH}"
 uvicorn services.api.main:app --host 127.0.0.1 --port 6987 --reload
 
 # Terminal 4: Start the agent layer (drains the agent-runs queue that
-# workflow runs are enqueued to; needs AGENT_INTERNAL_TOKEN set in .env)
+# workflow runs are enqueued to; needs AGENT_INTERNAL_TOKEN set in .env).
+# Optionally also `python -m services.worker` for the ARQ consumers.
 scripts/agent_up.sh
 
 # Terminal 5: Start frontend
@@ -296,20 +298,22 @@ cd clients/web && npm run dev
 
 ### Run with Docker (Full Stack)
 
-The compose file is [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml). Plain `up` is the investigation set:
+The compose file is [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml). Pass the repo-root `.env` explicitly — compose otherwise looks for one next to the compose file, and `AGENT_INTERNAL_TOKEN` would reach the containers empty. Plain `up` is the investigation set:
 
 ```bash
-docker compose -f infra/docker/docker-compose.yml up -d
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
 ```
 
-Starts `postgres`, `db-seed`, `redis`, `bifrost`, `backend`, `agent-worker`, and `agent-serve` — everything a chat-driven workflow run needs. The SOC daemon is not part of this set.
+Starts `postgres`, `db-seed`, `redis`, `bifrost`, `backend`, `agent-worker`, and `agent-serve` — the services a chat-driven workflow run uses. The SOC daemon is not part of this set.
 
 ```bash
 # Add federation polling, auto-enrichment, and the ARQ worker
-docker compose -f infra/docker/docker-compose.yml --profile daemon up -d
+docker compose --env-file .env -f infra/docker/docker-compose.yml --profile daemon up -d
 ```
 
 `--profile daemon` adds `soc-daemon` and `llm-worker`. Other opt-in profiles (`dev`, `observability`, `splunk`, `kafka`, `elastic`, `misp`) work the same way.
+
+> The `backend` container runs with auth on and fails closed without `JWT_SECRET_KEY`, which the compose file does not forward yet. Until it does, supply one through a second compose file (`-f my-override.yml` with `services.backend.environment: [JWT_SECRET_KEY=<random>]`).
 
 ### Run SOC Daemon (Headless Mode)
 
