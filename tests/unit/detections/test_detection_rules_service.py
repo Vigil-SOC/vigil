@@ -40,7 +40,32 @@ def test_reregistering_same_directory_does_not_duplicate(service, rules_dir):
     assert second["id"] == first["id"]
     assert len(service.sources) == before + 1
     assert service.get_stats()["total_rules"] == stats_once["total_rules"] == 3
+    assert service.get_stats()["sources_count"] == before + 1
     assert service.get_mcp_env_vars()["SIGMA_PATHS"] == str(rules_dir)
+
+
+@pytest.mark.unit
+def test_reregistering_seeded_git_default_clones_into_existing_entry(service):
+    seeded = next(s for s in service.sources if s["clone_name"] == "sigma")
+    assert seeded["status"] == "not_cloned"
+
+    def fake_clone(url, target):
+        (Path(target) / "rules").mkdir(parents=True)
+        (Path(target) / "rules" / "a.yml").write_text("title: a\n")
+
+    with patch.object(service, "_git_clone", side_effect=fake_clone) as clone:
+        got = service.add_source(
+            "Sigma again",
+            "git",
+            "sigma",
+            url="https://github.com/SigmaHQ/sigma.git",
+            subdirectory="rules",
+        )
+
+    clone.assert_called_once()
+    assert got is seeded
+    assert seeded["status"] == "ready" and seeded["rule_count"] == 1
+    assert len(service.sources) == 4
 
 
 @pytest.mark.unit
