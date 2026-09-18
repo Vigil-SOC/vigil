@@ -11,6 +11,8 @@ from services.daemon.poller import normalize_mitre_predictions
     "raw, expected",
     [
         (None, {}),
+        ({}, {}),
+        ([], {}),
         ({"T1486": 0.9, "T1490": 0.8}, {"T1486": 0.9, "T1490": 0.8}),
         (["T1486", "T1490"], {"T1486": 1.0, "T1490": 1.0}),
         (("T1486",), {"T1486": 1.0}),
@@ -22,8 +24,16 @@ from services.daemon.poller import normalize_mitre_predictions
                 {"technique": "T1059"},
                 {"technique": "T1078", "confidence": "high"},
                 {"technique": "T1105", "confidence": True},
+                {"technique": None, "id": "T1021", "confidence": None, "score": 0.3},
             ],
-            {"T1486": 0.7, "T1490": 0.4, "T1059": 1.0, "T1078": 1.0, "T1105": 1.0},
+            {
+                "T1486": 0.7,
+                "T1490": 0.4,
+                "T1059": 1.0,
+                "T1078": 1.0,
+                "T1105": 1.0,
+                "T1021": 0.3,
+            },
         ),
     ],
 )

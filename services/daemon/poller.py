@@ -38,11 +38,12 @@ def normalize_mitre_predictions(raw: Any, finding_id: str) -> Dict[str, float]:
     """Coerce a webhook ``mitre_predictions`` value to the canonical
     ``{technique_id: confidence}`` dict every consumer assumes.
 
-    Accepted: dict (passed through), list/tuple of technique ids, list of
-    ``{"technique"|"id": ..., "confidence"|"score": ...}`` dicts, a single
-    id string, or None. 1.0 is the "present, no score" precedent used by the
-    internal producers. Anything else raises ValueError so the request fails
-    with a 400 rather than the field being silently emptied downstream.
+    Accepted: dict (passed through as-is, values unvalidated), list/tuple of
+    technique ids, list of ``{"technique"|"id": ..., "confidence"|"score": ...}``
+    dicts, a single id string, or None. 1.0 is the "present, no score"
+    precedent used by the internal producers. Any other type, or a list entry
+    with no technique id, raises ValueError so the request fails with a 400
+    rather than the field being silently emptied downstream.
     """
     if raw is None:
         return {}
@@ -62,8 +63,11 @@ def normalize_mitre_predictions(raw: Any, finding_id: str) -> Dict[str, float]:
     for item in items:
         score: Any = 1.0
         if isinstance(item, dict):
-            technique = item.get("technique", item.get("id"))
-            score = item.get("confidence", item.get("score", 1.0))
+            # `or` rather than .get(default): a present-but-null key falls through.
+            technique = item.get("technique") or item.get("id")
+            score = item.get("confidence")
+            if score is None:
+                score = item.get("score")
             # bool is an int subclass; True/False are not confidences.
             if isinstance(score, bool) or not isinstance(score, (int, float)):
                 score = 1.0
