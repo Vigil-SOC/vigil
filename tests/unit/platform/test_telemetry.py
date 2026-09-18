@@ -142,7 +142,11 @@ class TestMeterProviderReaders:
         ):
             tel._do_init("svc")
         try:
-            readers = list(tel._meter_provider._all_metric_readers)
+            # The provider's own readers, not MeterProvider._all_metric_readers:
+            # that is a class-level WeakSet shared by every provider in the
+            # process, and a shut-down reader from an earlier test stays in it
+            # until the cyclic GC happens to run (flaky 3 == 2 in CI).
+            readers = list(tel._meter_provider._metric_readers)
             assert len(readers) == 2
             prom = [r for r in readers if isinstance(r, PrometheusMetricReader)]
             otlp = [r for r in readers if isinstance(r, PeriodicExportingMetricReader)]
