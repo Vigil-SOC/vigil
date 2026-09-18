@@ -7,12 +7,8 @@ import { useCostAnalytics, type CostData, type CostModelRow, type CostTimeRange 
 import { usePendingApprovals } from '../decisions/useDecisions'
 import { RUNS_PER_WORKFLOW, RUN_STATUSES, useRunOutcomes, type RunKindOutcomes, type RunStatus } from './useHealth'
 
-const RANGES: [CostTimeRange, string][] = [
-  ['24h', '24h'],
-  ['7d', '7d'],
-  ['30d', '30d'],
-  ['all', 'All'],
-]
+const RANGE_LABEL: Record<CostTimeRange, string> = { '24h': '24h', '7d': '7d', '30d': '30d', all: 'All' }
+const RANGES = Object.keys(RANGE_LABEL) as CostTimeRange[]
 
 const PRICING_LABEL = {
   exact: { label: 'exact', color: 'var(--ok)' },
@@ -27,6 +23,7 @@ const STATUS_COLOR: Record<RunStatus, string> = {
   cancelled: 'var(--tx-faint)',
   running: 'var(--accent)',
   paused: 'var(--high)',
+  other: 'var(--med)',
 }
 
 const fmtTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n))
@@ -47,8 +44,8 @@ export default function HealthScreen({ go }: ConsoleScreenProps) {
       <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
         <span className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">Spend window</span>
         <div className="range-tabs">
-          {RANGES.map(([k, label]) => (
-            <button key={k} className={k === range ? 'active' : ''} onClick={() => setRange(k)}>{label}</button>
+          {RANGES.map((k) => (
+            <button key={k} className={k === range ? 'active' : ''} aria-pressed={k === range} onClick={() => setRange(k)}>{RANGE_LABEL[k]}</button>
           ))}
         </div>
         <div className="flex-1" />
@@ -63,7 +60,7 @@ export default function HealthScreen({ go }: ConsoleScreenProps) {
       </div>
 
       <div className="px-[22px] pt-5 pb-3 grid gap-3 grid-cols-[1.6fr_1fr]">
-        <Card title="LLM spend and tokens" note={`window: ${RANGES.find(([k]) => k === range)?.[1]}`}>
+        <Card title="LLM spend and tokens" note={`window: ${RANGE_LABEL[range]}`}>
           {cost.phase === 'loading' && <EmptyState loading compact icon="bars" title="Loading spend…" />}
           {cost.phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load spend" body={cost.error} primary={{ label: 'Retry', onClick: cost.reload, icon: 'refresh' }} />}
           {cost.phase === 'ready' && cost.data && (
@@ -78,6 +75,10 @@ export default function HealthScreen({ go }: ConsoleScreenProps) {
         <Card title="Approvals waiting" note="runs parked on a person">
           {approvals.phase === 'loading' && <EmptyState loading compact icon="clock" title="Loading approvals…" />}
           {approvals.phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load approvals" body={approvals.error} primary={{ label: 'Retry', onClick: approvals.reload, icon: 'refresh' }} />}
+          {/* the hook keeps the last good count through a failed poll; say so */}
+          {approvals.phase === 'ready' && approvals.error && (
+            <p className="text-xs text-high mb-2" role="status">Last refresh failed — showing the previous count.</p>
+          )}
           {approvals.phase === 'ready' && (
             approvals.actions.length === 0 ? (
               <EmptyState compact icon="check" title="Nothing waiting" body="No workflow run is parked on an approval." />
@@ -100,6 +101,11 @@ export default function HealthScreen({ go }: ConsoleScreenProps) {
         <Card title="Recent workflow runs by kind" note={`most recent ${RUNS_PER_WORKFLOW} runs per workflow, not lifetime totals`}>
           {runs.phase === 'loading' && <EmptyState loading compact icon="flow" title="Loading runs…" />}
           {runs.phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load runs" body={runs.error} primary={{ label: 'Retry', onClick: runs.reload, icon: 'refresh' }} />}
+          {runs.phase === 'ready' && runs.unread.length > 0 && (
+            <p className="text-xs text-high mb-3" role="status">
+              Runs for {runs.unread.join(', ')} couldn’t be read and are missing from these counts.
+            </p>
+          )}
           {runs.phase === 'ready' && (
             runs.rows.every((r) => r.total === 0) ? (
               <EmptyState compact icon="flow" title="No runs yet" body="Outcomes by kind appear once a workflow has run." />
@@ -168,7 +174,10 @@ function RunsBody({ rows }: { rows: RunKindOutcomes[] }) {
         }))}
       />
       <div className="donut-wrap">
-        <Pie segs={byStatus.map((s) => ({ v: s.count / total, color: STATUS_COLOR[s.status], label: s.status }))} size={140} />
+        {/* the legend carries the numbers; the pie is decoration for readers */}
+        <div aria-hidden="true">
+          <Pie segs={byStatus.map((s) => ({ v: s.count / total, color: STATUS_COLOR[s.status], label: s.status }))} size={140} />
+        </div>
         <div className="legend">
           {byStatus.map((s) => (
             <div className="li" key={s.status}>

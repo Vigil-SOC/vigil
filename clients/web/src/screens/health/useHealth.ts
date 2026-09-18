@@ -4,7 +4,8 @@ import type { ApiWorkflow } from '../../data/mappers'
 
 export type Phase = 'loading' | 'ready' | 'error'
 
-export const RUN_STATUSES = ['completed', 'failed', 'cancelled', 'running', 'paused'] as const
+/** `other` catches a status the console does not know, so every run still lands in a bucket. */
+export const RUN_STATUSES = ['completed', 'failed', 'cancelled', 'running', 'paused', 'other'] as const
 export type RunStatus = (typeof RUN_STATUSES)[number]
 
 /** How many recent runs are read per workflow — the route caps at 200. */
@@ -27,11 +28,11 @@ interface RunsResponse {
 }
 
 function emptyStatuses(): Record<RunStatus, number> {
-  return { completed: 0, failed: 0, cancelled: 0, running: 0, paused: 0 }
+  return { completed: 0, failed: 0, cancelled: 0, running: 0, paused: 0, other: 0 }
 }
 
-function isRunStatus(s: string | undefined): s is RunStatus {
-  return (RUN_STATUSES as readonly string[]).includes(s ?? '')
+function toRunStatus(s: string | undefined): RunStatus {
+  return s && (RUN_STATUSES as readonly string[]).includes(s) ? (s as RunStatus) : 'other'
 }
 
 /** Join recent runs onto their workflow's declared run_kind and bucket by status. */
@@ -45,9 +46,8 @@ export function bucketRunOutcomes(
     const entry = kinds.get(runKind) ?? { runKind, workflows: 0, total: 0, byStatus: emptyStatuses() }
     entry.workflows += 1
     for (const run of runsByWorkflow[wf.id] ?? []) {
-      // unknown statuses are still counted in the total so the sum is honest
       entry.total += 1
-      if (isRunStatus(run.status)) entry.byStatus[run.status] += 1
+      entry.byStatus[toRunStatus(run.status)] += 1
     }
     kinds.set(runKind, entry)
   }
@@ -58,6 +58,8 @@ export function bucketRunOutcomes(
  *  recent runs of each, and join in the browser. Bounded by RUNS_PER_WORKFLOW. */
 export function useRunOutcomes() {
   const [rows, setRows] = useState<RunKindOutcomes[]>([])
+  /** workflows whose run listing failed; their runs are missing from the counts */
+  const [unread, setUnread] = useState<string[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -71,7 +73,8 @@ export function useRunOutcomes() {
       .listAll()
       .then(async (res) => {
         const workflows = (res.data?.workflows || []) as ApiWorkflow[]
-        const runLists = await Promise.all(
+        // one workflow's runs failing (removed since listing, say) must not blank the rest
+        const settled = await Promise.allSettled(
           workflows.map((wf) =>
             workflowApi
               .listRuns(wf.id, { limit: RUNS_PER_WORKFLOW })
@@ -80,15 +83,24 @@ export function useRunOutcomes() {
         )
         if (cancelled) return
         const runsByWorkflow: Record<string, RunSummary[]> = {}
+        const failed: string[] = []
         workflows.forEach((wf, i) => {
-          runsByWorkflow[wf.id] = runLists[i]
+          const s = settled[i]
+          if (s.status === 'fulfilled') runsByWorkflow[wf.id] = s.value
+          else failed.push(wf.name || wf.id)
         })
+        if (workflows.length > 0 && failed.length === workflows.length) {
+          setError('Failed to load workflow runs')
+          setPhase('error')
+          return
+        }
         setRows(bucketRunOutcomes(workflows, runsByWorkflow))
+        setUnread(failed)
         setPhase('ready')
       })
       .catch((e) => {
         if (cancelled) return
-        setError((e as { message?: string })?.message || 'Failed to load workflow runs')
+        setError((e as { message?: string })?.message || 'Failed to load workflows')
         setPhase('error')
       })
     return () => {
@@ -96,5 +108,5 @@ export function useRunOutcomes() {
     }
   }, [reloadKey])
 
-  return { rows, phase, error, reload }
+  return { rows, unread, phase, error, reload }
 }
