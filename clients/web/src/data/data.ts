@@ -8,6 +8,7 @@ export type ConsoleScreenKey =
   | 'decisions'
   | 'workflows'
   | 'autoops'
+  | 'health'
   | 'settings'
 
 /** A rail item carrying a gate only renders when the gate is satisfied. */
@@ -27,6 +28,7 @@ export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
   ['brain', 'AI Decisions', 'decisions'],
   ['flow', 'Workflows & Skills', 'workflows'],
   ['bot', 'Auto Ops', 'autoops'],
+  ['chart', 'Health', 'health'],
   ['gear', 'Settings', 'settings'],
 ]
 
@@ -81,5 +83,6 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   decisions: ['AI Decisions', 'Review and provide feedback for AI decisions'],
   workflows: ['Workflows & Skills', 'Pre-built multi-agent workflows for common SOC operations'],
   autoops: ['Auto Ops', 'Autonomous operations — master orchestrator and sub-agent investigations'],
+  health: ['Health', 'Operational health — LLM spend, approvals waiting, recent workflow runs'],
   settings: ['Settings', 'Configure Vigil — AI, integrations, users and platform'],
 }
