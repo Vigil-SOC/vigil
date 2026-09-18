@@ -190,6 +190,27 @@ class DetectionRulesService:
                 return source
         return None
 
+    def _rules_dir_key(self, local_path: str, subdirectory: str) -> str:
+        """Resolved rules directory: a source's identity together with its format."""
+        base = Path(local_path)
+        return str((base / subdirectory if subdirectory else base).resolve())
+
+    def _find_existing(
+        self, local_path: str, subdirectory: str, format: str
+    ) -> Optional[Dict[str, Any]]:
+        key = self._rules_dir_key(local_path, subdirectory)
+        for source in self.sources:
+            if source["format"] != format:
+                continue
+            if (
+                self._rules_dir_key(
+                    source["local_path"], source.get("subdirectory", "")
+                )
+                == key
+            ):
+                return source
+        return None
+
     def add_source(
         self,
         name: str,
@@ -227,6 +248,26 @@ class DetectionRulesService:
             clone_name = Path(path).name
         else:
             raise ValueError(f"Invalid source type: {source_type}")
+
+        # Idempotent on (resolved rules directory, format): re-registering the same
+        # directory refreshes the existing entry instead of appending a duplicate.
+        existing = self._find_existing(local_path, subdirectory, format)
+        if existing is not None:
+            if not Path(local_path).exists():
+                if source_type != "git":
+                    raise ValueError(f"Local path does not exist: {local_path}")
+                self._git_clone(url, local_path)
+            existing["rule_count"] = self._count_rules(
+                Path(local_path), format, subdirectory
+            )
+            existing["last_updated"] = datetime.now().isoformat()
+            existing["status"] = "ready"
+            self._save_config()
+            logger.info(
+                f"Source already registered as {existing['name']!r} "
+                f"({existing['id']}); not adding {name!r} again"
+            )
+            return existing
 
         source = {
             "id": source_id,
