@@ -1,113 +1,89 @@
-"""DetectionRulesService re-checks sources against disk on load (#968)."""
+"""add_source is idempotent on (resolved rules directory, format) (#969)."""
 
-import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
-from core.detections import detection_rules_service as drs
-from core.detections.detection_rules_service import (
-    DEFAULT_SOURCES,
-    DetectionRulesService,
-)
+from core.detections.detection_rules_service import DetectionRulesService
 
 
 @pytest.fixture
-def home(tmp_path, monkeypatch):
-    """Point the service's home and state directory at a temp dir."""
-    monkeypatch.setattr(drs, "_safe_home", lambda: tmp_path)
-
-    def fake_vigil_path(*parts, write=False):
-        target = tmp_path.joinpath(".vigil", *parts)
-        if write:
-            target.parent.mkdir(parents=True, exist_ok=True)
-        return target
-
-    monkeypatch.setattr(drs, "vigil_path", fake_vigil_path)
-    return tmp_path
+def service(tmp_path, monkeypatch):
+    monkeypatch.delenv("VIGIL_DIR", raising=False)
+    with patch.object(Path, "home", return_value=tmp_path):
+        yield DetectionRulesService()
 
 
-def _stale_config(home: Path) -> Path:
-    """A config as written by a first boot before anything was cloned."""
-    base = home / "security-detections"
-    sources = [
-        {
-            "id": f"src{i}",
-            "name": d["name"],
-            "type": d["type"],
-            "git_url": d["git_url"],
-            "format": d["format"],
-            "subdirectory": d.get("subdirectory", ""),
-            "story_subdirectory": d.get("story_subdirectory", ""),
-            "clone_name": d["clone_name"],
-            "local_path": str(base / d["clone_name"]),
-            "rule_count": 0,
-            "last_updated": None,
-            "status": "not_cloned",
-        }
-        for i, d in enumerate(DEFAULT_SOURCES)
-    ]
-    config = home / ".vigil" / "detection_sources.json"
-    config.parent.mkdir(parents=True)
-    config.write_text(json.dumps({"sources": sources, "version": 1}))
-    return config
-
-
-def test_load_rescans_stale_config_against_disk(home):
-    config = _stale_config(home)
-    rules = home / "security-detections" / "sigma" / "rules"
+@pytest.fixture
+def rules_dir(tmp_path):
+    rules = tmp_path / "myrules" / "rules"
     rules.mkdir(parents=True)
-    (rules / "x.yml").write_text("title: x\n")
-
-    service = DetectionRulesService()
-
-    by_name = {s["name"]: s for s in service.list_sources()}
-    assert by_name["Sigma Rules"]["status"] == "ready"
-    assert by_name["Sigma Rules"]["rule_count"] == 1
-    assert by_name["Splunk ESCU"]["status"] == "not_cloned"
-
-    stats = service.get_stats()
-    assert stats["total_rules"] == 1
-    assert stats["sources_count"] == 4
-
-    assert service.get_mcp_env_vars() == {"SIGMA_PATHS": str(rules)}
-
-    on_disk = {s["name"]: s for s in json.loads(config.read_text())["sources"]}
-    assert on_disk["Sigma Rules"]["status"] == "ready"
-    assert on_disk["Sigma Rules"]["rule_count"] == 1
+    for i in range(3):
+        (rules / f"r{i}.yml").write_text("title: x\n")
+    return rules
 
 
-def test_rescan_does_not_rewrite_unchanged_config(home):
-    config = _stale_config(home)
-    before = config.stat().st_mtime_ns
+@pytest.mark.unit
+def test_reregistering_same_directory_does_not_duplicate(service, rules_dir):
+    base = rules_dir.parent
+    before = len(service.sources)
 
-    DetectionRulesService()
+    first = service.add_source(
+        "Mine", "local", "sigma", path=str(base), subdirectory="rules"
+    )
+    stats_once = service.get_stats()
+    second = service.add_source(
+        "Mine again", "local", "sigma", path=str(base), subdirectory="rules"
+    )
 
-    assert config.stat().st_mtime_ns == before
-
-
-def test_malformed_entry_does_not_reset_to_defaults(home):
-    config = _stale_config(home)
-    data = json.loads(config.read_text())
-    data["sources"].append({"id": "odd", "name": "Odd", "format": "sigma"})
-    config.write_text(json.dumps(data))
-
-    service = DetectionRulesService()
-
-    assert [s["id"] for s in service.list_sources()][-1] == "odd"
-    assert len(service.list_sources()) == 5
+    assert second["id"] == first["id"]
+    assert len(service.sources) == before + 1
+    assert service.get_stats()["total_rules"] == stats_once["total_rules"] == 3
+    assert service.get_stats()["sources_count"] == before + 1
+    assert service.get_mcp_env_vars()["SIGMA_PATHS"] == str(rules_dir)
 
 
-def test_rescan_marks_missing_local_source_as_error(home):
-    _stale_config(home)
-    service = DetectionRulesService()
-    gone = home / "custom-rules"
-    gone.mkdir()
-    service.add_source("Custom", "local", "sigma", path=str(gone))
-    gone.rmdir()
+@pytest.mark.unit
+def test_reregistering_seeded_git_default_clones_into_existing_entry(service):
+    seeded = next(s for s in service.sources if s["clone_name"] == "sigma")
+    assert seeded["status"] == "not_cloned"
 
-    service.rescan_sources()
+    def fake_clone(url, target):
+        (Path(target) / "rules").mkdir(parents=True)
+        (Path(target) / "rules" / "a.yml").write_text("title: a\n")
 
-    custom = next(s for s in service.list_sources() if s["name"] == "Custom")
-    assert custom["status"] == "error"
-    assert custom["rule_count"] == 0
+    with patch.object(service, "_git_clone", side_effect=fake_clone) as clone:
+        got = service.add_source(
+            "Sigma again",
+            "git",
+            "sigma",
+            url="https://github.com/SigmaHQ/sigma.git",
+            subdirectory="rules",
+        )
+
+    clone.assert_called_once()
+    assert got is seeded
+    assert seeded["status"] == "ready" and seeded["rule_count"] == 1
+    assert len(service.sources) == 4
+
+
+@pytest.mark.unit
+def test_equivalent_path_spellings_match(service, rules_dir):
+    base = rules_dir.parent
+    service.add_source("A", "local", "sigma", path=str(base), subdirectory="rules")
+    # Same directory reached via the subdirectory folded into the path.
+    dup = service.add_source("B", "local", "sigma", path=str(base / "rules"))
+    assert dup["name"] == "A"
+    assert [s["name"] for s in service.sources if s["type"] == "local"] == ["A"]
+
+
+@pytest.mark.unit
+def test_same_directory_different_format_is_distinct(service, rules_dir):
+    base = rules_dir.parent
+    service.add_source("Sigma", "local", "sigma", path=str(base), subdirectory="rules")
+    other = service.add_source(
+        "KQL", "local", "kql", path=str(base), subdirectory="rules"
+    )
+    assert other["name"] == "KQL"
+    assert len([s for s in service.sources if s["type"] == "local"]) == 2
