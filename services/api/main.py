@@ -97,11 +97,21 @@ async def lifespan(app: FastAPI):
         await _shutdown(app)
 
 
-# Create FastAPI app
+# `version` is the version of the API this document describes, not the version
+# of the build serving it. Those are different things: the build moves every
+# release, and a document whose version renumbers itself every release is the
+# opposite of what a version in the path is for. The frozen surface is
+# `/api/v1/**`, so this says 1 and stays at 1 until there is a v2. The build
+# version is still reported, by the health and root endpoints below.
 app = FastAPI(
     title="Vigil SOC API",
-    description="REST API for Vigil SOC Application",
-    version=__version__,
+    description=(
+        "REST API for Vigil SOC Application. The frozen contract is "
+        "`/api/v1/**` (excluding operations marked `x-vigil-beta`); paths "
+        "under a bare `/api` are console wiring and carry no stability "
+        "promise."
+    ),
+    version="1",
     lifespan=lifespan,
 )
 
