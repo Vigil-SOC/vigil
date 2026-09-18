@@ -75,7 +75,8 @@
         {
           "refId": "A",
           "expr": "sum(increase(vigil_llm_cost_usd_total{job=\"otel-collector\"}[$__range]))",
-          "legendFormat": "USD"
+          "legendFormat": "USD",
+          "instant": true
         }
       ]
     },
@@ -121,7 +122,8 @@
         {
           "refId": "A",
           "expr": "sum(increase(vigil_llm_tokens_total{job=\"otel-collector\"}[$__range]))",
-          "legendFormat": "tokens"
+          "legendFormat": "tokens",
+          "instant": true
         }
       ]
     },
@@ -167,7 +169,8 @@
         {
           "refId": "A",
           "expr": "sum(increase(vigil_llm_calls_total{job=\"otel-collector\"}[$__range]))",
-          "legendFormat": "calls"
+          "legendFormat": "calls",
+          "instant": true
         }
       ]
     },
@@ -217,7 +220,8 @@
         {
           "refId": "A",
           "expr": "sum(increase(vigil_llm_cost_pricing_unknown_total{job=\"otel-collector\"}[$__range]))",
-          "legendFormat": "unpriced"
+          "legendFormat": "unpriced",
+          "instant": true
         }
       ]
     },
@@ -247,7 +251,8 @@
         {
           "refId": "A",
           "expr": "sum by (provider, model) (rate(vigil_llm_cost_usd_total{job=\"otel-collector\"}[$__rate_interval])) * 3600",
-          "legendFormat": "{{provider}}/{{model}}"
+          "legendFormat": "{{provider}}/{{model}}",
+          "instant": false
         }
       ]
     },
@@ -277,7 +282,8 @@
         {
           "refId": "A",
           "expr": "sum by (token_type) (rate(vigil_llm_tokens_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "{{token_type}}"
+          "legendFormat": "{{token_type}}",
+          "instant": false
         }
       ]
     },
@@ -295,7 +301,24 @@
         "defaults": {
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -307,12 +330,14 @@
         {
           "refId": "A",
           "expr": "sum by (model) (rate(vigil_llm_calls_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "calls/s {{model}}"
+          "legendFormat": "calls/s {{model}}",
+          "instant": false
         },
         {
           "refId": "B",
           "expr": "histogram_quantile(0.95, sum by (le, model) (rate(vigil_llm_duration_seconds_bucket{job=\"otel-collector\"}[$__rate_interval])))",
-          "legendFormat": "p95 s {{model}}"
+          "legendFormat": "p95 s {{model}}",
+          "instant": false
         }
       ]
     },
@@ -359,7 +384,6 @@
               }
             ]
           },
-          "noValue": "0",
           "decimals": 0
         },
         "overrides": []
@@ -379,7 +403,8 @@
         {
           "refId": "A",
           "expr": "max(vigil_approvals_pending)",
-          "legendFormat": "pending"
+          "legendFormat": "pending",
+          "instant": true
         }
       ]
     },
@@ -425,7 +450,8 @@
         {
           "refId": "A",
           "expr": "sum by (run_kind) (increase(vigil_runs_started_total{job=\"otel-collector\"}[$__range]))",
-          "legendFormat": "{{run_kind}}"
+          "legendFormat": "{{run_kind}}",
+          "instant": true
         }
       ]
     },
@@ -471,7 +497,8 @@
         {
           "refId": "A",
           "expr": "sum by (status) (increase(vigil_runs_finished_total{job=\"otel-collector\"}[$__range]))",
-          "legendFormat": "{{status}}"
+          "legendFormat": "{{status}}",
+          "instant": true
         }
       ]
     },
@@ -501,7 +528,8 @@
         {
           "refId": "A",
           "expr": "max(vigil_approvals_pending)",
-          "legendFormat": "pending"
+          "legendFormat": "pending",
+          "instant": false
         }
       ]
     },
@@ -531,7 +559,8 @@
         {
           "refId": "A",
           "expr": "sum by (run_kind) (increase(vigil_runs_started_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "{{run_kind}}"
+          "legendFormat": "{{run_kind}}",
+          "instant": false
         }
       ]
     },
@@ -561,7 +590,8 @@
         {
           "refId": "A",
           "expr": "sum by (run_kind, status) (increase(vigil_runs_finished_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "{{run_kind}} {{status}}"
+          "legendFormat": "{{run_kind}} {{status}}",
+          "instant": false
         }
       ]
     },
@@ -604,12 +634,14 @@
         {
           "refId": "A",
           "expr": "sum by (source) (rate(soc_daemon_poller_polls_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "polls {{source}}"
+          "legendFormat": "polls {{source}}",
+          "instant": false
         },
         {
           "refId": "B",
           "expr": "sum by (source) (rate(soc_daemon_poller_findings_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "findings {{source}}"
+          "legendFormat": "findings {{source}}",
+          "instant": false
         }
       ]
     },
@@ -639,7 +671,8 @@
         {
           "refId": "A",
           "expr": "histogram_quantile(0.95, sum by (le, source) (rate(soc_daemon_poller_duration_seconds_bucket{job=\"otel-collector\"}[$__rate_interval])))",
-          "legendFormat": "{{source}}"
+          "legendFormat": "{{source}}",
+          "instant": false
         }
       ]
     },
@@ -657,7 +690,24 @@
         "defaults": {
           "unit": "short"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byFrameRefID",
+              "options": "B"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
       },
       "options": {
         "legend": {
@@ -669,12 +719,14 @@
         {
           "refId": "A",
           "expr": "sum(rate(soc_daemon_processor_processed_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "processed/s"
+          "legendFormat": "processed/s",
+          "instant": false
         },
         {
           "refId": "B",
           "expr": "histogram_quantile(0.95, sum by (le) (rate(soc_daemon_processor_duration_seconds_bucket{job=\"otel-collector\"}[$__rate_interval])))",
-          "legendFormat": "p95 s"
+          "legendFormat": "p95 s",
+          "instant": false
         }
       ]
     },
@@ -704,17 +756,20 @@
         {
           "refId": "A",
           "expr": "sum(increase(soc_daemon_orchestrator_investigations_created_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "created"
+          "legendFormat": "created",
+          "instant": false
         },
         {
           "refId": "B",
           "expr": "sum(increase(soc_daemon_orchestrator_investigations_completed_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "completed"
+          "legendFormat": "completed",
+          "instant": false
         },
         {
           "refId": "C",
           "expr": "sum(increase(soc_daemon_orchestrator_investigations_failed_total{job=\"otel-collector\"}[$__rate_interval]))",
-          "legendFormat": "failed"
+          "legendFormat": "failed",
+          "instant": false
         }
       ]
     },
@@ -760,7 +815,8 @@
         {
           "refId": "A",
           "expr": "sum(increase(soc_daemon_orchestrator_dedup_prevented_total{job=\"otel-collector\"}[$__range]))",
-          "legendFormat": "dedup"
+          "legendFormat": "dedup",
+          "instant": true
         }
       ]
     },
@@ -810,7 +866,8 @@
         {
           "refId": "A",
           "expr": "sum(increase(soc_daemon_orchestrator_stuck_agents_total{job=\"otel-collector\"}[$__range]))",
-          "legendFormat": "stuck"
+          "legendFormat": "stuck",
+          "instant": true
         }
       ]
     }
