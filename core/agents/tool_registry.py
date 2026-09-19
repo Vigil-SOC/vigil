@@ -296,9 +296,25 @@ def _check_hunt_coverage(args: Args) -> Any:
         return {"error": str(exc)}
 
 
+# Learning episodes (#906): a window over Distil markers, and a JSONL export of a
+# chosen subset. Mappings, for the same reason as _recall.
+def _list_learning_episodes(args: Args) -> Any:
+    from core.memory.learning_episodes import list_learning_episodes
+
+    return list_learning_episodes(args)
+
+
+def _export_learning_episodes(args: Args) -> Any:
+    from core.memory.learning_episodes import export_learning_episodes
+
+    return export_learning_episodes(args)
+
+
 _MEMORY_TOOLS: Dict[str, Callable[[Args], Any]] = {
     RECALL_TOOL: _recall,
     "check_hunt_coverage": _check_hunt_coverage,
+    "list_learning_episodes": _list_learning_episodes,
+    "export_learning_episodes": _export_learning_episodes,
 }
 
 _APPROVAL_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
