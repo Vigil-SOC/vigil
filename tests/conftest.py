@@ -10,7 +10,10 @@ import os
 from unittest.mock import patch
 
 os.environ["DEV_MODE"] = "false"
-os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-not-for-prod")
+# `or`, not setdefault: a shell that sourced .env exports JWT_SECRET_KEY="".
+os.environ["JWT_SECRET_KEY"] = (
+    os.environ.get("JWT_SECRET_KEY") or "test-only-secret-not-for-prod"
+)
 os.environ["VIGIL_DISABLE_DOTENV"] = "1"
 
 import pytest  # noqa: E402

@@ -16,8 +16,10 @@ and restored afterwards; the request unit of work and ``AuthService``'s own
 sessions all go through that manager, so overriding a single dependency would
 not have been enough.
 
-Skips when no local Postgres answers — except under ``CI``, where a missing
-database is a provisioning failure and must fail rather than pass by skipping.
+Skips when no local Postgres or Redis answers (token revocation is fail-closed,
+so a session cannot be verified without Redis) — except under ``CI``, where a
+missing service is a provisioning failure and must fail rather than pass by
+skipping.
 """
 
 from __future__ import annotations
@@ -25,10 +27,13 @@ from __future__ import annotations
 import os
 
 import pytest
+import redis
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
+from core import redis_client
+from core.config import DEFAULT_REDIS_URL, get_settings
 from core.storage.connection import DatabaseConfig, get_db_manager
 from core.storage.models import Base, Role
 from services.api.middleware.rate_limit import limiter
@@ -70,9 +75,16 @@ def _unavailable_reason():
         return f"refusing to CREATE/DROP a database on non-local POSTGRES_HOST {host!r}"
     try:
         with _admin_engine().connect():
-            return None
+            pass
     except Exception as e:  # noqa: BLE001
         return f"requires a local PostgreSQL (docker compose up -d postgres): {e}"
+    try:
+        redis.Redis.from_url(
+            get_settings().redis_url or DEFAULT_REDIS_URL, socket_connect_timeout=5
+        ).ping()
+    except Exception as e:  # noqa: BLE001
+        return f"requires a local Redis (docker compose up -d redis): {e}"
+    return None
 
 
 @pytest.fixture(scope="module")
@@ -83,6 +95,9 @@ def empty_database():
         if os.getenv("CI"):
             pytest.fail(f"CI must run the bootstrap proof: {reason}")
         pytest.skip(reason)
+    # The shared redis.asyncio client binds to the event loop that first uses
+    # it; an earlier module's TestClient loop is closed by now, so start fresh.
+    redis_client._client = None
 
     admin = _admin_engine()
     with admin.connect() as c:
@@ -112,6 +127,9 @@ def empty_database():
 
     manager = get_db_manager()
     manager.retarget(DatabaseConfig(connection_string=_url(SCRATCH_DB)))
+    # DatabaseConfig falls back to POSTGRES_* on an unparsable DSN; the chain
+    # below must never run against the configured database by accident.
+    assert manager.config.database == SCRATCH_DB
     try:
         yield
     finally:
@@ -140,7 +158,9 @@ def client(empty_database):
 
 
 def _csrf(client: TestClient) -> dict:
-    # Double-submit: echo the csrf_token cookie the first response seeded.
+    # What the SPA does: echo the csrf_token cookie the first response seeded.
+    # Sent whether or not CSRF is enabled in this process (other modules turn it
+    # off at collection), so the chain holds either way.
     return {"X-CSRF-Token": client.cookies.get("csrf_token", "")}
 
 

@@ -22,8 +22,9 @@ if [ ! -f "$REPO_ROOT/.env" ]; then
     cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env"
     echo "Created .env from env.example (authentication on; first run creates the admin)"
 fi
-# A fresh setup boots with auth on, which needs a JWT signing secret.
-load_env
+# A fresh setup boots with auth on, which needs a JWT signing secret. Minted
+# here so the first ./start.sh finds it; a JWT_SECRET_KEY set in .env still
+# wins at start time (start.sh loads .env before calling this).
 ensure_jwt_secret
 
 # Python
