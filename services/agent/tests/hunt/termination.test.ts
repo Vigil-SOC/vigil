@@ -193,7 +193,7 @@ describe("the budget checkpoint", () => {
     const { ledger, state, queue, runId } = await parkedHunt();
     steer(queue, runId, "extend", "2 more iterations and $4");
 
-    const resumed = await reopen({ ledger, state, queue, runId, hypothesisIds: [] });
+    const resumed = await reopen({ ledger, state, queue, runId });
     await controllerFor(resumed, [INVESTIGATE]).advanceIteration();
 
     expect(resumed.projection.hunt.status).toBe("active");
@@ -206,10 +206,39 @@ describe("the budget checkpoint", () => {
     const { ledger, state, queue, runId } = await parkedHunt();
     steer(queue, runId, "extend", "nothing in particular");
 
-    const resumed = await reopen({ ledger, state, queue, runId, hypothesisIds: [] });
+    const resumed = await reopen({ ledger, state, queue, runId });
     await expect(controllerFor(resumed, [INVESTIGATE]).advanceIteration()).rejects.toThrow(HuntParked);
 
     expect(resumed.projection.hunt.status).toBe("parked");
+  });
+
+  // The iteration that crosses the cost ceiling is by definition the one that never
+  // reached a decision, so a counter patched at decision time always under-reported a
+  // hunt parked on cost -- and an extension compared against that stale figure could
+  // un-park a hunt the harness would refuse on its next call.
+  it("parks on cost at what was actually spent, and an extension that buys nothing keeps it parked", async () => {
+    const budgets: Budgets = { ...CAPPED, max_iterations: 8, max_calls: 96, max_cost_usd: 1 };
+    const { ledger, state, queue, runId, spend } = await newLedger({ budgets });
+    const result = await controllerFor(ledger, [INVESTIGATE], { costPerDecision: 1.5, spend }).advanceIteration();
+
+    expect(result.hunt_status).toBe("parked");
+    expect(ledger.projection.hunt.cost_usd).toBe(1.5);
+    expect(ledger.projection.hunt.parked_reason).toMatch(/spent its allowance: \$1\.5000 of \$1\.00/);
+
+    // The overshoot is $0.50; $0.25 raises the ceiling to $1.25 and buys no turn.
+    await steer(queue, runId, "extend", "", { grant: { iterations: 0, cost_usd: 0.25, wall_ms: 0 } });
+    const short = await reopen({ ledger, state, queue, runId });
+    await expect(controllerFor(short, [INVESTIGATE], { spend }).advanceIteration()).rejects.toThrow(HuntParked);
+    expect(short.projection.hunt.status).toBe("parked");
+    expect(short.projection.hunt.budgets.max_cost_usd).toBe(1.25);
+    expect(short.projection.directives.map((directive) => directive.text).join(" ")).toMatch(/leaves no room .* stays parked/);
+
+    await steer(queue, runId, "extend", "", { grant: { iterations: 0, cost_usd: 1, wall_ms: 0 } });
+    const resumed = await reopen({ ledger, state, queue, runId }, short);
+    const next = await controllerFor(resumed, [INVESTIGATE], { spend }).advanceIteration();
+    expect(next.hunt_status).toBe("active");
+    expect(next.iteration).toBe(2);
+    expect(resumed.projection.hunt.budgets.max_cost_usd).toBe(2.25);
   });
 
   it("concludes rather than parking when the budget runs out on a finished hunt", async () => {
