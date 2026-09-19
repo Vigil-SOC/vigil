@@ -153,6 +153,9 @@ export function fold(events: readonly HuntEvent[]): Projection {
       // construction. Folded here rather than patched at decision time, so the figure
       // is right mid-iteration too -- which is where a hunt that trips its ceiling
       // stops, since the iteration that crossed it is the one that never finished.
+      // Ledgers written before this arm also carry hunt patches naming cost_usd;
+      // a patch overwrites rather than adds, and each was written after the spend
+      // it summed, so replaying one counts nothing twice.
       case "spend":
         view.hunt.cost_usd += event.payload.cost_usd ?? 0;
         break;

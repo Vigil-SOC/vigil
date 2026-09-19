@@ -20,7 +20,7 @@ import type {
   DispatchRequest,
   DispatchResult,
 } from "../../workflows/hunt/types.js";
-import { billedLead, CONCLUDE, controllerFor, INVESTIGATE, newLedger, question } from "../support/hunt.js";
+import { billedLead, CONCLUDE, controllerFor, finalized, INVESTIGATE, newLedger, question } from "../support/hunt.js";
 
 describe("ledger", () => {
   it("appends without rewriting, and reads back the same projection", async () => {
@@ -73,6 +73,8 @@ describe("controller", () => {
     expect(ledger.projection.decisions).toHaveLength(1);
     expect(ledger.projection.decisions[0]!.digest_presented.iteration).toBe(1);
     expect(ledger.projection.hunt.cost_usd).toBe(0.25);
+    // The report is frozen on the same turn, so it must already carry that spend.
+    expect(finalized(ledger)[0]!.cost_usd).toBe(0.25);
   });
 
   it("coerces unresolved hypotheses to inconclusive, never disproven", async () => {

@@ -1851,6 +1851,12 @@ export class HuntController {
     const appended = dispatchResults.flatMap((dispatchResult) => this.persistDispatch(iteration, dispatchResult));
     const enriched = await this.enrich(iteration, appended.flatMap((record) => record.entities));
 
+    // The lead's, the workers' and the critic's spend this iteration went to State
+    // behind this journal. Read it back here, before anything below can end the
+    // hunt: a report or a park written off a stale fold would under-report by the
+    // whole final iteration, which is the iteration that always matters.
+    await this.ledger.refresh();
+
     // Before termination: a verdict reached this iteration must be on the record
     // when the terminal path coerces whatever is still active.
     const notes: string[] = [];
@@ -1866,9 +1872,6 @@ export class HuntController {
     // CONCLUDE is a recommendation; the predicate is the judge. A refusal leaves
     // the hunt active, so the budget check below still applies to it.
     if (result.decision.action === "CONCLUDE") notes.push(this.concludeOrRefuse(iteration));
-    // The lead's, the workers' and the critic's spend this iteration went to State
-    // behind this journal; read it back before asking whether the ceiling bound.
-    await this.ledger.refresh();
     if (this.ledger.projection.hunt.status === "active" && this.budgetExhausted()) {
       notes.push(this.budgetCheckpoint(iteration));
     }

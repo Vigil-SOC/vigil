@@ -241,6 +241,30 @@ describe("the budget checkpoint", () => {
     expect(resumed.projection.hunt.budgets.max_cost_usd).toBe(2.25);
   });
 
+  // The park the issue describes: the pool refused a call partway through an
+  // iteration, so no decision landed and nothing but the spend events says what it
+  // cost. The resume folds those, and extend() has to be measured against them.
+  it("measures an extension against the spend of the iteration that was refused", async () => {
+    const budgets: Budgets = { ...CAPPED, max_iterations: 8, max_calls: 96, max_cost_usd: 1 };
+    const started = await newLedger({ budgets });
+    const { ledger, queue, runId, spend } = started;
+    await spend(0.7, "lead");
+    await spend(0.8, "threat_hunter");
+    controllerFor(ledger, []).parkOnRefusal("cost_exhausted");
+    expect(ledger.projection.hunt.cost_usd).toBe(0);
+
+    await steer(queue, runId, "extend", "", { grant: { iterations: 0, cost_usd: 0.25, wall_ms: 0 } });
+    const resumed = await reopen(started);
+    expect(resumed.projection.hunt.cost_usd).toBe(1.5);
+    await expect(controllerFor(resumed, [INVESTIGATE], { spend }).advanceIteration()).rejects.toThrow(HuntParked);
+    expect(resumed.projection.hunt.status).toBe("parked");
+    expect(resumed.projection.directives.map((directive) => directive.text).join(" ")).toMatch(/leaves no room/);
+
+    await steer(queue, runId, "extend", "", { grant: { iterations: 0, cost_usd: 1, wall_ms: 0 } });
+    const again = await reopen(started, resumed);
+    expect((await controllerFor(again, [INVESTIGATE], { spend }).advanceIteration()).hunt_status).toBe("active");
+  });
+
   it("concludes rather than parking when the budget runs out on a finished hunt", async () => {
     const { ledger, hypothesisIds } = await newLedger({ budgets: CAPPED });
     resolve(ledger, hypothesisIds[0]!);
