@@ -239,10 +239,12 @@ Confidence scoring:
             "list_cases",
             "list_findings",
             "recall_entity",
+            "list_learning_episodes",
+            "export_learning_episodes",
         ],
         "max_tokens": 8192,
         "enable_thinking": False,
-        "extra_principles": "- Clear language, avoid jargon for executives\n- Focus on actionable insights\n- Never speculate - report only retrieved data\n- For board briefs: one page max, lead with risk posture, no CVEs or ATT&CK IDs in main body\n- Memory: recall_entity on case entities; read-only, and it orients your search rather than deciding its outcome",
+        "extra_principles": '- Clear language, avoid jargon for executives\n- Focus on actionable insights\n- Never speculate - report only retrieved data\n- For board briefs: one page max, lead with risk posture, no CVEs or ATT&CK IDs in main body\n- Memory: recall_entity on case entities; read-only, and it orients your search rather than deciding its outcome\n- Learning: for "what did we learn" over a period call list_learning_episodes with the window, then export_learning_episodes for the episodes the user picks; redacted unless they ask for identified',
         "methodology": """<methodology>
 1. Gather data via tools (cases, findings, actions)
 2. Analyze context: severity, timeline, impact
