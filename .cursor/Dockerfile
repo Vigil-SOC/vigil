@@ -65,6 +65,28 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && helm version --short
 
 ########################################################
+# ACTIONLINT + HADOLINT (CI lint gates)
+########################################################
+
+# ci-cd.yml gates workflow edits with `docker://rhysd/actionlint:1.7.12` and
+# Dockerfiles with `hadolint/hadolint-action@v3.5.0` (hadolint v2.15.1). Both
+# are static binaries pinned to the same versions so a local run reports what
+# CI will. actionlint reads .github/actionlint.yaml from the repo root, which
+# keeps shellcheck findings out of the gate, so shellcheck is not needed here.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && ACTIONLINT_VERSION=1.7.12 \
+    && curl --retry 3 --retry-delay 5 -fsSL \
+       "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${ARCH}.tar.gz" \
+       | tar -xz -C /usr/local/bin actionlint \
+    && actionlint -version \
+    && case "$ARCH" in amd64) HL_ARCH=x86_64 ;; arm64) HL_ARCH=arm64 ;; *) echo "unsupported arch $ARCH" && exit 1 ;; esac \
+    && HADOLINT_VERSION=v2.15.1 \
+    && curl --retry 3 --retry-delay 5 -fsSL -o /usr/local/bin/hadolint \
+       "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-${HL_ARCH}" \
+    && chmod +x /usr/local/bin/hadolint \
+    && hadolint --version
+
+########################################################
 # AGENT-BROWSER (live tests)
 ########################################################
 
