@@ -18,7 +18,6 @@ import os
 from contextlib import contextmanager
 
 # Keep CSRF out of the way — exercised elsewhere.
-os.environ.setdefault("DEV_MODE", "true")
 os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
 
 import pytest
@@ -36,6 +35,13 @@ def client():
 
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _signed_in(client, authenticate_app):
+    """Every route here is behind auth; these tests are about the toggle, not it."""
+    with authenticate_app(client.app):
+        yield
 
 
 @contextmanager

@@ -50,7 +50,10 @@ jobs:
           - 6379:6379
     env:
       TESTING: "true"
-      DEV_MODE: "true"
+      # The suite runs the way an install runs. The bypass was only ever here
+      # because auth_service raises at import without a signing secret.
+      DEV_MODE: "false"
+      JWT_SECRET_KEY: "ci-only-signing-secret-not-for-any-real-use"
       SECRET_KEY: "test-secret-key"
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
@@ -58,6 +61,9 @@ jobs:
       POSTGRES_PASSWORD: test
       POSTGRES_DB: deeptempo_test
       DATABASE_URL: postgresql://test:test@localhost:5432/deeptempo_test
+      # The database the provisioning step below creates. Without this the
+      # bootstrap test looks for a developer's own vigil_auth_test and errors.
+      AUTH_TEST_DATABASE_URL: postgresql://test:test@localhost:5432/vigil_auth_test
       REDIS_URL: redis://localhost:6379/0
 
     steps:
@@ -89,6 +95,14 @@ jobs:
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
             -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+
+      - name: Provision the bootstrap test database
+        # test_first_admin_bootstrap.py runs against an empty instance: it
+        # applies the auth DDL itself and truncates users, neither of which the
+        # shared schema survives. Its own database, created from nothing here.
+        run: |
+          PGPASSWORD=test psql -h localhost -p 5432 -U test -d postgres \
+            -c "CREATE DATABASE vigil_auth_test;"
 
       - name: Initialize schema
         # Strict here, and only here: CI provisions from empty, so a schema that

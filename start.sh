@@ -59,6 +59,11 @@ load_env
 [ -n "$_CALLER_BIND_HOST" ] && BIND_HOST="$_CALLER_BIND_HOST"
 export BIND_HOST="${BIND_HOST:-127.0.0.1}"
 
+# Authenticated runs fail closed without a signing secret. setup_dev.sh mints
+# one, but a .env copied from env.example by hand never went through it, and
+# that would otherwise die at import with nothing started.
+[ "${DEV_MODE:-}" = "true" ] || ensure_jwt_secret
+
 # `bifrost` only resolves inside the compose network. Rewrite before starting
 # services: bringing Ollama up syncs its catalog into Bifrost, and that runs
 # here on the host.
@@ -96,7 +101,13 @@ print_ready() {
     echo "Docs:     http://localhost:6987/docs"
     echo ""
     if [ "${DEV_MODE:-}" = "true" ]; then
-        echo "DEV_MODE active - auth bypassed"
+        # Last thing on the screen, because the startup banner printed at import
+        # is several hundred log lines ago by now. This is where someone
+        # actually looks to see what they just started.
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+        echo "  DEV_MODE - NOT AUTHENTICATED. No login, every request is admin."
+        echo "  Set DEV_MODE=false in .env to require one."
+        echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     else
         echo "First run: create your admin account at http://localhost:6988"
     fi

@@ -95,7 +95,6 @@ NOT_SETTINGS = {
     "REQUESTS_CA_BUNDLE",
     "SSL_CERT_FILE",
     # Consumed outside the Python backend (shell scripts, compose, Vite).
-    "BIND_HOST",
     "GRAFANA_PASSWORD",
     "VITE_EXTENSION_ORIGIN_ALLOWLIST",
     # Read by the TypeScript agent processes themselves, not by Settings.

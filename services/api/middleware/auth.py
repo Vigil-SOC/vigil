@@ -21,11 +21,10 @@ from core.storage.models import User
 logger = logging.getLogger(__name__)
 
 # Dev mode flag - ONLY for development, never in production!
+# The announcement belongs to core.auth.dev_mode, which names every gate the
+# flag opens and whether the bind is reachable. A second warning here said less
+# and said it in different words, so one startup reported the same fact twice.
 DEV_MODE = get_settings().dev_mode
-
-if DEV_MODE:
-    logger.warning("⚠️  DEV_MODE is ENABLED - Authentication is BYPASSED!")
-    logger.warning("⚠️  This should NEVER be enabled in production!")
 
 # The synthetic stand-in, for a database with no admin row. Cached because it is
 # never persisted: re-building it per request would hand out a new user_id each time.

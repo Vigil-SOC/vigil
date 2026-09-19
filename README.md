@@ -143,9 +143,12 @@ cd vigil
 ./start.sh
 ```
 
-> **Note:** Docker must be running before you start. The startup script handles everything else: creates the Python virtual environment, installs dependencies, starts PostgreSQL, initializes the database with a default admin user, installs frontend packages, and launches both backend and frontend servers.
+> **Note:** Docker must be running before you start. The startup script handles everything else: creates the Python virtual environment, installs dependencies, starts PostgreSQL, initializes the database, installs frontend packages, and launches both backend and frontend servers.
 
-Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full auth is WIP and while it will turn on it is untested. To activate auth set `DEV_MODE=false`.
+Authentication is on. A fresh install has no accounts, so the first thing
+Vigil asks for is an admin account with a password you choose — see [First
+Login](#first-login). To work locally without logging in, set `DEV_MODE=true`
+in `.env`; every startup then announces what that opens.
 
 > **Stable build vs. development build:** The Quick Start above clones `main` —
 > the active development branch (latest, *unreleased* code). For a stable,
@@ -176,14 +179,16 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 - **Git**
 - An LLM provider key. Vigil supports Anthropic Claude (default), OpenAI, and Ollama (local) — configure providers in Settings → AI Config. See the [Bifrost gateway](https://vigilsoc.org/docs/bifrost/) notes for the multi-provider setup. *(optional for initial testing)*
 
-### Default Login Credentials
+### First Login
 
-| | |
-|---|---|
-| **Username** | `admin` |
-| **Password** | `admin123` |
+There are no default credentials. The first time you open Vigil it sees an
+empty instance and asks you to create an admin account with a password you
+choose; once that account exists, the offer closes permanently.
 
-> Change these in production!
+To work locally without logging in, set `DEV_MODE=true` in `.env`. It prints a
+banner naming everything it unlocks on every startup, and the console carries a
+warning stripe. Run it bound to anything but loopback and the banner escalates,
+because at that point anyone who can reach the host is an administrator.
 
 ### Manual Install
 
@@ -194,7 +199,7 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 git clone https://github.com/Vigil-SOC/vigil.git
 cd vigil
 
-# Environment (DEV_MODE enabled by default)
+# Environment (authentication on by default)
 cp env.example .env
 # LLM provider keys (Anthropic / OpenAI / Ollama) are configured in the
 # web UI at Settings → AI / LLM Providers — not in .env.
@@ -249,18 +254,23 @@ troubleshooting.
 # Terminal 1: Start database (Docker must be running)
 cd docker && docker-compose up -d postgres
 
-# Terminal 2: Initialize admin user and generate demo data
-source venv/bin/activate
-python scripts/init_default_user.py
-python scripts/demo.py
-
-# Terminal 3: Start backend
+# Terminal 2: Start backend
 source venv/bin/activate
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 uvicorn services.api.main:app --host 127.0.0.1 --port 6987 --reload
 
-# Terminal 4: Start frontend
+# Terminal 3: Start frontend
 cd clients/web && npm run dev
+```
+
+Open http://localhost:6988 and create the admin account Vigil asks for. To fill
+a fresh instance with sample findings and cases, sign in first — ingestion is
+authenticated, so this runs after the account exists, not before:
+
+```bash
+source venv/bin/activate
+VIGIL_USERNAME=<the admin you just created> VIGIL_PASSWORD=<its password> \
+  python scripts/generate_sample_data.py --api
 ```
 
 ### Shutdown

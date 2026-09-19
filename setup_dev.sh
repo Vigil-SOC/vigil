@@ -16,11 +16,19 @@ elif ! node -e "process.exit(parseInt(process.version.slice(1))>=18?0:1)" 2>/dev
 fi
 [ "$WARNINGS" -gt 0 ] && echo ""
 
-# Environment
+# Environment. An existing .env is never rewritten — a machine already set up
+# keeps whatever it was configured with, including the auth bypass.
 if [ ! -f "$REPO_ROOT/.env" ]; then
     cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env"
-    echo "Created .env from env.example (DEV_MODE=true)"
+    echo "Created .env from env.example (authentication on)"
+    NEW_ENV=1
 fi
+
+# An authenticated backend raises at import without a signing secret, and the
+# .env just written asks for authentication. Minted here so a fresh setup has
+# one before anything tries to start: persisted at ~/.vigil/jwt_secret, reused
+# on every later run, and never written into .env.
+ensure_jwt_secret
 
 # Python
 ensure_venv
@@ -72,4 +80,10 @@ else
 fi
 
 echo ""
+if [ "${NEW_ENV:-0}" = "1" ]; then
+    echo "Authentication is on. The first time you open Vigil it asks you to"
+    echo "create an admin account - you choose the password."
+    echo "To work without logging in, set DEV_MODE=true in .env."
+    echo ""
+fi
 echo "Setup complete. Run: ./start.sh"

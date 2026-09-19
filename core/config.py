@@ -117,6 +117,11 @@ class Settings(BaseSettings):
 
     # Runtime
     dev_mode: bool = False
+    # The address uvicorn is told to bind. Read rather than chosen: start.sh and
+    # app_up.sh already export BIND_HOST, and the container image sets it to the
+    # 0.0.0.0 its CMD hardcodes. The DEV_MODE guard is the only reader — it needs
+    # to know whether an unauthenticated instance is reachable from the network.
+    bind_host: str = "127.0.0.1"
     testing: bool = False
     environment: str = "development"
     release_version: str = "unknown"

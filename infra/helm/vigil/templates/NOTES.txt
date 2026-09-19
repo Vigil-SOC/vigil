@@ -31,8 +31,8 @@ Vigil SOC has been installed in namespace {{ .Release.Namespace }} as release "{
    config.DEV_MODE to "false" and set secrets.jwtSecretKey to enable real auth.
 {{- else }}
 
-Default admin login (if not already changed): admin / admin123
-Change it immediately via the settings UI.
+There are no default credentials. Open Vigil and it will ask you to create the
+first admin account, with a password you choose; the offer closes once it exists.
 {{- end }}
 
 {{- if not .Values.secrets.anthropicApiKey }}

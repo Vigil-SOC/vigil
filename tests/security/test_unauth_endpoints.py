@@ -42,9 +42,10 @@ def app():
     reads a module-level ``DEV_MODE`` captured at import, so patching the
     attribute is enough there. Routers that carry their own dev-mode bypass
     — the VStrike inbound receiver is the current one — instead call
-    ``get_settings().dev_mode`` live, and tests/conftest.py sets
-    ``DEV_MODE=true`` for the whole session so routers can be imported at
-    all. Patching only the middleware left those routers short-circuiting
+    ``get_settings().dev_mode`` live. The suite now runs with the bypass off,
+    so this is belt and braces rather than the only thing standing between
+    the test and a no-op. Patching only the middleware left those routers
+    short-circuiting
     their own gate, so the endpoint answered 200 and looked unauthenticated
     when it was really just in dev mode.
 

@@ -157,6 +157,39 @@ def save_to_files(findings: List[Dict], cases: List[Dict]):
     print(f"✓ Saved {len(cases)} cases to {cases_file}")
 
 
+def _auth_headers(base_url: str) -> Dict[str, str]:
+    """Bearer header for an authenticated backend, or nothing for a bypassed one.
+
+    VIGIL_TOKEN is used as given. Otherwise VIGIL_USERNAME and VIGIL_PASSWORD
+    are exchanged for an access token. With neither set this returns no header,
+    which is correct against DEV_MODE=true and fails loudly below against
+    anything else.
+    """
+    import os
+
+    import requests
+
+    token = os.environ.get("VIGIL_TOKEN", "")
+    username = os.environ.get("VIGIL_USERNAME", "")
+    password = os.environ.get("VIGIL_PASSWORD", "")
+
+    if not token and username and password:
+        response = requests.post(
+            f"{base_url}/api/auth/login",
+            json={"username_or_email": username, "password": password},
+        )
+        if response.status_code != 200:
+            raise SystemExit(
+                f"Login failed for {username} at {base_url}: "
+                f"HTTP {response.status_code} {response.text}"
+            )
+        token = response.json().get("access_token", "")
+        if not token:
+            raise SystemExit("Login returned no access_token")
+
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 def ingest_via_api(
     findings: List[Dict], cases: List[Dict], base_url: str = "http://127.0.0.1:6987"
 ):
@@ -164,6 +197,17 @@ def ingest_via_api(
     import requests
 
     print(f"\nIngesting data via API at {base_url}...")
+
+    headers = _auth_headers(base_url)
+
+    # One authenticated call before the loop: 500 identical 401s is a worse way
+    # to learn there are no credentials than one sentence.
+    probe = requests.get(f"{base_url}/api/auth/me", headers=headers)
+    if probe.status_code in (401, 403):
+        raise SystemExit(
+            f"Not authenticated against {base_url} (HTTP {probe.status_code}). "
+            "Set VIGIL_TOKEN, or set VIGIL_USERNAME and VIGIL_PASSWORD."
+        )
 
     # Ingest findings
     print(f"Ingesting {len(findings)} findings...")
@@ -177,6 +221,7 @@ def ingest_via_api(
                     "format": "json",
                     "data_type": "finding",
                 },
+                headers=headers,
             )
             if response.status_code == 200:
                 findings_success += 1
@@ -195,6 +240,7 @@ def ingest_via_api(
             response = requests.post(
                 f"{base_url}/api/ingest/ingest-string",
                 data={"data": json.dumps(case), "format": "json", "data_type": "case"},
+                headers=headers,
             )
             if response.status_code == 200:
                 cases_success += 1
