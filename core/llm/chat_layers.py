@@ -71,18 +71,23 @@ _READONLY_LEADS = frozenset(
 def _is_destructive_mcp(name: str) -> bool:
     """True for a server-prefixed MCP tool that performs an irreversible action.
 
-    MCP names arrive as ``{server}_{tool}``; the action is the tool part. A
-    read-only lead verb wins outright; otherwise any destructive verb token marks
-    it. Deliberately conservative — a spurious drop just means chat recommends the
-    action instead of calling it, whereas a missed one is an ungated detonation.
+    Every token of the id is read, the server prefix included. Vendor tools
+    arrive as ``{server}_{tool}`` and Vigil's own arrive bare, so there is no
+    one prefix to strip — and stripping the first token off a bare name takes
+    the verb, which is the whole of what this decides on: ``isolate_host``
+    would be read as ``host``.
+
+    A read-only lead verb wins outright; otherwise any destructive verb token
+    marks it. Reading the prefix too can only over-drop, and that is the side to
+    err on — a spurious drop means chat recommends the action instead of calling
+    it, whereas a missed one is an ungated detonation.
 
     ART execute is named, not verb-matched: adding ``execute`` to the verb set
     would also drop ``splunk_execute``.
     """
     if name in EXECUTE_IDS:
         return True
-    action = name.split("_", 1)[1] if "_" in name else name
-    tokens = action.split("_")
+    tokens = name.split("_")
     if not tokens:
         return False
     if tokens[0] in _READONLY_LEADS:

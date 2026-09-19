@@ -131,3 +131,59 @@ class Role(Base):
 
     # Indexes
     __table_args__ = (Index("idx_role_name", "name"),)
+
+
+class McpCredential(Base):
+    """A credential a program holds, to reach Vigil's MCP surface.
+
+    Tied to a user and carrying no permissions of its own: what the holder may
+    do is what that user may do. See ``infra/database/init/34_mcp_credentials.sql``
+    for why it is a table of its own rather than columns on ``users``.
+    """
+
+    __tablename__ = "mcp_credentials"
+
+    credential_id: Mapped[str] = mapped_column(String(50), primary_key=True)
+    user_id: Mapped[str] = mapped_column(
+        String(50), ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False
+    )
+
+    # SHA-256 of a token this never stores. The token is 256 bits from a
+    # CSPRNG, so there is nothing to guess; bcrypt's work factor is for a
+    # secret a person chose, and would be paid on every call a program makes.
+    token_hash: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, index=True
+    )
+    label: Mapped[str] = mapped_column(String(200), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=utcnow, server_default="now()"
+    )
+    last_used_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    __table_args__ = (Index("idx_mcp_credentials_user", "user_id"),)
+
+    def is_usable(self, now: Optional[datetime] = None) -> bool:
+        """Whether this credential may authenticate a call right now."""
+        now = now or utcnow()
+        if self.revoked_at is not None:
+            return False
+        if self.expires_at is not None and self.expires_at <= now:
+            return False
+        return True
+
+    def to_dict(self) -> dict:
+        """What an operator may see. Never the token; it no longer exists."""
+        return {
+            "credential_id": self.credential_id,
+            "user_id": self.user_id,
+            "label": self.label,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "last_used_at": (
+                self.last_used_at.isoformat() if self.last_used_at else None
+            ),
+            "expires_at": self.expires_at.isoformat() if self.expires_at else None,
+            "revoked_at": self.revoked_at.isoformat() if self.revoked_at else None,
+        }

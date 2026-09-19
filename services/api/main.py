@@ -91,10 +91,24 @@ init_sentry()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _startup(app)
-    try:
-        yield
-    finally:
-        await _shutdown(app)
+    # The MCP session manager runs whether or not the surface is open: the
+    # toggle is a runtime one, so turning it on must not need a restart, and
+    # with the gate refusing every request the manager simply has nothing to do.
+    from tools.mcp.vigil import mcp as vigil_mcp
+
+    # Built here, not at import: each app carries its own session manager and a
+    # manager runs once, so a process that starts the app twice -- a test, a
+    # reloader -- needs a new one rather than the same one again.
+    # The app serves at ``/mcp`` of its own accord; mounted at ``/mcp`` that
+    # would put the real endpoint at /mcp/mcp. It is the mount that decides
+    # where this is served, so the app itself serves at its root.
+    _mcp_gate.app = vigil_mcp.streamable_http_app(streamable_http_path="/")
+
+    async with vigil_mcp.session_manager.run():
+        try:
+            yield
+        finally:
+            await _shutdown(app)
 
 
 # Create FastAPI app
@@ -408,6 +422,29 @@ def _build_services(app: FastAPI):
     app.state.demo_data = DemoDataService() if is_demo_mode() else None
 
 
+def _announce_mcp_surface() -> None:
+    """Say what this install is serving on /mcp, and whether anyone can open it."""
+    from core.integrations.mcp.surface import is_enabled
+    from services.api.mcp_surface import announce
+
+    try:
+        enabled = is_enabled()
+        count = 0
+        if enabled:
+            from core.storage.models import McpCredential
+            from core.storage.unit_of_work import unit_of_work
+
+            with unit_of_work() as session:
+                count = (
+                    session.query(McpCredential)
+                    .filter(McpCredential.revoked_at.is_(None))
+                    .count()
+                )
+        announce(enabled, count)
+    except Exception:  # noqa: BLE001 - an announcement must never fail a boot
+        logger.exception("Could not report the state of the MCP surface")
+
+
 async def _startup(app: FastAPI):
     """Initialize database and MCP tools on startup."""
     logger.info("=" * 60)
@@ -415,6 +452,7 @@ async def _startup(app: FastAPI):
     logger.info("=" * 60)
 
     _build_services(app)
+    _announce_mcp_surface()
 
     _testing = get_settings().testing
 
@@ -683,6 +721,16 @@ async def health_check():
         if schema_block is not None:
             payload["schema"] = schema_block
         return payload
+
+
+# Vigil's own MCP server, given an address. Mounted before the SPA catch-all so
+# /mcp reaches the server rather than index.html, and behind a gate that decides
+# whether the surface is open at all and, if it is, whose request this is.
+from services.api.mcp_surface import MOUNT_PATH as _MCP_MOUNT  # noqa: E402
+from services.api.mcp_surface import McpSurfaceGate  # noqa: E402
+
+_mcp_gate = McpSurfaceGate()
+app.mount(f"{_CONTEXT_PATH}{_MCP_MOUNT}", _mcp_gate, name="mcp")
 
 
 # Serve React static files in production

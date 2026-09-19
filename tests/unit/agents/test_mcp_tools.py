@@ -152,3 +152,61 @@ class TestReachingTheClient:
             )
 
         assert raised.value.kind == UNAVAILABLE
+
+
+# --- Vigil's own tools carry no prefix --------------------------------------
+#
+# They are the same tools an external caller reaches at /mcp. A tool that
+# answers to two names is two tools to anyone writing against it.
+
+
+class TestVigilsOwnToolsAreUnprefixed:
+    def test_a_bare_name_routes_to_vigil(self):
+        from core.agents.mcp_tools import split_tool_name
+
+        assert split_tool_name("list_findings", ["vigil", "crowdstrike"]) == (
+            "vigil",
+            "list_findings",
+        )
+
+    def test_a_vendor_prefix_still_wins_over_the_bare_fallback(self):
+        from core.agents.mcp_tools import split_tool_name
+
+        assert split_tool_name(
+            "crowdstrike_isolate_host", ["vigil", "crowdstrike"]
+        ) == (
+            "crowdstrike",
+            "isolate_host",
+        )
+
+    def test_a_bare_name_routes_nowhere_when_vigil_is_not_connected(self):
+        from core.agents.mcp_tools import split_tool_name
+
+        assert split_tool_name("list_findings", ["crowdstrike"]) is None
+
+
+class TestTheDestructiveGateReadsBareNames:
+    """It decides on the verb, and a bare name's verb is its first token."""
+
+    def test_a_bare_destructive_tool_is_dropped(self):
+        from core.llm.chat_layers import _is_destructive_mcp
+
+        assert _is_destructive_mcp("isolate_host") is True
+        assert _is_destructive_mcp("block_ip") is True
+
+    def test_a_prefixed_destructive_tool_is_still_dropped(self):
+        from core.llm.chat_layers import _is_destructive_mcp
+
+        assert _is_destructive_mcp("crowdstrike_isolate_host") is True
+
+    def test_vigils_own_read_tools_are_not_dropped(self):
+        from core.llm.chat_layers import _is_destructive_mcp
+
+        for name in ("list_findings", "get_finding", "list_cases", "close_case"):
+            assert _is_destructive_mcp(name) is False, name
+
+    def test_the_named_execute_id_is_still_dropped(self):
+        from core.llm.chat_layers import EXECUTE_IDS, _is_destructive_mcp
+
+        for name in EXECUTE_IDS:
+            assert _is_destructive_mcp(name) is True, name
