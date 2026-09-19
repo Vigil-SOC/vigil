@@ -50,7 +50,8 @@ jobs:
           - 6379:6379
     env:
       TESTING: "true"
-      DEV_MODE: "true"
+      # Auth on, as a fresh install runs; tests/conftest.py supplies the JWT secret.
+      DEV_MODE: "false"
       SECRET_KEY: "test-secret-key"
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"

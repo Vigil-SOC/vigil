@@ -150,7 +150,7 @@ cd vigil
 
 To run workflows, set `AGENT_INTERNAL_TOKEN` before the first start: `cp env.example .env`, fill in the token (generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`), then `./start.sh`. Without it the stack still comes up, but `./start.sh` warns that the agent layer did not start and workflow runs stay queued; edit `.env` and rerun.
 
-Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full auth is WIP and while it will turn on it is untested. To activate auth set `DEV_MODE=false`; no admin user is seeded, so the first visit to http://localhost:6988 shows a bootstrap screen where you create the admin account.
+Authentication is on by default. No admin user is seeded, so the first visit to http://localhost:6988 shows a bootstrap screen where you create the admin account; `start.sh` mints the JWT signing secret it needs at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env` — the bypass is documented there, and the backend announces it on every startup.
 
 > **Stable build vs. development build:** The Quick Start above clones `main` —
 > the active development branch (latest, *unreleased* code). For a stable,
@@ -183,10 +183,11 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 
 ### First Login
 
-With the default `DEV_MODE=true` there is no login. With `DEV_MODE=false`
-the user table starts empty and the first visit to http://localhost:6988
+The user table starts empty and the first visit to http://localhost:6988
 opens a bootstrap screen (backed by `/api/auth/bootstrap`) where you create
-the admin account. No default credentials ship with the repo.
+the admin account. No default credentials ship with the repo, and nothing in
+it creates an account with a password you did not choose. With `DEV_MODE=true`
+in `.env` there is no login at all.
 
 ### Manual Install
 
@@ -197,7 +198,7 @@ the admin account. No default credentials ship with the repo.
 git clone https://github.com/Vigil-SOC/vigil.git
 cd vigil
 
-# Environment (DEV_MODE enabled by default)
+# Environment (authentication on by default; set DEV_MODE=true here to bypass it locally)
 cp env.example .env
 # LLM provider keys (Anthropic / OpenAI / Ollama) are configured in the
 # web UI at Settings → AI / LLM Providers — not in .env.
