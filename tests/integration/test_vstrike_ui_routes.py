@@ -12,7 +12,6 @@ needed.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -24,8 +23,6 @@ ROOT = Path(__file__).resolve().parents[2]
 for _p in (ROOT,):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
-
-os.environ.setdefault("DEV_MODE", "true")
 
 
 def _mock_ui_service(**overrides):

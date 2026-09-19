@@ -7,14 +7,11 @@ the case database by calling the API directly.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
-os.environ.setdefault("DEV_MODE", "true")
 
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 for p in (str(REPO),):
