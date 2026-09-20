@@ -28,6 +28,12 @@ UNRATED = {
     "description": "three failed logons on FYODOR-L",
     "entity_context": {"hostnames": ["FYODOR-L"]},
 }
+NOT_A_BAND = {
+    "finding_id": "f-foo",
+    "severity": "not-a-band",
+    "description": "three failed logons on FYODOR-L",
+    "entity_context": {"hostnames": ["FYODOR-L"]},
+}
 
 
 def _orchestrator(data_service) -> Orchestrator:
@@ -68,6 +74,18 @@ async def test_unrated_finding_launches_with_unknown_priority():
     orch = _orchestrator(data_service)
 
     await orch._create_investigation_for_finding(UNRATED, None)
+
+    assert data_service.create_case.call_args.kwargs["priority"] == "unknown"
+    assert orch._create_investigation.await_args.kwargs["priority"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_a_severity_name_the_ranker_would_call_unknown_launches_unknown():
+    data_service = MagicMock()
+    data_service.create_case.return_value = {"case_id": "case-1", "title": "x"}
+    orch = _orchestrator(data_service)
+
+    await orch._create_investigation_for_finding(NOT_A_BAND, None)
 
     assert data_service.create_case.call_args.kwargs["priority"] == "unknown"
     assert orch._create_investigation.await_args.kwargs["priority"] == "unknown"

@@ -210,7 +210,7 @@ const PRIO_ORDER = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 } as co
 type TaskPriority = keyof typeof PRIO_ORDER
 const isTaskPriority = (v: string | undefined): v is TaskPriority =>
   v !== undefined && Object.prototype.hasOwnProperty.call(PRIO_ORDER, v)
-/** Sort rank for a task's priority; unknown sorts last. Anything else unknown to us sorts as medium. */
+/** Sort rank for a task's priority; the unknown band sorts last. Any other name sorts as medium. */
 const prioOrder = (v: string | undefined) => PRIO_ORDER[isTaskPriority(v) ? v : 'medium']
 type CaseTask = Schema<'CaseTaskSchema'>
 export function TasksCard({ caseId }: { caseId: string }) {

@@ -38,7 +38,7 @@ export function StatusBadge({ status }: { status: string }) {
 }
 
 export function PrioBadge({ prio }: { prio: string }) {
-  const meta = PRIO_META[prio] || PRIO_META.unknown
+  const meta = PRIO_META[prio] || FALLBACK
   return (
     <span className={`prio ${prio}`} style={{ color: meta.fg }}>
       {prio}

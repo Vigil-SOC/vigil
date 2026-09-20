@@ -537,20 +537,16 @@ class Orchestrator:
         trigger_id: Optional[int] = None,
     ):
         """Create an investigation for a finding, with dedup checks."""
-        raw_severity = finding.get("severity")
-        # Unrated sits in the unknown band for ranking. The launch path itself
-        # does not wait for a rating; Gate 1 already filtered the offer.
-        # Record unknown rather than inventing medium — nobody rated it.
-        if raw_severity is None or not str(raw_severity).strip():
-            severity = "unknown"
-        else:
-            severity = str(raw_severity).lower()
+        # Same band the ranker uses: empty or a name that is not a rating
+        # is unknown, not an invented medium. Gate 1 already filtered the offer.
+        priority = intake_severity_band(
+            "detection", finding_severity=finding.get("severity")
+        )
 
         if self._merge_if_overlaps(finding, trigger_id):
             return
 
         workflow_id = select_workflow(finding)
-        priority = severity
         # The case opens here, at admission, so the run has one to attach evidence
         # to from its first step. Failing to open one is logged, not fatal: the
         # investigation still launches, as it did before cases were opened here.
