@@ -19,12 +19,10 @@ from __future__ import annotations
 
 import io
 import logging
-import re
 import zipfile
 from typing import Any, Dict, List, Optional
 
-import yaml
-
+from core.frontmatter import FrontmatterError, split_frontmatter
 from core.skills import skill_service as _skill_service_mod
 
 logger = logging.getLogger(__name__)
@@ -41,12 +39,6 @@ ALLOWED_CATEGORIES = {
     "reporting",
     "custom",
 }
-
-_FRONTMATTER_RE = re.compile(
-    r"\A---\s*\n(?P<front>.*?)\n---\s*\n?(?P<body>.*)\Z",
-    re.DOTALL,
-)
-
 
 class SkillImportError(Exception):
     """Validation failure during import. Carries an HTTP status code."""
@@ -194,25 +186,17 @@ def _detect_top_level_prefix(infos: List[zipfile.ZipInfo]) -> str:
 
 
 def _parse_skill_md(text: str) -> tuple[str, Dict[str, Any]]:
-    match = _FRONTMATTER_RE.match(text)
-    if not match:
+    try:
+        front, body_start = split_frontmatter(text)
+    except FrontmatterError as exc:
+        raise SkillImportError(400, f"Invalid SKILL.md frontmatter: {exc}")
+    if front is None:
         raise SkillImportError(
             400,
             "SKILL.md must begin with YAML frontmatter delimited by '---' lines",
         )
 
-    try:
-        front = yaml.safe_load(match.group("front")) or {}
-    except yaml.YAMLError as exc:
-        raise SkillImportError(400, f"Invalid YAML in SKILL.md frontmatter: {exc}")
-
-    if not isinstance(front, dict):
-        raise SkillImportError(
-            400,
-            "SKILL.md frontmatter must be a YAML mapping",
-        )
-
-    body = match.group("body").strip()
+    body = text[body_start:].strip()
     if not body:
         raise SkillImportError(
             400,

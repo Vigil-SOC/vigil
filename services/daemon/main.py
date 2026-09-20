@@ -31,6 +31,14 @@ class SOCDaemon:
         self.config = config
         self.config.setup_logging()
 
+        # Observe mode (#915): log declared-vs-effective intent, enforce nothing.
+        try:
+            from services.daemon.intent import report_intent
+
+            report_intent(self.config)
+        except Exception as _intent_err:
+            logger.warning("Intent report failed (non-fatal): %s", _intent_err)
+
         # Initialize OTEL telemetry after logging is set up
         try:
             from core.telemetry import init_telemetry
