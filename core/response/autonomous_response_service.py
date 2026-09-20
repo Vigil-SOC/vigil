@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from core.agents.builtins import AgentId
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
+from core.response.config import ResponseConfig
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -19,9 +20,18 @@ EscalationCallback = Callable[[Dict[str, Any], str, str], None]
 class AutonomousResponseService:
     """Service for managing autonomous threat response with approval workflow."""
 
-    def __init__(self, approvals: Optional[ApprovalService] = None):
-        """Initialize autonomous response service."""
-        self.approval_service = approvals or ApprovalService()
+    def __init__(
+        self,
+        approvals: Optional[ApprovalService] = None,
+        config: Optional[ResponseConfig] = None,
+    ):
+        """Initialize autonomous response service.
+
+        ``config`` defaults to the approval service's band so the two never
+        compare against different lines; the no-arg form reads Settings.
+        """
+        self.approval_service = approvals or ApprovalService(config=config)
+        self.config = config or self.approval_service.config
         self._escalation_callbacks: List[EscalationCallback] = []
 
     def register_escalation_callback(self, callback: EscalationCallback):
@@ -302,11 +312,11 @@ Please review and approve/reject in the SOC dashboard.
 
     def _get_recommendation(self, confidence: float, indicators: List[str]) -> str:
         """Get recommendation based on confidence and indicators."""
-        if confidence >= 0.90:
+        if confidence >= self.config.confidence_threshold:
             return "AUTO-ISOLATE: Confidence threshold met for automatic isolation"
-        elif confidence >= 0.85:
+        elif confidence >= self.config.review_threshold:
             return "ISOLATE WITH APPROVAL: High confidence, recommend isolation with quick approval"
-        elif confidence >= 0.70:
+        elif confidence >= self.config.monitor_threshold:
             return "MANUAL REVIEW: Moderate confidence, requires analyst review"
         else:
             return "MONITOR: Low confidence, continue monitoring"
@@ -321,7 +331,8 @@ Please review and approve/reject in the SOC dashboard.
         correlation_data: Dict,
     ) -> Optional[Dict]:
         """
-        Create an isolation action (auto-execute if confidence >= 0.90).
+        Create an isolation action (auto-executes when the approval gate
+        approves it, i.e. at or above ``config.confidence_threshold``).
 
         Args:
             ip_address: Target IP address
@@ -368,7 +379,6 @@ Please review and approve/reject in the SOC dashboard.
                     "result": action.execution_result,
                 }
 
-            # Check if auto-approved (confidence >= 0.90)
             if action.status == ActionStatus.APPROVED.value:
                 logger.info(
                     f"Action {action.action_id} auto-approved (confidence: {confidence:.2%})"
@@ -434,15 +444,15 @@ Please review and approve/reject in the SOC dashboard.
             return "critical"
 
         # High confidence + C2 or lateral movement
-        if confidence >= 0.8 and any(
+        if confidence >= self.config.high_action_floor and any(
             ind in indicators for ind in ["c2_communication", "lateral_movement"]
         ):
             return "high"
 
         # Based on confidence
-        if confidence >= 0.85:
+        if confidence >= self.config.review_threshold:
             return "high"
-        elif confidence >= 0.7:
+        elif confidence >= self.config.monitor_threshold:
             return "medium"
         else:
             return "low"
@@ -592,7 +602,7 @@ Please review and approve/reject in the SOC dashboard.
             # Determine action
             confidence = correlation["confidence"]
 
-            if confidence >= 0.85 and auto_execute:
+            if confidence >= self.config.review_threshold and auto_execute:
                 # Create isolation action
                 action_result = self.create_isolation_action(
                     ip_address=target_ip,
@@ -617,7 +627,10 @@ Please review and approve/reject in the SOC dashboard.
                     "correlation": correlation,
                     "action": {
                         "status": "no_action",
-                        "reason": f"Confidence below threshold ({confidence:.2%} < 0.85)",
+                        "reason": (
+                            f"Confidence below review_threshold "
+                            f"({confidence:.2f} < {self.config.review_threshold:.2f})"
+                        ),
                     },
                 }
 

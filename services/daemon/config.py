@@ -4,6 +4,7 @@ from typing import List
 
 from core.config import DEFAULT_REDIS_URL, get_settings
 from core.ingestion.kafka_config import KafkaConfig  # re-exported for DaemonConfig
+from core.response.config import ResponseConfig  # re-exported for DaemonConfig
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -35,14 +36,6 @@ class ProcessingConfig:
     enrich_backfill_max_age_hours: int = (
         168  # only backfill findings newer than this (7d)
     )
-
-
-@dataclass
-class ResponseConfig:
-    auto_response_enabled: bool = True
-    confidence_threshold: float = 0.90
-    force_manual_approval: bool = False
-    dry_run: bool = False  # Log actions without executing
 
 
 @dataclass
@@ -153,10 +146,7 @@ class DaemonConfig:
             settings.daemon_enrich_backfill_max_age_hours
         )
 
-        config.response.auto_response_enabled = settings.daemon_auto_response
-        config.response.confidence_threshold = settings.daemon_confidence_threshold
-        config.response.force_manual_approval = settings.daemon_force_approval
-        config.response.dry_run = settings.daemon_dry_run
+        config.response = ResponseConfig.from_settings(settings)
 
         config.escalation.enabled = settings.daemon_escalation_enabled
         config.escalation.slack_enabled = (

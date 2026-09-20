@@ -320,6 +320,52 @@ class TestAutoResponse:
         mock_approval.create_action.assert_called_once()
 
 
+class TestConfiguredFloors:
+    """The responder's severity floors and the processor's queue line read
+    ResponseConfig rather than literals (#916)."""
+
+    def _responder(self, **overrides):
+        from services.daemon.config import EscalationConfig, ResponseConfig
+
+        return AutonomousResponder(
+            ResponseConfig(**overrides),
+            EscalationConfig(),
+            response_service=Mock(),
+            approvals=Mock(),
+        )
+
+    def test_default_floors_match_the_old_literals(self):
+        responder = self._responder()
+        assert responder._determine_action("critical", 0.70, "") == "isolate"
+        assert responder._determine_action("critical", 0.69, "") is None
+        assert responder._determine_action("high", 0.80, "") == "investigate"
+        assert responder._determine_action("high", 0.79, "") is None
+
+    def test_raised_floors_move_the_decision(self):
+        responder = self._responder(critical_action_floor=0.90, high_action_floor=0.95)
+        assert responder._determine_action("critical", 0.85, "") is None
+        assert responder._determine_action("high", 0.90, "") is None
+
+    @pytest.mark.asyncio
+    async def test_processor_queues_at_review_threshold(self):
+        from services.daemon.config import ResponseConfig
+
+        processor = FindingProcessor(
+            ProcessingConfig(), response_config=ResponseConfig(review_threshold=0.95)
+        )
+        queue = asyncio.Queue()
+        processor.set_response_queue(queue)
+        with patch("services.daemon.orchestrator.insert_intake_trigger"):
+            await processor._evaluate_for_response(
+                {"finding_id": "f-1", "severity": "low", "triage_confidence": 0.90}
+            )
+            assert queue.empty()
+            await processor._evaluate_for_response(
+                {"finding_id": "f-2", "severity": "low", "triage_confidence": 0.95}
+            )
+            assert queue.qsize() == 1
+
+
 class TestEscalation:
     """Test escalation logic."""
     

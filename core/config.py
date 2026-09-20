@@ -228,6 +228,11 @@ class Settings(BaseSettings):
     daemon_enrich_backfill_max_age_hours: int = 168
     daemon_auto_response: bool = True
     daemon_confidence_threshold: float = 0.90
+    # The rest of the confidence band (#916); see core.response.config.
+    daemon_review_threshold: float = 0.85
+    daemon_monitor_threshold: float = 0.70
+    daemon_critical_action_floor: float = 0.70
+    daemon_high_action_floor: float = 0.80
     daemon_force_approval: bool = False
     daemon_dry_run: bool = False
     daemon_escalation_enabled: bool = True

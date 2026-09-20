@@ -4,9 +4,11 @@
 records so the record data stays free of prompt-template text.
 """
 
-from typing import Any, Iterable, Mapping, Optional
+from string import Template
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 from core.memory.recall_contract import RECALL_TOOL
+from core.response.config import ResponseConfig
 
 # Read-only, and the wording carries ADR 0015 rather than gesturing at it. A
 # prior Verdict is not a disposition: the ADR's first named failure is a benign
@@ -114,6 +116,38 @@ def render_base_prompt(
         methodology=methodology or "",
         memory_operations=_memory_section(tools),
     )
+
+
+# The record fields that may carry band placeholders (see core.agents.builtins).
+_BAND_FIELDS = ("extra_principles", "methodology")
+
+
+def confidence_band_values(config: ResponseConfig) -> Dict[str, str]:
+    """Placeholder values for the band lines: the configured thresholds, and
+    the upper edge of each review band (one hundredth under the next line)."""
+    return {
+        "auto_approve": f"{config.confidence_threshold:.2f}",
+        "review": f"{config.review_threshold:.2f}",
+        "monitor": f"{config.monitor_threshold:.2f}",
+        "below_auto": f"{config.confidence_threshold - 0.01:.2f}",
+        "below_review": f"{config.review_threshold - 0.01:.2f}",
+    }
+
+
+def render_confidence_bands(
+    row: Mapping[str, Any], config: ResponseConfig
+) -> Dict[str, Any]:
+    """Return ``row`` with its band placeholders filled from ``config``.
+
+    ``safe_substitute`` so a record with no placeholders, or a stray ``$``,
+    passes through unchanged; only built-in records are rendered this way.
+    """
+    values = confidence_band_values(config)
+    rendered = dict(row)
+    for key in _BAND_FIELDS:
+        if row.get(key):
+            rendered[key] = Template(str(row[key])).safe_substitute(values)
+    return rendered
 
 
 # Both callers hold an agent record and were making the same four-field call, so

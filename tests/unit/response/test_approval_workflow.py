@@ -7,98 +7,138 @@ Note: Tests marked with @pytest.mark.external_service require external services
 """
 
 import pytest
+from contextlib import contextmanager
 from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
-from core.response.approval_service import ApprovalService
+from core.config import get_settings
+from core.response.approval_service import (
+    ActionStatus,
+    ActionType,
+    ApprovalService,
+    Reversibility,
+)
 from core.response.autonomous_response_service import AutonomousResponseService
+from core.response.config import ResponseConfig
 
 
+@pytest.fixture
+def no_db():
+    """Stand-in session so _put_action's decision runs without PostgreSQL.
+
+    The row is a real ORM object that never reaches a database; the status
+    the test reads is decided before the session is touched.
+    """
+    manager = MagicMock()
+
+    @contextmanager
+    def _scope():
+        yield MagicMock()
+
+    manager.session_scope = _scope
+    with patch("core.response.approval_service.get_db_manager", return_value=manager):
+        yield
+
+
+def _create(svc: ApprovalService, confidence: float, **kwargs):
+    svc.force_manual_approval = False
+    return svc.create_action(
+        action_type=ActionType.BLOCK_IP,
+        title="block",
+        description="test",
+        target="1.2.3.4",
+        confidence=confidence,
+        reason="test",
+        evidence=[],
+        created_by="pytest",
+        **kwargs,
+    )
+
+
+@pytest.mark.usefixtures("no_db")
 class TestConfidenceThresholds:
-    """Test confidence threshold logic."""
-    
-    def test_auto_approve_high_confidence(self):
-        """Test auto-approval for high confidence (>= 0.90)."""
-        service = ApprovalService()
-        
-        action = {
-            "type": "isolate_host",
-            "confidence": 0.92
-        }
-        
-        should_auto_approve = service.should_auto_approve(
-            action,
-            threshold=0.90,
-            force_manual=False
+    """The auto-approve line is ResponseConfig.confidence_threshold, nothing else (#916)."""
+
+    def test_default_threshold_auto_approves_at_ninety(self):
+        action = _create(ApprovalService(config=ResponseConfig()), confidence=0.90)
+        assert action.status == ActionStatus.APPROVED.value
+        assert action.requires_approval is False
+
+    def test_default_threshold_holds_below_ninety(self):
+        # 0.87 used to auto-approve through a hardcoded >= 0.85 branch.
+        action = _create(ApprovalService(config=ResponseConfig()), confidence=0.87)
+        assert action.status == ActionStatus.PENDING.value
+        assert action.requires_approval is True
+
+    def test_raised_threshold_makes_ninety_wait_for_approval(self):
+        svc = ApprovalService(config=ResponseConfig(confidence_threshold=0.95))
+        action = _create(svc, confidence=0.90, reversibility=Reversibility.REVERSIBLE)
+        assert action.status == ActionStatus.PENDING.value
+        assert action.requires_approval is True
+
+    def test_no_arg_service_reads_threshold_from_env(self, monkeypatch):
+        monkeypatch.setenv("DAEMON_CONFIDENCE_THRESHOLD", "0.95")
+        get_settings.cache_clear()
+        try:
+            svc = ApprovalService()
+            assert svc.config.confidence_threshold == 0.95
+            action = _create(svc, confidence=0.92)
+            assert action.status == ActionStatus.PENDING.value
+        finally:
+            get_settings.cache_clear()
+
+    def test_force_manual_wins_over_confidence(self):
+        svc = ApprovalService(config=ResponseConfig())
+        svc.force_manual_approval = True
+        action = svc.create_action(
+            action_type=ActionType.ISOLATE_HOST,
+            title="isolate",
+            description="test",
+            target="host-1",
+            confidence=0.99,
+            reason="test",
+            evidence=[],
         )
-        
-        assert should_auto_approve is True
-    
-    def test_auto_approve_with_flag(self):
-        """Test auto-approval for confidence 0.85-0.89."""
-        service = ApprovalService()
-        
-        action = {
-            "type": "block_ip",
-            "confidence": 0.87
-        }
-        
-        should_auto_approve = service.should_auto_approve(
-            action,
-            threshold=0.90,
-            force_manual=False
+        assert action.status == ActionStatus.PENDING.value
+
+
+class TestConfiguredBands:
+    """Every other comparison reads the same ResponseConfig (#916)."""
+
+    def test_recommendation_ladder_follows_config(self):
+        svc = AutonomousResponseService(
+            approvals=Mock(spec=ApprovalService),
+            config=ResponseConfig(
+                confidence_threshold=0.95,
+                review_threshold=0.90,
+                monitor_threshold=0.80,
+            ),
         )
-        
-        # Should auto-approve but with flag
-        assert should_auto_approve is True
-        assert service.needs_flag(action["confidence"]) is True
-    
-    def test_require_approval_medium_confidence(self):
-        """Test requiring approval for medium confidence (0.70-0.84)."""
-        service = ApprovalService()
-        
-        action = {
-            "type": "disable_user",
-            "confidence": 0.75
-        }
-        
-        should_auto_approve = service.should_auto_approve(
-            action,
-            threshold=0.90,
-            force_manual=False
+        assert svc._get_recommendation(0.95, []).startswith("AUTO-ISOLATE")
+        assert svc._get_recommendation(0.92, []).startswith("ISOLATE WITH APPROVAL")
+        assert svc._get_recommendation(0.85, []).startswith("MANUAL REVIEW")
+        assert svc._get_recommendation(0.79, []).startswith("MONITOR")
+
+    def test_no_action_reason_names_the_field_and_value(self):
+        svc = AutonomousResponseService(
+            approvals=Mock(spec=ApprovalService),
+            config=ResponseConfig(review_threshold=0.80),
         )
-        
-        assert should_auto_approve is False
-    
-    def test_monitor_only_low_confidence(self):
-        """Test monitor-only for low confidence (< 0.70)."""
-        service = ApprovalService()
-        
-        action = {
-            "type": "isolate_host",
-            "confidence": 0.55
+        finding = {
+            "finding_id": "f-1",
+            "severity": "low",
+            "mitre_predictions": {},
+            "entity_context": {"src_ips": ["10.0.0.1"]},
         }
-        
-        decision = service.get_action_decision(action, threshold=0.90)
-        
-        assert decision == "monitor_only"
-    
-    def test_force_manual_mode(self):
-        """Test force manual approval mode."""
-        service = ApprovalService()
-        
-        action = {
-            "type": "isolate_host",
-            "confidence": 0.95  # High confidence
-        }
-        
-        should_auto_approve = service.should_auto_approve(
-            action,
-            threshold=0.90,
-            force_manual=True  # Force manual
+        with patch(
+            "core.storage.database_data_service.DatabaseDataService"
+        ) as data_service:
+            data_service.return_value.get_finding.return_value = finding
+            result = svc.investigate_and_respond("f-1")
+        assert result["action"]["status"] == "no_action"
+        assert result["action"]["reason"] == (
+            "Confidence below review_threshold (0.00 < 0.80)"
         )
-        
-        assert should_auto_approve is False
 
 
 class TestActionValidation:

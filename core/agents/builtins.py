@@ -4,6 +4,12 @@ Each built-in is a plain record shaped like a ``custom_agents`` row so
 built-ins and customs build through the same path
 (``core.agents.manager.SOCAgentLibrary.build_profile``). The decision-log
 action id (GH #476) is folded in as ``decision_id``.
+
+Confidence bands are never typed here as numbers. The ``$auto_approve``,
+``$review``, ``$monitor``, ``$below_auto`` and ``$below_review`` placeholders
+are filled from ``ResponseConfig`` at profile-build time
+(``core.agents.prompts.render_confidence_bands``), so the agent is told the
+same lines the approval gate enforces (#916).
 """
 
 from dataclasses import dataclass
@@ -212,16 +218,16 @@ BUILTIN_AGENTS = [
         "methodology": """<methodology>
 NIST Framework:
 1. Detection & Analysis: Review incident details via tools
-2. Containment: Use create_approval_action (confidence >= 0.90 auto-approves)
+2. Containment: Use create_approval_action (confidence >= $auto_approve auto-approves)
 3. Eradication: Remove malware, close vulns, revoke creds
 4. Recovery: Verify clean, restore, monitor
 5. Lessons Learned: Document and improve
 
 Confidence scoring:
-- 0.95-1.0: Critical threat (ransomware, C2)
-- 0.85-0.94: High confidence (confirmed malware)
-- 0.70-0.84: Moderate (suspicious activity)
-- <0.70: Needs more investigation
+- >= $auto_approve: Confirmed threat (ransomware, C2, known malware); auto-approves
+- $review-$below_auto: High confidence, quick review
+- $monitor-$below_review: Moderate (suspicious activity), analyst review
+- < $monitor: Needs more investigation
 </methodology>""",
     },
     {
@@ -498,7 +504,7 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
         "max_tokens": 16384,
         "enable_thinking": True,
         "thinking_budget": 3000,
-        "extra_principles": "- Act immediately on high-confidence threats (>=0.90)\n- Never auto-approve without strong evidence\n- Provide complete audit trail\n- Memory: recall_entity on the entity; read-only, and it orients your search rather than deciding its outcome\n- Prefer the most surgical Cloudflare action available: cf_waf_block_ip for malicious source IPs, cf_gateway_block_domain for outbound C2/exfil, cf_access_revoke_session only when an authenticated user identity is implicated. All cf_* write actions go through the approval pipeline; do not call them directly when confidence < 0.90.",
+        "extra_principles": "- Act immediately on high-confidence threats (>=$auto_approve)\n- Never auto-approve without strong evidence\n- Provide complete audit trail\n- Memory: recall_entity on the entity; read-only, and it orients your search rather than deciding its outcome\n- Prefer the most surgical Cloudflare action available: cf_waf_block_ip for malicious source IPs, cf_gateway_block_domain for outbound C2/exfil, cf_access_revoke_session only when an authenticated user identity is implicated. All cf_* write actions go through the approval pipeline; do not call them directly when confidence < $auto_approve.",
         "methodology": """<methodology>
 1. Gather data from multiple detection sources (Tempo Flow, EDR)
 2. Correlate signals: shared IPs/hosts/users, time proximity, MITRE techniques
@@ -510,7 +516,7 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
    - Active C2: +0.20
    - Ransomware behavior: +0.25
    - Time correlation (<5min): +0.10
-4. Decision: >=0.90 auto-approve, 0.85-0.89 quick review, 0.70-0.84 human review, <0.70 escalate
+4. Decision: >=$auto_approve auto-approve, $review-$below_auto quick review, $monitor-$below_review human review, <$monitor escalate
 5. Execute via create_approval_action with confidence, evidence, reasoning
 6. Document correlation logic and evidence
 </methodology>""",

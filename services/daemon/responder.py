@@ -149,11 +149,14 @@ class AutonomousResponder:
                 return recommended
 
         # Critical severity always warrants action
-        if severity == "critical" and confidence >= 0.7:
+        if (
+            severity == "critical"
+            and confidence >= self.response_config.critical_action_floor
+        ):
             return "isolate"
 
         # High severity with good confidence
-        if severity == "high" and confidence >= 0.8:
+        if severity == "high" and confidence >= self.response_config.high_action_floor:
             return "investigate"
 
         return None
