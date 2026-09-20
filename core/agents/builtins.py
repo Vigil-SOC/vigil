@@ -6,8 +6,8 @@ built-ins and customs build through the same path
 action id (GH #476) is folded in as ``decision_id``.
 
 Confidence bands are never typed here as numbers. The ``$auto_approve``,
-``$review``, ``$monitor``, ``$below_auto`` and ``$below_review`` placeholders
-are filled from ``ResponseConfig`` at profile-build time
+``$review`` and ``$monitor`` placeholders are filled from ``ResponseConfig``
+at profile-build time
 (``core.agents.prompts.render_confidence_bands``), so the agent is told the
 same lines the approval gate enforces (#916).
 """
@@ -225,8 +225,8 @@ NIST Framework:
 
 Confidence scoring:
 - >= $auto_approve: Confirmed threat (ransomware, C2, known malware); auto-approves
-- $review-$below_auto: High confidence, quick review
-- $monitor-$below_review: Moderate (suspicious activity), analyst review
+- $review-<$auto_approve: High confidence, quick review
+- $monitor-<$review: Moderate (suspicious activity), analyst review
 - < $monitor: Needs more investigation
 </methodology>""",
     },
@@ -516,7 +516,7 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
    - Active C2: +0.20
    - Ransomware behavior: +0.25
    - Time correlation (<5min): +0.10
-4. Decision: >=$auto_approve auto-approve, $review-$below_auto quick review, $monitor-$below_review human review, <$monitor escalate
+4. Decision: >=$auto_approve auto-approve, $review-<$auto_approve quick review, $monitor-<$review human review, <$monitor escalate
 5. Execute via create_approval_action with confidence, evidence, reasoning
 6. Document correlation logic and evidence
 </methodology>""",

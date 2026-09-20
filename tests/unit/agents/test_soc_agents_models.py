@@ -92,7 +92,7 @@ def test_builtin_band_text_is_rendered_from_response_config():
         )
     )
     assert (
-        ">=0.95 auto-approve, 0.88-0.94 quick review, 0.60-0.87 human review, "
+        ">=0.95 auto-approve, 0.88-<0.95 quick review, 0.60-<0.88 human review, "
         "<0.60 escalate"
     ) in agents["auto_responder"].system_prompt
     assert "confidence >= 0.95 auto-approves" in agents["responder"].system_prompt
@@ -100,7 +100,7 @@ def test_builtin_band_text_is_rendered_from_response_config():
         assert "$" not in agent.system_prompt, agent.id
 
     defaults = SOCAgentLibrary.get_all_agents(ResponseConfig())
-    assert ">=0.90 auto-approve, 0.85-0.89 quick review" in (
+    assert ">=0.90 auto-approve, 0.85-<0.90 quick review" in (
         defaults["auto_responder"].system_prompt
     )
 

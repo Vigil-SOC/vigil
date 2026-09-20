@@ -602,6 +602,14 @@ Please review and approve/reject in the SOC dashboard.
             # Determine action
             confidence = correlation["confidence"]
 
+            if not auto_execute:
+                reason = "auto_execute disabled"
+            else:
+                reason = (
+                    f"Confidence below review_threshold "
+                    f"({confidence:.2f} < {self.config.review_threshold:.2f})"
+                )
+
             if confidence >= self.config.review_threshold and auto_execute:
                 # Create isolation action
                 action_result = self.create_isolation_action(
@@ -625,13 +633,7 @@ Please review and approve/reject in the SOC dashboard.
                     "finding_id": finding_id,
                     "target": target_ip,
                     "correlation": correlation,
-                    "action": {
-                        "status": "no_action",
-                        "reason": (
-                            f"Confidence below review_threshold "
-                            f"({confidence:.2f} < {self.config.review_threshold:.2f})"
-                        ),
-                    },
+                    "action": {"status": "no_action", "reason": reason},
                 }
 
         except Exception as e:

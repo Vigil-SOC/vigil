@@ -24,10 +24,10 @@ from core.response.config import ResponseConfig
 
 @pytest.fixture
 def no_db():
-    """Stand-in session so _put_action's decision runs without PostgreSQL.
-
-    The row is a real ORM object that never reaches a database; the status
-    the test reads is decided before the session is touched.
+    """Stand-in session and config store so ApprovalService never reaches
+    PostgreSQL: not for the row _put_action inserts, and not for the
+    force_manual_approval flag __init__ reads (and would otherwise write).
+    The status the test reads is decided before the session is touched.
     """
     manager = MagicMock()
 
@@ -36,12 +36,19 @@ def no_db():
         yield MagicMock()
 
     manager.session_scope = _scope
-    with patch("core.response.approval_service.get_db_manager", return_value=manager):
+    config_store = Mock()
+    config_store.get_system_config.return_value = {"enabled": False}
+    with (
+        patch("core.response.approval_service.get_db_manager", return_value=manager),
+        patch(
+            "core.response.approval_service.get_config_service",
+            return_value=config_store,
+        ),
+    ):
         yield
 
 
 def _create(svc: ApprovalService, confidence: float, **kwargs):
-    svc.force_manual_approval = False
     return svc.create_action(
         action_type=ActionType.BLOCK_IP,
         title="block",
@@ -65,7 +72,8 @@ class TestConfidenceThresholds:
         assert action.requires_approval is False
 
     def test_default_threshold_holds_below_ninety(self):
-        # 0.87 used to auto-approve through a hardcoded >= 0.85 branch.
+        # The deleted test-only should_auto_approve had a hardcoded >= 0.85
+        # branch that passed 0.87; the gate itself never did, and still does not.
         action = _create(ApprovalService(config=ResponseConfig()), confidence=0.87)
         assert action.status == ActionStatus.PENDING.value
         assert action.requires_approval is True
@@ -135,10 +143,12 @@ class TestConfiguredBands:
         ) as data_service:
             data_service.return_value.get_finding.return_value = finding
             result = svc.investigate_and_respond("f-1")
+            held = svc.investigate_and_respond("f-1", auto_execute=False)
         assert result["action"]["status"] == "no_action"
         assert result["action"]["reason"] == (
             "Confidence below review_threshold (0.00 < 0.80)"
         )
+        assert held["action"]["reason"] == "auto_execute disabled"
 
 
 class TestActionValidation:

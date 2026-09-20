@@ -123,14 +123,12 @@ _BAND_FIELDS = ("extra_principles", "methodology")
 
 
 def confidence_band_values(config: ResponseConfig) -> Dict[str, str]:
-    """Placeholder values for the band lines: the configured thresholds, and
-    the upper edge of each review band (one hundredth under the next line)."""
+    """Placeholder values for the band lines. Bands are written half-open
+    (``0.85-<0.90``) so no upper edge has to be derived from the next line."""
     return {
         "auto_approve": f"{config.confidence_threshold:.2f}",
         "review": f"{config.review_threshold:.2f}",
         "monitor": f"{config.monitor_threshold:.2f}",
-        "below_auto": f"{config.confidence_threshold - 0.01:.2f}",
-        "below_review": f"{config.review_threshold - 0.01:.2f}",
     }
 
 
