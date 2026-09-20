@@ -114,6 +114,7 @@ class SOCDaemon:
         self._poller.set_output_queue(self._processor.input_queue)
         self._kafka_ingestor.set_output_queue(self._processor.input_queue)
         self._processor.set_response_queue(self._responder.input_queue)
+        self._scheduler.set_processor_queue(self._processor.input_queue)
 
         # Wire up metrics server with component references
         if self._metrics_server:

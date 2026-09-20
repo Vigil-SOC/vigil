@@ -66,6 +66,8 @@ class EscalationConfig:
 class SchedulerConfig:
     threat_hunt_enabled: bool = True
     threat_hunt_interval: int = 86400  # Daily (24 hours)
+    probes_enabled: bool = True  # known-answer probes (#923)
+    probe_interval: int = 3600  # hourly tick; the day-scoped id makes it daily
     report_generation_enabled: bool = True
     report_interval: int = 604800  # Weekly (7 days)
     cleanup_enabled: bool = True
@@ -172,6 +174,8 @@ class DaemonConfig:
 
         config.scheduler.threat_hunt_enabled = settings.daemon_threat_hunt_enabled
         config.scheduler.threat_hunt_interval = settings.daemon_threat_hunt_interval
+        config.scheduler.probes_enabled = settings.daemon_probes_enabled
+        config.scheduler.probe_interval = settings.daemon_probe_interval
         config.scheduler.cleanup_retention_days = settings.daemon_cleanup_retention_days
         config.scheduler.approval_expiry_days = settings.daemon_approval_expiry_days
 
