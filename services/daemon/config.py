@@ -140,7 +140,9 @@ class DaemonConfig:
         # pydantic-settings marks a field set iff env or .env supplied it.
         for intent_field in INTENT_FIELDS:
             config.sources[intent_field.path] = (
-                "env" if intent_field.setting in settings.model_fields_set else "default"
+                "env"
+                if intent_field.setting in settings.model_fields_set
+                else "default"
             )
 
         config.log_level = settings.daemon_log_level

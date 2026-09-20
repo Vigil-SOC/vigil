@@ -40,6 +40,7 @@ ALLOWED_CATEGORIES = {
     "custom",
 }
 
+
 class SkillImportError(Exception):
     """Validation failure during import. Carries an HTTP status code."""
 
