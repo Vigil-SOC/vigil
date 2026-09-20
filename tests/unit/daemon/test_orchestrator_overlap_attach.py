@@ -2,7 +2,8 @@
 
 ``check_overlap`` names the live investigations sharing an entity. The finding
 goes into the first one's case; when none has a case, onto its ``trigger_ids``.
-Either way nothing new is opened.
+Either way nothing new is opened. A failed write is not a merge: the row
+stays queued (#997).
 """
 
 from __future__ import annotations
@@ -99,9 +100,12 @@ async def test_a_failed_attach_is_logged_and_does_not_raise(caplog):
         await orch._create_investigation_for_finding(FINDING, None)
 
     assert any("could not be attached" in r.message for r in caplog.records)
+    assert any("leaving queued" in r.message for r in caplog.records)
     # Not retried on the trigger_ids path either: the case exists, the write failed.
     orch._append_trigger_id.assert_not_called()
-    _nothing_new_opened(orch, data_service)
+    orch._create_investigation.assert_not_awaited()
+    data_service.create_case.assert_not_called()
+    assert orch.stats["dedup_prevented"] == 0
 
 
 @pytest.mark.asyncio
@@ -113,7 +117,22 @@ async def test_no_data_service_reads_as_a_failed_attach(caplog):
 
     assert any("could not be attached" in r.message for r in caplog.records)
     orch._append_trigger_id.assert_not_called()
-    _nothing_new_opened(orch, None)
+    orch._create_investigation.assert_not_awaited()
+    assert orch.stats["dedup_prevented"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_append_is_not_a_merge():
+    data_service = MagicMock()
+    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": None}}, data_service)
+    orch._append_trigger_id.return_value = False
+
+    await orch._create_investigation_for_finding(FINDING, None)
+
+    orch._append_trigger_id.assert_called_once_with("inv-1", "f-2")
+    data_service.add_finding_to_case.assert_not_called()
+    orch._create_investigation.assert_not_awaited()
+    assert orch.stats["dedup_prevented"] == 0
 
 
 # The fallback writer itself, over a fake session: the column has to be

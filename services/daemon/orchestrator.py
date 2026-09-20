@@ -477,14 +477,23 @@ class Orchestrator:
         return row
 
     def _merge_if_overlaps(self, finding: Dict, trigger_id: Optional[int]) -> bool:
+        """True when this row is not launching this tick (merged, or held).
+
+        A failed attach is not a merge: no ``dedup_prevented`` bump, no
+        ``_decide_trigger``. Returning True still skips launch so the row
+        stays ``queued`` and the next tick retries; False would open a
+        second investigation on the same entity.
+        """
         overlapping = self.shared_intel.check_overlap(finding)
         if not overlapping:
             return False
         finding_id = finding.get("finding_id", "unknown")
+        merged_into = self._attach_finding_to_overlap(finding_id, overlapping)
+        if merged_into is None:
+            return True
         self.stats["dedup_prevented"] += 1
         if _dedup_prevented is not None:
             _dedup_prevented.add(1)
-        merged_into = self._attach_finding_to_overlap(finding_id, overlapping)
         self._decide_trigger(
             trigger_id,
             state="merged",
@@ -555,14 +564,17 @@ class Orchestrator:
             trigger_id=trigger_id,
         )
 
-    def _attach_finding_to_overlap(self, finding_id: str, overlapping: List[str]):
+    def _attach_finding_to_overlap(
+        self, finding_id: str, overlapping: List[str]
+    ) -> Optional[str]:
         """Attach a finding to the live investigation already covering its entity.
 
         Prefer the first overlapping investigation with a case, so the finding
         lands in ``case_findings`` where the running agent reads it. When none
         has one (opened before cases were minted at admission), the finding id
         goes onto ``trigger_ids`` of the first instead. Nothing new is opened.
-        Returns the case id, or the investigation id on the fallback path.
+        Returns the case id, or the investigation id on the fallback path,
+        only when the write succeeded; ``None`` otherwise.
         """
         for inv_id in overlapping:
             case_id = (self.get_investigation(inv_id) or {}).get("case_id")
@@ -576,22 +588,24 @@ class Orchestrator:
                 logger.info(
                     f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
                 )
-            else:
-                logger.warning(
-                    f"Finding {finding_id} overlaps investigation {inv_id} but could not be attached to case {case_id}"
-                )
-            return case_id
+                return case_id
+            logger.warning(
+                f"Finding {finding_id} overlaps investigation {inv_id} "
+                f"but could not be attached to case {case_id}; leaving queued"
+            )
+            return None
 
         inv_id = overlapping[0]
         if self._append_trigger_id(inv_id, finding_id):
             logger.info(
                 f"Finding {finding_id} overlaps investigation {inv_id}; no case, appended to trigger_ids"
             )
-        else:
-            logger.warning(
-                f"Finding {finding_id} overlaps investigation {inv_id} but could not be appended to its trigger_ids"
-            )
-        return inv_id
+            return inv_id
+        logger.warning(
+            f"Finding {finding_id} overlaps investigation {inv_id} "
+            f"but could not be appended to its trigger_ids; leaving queued"
+        )
+        return None
 
     def _append_trigger_id(self, inv_id: str, finding_id: str) -> bool:
         """Idempotent; ``False`` when the row is missing or the write failed."""
