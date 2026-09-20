@@ -26,8 +26,8 @@ SEVERITIES = ("critical", "high", "medium", "low")
 ACTIONS = ("isolate", "block", "investigate", "monitor", "dismiss")
 
 # finding_id is String(50) and reads "probe:<name>:<YYYY-MM-DD>", so a name
-# has 33 characters. Entities are RFC 5737 / RFC 2606 so no lookup ever
-# resolves them; no file_hashes, so nothing is sent to a sandbox or VirusTotal.
+# has 33 characters. Entities are RFC 5737 / RFC 2606, so an IP lookup can only
+# come back empty; no file_hashes, so nothing reaches a sandbox or hash lookup.
 PROBES: List[Dict[str, Any]] = [
     {
         "name": "c2-beacon-exfil",

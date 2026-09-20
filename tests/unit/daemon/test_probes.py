@@ -146,10 +146,11 @@ class TestTheProcessorGuard:
         processor._evaluate_for_response.assert_awaited_once()
 
     # The guard sits after triage, not inside it: a probe that triage failed on
-    # still carries a preset severity, and must still stop.
+    # still stops, even when a severity that would normally respond is present.
     async def test_guard_holds_when_triage_raises(self):
         processor = self._processor(auto_triage_enabled=True, auto_enrich_enabled=False)
         probe = build_probe_finding(PROBES[0], utcnow().date())
+        probe["severity"] = "critical"
         with patch.object(
             FindingProcessor,
             "_triage_finding",
