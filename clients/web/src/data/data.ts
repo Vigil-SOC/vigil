@@ -61,7 +61,7 @@ export interface CaseRow {
   title: string
   desc?: string
   status: 'open' | 'investigating' | 'closed'
-  prio: 'critical' | 'high' | 'medium' | 'low'
+  prio: 'critical' | 'high' | 'medium' | 'low' | 'unknown'
   owner: string
   ownerName: string
   findings: number

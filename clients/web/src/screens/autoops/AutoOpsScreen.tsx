@@ -3,7 +3,7 @@ import { Icon } from '../../shared/icons'
 import { EmptyState, Toggle, NumberInput } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { useAutoOps, type Investigation, type OrchestratorStatus } from './useAutoOps'
-import { StatusBadge } from './statusBadge'
+import { StatusBadge, PrioBadge } from './statusBadge'
 import InvestigationDetail from './InvestigationDetail'
 
 interface KpiDef {
@@ -237,7 +237,7 @@ function InvestigationRow({
     <tr className="clickable" onClick={() => onSelect(inv.investigation_id)}>
       <td><span className="id-cell">{inv.investigation_id}</span></td>
       <td><span className="tag">{inv.skill_id}</span></td>
-      <td><span className={`prio ${inv.priority}`}>{inv.priority}</span></td>
+      <td><PrioBadge prio={inv.priority} /></td>
       <td><StatusBadge status={inv.status} /></td>
       <td>
         <span

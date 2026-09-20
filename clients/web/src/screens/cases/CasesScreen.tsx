@@ -40,7 +40,7 @@ function casePrompt(c: CaseRow): string {
 }
 
 type SortKey = 'id' | 'title' | 'status' | 'prio' | 'ownerName' | 'findings' | 'tactic' | 'age' | 'sla' | 'updated'
-const PRIO_RANK = { critical: 0, high: 1, medium: 2, low: 3 } satisfies Record<CaseRow['prio'], number>
+const PRIO_RANK = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 } satisfies Record<CaseRow['prio'], number>
 
 function sortValue(c: CaseRow, key: SortKey): string | number {
   switch (key) {

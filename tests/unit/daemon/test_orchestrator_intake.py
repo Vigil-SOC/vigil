@@ -107,7 +107,7 @@ async def test_an_unrated_finding_launches_when_asked():
     await orch._create_investigation_for_finding(UNRATED, None, trigger_id=7)
 
     orch._create_investigation.assert_awaited_once()
-    assert orch._create_investigation.await_args.kwargs["priority"] == "medium"
+    assert orch._create_investigation.await_args.kwargs["priority"] == "unknown"
     orch._decide_trigger.assert_not_called()
 
 

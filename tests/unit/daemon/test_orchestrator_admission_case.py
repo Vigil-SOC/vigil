@@ -22,6 +22,12 @@ FINDING = {
     "description": "three failed logons on FYODOR-L",
     "entity_context": {"hostnames": ["FYODOR-L"]},
 }
+UNRATED = {
+    "finding_id": "f-none",
+    "severity": None,
+    "description": "three failed logons on FYODOR-L",
+    "entity_context": {"hostnames": ["FYODOR-L"]},
+}
 
 
 def _orchestrator(data_service) -> Orchestrator:
@@ -53,6 +59,18 @@ async def test_opens_a_case_and_launches_under_it():
     assert kwargs["case_id"] == "case-1"
     assert kwargs["workflow_id"] == workflow_id
     assert kwargs["priority"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_unrated_finding_launches_with_unknown_priority():
+    data_service = MagicMock()
+    data_service.create_case.return_value = {"case_id": "case-1", "title": "x"}
+    orch = _orchestrator(data_service)
+
+    await orch._create_investigation_for_finding(UNRATED, None)
+
+    assert data_service.create_case.call_args.kwargs["priority"] == "unknown"
+    assert orch._create_investigation.await_args.kwargs["priority"] == "unknown"
 
 
 @pytest.mark.asyncio

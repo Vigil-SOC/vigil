@@ -540,8 +540,9 @@ class Orchestrator:
         raw_severity = finding.get("severity")
         # Unrated sits in the unknown band for ranking. The launch path itself
         # does not wait for a rating; Gate 1 already filtered the offer.
+        # Record unknown rather than inventing medium — nobody rated it.
         if raw_severity is None or not str(raw_severity).strip():
-            severity = "medium"
+            severity = "unknown"
         else:
             severity = str(raw_severity).lower()
 
@@ -549,7 +550,7 @@ class Orchestrator:
             return
 
         workflow_id = select_workflow(finding)
-        priority = severity or "medium"
+        priority = severity
         # The case opens here, at admission, so the run has one to attach evidence
         # to from its first step. Failing to open one is logged, not fatal: the
         # investigation still launches, as it did before cases were opened here.
