@@ -75,7 +75,10 @@ def report_intent(config: Optional[DaemonConfig] = None) -> None:
     if rows is None:
         return
     if not rows:
-        logger.info("INTENT.md matches effective daemon config (%s)", intent_file())
+        logger.info(
+            "INTENT.md: no declared key differs from effective daemon config (%s)",
+            intent_file(),
+        )
         return
     for line in format_rows(rows):
         logger.info(line)
@@ -89,7 +92,7 @@ def main() -> int:
         print(f"no intent report: {path} could not be read")
         return 0
     if not rows:
-        print(f"{path}: declared intent matches effective daemon config")
+        print(f"{path}: no declared key differs from effective daemon config")
         return 0
     print(f"{path}: {len(rows)} key(s) differ from effective daemon config")
     for line in format_rows(rows):

@@ -1,11 +1,13 @@
 """INTENT.md observe mode (#915): loader, label rule, diff, sources. No Postgres."""
 
 import logging
+import os
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from core.config import Settings
 from core.intent import (
     DEFAULT_INTENT_FILE,
     HIGHER_TIGHTER,
@@ -42,18 +44,26 @@ def _write(tmp_path: Path, frontmatter: str) -> Path:
 # --- shipped manifest --------------------------------------------------------
 
 
-def test_shipped_manifest_declares_every_field_at_default(offline_config):
+def test_shipped_manifest_declares_every_field_at_default():
     declared = read_intent(DEFAULT_INTENT_FILE)
     assert declared is not None
     assert set(declared) == {f.key for f in INTENT_FIELDS}
     assert diff_intent(declared, effective_values(DaemonConfig()), {}) == []
 
 
-def test_fresh_checkout_reports_no_differences(offline_config, caplog):
+def test_every_field_names_a_real_setting():
+    # A typo here would silently report the key's source as "default" forever.
+    assert {f.setting for f in INTENT_FIELDS} <= set(Settings.model_fields)
+
+
+def test_fresh_checkout_reports_no_differences(offline_config, caplog, monkeypatch):
+    for name in list(os.environ):
+        if name.upper().startswith(("DAEMON_", "ORCHESTRATOR_")):
+            monkeypatch.delenv(name)
     caplog.set_level(logging.INFO)
     report_intent(DaemonConfig.from_env())
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any("matches effective" in r.message for r in caplog.records)
+    assert any("no declared key differs" in r.message for r in caplog.records)
 
 
 # --- label rule, both directions per field type -------------------------------
@@ -79,10 +89,34 @@ def test_fresh_checkout_reports_no_differences(offline_config, caplog):
         (HIGHER_TIGHTER, False, True, "loosen"),
         (LOWER_TIGHTER, 0.9, 0.9, "same"),
         (SHORTER_TIGHTER, ["high", "critical"], ["critical", "high"], "same"),
+        (SHORTER_TIGHTER, ["critical", "medium"], ["critical", "high"], "same"),
     ],
 )
 def test_label(rule, declared, effective, expected):
     assert label(rule, declared, effective) == expected
+
+
+def test_reordered_or_recased_severities_are_not_a_difference():
+    config = DaemonConfig()
+    declared = {"escalate.severities": ["HIGH", "critical", "high"]}
+    assert diff_intent(declared, effective_values(config), {}) == []
+
+
+@pytest.mark.parametrize(
+    "key, bad",
+    [
+        ("triage.auto_triage", 1),
+        ("respond.confidence_threshold", "0.95"),
+        ("escalate.severities", "critical"),
+        ("investigate.enabled", None),
+    ],
+)
+def test_wrong_type_is_one_warning_and_no_row(key, bad, caplog):
+    caplog.set_level(logging.WARNING)
+    rows = diff_intent({key: bad}, effective_values(DaemonConfig()), {})
+    assert rows == []
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and key in warnings[0].message
 
 
 # --- diff ---------------------------------------------------------------------
@@ -161,6 +195,14 @@ def test_missing_file_is_one_warning(tmp_path, caplog):
 def test_malformed_frontmatter_is_one_warning_naming_the_file(tmp_path, caplog):
     caplog.set_level(logging.WARNING)
     path = _write(tmp_path, ": [not yaml")
+    assert read_intent(path) is None
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and str(path) in warnings[0].message
+
+
+def test_manifest_declaring_nothing_is_one_warning(tmp_path, caplog):
+    caplog.set_level(logging.WARNING)
+    path = _write(tmp_path, "# only comments")
     assert read_intent(path) is None
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1 and str(path) in warnings[0].message

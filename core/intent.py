@@ -158,6 +158,9 @@ def read_intent(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
     for key in sorted(set(declared) - set(FIELDS_BY_KEY)):
         logger.warning("INTENT.md key %r has no reader in the daemon; ignored", key)
         declared.pop(key)
+    if not declared:
+        logger.warning("INTENT.md declares no known key (%s)", path)
+        return None
     return declared
 
 
@@ -173,13 +176,19 @@ def effective_values(config: Any) -> Dict[str, Any]:
 
 
 def _normalize(value: Any) -> Any:
+    """Comparable form: severity lists as lower-cased sets, numbers as floats.
+
+    Returns ``None`` for a value of the wrong shape (a quoted number, ``1`` for
+    a boolean, a bare string for a list): YAML is loose and a typo must not
+    become a crash or a silent "no difference".
+    """
     if isinstance(value, (list, tuple)):
-        return [str(v) for v in value]
+        return frozenset(str(v).lower() for v in value)
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
         return float(value)
-    return value
+    return None
 
 
 def label(rule: str, declared: Any, effective: Any) -> str:
@@ -187,12 +196,11 @@ def label(rule: str, declared: Any, effective: Any) -> str:
     if declared == effective:
         return "same"
     if rule == SHORTER_TIGHTER:
-        d, e = set(declared), set(effective)
-        if d < e:
-            return "tighten"
-        if d > e:
-            return "loosen"
-        return "same"  # same size, different members: neither direction
+        # Length, as the issue states the rule; two lists of equal length with
+        # different members are neither direction.
+        if len(declared) == len(effective):
+            return "same"
+        return "tighten" if len(declared) < len(effective) else "loosen"
     if rule == HIGHER_TIGHTER:
         return "tighten" if declared > effective else "loosen"
     if rule == LOWER_TIGHTER:
@@ -205,13 +213,25 @@ def diff_intent(
     effective: Mapping[str, Any],
     sources: Mapping[str, str],
 ) -> List[IntentDiff]:
-    """One row per declared key whose value differs from the effective one."""
+    """One row per declared key whose value differs from the effective one.
+
+    A declared value of the wrong type for its knob is one warning and no row.
+    """
     rows: List[IntentDiff] = []
     for f in INTENT_FIELDS:
         if f.key not in declared:
             continue
         want, have = declared[f.key], effective[f.key]
-        if _normalize(want) == _normalize(have):
+        norm_want, norm_have = _normalize(want), _normalize(have)
+        if norm_want is None or type(norm_want) is not type(norm_have):
+            logger.warning(
+                "INTENT.md key %r: declared %r is not a %s; ignored",
+                f.key,
+                want,
+                type(have).__name__,
+            )
+            continue
+        if norm_want == norm_have:
             continue
         rows.append(
             IntentDiff(

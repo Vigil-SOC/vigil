@@ -12,7 +12,9 @@ from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
-_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*(?:\n|\Z)", re.DOTALL)
+# Trailing ``\s*`` rather than a required newline: the skill importer accepted a
+# body starting on the closing ``---`` line, and that leniency is kept.
+_FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*", re.DOTALL)
 
 
 class FrontmatterError(ValueError):
