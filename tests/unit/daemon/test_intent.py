@@ -31,8 +31,16 @@ def _no_db(*_a, **_k):
 
 @pytest.fixture
 def offline_config():
-    with patch("core.storage.config_service.get_config_service", _no_db):
+    # Both the lazy import inside from_env() and the module-level one in
+    # services.daemon.intent, so no test here reaches for Postgres.
+    with patch("core.storage.config_service.get_config_service", _no_db), patch(
+        "services.daemon.intent.get_config_service", _no_db
+    ):
         yield
+
+
+def _intent_records(caplog):
+    return [r for r in caplog.records if r.name.endswith("intent")]
 
 
 def _write(tmp_path: Path, frontmatter: str) -> Path:
@@ -62,8 +70,9 @@ def test_fresh_checkout_reports_no_differences(offline_config, caplog, monkeypat
             monkeypatch.delenv(name)
     caplog.set_level(logging.INFO)
     report_intent(DaemonConfig.from_env())
-    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
-    assert any("no declared key differs" in r.message for r in caplog.records)
+    records = _intent_records(caplog)
+    assert not [r for r in records if r.levelno >= logging.WARNING]
+    assert any("no declared key differs" in r.message for r in records)
 
 
 # --- label rule, both directions per field type -------------------------------
