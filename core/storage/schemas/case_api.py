@@ -37,6 +37,7 @@ class CaseListResponse(BaseModel):
 class CasePurgeResponse(BaseModel):
     success: bool
     deleted: int
+    killed_investigations: int = 0
     message: str
 
 

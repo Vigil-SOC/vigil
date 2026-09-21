@@ -163,6 +163,26 @@ describe('ActivityCard', () => {
 })
 
 describe('TasksCard', () => {
+  it('sorts an unknown-priority task after a rated one', async () => {
+    vi.mocked(casesApi.getTasks).mockResolvedValue({
+      data: {
+        tasks: [
+          { ...TASK_ROW, task_id: 1, title: 'Unrated follow-up', priority: 'unknown' },
+          { ...TASK_ROW, task_id: 2, title: 'Collect packet capture', priority: 'high' },
+        ],
+      },
+    } as never)
+
+    render(<TasksCard caseId="case-2026-0142" />)
+
+    await waitFor(() =>
+      expect(screen.getByText('Collect packet capture')).toBeInTheDocument(),
+    )
+    const high = screen.getByText('Collect packet capture')
+    const unrated = screen.getByText('Unrated follow-up')
+    expect(high.compareDocumentPosition(unrated) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('toggles a task by task_id via PUT, not a hand-written id', async () => {
     render(<TasksCard caseId="case-2026-0142" />)
 

@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import { streamFetch, aiDecisionsApi, approvalsApi } from '../services/api'
+import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi } from '../services/api'
 
 vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -86,10 +86,31 @@ vi.mock('../services/api', () => ({
       Promise.resolve({
         data: {
           workflows: [
-            { id: 'incident-response', name: 'Incident Response', description: 'Respond to active incidents.', agents: ['triage', 'responder'], trigger_examples: ['"Run incident response"'] },
+            { id: 'incident-response', name: 'Incident Response', description: 'Respond to active incidents.', agents: ['triage', 'responder'], trigger_examples: ['"Run incident response"'], run_kind: 'compose' },
+            { id: 'threat-hunt', name: 'Threat Hunt', description: 'Hunt.', agents: ['hunter'], run_kind: 'hunt' },
           ],
         },
       }),
+    listRuns: vi.fn((id: string) =>
+      Promise.resolve({
+        data: {
+          runs: id === 'incident-response'
+            ? [{ run_id: 'r1', workflow_id: id, status: 'completed' }, { run_id: 'r2', workflow_id: id, status: 'failed' }]
+            : [],
+        },
+      })),
+  },
+  // the bare client, for hooks that call routes without a named wrapper
+  default: {
+    get: vi.fn((path: string) =>
+      path === '/analytics/cost'
+        ? Promise.resolve({
+            data: {
+              totals: { calls: 12, input_tokens: 12000, output_tokens: 3400, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 1.25, cache_hit_rate: 0.1 },
+              by_model: [{ model: 'gemini-2.5-flash', provider_type: 'vertex', pricing_source: 'exact', calls: 12, input_tokens: 12000, output_tokens: 3400, cost_usd: 1.25, cache_hit_rate: 0.1 }],
+            },
+          })
+        : Promise.reject(new Error(`unmocked GET ${path}`))),
   },
   attackApi: {
     getTechniqueRollup: () =>
@@ -216,11 +237,73 @@ describe('SocConsole', () => {
       ['Analytics', 'Analytics Dashboard'],
       ['AI Decisions', 'AI Decisions'],
       ['Workflows & Skills', 'Workflows & Skills'],
+      ['Health', 'Health'],
       ['Dashboard', 'Dashboard'],
     ]
     for (const [navLabel, pageTitle] of screens) {
       fireEvent.click(screen.getByRole('button', { name: navLabel }))
       expect(title()).toBe(pageTitle)
+    }
+  })
+
+  it('shows spend, approval depth and recent run outcomes on the Health screen', async () => {
+    renderConsole('/health')
+    // once in the total KPI, once in the by-model row
+    expect(await screen.findAllByText('$1.25')).toHaveLength(2)
+    expect(screen.getByText('12.0k / 3.4k')).toBeInTheDocument()
+    expect(screen.getByText('gemini-2.5-flash')).toBeInTheDocument()
+    expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
+    // runs are joined onto the workflow's declared kind; the hunt has none and is left out
+    expect(await screen.findByText('compose · 1 workflow')).toBeInTheDocument()
+    expect(screen.getByText('1 ok · 1 failed · 2 total')).toBeInTheDocument()
+    expect(screen.queryByText(/^hunt ·/)).not.toBeInTheDocument()
+  })
+
+  it('renders the Health screen as clean empties when nothing has run or spent', async () => {
+    const empty = { calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_creation_tokens: 0, cost_usd: 0, cache_hit_rate: 0 }
+    vi.mocked(api.get).mockResolvedValueOnce({ data: { totals: empty, by_model: [] } } as never)
+    vi.mocked(workflowApi.listRuns).mockResolvedValue({ data: { runs: [] } } as never)
+    try {
+      renderConsole('/health')
+      expect(await screen.findByText('No LLM traffic in this window')).toBeInTheDocument()
+      expect(await screen.findByText('No runs yet')).toBeInTheDocument()
+      expect(await screen.findByText('Nothing waiting')).toBeInTheDocument()
+      // an empty deploy shows copy, never a zero dressed up as a metric
+      expect(screen.queryByText('$0.00')).not.toBeInTheDocument()
+    } finally {
+      vi.mocked(workflowApi.listRuns).mockReset()
+    }
+  })
+
+  it('counts approvals on the Health screen and sends the button to the approvals tab', async () => {
+    vi.mocked(approvalsApi.listPending).mockResolvedValue({
+      data: { actions: [{ action_id: 'a-1', title: 'Approve containment?' }, { action_id: 'a-2', title: 'Approve isolation?' }] },
+    } as never)
+    try {
+      renderConsole('/health')
+      // the count sits beside "pending"; the rail badge shows the same number
+      expect((await screen.findByText('pending')).previousElementSibling?.textContent).toBe('2')
+      fireEvent.click(screen.getByRole('button', { name: /Open approvals/ }))
+      expect(title()).toBe('AI Decisions')
+      expect(await screen.findByRole('tab', { name: /Pending Approvals/, selected: true })).toBeInTheDocument()
+    } finally {
+      vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
+    }
+  })
+
+  it('keeps the other kinds when one workflow’s runs cannot be read', async () => {
+    vi.mocked(workflowApi.listRuns).mockImplementation(((id: string) =>
+      id === 'threat-hunt'
+        ? Promise.reject(new Error('boom'))
+        : Promise.resolve({ data: { runs: [{ run_id: 'r1', workflow_id: id, status: 'completed' }, { run_id: 'r9', workflow_id: id, status: 'weird' }] } })) as never)
+    try {
+      renderConsole('/health')
+      expect(await screen.findByText('compose · 1 workflow')).toBeInTheDocument()
+      // an unknown status still counts toward the total rather than vanishing
+      expect(screen.getByText('1 ok · 0 failed · 2 total')).toBeInTheDocument()
+      expect(screen.getByText(/Runs for Threat Hunt couldn’t be read/)).toBeInTheDocument()
+    } finally {
+      vi.mocked(workflowApi.listRuns).mockReset()
     }
   })
 

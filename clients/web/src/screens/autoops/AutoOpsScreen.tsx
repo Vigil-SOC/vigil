@@ -3,7 +3,7 @@ import { Icon } from '../../shared/icons'
 import { EmptyState, Toggle, NumberInput } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { useAutoOps, type Investigation, type OrchestratorStatus } from './useAutoOps'
-import { StatusBadge } from './statusBadge'
+import { StatusBadge, PrioBadge } from './statusBadge'
 import InvestigationDetail from './InvestigationDetail'
 
 interface KpiDef {
@@ -17,7 +17,7 @@ interface KpiDef {
 
 const KPIS: KpiDef[] = [
   { key: 'active', label: 'Active Agents', statuses: ['assigned', 'executing'], value: (s) => s.active_agents, color: 'var(--med)', note: 'running now' },
-  { key: 'queued', label: 'Queued', statuses: ['queued'], value: (s) => s.queued, note: 'waiting for a slot' },
+  { key: 'queued', label: 'Queued', statuses: [], value: (s) => s.queued, note: 'waiting for a slot' },
   { key: 'review', label: 'Pending Review', statuses: ['review_submitted'], value: (s) => s.pending_review, color: 'var(--high)', note: 'awaiting a human' },
   { key: 'done', label: 'Completed', statuses: ['completed'], value: (s) => s.completed, color: 'var(--ok)', note: 'this session' },
   { key: 'failed', label: 'Failed', statuses: ['failed'], value: (s) => s.failed, color: 'var(--crit)', note: 'errored out' },
@@ -146,8 +146,8 @@ export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }:
             value={k.value(status)}
             note={k.note}
             color={k.color}
-            active={filterActive(k.statuses)}
-            onClick={() => toggleFilter(k.statuses)}
+            active={k.statuses.length ? filterActive(k.statuses) : undefined}
+            onClick={k.statuses.length ? () => toggleFilter(k.statuses) : undefined}
           />
         ))}
         <KpiCell label="Total Cost" value={`$${cost.total_cost_usd?.toFixed(2) ?? '0.00'}`} note="cumulative spend" />
@@ -237,7 +237,7 @@ function InvestigationRow({
     <tr className="clickable" onClick={() => onSelect(inv.investigation_id)}>
       <td><span className="id-cell">{inv.investigation_id}</span></td>
       <td><span className="tag">{inv.skill_id}</span></td>
-      <td><span className={`prio ${inv.priority}`}>{inv.priority}</span></td>
+      <td><PrioBadge prio={inv.priority} /></td>
       <td><StatusBadge status={inv.status} /></td>
       <td>
         <span

@@ -4,7 +4,30 @@ import {
   MISSING_FINDING_SEVERITY,
   MISSING_FINDING_TIME,
 } from './data'
-import { formatFindingScore, mapApiFinding, mapApiSkill } from './mappers'
+import { formatFindingScore, mapApiCase, mapApiFinding, mapApiSkill } from './mappers'
+import type { ApiCase } from './mappers'
+
+const caseStub = (priority?: string | null): ApiCase =>
+  ({
+    case_id: 'c-1',
+    priority,
+    activities: [],
+    mitre_techniques: [],
+    notes: [],
+    resolution_steps: [],
+    tags: [],
+    timeline: [],
+  })
+
+describe('mapApiCase priority', () => {
+  it('keeps unknown instead of falling through to medium', () => {
+    expect(mapApiCase(caseStub('unknown')).prio).toBe('unknown')
+  })
+
+  it('still maps a rated priority', () => {
+    expect(mapApiCase(caseStub('high')).prio).toBe('high')
+  })
+})
 
 describe('mapApiSkill', () => {
   it('maps the current DB row and ignores retired fields', () => {

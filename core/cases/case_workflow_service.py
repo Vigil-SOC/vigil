@@ -18,6 +18,24 @@ from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
+# unknown sits below low: a rated Case keeps its rating when merged with an
+# unrated one, and two unrated Cases stay unknown. Names the ranker would
+# also call unknown rank the same, so list.index cannot throw.
+_MERGE_PRIORITY_RANK = {
+    "unknown": 0,
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
+
+
+def preferred_merge_priority(target: str, source: str) -> str:
+    """The higher-rated of two Case priorities. Unrecognized names rank as unknown."""
+    if _MERGE_PRIORITY_RANK.get(source, 0) > _MERGE_PRIORITY_RANK.get(target, 0):
+        return source
+    return target
+
 
 class CaseWorkflowService:
     """Service for managing case workflows and templates."""
@@ -565,9 +583,9 @@ class CaseWorkflowService:
             )
 
             if target.priority and source.priority:
-                order = ["low", "medium", "high", "critical"]
-                if order.index(source.priority) > order.index(target.priority):
-                    target.priority = source.priority
+                target.priority = preferred_merge_priority(
+                    target.priority, source.priority
+                )
 
             # Reparent the source's child records onto the target. Tolerated
             # per-model, as before the extraction: a merge still completes if

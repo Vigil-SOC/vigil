@@ -5,7 +5,6 @@
 import os
 from types import SimpleNamespace
 
-os.environ.setdefault("DEV_MODE", "true")
 os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
 
 import pytest

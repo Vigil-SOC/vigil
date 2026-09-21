@@ -10,7 +10,6 @@ fields on read so plaintext credentials never leak to the frontend.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -19,8 +18,6 @@ ROOT = Path(__file__).resolve().parents[2]
 for _p in (ROOT,):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
-
-os.environ.setdefault("DEV_MODE", "true")
 
 
 def _post_payload():
