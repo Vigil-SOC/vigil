@@ -349,27 +349,34 @@ class TestShadowAdjudication:
     # mitre_predictions is stored in more than one shape (iter_techniques lists
     # them); the line must come out of every one and never name an Unknown tactic.
     @pytest.mark.parametrize(
-        "mitre, expect_intent",
+        "mitre, intent",
         [
-            ({"T1071.001": 0.91, "T1059.001": 0.2}, True),
+            (
+                {"T1071.001": 0.91, "T1059.001": 0.2},
+                " and is Command and Control activity (T1071.001 Web Protocols)",
+            ),
             (
                 {
                     "techniques": [{"technique_id": "T1021.001", "confidence": 0.7}],
                     "model": "v2",
                 },
-                True,
+                " and is Lateral Movement activity (T1021.001 RDP)",
             ),
-            ([{"id": "T1190", "confidence": "0.8"}], True),
-            ({"T1071": None, "T1059": 0.3}, False),
-            ({"T9999": 0.9}, False),
-            ("garbage", False),
-            (None, False),
+            (
+                [{"id": "T1190", "confidence": "0.8"}],
+                " and is Initial Access activity (T1190 Exploit Public-Facing Application)",
+            ),
+            # A technique the taxonomy has no tactic for is named on its own.
+            ({"T9999": 0.9}, " and is T9999 activity"),
+            ({"T1071": None, "T1059": 0.3}, ""),
+            ("garbage", ""),
+            (None, ""),
         ],
     )
-    def test_the_hypothesis_reads_every_prediction_shape(self, mitre, expect_intent):
+    def test_the_hypothesis_reads_every_prediction_shape(self, mitre, intent):
         line = _shadow_hypothesis([{**C2_FINDING, "mitre_predictions": mitre}])
         assert line.startswith("Beaconing to 198.51.100.7 involving ")
-        assert ("activity (" in line) is expect_intent
+        assert line.endswith(f"is what intake says it is{intent}")
         assert "Unknown" not in line
 
     def test_no_finding_means_no_line(self):

@@ -306,9 +306,14 @@ def _shadow_hypothesis(findings: List[Dict]) -> str:
     if techniques:
         top = max(techniques, key=lambda t: _confidence(t.get("confidence")))
         tid, name, tactic = resolve_technique(top)
-        if tid and tactic != "Unknown":
+        if tid:
             technique = f"{tid} {name}" if name and name != tid else tid
-            intent = f" and is {tactic} activity ({technique})"
+            # The tactic when the taxonomy knows it; the technique alone when not.
+            intent = (
+                f" and is {technique} activity"
+                if tactic == "Unknown"
+                else f" and is {tactic} activity ({technique})"
+            )
     return f"{subject}{where} is what intake says it is{intent}"
 
 
