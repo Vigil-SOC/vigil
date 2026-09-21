@@ -185,13 +185,45 @@ def score_probe(row: Dict[str, Any], now: datetime) -> Optional[Dict[str, Any]]:
         ] in expected.get("recommended_action", [])
         outcome = "hit" if hit else "miss"
         answered = _parse_utc(triage.get("timestamp"))
+        if answered is None:
+            logger.warning(
+                "Probe %s: ai_triage has no usable timestamp; time_to_verdict_s null",
+                row.get("finding_id"),
+            )
         time_to_verdict = (answered - created_at).total_seconds() if answered else None
     return {
         "outcome": outcome,
         "verdict": verdict,
         "time_to_verdict_s": time_to_verdict,
-        "scored_at": now.isoformat(),
+        # Offset written explicitly, as the row's own timestamps are (schemas/base.py).
+        "scored_at": now.replace(tzinfo=timezone.utc).isoformat(),
     }
+
+
+def _score_and_write(row: Dict[str, Any], now: datetime, data_service: Any) -> bool:
+    """Score one due row and persist it; False when nothing was written."""
+    probe = row["entity_context"]["probe"]
+    score = score_probe(row, now)
+    if score is None:
+        return False
+    # update_finding replaces the whole JSONB, so merge into a copy.
+    entity_context = copy.deepcopy(row["entity_context"])
+    entity_context["probe"]["score"] = score
+    if not data_service.update_finding(
+        row["finding_id"], entity_context=entity_context
+    ):
+        logger.warning("Probe %s: score not written", row["finding_id"])
+        return False
+    probe_metrics.record(
+        probe.get("name", "unknown"), score["outcome"], score["time_to_verdict_s"]
+    )
+    logger.info(
+        "Probe %s scored %s (time_to_verdict_s=%s)",
+        row["finding_id"],
+        score["outcome"],
+        score["time_to_verdict_s"],
+    )
+    return True
 
 
 def score_probes(data_service: Any) -> int:
@@ -206,25 +238,9 @@ def score_probes(data_service: Any) -> int:
         probe = (row.get("entity_context") or {}).get("probe")
         if not isinstance(probe, dict) or "score" in probe:
             continue
-        score = score_probe(row, now)
-        if score is None:
-            continue
-        # update_finding replaces the whole JSONB, so merge into a copy.
-        entity_context = copy.deepcopy(row["entity_context"])
-        entity_context["probe"]["score"] = score
-        if not data_service.update_finding(
-            row["finding_id"], entity_context=entity_context
-        ):
-            logger.warning("Probe %s: score not written", row["finding_id"])
-            continue
-        probe_metrics.record(
-            probe.get("name", "unknown"), score["outcome"], score["time_to_verdict_s"]
-        )
-        scored += 1
-        logger.info(
-            "Probe %s scored %s (time_to_verdict_s=%s)",
-            row["finding_id"],
-            score["outcome"],
-            score["time_to_verdict_s"],
-        )
+        # One malformed row must not hold up the rest, or the injection after.
+        try:
+            scored += _score_and_write(row, now, data_service)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Probe %s: scoring failed: %s", row.get("finding_id"), exc)
     return scored

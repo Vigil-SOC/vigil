@@ -34,13 +34,16 @@ class _Data:
         self.existing = set(existing)
         self.rows = {r["finding_id"]: r for r in rows}
         self.updates = []
+        self.calls = []
 
     def get_finding(self, finding_id):
+        self.calls.append("get_finding")
         if finding_id in self.rows:
             return self.rows[finding_id]
         return {"finding_id": finding_id} if finding_id in self.existing else None
 
     def get_findings(self, data_source=None, **_):
+        self.calls.append("get_findings")
         return [r for r in self.rows.values() if r["data_source"] == data_source]
 
     def update_finding(self, finding_id, **updates):
@@ -55,7 +58,8 @@ def _probe_row(probe, age=timedelta(hours=2), triage=None, triage_after=None):
     created = utcnow() - age
     row = build_probe_finding(probe, created.date())
     row["created_at"] = created.replace(tzinfo=timezone.utc).isoformat()
-    row["ai_enrichment"] = None
+    # What a timed-out triage leaves behind (#965): an error, no ai_triage.
+    row["ai_enrichment"] = {"ai_triage_error": "timed out"}
     if triage is not None:
         answered = created + (triage_after or timedelta(minutes=3))
         row["ai_enrichment"] = {
@@ -222,7 +226,16 @@ class TestScoring:
         assert ctx["probe"]["expected"] == self.beacon["expected"]
         assert ctx["probe"]["score"]["outcome"] == "hit"
 
+    # OTEL off is the default in tests: get_meter hands back the no-op meter.
     def test_scores_without_otel(self):
+        fresh = daemon_metrics.ProbeMetrics()
+        data = _Data(rows=[_probe_row(self.travel)])
+        with patch("services.daemon.probes.probe_metrics", fresh):
+            assert score_probes(data) == 1
+        assert fresh.results[(self.travel["name"], "silent")] == 1
+        assert fresh._results_counter is not None  # the no-op instrument
+
+    def test_scores_when_the_meter_itself_fails(self):
         fresh = daemon_metrics.ProbeMetrics()
         data = _Data(rows=[_probe_row(self.travel)])
         with (
@@ -233,6 +246,15 @@ class TestScoring:
         ):
             assert score_probes(data) == 1
         assert fresh.results[(self.travel["name"], "silent")] == 1
+
+    def test_a_malformed_row_does_not_stop_the_others(self):
+        bad = _probe_row(self.beacon, triage="not-a-dict")
+        good = _probe_row(self.travel)
+        data = _Data(rows=[bad, good])
+
+        assert score_probes(data) == 1
+        assert good["entity_context"]["probe"]["score"]["outcome"] == "silent"
+        assert "score" not in bad["entity_context"]["probe"]
 
     def test_the_instruments_get_the_labels_and_only_verdicts_reach_the_histogram(
         self,
@@ -303,6 +325,9 @@ class TestTheScheduledTask:
         assert scheduler.stats["probes_scored"] == 1
         # Yesterday's row was scored and today's three still went on the queue.
         assert queue.qsize() == 3
+        # The scoring read came before the first injection lookup.
+        assert scheduler._data_service.calls[0] == "get_findings"
+        assert scheduler._data_service.calls.count("get_finding") == 3
 
 
 class TestTheProcessorGuard:
