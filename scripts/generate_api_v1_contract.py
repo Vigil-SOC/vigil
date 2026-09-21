@@ -17,6 +17,7 @@ the diff — a deliberate, reviewable act.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import re
@@ -68,8 +69,13 @@ def build_contract(app: Any) -> dict:
     Deterministic: stable operation ids, only ``/api/v1`` paths, beta operations
     dropped, and the transitive closure of referenced component schemas so a
     change to a shared response shape is caught, not just a path rename.
+
+    Reads the app without altering it: ``app.openapi()`` hands back the cached
+    schema object itself, so rewriting ids on it would leave every later caller
+    in the process — the served ``/openapi.json``, another test — looking at
+    ids this function invented.
     """
-    spec = app.openapi()
+    spec = copy.deepcopy(app.openapi())
     _stable_operation_ids(spec)
 
     HTTP_METHODS = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}

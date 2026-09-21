@@ -74,3 +74,36 @@ def test_contract_covers_only_v1_paths():
     live = _live_contract()
     stray = [p for p in live["paths"] if not p.startswith("/api/v1")]
     assert not stray, f"non-v1 paths in the contract: {stray}"
+
+
+def test_building_the_contract_leaves_the_app_spec_alone():
+    # app.openapi() returns the cached schema object, not a copy. Rewriting
+    # operation ids on it would mean that after this test ran, every other
+    # caller in the process — the served /openapi.json, the frontend types
+    # generator, the next test — read ids the contract builder invented.
+    from services.api.main import app
+
+    before = {
+        (path, method): op.get("operationId")
+        for path, methods in app.openapi()["paths"].items()
+        for method, op in methods.items()
+        if isinstance(op, dict)
+    }
+
+    build_contract(app)
+
+    after = {
+        (path, method): op.get("operationId")
+        for path, methods in app.openapi()["paths"].items()
+        for method, op in methods.items()
+        if isinstance(op, dict)
+    }
+
+    changed = sorted(
+        f"{m.upper()} {p}" for (p, m), v in before.items() if after[(p, m)] != v
+    )
+    assert not changed, (
+        f"build_contract() rewrote operationIds on the app's own spec for "
+        f"{len(changed)} operation(s), e.g. {changed[:3]}. It must read the "
+        "spec, not edit it."
+    )
