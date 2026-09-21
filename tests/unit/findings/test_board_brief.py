@@ -1,9 +1,9 @@
 """Tests for the Board Brief report type (Issue #8).
 
 Tests cover:
-1. Reporter agent configuration includes board brief methodology
-2. Agent routing selects Reporter for board brief keywords
-3. Board brief template exists and has required sections
+1. Reporter agent delegates report writing to the executive-summary skill (#929)
+2. The skill body carries the report-type methodology and loads from the library
+3. Board brief template exists as the skill's asset and has required sections
 4. Risk posture determination logic with synthetic data
 5. Metric computation helpers with synthetic findings/cases
 """
@@ -12,7 +12,6 @@ import json
 import os
 import pytest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest.mock import MagicMock
 
 from core.skills.skill_library import LIBRARY_ROOT, load_skills, read_skill
@@ -253,6 +252,7 @@ class TestExecutiveSummarySkill:
         asset = read_skill("executive-summary", "assets/board-brief.md", roots=[LIBRARY_ROOT])
         assert asset["file"] == "assets/board-brief.md"
         assert asset["content"] == TEMPLATE_PATH.read_text()
+        assert "## Risk posture: {{POSTURE_INDICATOR}}" in asset["content"]
 
     def test_skill_methodology_includes_board_brief(self):
         body = _skill_body()
@@ -288,7 +288,9 @@ class TestExecutiveSummarySkill:
         assert len(cases) >= 3
         for case in cases:
             assert set(case) == {"name", "input", "expect"}
-            assert case["name"] and case["input"] and case["expect"]
+            assert case["name"] and case["input"]
+            assert isinstance(case["expect"], list) and case["expect"]
+            assert all(isinstance(s, str) and s for s in case["expect"])
 
 
 # ---------------------------------------------------------------------------
