@@ -4,6 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.models import Case, CaseSLA, SLAPolicy
@@ -258,18 +259,31 @@ async def update_sla_policy(
     return SLAPolicySchema.dump(policy)
 
 
+# What the operator is told when a case still references the policy. `force` is
+# not offered, because it could never have worked: `case_slas.sla_policy_id` is
+# a foreign key with no `ON DELETE` clause, and the column is NOT NULL, so
+# there is no detaching -- honouring the promise would have meant deleting the
+# per-case SLA history, which is the record of whether the SOC answered on
+# time. Deactivating retires the policy exactly as intended:
+# `CaseSLAService` selects on `is_active`, so no new case takes it, and the
+# cases that used it keep their deadlines and their breaches.
+_STILL_REFERENCED = (
+    "Cannot delete an SLA policy that cases still reference{count}. "
+    "Deactivate it instead (is_active=false): no new case will take it, and "
+    "the cases that used it keep their SLA history."
+)
+
+
 @router.delete("/{policy_id}")
 async def delete_sla_policy(
     policy_id: str,
     session: UnitOfWorkSession,
-    force: bool = False,
 ):
     """
-    Delete an SLA policy.
+    Delete an SLA policy that no case references.
 
     Args:
         policy_id: The policy ID
-        force: Force delete even if policy is in use
 
     Returns:
         Success message
@@ -279,17 +293,27 @@ async def delete_sla_policy(
     if not policy:
         raise HTTPException(status_code=404, detail="SLA policy not found")
 
-    # Check if policy is in use
-
     in_use = session.query(CaseSLA).filter(CaseSLA.sla_policy_id == policy_id).count()
 
-    if in_use > 0 and not force:
+    if in_use > 0:
         raise HTTPException(
-            status_code=400,
-            detail=f"Cannot delete policy that is in use by {in_use} case(s). Use force=true to delete anyway.",
+            status_code=409,
+            detail=_STILL_REFERENCED.format(count=f" ({in_use} case(s))"),
         )
 
     session.delete(policy)
+
+    # Flush inside the handler so the constraint speaks while there is still
+    # something here to translate it. The count above is read under whatever
+    # scope the request has, while the foreign key is global, so a policy can
+    # read as unused and still be referenced -- and at commit time, after this
+    # handler has returned, that surfaces as a bare "Internal server error".
+    try:
+        session.flush()
+    except IntegrityError:
+        raise HTTPException(
+            status_code=409, detail=_STILL_REFERENCED.format(count="")
+        ) from None
 
     return {"success": True, "message": f"SLA policy {policy_id} deleted successfully"}
 

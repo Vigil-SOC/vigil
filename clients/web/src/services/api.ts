@@ -345,8 +345,7 @@ export const slaPoliciesApi = {
     is_default?: boolean
   }) => api.put(`/sla-policies/${policyId}`, data),
   
-  delete: (policyId: string, force?: boolean) =>
-    api.delete(`/sla-policies/${policyId}`, { params: { force } }),
+  delete: (policyId: string) => api.delete(`/sla-policies/${policyId}`),
   
   setDefault: (policyId: string) =>
     api.post(`/sla-policies/${policyId}/set-default`),
