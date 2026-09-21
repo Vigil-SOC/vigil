@@ -7,11 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.agents.projections import read_projection, read_replay
-from core.api.v1.workflows_router import (
-    _is_hunt,
-)
-from core.api.v1.workflows_router import get_workflow as _v1_get_workflow
-from core.api.v1.workflows_router import list_workflows as _v1_list_workflows
 from core.deps import (
     provide_approvals,
     provide_custom_workflows,
@@ -22,6 +17,7 @@ from core.deps import (
 )
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
+from core.workflows import catalog
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
 from core.workflows.workflow_run_service import WorkflowRunService
@@ -138,16 +134,16 @@ class WorkflowRunCancelRequest(BaseModel):
 # -----------------------------------------------------------------------------
 
 
-# The catalog reads are the frozen contract; their handlers live in
-# core/api/v1/workflows_router.py and are served at /api/v1/workflows. These two
-# routes keep the pre-version /api/workflows paths working by delegating to the
-# same functions. They must stay in THIS router so first-match order with
+# The catalog reads are the frozen contract, served at /api/v1/workflows by
+# core/api/v1/workflows_router.py. These two routes keep the pre-version
+# /api/workflows paths working by reading the same core.workflows.catalog
+# functions. They must stay in THIS router so first-match order with
 # /workflows/custom (which looks like a {workflow_id}) is decided by decorator
 # order, not cross-router mount order.
 @router.get("/workflows")
 async def list_workflows(service: WorkflowsService = Depends(provide_workflows)):
-    """List all available workflows. Delegates to the v1 contract handler."""
-    return await _v1_list_workflows(service)
+    """List all available workflows."""
+    return catalog.listing(service)
 
 
 # Static routes MUST come before parameterized {workflow_id} routes
@@ -329,12 +325,18 @@ async def get_workflow(
     service: WorkflowsService = Depends(provide_workflows),
     registry=Depends(provide_mcp_registry),
 ):
-    """Get one workflow. Delegates to the v1 contract handler.
+    """Get one workflow.
 
     Defined after /workflows/custom so decorator order resolves the {workflow_id}
     vs /custom ambiguity within this router.
     """
-    return await _v1_get_workflow(workflow_id, service, registry)
+    workflow = catalog.detail(service, registry, workflow_id)
+    if workflow is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workflow not found: {workflow_id}",
+        )
+    return workflow
 
 
 @router.post("/workflows/{workflow_id}/execute")
@@ -403,7 +405,7 @@ async def get_workflow_run(
     if not row:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     row["phases"] = run_service.list_phases(run_id)
-    if _is_hunt(workflows, row.get("workflow_id")):
+    if catalog.is_hunt(workflows, row.get("workflow_id")):
         row["hunt"] = await read_projection(run_id)
     return row
 
