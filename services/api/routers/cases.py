@@ -1,10 +1,11 @@
 """Cases API endpoints."""
 
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
 from core.auth.auth_service import AuthService
@@ -53,6 +54,8 @@ from core.storage.schemas.case_api import (
 )
 from core.time import utcnow
 from services.api.middleware.auth import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -128,9 +131,34 @@ async def get_cases(status: Optional[str] = None, priority: Optional[str] = None
     return {"cases": cases, "total": len(cases)}
 
 
+def _mark_workdirs_failed(investigation_ids: List[str], reason: str) -> None:
+    """Mirror the kill endpoint's sidecar write for runs the reset failed.
+
+    Runs after the request commits, because the sidecar cannot be rolled back
+    with the rows. One unwritable workdir must not abandon the rest.
+    """
+    from core.config import get_settings
+    from services.daemon.workdir import WorkdirManager
+
+    workdir = WorkdirManager(get_settings().orchestrator_workdir)
+    for investigation_id in investigation_ids:
+        if not workdir.exists(investigation_id):
+            continue
+        try:
+            state = workdir.read_state(investigation_id)
+            state["status"] = "failed"
+            state["failure_reason"] = reason
+            workdir.write_state(investigation_id, state)
+        except OSError as e:
+            logger.warning(
+                "Could not write workdir state for %s: %s", investigation_id, e
+            )
+
+
 @router.delete("/all", response_model=CasePurgeResponse)
 async def clear_all_cases(
     session: UnitOfWorkSession,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
 ):
     """Delete all cases and case-derived generated data (requires cases.delete)."""
@@ -139,12 +167,22 @@ async def clear_all_cases(
             status_code=403, detail="Permission denied: cases.delete required"
         )
 
-    count = case_records_service.purge_all_cases(session)
+    result = case_records_service.purge_all_cases(session)
+    killed = len(result.killed_investigation_ids)
+    background_tasks.add_task(
+        _mark_workdirs_failed,
+        result.killed_investigation_ids,
+        case_records_service.RESET_KILL_REASON,
+    )
 
     return {
         "success": True,
-        "deleted": count,
-        "message": f"Deleted {count} cases and case-derived records",
+        "deleted": result.cases,
+        "killed_investigations": killed,
+        "message": (
+            f"Deleted {result.cases} cases and case-derived records; "
+            f"killed {killed} live investigations"
+        ),
     }
 
 
@@ -541,26 +579,27 @@ async def generate_case_report(case_id: str):
 
 @router.delete("/{case_id}", response_model=CaseSuccessResponse)
 async def delete_case(case_id: str, session: UnitOfWorkSession):
-    """Delete a case that has no live Investigation.
+    """Delete a case that has no live Investigation (#1001)."""
+    # Demo cases live in memory, not in the session, and nothing investigates
+    # them, so there is no live run to guard against.
+    if data_service.is_demo_mode():
+        if not data_service.delete_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
+        return {"success": True}
 
-    A live finding-run on this Case must be killed or finished first
-    (#1001). Hunts have no Case, so they never block this.
-    """
-    case = data_service.get_case(case_id)
-    if not case:
+    live = case_records_service.delete_case(session, case_id)
+
+    if live is None:
         raise HTTPException(status_code=404, detail="Case not found")
-
-    live = case_records_service.count_live_investigations(session, case_id)
     if live:
+        plural = "s" if len(live) != 1 else ""
         raise HTTPException(
             status_code=409,
-            detail=f"case has {live} live investigations; kill or finish them first",
+            detail=(
+                f"case has {len(live)} live investigation{plural} "
+                f"({', '.join(live)}); kill or finish them first"
+            ),
         )
-
-    success = data_service.delete_case(case_id)
-
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to delete case")
 
     return {"success": True}
 

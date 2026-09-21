@@ -82,6 +82,7 @@ from core.integrations.mcp.client import process_mcp_client
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
+from core.storage.models import IN_FLIGHT_INVESTIGATION_STATUSES
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
@@ -1013,7 +1014,7 @@ class Orchestrator:
     # The run: enqueued here, driven by the agent worker, read back as a projection
     # -------------------------------------------------------------------------
 
-    IN_FLIGHT = ("assigned", "executing", "waiting_approval")
+    IN_FLIGHT = IN_FLIGHT_INVESTIGATION_STATUSES
 
     def _in_flight(self) -> int:
         return sum(len(self._get_investigations_by_status(s)) for s in self.IN_FLIGHT)

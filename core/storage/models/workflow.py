@@ -22,6 +22,22 @@ from sqlalchemy.orm import Mapped, mapped_column
 from core.storage.models.base import Base
 from core.time import utcnow
 
+# The two senses of "not finished", kept together because they differ by one
+# status and drift apart when they do not share a home. LIVE is the record the
+# Case owns; IN_FLIGHT is the subset holding an agent slot, which a run under
+# review has already given back.
+LIVE_INVESTIGATION_STATUSES = (
+    "assigned",
+    "executing",
+    "waiting_approval",
+    "review_submitted",
+)
+IN_FLIGHT_INVESTIGATION_STATUSES = (
+    "assigned",
+    "executing",
+    "waiting_approval",
+)
+
 
 class Investigation(Base):
     """Tracks an autonomous investigation assignment managed by the orchestrator."""

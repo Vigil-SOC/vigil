@@ -1863,13 +1863,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Case
-         * @description Delete a case.
-         *
-         *     Args:
-         *         case_id: The case ID
-         *
-         *     Returns:
-         *         Success status
+         * @description Delete a case that has no live Investigation (#1001).
          */
         delete: operations["delete_api_cases_case_id"];
         options?: never;
@@ -7608,6 +7602,11 @@ export interface components {
         CasePurgeResponse: {
             /** Deleted */
             deleted: number;
+            /**
+             * Killed Investigations
+             * @default 0
+             */
+            killed_investigations: number;
             /** Message */
             message: string;
             /** Success */
