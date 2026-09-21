@@ -657,6 +657,11 @@ async def health_check():
             "status": "healthy",
             "version": __version__,
             "demo_mode": is_demo_mode(),
+            # The SPA's bypass indicator reads this. It cannot use its own build
+            # flag: DEV_MODE is set at runtime, and a prebuilt bundle served by a
+            # bypassed backend would otherwise show nothing. Public on purpose --
+            # an unauthenticated caller can already tell by being served.
+            "auth_bypassed": get_settings().dev_mode,
             # Booleans only — this route is public, and the resolved path names
             # where credentials live. Full status: GET /api/config/state-directory.
             "state_directory": {
@@ -678,6 +683,7 @@ async def health_check():
             "status": "healthy",
             "version": __version__,
             "demo_mode": False,
+            "auth_bypassed": get_settings().dev_mode,
             "storage": {"backend": "unknown", "error": str(e)},
         }
         if schema_block is not None:
