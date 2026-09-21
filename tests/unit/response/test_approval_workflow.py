@@ -146,7 +146,7 @@ class TestConfiguredBands:
             held = svc.investigate_and_respond("f-1", auto_execute=False)
         assert result["action"]["status"] == "no_action"
         assert result["action"]["reason"] == (
-            "Confidence below review_threshold (0.00 < 0.80)"
+            "response.review_threshold=0.80 not met (0.00)"
         )
         assert held["action"]["reason"] == "auto_execute disabled"
 

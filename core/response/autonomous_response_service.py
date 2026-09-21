@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from core.agents.builtins import AgentId
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
-from core.response.config import ResponseConfig
+from core.response.config import ResponseConfig, decision_rule
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -601,14 +601,10 @@ Please review and approve/reject in the SOC dashboard.
 
             # Determine action
             confidence = correlation["confidence"]
-
-            if not auto_execute:
-                reason = "auto_execute disabled"
-            else:
-                reason = (
-                    f"Confidence below review_threshold "
-                    f"({confidence:.2f} < {self.config.review_threshold:.2f})"
-                )
+            rule = decision_rule(
+                "response.review_threshold", self.config.review_threshold, confidence
+            )
+            reason = rule if auto_execute else "auto_execute disabled"
 
             if confidence >= self.config.review_threshold and auto_execute:
                 # Create isolation action
@@ -616,7 +612,7 @@ Please review and approve/reject in the SOC dashboard.
                     ip_address=target_ip,
                     hostname=target_hostname,
                     confidence=confidence,
-                    reason=f"Automated response to finding {finding_id}",
+                    reason=f"Automated response to finding {finding_id}; {rule}",
                     evidence=[finding_id],
                     correlation_data=correlation,
                 )

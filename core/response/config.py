@@ -11,9 +11,25 @@ Lives in ``core/`` because ``core`` must not import ``services``;
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from core.config import Settings, get_settings
+
+
+def decision_rule(field: str, value: Any, observed: Optional[float] = None) -> str:
+    """Render the rule a decision fired on, keyed on the config field (#917).
+
+    Numeric thresholds render as ``response.confidence_threshold=0.90 met (0.92)``
+    — the field, the value it held when the decision was made, whether the
+    observed confidence reached it, and that confidence. Branches with no
+    comparison (``reversibility=irreversible``, ``approval.force_manual_approval=True``)
+    render as ``field=value``. Every decision site calls this; none assembles
+    the string itself, so a later slice can parse one shape.
+    """
+    if observed is None:
+        return f"{field}={value}"
+    verdict = "met" if observed >= value else "not met"
+    return f"{field}={value:.2f} {verdict} ({observed:.2f})"
 
 
 @dataclass

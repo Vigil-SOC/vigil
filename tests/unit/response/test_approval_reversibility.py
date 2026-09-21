@@ -49,16 +49,18 @@ class TestReversibilityGate:
         assert action.status == ActionStatus.PENDING.value
         assert action.requires_approval is True
         assert action.reversibility == Reversibility.IRREVERSIBLE.value
+        assert action.reason == "test; reversibility=irreversible"
 
     def test_reversible_high_confidence_still_auto_approves(self):
-        action = _create(
-            ApprovalService(),
-            confidence=0.95,
-            reversibility=Reversibility.REVERSIBLE,
-        )
+        svc = ApprovalService()
+        action = _create(svc, confidence=0.95, reversibility=Reversibility.REVERSIBLE)
         assert action.status == ActionStatus.APPROVED.value
         assert action.requires_approval is False
         assert action.reversibility == Reversibility.REVERSIBLE.value
+        threshold = svc.config.confidence_threshold
+        assert action.reason == (
+            f"test; response.confidence_threshold={threshold:.2f} met (0.95)"
+        )
 
 
 class TestIdempotencyKey:
