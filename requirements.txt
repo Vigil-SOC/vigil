@@ -21,7 +21,7 @@ aiohttp>=3.9.0
 
 # Core declared transitive deps
 pydantic>=2.0.0
-pydantic-settings>=2.0.0
+pydantic-settings>=2.15.0
 PyYAML>=6.0.3
 
 # Web Backend
