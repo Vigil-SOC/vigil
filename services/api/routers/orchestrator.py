@@ -57,6 +57,9 @@ class InvestigationCreateRequest(BaseModel):
     # subject is what makes a Verdict findable later, and nothing infers one here.
     hypothesis_subjects: Optional[Dict[str, List[str]]] = None
     priority: str = "medium"
+    # Id of an already-stored object. Copied onto the trigger payload; attached
+    # to the Case at Claim when one is minted or joined.
+    document_id: Optional[str] = None
 
 
 # ---- Status & Control ----
@@ -474,16 +477,20 @@ async def create_investigation(request: InvestigationCreateRequest):
     try:
         from services.daemon.orchestrator import insert_intake_trigger
 
+        payload = {
+            "workflow_id": request.workflow_id,
+            "finding_ids": request.finding_ids,
+            "case_id": request.case_id,
+            "hypothesis": request.hypothesis,
+            "hypothesis_subjects": request.hypothesis_subjects,
+        }
+        if request.document_id:
+            payload["document_id"] = request.document_id
+
         insert_intake_trigger(
             kind="human_ask",
             priority=request.priority or "medium",
-            payload={
-                "workflow_id": request.workflow_id,
-                "finding_ids": request.finding_ids,
-                "case_id": request.case_id,
-                "hypothesis": request.hypothesis,
-                "hypothesis_subjects": request.hypothesis_subjects,
-            },
+            payload=payload,
         )
 
         return {

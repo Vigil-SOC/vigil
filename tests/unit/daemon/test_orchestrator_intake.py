@@ -372,6 +372,34 @@ async def test_post_investigations_inserts_a_human_ask_the_tick_launches(
     assert orch._create_manual_investigation.await_args.kwargs["trigger_id"] == 1
 
 
+@pytest.mark.asyncio
+async def test_post_investigations_carries_a_document_on_the_payload(monkeypatch):
+    from services.api.routers.orchestrator import (
+        InvestigationCreateRequest,
+        create_investigation,
+    )
+
+    captured = []
+    monkeypatch.setattr(
+        "services.daemon.orchestrator.insert_intake_trigger",
+        lambda **kwargs: captured.append(kwargs) or 1,
+    )
+
+    result = await create_investigation(
+        InvestigationCreateRequest(
+            workflow_id="incident-response",
+            finding_ids=["f-1"],
+            document_id="doc-9",
+            priority="high",
+        )
+    )
+
+    assert result["success"] is True
+    assert captured[0]["kind"] == "human_ask"
+    assert captured[0]["payload"]["document_id"] == "doc-9"
+    assert captured[0]["payload"]["finding_ids"] == ["f-1"]
+
+
 def _processor_inserts(monkeypatch):
     from services.daemon.config import ProcessingConfig
     from services.daemon.processor import FindingProcessor

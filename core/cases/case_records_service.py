@@ -61,6 +61,27 @@ _CASE_OWNED_MODELS = (
 )
 
 
+def add_attachment(
+    session: Session,
+    case_id: str,
+    *,
+    document_id: str,
+    uploaded_by: str = "human_ask",
+) -> CaseAttachment:
+    """Link an already-stored document to a Case. Does not commit."""
+    attachment = CaseAttachment(
+        case_id=case_id,
+        filename=document_id,
+        file_path=document_id,
+        file_size=0,
+        uploaded_by=uploaded_by,
+        description="document attached on the Human Ask",
+    )
+    session.add(attachment)
+    session.flush()
+    return attachment
+
+
 def add_task(
     session: Session,
     case_id: str,

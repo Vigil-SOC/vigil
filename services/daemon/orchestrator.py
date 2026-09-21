@@ -298,6 +298,15 @@ def _mint_case(session, spec: CaseSpec) -> str:
     return case_id
 
 
+def _attach_human_ask_document(session, case_id, document_id) -> None:
+    """Put the Human Ask's document on the Case. No-op when either is missing."""
+    if not case_id or not document_id:
+        return
+    from core.cases.case_records_service import add_attachment
+
+    add_attachment(session, case_id, document_id=str(document_id))
+
+
 class _TriggerAlreadyDecided(Exception):
     """The CAS on a queued trigger matched zero rows."""
 
@@ -725,6 +734,7 @@ class Orchestrator:
             hypothesis_subjects=hypothesis_subjects,
             shutdown_event=shutdown_event,
             trigger_id=trigger_id,
+            document_id=item.get("document_id"),
         )
 
     async def _create_investigation(
@@ -739,6 +749,7 @@ class Orchestrator:
         hypothesis_subjects: Optional[Dict[str, List[str]]] = None,
         shutdown_event: Optional[asyncio.Event] = None,
         trigger_id: Optional[int] = None,
+        document_id: Optional[str] = None,
     ):
         """Core investigation creation logic."""
         if mint_case is not None:
@@ -828,7 +839,10 @@ class Orchestrator:
         }
 
         saved = self._save_investigation(
-            inv_record, trigger_id=trigger_id, mint_case=mint_case
+            inv_record,
+            trigger_id=trigger_id,
+            mint_case=mint_case,
+            document_id=document_id,
         )
         if not saved:
             logger.warning(
@@ -1774,12 +1788,13 @@ class Orchestrator:
         inv_record: Dict,
         trigger_id: Optional[int] = None,
         mint_case: Optional[CaseSpec] = None,
+        document_id: Optional[str] = None,
     ) -> bool:
         """Save a new investigation; with a trigger id, CAS it launched in the same transaction.
 
         When ``mint_case`` is given, the Case (and ``case_findings``) are written
         in this session so a crash cannot leave a Case with no run, or a run
-        with no Case.
+        with no Case. A document on a Human Ask lands on that Case here.
         """
         try:
             from sqlalchemy import update
@@ -1790,6 +1805,9 @@ class Orchestrator:
             with get_db_manager().session_scope() as session:
                 if mint_case is not None:
                     inv_record["case_id"] = _mint_case(session, mint_case)
+                _attach_human_ask_document(
+                    session, inv_record.get("case_id"), document_id
+                )
                 inv = Investigation(
                     investigation_id=inv_record["investigation_id"],
                     case_id=inv_record.get("case_id"),
