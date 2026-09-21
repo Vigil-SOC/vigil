@@ -1,9 +1,10 @@
 import logging
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 from core.config import DEFAULT_REDIS_URL, get_settings
 from core.ingestion.kafka_config import KafkaConfig  # re-exported for DaemonConfig
+from core.intent import INTENT_FIELDS
 from core.response.config import ResponseConfig  # re-exported for DaemonConfig
 from core.secrets import get_secret
 
@@ -59,6 +60,8 @@ class EscalationConfig:
 class SchedulerConfig:
     threat_hunt_enabled: bool = True
     threat_hunt_interval: int = 86400  # Daily (24 hours)
+    probes_enabled: bool = True  # known-answer probes (#923)
+    probe_interval: int = 3600  # hourly tick; the day-scoped id makes it daily
     report_generation_enabled: bool = True
     report_interval: int = 604800  # Weekly (7 days)
     cleanup_enabled: bool = True
@@ -120,10 +123,22 @@ class DaemonConfig:
     log_level: str = "INFO"
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+    # Where each intent knob's value came from (env | db | default), keyed by
+    # attribute path, recorded by from_env() for the INTENT.md observe report.
+    sources: Dict[str, str] = field(default_factory=dict)
+
     @classmethod
     def from_env(cls) -> "DaemonConfig":
         config = cls()
         settings = get_settings()
+
+        # pydantic-settings marks a field set iff env or .env supplied it.
+        for intent_field in INTENT_FIELDS:
+            config.sources[intent_field.path] = (
+                "env"
+                if intent_field.setting in settings.model_fields_set
+                else "default"
+            )
 
         config.log_level = settings.daemon_log_level
 
@@ -162,6 +177,8 @@ class DaemonConfig:
 
         config.scheduler.threat_hunt_enabled = settings.daemon_threat_hunt_enabled
         config.scheduler.threat_hunt_interval = settings.daemon_threat_hunt_interval
+        config.scheduler.probes_enabled = settings.daemon_probes_enabled
+        config.scheduler.probe_interval = settings.daemon_probe_interval
         config.scheduler.cleanup_retention_days = settings.daemon_cleanup_retention_days
         config.scheduler.approval_expiry_days = settings.daemon_approval_expiry_days
 
@@ -223,6 +240,7 @@ class DaemonConfig:
                 for key, cast in field_map.items():
                     if key in db_config:
                         setattr(config.orchestrator, key, cast(db_config[key]))
+                        config.sources[f"orchestrator.{key}"] = "db"
                 logger.info("Orchestrator config overridden from database settings")
         except Exception as e:
             logger.debug(

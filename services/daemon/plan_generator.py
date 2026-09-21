@@ -156,10 +156,11 @@ WORKFLOW_STEP_MAP = {
     ],
 }
 
-# #920 opened the case at admission and told the agent to file into it. When
-# that create fails, generate_plan still writes ``case_id: pending`` — a name,
-# not a row. The step below is swapped in so the agent mints a case instead of
-# attaching to one that does not exist.
+# Admitted detections always arrive with a Case (#1000). This pending branch
+# remains for hunts (schedule, or a Human Ask with no findings) that launch
+# with no Case: generate_plan writes ``case_id: pending`` — a name, not a row
+# — and the step below tells the agent to mint one instead of attaching to a
+# Case that does not exist.
 _CASE_MANAGEMENT_WHEN_PENDING = (
     "No case was opened at admission; create one with create_case, then attach "
     "related findings (add_finding_to_case), IOCs, timeline, and MITRE techniques to it"

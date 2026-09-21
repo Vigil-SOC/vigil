@@ -22,6 +22,22 @@ from sqlalchemy.orm import Mapped, mapped_column
 from core.storage.models.base import Base
 from core.time import utcnow
 
+# The two senses of "not finished", kept together because they differ by one
+# status and drift apart when they do not share a home. LIVE is the record the
+# Case owns; IN_FLIGHT is the subset holding an agent slot, which a run under
+# review has already given back.
+LIVE_INVESTIGATION_STATUSES = (
+    "assigned",
+    "executing",
+    "waiting_approval",
+    "review_submitted",
+)
+IN_FLIGHT_INVESTIGATION_STATUSES = (
+    "assigned",
+    "executing",
+    "waiting_approval",
+)
+
 
 class Investigation(Base):
     """Tracks an autonomous investigation assignment managed by the orchestrator."""
@@ -108,6 +124,12 @@ class IntakeTrigger(Base):
         JSONB, nullable=False, default=dict, server_default="{}"
     )
     investigation_id: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
+    # Set at Claim. No FK: a later case delete is a sibling, and an old row
+    # pointing at a gone Case is history, not an error.
+    case_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # A cases.case_id as of #1002; overlap with a caseless run is not a merge.
+    # Rows merged before it can hold an investigation_id, which is why the
+    # column is still wide enough for one.
     merged_into: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default="now()"

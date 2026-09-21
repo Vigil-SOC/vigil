@@ -32,6 +32,7 @@ def _row(*, id: int, state: str, created_at: datetime, finding_id: str = "f-1"):
         priority="high",
         payload={},
         investigation_id=None,
+        case_id=None,
         merged_into=None,
         created_at=created_at,
         decided_at=None,

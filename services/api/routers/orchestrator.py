@@ -504,9 +504,11 @@ class ScanFindingsRequest(BaseModel):
 
 @router.post("/scan-findings")
 async def scan_existing_findings(request: ScanFindingsRequest):
-    """Insert human_ask trigger rows for matching findings not already investigated.
+    """Insert detection trigger rows for matching findings not already investigated.
 
-    The intake tick ranks and launches them when a slot is free.
+    A scan is a rerun of Gate 1 by hand, not a Human Ask, so the row merges
+    and dedups with other detections. The intake tick ranks and launches them
+    when a slot is free.
     """
     try:
         from core.storage.connection import get_db_manager
@@ -535,20 +537,22 @@ async def scan_existing_findings(request: ScanFindingsRequest):
                     continue
                 to_investigate.append({"finding_id": fid, "severity": f.severity})
 
-        from services.daemon.orchestrator import insert_intake_trigger
+        from services.daemon.orchestrator import (
+            insert_intake_trigger,
+            intake_severity_band,
+        )
 
         queued = 0
         for finding_data in to_investigate:
             try:
                 trigger_id = insert_intake_trigger(
-                    kind="human_ask",
-                    priority=finding_data.get("severity") or "medium",
+                    kind="detection",
+                    priority=intake_severity_band(
+                        "detection",
+                        finding_severity=finding_data.get("severity"),
+                    ),
                     finding_id=finding_data.get("finding_id"),
-                    payload={
-                        "workflow_id": "incident-response",
-                        "finding_ids": [finding_data["finding_id"]],
-                        "trigger_type": "scan",
-                    },
+                    payload={"trigger_type": "scan"},
                 )
                 if trigger_id is not None:
                     queued += 1

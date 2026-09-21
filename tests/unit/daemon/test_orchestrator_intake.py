@@ -14,7 +14,11 @@ import pytest
 
 from core.time import utcnow
 from services.daemon.config import OrchestratorConfig
-from services.daemon.orchestrator import Orchestrator, lift_ai_enrichment
+from services.daemon.orchestrator import (
+    Orchestrator,
+    _Overlap,
+    lift_ai_enrichment,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -46,8 +50,9 @@ def _orchestrator(**extra) -> Orchestrator:
     orch._create_manual_investigation = AsyncMock()
     orch._decide_trigger = MagicMock()
     orch._data_service = MagicMock()
-    orch._open_case_for_finding = MagicMock(return_value="case-1")
-    orch._attach_finding_to_overlap = MagicMock(return_value="case-1")
+    orch._attach_to_overlapping_case = MagicMock(
+        return_value=(_Overlap.MERGED, "case-1")
+    )
     orch._in_flight = MagicMock(return_value=0)
     orch._queued_intake_depth = MagicMock(return_value=0)
     orch._intake_surge_active = False
@@ -56,12 +61,21 @@ def _orchestrator(**extra) -> Orchestrator:
     return orch
 
 
-def test_merged_into_is_wide_enough_for_an_investigation_id():
-    from core.storage.models import IntakeTrigger, Investigation
+def test_merged_into_is_as_wide_as_a_case():
+    from core.storage.models import Case, IntakeTrigger
 
     assert (
         IntakeTrigger.__table__.c.merged_into.type.length
-        == Investigation.__table__.c.investigation_id.type.length
+        >= Case.__table__.c.case_id.type.length
+    )
+
+
+def test_intake_case_id_is_as_wide_as_a_case():
+    from core.storage.models import Case, IntakeTrigger
+
+    assert (
+        IntakeTrigger.__table__.c.case_id.type.length
+        == Case.__table__.c.case_id.type.length
     )
 
 
@@ -144,7 +158,7 @@ async def test_overlap_ends_merged_with_the_case_it_joined():
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
 
-    orch._attach_finding_to_overlap.assert_called_once_with("f-high", ["inv-1"])
+    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-1"])
     orch._decide_trigger.assert_called_once_with(
         9, state="merged", reason="overlaps_open_work", merged_into="case-1"
     )
@@ -159,7 +173,7 @@ async def test_a_medium_finding_that_overlaps_merges_instead_of_shedding():
 
     await orch._create_investigation_for_finding(MEDIUM, None, trigger_id=8)
 
-    orch._attach_finding_to_overlap.assert_called_once_with("f-med", ["inv-1"])
+    orch._attach_to_overlapping_case.assert_called_once_with("f-med", ["inv-1"])
     orch._decide_trigger.assert_called_once_with(
         8, state="merged", reason="overlaps_open_work", merged_into="case-1"
     )
@@ -170,21 +184,20 @@ async def test_a_medium_finding_that_overlaps_merges_instead_of_shedding():
 async def test_failed_attach_leaves_row_queued():
     orch = _orchestrator()
     orch.shared_intel.check_overlap.return_value = ["inv-1"]
-    orch._attach_finding_to_overlap = MagicMock(return_value=None)
+    orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.HOLD, None))
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
 
-    orch._attach_finding_to_overlap.assert_called_once_with("f-high", ["inv-1"])
+    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-1"])
     orch._decide_trigger.assert_not_called()
     orch._create_investigation.assert_not_awaited()
-    orch._open_case_for_finding.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_failed_attach_does_not_count_dedup():
     orch = _orchestrator()
     orch.shared_intel.check_overlap.return_value = ["inv-1"]
-    orch._attach_finding_to_overlap = MagicMock(return_value=None)
+    orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.HOLD, None))
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
 
@@ -195,13 +208,42 @@ async def test_failed_attach_does_not_count_dedup():
 async def test_failed_attach_on_resolve_is_not_launchable():
     orch = _orchestrator()
     orch.shared_intel.check_overlap.return_value = ["inv-1"]
-    orch._attach_finding_to_overlap = MagicMock(return_value=None)
+    orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.HOLD, None))
     orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
     row = {"id": 9, "kind": "detection", "finding_id": "f-high"}
 
     kept = orch._resolve_intake_row(row, utcnow())
 
     assert kept is None
+    orch._decide_trigger.assert_not_called()
+    assert orch.stats["dedup_prevented"] == 0
+
+
+@pytest.mark.asyncio
+async def test_overlap_with_caseless_run_is_not_a_merge():
+    orch = _orchestrator()
+    orch.shared_intel.check_overlap.return_value = ["inv-hunt"]
+    orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.LAUNCH, None))
+
+    await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
+
+    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-hunt"])
+    orch._decide_trigger.assert_not_called()
+    orch._create_investigation.assert_awaited_once()
+    assert orch.stats["dedup_prevented"] == 0
+
+
+@pytest.mark.asyncio
+async def test_caseless_overlap_on_resolve_stays_launchable():
+    orch = _orchestrator()
+    orch.shared_intel.check_overlap.return_value = ["inv-hunt"]
+    orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.LAUNCH, None))
+    orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
+    row = {"id": 9, "kind": "detection", "finding_id": "f-high"}
+
+    kept = orch._resolve_intake_row(row, utcnow())
+
+    assert kept is row
     orch._decide_trigger.assert_not_called()
     assert orch.stats["dedup_prevented"] == 0
 
@@ -216,7 +258,8 @@ async def test_a_high_detection_launches_through_the_existing_path():
     kwargs = orch._create_investigation.await_args.kwargs
     assert kwargs["trigger_id"] == 11
     assert kwargs["priority"] == "high"
-    assert kwargs["case_id"] == "case-1"
+    assert kwargs["mint_case"].finding_ids == ["f-high"]
+    assert kwargs["mint_case"].priority == "high"
     orch._log_ai_decision.assert_not_called()
 
 
@@ -260,6 +303,7 @@ async def test_a_failed_cas_creates_no_investigation(tmp_path):
         findings=[HIGH],
         trigger_type="finding",
         priority="high",
+        case_id="case-1",
         trigger_id=4,
     )
 
@@ -344,8 +388,34 @@ async def test_processor_inserts_a_detection_row(monkeypatch):
     assert processor.stats["queued_for_investigation"] == 1
 
 
+def _scan_session(investigations, findings):
+    class Session:
+        def query(self, model):
+            self.model = model
+            return self
+
+        def filter(self, *a, **k):
+            return self
+
+        def order_by(self, *a):
+            return self
+
+        def all(self):
+            if getattr(self.model, "__name__", "") == "Investigation":
+                return investigations
+            return findings
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    return Session()
+
+
 @pytest.mark.asyncio
-async def test_scan_findings_inserts_human_ask_rows(monkeypatch):
+async def test_scan_findings_inserts_detection_rows(monkeypatch):
     from types import SimpleNamespace
 
     from services.api.routers.orchestrator import (
@@ -363,30 +433,8 @@ async def test_scan_findings_inserts_human_ask_rows(monkeypatch):
     finding_new = SimpleNamespace(finding_id="f-new", severity="high")
     finding_done = SimpleNamespace(finding_id="f-done", severity="critical")
 
-    class Session:
-        def query(self, model):
-            self.model = model
-            return self
-
-        def filter(self, *a, **k):
-            return self
-
-        def order_by(self, *a):
-            return self
-
-        def all(self):
-            if getattr(self.model, "__name__", "") == "Investigation":
-                return [inv]
-            return [finding_new, finding_done]
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
     db = MagicMock()
-    db.session_scope.return_value = Session()
+    db.session_scope.return_value = _scan_session([inv], [finding_new, finding_done])
     monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
 
     result = await scan_existing_findings(
@@ -397,16 +445,66 @@ async def test_scan_findings_inserts_human_ask_rows(monkeypatch):
     assert result["skipped_already_investigated"] == 1
     assert captured == [
         {
-            "kind": "human_ask",
+            "kind": "detection",
             "priority": "high",
             "finding_id": "f-new",
-            "payload": {
-                "workflow_id": "incident-response",
-                "finding_ids": ["f-new"],
-                "trigger_type": "scan",
-            },
+            "payload": {"trigger_type": "scan"},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_second_scan_of_a_queued_finding_is_a_noop(monkeypatch):
+    from types import SimpleNamespace
+
+    from services.api.routers.orchestrator import (
+        ScanFindingsRequest,
+        scan_existing_findings,
+    )
+
+    captured = []
+
+    def insert(**kwargs):
+        captured.append(kwargs)
+        return None if len(captured) > 1 else 1
+
+    monkeypatch.setattr("services.daemon.orchestrator.insert_intake_trigger", insert)
+
+    finding = SimpleNamespace(finding_id="f-new", severity="high")
+    db = MagicMock()
+    db.session_scope.return_value = _scan_session([], [finding])
+    monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
+
+    first = await scan_existing_findings(ScanFindingsRequest())
+    second = await scan_existing_findings(ScanFindingsRequest())
+
+    assert first["queued"] == 1
+    assert second["queued"] == 0
+    assert len(captured) == 2
+    assert all(call["kind"] == "detection" for call in captured)
+    assert all(call["finding_id"] == "f-new" for call in captured)
+
+
+@pytest.mark.asyncio
+async def test_scan_row_merges_into_live_case():
+    orch = _orchestrator()
+    orch.shared_intel.check_overlap.return_value = ["inv-1"]
+    orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
+    row = {
+        "id": 12,
+        "kind": "detection",
+        "finding_id": "f-high",
+        "payload": {"trigger_type": "scan"},
+    }
+
+    kept = orch._resolve_intake_row(row, utcnow())
+
+    assert kept is None
+    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-1"])
+    orch._decide_trigger.assert_called_once_with(
+        12, state="merged", reason="overlaps_open_work", merged_into="case-1"
+    )
+    orch._create_investigation.assert_not_awaited()
 
 
 @pytest.mark.asyncio

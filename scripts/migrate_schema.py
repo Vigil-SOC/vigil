@@ -254,6 +254,25 @@ def widen_episodic_distil_markers(conn):
 
 
 # ---------------------------------------------------------------------------
+# intake_triggers table
+# ---------------------------------------------------------------------------
+
+# The Case the row was claimed under (#1000). #918 created this table before the
+# column existed, so every database that drained an intake queue between the two
+# has the table without it -- and create_all never alters one it finds. The whole
+# row is selected on every drain, so the missing column fails the queue read
+# rather than one launch: the daemon reports an empty queue and launches nothing.
+@migration("Add case_id column to intake_triggers")
+def add_intake_trigger_case_id(conn):
+    if not _table_exists(conn, 'intake_triggers'):
+        return
+    conn.execute(text("""
+        ALTER TABLE intake_triggers
+        ADD COLUMN IF NOT EXISTS case_id VARCHAR(50);
+    """))
+
+
+# ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
 

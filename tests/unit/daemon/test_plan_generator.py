@@ -34,6 +34,14 @@ def test_case_management_step_creates_a_case_when_admission_left_none(workflow_i
     assert "create one with create_case" in plan
 
 
+def test_detection_plan_never_says_case_pending():
+    plan = generate_plan(
+        "inv-1", "incident-response", [{"finding_id": "f-1"}], "case-1"
+    )
+    assert "case_id: pending" not in plan
+    assert "case_id: case-1" in plan
+
+
 def test_includes_case_id_when_the_investigation_has_one():
     text = generate_initial_context(
         [{"finding_id": "f-1", "severity": "high", "description": "lockouts"}],
