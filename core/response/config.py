@@ -11,9 +11,27 @@ Lives in ``core/`` because ``core`` must not import ``services``;
 """
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 from core.config import Settings, get_settings
+
+
+def render_rule(field: str, value: Any, observed: Optional[float] = None) -> str:
+    """The rule a decision was decided by, as one string (#917).
+
+    Numeric rules with an observed value render the comparison
+    (``respond.confidence_threshold=0.90 met (0.95)``); flags render as
+    ``field=true``; anything else as ``field=value`` (``reversibility=irreversible``).
+    Recording only — a later slice may parse it, so the shape is fixed here.
+    """
+    if isinstance(value, bool):
+        return f"{field}={'true' if value else 'false'}"
+    if isinstance(value, (int, float)):
+        if observed is None:
+            return f"{field}={value:.2f}"
+        verdict = "met" if observed >= value else "not met"
+        return f"{field}={value:.2f} {verdict} ({observed:.2f})"
+    return f"{field}={value}"
 
 
 @dataclass
@@ -36,6 +54,10 @@ class ResponseConfig:
     high_action_floor: float = 0.80
     force_manual_approval: bool = False
     dry_run: bool = False  # Log actions without executing
+
+    def rule(self, field: str, observed: Optional[float] = None) -> str:
+        """Render the rule for one of this config's fields at its current value."""
+        return render_rule(f"respond.{field}", getattr(self, field), observed)
 
     @classmethod
     def from_settings(cls, settings: Optional[Settings] = None) -> "ResponseConfig":

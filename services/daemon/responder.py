@@ -121,13 +121,12 @@ class AutonomousResponder:
         entity_context = finding.get("entity_context", {})
 
         # Determine if response is needed
-        response_action = self._determine_action(
-            severity, confidence, recommended_action
-        )
+        decided = self._determine_action(severity, confidence, recommended_action)
 
-        if not response_action:
+        if not decided:
             logger.debug(f"No response action needed for {finding_id}")
             return
+        response_action, rule = decided
 
         # Check if escalation is needed
         should_escalate = self._should_escalate(severity, confidence)
@@ -137,27 +136,33 @@ class AutonomousResponder:
 
         # Create response action
         if response_action in ["isolate", "block"]:
-            await self._create_response_action(finding, response_action, entity_context)
+            await self._create_response_action(
+                finding, response_action, entity_context, rule
+            )
 
     def _determine_action(
         self, severity: str, confidence: float, recommended: str
-    ) -> Optional[str]:
-        """Determine what response action to take."""
+    ) -> Optional[tuple[str, str]]:
+        """Determine what response action to take.
+
+        Returns ``(action, rule)`` — the rule being the rendered config field
+        that decided it (#917) — or None when no branch fires.
+        """
+        cfg = self.response_config
         # High confidence + recommended isolation/block
-        if confidence >= self.response_config.confidence_threshold:
-            if recommended in ["isolate", "block"]:
-                return recommended
+        if confidence >= cfg.confidence_threshold and recommended in [
+            "isolate",
+            "block",
+        ]:
+            return recommended, cfg.rule("confidence_threshold", confidence)
 
         # Critical severity always warrants action
-        if (
-            severity == "critical"
-            and confidence >= self.response_config.critical_action_floor
-        ):
-            return "isolate"
+        if severity == "critical" and confidence >= cfg.critical_action_floor:
+            return "isolate", cfg.rule("critical_action_floor", confidence)
 
         # High severity with good confidence
-        if severity == "high" and confidence >= self.response_config.high_action_floor:
-            return "investigate"
+        if severity == "high" and confidence >= cfg.high_action_floor:
+            return "investigate", cfg.rule("high_action_floor", confidence)
 
         return None
 
@@ -313,12 +318,17 @@ class AutonomousResponder:
             logger.error(f"PagerDuty escalation error: {e}")
 
     async def _create_response_action(
-        self, finding: Dict[str, Any], action_type: str, entity_context: Dict[str, Any]
+        self,
+        finding: Dict[str, Any],
+        action_type: str,
+        entity_context: Dict[str, Any],
+        rule: str,
     ):
         """Create a response action (pending or auto-approved)."""
         if self.response_config.dry_run:
             logger.info(
-                f"[DRY RUN] Would create {action_type} action for finding {finding.get('finding_id')}"
+                f"[DRY RUN] Would create {action_type} action for finding "
+                f"{finding.get('finding_id')}; {rule}"
             )
             return
 
@@ -348,7 +358,7 @@ class AutonomousResponder:
             ip_address=target_ip or "unknown",
             hostname=hostname,
             confidence=confidence,
-            reason=f"Automated response to {finding_id}",
+            reason=f"Automated response to {finding_id}; {rule}",
             evidence=[finding_id],
             correlation_data=correlation_data,
         )

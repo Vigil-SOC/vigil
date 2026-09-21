@@ -24,7 +24,7 @@ from opentelemetry.metrics import Observation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from core.response.config import ResponseConfig
+from core.response.config import ResponseConfig, render_rule
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
@@ -335,14 +335,20 @@ class ApprovalService:
         """
         key = idempotency_key or None
 
+        # Each branch records the rule it fired on; the caller's narrative
+        # stays first in ``reason`` and the rule is appended (#917).
         if self.force_manual_approval:
             requires_approval = True
+            rule = render_rule("approval.force_manual_approval", True)
         elif reversibility is Reversibility.IRREVERSIBLE:
             requires_approval = True
+            rule = render_rule("reversibility", reversibility.value)
         elif reversibility is Reversibility.REVERSIBLE:
             requires_approval = confidence < self.config.confidence_threshold
+            rule = self.config.rule("confidence_threshold", confidence)
         else:
             raise ValueError(f"Unknown reversibility: {reversibility}")
+        reason = f"{reason}; {rule}" if reason else rule
 
         action_id = f"action-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
         status = (

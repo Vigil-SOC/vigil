@@ -4,6 +4,7 @@ Tests polling, processing, auto-response, and escalation logic.
 """
 
 import asyncio
+import logging
 import pytest
 from datetime import timedelta
 from core.time import utcnow
@@ -336,15 +337,49 @@ class TestConfiguredFloors:
 
     def test_default_floors_match_the_old_literals(self):
         responder = self._responder()
-        assert responder._determine_action("critical", 0.70, "") == "isolate"
+        assert responder._determine_action("critical", 0.70, "")[0] == "isolate"
         assert responder._determine_action("critical", 0.69, "") is None
-        assert responder._determine_action("high", 0.80, "") == "investigate"
+        assert responder._determine_action("high", 0.80, "")[0] == "investigate"
         assert responder._determine_action("high", 0.79, "") is None
 
     def test_raised_floors_move_the_decision(self):
         responder = self._responder(critical_action_floor=0.90, high_action_floor=0.95)
         assert responder._determine_action("critical", 0.85, "") is None
         assert responder._determine_action("high", 0.90, "") is None
+
+    def test_each_branch_records_the_rule_it_fired_on(self):
+        """Two findings decided by different branches carry different rules (#917)."""
+        responder = self._responder()
+        assert responder._determine_action("critical", 0.70, "") == (
+            "isolate",
+            "respond.critical_action_floor=0.70 met (0.70)",
+        )
+        assert responder._determine_action("low", 0.90, "isolate") == (
+            "isolate",
+            "respond.confidence_threshold=0.90 met (0.90)",
+        )
+
+    @pytest.mark.asyncio
+    async def test_reason_and_dry_run_log_carry_the_rule(self, caplog):
+        responder = self._responder()
+        finding = {
+            "finding_id": "f-1",
+            "severity": "critical",
+            "triage_confidence": 0.75,
+            "entity_context": {"src_ips": ["10.0.0.1"]},
+        }
+        await responder._evaluate_response(finding)
+        kwargs = responder._response_service.create_isolation_action.call_args.kwargs
+        assert kwargs["reason"] == (
+            "Automated response to f-1; respond.critical_action_floor=0.70 met (0.75)"
+        )
+
+        dry = self._responder(dry_run=True)
+        with caplog.at_level(logging.INFO, logger="services.daemon.responder"):
+            await dry._evaluate_response(finding)
+        assert "[DRY RUN] Would create isolate action for finding f-1; " \
+            "respond.critical_action_floor=0.70 met (0.75)" in caplog.text
+        dry._response_service.create_isolation_action.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_processor_queues_at_review_threshold(self):
