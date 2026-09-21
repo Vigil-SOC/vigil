@@ -152,11 +152,20 @@ class CaseSLAService:
                 logger.warning(f"SLA already assigned to case {case_id}")
                 return existing_sla
 
-            # Get SLA policy
+            # Get SLA policy. Deactivating is what an operator is told to do
+            # with a policy they cannot delete, and that promise only holds if
+            # a named policy is checked the same way the default one is: a
+            # template carrying `default_sla_policy_id` names it explicitly, so
+            # without this an inactive policy keeps being assigned to new cases.
             if sla_policy_id:
                 policy = (
                     session.query(SLAPolicy)
-                    .filter(SLAPolicy.policy_id == sla_policy_id)
+                    .filter(
+                        and_(
+                            SLAPolicy.policy_id == sla_policy_id,
+                            SLAPolicy.is_active.is_(True),
+                        )
+                    )
                     .first()
                 )
             else:
