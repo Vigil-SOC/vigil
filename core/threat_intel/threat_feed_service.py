@@ -398,10 +398,20 @@ def upsert_indicators(indicators: List[NormalizedIndicator]) -> Dict[str, int]:
     return {"inserted": inserted, "updated": updated, "skipped": skipped}
 
 
+def _unexpired_clause(now: datetime):
+    """Live rows: no expiry, or a window that has not closed."""
+    from core.storage.models import ThreatIndicator
+
+    return (ThreatIndicator.valid_until.is_(None)) | (ThreatIndicator.valid_until > now)
+
+
 def lookup_indicators(
     indicator_type: str, values: List[str]
 ) -> Dict[str, Dict[str, Any]]:
-    """Look up a batch of indicator values; return matches keyed by value."""
+    """Look up a batch of currently-valid indicator values; keyed by value.
+
+    Expired rows (``valid_until`` in the past) are omitted. A NULL expiry is live.
+    """
     if not values:
         return {}
     try:
@@ -413,11 +423,13 @@ def lookup_indicators(
         return {}
     db = get_db_manager()
     out: Dict[str, Dict[str, Any]] = {}
+    now = utcnow()
     with db.session_scope() as session:
         rows = (
             session.query(ThreatIndicator)
             .filter(ThreatIndicator.indicator_type == indicator_type)
             .filter(ThreatIndicator.indicator_value.in_(values))
+            .filter(_unexpired_clause(now))
             .all()
         )
         for row in rows:
@@ -444,9 +456,11 @@ def _recent_indicators(limit: int) -> List[Dict[str, Any]]:
         logger.debug("ThreatIndicator read unavailable: %s", e)
         return []
     db = get_db_manager()
+    now = utcnow()
     with db.session_scope() as session:
         rows = (
             session.query(ThreatIndicator)
+            .filter(_unexpired_clause(now))
             .order_by(ThreatIndicator.last_seen.desc(), ThreatIndicator.id.desc())
             .limit(limit)
             .all()

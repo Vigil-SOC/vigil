@@ -615,7 +615,8 @@ class Orchestrator:
     ):
         """Create an investigation for a finding, with dedup checks."""
         # Same band the ranker uses: empty or a name that is not a rating
-        # is unknown, not an invented medium. Gate 1 already filtered the offer.
+        # is unknown, not an invented medium. A detection can arrive from
+        # Gate 1 or from a live feed hit; neither path invents a medium.
         priority = intake_severity_band(
             "detection", finding_severity=finding.get("severity")
         )
