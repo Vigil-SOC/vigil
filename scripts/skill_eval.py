@@ -25,7 +25,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -40,16 +40,12 @@ from core.skills.skill_library import (  # noqa: E402
     read_skill,
 )
 
-# Providers whose key name Bifrost's config.json does not spell as
-# <PROVIDER>_API_KEY; anything else falls back to that pattern.
-KEY_ENV = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-}
+# The env var a provider's key lives in; None for a keyless provider. Anything
+# not listed follows the <PROVIDER>_API_KEY pattern Bifrost's config uses.
+KEY_ENV: Dict[str, Optional[str]] = {"ollama": None}
 
 
-def key_env_name(provider: str) -> str:
+def key_env_name(provider: str) -> Optional[str]:
     return KEY_ENV.get(provider, f"{provider.upper()}_API_KEY")
 
 
@@ -119,17 +115,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--root", type=Path, default=LIBRARY_ROOT, help="skills library root"
     )
-    parser.add_argument("--max-tokens", type=int, default=1024)
+    parser.add_argument(
+        "--max-tokens", type=int, default=1024, help="answer budget per case"
+    )
     return parser.parse_args(argv)
 
 
 async def main(argv: Sequence[str]) -> int:
     args = parse_args(argv)
-    key_name = key_env_name(args.provider)
-    if not os.environ.get(key_name):
-        print(f"skill_eval: {key_name} not set; skipping the model run")
-        return 0
-
+    # A mistyped skill name is an error even on a machine with no key.
     skills = load_skills([args.root])
     if args.skill:
         skills = [s for s in skills if s.name == args.skill]
@@ -139,6 +133,10 @@ async def main(argv: Sequence[str]) -> int:
                 file=sys.stderr,
             )
             return 2
+    key_name = key_env_name(args.provider)
+    if key_name and not os.environ.get(key_name):
+        print(f"skill_eval: {key_name} not set; skipping the model run")
+        return 0
     if not skills:
         print(f"skill_eval: no skills under {args.root}; nothing to run")
         return 0

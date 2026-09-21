@@ -56,6 +56,8 @@ def _case_problems(index: int, case: Any) -> List[str]:
 def check_library(root: Path) -> List[str]:
     """Every problem with the skills under ``root``; empty when the library is clean."""
     problems: List[str] = []
+    if not root.is_dir():  # a missing root is an empty library, as in load_skills
+        return problems
     for skill_dir in sorted(p for p in root.iterdir() if p.is_dir()):
         try:
             parse_skill(skill_dir)
@@ -68,7 +70,7 @@ def check_library(root: Path) -> List[str]:
             continue
         try:
             cases = json.loads(cases_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError) as exc:
             problems.append(f"{skill_dir.name}: {CASES_FILE} is not valid JSON: {exc}")
             continue
         if not isinstance(cases, list):
@@ -92,6 +94,7 @@ def test_every_bundled_skill_carries_eval_cases():
 def test_the_fixture_library_passes_and_an_empty_root_passes(tmp_path):
     assert check_library(FIXTURE_LIBRARY) == []
     assert check_library(tmp_path) == []
+    assert check_library(tmp_path / "missing") == []
 
 
 def _copy_fixture(tmp_path: Path) -> Path:
@@ -133,10 +136,27 @@ def _valid_cases(count: int = MIN_CASES) -> List[dict]:
         ),
         (
             lambda d: _write_cases(
+                d, _valid_cases()[:2] + [{**_valid_cases()[0], "expect": "hi"}]
+            ),
+            "`expect` must be a non-empty list",
+        ),
+        (
+            lambda d: _write_cases(
                 d, _valid_cases()[:2] + [{"input": "x", "expect": ["y"]}]
             ),
             "has no `name`",
         ),
+        (
+            lambda d: _write_cases(
+                d, _valid_cases()[:2] + [{"name": "n", "expect": ["y"]}]
+            ),
+            "`input` must be a non-empty string or object",
+        ),
+        (
+            lambda d: _write_cases(d, _valid_cases()[:2] + ["not an object"]),
+            "is not an object",
+        ),
+        (lambda d: (d / CASES_FILE).write_text("[not json"), "not valid JSON"),
         (lambda d: (d / "SKILL.md").write_text("no frontmatter\n"), "invalid SKILL.md"),
     ],
 )

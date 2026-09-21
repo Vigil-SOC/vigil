@@ -150,7 +150,9 @@ jobs:
 
       # Every model call goes through Bifrost, which reads the key from its
       # own environment (infra/docker/bifrost/config.json: env.ANTHROPIC_API_KEY).
+      # Not worth starting when the script is going to skip anyway.
       - name: Start Bifrost
+        if: env.ANTHROPIC_API_KEY != ''
         run: |
           docker compose -f infra/docker/docker-compose.yml up -d bifrost
           for _ in $(seq 1 30); do
