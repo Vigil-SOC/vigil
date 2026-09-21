@@ -15,6 +15,7 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
@@ -119,6 +120,19 @@ def lift_ai_enrichment(finding: Dict) -> Dict:
         if key in nested and lifted.get(key) is None:
             lifted[key] = nested[key]
     return lifted
+
+
+class _Overlap(str, Enum):
+    """What overlapping live work means for the Trigger that overlaps it.
+
+    Three outcomes, because a single ``None`` cannot say which of them
+    happened and the caller would have to walk the overlap a second time to
+    find out — a second walk that can disagree with the first.
+    """
+
+    MERGED = "merged"  # attached to a Case; the row is decided
+    HOLD = "hold"  # a Case is or may be there, but we could not attach
+    LAUNCH = "launch"  # every overlapping run read clean and none has a Case
 
 
 _SEVERITY_BANDS = ("critical", "high", "medium", "low", "unknown")
@@ -547,9 +561,11 @@ class Orchestrator:
         if not overlapping:
             return False
         finding_id = finding.get("finding_id", "unknown")
-        merged_into = self._attach_finding_to_overlap(finding_id, overlapping)
-        if merged_into is None:
-            return self._first_overlapping_case(overlapping) is not None
+        outcome, merged_into = self._attach_to_overlapping_case(finding_id, overlapping)
+        if outcome is _Overlap.LAUNCH:
+            return False
+        if outcome is _Overlap.HOLD:
+            return True
         self.stats["dedup_prevented"] += 1
         if _dedup_prevented is not None:
             _dedup_prevented.add(1)
@@ -621,44 +637,50 @@ class Orchestrator:
             trigger_id=trigger_id,
         )
 
-    def _first_overlapping_case(
-        self, overlapping: List[str]
-    ) -> Optional[Tuple[str, str]]:
-        """The first live overlapping investigation that has a Case, if any."""
-        for inv_id in overlapping:
-            case_id = (self.get_investigation(inv_id) or {}).get("case_id")
-            if case_id:
-                return inv_id, case_id
-        return None
-
-    def _attach_finding_to_overlap(
+    def _attach_to_overlapping_case(
         self, finding_id: str, overlapping: List[str]
-    ) -> Optional[str]:
+    ) -> Tuple[_Overlap, Optional[str]]:
         """Attach a finding to the Case of the first overlapping live run that has one.
 
-        Returns that ``case_id`` only when ``add_finding_to_case`` succeeded.
-        ``None`` means either none of the overlapping runs has a Case (not a
-        merge — the caller launches) or the write failed (hold queued).
-        ``merged_into`` is always a ``cases.case_id``.
+        The ``case_id`` comes back with ``MERGED`` and is always a
+        ``cases.case_id``. ``LAUNCH`` means every overlapping run read clean
+        and none of them is on a Case: not a merge, so the caller goes on to
+        Claim. Anything else is ``HOLD`` — the row stays ``queued`` and the
+        next tick retries.
+
+        ``check_overlap`` names only rows that are live, so an investigation
+        that will not read is a failed read rather than a caseless run:
+        ``get_investigation`` answers ``None`` for a database error the same
+        way it does for a row that is gone. Launching on that would open a
+        second run on an entity a Case already covers, so an unreadable row
+        holds.
         """
-        found = self._first_overlapping_case(overlapping)
-        if found is None:
-            return None
-        inv_id, case_id = found
-        # No data service reads as a failed attach: logged, never raised.
-        added = bool(self._data_service) and self._data_service.add_finding_to_case(
-            case_id, finding_id
-        )
-        if added:
-            logger.info(
-                f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
+        for inv_id in overlapping:
+            investigation = self.get_investigation(inv_id)
+            if investigation is None:
+                logger.warning(
+                    f"Finding {finding_id} overlaps investigation {inv_id} "
+                    f"but it would not read; leaving queued"
+                )
+                return _Overlap.HOLD, None
+            case_id = investigation.get("case_id")
+            if not case_id:
+                continue
+            # No data service reads as a failed attach: logged, never raised.
+            added = bool(self._data_service) and self._data_service.add_finding_to_case(
+                case_id, finding_id
             )
-            return case_id
-        logger.warning(
-            f"Finding {finding_id} overlaps investigation {inv_id} "
-            f"but could not be attached to case {case_id}; leaving queued"
-        )
-        return None
+            if added:
+                logger.info(
+                    f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
+                )
+                return _Overlap.MERGED, case_id
+            logger.warning(
+                f"Finding {finding_id} overlaps investigation {inv_id} "
+                f"but could not be attached to case {case_id}; leaving queued"
+            )
+            return _Overlap.HOLD, None
+        return _Overlap.LAUNCH, None
 
     async def _create_manual_investigation(
         self,

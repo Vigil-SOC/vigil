@@ -11,6 +11,7 @@ import pytest
 from services.daemon.config import DaemonConfig, OrchestratorConfig
 from services.daemon.orchestrator import (
     Orchestrator,
+    _Overlap,
     intake_age_seconds,
     intake_severity_band,
     rank_intake_row,
@@ -71,7 +72,9 @@ def _orchestrator(**extra) -> Orchestrator:
     orch._create_manual_investigation = AsyncMock()
     orch._decide_trigger = MagicMock()
     orch._data_service = MagicMock()
-    orch._attach_finding_to_overlap = MagicMock(return_value="case-1")
+    orch._attach_to_overlapping_case = MagicMock(
+        return_value=(_Overlap.MERGED, "case-1")
+    )
     orch._in_flight = MagicMock(return_value=0)
     orch._queued_intake_depth = MagicMock(return_value=0)
     orch._intake_surge_active = False
