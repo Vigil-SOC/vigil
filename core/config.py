@@ -96,11 +96,25 @@ def state_dir_status() -> dict:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def dotenv_allowed() -> bool:
+    """False when this process has already decided where its config comes from.
+
+    A test run sets ``VIGIL_DISABLE_DOTENV`` before collection so that nothing
+    reads a developer's ``.env`` and makes the suite answer differently on one
+    machine than another. Every reader of a ``.env`` has to ask -- pydantic's
+    ``env_file`` here, ``load_dotenv()`` in the standalone tool servers, and the
+    secrets backend that reads the state directory's own file -- because a
+    single unguarded one puts the developer's configuration back.
+
+    ``os.environ``, not ``Settings``: this is answered while ``Settings`` is
+    still being defined, like ``VIGIL_DIR``.
+    """
+    disabled = os.environ.get("VIGIL_DISABLE_DOTENV")  # noqa: ENV001 - pre-Settings
+    return not disabled
+
+
 def _settings_env_file() -> Optional[Path]:
-    # Tests set this before collection so import-time get_settings() captures
-    # do not read a developer's root .env. os.environ, not Settings: resolved
-    # while Settings is being defined, like VIGIL_DIR.
-    if os.environ.get("VIGIL_DISABLE_DOTENV"):  # noqa: ENV001 - pre-Settings bootstrap
+    if not dotenv_allowed():
         return None
     return REPO_ROOT / ".env"
 

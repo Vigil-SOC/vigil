@@ -106,13 +106,32 @@ class DotEnvBackend(SecretsBackend):
     """Store secrets in a .env file."""
 
     def __init__(self, env_file: Optional[Path] = None):
-        """Initialize with path to .env file."""
+        """Initialize with path to .env file.
+
+        A caller that names the file has said which one it means. Defaulting to
+        the state directory's is what a test run must not do: nothing asked for
+        that file, and answering `get_secret()` from it hands a test the
+        operator's real credential.
+        """
+        self._file_was_named = env_file is not None
         self.env_file = env_file or vigil_path(".env")
         self._cache: Dict[str, str] = {}
         self._load_env_file()
 
     def _load_env_file(self):
-        """Load .env file into cache."""
+        """Load .env file into cache.
+
+        The state directory's own file is skipped when the process has said it
+        is not reading a ``.env``. It never reaches ``os.environ``, so it does
+        not change what ``get_settings()`` answers -- but a test asking for a
+        credential would be handed the operator's real one, which is the same
+        leak wearing a different coat. A file the caller named is read either
+        way: naming it is the asking.
+        """
+        from core.config import dotenv_allowed
+
+        if not self._file_was_named and not dotenv_allowed():
+            return
         if self.env_file.exists():
             try:
                 with open(self.env_file, "r") as f:

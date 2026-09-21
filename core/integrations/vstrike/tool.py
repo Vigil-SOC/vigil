@@ -19,7 +19,6 @@ Tools:
   - vstrike_ui_rightpanel_focus
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -43,9 +42,12 @@ from mcp.server.models import InitializationOptions
 # module's job -- nothing else would tell it where VStrike lives. Imported into a
 # process that has already decided where its configuration comes from, it is
 # not: `load_dotenv()` writes the whole file into `os.environ`, which pydantic
-# reads whatever `env_file` says. `VIGIL_DISABLE_DOTENV` is how that process
-# says so, and `core/config.py` honours the same flag.
-if not os.environ.get("VIGIL_DISABLE_DOTENV"):
+# reads whatever `env_file` says. `core.config.dotenv_allowed()` is the one
+# place that answers which of the two this is, so a third reader cannot come to
+# disagree with these.
+from core.config import dotenv_allowed  # noqa: E402
+
+if dotenv_allowed():
     try:
         from dotenv import load_dotenv
 

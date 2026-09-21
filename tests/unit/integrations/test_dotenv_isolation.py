@@ -70,3 +70,61 @@ def test_importing_it_does_not_copy_dotenv_into_the_environment(module, tmp_path
 def test_running_it_as_a_server_still_reads_dotenv(module, tmp_path):
     """What the spawned server does: no flag, and `.env` is how it is configured."""
     assert _marker_after_import(module, tmp_path, disable_dotenv=False) == "leaked"
+
+
+# --- The other file that is also a .env --------------------------------------
+#
+# `core/secrets_manager.py`'s DotEnvBackend reads the state directory's own
+# `.env`, not the repo's, and never writes to `os.environ` -- so it does not
+# make `get_settings()` answer differently. What it does is hand a test the
+# operator's real credential when it asks for one, which is the same leak in a
+# different coat: the acceptance is that every path that loads a `.env` asks
+# the same flag.
+#
+# Only the file it reaches for on its own. A caller that names a file has said
+# which one it means -- `migrate_dotenv_secrets_to_encrypted()` reloads a named
+# file on purpose -- and guarding that too would break the migration rather
+# than close anything.
+
+
+def _state_dir_dotenv(tmp_path, monkeypatch):
+    monkeypatch.setenv("VIGIL_DIR", str(tmp_path))
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("SPLUNK_PASSWORD=the-operators-real-one\n")
+    return dotenv
+
+
+def test_the_secrets_backend_does_not_read_the_state_directorys_dotenv(
+    tmp_path, monkeypatch
+):
+    from core.secrets_manager import DotEnvBackend
+
+    _state_dir_dotenv(tmp_path, monkeypatch)
+    monkeypatch.setenv("VIGIL_DISABLE_DOTENV", "1")
+
+    assert DotEnvBackend().get("SPLUNK_PASSWORD") is None, (
+        "A test asking for a credential was handed the value from the "
+        "operator's .env. Every path that loads one has to honour "
+        "VIGIL_DISABLE_DOTENV, not only the ones that write into os.environ."
+    )
+
+
+def test_the_secrets_backend_still_reads_it_outside_a_test_run(tmp_path, monkeypatch):
+    """The other direction: this file is where an operator's secrets live."""
+    from core.secrets_manager import DotEnvBackend
+
+    _state_dir_dotenv(tmp_path, monkeypatch)
+    monkeypatch.delenv("VIGIL_DISABLE_DOTENV", raising=False)
+
+    assert DotEnvBackend().get("SPLUNK_PASSWORD") == "the-operators-real-one"
+
+
+def test_a_file_the_caller_named_is_read_either_way(tmp_path, monkeypatch):
+    """Naming it is the asking -- the migration reloads a named file on purpose."""
+    from core.secrets_manager import DotEnvBackend
+
+    named = tmp_path / "named.env"
+    named.write_text("SPLUNK_PASSWORD=one-the-caller-asked-for\n")
+    monkeypatch.setenv("VIGIL_DISABLE_DOTENV", "1")
+
+    assert DotEnvBackend(named).get("SPLUNK_PASSWORD") == "one-the-caller-asked-for"
