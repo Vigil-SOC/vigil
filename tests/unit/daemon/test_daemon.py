@@ -377,8 +377,10 @@ class TestConfiguredFloors:
         dry = self._responder(dry_run=True)
         with caplog.at_level(logging.INFO, logger="services.daemon.responder"):
             await dry._evaluate_response(finding)
-        assert "[DRY RUN] Would create isolate action for finding f-1; " \
-            "respond.critical_action_floor=0.70 met (0.75)" in caplog.text
+        assert (
+            "[DRY RUN] Would create isolate action for finding f-1; "
+            "respond.critical_action_floor=0.70 met (0.75)"
+        ) in caplog.text
         dry._response_service.create_isolation_action.assert_not_called()
 
     @pytest.mark.asyncio

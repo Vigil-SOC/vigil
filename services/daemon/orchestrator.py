@@ -1327,9 +1327,15 @@ class Orchestrator:
 
         completeness = len(completed_steps) / total_steps if total_steps > 0 else 0
         # Not a ResponseConfig band; record the literal it is compared to (#917).
-        rule = render_rule("review.completeness_floor", 0.8, completeness)
+        # A complete run with no summary was decided by the summary, not the floor.
+        completeness_met = completeness >= 0.8
+        rule = (
+            render_rule("review.completeness_floor", 0.8, completeness)
+            if not completeness_met or summary
+            else render_rule("review.summary", "missing")
+        )
 
-        if completeness >= 0.8 and summary:
+        if completeness_met and summary:
             self._update_investigation_status(inv_id, "completed")
             self.stats["investigations_completed"] += 1
             if _inv_completed is not None:

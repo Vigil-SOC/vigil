@@ -50,6 +50,15 @@ async def test_each_review_branch_records_the_completeness_rule():
     assert kwargs["decision_type"] == "review_rework"
     assert kwargs["rule"] == "review.completeness_floor=0.80 not met (0.40)"
 
+    # Complete but summaryless: the summary decided it, not the floor.
+    no_summary = _orchestrator(
+        {"completed_steps": [1, 2], "total_steps": 2, "summary": ""}
+    )
+    await no_summary._review_investigation("inv-3")
+    kwargs = no_summary._log_ai_decision.call_args.kwargs
+    assert kwargs["decision_type"] == "review_rework"
+    assert kwargs["rule"] == "review.summary=missing"
+
 
 def test_log_ai_decision_puts_the_rule_in_decision_metadata():
     orch = object.__new__(Orchestrator)
