@@ -15,7 +15,7 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
 from core.config import get_settings
@@ -538,8 +538,10 @@ class Orchestrator:
 
         A failed attach is not a merge: no ``dedup_prevented`` bump, no
         ``_decide_trigger``. Returning True still skips launch so the row
-        stays ``queued`` and the next tick retries; False would open a
-        second investigation on the same entity.
+        stays ``queued`` and the next tick retries.
+
+        Overlap with only caseless live runs (hunts, legacy) is not a merge:
+        False, so the row proceeds to Claim and opens its own Case.
         """
         overlapping = self.shared_intel.check_overlap(finding)
         if not overlapping:
@@ -547,7 +549,7 @@ class Orchestrator:
         finding_id = finding.get("finding_id", "unknown")
         merged_into = self._attach_finding_to_overlap(finding_id, overlapping)
         if merged_into is None:
-            return True
+            return self._first_overlapping_case(overlapping) is not None
         self.stats["dedup_prevented"] += 1
         if _dedup_prevented is not None:
             _dedup_prevented.add(1)
@@ -619,71 +621,44 @@ class Orchestrator:
             trigger_id=trigger_id,
         )
 
+    def _first_overlapping_case(
+        self, overlapping: List[str]
+    ) -> Optional[Tuple[str, str]]:
+        """The first live overlapping investigation that has a Case, if any."""
+        for inv_id in overlapping:
+            case_id = (self.get_investigation(inv_id) or {}).get("case_id")
+            if case_id:
+                return inv_id, case_id
+        return None
+
     def _attach_finding_to_overlap(
         self, finding_id: str, overlapping: List[str]
     ) -> Optional[str]:
-        """Attach a finding to the live investigation already covering its entity.
+        """Attach a finding to the Case of the first overlapping live run that has one.
 
-        Prefer the first overlapping investigation with a case, so the finding
-        lands in ``case_findings`` where the running agent reads it. When none
-        has one (opened before cases were minted at admission), the finding id
-        goes onto ``trigger_ids`` of the first instead. Nothing new is opened.
-        Returns the case id, or the investigation id on the fallback path,
-        only when the write succeeded; ``None`` otherwise.
+        Returns that ``case_id`` only when ``add_finding_to_case`` succeeded.
+        ``None`` means either none of the overlapping runs has a Case (not a
+        merge — the caller launches) or the write failed (hold queued).
+        ``merged_into`` is always a ``cases.case_id``.
         """
-        for inv_id in overlapping:
-            case_id = (self.get_investigation(inv_id) or {}).get("case_id")
-            if not case_id:
-                continue
-            # No data service reads as a failed attach: logged, never raised.
-            added = bool(self._data_service) and self._data_service.add_finding_to_case(
-                case_id, finding_id
-            )
-            if added:
-                logger.info(
-                    f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
-                )
-                return case_id
-            logger.warning(
-                f"Finding {finding_id} overlaps investigation {inv_id} "
-                f"but could not be attached to case {case_id}; leaving queued"
-            )
+        found = self._first_overlapping_case(overlapping)
+        if found is None:
             return None
-
-        inv_id = overlapping[0]
-        if self._append_trigger_id(inv_id, finding_id):
+        inv_id, case_id = found
+        # No data service reads as a failed attach: logged, never raised.
+        added = bool(self._data_service) and self._data_service.add_finding_to_case(
+            case_id, finding_id
+        )
+        if added:
             logger.info(
-                f"Finding {finding_id} overlaps investigation {inv_id}; no case, appended to trigger_ids"
+                f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
             )
-            return inv_id
+            return case_id
         logger.warning(
             f"Finding {finding_id} overlaps investigation {inv_id} "
-            f"but could not be appended to its trigger_ids; leaving queued"
+            f"but could not be attached to case {case_id}; leaving queued"
         )
         return None
-
-    def _append_trigger_id(self, inv_id: str, finding_id: str) -> bool:
-        """Idempotent; ``False`` when the row is missing or the write failed."""
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation
-
-            with get_db_manager().session_scope() as session:
-                inv = (
-                    session.query(Investigation)
-                    .filter_by(investigation_id=inv_id)
-                    .first()
-                )
-                if not inv:
-                    return False
-                current = list(inv.trigger_ids or [])
-                if finding_id not in current:
-                    # Reassign, not append: JSONB lists are not change-tracked in place.
-                    inv.trigger_ids = [*current, finding_id]
-                return True
-        except Exception as e:
-            logger.error(f"Failed to append trigger id to investigation {inv_id}: {e}")
-            return False
 
     async def _create_manual_investigation(
         self,

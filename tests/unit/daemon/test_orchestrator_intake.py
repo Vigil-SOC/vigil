@@ -46,6 +46,7 @@ def _orchestrator(**extra) -> Orchestrator:
     orch._create_manual_investigation = AsyncMock()
     orch._decide_trigger = MagicMock()
     orch._data_service = MagicMock()
+    orch.get_investigation = MagicMock(return_value={"case_id": "case-1"})
     orch._attach_finding_to_overlap = MagicMock(return_value="case-1")
     orch._in_flight = MagicMock(return_value=0)
     orch._queued_intake_depth = MagicMock(return_value=0)
@@ -55,12 +56,12 @@ def _orchestrator(**extra) -> Orchestrator:
     return orch
 
 
-def test_merged_into_is_wide_enough_for_an_investigation_id():
-    from core.storage.models import IntakeTrigger, Investigation
+def test_merged_into_is_as_wide_as_a_case():
+    from core.storage.models import Case, IntakeTrigger
 
     assert (
         IntakeTrigger.__table__.c.merged_into.type.length
-        == Investigation.__table__.c.investigation_id.type.length
+        >= Case.__table__.c.case_id.type.length
     )
 
 
@@ -209,6 +210,37 @@ async def test_failed_attach_on_resolve_is_not_launchable():
     kept = orch._resolve_intake_row(row, utcnow())
 
     assert kept is None
+    orch._decide_trigger.assert_not_called()
+    assert orch.stats["dedup_prevented"] == 0
+
+
+@pytest.mark.asyncio
+async def test_overlap_with_caseless_run_is_not_a_merge():
+    orch = _orchestrator()
+    orch.shared_intel.check_overlap.return_value = ["inv-hunt"]
+    orch.get_investigation = MagicMock(return_value={"case_id": None})
+    orch._attach_finding_to_overlap = MagicMock(return_value=None)
+
+    await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
+
+    orch._attach_finding_to_overlap.assert_called_once_with("f-high", ["inv-hunt"])
+    orch._decide_trigger.assert_not_called()
+    orch._create_investigation.assert_awaited_once()
+    assert orch.stats["dedup_prevented"] == 0
+
+
+@pytest.mark.asyncio
+async def test_caseless_overlap_on_resolve_stays_launchable():
+    orch = _orchestrator()
+    orch.shared_intel.check_overlap.return_value = ["inv-hunt"]
+    orch.get_investigation = MagicMock(return_value={"case_id": None})
+    orch._attach_finding_to_overlap = MagicMock(return_value=None)
+    orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
+    row = {"id": 9, "kind": "detection", "finding_id": "f-high"}
+
+    kept = orch._resolve_intake_row(row, utcnow())
+
+    assert kept is row
     orch._decide_trigger.assert_not_called()
     assert orch.stats["dedup_prevented"] == 0
 

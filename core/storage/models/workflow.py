@@ -111,6 +111,7 @@ class IntakeTrigger(Base):
     # Set at Claim. No FK: a later case delete is a sibling, and an old row
     # pointing at a gone Case is history, not an error.
     case_id: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Always a cases.case_id. Overlap with a caseless run is not a merge (#1002).
     merged_into: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default="now()"
