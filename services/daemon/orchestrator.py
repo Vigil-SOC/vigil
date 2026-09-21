@@ -82,6 +82,7 @@ from core.integrations.mcp.client import process_mcp_client
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
+from core.response.config import decision_rule
 from core.storage.models import IN_FLIGHT_INVESTIGATION_STATUSES
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.workflows_service import WorkflowsService
@@ -1325,6 +1326,12 @@ class Orchestrator:
         proposed_actions = state.get("proposed_actions", [])
 
         completeness = len(completed_steps) / total_steps if total_steps > 0 else 0
+        # The one threshold the orchestrator decides on; a literal, not a
+        # ResponseConfig field, recorded as such (#917). A missing summary
+        # fails the review on its own, so it is recorded too.
+        rule = decision_rule("review.completeness_floor", 0.8, completeness)
+        if not summary:
+            rule = f"{rule}; {decision_rule('review.summary', 'missing')}"
 
         if completeness >= 0.8 and summary:
             self._update_investigation_status(inv_id, "completed")
@@ -1353,6 +1360,7 @@ class Orchestrator:
                 reasoning=f"Investigation completed {completeness:.0%} of steps with valid summary. {len(proposed_actions)} proposed actions.",
                 action="approve",
                 confidence=completeness,
+                rule=rule,
             )
 
             self._send_notification(
@@ -1400,6 +1408,7 @@ class Orchestrator:
                 reasoning=notes,
                 action="needs_rework",
                 confidence=completeness,
+                rule=rule,
             )
 
             self._send_notification(
@@ -1536,8 +1545,13 @@ class Orchestrator:
         reasoning: str,
         action: str,
         confidence: float = 1.0,
+        rule: Optional[str] = None,
     ):
-        """Log a master agent decision to the AIDecisionLog table."""
+        """Log a master agent decision to the AIDecisionLog table.
+
+        ``rule`` is the rendered ``decision_rule`` for decisions made on a
+        threshold; it lands in ``decision_metadata["rule"]``.
+        """
         try:
             from core.storage.connection import get_db_manager
             from core.storage.models import AIDecisionLog, Investigation
@@ -1571,6 +1585,7 @@ class Orchestrator:
                     decision_metadata={
                         "source": ORCHESTRATOR_ACTOR,
                         "investigation_id": inv_id,
+                        **({"rule": rule} if rule else {}),
                     },
                 )
                 session.add(entry)

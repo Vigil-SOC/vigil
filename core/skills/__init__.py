@@ -1,6 +1,5 @@
-"""Skills domain package (Reorg R5 / #486).
+"""Skills domain package.
 
-Service and bridge modules for the Skill Builder live here. Callers import
-these directly from ``core.skills``; the legacy ``services.skill_*`` paths
-were removed with this move.
+Skills are directories of ``SKILL.md`` read from disk by
+:mod:`core.skills.skill_library` (epic #882). There is no database behind them.
 """

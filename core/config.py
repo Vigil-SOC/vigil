@@ -125,6 +125,10 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 500
     vigil_context_path: str = ""
     vigil_frontend_url: str = ""
+    # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
+    vigil_intent_path: str = ""
+    # One extra root of SKILL.md directories, read alongside core/skills/library.
+    vigil_skills_path: str = ""
 
     # Database. DATABASE_URL is not a field: Settings.extra is ignore so the
     # agent and scripts/migrate_schema.py can keep it in the environment.
@@ -228,6 +232,11 @@ class Settings(BaseSettings):
     daemon_enrich_backfill_max_age_hours: int = 168
     daemon_auto_response: bool = True
     daemon_confidence_threshold: float = 0.90
+    # The rest of the confidence band (#916); see core.response.config.
+    daemon_review_threshold: float = 0.85
+    daemon_monitor_threshold: float = 0.70
+    daemon_critical_action_floor: float = 0.70
+    daemon_high_action_floor: float = 0.80
     daemon_force_approval: bool = False
     daemon_dry_run: bool = False
     daemon_escalation_enabled: bool = True
@@ -239,6 +248,9 @@ class Settings(BaseSettings):
     daemon_pagerduty_enabled: bool = False
     daemon_threat_hunt_enabled: bool = True
     daemon_threat_hunt_interval: int = 86400
+    # Known-answer probes (#923): an hourly sweep, injected once a day by id.
+    daemon_probes_enabled: bool = True
+    daemon_probe_interval: int = 3600
     daemon_cleanup_retention_days: int = 90
     # Separate from cleanup_retention_days on purpose: that governs bulk data
     # retention and wants a long horizon, while an unanswered containment

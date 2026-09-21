@@ -8,21 +8,11 @@ import { basePath } from '../config/basePath'
  * console lists them and nothing more (epic #882, decision 7).
  */
 
-/**
- * Wire row from GET /api/skills. Tolerates both the current DB row
- * (skill_id, category, version, is_active) and the future file-loader shape
- * (name, description, source_path). `path` is a placeholder for whatever
- * field name the loader settles on; #928 regenerates the real type.
- */
+/** Wire row from GET /api/skills: a skill loaded from disk (#928). */
 export interface ApiSkill {
-  skill_id?: string
   name: string
-  description?: string | null
-  source_path?: string | null
-  path?: string | null
-  category?: string
-  version?: number
-  is_active?: boolean
+  description: string
+  source_path: string
 }
 
 const client = axios.create({
