@@ -55,15 +55,16 @@ def _require_str(frontmatter: Dict[str, Any], key: str, limit: int) -> str:
     return value
 
 
+# A key written with no value parses to None and is read as absent.
 def _check_optional(frontmatter: Dict[str, Any]) -> None:
     for key, limit in (("license", None), ("compatibility", _COMPATIBILITY_MAX)):
-        if key in frontmatter and not isinstance(frontmatter[key], str):
+        value = frontmatter.get(key)
+        if value is not None and not isinstance(value, str):
             raise SkillError(f"`{key}` must be a string")
-        if limit and len(frontmatter.get(key) or "") > limit:
+        if limit and len(value or "") > limit:
             raise SkillError(f"`{key}` is longer than {limit} characters")
-    if "allowed-tools" in frontmatter and not isinstance(
-        frontmatter["allowed-tools"], str
-    ):
+    tools = frontmatter.get("allowed-tools")
+    if tools is not None and not isinstance(tools, str):
         raise SkillError("`allowed-tools` must be a space-delimited string")
     metadata = frontmatter.get("metadata")
     if metadata is not None and not (
@@ -84,8 +85,8 @@ def parse_skill(skill_dir: Path) -> Skill:
     if not skill_file.is_file():
         raise SkillError(f"no {SKILL_FILE}")
     try:
-        frontmatter, _ = split_frontmatter(skill_file.read_text(encoding="utf-8"))
-    except (FrontmatterError, UnicodeDecodeError) as exc:
+        frontmatter, _ = split_frontmatter(skill_file.read_text(encoding="utf-8-sig"))
+    except (FrontmatterError, UnicodeDecodeError, OSError) as exc:
         raise SkillError(str(exc)) from exc
     if frontmatter is None:
         raise SkillError("missing YAML frontmatter")
@@ -176,25 +177,29 @@ def read_skill(
     skill = skills.get(name)
     if skill is None:
         return {"error": f"No skill named {name!r}"}
-
-    if file is None or file == "":
-        content = (skill.path / SKILL_FILE).read_text(encoding="utf-8")
-        _, offset = split_frontmatter(content)
-        return {
-            "skill": name,
-            "file": SKILL_FILE,
-            "content": content[offset:].lstrip("\n"),
-        }
-
-    if not isinstance(file, str):
+    if file is not None and not isinstance(file, str):
         return {"error": "`file` must be a path relative to the skill directory"}
+    # A NUL byte or an over-long name raises from the path layer itself; those
+    # are the model's mistakes to hear about, not the tool's to crash on.
+    try:
+        return _read(skill, file or None)
+    except (OSError, ValueError) as exc:
+        return {"error": f"Could not read {file or SKILL_FILE!r}: {exc}"}
+
+
+def _read(skill: Skill, file: Optional[str]) -> Dict[str, Any]:
+    if file is None:
+        content = (skill.path / SKILL_FILE).read_text(encoding="utf-8-sig")
+        _, offset = split_frontmatter(content)
+        body = content[offset:].lstrip("\n")
+        return {"skill": skill.name, "file": SKILL_FILE, "content": body}
     target = _confined(skill.path, file)
     if target is None:
-        return {"error": f"{file!r} is outside skill {name!r}"}
+        return {"error": f"{file!r} is outside skill {skill.name!r}"}
     if not target.is_file():
-        return {"error": f"Skill {name!r} has no file {file!r}"}
+        return {"error": f"Skill {skill.name!r} has no file {file!r}"}
     try:
         text = target.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return {"error": f"{file!r} is not a text file"}
-    return {"skill": name, "file": file, "content": text}
+    return {"skill": skill.name, "file": file, "content": text}

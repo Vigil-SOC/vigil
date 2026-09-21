@@ -79,7 +79,8 @@ def _skills_section(
         return ""
     if skills is None:
         skills = load_skills(skill_roots())
-    lines = [f"- {s.name}: {s.description.strip()}" for s in skills]
+    # One line per skill even when the description was a YAML block scalar.
+    lines = [f"- {s.name}: {' '.join(s.description.split())}" for s in skills]
     return (
         _SKILLS_HEADER
         + "\n".join(lines or ["(no skills loaded)"])

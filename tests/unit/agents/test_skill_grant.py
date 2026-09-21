@@ -10,7 +10,7 @@ from core.agents.builtins import BUILTIN_AGENTS
 from core.agents.prompts import _skills_section, render_base_prompt
 from core.agents.tool_registry import MANIFEST, execute_backend_tool
 from core.llm.chat_layers import _declare
-from core.skills.skill_library import load_skills
+from core.skills.skill_library import Skill, load_skills
 
 pytestmark = pytest.mark.unit
 
@@ -38,6 +38,14 @@ def test_skills_block_follows_the_grant_not_the_library():
     # A granted agent with nothing on disk is still told the tool exists.
     assert "<available_skills>" in _skills_section(["read_skill"], [])
 
+    # A block-scalar description stays on the skill's one index line.
+    folded = Skill(
+        name="multi", description="first line\n  second line\n", path=FIXTURES
+    )
+    assert "- multi: first line second line\n" in _skills_section(
+        ["read_skill"], [folded]
+    )
+
 
 def test_render_base_prompt_lists_skills_only_for_a_granted_agent():
     skills = load_skills([FIXTURES])
@@ -57,7 +65,9 @@ async def test_read_skill_dispatches_through_execute_backend_tool(monkeypatch):
     monkeypatch.setattr(
         "core.skills.skill_library.skill_roots", lambda settings=None: [FIXTURES]
     )
-    result, handled = await execute_backend_tool("read_skill", {"name": "minimal-skill"})
+    result, handled = await execute_backend_tool(
+        "read_skill", {"name": "minimal-skill"}
+    )
     assert handled is True
     assert result["content"].startswith("# Minimal skill")
 

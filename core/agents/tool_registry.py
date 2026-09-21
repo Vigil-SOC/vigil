@@ -396,7 +396,7 @@ async def execute_backend_tool(
     if tool_name in _MEMORY_TOOLS:
         return _MEMORY_TOOLS[tool_name](args), True
 
-    # Filesystem only (#925), so the import is at the top like the projections'.
+    # Agent skills (#925): reads from disk only, never a database.
     if tool_name == READ_SKILL_TOOL:
         return read_skill(args.get("name"), args.get("file")), True
 

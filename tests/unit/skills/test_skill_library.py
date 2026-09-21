@@ -40,9 +40,24 @@ def test_fixture_root_loads_the_valid_skills_and_skips_the_mismatch(caplog):
     assert "does not match directory" in caplog.text
 
 
-def test_every_optional_spec_field_is_accepted():
+def test_every_optional_spec_field_is_accepted(tmp_path):
     skill = parse_skill(FIXTURES / "full-skill")
     assert skill.name == "full-skill"
+    # A key written with no value is absent, not a type error.
+    empties = _write_skill(
+        tmp_path, "empties", "name: empties\ndescription: d\nlicense:\ncompatibility:"
+    )
+    assert parse_skill(empties).name == "empties"
+
+
+def test_a_utf8_bom_does_not_hide_the_frontmatter(tmp_path):
+    skill_dir = tmp_path / "bom"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: bom\ndescription: d\n---\n\nBody.\n", encoding="utf-8-sig"
+    )
+    assert parse_skill(skill_dir).name == "bom"
+    assert read_skill("bom", roots=[tmp_path])["content"] == "Body.\n"
 
 
 @pytest.mark.parametrize(
@@ -55,7 +70,17 @@ def test_every_optional_spec_field_is_accepted():
         ("no-desc", "name: no-desc", "`description`"),
         ("long-desc", f"name: long-desc\ndescription: {'x' * 1025}", "1024"),
         ("bad-meta", "name: bad-meta\ndescription: d\nmetadata:\n  n: 1", "`metadata`"),
-        ("bad-tools", "name: bad-tools\ndescription: d\nallowed-tools: [a]", "`allowed-tools`"),
+        (
+            "bad-tools",
+            "name: bad-tools\ndescription: d\nallowed-tools: [a]",
+            "`allowed-tools`",
+        ),
+        ("bad-lic", "name: bad-lic\ndescription: d\nlicense: [MIT]", "`license`"),
+        (
+            "long-compat",
+            f"name: long-compat\ndescription: d\ncompatibility: {'c' * 501}",
+            "500",
+        ),
     ],
 )
 def test_spec_violations_are_rejected(tmp_path, dirname, frontmatter, reason):
@@ -127,7 +152,20 @@ def test_read_skill_refuses_a_symlink_escaping_the_skill(tmp_path):
 
 def test_read_skill_reports_unknown_skill_file_and_missing_name():
     assert "No skill" in read_skill("nope", roots=[FIXTURES])["error"]
-    assert "no file" in read_skill("full-skill", "references/x.md", roots=[FIXTURES])["error"]
+    assert (
+        "no file"
+        in read_skill("full-skill", "references/x.md", roots=[FIXTURES])["error"]
+    )
     assert "requires" in read_skill(None, roots=[FIXTURES])["error"]
+    assert "must be a path" in read_skill("full-skill", 7, roots=[FIXTURES])["error"]
+    # Inputs the path layer itself rejects still come back as an error dict.
+    assert (
+        "Could not read"
+        in read_skill("full-skill", "a\x00b", roots=[FIXTURES])["error"]
+    )
+    assert (
+        "Could not read"
+        in read_skill("full-skill", "x" * 5000, roots=[FIXTURES])["error"]
+    )
     # The mismatched fixture is on disk but was never loaded, so it is unreadable.
     assert "No skill" in read_skill("some-other-name", roots=[FIXTURES])["error"]
