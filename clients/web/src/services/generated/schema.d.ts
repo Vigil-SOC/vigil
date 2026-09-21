@@ -5404,9 +5404,11 @@ export interface paths {
         put?: never;
         /**
          * Scan Existing Findings
-         * @description Insert human_ask trigger rows for matching findings not already investigated.
+         * @description Insert detection trigger rows for matching findings not already investigated.
          *
-         *     The intake tick ranks and launches them when a slot is free.
+         *     A scan is a rerun of Gate 1 by hand, not a Human Ask, so the row merges
+         *     and dedups with other detections. The intake tick ranks and launches them
+         *     when a slot is free.
          */
         post: operations["post_api_orchestrator_scan-findings"];
         delete?: never;
