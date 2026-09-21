@@ -403,12 +403,14 @@ class ClaudeService:
             return None
 
         messages = list(context or []) + [{"role": "user", "content": message}]
+        # Minted once: the same id goes to Bifrost as custom metadata and to
+        # the LLMInteractionLog row below, so the two can be joined (#185).
+        interaction_id = str(uuid.uuid4())
         api_kwargs: Dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "messages": messages,
-            # Correlates the Bifrost LogEntry with the row persisted below.
-            "extra_headers": {"x-bf-lh-vigil-interaction-id": str(uuid.uuid4())},
+            "extra_headers": {"x-bf-lh-vigil-interaction-id": interaction_id},
         }
         if system_prompt:
             api_kwargs["system"] = system_prompt
@@ -451,6 +453,7 @@ class ClaudeService:
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
             duration_ms=int(duration_s * 1000),
+            interaction_id=interaction_id,
             cost_usd=cost_usd,
         )
         # Direct-SDK path: never enters LLMRouter.dispatch, so this is the

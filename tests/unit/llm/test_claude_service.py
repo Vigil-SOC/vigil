@@ -1,5 +1,7 @@
 """Unit tests for ClaudeService one-shot construction and key loading."""
 
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from core.llm.harness.claude import ClaudeService
@@ -53,3 +55,46 @@ class TestClaudeServiceInitialization:
 
         assert service.api_key == "sk-ant-legacy-env-key"
         mock_discover.assert_not_called()
+
+
+class TestChatBifrostCorrelation:
+    @patch("core.llm.harness.claude.record_llm_call")
+    @patch("core.llm.harness.claude.get_secret", return_value="test-api-key-123")
+    def test_header_and_persisted_row_share_interaction_id(
+        self, _get_secret, _record, monkeypatch
+    ):
+        """#980: the x-bf-lh-vigil-interaction-id sent to Bifrost must be the
+        interaction_id written to llm_interaction_logs, or the two stores
+        can never be joined."""
+        service = ClaudeService()
+
+        captured_kwargs = {}
+        persisted = []
+
+        def fake_create(**kwargs):
+            captured_kwargs.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="ok")],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+                model=kwargs["model"],
+                stop_reason="end_turn",
+            )
+
+        service.client = SimpleNamespace(
+            messages=SimpleNamespace(create=fake_create)
+        )
+
+        @contextmanager
+        def fake_scope():
+            yield SimpleNamespace(add=persisted.append)
+
+        monkeypatch.setattr(
+            "core.storage.connection.get_db_manager",
+            lambda: SimpleNamespace(session_scope=fake_scope),
+        )
+
+        assert service.chat("hi") == "ok"
+
+        header_id = captured_kwargs["extra_headers"]["x-bf-lh-vigil-interaction-id"]
+        assert len(persisted) == 1
+        assert persisted[0].interaction_id == header_id
