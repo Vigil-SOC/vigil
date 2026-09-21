@@ -88,6 +88,11 @@ def _value_for(model, model_name, column):
     if type_name == "VECTOR":
         return [0.1, 0.2, 0.3]
     if type_name == "ARRAY":
+        # Read the element type. Producing strings for every ARRAY is what let
+        # ARRAY(Integer) columns be described as lists of str and still capture
+        # a green golden -- the sample agreed with the wrong schema.
+        if type(column.type.item_type).__name__ == "Integer":
+            return [_stable_int(key), _stable_int(f"{key}-b")]
         return [f"{column.key}-a", f"{column.key}-b"]
     if type_name == "JSONB":
         if _json_default_is_list(model, column.key):
