@@ -403,8 +403,9 @@ class ClaudeService:
             return None
 
         messages = list(context or []) + [{"role": "user", "content": message}]
-        # Minted once: the same id goes to Bifrost as custom metadata and to
-        # the LLMInteractionLog row below, so the two can be joined (#185).
+        # Minted once: sent as the x-bf-lh-* header (Bifrost records it as the
+        # log entry's custom metadata) and written to the row below, so the
+        # two stores can be joined (#185).
         interaction_id = str(uuid.uuid4())
         api_kwargs: Dict[str, Any] = {
             "model": model,
