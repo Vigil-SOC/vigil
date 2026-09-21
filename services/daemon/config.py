@@ -89,6 +89,9 @@ class OrchestratorConfig:
     stale_threshold: int = 300
     workdir_base: str = "data/investigations"
     dry_run: bool = False
+    # ORCHESTRATOR_SHADOW_ADJUDICATION: enqueue a second, non-executing
+    # `adjudicate` run beside every detection-finding investigation (#880).
+    shadow_adjudication: bool = False
     # How long a queued trigger may wait, the last-quarter promotion
     # window, and the queued depth that warrants one human signal.
     # Constants, not settings: one policy, not an operator dial.
@@ -201,6 +204,9 @@ class DaemonConfig:
         config.orchestrator.stale_threshold = settings.orchestrator_stale_threshold
         config.orchestrator.workdir_base = settings.orchestrator_workdir
         config.orchestrator.dry_run = settings.orchestrator_dry_run
+        config.orchestrator.shadow_adjudication = (
+            settings.orchestrator_shadow_adjudication
+        )
 
         config.llm_queue.redis_url = settings.redis_url or DEFAULT_REDIS_URL
         config.llm_queue.max_concurrent_llm_calls = settings.llm_max_concurrent

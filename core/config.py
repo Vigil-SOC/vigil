@@ -272,6 +272,9 @@ class Settings(BaseSettings):
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
     orchestrator_dry_run: bool = False
+    # Shadow mode (#880): every admitted finding also gets an `adjudicate` run
+    # beside the real one. Off by default; env only, no SystemConfig override.
+    orchestrator_shadow_adjudication: bool = False
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False
