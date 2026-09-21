@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.routing import Auth, RouterMeta
 
@@ -57,6 +57,11 @@ class InvestigationCreateRequest(BaseModel):
     # subject is what makes a Verdict findable later, and nothing infers one here.
     hypothesis_subjects: Optional[Dict[str, List[str]]] = None
     priority: str = "medium"
+    # Opaque: a URL, a path, or the report text itself. Nothing here resolves,
+    # fetches or parses it -- it rides the trigger payload into the run's brief,
+    # and onto the Case as evidence when the ask has one. The cap is the only
+    # check, and it is sized for a pasted report.
+    document: Optional[str] = Field(None, max_length=65_536)
 
 
 # ---- Status & Control ----
@@ -474,16 +479,20 @@ async def create_investigation(request: InvestigationCreateRequest):
     try:
         from services.daemon.orchestrator import insert_intake_trigger
 
+        payload = {
+            "workflow_id": request.workflow_id,
+            "finding_ids": request.finding_ids,
+            "case_id": request.case_id,
+            "hypothesis": request.hypothesis,
+            "hypothesis_subjects": request.hypothesis_subjects,
+        }
+        if request.document:
+            payload["document"] = request.document
+
         insert_intake_trigger(
             kind="human_ask",
             priority=request.priority or "medium",
-            payload={
-                "workflow_id": request.workflow_id,
-                "finding_ids": request.finding_ids,
-                "case_id": request.case_id,
-                "hypothesis": request.hypothesis,
-                "hypothesis_subjects": request.hypothesis_subjects,
-            },
+            payload=payload,
         )
 
         return {
