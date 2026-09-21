@@ -1,6 +1,5 @@
-"""Investigation, workflow, skill, and agent ORM models."""
+"""Investigation, workflow, and agent ORM models."""
 
-import uuid
 from datetime import datetime
 from typing import List, Optional
 
@@ -261,9 +260,6 @@ class WorkflowRun(Base):
         Numeric(10, 4), nullable=False, default=0, server_default="0"
     )
     result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    skill_tools_available: Mapped[list] = mapped_column(
-        JSONB, nullable=False, default=list, server_default="[]"
-    )
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Set when an operator removes the run from History. The row and its ledger stay.
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -380,79 +376,6 @@ class ApprovalAction(Base):
             postgresql_where=text("idempotency_key IS NOT NULL AND status <> 'failed'"),
         ),
     )
-
-
-class Skill(Base):
-    """Skill model - reusable, parameterized SOC capability (detection,
-    enrichment, response, reporting) that agents and workflows can invoke."""
-
-    __tablename__ = "skills"
-
-    skill_id: Mapped[str] = mapped_column(String(32), primary_key=True)
-
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    category: Mapped[str] = mapped_column(String(32), nullable=False)
-
-    # JSON Schema for skill parameters (the inputs the skill accepts).
-    input_schema: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default="{}"
-    )
-    # JSON Schema for skill output.
-    output_schema: Mapped[dict] = mapped_column(
-        JSONB, nullable=False, default=dict, server_default="{}"
-    )
-    # MCP tool names required by this skill
-    # (e.g. ["splunk.search", "virustotal.hash_lookup"]).
-    required_tools: Mapped[List[str]] = mapped_column(
-        JSONB, nullable=False, default=list, server_default="[]"
-    )
-    # LLM instructions; may contain {{param}} placeholders.
-    prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
-    # Ordered execution steps (tool calls / prompts / transforms) — interpreted
-    # by the future skill-execution worker.
-    execution_steps: Mapped[List[dict]] = mapped_column(
-        JSONB, nullable=False, default=list, server_default="[]"
-    )
-
-    is_active: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default="true"
-    )
-    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    version: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=1, server_default="1"
-    )
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        default=utcnow,
-        server_default="now()",
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        default=utcnow,
-        onupdate=utcnow,
-        server_default="now()",
-    )
-
-    __table_args__ = (
-        Index("idx_skill_category", "category"),
-        Index("idx_skill_is_active", "is_active"),
-        Index(
-            "idx_skill_name_trgm",
-            "name",
-            postgresql_ops={"name": "gin_trgm_ops"},
-            postgresql_using="gin",
-        ),
-    )
-
-    @staticmethod
-    def generate_skill_id() -> str:
-        """Generate a new skill_id in the form s-YYYYMMDD-XXXXXXXX."""
-        ts = utcnow().strftime("%Y%m%d")
-        return f"s-{ts}-{uuid.uuid4().hex[:8].upper()}"
 
 
 class CustomAgent(Base):

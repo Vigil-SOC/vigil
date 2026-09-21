@@ -64,7 +64,6 @@ from core.storage.models.workflow import (
     IntakeTrigger,
     Investigation,
     InvestigationLog,
-    Skill,
     WorkflowRun,
     WorkflowRunPhase,
 )
@@ -117,7 +116,6 @@ __all__ = [
     "SLAPolicy",
     "SharedIOC",
     "SketchMapping",
-    "Skill",
     "SystemConfig",
     "ThreatIndicator",
     "User",

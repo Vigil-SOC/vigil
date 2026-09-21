@@ -1559,52 +1559,6 @@
       "sketch_url": "sketch_url-value"
     }
   },
-  "Skill": {
-    "empty.to_dict.default": {
-      "category": null,
-      "created_at": null,
-      "created_by": null,
-      "description": null,
-      "execution_steps": [],
-      "input_schema": {},
-      "is_active": null,
-      "name": null,
-      "output_schema": {},
-      "prompt_template": null,
-      "required_tools": [],
-      "skill_id": null,
-      "updated_at": null,
-      "version": null
-    },
-    "populated.to_dict.default": {
-      "category": "category-value",
-      "created_at": "2024-03-14T15:09:26.535000+00:00",
-      "created_by": "created_by-value",
-      "description": "description-value",
-      "execution_steps": [
-        {
-          "item": "execution_steps-0"
-        }
-      ],
-      "input_schema": {
-        "sample": "input_schema-value"
-      },
-      "is_active": true,
-      "name": "name-value",
-      "output_schema": {
-        "sample": "output_schema-value"
-      },
-      "prompt_template": "prompt_template-value",
-      "required_tools": [
-        {
-          "item": "required_tools-0"
-        }
-      ],
-      "skill_id": "skill_id-value",
-      "updated_at": "2024-03-14T15:09:26.535000+00:00",
-      "version": 585
-    }
-  },
   "SystemConfig": {
     "empty.to_dict.default": {
       "config_type": null,
@@ -1719,7 +1673,6 @@
       "finished_at": null,
       "result_summary": null,
       "run_id": null,
-      "skill_tools_available": [],
       "started_at": null,
       "status": null,
       "total_cost_usd": 0.0,
@@ -1735,7 +1688,6 @@
       "error": null,
       "finished_at": null,
       "run_id": null,
-      "skill_tools_available": [],
       "started_at": null,
       "status": null,
       "total_cost_usd": 0.0,
@@ -1752,11 +1704,6 @@
       "finished_at": "2024-03-14T15:09:26.535000+00:00",
       "result_summary": "result_summary-value",
       "run_id": "run_id-value",
-      "skill_tools_available": [
-        {
-          "item": "skill_tools_available-0"
-        }
-      ],
       "started_at": "2024-03-14T15:09:26.535000+00:00",
       "status": "status-value",
       "total_cost_usd": 7.53,
@@ -1774,11 +1721,6 @@
       "error": "error-value",
       "finished_at": "2024-03-14T15:09:26.535000+00:00",
       "run_id": "run_id-value",
-      "skill_tools_available": [
-        {
-          "item": "skill_tools_available-0"
-        }
-      ],
       "started_at": "2024-03-14T15:09:26.535000+00:00",
       "status": "status-value",
       "total_cost_usd": 7.53,

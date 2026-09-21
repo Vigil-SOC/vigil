@@ -336,37 +336,13 @@ _APPROVAL_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
 }
 
 
-# A skill's tool name is user-authored, so a dispatch failure falls through to
-# the table below in case the name merely looks like one.
-def _skill_result(
-    name: str, args: Args, index: Optional[Args]
-) -> Optional[Tuple[Any, bool]]:
-    try:
-        from core.skills import skill_tools_bridge as skills
-
-        if skills.is_skill_tool_name(name):
-            return (
-                skills.execute_skill_tool(name, args, skills_by_tool_name=index),
-                True,
-            )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Skill tool dispatch failed for %s: %s", name, exc)
-    return None
-
-
 # Returns (result, handled). handled is False only when the name is no backend
 # tool at all, which is the caller's cue to try MCP.
 async def execute_backend_tool(
     tool_name: str,
     tool_input: Optional[Args],
-    *,
-    skill_index: Optional[Args] = None,
 ) -> Tuple[Any, bool]:
     args = dict(tool_input or {})
-
-    skill = _skill_result(tool_name, args, skill_index)
-    if skill is not None:
-        return skill
 
     if tool_name == "case_records":
         return _case_records(args), True

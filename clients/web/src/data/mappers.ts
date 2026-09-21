@@ -328,9 +328,9 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
 
 export function mapApiSkill(s: ApiSkill): Skill {
   return {
-    id: s.skill_id ?? s.name,
+    id: s.name,
     name: s.name,
-    desc: s.description || '',
-    source: s.source_path ?? s.path ?? undefined,
+    desc: s.description,
+    source: s.source_path,
   }
 }
