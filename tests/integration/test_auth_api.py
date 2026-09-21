@@ -18,9 +18,6 @@ os.environ.setdefault("DEV_MODE", "true")
 os.environ.setdefault(
     "JWT_SECRET_KEY", "integration-test-secret-not-for-production-use-12345"
 )
-# Keep CSRF out of the way for these contract checks; CSRF is exercised
-# by frontend Playwright / manual validation.
-os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
 
 import pytest
 from fastapi.testclient import TestClient

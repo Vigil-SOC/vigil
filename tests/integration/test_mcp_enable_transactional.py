@@ -17,9 +17,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 
-# Keep CSRF out of the way — exercised elsewhere.
 os.environ.setdefault("DEV_MODE", "true")
-os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch

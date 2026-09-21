@@ -8,6 +8,17 @@ import os
 os.environ.setdefault("DEV_MODE", "true")
 os.environ["VIGIL_DISABLE_DOTENV"] = "1"
 
+# The CSRF settings an unconfigured install has -- `core/config.py` defaults
+# them to exactly this. Stated here rather than left to the defaults because a
+# developer's shell can carry either one, and stated once rather than by
+# whichever test module happens to be collected first: four modules used to set
+# `VIGIL_CSRF_ENABLED=false` at import, process-wide and without cleanup, so
+# what the suite ran under depended on the order pytest walked it in. Enabled
+# and report-only means a violation is logged and the request proceeds, which
+# is why a clean checkout has never needed the flag.
+os.environ["VIGIL_CSRF_ENABLED"] = "true"
+os.environ["VIGIL_CSRF_REPORT_ONLY"] = "true"
+
 import pytest  # noqa: E402
 
 
