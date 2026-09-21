@@ -17,7 +17,8 @@ THREAT_INTEL = {r["id"]: r for r in BUILTIN_AGENTS}["threat_intel"]
 def test_read_skill_returns_the_bundled_procedure():
     result = read_skill("ioc-enrichment", roots=[LIBRARY_ROOT])
     body = result["content"]
-    assert result["skill"] == "ioc-enrichment" and not body.startswith("---")
+    assert result["skill"] == "ioc-enrichment"
+    assert not body.startswith("---")
     for phrase in ("recall_entity", "cf_lookup_ip_threat", "lookup_indicators"):
         assert phrase in body
     assert "cloudforce_one" in body and "cloudy_summary" in body

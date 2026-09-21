@@ -36,7 +36,13 @@
         ]
       }
     },
-    "expect": ["185.220.101.5", "malicious-c2.example.com", "cloudforce_one", "source", "confidence"]
+    "expect": [
+      "indicator: 185.220.101.5",
+      "indicator: malicious-c2.example.com",
+      "source: cloudforce_one",
+      "confidence: 85",
+      "recommendation:"
+    ]
   },
   {
     "name": "brute force from a bare external ip",
@@ -57,7 +63,7 @@
       "mitre_techniques": ["T1110.001"],
       "iocs": {"ips": ["203.0.113.45"], "users": ["admin"]}
     },
-    "expect": ["203.0.113.45", "source", "confidence"]
+    "expect": ["indicator: 203.0.113.45", "source:", "confidence:", "recommendation:"]
   },
   {
     "name": "exfiltration to an external domain",
@@ -79,6 +85,6 @@
       "mitre_techniques": ["T1567.002"],
       "iocs": {"domains": ["transfer.sh"], "users": ["employee.name"]}
     },
-    "expect": ["transfer.sh", "source", "confidence"]
+    "expect": ["indicator: transfer.sh", "source:", "confidence:", "recommendation:"]
   }
 ]

@@ -58,24 +58,27 @@ reporting or threat intelligence.
 
 When `finding.enrichment.threat_indicators` contains Cloudforce One hits,
 treat them as ground-truth indicators observed at the edge: cite them with
-`source='cloudforce_one'` and the STIX `confidence` they carry, and do not
-downgrade them against a weaker third-party source. When
+`source='cloudforce_one'` and the STIX `confidence` they carry. When
 `finding.evidence.cloudy_summary` is present, it is premium per-event
 context: quote it with its provenance, do not paraphrase it as your own
 analysis.
 
 ## Output shape
 
-Always finish with this report, whatever tools were or were not available.
-One block per external indicator, the indicator echoed exactly as extracted:
+Always finish with this report, whatever tools were or were not available,
+in exactly this layout: one block per external indicator, the indicator
+echoed exactly as extracted, one `source:` line per source you consulted or
+could not consult. Only a source that returned data gets a verdict and its
+own score; a source you did not call is `not queried`, never a guessed result.
+The `confidence:` line is yours, from the evidence above it.
 
 ```
-indicator: 185.220.101.5
-type: ip
-source: cloudforce_one — c2, tor-exit; confidence: 85 (STIX)
-source: recall_entity — no prior sightings; confidence: n/a
-source: cf_lookup_ip_threat — not queried
-recommendation: hunt
+indicator: <value>
+type: <ip|domain|url|hash|email>
+source: <name> — <what it returned>; confidence: <its score>
+source: <name> — not queried
+confidence: <high|medium|low> (analyst)
+recommendation: <hunt|block|monitor|dismiss>
 ```
 
 Close with the list of indicators to hunt and the confidence of any
