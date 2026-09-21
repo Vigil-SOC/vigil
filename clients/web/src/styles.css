@@ -854,6 +854,10 @@
       color: var(--tx-3);
    }
 
+   .prio.unknown {
+      color: var(--tx-faint);
+   }
+
    /* view scroll region */
    .view {
       flex: 1;

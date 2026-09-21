@@ -13,8 +13,10 @@ import asyncio
 import json
 import logging
 import uuid
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from enum import Enum
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
 from core.config import get_settings
@@ -80,6 +82,7 @@ from core.integrations.mcp.client import process_mcp_client
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
+from core.storage.models import IN_FLIGHT_INVESTIGATION_STATUSES
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
@@ -118,6 +121,19 @@ def lift_ai_enrichment(finding: Dict) -> Dict:
         if key in nested and lifted.get(key) is None:
             lifted[key] = nested[key]
     return lifted
+
+
+class _Overlap(str, Enum):
+    """What overlapping live work means for the Trigger that overlaps it.
+
+    Three outcomes, because a single ``None`` cannot say which of them
+    happened and the caller would have to walk the overlap a second time to
+    find out — a second walk that can disagree with the first.
+    """
+
+    MERGED = "merged"  # attached to a Case; the row is decided
+    HOLD = "hold"  # a Case is or may be there, but we could not attach
+    LAUNCH = "launch"  # every overlapping run read clean and none has a Case
 
 
 _SEVERITY_BANDS = ("critical", "high", "medium", "low", "unknown")
@@ -223,6 +239,62 @@ def insert_intake_trigger(
             "intake already has a queued row for finding %s", finding_id or "(none)"
         )
         return None
+
+
+@dataclass(frozen=True)
+class CaseSpec:
+    """Case to mint in the launch transaction. ``case_id`` is assigned before plan files."""
+
+    title: str
+    finding_ids: List[str]
+    priority: str
+    case_id: Optional[str] = None
+
+
+def _new_case_id() -> str:
+    return f"case-{utcnow().strftime('%Y-%m-%d')}-{uuid.uuid4().hex[:8]}"
+
+
+def _human_ask_case_title(
+    hypothesis: Optional[str], findings: List[Dict], workflow_id: str
+) -> str:
+    """Title for a Case minted from a Human Ask: hypothesis first, else the finding."""
+    if hypothesis and str(hypothesis).strip():
+        return str(hypothesis).strip()[:200]
+    if findings:
+        return _infer_title(findings[0], workflow_id)[:200]
+    return _infer_title({}, workflow_id)[:200]
+
+
+def _mint_case(session, spec: CaseSpec) -> str:
+    """Insert a Case and its finding links on the caller's session. Does not commit."""
+    from sqlalchemy import select
+
+    from core.storage.models import Case, Finding
+
+    case_id = spec.case_id or _new_case_id()
+    now = utcnow()
+    case = Case(
+        case_id=case_id,
+        title=(spec.title or "Investigation")[:200],
+        description="",
+        status="open",
+        priority=spec.priority,
+        timeline=[{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
+    )
+    session.add(case)
+    session.flush()
+    if spec.finding_ids:
+        rows = (
+            session.execute(
+                select(Finding).where(Finding.finding_id.in_(spec.finding_ids))
+            )
+            .scalars()
+            .all()
+        )
+        case.findings.extend(rows)
+        session.flush()
+    return case_id
 
 
 class _TriggerAlreadyDecided(Exception):
@@ -391,7 +463,7 @@ class Orchestrator:
                     continue
 
                 await self._drain_intake(shutdown_event)
-                await self._pickup_queued_investigations(shutdown_event)
+                await self._pickup_assigned_investigations(shutdown_event)
 
             except asyncio.CancelledError:
                 break
@@ -477,14 +549,27 @@ class Orchestrator:
         return row
 
     def _merge_if_overlaps(self, finding: Dict, trigger_id: Optional[int]) -> bool:
+        """True when this row is not launching this tick (merged, or held).
+
+        A failed attach is not a merge: no ``dedup_prevented`` bump, no
+        ``_decide_trigger``. Returning True still skips launch so the row
+        stays ``queued`` and the next tick retries.
+
+        Overlap with only caseless live runs (hunts, legacy) is not a merge:
+        False, so the row proceeds to Claim and opens its own Case.
+        """
         overlapping = self.shared_intel.check_overlap(finding)
         if not overlapping:
             return False
         finding_id = finding.get("finding_id", "unknown")
+        outcome, merged_into = self._attach_to_overlapping_case(finding_id, overlapping)
+        if outcome is _Overlap.LAUNCH:
+            return False
+        if outcome is _Overlap.HOLD:
+            return True
         self.stats["dedup_prevented"] += 1
         if _dedup_prevented is not None:
             _dedup_prevented.add(1)
-        merged_into = self._attach_finding_to_overlap(finding_id, overlapping)
         self._decide_trigger(
             trigger_id,
             state="merged",
@@ -528,44 +613,58 @@ class Orchestrator:
         trigger_id: Optional[int] = None,
     ):
         """Create an investigation for a finding, with dedup checks."""
-        raw_severity = finding.get("severity")
-        # Unrated sits in the unknown band for ranking. The launch path itself
-        # does not wait for a rating; Gate 1 already filtered the offer.
-        if raw_severity is None or not str(raw_severity).strip():
-            severity = "medium"
-        else:
-            severity = str(raw_severity).lower()
+        # Same band the ranker uses: empty or a name that is not a rating
+        # is unknown, not an invented medium. Gate 1 already filtered the offer.
+        priority = intake_severity_band(
+            "detection", finding_severity=finding.get("severity")
+        )
 
         if self._merge_if_overlaps(finding, trigger_id):
             return
 
         workflow_id = select_workflow(finding)
-        priority = severity or "medium"
-        # The case opens here, at admission, so the run has one to attach evidence
-        # to from its first step. Failing to open one is logged, not fatal: the
-        # investigation still launches, as it did before cases were opened here.
-        case_id = self._open_case_for_finding(finding, workflow_id, priority)
+        finding_id = finding.get("finding_id")
         await self._create_investigation(
             workflow_id=workflow_id,
             findings=[finding],
             trigger_type="finding",
             priority=priority,
-            case_id=case_id,
+            mint_case=CaseSpec(
+                title=_infer_title(finding, workflow_id)[:200],
+                finding_ids=[finding_id] if finding_id else [],
+                priority=priority,
+            ),
             shutdown_event=shutdown_event,
             trigger_id=trigger_id,
         )
 
-    def _attach_finding_to_overlap(self, finding_id: str, overlapping: List[str]):
-        """Attach a finding to the live investigation already covering its entity.
+    def _attach_to_overlapping_case(
+        self, finding_id: str, overlapping: List[str]
+    ) -> Tuple[_Overlap, Optional[str]]:
+        """Attach a finding to the Case of the first overlapping live run that has one.
 
-        Prefer the first overlapping investigation with a case, so the finding
-        lands in ``case_findings`` where the running agent reads it. When none
-        has one (opened before cases were minted at admission), the finding id
-        goes onto ``trigger_ids`` of the first instead. Nothing new is opened.
-        Returns the case id, or the investigation id on the fallback path.
+        The ``case_id`` comes back with ``MERGED`` and is always a
+        ``cases.case_id``. ``LAUNCH`` means every overlapping run read clean
+        and none of them is on a Case: not a merge, so the caller goes on to
+        Claim. Anything else is ``HOLD`` — the row stays ``queued`` and the
+        next tick retries.
+
+        ``check_overlap`` names only rows that are live, so an investigation
+        that will not read is a failed read rather than a caseless run:
+        ``get_investigation`` answers ``None`` for a database error the same
+        way it does for a row that is gone. Launching on that would open a
+        second run on an entity a Case already covers, so an unreadable row
+        holds.
         """
         for inv_id in overlapping:
-            case_id = (self.get_investigation(inv_id) or {}).get("case_id")
+            investigation = self.get_investigation(inv_id)
+            if investigation is None:
+                logger.warning(
+                    f"Finding {finding_id} overlaps investigation {inv_id} "
+                    f"but it would not read; leaving queued"
+                )
+                return _Overlap.HOLD, None
+            case_id = investigation.get("case_id")
             if not case_id:
                 continue
             # No data service reads as a failed attach: logged, never raised.
@@ -576,66 +675,13 @@ class Orchestrator:
                 logger.info(
                     f"Finding {finding_id} overlaps investigation {inv_id}; attached to case {case_id}"
                 )
-            else:
-                logger.warning(
-                    f"Finding {finding_id} overlaps investigation {inv_id} but could not be attached to case {case_id}"
-                )
-            return case_id
-
-        inv_id = overlapping[0]
-        if self._append_trigger_id(inv_id, finding_id):
-            logger.info(
-                f"Finding {finding_id} overlaps investigation {inv_id}; no case, appended to trigger_ids"
-            )
-        else:
+                return _Overlap.MERGED, case_id
             logger.warning(
-                f"Finding {finding_id} overlaps investigation {inv_id} but could not be appended to its trigger_ids"
+                f"Finding {finding_id} overlaps investigation {inv_id} "
+                f"but could not be attached to case {case_id}; leaving queued"
             )
-        return inv_id
-
-    def _append_trigger_id(self, inv_id: str, finding_id: str) -> bool:
-        """Idempotent; ``False`` when the row is missing or the write failed."""
-        try:
-            from core.storage.connection import get_db_manager
-            from core.storage.models import Investigation
-
-            with get_db_manager().session_scope() as session:
-                inv = (
-                    session.query(Investigation)
-                    .filter_by(investigation_id=inv_id)
-                    .first()
-                )
-                if not inv:
-                    return False
-                current = list(inv.trigger_ids or [])
-                if finding_id not in current:
-                    # Reassign, not append: JSONB lists are not change-tracked in place.
-                    inv.trigger_ids = [*current, finding_id]
-                return True
-        except Exception as e:
-            logger.error(f"Failed to append trigger id to investigation {inv_id}: {e}")
-            return False
-
-    def _open_case_for_finding(
-        self, finding: Dict, workflow_id: str, priority: str
-    ) -> Optional[str]:
-        """Open a case for an admitted finding; ``None`` when one could not be."""
-        finding_id = finding.get("finding_id", "unknown")
-        if not self._data_service:
-            logger.warning(
-                f"No data service; finding {finding_id} launches without a case"
-            )
-            return None
-        case = self._data_service.create_case(
-            _infer_title(finding, workflow_id), [finding_id], priority=priority
-        )
-        case_id = (case or {}).get("case_id")
-        if not case_id:
-            logger.warning(
-                f"Case creation failed for finding {finding_id}; launching without a case"
-            )
-            return None
-        return case_id
+            return _Overlap.HOLD, None
+        return _Overlap.LAUNCH, None
 
     async def _create_manual_investigation(
         self,
@@ -645,8 +691,8 @@ class Orchestrator:
     ):
         """Create an investigation from a manual request."""
         workflow_id = item.get("workflow_id", "incident-response")
-        finding_ids = item.get("finding_ids", [])
-        case_id = item.get("case_id")
+        finding_ids = item.get("finding_ids") or []
+        case_id = item.get("case_id") or None
         hypothesis = item.get("hypothesis")
         hypothesis_subjects = item.get("hypothesis_subjects")
 
@@ -657,6 +703,14 @@ class Orchestrator:
                 if f:
                     findings.append(f)
 
+        mint = None
+        if not case_id and finding_ids:
+            mint = CaseSpec(
+                title=_human_ask_case_title(hypothesis, findings, workflow_id),
+                finding_ids=list(finding_ids),
+                priority=item.get("priority") or "medium",
+            )
+
         await self._create_investigation(
             workflow_id=workflow_id,
             findings=findings,
@@ -664,6 +718,7 @@ class Orchestrator:
             trigger_type=item.get("trigger_type") or "manual",
             priority=item.get("priority", "medium"),
             case_id=case_id,
+            mint_case=mint,
             hypothesis=hypothesis,
             hypothesis_subjects=hypothesis_subjects,
             shutdown_event=shutdown_event,
@@ -677,12 +732,19 @@ class Orchestrator:
         trigger_type: str,
         priority: str,
         case_id: Optional[str] = None,
+        mint_case: Optional[CaseSpec] = None,
         hypothesis: Optional[str] = None,
         hypothesis_subjects: Optional[Dict[str, List[str]]] = None,
         shutdown_event: Optional[asyncio.Event] = None,
         trigger_id: Optional[int] = None,
     ):
         """Core investigation creation logic."""
+        if mint_case is not None:
+            case_id = case_id or mint_case.case_id or _new_case_id()
+            mint_case = replace(mint_case, case_id=case_id)
+        if findings and not case_id:
+            raise ValueError("a run opened on findings needs a case")
+
         inv_id = f"inv-{utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
         total_steps = count_steps(workflow_id)
 
@@ -763,7 +825,9 @@ class Orchestrator:
             "run_id": run_id_for(inv_id),
         }
 
-        saved = self._save_investigation(inv_record, trigger_id=trigger_id)
+        saved = self._save_investigation(
+            inv_record, trigger_id=trigger_id, mint_case=mint_case
+        )
         if not saved:
             logger.warning(
                 "intake row %s already decided; not launching %s",
@@ -802,7 +866,7 @@ class Orchestrator:
         if not self.config.dry_run and not shutting_down:
             await self._enqueue_investigation(inv_record)
 
-    async def _pickup_queued_investigations(self, shutdown_event: asyncio.Event):
+    async def _pickup_assigned_investigations(self, shutdown_event: asyncio.Event):
         """Re-enqueue assigned investigations after a restart."""
         if self.config.dry_run:
             return
@@ -950,7 +1014,7 @@ class Orchestrator:
     # The run: enqueued here, driven by the agent worker, read back as a projection
     # -------------------------------------------------------------------------
 
-    IN_FLIGHT = ("assigned", "executing", "waiting_approval")
+    IN_FLIGHT = IN_FLIGHT_INVESTIGATION_STATUSES
 
     def _in_flight(self) -> int:
         return sum(len(self._get_investigations_by_status(s)) for s in self.IN_FLIGHT)
@@ -1690,9 +1754,17 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     def _save_investigation(
-        self, inv_record: Dict, trigger_id: Optional[int] = None
+        self,
+        inv_record: Dict,
+        trigger_id: Optional[int] = None,
+        mint_case: Optional[CaseSpec] = None,
     ) -> bool:
-        """Save a new investigation; with a trigger id, CAS it launched in the same transaction."""
+        """Save a new investigation; with a trigger id, CAS it launched in the same transaction.
+
+        When ``mint_case`` is given, the Case (and ``case_findings``) are written
+        in this session so a crash cannot leave a Case with no run, or a run
+        with no Case.
+        """
         try:
             from sqlalchemy import update
 
@@ -1700,6 +1772,8 @@ class Orchestrator:
             from core.storage.models import IntakeTrigger, Investigation
 
             with get_db_manager().session_scope() as session:
+                if mint_case is not None:
+                    inv_record["case_id"] = _mint_case(session, mint_case)
                 inv = Investigation(
                     investigation_id=inv_record["investigation_id"],
                     case_id=inv_record.get("case_id"),
@@ -1735,6 +1809,7 @@ class Orchestrator:
                     .values(
                         state="launched",
                         investigation_id=inv_record["investigation_id"],
+                        case_id=inv_record.get("case_id"),
                         decided_at=utcnow(),
                     )
                     .returning(IntakeTrigger.id)

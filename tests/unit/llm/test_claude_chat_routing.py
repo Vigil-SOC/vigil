@@ -16,16 +16,12 @@ auth/DB through its ``__init__``).
 from __future__ import annotations
 
 import importlib.util
-import os
 import sys
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent.parent.parent
-# DEV_MODE so importing the endpoint module (via core.llm.harness.claude) does
-# not trip the production JWT-secret guard.
-os.environ.setdefault("DEV_MODE", "true")
 for _p in (str(REPO),):
     if _p not in sys.path:
         sys.path.insert(0, _p)

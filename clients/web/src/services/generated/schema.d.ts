@@ -1864,13 +1864,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Case
-         * @description Delete a case.
-         *
-         *     Args:
-         *         case_id: The case ID
-         *
-         *     Returns:
-         *         Success status
+         * @description Delete a case that has no live Investigation (#1001).
          */
         delete: operations["delete_api_cases_case_id"];
         options?: never;
@@ -5359,9 +5353,11 @@ export interface paths {
         put?: never;
         /**
          * Scan Existing Findings
-         * @description Insert human_ask trigger rows for matching findings not already investigated.
+         * @description Insert detection trigger rows for matching findings not already investigated.
          *
-         *     The intake tick ranks and launches them when a slot is free.
+         *     A scan is a rerun of Gate 1 by hand, not a Human Ask, so the row merges
+         *     and dedups with other detections. The intake tick ranks and launches them
+         *     when a slot is free.
          */
         post: operations["post_api_orchestrator_scan-findings"];
         delete?: never;
@@ -8529,6 +8525,11 @@ export interface components {
         CasePurgeResponse: {
             /** Deleted */
             deleted: number;
+            /**
+             * Killed Investigations
+             * @default 0
+             */
+            killed_investigations: number;
             /** Message */
             message: string;
             /** Success */

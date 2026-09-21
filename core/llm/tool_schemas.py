@@ -391,6 +391,73 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
+        "name": "list_learning_episodes",
+        "description": (
+            "What Vigil learned in a window: one episode per concluded hunt or "
+            "case, read from distilled memory. Each carries kind, "
+            "investigation_id, origin_run_id (null for a case), concluded_at, "
+            "and a payload of the verdicts (with source stances) and gaps that "
+            "investigation recorded. An investigation that concluded nothing is "
+            "still an episode. Read-only."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start": {
+                    "type": "string",
+                    "description": "Window start (ISO-8601 timestamp or date)",
+                },
+                "end": {
+                    "type": "string",
+                    "description": "Window end (ISO-8601 timestamp or date, inclusive)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of episodes to return, newest first",
+                    "default": 200,
+                },
+            },
+            "required": ["start", "end"],
+        },
+    },
+    {
+        "name": "export_learning_episodes",
+        "description": (
+            "Write a chosen set of learning episodes to a JSONL file in the "
+            "exports directory, one episode per line, selected by "
+            "{kind, investigation_id} pairs from list_learning_episodes. By "
+            "default entity values are redacted to their type (ip:*); pass "
+            "identified=true to keep them. An empty selection writes no file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "episodes": {
+                    "type": "array",
+                    "description": "Episodes to export, as returned by list_learning_episodes",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["hunt", "case"]},
+                            "investigation_id": {"type": "string"},
+                        },
+                        "required": ["kind", "investigation_id"],
+                    },
+                },
+                "identified": {
+                    "type": "boolean",
+                    "description": "Keep entity values instead of redacting them to their type",
+                    "default": False,
+                },
+                "name": {
+                    "type": "string",
+                    "description": "File stem under the exports directory; defaults to a timestamped name",
+                },
+            },
+            "required": ["episodes"],
+        },
+    },
+    {
         "name": "replay_hunt",
         "description": (
             "Replay a completed threat hunt: for each decision the hunt lead "

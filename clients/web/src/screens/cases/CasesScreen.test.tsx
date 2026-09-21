@@ -137,3 +137,26 @@ describe('case deletion', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'New Case' })).toBeInTheDocument())
   })
 })
+
+describe('unknown priority', () => {
+  it('renders Unknown on the list and offers it as a filter', async () => {
+    testState.cases = [{ ...CASE, priority: 'unknown' }]
+    renderCases()
+
+    expect(await screen.findByText('Unknown')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    expect(
+      within(screen.getByRole('dialog', { name: 'Filters' })).getByRole('button', { name: 'Unknown' }),
+    ).toBeInTheDocument()
+  })
+
+  it('keeps Unknown selected in the edit dialog', async () => {
+    testState.cases = [{ ...CASE, priority: 'unknown' }]
+    renderCases(`/cases?case=${CASE.case_id}`)
+
+    expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
+    expect(screen.getByText('Unknown priority')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+    expect(within(screen.getByRole('dialog', { name: 'Edit case' })).getByText('Unknown')).toBeInTheDocument()
+  })
+})

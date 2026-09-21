@@ -29,8 +29,8 @@ OPENAPI_TS = WEB / "node_modules" / ".bin" / "openapi-typescript"
 # Every one of these is assignment, not setdefault — an exported value in the
 # caller's shell is exactly what we are defending against.
 #
-#   DEV_MODE / VIGIL_DISABLE_DOTENV — match tests/conftest.py: importing the app
-#     must not demand JWT_SECRET_KEY or read a developer's .env.
+#   DEV_MODE / VIGIL_DISABLE_DOTENV — importing the app must not demand
+#     JWT_SECRET_KEY or read a developer's .env. Neither changes the spec.
 #   VIGIL_CONTEXT_PATH — prefixes *every* route (services/api/main.py), so a
 #     non-empty value rewrites all of them and the diff is 100%.
 #   DARKTRACE_ENABLED / CLOUDY_INGESTION_ENABLED — RouterMeta.enabled gates,

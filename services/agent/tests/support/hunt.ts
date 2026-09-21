@@ -1,3 +1,5 @@
+import { ZERO_TOKENS, type SpendPayload } from "../../contracts/budget.js";
+import type { State } from "../../core/seams.js";
 import { InProcessState } from "../../core/state.js";
 import { DEFAULT_DISPATCH, DEFAULT_RUNTIME, type RunSpec } from "../../core/spec.js";
 import { DEFAULT_CHECKPOINTS, type Checkpoints } from "../../workflows/hunt/checkpoints.js";
@@ -14,9 +16,10 @@ import { HuntController, startHunt } from "../../workflows/hunt/controller.js";
 import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
 import { Journal, type HuntEvent, type HuntKinds } from "../../workflows/hunt/journal.js";
 import { newId } from "../../workflows/hunt/ids.js";
-import type { DecisionProvider, Enricher, WorkerDispatcher } from "../../workflows/hunt/ports.js";
+import type { DecisionProvider, DisconfirmationCritic, Enricher, WorkerDispatcher } from "../../workflows/hunt/ports.js";
 import type { HuntReport } from "../../workflows/hunt/report.js";
 import {
+  SCRIPTED_MODEL_ID,
   ScriptedDecisionProvider,
   ScriptedDisconfirmationCritic,
   type ScriptedDecision,
@@ -95,6 +98,7 @@ export interface Started {
   queue: InProcessDirectiveQueue;
   runId: string;
   hypothesisIds: string[];
+  spend: Spender;
 }
 
 export async function newLedger(overrides: SpecOverrides = {}): Promise<Started> {
@@ -102,12 +106,73 @@ export async function newLedger(overrides: SpecOverrides = {}): Promise<Started>
   const queue = new InProcessDirectiveQueue();
   const runId = newId("run");
   const ledger = await startHunt(state, queue, runId, huntSpecFor(overrides));
-  return { ledger, state, queue, runId, hypothesisIds: [...ledger.projection.hypotheses.keys()] };
+  return { ledger, state, queue, runId, hypothesisIds: [...ledger.projection.hypotheses.keys()], spend: spender(state, runId) };
+}
+
+// Journals one model call's spend the way the stream does (core/stream.ts): straight
+// to State, past the controller's journal. hunt.cost_usd is folded from these, so a
+// double that only returns cost_usd would leave the budget counter at zero.
+export type Spender = (cost_usd: number, role: string) => Promise<void>;
+
+export function spender(state: State<HuntKinds>, runId: string): Spender {
+  return async (cost_usd, role) => {
+    const payload: SpendPayload = {
+      model_id: SCRIPTED_MODEL_ID,
+      provider_type: "scripted",
+      role,
+      tokens: ZERO_TOKENS,
+      cost_usd,
+      pricing_source: "scripted",
+    };
+    await state.append(runId, [{ run_id: runId, run_kind: "hunt", kind: "spend", payload }]);
+  };
+}
+
+// Bills on the throw as well as the return: a call that died mid-turn still spent,
+// and the stream journals it before rethrowing.
+export function billedLead(provider: DecisionProvider, spend: Spender): DecisionProvider {
+  return {
+    decide: async (digest, signal) => {
+      try {
+        const result = await provider.decide(digest, signal);
+        await spend(result.cost_usd, "lead");
+        return result;
+      } catch (error) {
+        await spend(spentBefore(error), "lead");
+        throw error;
+      }
+    },
+  };
+}
+
+function billedWorker(dispatcher: WorkerDispatcher, spend: Spender): WorkerDispatcher {
+  return {
+    dispatch: async (request) => {
+      const result = await dispatcher.dispatch(request);
+      await spend(result.cost_usd, request.agent_id);
+      return result;
+    },
+  };
+}
+
+function billedCritic(critic: DisconfirmationCritic, spend: Spender): DisconfirmationCritic {
+  return {
+    argueNull: async (check) => {
+      const result = await critic.argueNull(check);
+      await spend(result.cost_usd, "critic");
+      return result;
+    },
+  };
+}
+
+function spentBefore(error: unknown): number {
+  const cost = (error as { cost_usd?: unknown }).cost_usd;
+  return typeof cost === "number" ? cost : 0;
 }
 
 // What answering a checkpoint hours later does: nothing of the writing process
 // carries over, and a directive queued while nobody held the ledger still waits.
-export async function reopen(started: Started, from?: Journal): Promise<Journal> {
+export async function reopen(started: Pick<Started, "ledger" | "state" | "queue" | "runId">, from?: Journal): Promise<Journal> {
   await (from ?? started.ledger).flush();
   return Journal.open(started.state, started.queue, started.runId);
 }
@@ -124,6 +189,9 @@ export interface ControllerOptions {
   provider?: DecisionProvider;
   dispatch?: RunSpec["dispatch"];
   maxWorkers?: number;
+  // Given when a test bills: the doubles' costs reach the ledger as spend events,
+  // which is the only way they reach hunt.cost_usd.
+  spend?: Spender;
 }
 
 export function controllerFor(
@@ -136,14 +204,16 @@ export function controllerFor(
     (options.dispatcher === undefined
       ? undefined
       : { ...DEFAULT_DISPATCH, mode: "parallel" as const, max_workers: options.maxWorkers ?? 3 });
+  const provider = options.provider ?? new ScriptedDecisionProvider(decisions, options.costPerDecision ?? 0);
+  const { spend } = options;
   return new HuntController(
     ledger,
-    options.provider ?? new ScriptedDecisionProvider(decisions, options.costPerDecision ?? 0),
-    options.dispatcher,
+    spend === undefined ? provider : billedLead(provider, spend),
+    spend === undefined || options.dispatcher === undefined ? options.dispatcher : billedWorker(options.dispatcher, spend),
     dispatch,
     undefined,
     options.enricher,
-    options.critic,
+    spend === undefined || options.critic === undefined ? options.critic : billedCritic(options.critic, spend),
     options.verdicts ?? DEFAULT_VERDICTS,
   );
 }

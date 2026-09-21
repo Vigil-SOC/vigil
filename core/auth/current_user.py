@@ -27,9 +27,22 @@ logger = logging.getLogger(__name__)
 # Dev mode flag - ONLY for development, never in production!
 DEV_MODE = get_settings().dev_mode
 
+# Every gate the flag opens, so the announcement says exactly what is exposed.
+# /internal is deliberately absent: core/agents/internal_auth.py is shared-secret
+# only and has no dev-mode branch.
+DEV_MODE_OPEN_GATES = (
+    "session auth (every request runs as a mock admin with full permissions)",
+    "vstrike inbound (POST /api/integrations/vstrike/findings accepts pushes "
+    "without its bearer key)",
+)
+
 if DEV_MODE:
-    logger.warning("⚠️  DEV_MODE is ENABLED - Authentication is BYPASSED!")
-    logger.warning("⚠️  This should NEVER be enabled in production!")
+    logger.warning(
+        "⚠️  DEV_MODE is ENABLED - authentication is BYPASSED. Gates opened: %s. "
+        "This is for a developer's own machine only; set DEV_MODE=false in .env "
+        "to require a login.",
+        "; ".join(DEV_MODE_OPEN_GATES),
+    )
 
 # The synthetic stand-in, for a database with no admin row. Cached because it is
 # never persisted: re-building it per request would hand out a new user_id each time.

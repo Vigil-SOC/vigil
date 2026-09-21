@@ -7,11 +7,12 @@ router owns the status code.
 
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, NamedTuple, Optional
 
 from sqlalchemy.orm import Session
 
 from core.storage.models import (
+    LIVE_INVESTIGATION_STATUSES,
     AIDecisionLog,
     Case,
     CaseAttachment,
@@ -33,6 +34,14 @@ from core.storage.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+RESET_KILL_REASON = "killed: case reset"
+
+
+class PurgeResult(NamedTuple):
+    cases: int
+    killed_investigation_ids: List[str]
+
 
 # Purged wholesale by :func:`purge_all_cases`; order matters only in that
 # child rows go before ``Case`` itself.
@@ -146,13 +155,73 @@ def list_escalations(session: Session, case_id: str) -> List[CaseEscalation]:
     return session.query(CaseEscalation).filter(CaseEscalation.case_id == case_id).all()
 
 
-def purge_all_cases(session: Session) -> int:
-    """Delete every case and its derived records. Returns the case count removed.
+def live_investigation_ids(session: Session, case_id: str) -> List[str]:
+    """Live Investigations on this Case. Hunts have no Case, so they are not in it."""
+    rows = (
+        session.query(Investigation.investigation_id)
+        .filter(
+            Investigation.case_id == case_id,
+            Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
+        )
+        .all()
+    )
+    return [row[0] for row in rows]
 
-    Rows in other tables that merely *reference* a case (investigations)
-    are detached rather than deleted — they outlive the case.
+
+def delete_case(session: Session, case_id: str) -> Optional[List[str]]:
+    """Delete a Case that has no live Investigation, in the caller's transaction.
+
+    Returns ``None`` when there is no such Case, the blocking Investigation ids
+    when there are any, and an empty list once the Case is deleted. The check
+    and the delete share a transaction so a run claimed in between cannot have
+    its ``case_id`` SET NULL out from under it.
+    """
+    case = session.get(Case, case_id)
+    if case is None:
+        return None
+
+    live = live_investigation_ids(session, case_id)
+    if live:
+        return live
+
+    session.delete(case)
+    session.flush()
+    return []
+
+
+def kill_live_case_investigations(session: Session) -> List[Investigation]:
+    """Fail every live Case-bearing Investigation. Hunts are not selected.
+
+    ``status=failed`` drops the row out of the supervision loop, which
+    reconciles only executing and waiting_approval rows, so nothing puts it
+    back. The workdir sidecar the kill endpoint also writes is the caller's:
+    ``core`` cannot import the daemon that owns it.
+    """
+    live = (
+        session.query(Investigation)
+        .filter(
+            Investigation.case_id.isnot(None),
+            Investigation.status.in_(LIVE_INVESTIGATION_STATUSES),
+        )
+        .all()
+    )
+    for inv in live:
+        inv.status = "failed"
+        inv.master_review_notes = RESET_KILL_REASON
+    session.flush()
+    return live
+
+
+def purge_all_cases(session: Session) -> PurgeResult:
+    """Delete every case and its derived records, killing live runs first.
+
+    Live Case-bearing Investigations are failed before the delete so a
+    finding-run is never left running with ``case_id`` SET NULL. Completed rows
+    keep their ``case_id`` until the Case delete; the FK SET NULLs them as
+    history. Hunts (``case_id`` already null) are not touched.
     """
     count = session.query(Case).count()
+    killed = [inv.investigation_id for inv in kill_live_case_investigations(session)]
 
     for model in _CASE_OWNED_MODELS:
         session.query(model).delete(synchronize_session=False)
@@ -164,9 +233,6 @@ def purge_all_cases(session: Session) -> int:
     session.query(AIDecisionLog).filter(AIDecisionLog.case_id.isnot(None)).delete(
         synchronize_session=False
     )
-    session.query(Investigation).filter(Investigation.case_id.isnot(None)).update(
-        {"case_id": None}, synchronize_session=False
-    )
     session.query(CaseAuditLog).delete(synchronize_session=False)
     session.query(Case).delete(synchronize_session=False)
-    return count
+    return PurgeResult(cases=count, killed_investigation_ids=killed)

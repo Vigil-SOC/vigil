@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.time import utcnow
 from services.daemon.config import ProcessingConfig
@@ -19,6 +19,7 @@ _ENRICH_BREAKER_COOLDOWN = 120  # seconds
 # ai_enrichment JSONB column (these dict keys don't map to columns 1:1).
 _AI_ANALYSIS_KEYS = (
     "ai_triage",
+    "ai_triage_error",
     "enrichment",
     "enriched_at",
     "triage_confidence",
@@ -358,8 +359,9 @@ class FindingProcessor:
     async def _backfill_loop(self, shutdown_event: asyncio.Event):
         """Periodically triage findings that were stored but never enriched
         (ai_enrichment IS NULL) — e.g. arrived while the gateway was down, the
-        breaker was paused, or the daemon restarted mid-flight. Gentle: small
-        batches, skips while the breaker is open, paced by the in-flight cap."""
+        breaker was paused, or the daemon restarted mid-flight — or whose triage
+        recorded an error and never succeeded (#965). Gentle: small batches,
+        skips while the breaker is open, paced by the in-flight cap."""
         if not self.config.enrich_backfill_enabled:
             return
         if not (self.config.auto_triage_enabled or self.config.auto_enrich_enabled):
@@ -450,7 +452,7 @@ class FindingProcessor:
             prompt = self._build_triage_prompt(finding)
 
             # Get AI assessment with timeout
-            response = await asyncio.wait_for(
+            response, error = await asyncio.wait_for(
                 self._get_ai_triage(prompt), timeout=self.config.triage_timeout
             )
 
@@ -458,11 +460,15 @@ class FindingProcessor:
                 # Parse and apply AI assessment
                 finding = self._apply_triage_result(finding, response)
                 self.stats["triaged"] += 1
+            else:
+                finding["ai_triage_error"] = error or "empty LLM response"
 
         except asyncio.TimeoutError:
             logger.warning(f"AI triage timed out for {finding.get('finding_id')}")
+            finding["ai_triage_error"] = "timed out"
         except Exception as e:
             logger.error(f"AI triage error: {e}")
+            finding["ai_triage_error"] = f"{type(e).__name__}: {e}"
 
         return finding
 
@@ -517,22 +523,60 @@ REASONING: [Brief explanation]
                 logger.warning(f"Failed to connect LLM gateway: {e}")
                 self._llm_gateway = None
 
-    async def _get_ai_triage(self, prompt: str) -> Optional[str]:
-        """Get AI triage response via the LLM queue."""
+    @staticmethod
+    def _resolve_triage_target() -> Optional[Tuple[str, str]]:
+        """(provider_id, model) for the ``triage`` component, the same chain chat
+        uses (#965): ai_model_configs → chat_default → Anthropic default, then
+        provider_for() falls back to the configured default provider of any
+        type so an OpenAI-only install routes through Bifrost. None when no
+        provider is configured at all."""
+        from core.llm.providers.registry import get_registry
+        from core.llm.target import model_for, provider_for
+
+        provider_id, model = None, None
+        try:
+            resolved = get_registry().resolve_model_for_component("triage")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"triage model assignment lookup failed: {e}")
+            resolved = None
+        if resolved:
+            provider_id, model = resolved
+        provider = provider_for(provider_id)
+        if provider is None:
+            return None
+        return provider.provider_id, model_for(provider, model)
+
+    async def _get_ai_triage(self, prompt: str) -> Tuple[Optional[str], Optional[str]]:
+        """Get AI triage response via the LLM queue.
+
+        Returns ``(content, error)``: exactly one is set. Errors are returned
+        rather than swallowed so the caller can persist them on the finding —
+        previously a worker failure came back as empty content and the finding
+        was stored indistinguishable from a triaged, unremarkable one."""
         await self._ensure_gateway()
         if self._llm_gateway is None:
             logger.warning("LLM gateway unavailable, skipping AI triage")
-            return None
+            return None, "LLM gateway unavailable"
+        target = self._resolve_triage_target()
+        if target is None:
+            logger.warning("No LLM provider configured, skipping AI triage")
+            return None, "no LLM provider configured"
+        provider_id, model = target
         try:
-            result = await self._llm_gateway.submit_triage(prompt)
-            if result is None:
-                return None
-            if isinstance(result, dict):
-                return result.get("content", "")
-            return str(result)
+            result = await self._llm_gateway.submit_triage(
+                prompt, provider_id=provider_id, model=model
+            )
         except Exception as e:
             logger.error(f"LLM queue triage error: {e}")
-            return None
+            return None, f"{type(e).__name__}: {e}"
+        if result is None:
+            return None, "LLM returned no result"
+        if isinstance(result, dict):
+            # Worker shape on failure: {"content": "", "type": "error", "error": ...}
+            if result.get("type") == "error" or result.get("error"):
+                return None, str(result.get("error") or "LLM call failed")
+            return result.get("content", ""), None
+        return str(result), None
 
     def _apply_triage_result(
         self, finding: Dict[str, Any], response: str
@@ -574,7 +618,8 @@ REASONING: [Brief explanation]
                     triage_result["reasoning"] = value
                     finding["triage_reasoning"] = value
 
-        # Add triage metadata
+        # Add triage metadata; a success supersedes any earlier recorded failure.
+        finding.pop("ai_triage_error", None)
         finding["ai_triage"] = {
             "timestamp": utcnow().isoformat(),
             "result": triage_result,

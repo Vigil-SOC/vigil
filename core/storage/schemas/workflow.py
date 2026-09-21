@@ -159,6 +159,7 @@ class IntakeTriggerSchema(ORMSchema):
     priority: Optional[str] = None
     payload: JsonDict = Field(default_factory=dict)
     investigation_id: Optional[str] = None
+    case_id: Optional[str] = None
     merged_into: Optional[str] = None
     created_at: OptDateTime = None
     decided_at: OptDateTime = None
