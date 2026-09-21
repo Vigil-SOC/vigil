@@ -1178,7 +1178,9 @@ class Orchestrator:
         try:
             await self._enqueue_shadow_adjudication(inv_record, request)
         except Exception as exc:  # noqa: BLE001 — the shadow is best-effort
-            logger.error("could not enqueue shadow adjudication for %s: %s", inv_id, exc)
+            logger.error(
+                "could not enqueue shadow adjudication for %s: %s", inv_id, exc
+            )
 
     # Shadow mode (#880): one more job over the same finding, on the adjudicate
     # loop, that executes nothing and journals which workflow it would have run.
@@ -1237,7 +1239,9 @@ class Orchestrator:
         ):
             logger.warning("no workflow_runs row for shadow run %s", shadow_id)
 
-        job = build_start_job(shadow_id, "adjudicate", shadow, enqueued_by="orchestrator")
+        job = build_start_job(
+            shadow_id, "adjudicate", shadow, enqueued_by="orchestrator"
+        )
         await enqueue_run(job, job_id=shadow_id)
         logger.info("enqueued shadow adjudication of %s as run %s", inv_id, shadow_id)
 
