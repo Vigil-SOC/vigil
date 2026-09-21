@@ -103,7 +103,37 @@ class McpSurfaceGate:
             return
 
         with acting_as(user.username):
-            await self.app(scope, receive, send)
+            await self.app(_owned_by(scope, user), receive, send)
+
+
+def _owned_by(scope: Scope, user) -> Scope:
+    """The scope, saying whose it is in the terms the session manager reads.
+
+    A session belongs to the credential that opened it, and the SDK enforces
+    that by comparing ``scope["user"]`` against the principal recorded when the
+    session was created -- but only when that user is one of its own
+    ``AuthenticatedUser``. Vigil authenticates ahead of the server rather than
+    through its token verifier, so without this the principal is ``None`` on
+    every request, ``None`` matches ``None``, and any authenticated caller who
+    learned another's ``mcp-session-id`` could post on it.
+
+    The principal is the person, not the credential: two credentials issued to
+    one user are one principal, and may continue each other's session.
+    """
+    from mcp.server.auth.middleware.bearer_auth import AuthenticatedUser
+    from mcp.server.auth.provider import AccessToken
+
+    return {
+        **scope,
+        "user": AuthenticatedUser(
+            AccessToken(
+                token="",
+                client_id=user.username,
+                scopes=[],
+                subject=str(getattr(user, "user_id", user.username)),
+            )
+        ),
+    }
 
 
 def _dev_mode_user(token: str):

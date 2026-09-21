@@ -202,3 +202,64 @@ def test_a_caller_on_a_domain_reaches_the_server(client_on_a_domain):
         "container name or an ingress is unreachable."
     )
     assert response.status_code == 200
+
+
+# --- A session belongs to whoever opened it ----------------------------------
+#
+# The session manager compares the principal on each request against the one
+# recorded when the session was created -- but only when scope["user"] is one
+# of its own AuthenticatedUser. Vigil authenticates ahead of the server, so
+# without _owned_by the principal is None on every request, None matches None,
+# and the check passes for anyone.
+
+
+class _Alice:
+    username = "alice"
+    user_id = "u-alice"
+
+
+class _Bob:
+    username = "bob"
+    user_id = "u-bob"
+
+
+_INITIALIZE = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "not-vigil", "version": "1"},
+    },
+}
+_MCP_HEADERS = {
+    "Authorization": "Bearer vgl_mcp_a_working_one",
+    "Accept": "application/json, text/event-stream",
+}
+
+
+def test_one_callers_session_is_not_another_callers(client_on_a_domain):
+    """Learning a session id must not be enough to act on that session."""
+    with patch("services.api.mcp_surface.is_enabled", return_value=True):
+        with patch("services.api.mcp_surface.authenticate", return_value=_Alice()):
+            opened = client_on_a_domain.post(
+                "/mcp", json=_INITIALIZE, headers=_MCP_HEADERS
+            )
+        assert opened.status_code == 200
+        session_id = opened.headers.get("mcp-session-id")
+        assert session_id, "the server did not hand back a session id"
+
+        with patch("services.api.mcp_surface.authenticate", return_value=_Bob()):
+            borrowed = client_on_a_domain.post(
+                "/mcp",
+                json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+                headers={**_MCP_HEADERS, "mcp-session-id": session_id},
+            )
+
+    assert borrowed.status_code == 404, (
+        "A caller reached a session opened by someone else. The session "
+        "manager only compares principals when scope['user'] is its own "
+        "AuthenticatedUser; Vigil authenticates ahead of the server, so the "
+        "principal must be put on the scope for the check to mean anything."
+    )
