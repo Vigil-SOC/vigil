@@ -34,7 +34,12 @@ export default function DevModeWarning() {
     // A failed probe leaves the indicator as it is. It says "auth is off", and
     // a backend we cannot reach has told us nothing that justifies saying that.
     let live = true
-    fetch(`${basePath}/api/health`, { credentials: 'include' })
+    // Bounded: a backend that accepts the connection and never answers would
+    // otherwise leave this request pending for the life of the session.
+    fetch(`${basePath}/api/health`, {
+      credentials: 'include',
+      signal: AbortSignal.timeout(15_000),
+    })
       .then((r) => (r.ok ? r.json() : null))
       .then((body) => {
         if (live && body?.auth_bypassed === true) setBackendBypassed(true)
@@ -47,11 +52,13 @@ export default function DevModeWarning() {
 
   if (!BUILT_WITH_BYPASS && !backendBypassed) return null
 
+  // tabIndex so the tip is reachable without a mouse: with the rail collapsed
+  // it is the only place the warning is spelled out.
   return (
     <div
       className="nav-btn dev-mode-warning"
       role="status"
-      aria-live="polite"
+      tabIndex={0}
       aria-label="Authentication bypassed: DEV_MODE is on"
       style={{
         // Not theme tokens: this must read the same under every theme, and it
