@@ -24,6 +24,7 @@ import inspect
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -124,3 +125,33 @@ def test_a_format_carrying_a_path_is_refused(
     assert response.status_code == 400, response.text
     assert stub.calls == []
     assert not (tmp_path.parent / "evil").exists()
+
+
+def test_every_declared_format_is_one_the_writer_writes_differently():
+    """The route's closed set and the writer's branch are one list now, but a
+    format could still be added to it that the branch does not know -- which
+    would answer 200 and hand back JSON in a file named after it, the exact
+    thing the check exists to prevent. So write one for real in each and
+    require that they differ."""
+    import tempfile
+
+    service = DatabaseDataService()
+    written = {}
+
+    with tempfile.TemporaryDirectory() as tmp:
+        for fmt in DatabaseDataService.EXPORT_FORMATS:
+            path = Path(tmp) / f"findings.{fmt}"
+            with patch.object(
+                DatabaseDataService,
+                "get_findings",
+                return_value=[{"finding_id": "f-1"}, {"finding_id": "f-2"}],
+            ):
+                assert service.export_findings(path, fmt=fmt) is True
+            written[fmt] = path.read_text()
+
+    assert len(set(written.values())) == len(written), (
+        "Two declared export formats produced identical bytes, so at least one "
+        f"is not a format the writer actually branches on: {sorted(written)}. "
+        "Either teach export_findings to write it, or drop it from "
+        "DatabaseDataService.EXPORT_FORMATS."
+    )
