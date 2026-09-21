@@ -80,9 +80,7 @@ class TestChatBifrostCorrelation:
                 stop_reason="end_turn",
             )
 
-        service.client = SimpleNamespace(
-            messages=SimpleNamespace(create=fake_create)
-        )
+        service.client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
 
         @contextmanager
         def fake_scope():
