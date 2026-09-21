@@ -540,19 +540,22 @@ async def generate_case_report(case_id: str):
 
 
 @router.delete("/{case_id}", response_model=CaseSuccessResponse)
-async def delete_case(case_id: str):
-    """
-    Delete a case.
+async def delete_case(case_id: str, session: UnitOfWorkSession):
+    """Delete a case that has no live Investigation.
 
-    Args:
-        case_id: The case ID
-
-    Returns:
-        Success status
+    A live finding-run on this Case must be killed or finished first
+    (#1001). Hunts have no Case, so they never block this.
     """
     case = data_service.get_case(case_id)
     if not case:
         raise HTTPException(status_code=404, detail="Case not found")
+
+    live = case_records_service.count_live_investigations(session, case_id)
+    if live:
+        raise HTTPException(
+            status_code=409,
+            detail=f"case has {live} live investigations; kill or finish them first",
+        )
 
     success = data_service.delete_case(case_id)
 
