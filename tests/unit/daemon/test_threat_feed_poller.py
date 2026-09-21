@@ -9,7 +9,7 @@ from core.memory.hunt_coverage import build_proposal
 from core.threat_intel import threat_feed_service as feed
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon import orchestrator
-from services.daemon.threat_feed_poller import ThreatFeedPoller
+from services.daemon.threat_feed_poller import ThreatFeedPoller, _IntelIntake
 
 pytestmark = pytest.mark.unit
 
@@ -47,10 +47,10 @@ def _capture_intake(monkeypatch):
     return captured
 
 
-def _offers(monkeypatch, *keys, already=()):
+def _offers(monkeypatch, *keys, already=(), queued=False):
     monkeypatch.setattr(
-        "services.daemon.threat_feed_poller._keys_already_offered",
-        lambda: set(already),
+        "services.daemon.threat_feed_poller._intel_intake_state",
+        lambda: _IntelIntake(queued, set(already)),
     )
     monkeypatch.setattr(
         feed,
@@ -100,19 +100,22 @@ async def test_run_once_fetches_upserts_then_offers(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_poll_that_wrote_nothing_does_not_offer(monkeypatch):
+async def test_a_poll_that_wrote_nothing_still_offers(monkeypatch):
+    # The producer reads threat_indicators, not this poll's counters: keys an
+    # earlier poll wrote and a refused insert left behind get another chance,
+    # which a quiet TAXII `since` window would otherwise deny them forever.
     calls = []
     monkeypatch.setattr(
         ThreatFeedPoller,
         "offer_uncovered_indicators_to_intake",
-        lambda self: calls.append("offered") or {},
+        lambda self: calls.append("offered") or {"inserted": 1, "keys": 1},
     )
     _poll(monkeypatch, calls, counts={"inserted": 0, "updated": 0, "skipped": 2})
 
     summary = await ThreatFeedPoller().run_once()
 
-    assert "offered" not in calls
-    assert "intake" not in summary
+    assert "offered" in calls
+    assert summary["intake"] == {"inserted": 1, "keys": 1}
 
 
 @pytest.mark.asyncio
@@ -154,6 +157,21 @@ def test_a_poll_of_uncovered_keys_is_one_row_naming_all_of_them(monkeypatch):
         "hypothesis": statement,
         "hypothesis_subjects": {statement: [KEY, OTHER_KEY]},
     }
+
+
+def test_a_queued_intel_row_holds_the_next_poll(monkeypatch):
+    captured = _capture_intake(monkeypatch)
+    _offers(monkeypatch, KEY, queued=True)
+    monkeypatch.setattr(
+        feed,
+        "propose_hunts_from_recent_indicators",
+        lambda: pytest.fail("a held poll must not spend a coverage check per key"),
+    )
+
+    result = ThreatFeedPoller().offer_uncovered_indicators_to_intake()
+
+    assert captured == []
+    assert result == {"inserted": 0, "skipped": "intel_row_queued"}
 
 
 def test_no_uncovered_key_is_no_row(monkeypatch):

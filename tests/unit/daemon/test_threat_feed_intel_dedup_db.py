@@ -15,7 +15,7 @@ from core.time import utcnow
 from services.daemon.orchestrator import insert_intake_trigger
 from services.daemon.threat_feed_poller import (
     INTEL_RECHECK_AFTER,
-    _keys_already_offered,
+    _intel_intake_state,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
@@ -68,25 +68,25 @@ def _age(trigger_id, *, state, age):
 def test_a_queued_intel_row_speaks_for_its_keys():
     _intel_row(KEY, OTHER_KEY)
 
-    assert _keys_already_offered() >= {KEY, OTHER_KEY}
+    assert _intel_intake_state().spoken_for >= {KEY, OTHER_KEY}
 
 
 def test_a_queued_row_speaks_for_its_keys_however_old_it_is():
     _intel_row(KEY, age=INTEL_RECHECK_AFTER * 10)
 
-    assert KEY in _keys_already_offered()
+    assert KEY in _intel_intake_state().spoken_for
 
 
 def test_a_launched_row_still_speaks_inside_the_recheck_window():
     _intel_row(KEY, state="launched", age=INTEL_RECHECK_AFTER / 2)
 
-    assert KEY in _keys_already_offered()
+    assert KEY in _intel_intake_state().spoken_for
 
 
 def test_a_launched_row_past_the_window_is_due_a_fresh_look():
     _intel_row(KEY, state="launched", age=INTEL_RECHECK_AFTER * 2)
 
-    assert KEY not in _keys_already_offered()
+    assert KEY not in _intel_intake_state().spoken_for
 
 
 def test_the_nightly_scheduled_hunt_speaks_for_nothing():
@@ -102,7 +102,7 @@ def test_the_nightly_scheduled_hunt_speaks_for_nothing():
         },
     )
 
-    assert _keys_already_offered() == set()
+    assert _intel_intake_state().spoken_for == set()
 
 
 def test_a_human_ask_carrying_the_same_key_speaks_for_nothing():
@@ -116,4 +116,33 @@ def test_a_human_ask_carrying_the_same_key_speaks_for_nothing():
         },
     )
 
-    assert _keys_already_offered() == set()
+    assert _intel_intake_state().spoken_for == set()
+
+
+def test_a_queued_intel_row_holds_the_intake():
+    _intel_row(KEY)
+
+    assert _intel_intake_state().queued is True
+
+
+def test_a_launched_intel_row_does_not_hold_the_intake():
+    _intel_row(KEY, state="launched", age=INTEL_RECHECK_AFTER / 2)
+
+    state = _intel_intake_state()
+    assert state.queued is False
+    assert KEY in state.spoken_for
+
+
+def test_a_queued_nightly_hunt_does_not_hold_the_intel_intake():
+    insert_intake_trigger(
+        kind="schedule",
+        priority="low",
+        payload={
+            "workflow_id": "threat-hunt",
+            "trigger_type": "scheduled",
+            "finding_ids": [],
+            "hypothesis": "Activity consistent with T1071 is present in the estate",
+        },
+    )
+
+    assert _intel_intake_state().queued is False

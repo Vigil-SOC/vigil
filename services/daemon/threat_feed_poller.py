@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, NamedTuple, Optional, Set
 
 from core.config import get_settings
 from core.time import utcnow
@@ -30,6 +30,13 @@ logger = logging.getLogger(__name__)
 # would re-launch the same hunt every interval forever. A constant, not a
 # settings field, for the reason #905 gives about its own cap.
 INTEL_RECHECK_AFTER = timedelta(days=7)
+
+
+class _IntelIntake(NamedTuple):
+    """What the intake already says about intel, read once per poll."""
+
+    queued: bool
+    spoken_for: Set[str]
 
 
 # Track the last successful poll per (source, collection_id) so we only ask
@@ -152,10 +159,11 @@ class ThreatFeedPoller:
                 "errors": errors,
             },
         }
-        # Only a poll that wrote something can have uncovered a new key, and a
-        # poll whose collections all errored wrote nothing it can vouch for.
-        if total_inserted or total_updated:
-            summary["intake"] = self.offer_uncovered_indicators_to_intake()
+        # Every poll that ran, not only one whose counters moved: the producer
+        # reads `threat_indicators`, not this poll's results, so a poll that
+        # fetched nothing new can still be the one that offers a key an earlier
+        # poll wrote and a refused insert left behind.
+        summary["intake"] = self.offer_uncovered_indicators_to_intake()
         if total_seen or errors:
             logger.info("Threat feed poll: %s", summary)
         return summary
@@ -168,8 +176,9 @@ class ThreatFeedPoller:
         stop launching. The keys that did not make this row are still uncovered
         on the next poll and go into its row.
 
-        Does not open the hunt: the drain tick launches it. Keys an intel row
-        already named are skipped for `INTEL_RECHECK_AFTER`.
+        Does not open the hunt: the drain tick launches it. One intel row is
+        queued at a time, and keys an intel row already named are skipped for
+        `INTEL_RECHECK_AFTER`.
         """
         try:
             from core.memory.hunt_coverage import build_proposal
@@ -181,20 +190,25 @@ class ThreatFeedPoller:
             logger.warning("intel intake producer unavailable: %s", e)
             return {"error": str(e)}
 
+        # Read before proposing, not after: a poll that cannot offer anything
+        # should not spend a coverage check per recent indicator finding that out.
+        intake = _intel_intake_state()
+        if intake.queued:
+            return {"inserted": 0, "skipped": "intel_row_queued"}
+
         try:
             result = propose_hunts_from_recent_indicators()
         except Exception as e:  # noqa: BLE001
             logger.warning("feed hunt proposals failed: %s", e)
             return {"error": str(e)}
 
-        spoken_for = _keys_already_offered()
         keys: List[str] = []
         skipped = 0
         for proposal in result.get("proposals") or []:
             key = proposal.get("entity_key")
             if not key or key in keys:
                 continue
-            if key in spoken_for:
+            if key in intake.spoken_for:
                 skipped += 1
                 continue
             keys.append(key)
@@ -208,7 +222,7 @@ class ThreatFeedPoller:
         # to be the same string.
         body = build_proposal(keys, [])
         try:
-            trigger_id = insert_intake_trigger(
+            insert_intake_trigger(
                 kind="schedule",
                 priority="low",
                 payload={
@@ -223,21 +237,23 @@ class ThreatFeedPoller:
             logger.warning("could not offer uncovered indicators to intake: %s", e)
             return {"error": str(e)}
 
-        offered = {
-            "inserted": 1 if trigger_id else 0,
-            "keys": len(keys),
-            "skipped_recent": skipped,
-        }
+        # No `None` to weigh: that is the queued-finding unique index answering,
+        # and a schedule row carries no finding_id to collide on.
+        offered = {"inserted": 1, "keys": len(keys), "skipped_recent": skipped}
         logger.info("Uncovered feed indicators offered to intake: %s", offered)
         return offered
 
 
-def _keys_already_offered() -> Set[str]:
-    """Keys an intel row has named and that are not due a fresh look yet.
+def _intel_intake_state() -> _IntelIntake:
+    """Whether an intel row is waiting, and which keys are not due a fresh look.
 
-    One query, filtered on the payload rather than read back and sifted in
-    Python. A row still `queued` counts however old it is, so a poll while one
-    waits cannot restate its keys.
+    One query for both, filtered on the payload rather than read back and
+    sifted in Python. A row still `queued` counts however old it is: a poll
+    while one waits neither restates its keys nor adds a second row.
+
+    A read that fails answers "nothing is queued, nothing is spoken for". The
+    insert is the guarded step, and holding every poll because the intake would
+    not read would stop intel reaching the queue at all.
     """
     try:
         from sqlalchemy import or_
@@ -246,11 +262,11 @@ def _keys_already_offered() -> Set[str]:
         from core.storage.models import IntakeTrigger
     except Exception as e:  # noqa: BLE001
         logger.debug("intake read unavailable for intel dedup: %s", e)
-        return set()
+        return _IntelIntake(False, set())
     try:
         with get_db_manager().session_scope() as session:
             rows = (
-                session.query(IntakeTrigger.payload)
+                session.query(IntakeTrigger.state, IntakeTrigger.payload)
                 .filter(
                     IntakeTrigger.kind == "schedule",
                     IntakeTrigger.payload["trigger_type"].astext == "intel",
@@ -263,13 +279,15 @@ def _keys_already_offered() -> Set[str]:
             )
     except Exception as e:  # noqa: BLE001
         logger.warning("could not read prior intel triggers: %s", e)
-        return set()
+        return _IntelIntake(False, set())
     keys: Set[str] = set()
-    for (payload,) in rows:
+    queued = False
+    for state, payload in rows:
+        queued = queued or state == "queued"
         declared = (payload or {}).get("hypothesis_subjects")
         if not isinstance(declared, dict):
             continue
         for subjects in declared.values():
             if isinstance(subjects, list):
                 keys.update(key for key in subjects if isinstance(key, str) and key)
-    return keys
+    return _IntelIntake(queued, keys)
