@@ -136,6 +136,94 @@ class ThreatFeedPoller:
                 "errors": errors,
             },
         }
+        summary["intake"] = self.offer_uncovered_indicators_to_intake()
         if total_seen or errors:
             logger.info("Threat feed poll: %s", summary)
         return summary
+
+    def offer_uncovered_indicators_to_intake(self) -> Dict[str, Any]:
+        """Offer each uncovered recent indicator as a case-less schedule row.
+
+        Uses the same coverage check #905 uses. Does not open the hunt: the
+        drain tick launches it. A queued intel row for the same entity_key is
+        not inserted again.
+        """
+        try:
+            from core.threat_intel.threat_feed_service import (
+                propose_hunts_from_recent_indicators,
+            )
+            from services.daemon.orchestrator import insert_intake_trigger
+        except Exception as e:  # noqa: BLE001
+            logger.warning("intel intake producer unavailable: %s", e)
+            return {"error": str(e)}
+
+        try:
+            result = propose_hunts_from_recent_indicators()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("feed hunt proposals failed: %s", e)
+            return {"error": str(e)}
+
+        queued = _queued_intel_entity_keys()
+        inserted = 0
+        skipped_queued = 0
+        for proposal in result.get("proposals") or []:
+            entity_key = proposal.get("entity_key")
+            if not entity_key:
+                continue
+            if entity_key in queued:
+                skipped_queued += 1
+                continue
+            body = proposal.get("proposal") or {}
+            trigger_id = insert_intake_trigger(
+                kind="schedule",
+                priority="low",
+                payload={
+                    "workflow_id": "threat-hunt",
+                    "trigger_type": "intel",
+                    "finding_ids": [],
+                    "hypothesis": body.get("hypothesis"),
+                    "hypothesis_subjects": body.get("hypothesis_subjects"),
+                    "entity_key": entity_key,
+                },
+            )
+            if trigger_id is None:
+                skipped_queued += 1
+                continue
+            inserted += 1
+            queued.add(entity_key)
+        offered = {"inserted": inserted, "skipped_queued": skipped_queued}
+        if inserted or skipped_queued:
+            logger.info("Uncovered feed indicators offered to intake: %s", offered)
+        return offered
+
+
+def _queued_intel_entity_keys() -> set:
+    """Entity keys already sitting on a queued intel schedule row."""
+    try:
+        from core.storage.connection import get_db_manager
+        from core.storage.models import IntakeTrigger
+    except Exception as e:  # noqa: BLE001
+        logger.debug("intake read unavailable for intel dedup: %s", e)
+        return set()
+    try:
+        with get_db_manager().session_scope() as session:
+            rows = (
+                session.query(IntakeTrigger)
+                .filter(
+                    IntakeTrigger.kind == "schedule",
+                    IntakeTrigger.state == "queued",
+                )
+                .all()
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("could not read queued intel triggers: %s", e)
+        return set()
+    keys = set()
+    for row in rows:
+        payload = row.payload or {}
+        if payload.get("trigger_type") != "intel":
+            continue
+        key = payload.get("entity_key")
+        if key:
+            keys.add(key)
+    return keys
