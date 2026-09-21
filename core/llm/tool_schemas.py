@@ -7,6 +7,7 @@ Defines all tools available to Claude via function calling
 # (#729) rather than transcribed here: a schema that drifts from the handler's
 # arguments fails as "no history", which reads as an entity nobody has looked at.
 from core.memory.recall_contract import RECALL_PARAMETERS, RECALL_TOOL
+from core.skills.skill_library import READ_SKILL_TOOL
 
 # Security-Detections Tools (Core functionality)
 SECURITY_DETECTION_TOOLS = [
@@ -690,6 +691,38 @@ MEMORY_TOOLS = [
     },
 ]
 
+# Agent skills (#925). One static tool for every skill rather than one per
+# skill: the library is a set of documents, and the prompt lists which exist.
+SKILL_TOOLS = [
+    {
+        "name": READ_SKILL_TOOL,
+        "description": (
+            "Read a skill from the library listed in <available_skills>. Without "
+            "`file` this returns the skill's SKILL.md body: the procedure to follow. "
+            "A body may point at supporting files (references/, assets/); pass one "
+            "as `file`, a path relative to the skill directory, to read it. Text "
+            "only, nothing is executed, and a path outside the skill is refused."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill name exactly as listed in <available_skills>",
+                },
+                "file": {
+                    "type": "string",
+                    "description": (
+                        "Optional file inside the skill directory, e.g. "
+                        "references/checklist.md. Omit for the SKILL.md body."
+                    ),
+                },
+            },
+            "required": ["name"],
+        },
+    },
+]
+
 # Combine all tools
 ALL_TOOLS = (
     SECURITY_DETECTION_TOOLS
@@ -698,4 +731,5 @@ ALL_TOOLS = (
     + THREAT_INTEL_TOOLS
     + APPROVAL_TOOLS
     + MEMORY_TOOLS
+    + SKILL_TOOLS
 )

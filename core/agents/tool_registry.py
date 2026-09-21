@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.memory.recall_contract import RECALL_TOOL
+from core.skills.skill_library import READ_SKILL_TOOL, read_skill
 
 logger = logging.getLogger(__name__)
 
@@ -394,6 +395,10 @@ async def execute_backend_tool(
 
     if tool_name in _MEMORY_TOOLS:
         return _MEMORY_TOOLS[tool_name](args), True
+
+    # Filesystem only (#925), so the import is at the top like the projections'.
+    if tool_name == READ_SKILL_TOOL:
+        return read_skill(args.get("name"), args.get("file")), True
 
     if tool_name in _APPROVAL_TOOLS:
         from core.response.approval_service import ApprovalService
