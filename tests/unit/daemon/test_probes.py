@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import date
+from datetime import date, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from core.memory.source_tier import InvestigationKind, SourceTier, resolve_source_tier
 from core.time import utcnow
+from services.daemon import metrics as daemon_metrics
 from services.daemon.config import ProcessingConfig, SchedulerConfig
 from services.daemon.probes import (
     ACTIONS,
@@ -20,6 +21,7 @@ from services.daemon.probes import (
     build_probe_finding,
     inject_probes,
     probe_finding_id,
+    score_probes,
 )
 from services.daemon.processor import FindingProcessor
 from services.daemon.scheduler import TaskScheduler
@@ -28,11 +30,45 @@ pytestmark = pytest.mark.unit
 
 
 class _Data:
-    def __init__(self, existing=()):
+    def __init__(self, existing=(), rows=()):
         self.existing = set(existing)
+        self.rows = {r["finding_id"]: r for r in rows}
+        self.updates = []
 
     def get_finding(self, finding_id):
+        if finding_id in self.rows:
+            return self.rows[finding_id]
         return {"finding_id": finding_id} if finding_id in self.existing else None
+
+    def get_findings(self, data_source=None, **_):
+        return [r for r in self.rows.values() if r["data_source"] == data_source]
+
+    def update_finding(self, finding_id, **updates):
+        self.updates.append((finding_id, updates))
+        self.rows[finding_id].update(updates)
+        return True
+
+
+def _probe_row(probe, age=timedelta(hours=2), triage=None, triage_after=None):
+    """A stored probe as the data service dumps it: aware ISO ``created_at``,
+    triage timestamp naive, as the processor writes it."""
+    created = utcnow() - age
+    row = build_probe_finding(probe, created.date())
+    row["created_at"] = created.replace(tzinfo=timezone.utc).isoformat()
+    row["ai_enrichment"] = None
+    if triage is not None:
+        answered = created + (triage_after or timedelta(minutes=3))
+        row["ai_enrichment"] = {
+            "ai_triage": {"timestamp": answered.isoformat(), "result": triage}
+        }
+    return row
+
+
+def _score(data):
+    scored = score_probes(data)
+    return scored, {
+        fid: r["entity_context"]["probe"].get("score") for fid, r in data.rows.items()
+    }
 
 
 class TestTheProbeDefinitions:
@@ -95,6 +131,144 @@ class TestTheSweep:
         assert queue.empty()
 
 
+class TestScoring:
+    beacon, patch_window, travel = PROBES
+
+    def test_the_three_outcomes(self):
+        data = _Data(
+            rows=[
+                _probe_row(
+                    self.beacon,
+                    triage={
+                        "severity": "critical",
+                        "recommended_action": "isolate",
+                        "confidence": 0.9,
+                    },
+                ),
+                _probe_row(
+                    self.patch_window,
+                    triage={"severity": "high", "recommended_action": "dismiss"},
+                ),
+                _probe_row(self.travel),
+            ]
+        )
+
+        scored, scores = _score(data)
+
+        assert scored == 3
+        hit, miss, silent = (scores[r["finding_id"]] for r in data.rows.values())
+        assert hit["outcome"] == "hit"
+        assert hit["verdict"] == {
+            "severity": "critical",
+            "recommended_action": "isolate",
+            "confidence": 0.9,
+        }
+        assert hit["time_to_verdict_s"] == pytest.approx(180)
+        assert hit["scored_at"]
+        assert miss["outcome"] == "miss" and miss["time_to_verdict_s"] > 0
+        assert silent["outcome"] == "silent"
+        assert silent["verdict"] is None and silent["time_to_verdict_s"] is None
+
+    def test_a_right_severity_with_a_wrong_action_is_a_miss(self):
+        data = _Data(
+            rows=[
+                _probe_row(
+                    self.travel,
+                    triage={"severity": "high", "recommended_action": "isolate"},
+                )
+            ]
+        )
+        _, scores = _score(data)
+        assert [s["outcome"] for s in scores.values()] == ["miss"]
+
+    def test_a_probe_younger_than_an_hour_waits(self):
+        data = _Data(rows=[_probe_row(self.travel, age=timedelta(minutes=59))])
+
+        scored, scores = _score(data)
+
+        assert scored == 0 and data.updates == []
+        assert list(scores.values()) == [None]
+
+    def test_a_scored_probe_is_not_rescored(self):
+        data = _Data(rows=[_probe_row(self.travel)])
+        assert score_probes(data) == 1
+        [(_, first)] = data.updates
+
+        # A triage arriving later (enrichment backfill) does not reopen it.
+        data.rows[next(iter(data.rows))]["ai_enrichment"] = {
+            "ai_triage": {
+                "timestamp": utcnow().isoformat(),
+                "result": {"severity": "high", "recommended_action": "investigate"},
+            }
+        }
+        assert score_probes(data) == 0
+        assert data.updates == [(next(iter(data.rows)), first)]
+
+    def test_the_score_is_merged_into_entity_context(self):
+        row = _probe_row(
+            self.beacon,
+            triage={"severity": "high", "recommended_action": "block"},
+        )
+        data = _Data(rows=[row])
+
+        score_probes(data)
+
+        [(finding_id, updates)] = data.updates
+        assert finding_id == row["finding_id"]
+        assert set(updates) == {"entity_context"}
+        ctx = updates["entity_context"]
+        assert ctx["src_ips"] == self.beacon["entity_context"]["src_ips"]
+        assert ctx["probe"]["name"] == self.beacon["name"]
+        assert ctx["probe"]["expected"] == self.beacon["expected"]
+        assert ctx["probe"]["score"]["outcome"] == "hit"
+
+    def test_scores_without_otel(self):
+        fresh = daemon_metrics.ProbeMetrics()
+        data = _Data(rows=[_probe_row(self.travel)])
+        with (
+            patch.object(
+                daemon_metrics, "get_meter", side_effect=RuntimeError("no otel")
+            ),
+            patch("services.daemon.probes.probe_metrics", fresh),
+        ):
+            assert score_probes(data) == 1
+        assert fresh.results[(self.travel["name"], "silent")] == 1
+
+    def test_the_instruments_get_the_labels_and_only_verdicts_reach_the_histogram(
+        self,
+    ):
+        fresh = daemon_metrics.ProbeMetrics()
+        data = _Data(
+            rows=[
+                _probe_row(
+                    self.beacon,
+                    triage={"severity": "high", "recommended_action": "block"},
+                ),
+                _probe_row(self.travel),
+            ]
+        )
+        with (
+            patch.object(daemon_metrics, "get_meter") as meter,
+            patch("services.daemon.probes.probe_metrics", fresh),
+        ):
+            score_probes(data)
+        counter = meter.return_value.create_counter.return_value
+        hist = meter.return_value.create_histogram.return_value
+        assert meter.return_value.create_counter.call_args.kwargs["name"] == (
+            "vigil.probe.results.total"
+        )
+        assert meter.return_value.create_histogram.call_args.kwargs["name"] == (
+            "vigil.probe.time_to_verdict.seconds"
+        )
+        assert [c.args[1] for c in counter.add.call_args_list] == [
+            {"probe": self.beacon["name"], "outcome": "hit"},
+            {"probe": self.travel["name"], "outcome": "silent"},
+        ]
+        assert [c.args[1] for c in hist.record.call_args_list] == [
+            {"probe": self.beacon["name"]}
+        ]
+
+
 class TestTheScheduledTask:
     def test_registered_hourly_by_default(self):
         scheduler = TaskScheduler(SchedulerConfig())
@@ -115,6 +289,20 @@ class TestTheScheduledTask:
 
         assert queue.qsize() == 3
         assert scheduler.stats["probes_injected"] == 3
+
+    async def test_sweep_scores_before_it_injects(self):
+        scheduler = TaskScheduler(SchedulerConfig())
+        scheduler._data_service = _Data(
+            rows=[_probe_row(PROBES[0], age=timedelta(days=1))]
+        )
+        queue: asyncio.Queue = asyncio.Queue()
+        scheduler.set_processor_queue(queue)
+
+        await scheduler._run_probe_sweep()
+
+        assert scheduler.stats["probes_scored"] == 1
+        # Yesterday's row was scored and today's three still went on the queue.
+        assert queue.qsize() == 3
 
 
 class TestTheProcessorGuard:

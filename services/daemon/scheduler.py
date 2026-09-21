@@ -10,7 +10,7 @@ from core.config import get_settings
 from core.storage.connection import get_db_manager
 from core.time import utcnow
 from services.daemon.config import SchedulerConfig
-from services.daemon.probes import inject_probes
+from services.daemon.probes import inject_probes, score_probes
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ class TaskScheduler:
             "tasks_run": 0,
             "threat_hunts": 0,
             "probes_injected": 0,
+            "probes_scored": 0,
             "reports_generated": 0,
             "cleanups_run": 0,
             "errors": 0,
@@ -387,12 +388,14 @@ class TaskScheduler:
         }
 
     async def _run_probe_sweep(self):
-        """Put today's known-answer probes on the processor queue (#923)."""
+        """Score the probes past their hour (#924), then queue today's (#923)."""
         if self._processor_queue is None or not self._data_service:
             logger.warning(
                 "Probe sweep skipped: processor queue or database unavailable"
             )
             return 0
+        scored = await asyncio.to_thread(score_probes, self._data_service)
+        self.stats["probes_scored"] += scored
         injected = await inject_probes(self._processor_queue, self._data_service)
         self.stats["probes_injected"] += injected
         return injected

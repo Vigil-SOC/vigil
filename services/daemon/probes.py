@@ -5,21 +5,27 @@ triage → LLM gateway is exercised end to end on a known input. A probe is a
 Finding with ``data_source = "probe"`` whose known answer rides in
 ``entity_context["probe"]["expected"]``; it goes onto the processor's own input
 queue like any polled finding and stops after triage (see the guard in
-``FindingProcessor._enrich_in_background``). Scoring the answer is #924.
+``FindingProcessor._enrich_in_background``). An hour after creation
+``score_probes`` (#924) grades the triage that landed in
+``ai_enrichment["ai_triage"]`` against that answer and writes the result to
+``entity_context["probe"]["score"]``.
 """
 
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
-from datetime import date
-from typing import Any, Dict, List
+from datetime import date, datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 from core.time import utcnow
+from services.daemon.metrics import probe_metrics
 
 logger = logging.getLogger(__name__)
 
 PROBE_DATA_SOURCE = "probe"
+SCORE_AFTER = timedelta(hours=1)
 
 # Vocabulary _build_triage_prompt asks the model for; ``expected`` draws from it.
 SEVERITIES = ("critical", "high", "medium", "low")
@@ -138,3 +144,87 @@ async def inject_probes(queue: asyncio.Queue, data_service: Any) -> int:
     if injected:
         logger.info("Injected %d known-answer probe(s) for %s", injected, day)
     return injected
+
+
+def _parse_utc(value: Any) -> Optional[datetime]:
+    """ISO string or datetime → naive UTC, comparable with ``utcnow()``."""
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is not None:
+        value = value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def score_probe(row: Dict[str, Any], now: datetime) -> Optional[Dict[str, Any]]:
+    """The score block for one probe row, or None when it is not due yet.
+
+    hit: triage severity and recommended_action both in the expected lists;
+    miss: a triage exists and either is not; silent: no ai_triage an hour on.
+    """
+    created_at = _parse_utc(row.get("created_at"))
+    if created_at is None or now - created_at < SCORE_AFTER:
+        return None
+    expected = row["entity_context"]["probe"].get("expected") or {}
+    triage = (row.get("ai_enrichment") or {}).get("ai_triage") or {}
+    result = triage.get("result") or {}
+    if not triage:
+        outcome, verdict, time_to_verdict = "silent", None, None
+    else:
+        verdict = {
+            "severity": result.get("severity"),
+            "recommended_action": result.get("recommended_action"),
+            "confidence": result.get("confidence"),
+        }
+        hit = verdict["severity"] in expected.get("severity", []) and verdict[
+            "recommended_action"
+        ] in expected.get("recommended_action", [])
+        outcome = "hit" if hit else "miss"
+        answered = _parse_utc(triage.get("timestamp"))
+        time_to_verdict = (answered - created_at).total_seconds() if answered else None
+    return {
+        "outcome": outcome,
+        "verdict": verdict,
+        "time_to_verdict_s": time_to_verdict,
+        "scored_at": now.isoformat(),
+    }
+
+
+def score_probes(data_service: Any) -> int:
+    """Score every unscored probe row past its hour; return how many were scored.
+
+    Runs first in the sweep so today's injection never competes. A scored row
+    is never rescored, even if a later enrichment backfill adds a triage.
+    """
+    now = utcnow()
+    scored = 0
+    for row in data_service.get_findings(data_source=PROBE_DATA_SOURCE):
+        probe = (row.get("entity_context") or {}).get("probe")
+        if not isinstance(probe, dict) or "score" in probe:
+            continue
+        score = score_probe(row, now)
+        if score is None:
+            continue
+        # update_finding replaces the whole JSONB, so merge into a copy.
+        entity_context = copy.deepcopy(row["entity_context"])
+        entity_context["probe"]["score"] = score
+        if not data_service.update_finding(
+            row["finding_id"], entity_context=entity_context
+        ):
+            logger.warning("Probe %s: score not written", row["finding_id"])
+            continue
+        probe_metrics.record(
+            probe.get("name", "unknown"), score["outcome"], score["time_to_verdict_s"]
+        )
+        scored += 1
+        logger.info(
+            "Probe %s scored %s (time_to_verdict_s=%s)",
+            row["finding_id"],
+            score["outcome"],
+            score["time_to_verdict_s"],
+        )
+    return scored
