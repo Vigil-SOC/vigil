@@ -473,12 +473,21 @@ def generate_initial_state(
 
 
 def generate_initial_context(
-    findings: List[Dict[str, Any]], case_id: Optional[str] = None
+    findings: List[Dict[str, Any]],
+    case_id: Optional[str] = None,
+    document: Optional[str] = None,
 ) -> str:
-    """Generate the initial context.md with trigger finding summaries."""
+    """Generate the initial context.md with trigger finding summaries.
+
+    ``document`` is whatever a person handed the ask -- a URL, a path, or the
+    report text. It goes in whole and unparsed, ahead of the findings: a run
+    never reads the trigger payload, so the brief is the only way it arrives.
+    """
     lines = ["# Investigation Context", ""]
     if case_id:
         lines.extend([f"case_id: {case_id}", ""])
+    if document:
+        lines.extend(["## Attached Document", "", document, ""])
     lines.extend(["## Trigger Findings", ""])
 
     for f in findings[:5]:

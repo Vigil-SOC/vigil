@@ -298,13 +298,43 @@ def _mint_case(session, spec: CaseSpec) -> str:
     return case_id
 
 
-def _attach_human_ask_document(session, case_id, document_id) -> None:
-    """Put the Human Ask's document on the Case. No-op when either is missing."""
-    if not case_id or not document_id:
-        return
-    from core.cases.case_records_service import add_attachment
+def _record_human_ask_document(
+    session, case_id: Optional[str], document: Optional[str]
+) -> None:
+    """Record the Human Ask's document on the Case. No-op when either is missing.
 
-    add_attachment(session, case_id, document_id=str(document_id))
+    The string is opaque, so it goes in ``description`` (Text) and never in
+    ``file_path``: that column is resolved against the evidence store and
+    hashed, which is wrong for a URL and worse for a path a caller chose.
+
+    Written straight onto the launch session rather than through
+    ``CaseEvidenceService``: that service's constructor mkdirs an evidence
+    directory, and this path stores no file. A mkdir that fails would take the
+    launch down with it, and the row is the same either way.
+    """
+    if not case_id or not document:
+        return
+    from core.storage.models import CaseEvidence
+
+    now = utcnow()
+    session.add(
+        CaseEvidence(
+            case_id=case_id,
+            evidence_type="document",
+            name="Document on the Human Ask",
+            description=str(document),
+            collected_by="human_ask",
+            collected_at=now,
+            chain_of_custody=[
+                {
+                    "timestamp": now.isoformat(),
+                    "action": "collected",
+                    "user": "human_ask",
+                    "notes": "Document supplied on the Human Ask",
+                }
+            ],
+        )
+    )
 
 
 class _TriggerAlreadyDecided(Exception):
@@ -734,7 +764,7 @@ class Orchestrator:
             hypothesis_subjects=hypothesis_subjects,
             shutdown_event=shutdown_event,
             trigger_id=trigger_id,
-            document_id=item.get("document_id"),
+            document=item.get("document"),
         )
 
     async def _create_investigation(
@@ -749,7 +779,7 @@ class Orchestrator:
         hypothesis_subjects: Optional[Dict[str, List[str]]] = None,
         shutdown_event: Optional[asyncio.Event] = None,
         trigger_id: Optional[int] = None,
-        document_id: Optional[str] = None,
+        document: Optional[str] = None,
     ):
         """Core investigation creation logic."""
         if mint_case is not None:
@@ -772,7 +802,9 @@ class Orchestrator:
         self.workdir.write_state(inv_id, state)
 
         self.workdir.write_file(
-            inv_id, "context.md", generate_initial_context(findings, case_id)
+            inv_id,
+            "context.md",
+            generate_initial_context(findings, case_id, document),
         )
         # What this run is about, so the harness's keyed read has something to ask
         # on. Written even when empty: an investigation whose findings name no
@@ -842,7 +874,7 @@ class Orchestrator:
             inv_record,
             trigger_id=trigger_id,
             mint_case=mint_case,
-            document_id=document_id,
+            document=document,
         )
         if not saved:
             logger.warning(
@@ -1788,13 +1820,13 @@ class Orchestrator:
         inv_record: Dict,
         trigger_id: Optional[int] = None,
         mint_case: Optional[CaseSpec] = None,
-        document_id: Optional[str] = None,
+        document: Optional[str] = None,
     ) -> bool:
         """Save a new investigation; with a trigger id, CAS it launched in the same transaction.
 
         When ``mint_case`` is given, the Case (and ``case_findings``) are written
         in this session so a crash cannot leave a Case with no run, or a run
-        with no Case. A document on a Human Ask lands on that Case here.
+        with no Case. A document on a Human Ask is recorded on that Case here.
         """
         try:
             from sqlalchemy import update
@@ -1805,9 +1837,7 @@ class Orchestrator:
             with get_db_manager().session_scope() as session:
                 if mint_case is not None:
                     inv_record["case_id"] = _mint_case(session, mint_case)
-                _attach_human_ask_document(
-                    session, inv_record.get("case_id"), document_id
-                )
+                _record_human_ask_document(session, inv_record.get("case_id"), document)
                 inv = Investigation(
                     investigation_id=inv_record["investigation_id"],
                     case_id=inv_record.get("case_id"),

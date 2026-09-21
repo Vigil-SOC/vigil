@@ -7,7 +7,6 @@ one that names findings mints.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -48,6 +47,19 @@ def _orchestrator(data_service) -> Orchestrator:
     orch._log_ai_decision = MagicMock()
     orch._create_investigation = AsyncMock()
     orch._data_service = data_service
+    return orch
+
+
+def _launching_orchestrator(tmp_path) -> Orchestrator:
+    """One that runs `_create_investigation` for real, with the save mocked."""
+    orch = object.__new__(Orchestrator)
+    orch.config = OrchestratorConfig(dry_run=True)
+    orch.workdir = WorkdirManager(str(tmp_path))
+    orch._workflows = MagicMock()
+    orch.shared_intel = MagicMock()
+    orch.stats = {"investigations_created": 0}
+    orch._save_investigation = MagicMock(return_value=True)
+    orch._check_cross_correlations = AsyncMock()
     return orch
 
 
@@ -140,7 +152,7 @@ async def test_joining_a_case_passes_the_document():
             "case_id": "case-join",
             "finding_ids": ["f-1"],
             "priority": "high",
-            "document_id": "doc-9",
+            "document": "doc-9",
         },
         None,
         trigger_id=3,
@@ -149,7 +161,7 @@ async def test_joining_a_case_passes_the_document():
     kwargs = orch._create_investigation.await_args.kwargs
     assert kwargs["case_id"] == "case-join"
     assert kwargs["mint_case"] is None
-    assert kwargs["document_id"] == "doc-9"
+    assert kwargs["document"] == "doc-9"
 
 
 @pytest.mark.asyncio
@@ -174,7 +186,7 @@ async def test_human_ask_with_findings_mints():
     assert spec.title == "T1071 on FYODOR-L"
     assert spec.priority == "high"
     assert kwargs["case_id"] is None
-    assert kwargs.get("document_id") is None
+    assert kwargs.get("document") is None
 
 
 @pytest.mark.asyncio
@@ -188,13 +200,13 @@ async def test_finding_ask_with_a_document_passes_it_to_claim():
             "workflow_id": "incident-response",
             "finding_ids": ["f-1"],
             "priority": "high",
-            "document_id": "doc-9",
+            "document": "doc-9",
         },
         None,
     )
 
     kwargs = orch._create_investigation.await_args.kwargs
-    assert kwargs["document_id"] == "doc-9"
+    assert kwargs["document"] == "doc-9"
     assert kwargs["mint_case"] is not None
 
 
@@ -226,13 +238,13 @@ async def test_hypothesis_only_ask_keeps_the_document_on_the_payload():
             "workflow_id": "threat-hunt",
             "hypothesis": "T1071 on FYODOR-L",
             "priority": "low",
-            "document_id": "doc-9",
+            "document": "doc-9",
         },
         None,
     )
 
     kwargs = orch._create_investigation.await_args.kwargs
-    assert kwargs["document_id"] == "doc-9"
+    assert kwargs["document"] == "doc-9"
     assert kwargs["case_id"] is None
     assert kwargs["mint_case"] is None
 
@@ -286,15 +298,8 @@ async def test_detection_plan_never_says_case_pending(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_finding_run_saves_the_document_on_the_case(tmp_path):
-    orch = object.__new__(Orchestrator)
-    orch.config = OrchestratorConfig(dry_run=True)
-    orch.workdir = WorkdirManager(str(tmp_path))
-    orch._workflows = MagicMock()
-    orch.shared_intel = MagicMock()
-    orch.stats = {"investigations_created": 0}
-    orch._save_investigation = MagicMock(return_value=True)
-    orch._check_cross_correlations = AsyncMock()
+async def test_finding_run_records_the_document_and_puts_it_in_the_brief(tmp_path):
+    orch = _launching_orchestrator(tmp_path)
 
     await orch._create_investigation(
         workflow_id="incident-response",
@@ -302,31 +307,77 @@ async def test_finding_run_saves_the_document_on_the_case(tmp_path):
         trigger_type="manual",
         priority="high",
         mint_case=CaseSpec(title="t", finding_ids=["f-1"], priority="high"),
-        document_id="doc-9",
+        document="the CISA advisory, pasted",
     )
 
-    assert orch._save_investigation.call_args.kwargs["document_id"] == "doc-9"
+    record = orch._save_investigation.call_args[0][0]
+    brief = orch.workdir.read_file(record["investigation_id"], "context.md")
+    assert orch._save_investigation.call_args.kwargs["document"] == (
+        "the CISA advisory, pasted"
+    )
+    assert "the CISA advisory, pasted" in brief
 
 
-def test_attach_is_a_noop_without_a_case_or_document():
-    from services.daemon.orchestrator import _attach_human_ask_document
+@pytest.mark.asyncio
+async def test_a_hunt_keeps_no_case_and_still_gets_the_document(tmp_path):
+    orch = _launching_orchestrator(tmp_path)
+
+    await orch._create_investigation(
+        workflow_id="threat-hunt",
+        findings=[],
+        trigger_type="manual",
+        priority="low",
+        hypothesis="T1071 on FYODOR-L",
+        document="the CISA advisory, pasted",
+    )
+
+    record = orch._save_investigation.call_args[0][0]
+    brief = orch.workdir.read_file(record["investigation_id"], "context.md")
+    assert record["case_id"] is None
+    assert "the CISA advisory, pasted" in brief
+
+
+@pytest.mark.asyncio
+async def test_a_brief_without_a_document_gains_no_section(tmp_path):
+    orch = _launching_orchestrator(tmp_path)
+
+    await orch._create_investigation(
+        workflow_id="incident-response",
+        findings=[FINDING],
+        trigger_type="manual",
+        priority="high",
+        mint_case=CaseSpec(title="t", finding_ids=["f-1"], priority="high"),
+    )
+
+    record = orch._save_investigation.call_args[0][0]
+    brief = orch.workdir.read_file(record["investigation_id"], "context.md")
+    assert "Attached Document" not in brief
+
+
+def test_recording_is_a_noop_without_a_case_or_document():
+    from services.daemon.orchestrator import _record_human_ask_document
 
     session = MagicMock()
-    _attach_human_ask_document(session, None, "doc-9")
-    _attach_human_ask_document(session, "case-1", None)
+    _record_human_ask_document(session, None, "the advisory")
+    _record_human_ask_document(session, "case-1", None)
     session.add.assert_not_called()
 
 
-def test_attach_writes_the_document_on_the_case(monkeypatch):
-    from services.daemon.orchestrator import _attach_human_ask_document
+def test_the_document_is_recorded_as_evidence_on_the_launch_session():
+    from core.storage.models import CaseEvidence
+    from services.daemon.orchestrator import _record_human_ask_document
 
-    added = []
-
-    def _add(session, case_id, *, document_id, uploaded_by="human_ask"):
-        added.append((case_id, document_id, uploaded_by))
-        return SimpleNamespace(attachment_id=1)
-
-    monkeypatch.setattr("core.cases.case_records_service.add_attachment", _add)
     session = MagicMock()
-    _attach_human_ask_document(session, "case-1", "doc-9")
-    assert added == [("case-1", "doc-9", "human_ask")]
+
+    _record_human_ask_document(session, "case-1", "the advisory")
+
+    evidence = session.add.call_args.args[0]
+    assert isinstance(evidence, CaseEvidence)
+    assert evidence.case_id == "case-1"
+    assert evidence.evidence_type == "document"
+    assert evidence.collected_by == "human_ask"
+    assert evidence.description == "the advisory"
+    # A URL or a caller's path must never reach file_path: the evidence
+    # service resolves that column against its store and hashes it.
+    assert evidence.file_path is None
+    assert evidence.chain_of_custody[0]["user"] == "human_ask"

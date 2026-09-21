@@ -278,3 +278,130 @@ def test_claim_cas_loses_race_writes_neither_case_nor_investigation():
         assert session.get(Investigation, "inv-cas-b") is None
         assert session.get(Case, "case-cas-a") is not None
         assert session.get(Case, "case-cas-b") is None
+
+
+def test_the_document_lands_on_the_case_as_evidence_in_the_launch_transaction():
+    from core.storage.connection import get_db_manager
+    from core.storage.models import CaseEvidence
+    from services.daemon.orchestrator import CaseSpec
+
+    finding_id = "f-doc-1010"
+    case_id = "case-doc-1010"
+    inv_id = "inv-doc-1010"
+    _finding(finding_id)
+    trigger_id = insert_intake_trigger(
+        kind="human_ask",
+        priority="high",
+        payload={"finding_ids": [finding_id], "document": "the CISA advisory"},
+    )
+    orch = object.__new__(Orchestrator)
+    orch.config = OrchestratorConfig()
+
+    assert (
+        orch._save_investigation(
+            _claim_record(inv_id, case_id, finding_id),
+            trigger_id=trigger_id,
+            mint_case=CaseSpec(
+                title="three failed logons on FYODOR-L",
+                finding_ids=[finding_id],
+                priority="high",
+                case_id=case_id,
+            ),
+            document="the CISA advisory",
+        )
+        is True
+    )
+
+    with get_db_manager().session_scope() as session:
+        rows = session.query(CaseEvidence).filter(CaseEvidence.case_id == case_id).all()
+        assert len(rows) == 1
+        assert rows[0].evidence_type == "document"
+        assert rows[0].description == "the CISA advisory"
+        assert rows[0].collected_by == "human_ask"
+        # Opaque string, so nothing was resolved as a file.
+        assert rows[0].file_path is None
+        assert rows[0].file_hash_sha256 is None
+
+
+def test_a_lost_claim_takes_the_evidence_row_with_it():
+    from core.storage.connection import get_db_manager
+    from core.storage.models import CaseEvidence
+    from services.daemon.orchestrator import CaseSpec
+
+    finding_id = "f-doc-cas-1010"
+    _finding(finding_id)
+    trigger_id = insert_intake_trigger(
+        kind="human_ask",
+        priority="high",
+        payload={"finding_ids": [finding_id], "document": "the CISA advisory"},
+    )
+    orch = object.__new__(Orchestrator)
+    orch.config = OrchestratorConfig()
+
+    def claim(inv_id: str, case_id: str) -> bool:
+        return orch._save_investigation(
+            _claim_record(inv_id, case_id, finding_id),
+            trigger_id=trigger_id,
+            mint_case=CaseSpec(
+                title="three failed logons on FYODOR-L",
+                finding_ids=[finding_id],
+                priority="high",
+                case_id=case_id,
+            ),
+            document="the CISA advisory",
+        )
+
+    assert claim("inv-doc-cas-a", "case-doc-cas-a") is True
+    assert claim("inv-doc-cas-b", "case-doc-cas-b") is False
+
+    with get_db_manager().session_scope() as session:
+        assert (
+            session.query(CaseEvidence)
+            .filter(CaseEvidence.case_id == "case-doc-cas-b")
+            .count()
+            == 0
+        )
+
+
+def test_a_hunt_records_no_evidence_and_keeps_the_document_on_the_payload():
+    from core.storage.connection import get_db_manager
+    from core.storage.models import CaseEvidence
+
+    trigger_id = insert_intake_trigger(
+        kind="human_ask",
+        priority="low",
+        payload={"workflow_id": "threat-hunt", "document": "the CISA advisory"},
+    )
+    orch = object.__new__(Orchestrator)
+    orch.config = OrchestratorConfig()
+    with get_db_manager().session_scope() as session:
+        before = session.query(CaseEvidence).count()
+    record = {
+        "investigation_id": "inv-doc-hunt-1010",
+        "case_id": None,
+        "workflow_id": "threat-hunt",
+        "trigger_type": "manual",
+        "trigger_ids": [],
+        "status": "assigned",
+        "workdir": "/tmp/inv",
+        "current_step": 1,
+        "total_steps": 1,
+        "priority": "low",
+        "max_iterations": 50,
+        "max_cost_usd": 5.0,
+        "max_runtime_seconds": 3600,
+    }
+
+    assert (
+        orch._save_investigation(
+            record, trigger_id=trigger_id, document="the CISA advisory"
+        )
+        is True
+    )
+
+    dumped = _row(trigger_id)
+    assert dumped["state"] == "launched"
+    assert dumped["case_id"] is None
+    assert dumped["payload"]["document"] == "the CISA advisory"
+    with get_db_manager().session_scope() as session:
+        assert session.query(CaseEvidence).count() == before

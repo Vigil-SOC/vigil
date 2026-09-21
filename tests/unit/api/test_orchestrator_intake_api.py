@@ -178,3 +178,72 @@ def test_status_queued_does_not_report_zero_when_intake_count_fails(monkeypatch)
 
     assert resp.status_code == 500
     assert resp.json() == {"detail": "intake table unreachable"}
+
+
+# ---- POST /investigations: the document on a Human Ask (#1010) ----
+
+
+@pytest.fixture()
+def enqueued(monkeypatch):
+    """What POST /investigations handed ``insert_intake_trigger``."""
+    captured = []
+    monkeypatch.setattr(
+        "services.daemon.orchestrator.insert_intake_trigger",
+        lambda **kwargs: captured.append(kwargs) or 1,
+    )
+    return captured
+
+
+def test_post_investigations_carries_the_document_on_the_payload(client, enqueued):
+    resp = client.post(
+        "/api/orchestrator/investigations",
+        json={
+            "workflow_id": "incident-response",
+            "finding_ids": ["f-1"],
+            "document": "the CISA advisory, pasted",
+            "priority": "high",
+        },
+    )
+
+    assert resp.status_code == 200
+    assert enqueued[0]["kind"] == "human_ask"
+    assert enqueued[0]["payload"]["document"] == "the CISA advisory, pasted"
+    assert enqueued[0]["payload"]["finding_ids"] == ["f-1"]
+
+
+def test_post_investigations_without_a_document_is_unchanged(client, enqueued):
+    resp = client.post(
+        "/api/orchestrator/investigations",
+        json={"workflow_id": "incident-response", "finding_ids": ["f-1"]},
+    )
+
+    assert resp.status_code == 200
+    assert set(enqueued[0]["payload"]) == {
+        "workflow_id",
+        "finding_ids",
+        "case_id",
+        "hypothesis",
+        "hypothesis_subjects",
+    }
+
+
+def test_a_null_document_leaves_the_key_off(client, enqueued):
+    resp = client.post(
+        "/api/orchestrator/investigations",
+        json={"workflow_id": "incident-response", "document": None},
+    )
+
+    assert resp.status_code == 200
+    assert "document" not in enqueued[0]["payload"]
+
+
+def test_a_document_over_the_cap_is_refused_and_enqueues_nothing(client, enqueued):
+    resp = client.post(
+        "/api/orchestrator/investigations",
+        json={"workflow_id": "incident-response", "document": "x" * 65_537},
+    )
+
+    # The cap is what keeps an oversized string from reaching a column and
+    # failing the launch instead, where the row stays queued until its TTL.
+    assert resp.status_code == 422
+    assert enqueued == []
