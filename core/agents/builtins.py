@@ -370,15 +370,9 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
         "max_tokens": 16384,
         "enable_thinking": True,
         "thinking_budget": 6000,
-        "extra_principles": "- Focus on actionable intelligence\n- State confidence in attribution\n- Query multiple threat intel sources in parallel\n- Memory: recall_entity on IOCs before spending an external lookup; read-only, and it orients your search rather than deciding its outcome\n- Cloudflare context: when finding.enrichment.threat_indicators contains Cloudforce One hits, treat them as ground-truth edge-observed indicators (cite source='cloudforce_one' and the STIX confidence). Cloudy summaries (finding.evidence.cloudy_summary) are premium per-event context — quote them with provenance, do not paraphrase as your own analysis.",
-        "methodology": """<methodology>
-1. Retrieve context and extract IOCs
-2. Enrich IOCs: IP geolocation, Shodan, VirusTotal, OTX
-3. Identify threat actors: TTPs, infrastructure overlap, campaign patterns
-4. Assess threat context: Motivations, objectives, targeting
-5. Predict future threats based on patterns
-6. Provide actionable intelligence and IOCs to hunt
-</methodology>""",
+        # Enrichment procedure and Cloudforce One rule live in the `ioc-enrichment`
+        # skill (#882 decision 8); the Memory line stays, ADR 0015 requires it.
+        "extra_principles": "- Focus on actionable intelligence\n- State confidence in attribution\n- Memory: recall_entity on IOCs; read-only, and it orients your search rather than deciding its outcome",
     },
     {
         "id": "compliance",
