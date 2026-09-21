@@ -1,12 +1,11 @@
-# ThreatFeedPoller fetches and upserts, then offers uncovered indicators to
-# intake as schedule rows (#1009). It must not open the hunt itself.
+# ThreatFeedPoller fetches and upserts, then offers the poll's uncovered keys to
+# intake as one schedule row (#1009). It must not open the hunt itself.
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
+from core.memory.hunt_coverage import build_proposal
 from core.threat_intel import threat_feed_service as feed
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon import orchestrator
@@ -20,17 +19,13 @@ CONFIG = {
     "collection_ids": "col-1, col-2",
 }
 
-HYPOTHESIS = (
-    "Activity from the reported indicators ip:203.0.113.7 is present in the "
-    "environment"
-)
-PROPOSAL = {
-    "entity_key": "ip:203.0.113.7",
-    "proposal": {
-        "hypothesis": HYPOTHESIS,
-        "hypothesis_subjects": {HYPOTHESIS: ["ip:203.0.113.7"]},
-    },
-}
+KEY = "ip:203.0.113.7"
+OTHER_KEY = "domain:evil.example"
+
+
+def _proposal(key):
+    body = build_proposal([key], [])
+    return {"entity_key": key, "proposal": body}
 
 
 def _forbid_hunt_start(monkeypatch):
@@ -52,15 +47,19 @@ def _capture_intake(monkeypatch):
     return captured
 
 
-@pytest.mark.asyncio
-async def test_run_once_fetches_upserts_then_offers(monkeypatch):
-    calls = []
-    _forbid_hunt_start(monkeypatch)
+def _offers(monkeypatch, *keys, already=()):
     monkeypatch.setattr(
-        ThreatFeedPoller,
-        "offer_uncovered_indicators_to_intake",
-        lambda self: calls.append("offered") or {"inserted": 0, "skipped_queued": 0},
+        "services.daemon.threat_feed_poller._keys_already_offered",
+        lambda: set(already),
     )
+    monkeypatch.setattr(
+        feed,
+        "propose_hunts_from_recent_indicators",
+        lambda: {"proposals": [_proposal(key) for key in keys]},
+    )
+
+
+def _poll(monkeypatch, calls, *, counts):
     monkeypatch.setattr(ThreatFeedPoller, "is_enabled", staticmethod(lambda: True))
     monkeypatch.setattr("core.config.get_integration_config", lambda _id: CONFIG)
 
@@ -70,10 +69,22 @@ async def test_run_once_fetches_upserts_then_offers(monkeypatch):
 
     def _upsert(indicators):
         calls.append(("upsert", len(indicators)))
-        return {"inserted": 1, "updated": 0, "skipped": 0}
+        return counts
 
     monkeypatch.setattr(feed, "fetch_taxii_collection", _fetch)
     monkeypatch.setattr(feed, "upsert_indicators", _upsert)
+
+
+@pytest.mark.asyncio
+async def test_run_once_fetches_upserts_then_offers(monkeypatch):
+    calls = []
+    _forbid_hunt_start(monkeypatch)
+    monkeypatch.setattr(
+        ThreatFeedPoller,
+        "offer_uncovered_indicators_to_intake",
+        lambda self: calls.append("offered") or {"inserted": 1, "keys": 1},
+    )
+    _poll(monkeypatch, calls, counts={"inserted": 1, "updated": 0, "skipped": 0})
 
     summary = await ThreatFeedPoller().run_once()
 
@@ -85,7 +96,23 @@ async def test_run_once_fetches_upserts_then_offers(monkeypatch):
         "offered",
     ]
     assert summary["totals"] == {"seen": 2, "inserted": 2, "updated": 0, "errors": 0}
-    assert summary["intake"] == {"inserted": 0, "skipped_queued": 0}
+    assert summary["intake"] == {"inserted": 1, "keys": 1}
+
+
+@pytest.mark.asyncio
+async def test_a_poll_that_wrote_nothing_does_not_offer(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        ThreatFeedPoller,
+        "offer_uncovered_indicators_to_intake",
+        lambda self: calls.append("offered") or {},
+    )
+    _poll(monkeypatch, calls, counts={"inserted": 0, "updated": 0, "skipped": 2})
+
+    summary = await ThreatFeedPoller().run_once()
+
+    assert "offered" not in calls
+    assert "intake" not in summary
 
 
 @pytest.mark.asyncio
@@ -95,7 +122,7 @@ async def test_a_disabled_poll_does_not_offer(monkeypatch):
     monkeypatch.setattr(
         ThreatFeedPoller,
         "offer_uncovered_indicators_to_intake",
-        lambda self: offered.append("offered") or {"inserted": 0},
+        lambda self: offered.append("offered") or {},
     )
 
     summary = await ThreatFeedPoller().run_once()
@@ -104,111 +131,69 @@ async def test_a_disabled_poll_does_not_offer(monkeypatch):
     assert offered == []
 
 
-def test_uncovered_indicator_becomes_a_schedule_row(monkeypatch):
+def test_a_poll_of_uncovered_keys_is_one_row_naming_all_of_them(monkeypatch):
     _forbid_hunt_start(monkeypatch)
     captured = _capture_intake(monkeypatch)
-    monkeypatch.setattr(
-        "services.daemon.threat_feed_poller._queued_intel_entity_keys",
-        lambda: set(),
-    )
-    monkeypatch.setattr(
-        feed,
-        "propose_hunts_from_recent_indicators",
-        lambda: {"proposals": [PROPOSAL]},
-    )
+    _offers(monkeypatch, KEY, OTHER_KEY)
 
     result = ThreatFeedPoller().offer_uncovered_indicators_to_intake()
 
-    assert result == {"inserted": 1, "skipped_queued": 0}
-    assert captured == [
-        {
-            "kind": "schedule",
-            "priority": "low",
-            "payload": {
-                "workflow_id": "threat-hunt",
-                "trigger_type": "intel",
-                "finding_ids": [],
-                "hypothesis": HYPOTHESIS,
-                "hypothesis_subjects": {HYPOTHESIS: ["ip:203.0.113.7"]},
-                "entity_key": "ip:203.0.113.7",
-            },
-        }
-    ]
+    assert result == {"inserted": 1, "keys": 2, "skipped_recent": 0}
+    assert len(captured) == 1
+    payload = captured[0]["payload"]
+    assert captured[0]["kind"] == "schedule"
+    assert captured[0]["priority"] == "low"
+    # The hypothesis and the subjects key are the same string, or kept_subjects
+    # drops the subjects on the way to the board.
+    statement = payload["hypothesis"]
+    assert payload["hypothesis_subjects"] == {statement: [KEY, OTHER_KEY]}
+    assert payload == {
+        "workflow_id": "threat-hunt",
+        "trigger_type": "intel",
+        "finding_ids": [],
+        "hypothesis": statement,
+        "hypothesis_subjects": {statement: [KEY, OTHER_KEY]},
+    }
 
 
-def test_covered_indicator_is_not_enqueued(monkeypatch):
+def test_no_uncovered_key_is_no_row(monkeypatch):
     captured = _capture_intake(monkeypatch)
-    monkeypatch.setattr(
-        "services.daemon.threat_feed_poller._queued_intel_entity_keys",
-        lambda: set(),
-    )
-    monkeypatch.setattr(
-        feed,
-        "propose_hunts_from_recent_indicators",
-        lambda: {
-            "proposals": [],
-            "running": 1,
-            "concluded": 1,
-        },
-    )
+    _offers(monkeypatch)
 
     result = ThreatFeedPoller().offer_uncovered_indicators_to_intake()
 
     assert captured == []
-    assert result == {"inserted": 0, "skipped_queued": 0}
+    assert result == {"inserted": 0, "keys": 0, "skipped_recent": 0}
 
 
-def test_second_poll_while_queued_does_not_duplicate(monkeypatch):
+def test_a_key_already_offered_is_left_out_and_the_rest_still_go(monkeypatch):
     captured = _capture_intake(monkeypatch)
-    monkeypatch.setattr(
-        "services.daemon.threat_feed_poller._queued_intel_entity_keys",
-        lambda: {"ip:203.0.113.7"},
-    )
-    monkeypatch.setattr(
-        feed,
-        "propose_hunts_from_recent_indicators",
-        lambda: {"proposals": [PROPOSAL]},
-    )
+    _offers(monkeypatch, KEY, OTHER_KEY, already=[KEY])
+
+    result = ThreatFeedPoller().offer_uncovered_indicators_to_intake()
+
+    assert result == {"inserted": 1, "keys": 1, "skipped_recent": 1}
+    subjects = captured[0]["payload"]["hypothesis_subjects"]
+    assert list(subjects.values()) == [[OTHER_KEY]]
+
+
+def test_every_key_already_offered_is_no_row(monkeypatch):
+    captured = _capture_intake(monkeypatch)
+    _offers(monkeypatch, KEY, OTHER_KEY, already=[KEY, OTHER_KEY])
 
     result = ThreatFeedPoller().offer_uncovered_indicators_to_intake()
 
     assert captured == []
-    assert result == {"inserted": 0, "skipped_queued": 1}
+    assert result == {"inserted": 0, "keys": 0, "skipped_recent": 2}
 
 
-def test_a_queued_nightly_hunt_does_not_block_an_intel_offer(monkeypatch):
-    from services.daemon.threat_feed_poller import _queued_intel_entity_keys
+def test_a_refused_insert_is_reported_not_raised(monkeypatch):
+    def _boom(**_kwargs):
+        raise RuntimeError("no database")
 
-    rows = [
-        SimpleNamespace(
-            payload={
-                "trigger_type": "scheduled",
-                "workflow_id": "threat-hunt",
-                "hypothesis": "nightly",
-            }
-        ),
-        SimpleNamespace(
-            payload={"trigger_type": "intel", "entity_key": "ip:203.0.113.7"}
-        ),
-    ]
+    monkeypatch.setattr("services.daemon.orchestrator.insert_intake_trigger", _boom)
+    _offers(monkeypatch, KEY)
 
-    class Session:
-        def query(self, model):
-            return self
-
-        def filter(self, *a, **k):
-            return self
-
-        def all(self):
-            return rows
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    db = SimpleNamespace(session_scope=lambda: Session())
-    monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
-
-    assert _queued_intel_entity_keys() == {"ip:203.0.113.7"}
+    assert ThreatFeedPoller().offer_uncovered_indicators_to_intake() == {
+        "error": "no database"
+    }

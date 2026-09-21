@@ -2,18 +2,34 @@
 
 Registered as a scheduled task by `daemon/scheduler.py` when the
 `cloudforce_one` integration is enabled. No-op when disabled.
+
+After the upsert loop it offers the poll's uncovered indicators to the Intake
+as one case-less `kind="schedule"` row carrying every key (#1009). It does not
+open the hunt; the drain tick launches it.
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 from core.config import get_settings
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# How long a key an intel row already named stays spoken for. Coverage cannot
+# answer this: `check_coverage` reads `workflow_runs.trigger_context` for the
+# in-flight arm, and a hunt the orchestrator launches never gets a
+# `workflow_runs` row (it enqueues the job directly and only
+# `agent_runs_router` and `WorkflowsService.execute_workflow` call
+# `begin_run`), while the concluded arm reads `episodic_verdicts` and a hunt
+# that gathered nothing writes an `episodic_gaps` row instead. So a hunted key
+# reads `uncovered` again on the next poll, and without this window the poller
+# would re-launch the same hunt every interval forever. A constant, not a
+# settings field, for the reason #905 gives about its own cap.
+INTEL_RECHECK_AFTER = timedelta(days=7)
 
 
 # Track the last successful poll per (source, collection_id) so we only ask
@@ -136,19 +152,27 @@ class ThreatFeedPoller:
                 "errors": errors,
             },
         }
-        summary["intake"] = self.offer_uncovered_indicators_to_intake()
+        # Only a poll that wrote something can have uncovered a new key, and a
+        # poll whose collections all errored wrote nothing it can vouch for.
+        if total_inserted or total_updated:
+            summary["intake"] = self.offer_uncovered_indicators_to_intake()
         if total_seen or errors:
             logger.info("Threat feed poll: %s", summary)
         return summary
 
     def offer_uncovered_indicators_to_intake(self) -> Dict[str, Any]:
-        """Offer each uncovered recent indicator as a case-less schedule row.
+        """Offer this poll's uncovered keys as one case-less schedule row.
 
-        Uses the same coverage check #905 uses. Does not open the hunt: the
-        drain tick launches it. A queued intel row for the same entity_key is
-        not inserted again.
+        One row per poll, not one per key: up to 200 low-priority hunts against
+        the hourly cost brake would let a feed decide when critical detections
+        stop launching. The keys that did not make this row are still uncovered
+        on the next poll and go into its row.
+
+        Does not open the hunt: the drain tick launches it. Keys an intel row
+        already named are skipped for `INTEL_RECHECK_AFTER`.
         """
         try:
+            from core.memory.hunt_coverage import build_proposal
             from core.threat_intel.threat_feed_service import (
                 propose_hunts_from_recent_indicators,
             )
@@ -163,17 +187,27 @@ class ThreatFeedPoller:
             logger.warning("feed hunt proposals failed: %s", e)
             return {"error": str(e)}
 
-        queued = _queued_intel_entity_keys()
-        inserted = 0
-        skipped_queued = 0
+        spoken_for = _keys_already_offered()
+        keys: List[str] = []
+        skipped = 0
         for proposal in result.get("proposals") or []:
-            entity_key = proposal.get("entity_key")
-            if not entity_key:
+            key = proposal.get("entity_key")
+            if not key or key in keys:
                 continue
-            if entity_key in queued:
-                skipped_queued += 1
+            if key in spoken_for:
+                skipped += 1
                 continue
-            body = proposal.get("proposal") or {}
+            keys.append(key)
+
+        if not keys:
+            return {"inserted": 0, "keys": 0, "skipped_recent": skipped}
+
+        # One statement for the whole row, minted where the coverage proposal
+        # mints its own: `kept_subjects` drops subjects whose statement text is
+        # not the one being put up, so the hypothesis and the subjects key have
+        # to be the same string.
+        body = build_proposal(keys, [])
+        try:
             trigger_id = insert_intake_trigger(
                 kind="schedule",
                 priority="low",
@@ -181,25 +215,33 @@ class ThreatFeedPoller:
                     "workflow_id": "threat-hunt",
                     "trigger_type": "intel",
                     "finding_ids": [],
-                    "hypothesis": body.get("hypothesis"),
-                    "hypothesis_subjects": body.get("hypothesis_subjects"),
-                    "entity_key": entity_key,
+                    "hypothesis": body["hypothesis"],
+                    "hypothesis_subjects": body["hypothesis_subjects"],
                 },
             )
-            if trigger_id is None:
-                skipped_queued += 1
-                continue
-            inserted += 1
-            queued.add(entity_key)
-        offered = {"inserted": inserted, "skipped_queued": skipped_queued}
-        if inserted or skipped_queued:
-            logger.info("Uncovered feed indicators offered to intake: %s", offered)
+        except Exception as e:  # noqa: BLE001 — a refused insert is not a failed poll
+            logger.warning("could not offer uncovered indicators to intake: %s", e)
+            return {"error": str(e)}
+
+        offered = {
+            "inserted": 1 if trigger_id else 0,
+            "keys": len(keys),
+            "skipped_recent": skipped,
+        }
+        logger.info("Uncovered feed indicators offered to intake: %s", offered)
         return offered
 
 
-def _queued_intel_entity_keys() -> set:
-    """Entity keys already sitting on a queued intel schedule row."""
+def _keys_already_offered() -> Set[str]:
+    """Keys an intel row has named and that are not due a fresh look yet.
+
+    One query, filtered on the payload rather than read back and sifted in
+    Python. A row still `queued` counts however old it is, so a poll while one
+    waits cannot restate its keys.
+    """
     try:
+        from sqlalchemy import or_
+
         from core.storage.connection import get_db_manager
         from core.storage.models import IntakeTrigger
     except Exception as e:  # noqa: BLE001
@@ -208,22 +250,26 @@ def _queued_intel_entity_keys() -> set:
     try:
         with get_db_manager().session_scope() as session:
             rows = (
-                session.query(IntakeTrigger)
+                session.query(IntakeTrigger.payload)
                 .filter(
                     IntakeTrigger.kind == "schedule",
-                    IntakeTrigger.state == "queued",
+                    IntakeTrigger.payload["trigger_type"].astext == "intel",
+                    or_(
+                        IntakeTrigger.state == "queued",
+                        IntakeTrigger.created_at >= utcnow() - INTEL_RECHECK_AFTER,
+                    ),
                 )
                 .all()
             )
     except Exception as e:  # noqa: BLE001
-        logger.warning("could not read queued intel triggers: %s", e)
+        logger.warning("could not read prior intel triggers: %s", e)
         return set()
-    keys = set()
-    for row in rows:
-        payload = row.payload or {}
-        if payload.get("trigger_type") != "intel":
+    keys: Set[str] = set()
+    for (payload,) in rows:
+        declared = (payload or {}).get("hypothesis_subjects")
+        if not isinstance(declared, dict):
             continue
-        key = payload.get("entity_key")
-        if key:
-            keys.add(key)
+        for subjects in declared.values():
+            if isinstance(subjects, list):
+                keys.update(key for key in subjects if isinstance(key, str) and key)
     return keys
