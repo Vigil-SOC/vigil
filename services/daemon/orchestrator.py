@@ -1327,8 +1327,11 @@ class Orchestrator:
 
         completeness = len(completed_steps) / total_steps if total_steps > 0 else 0
         # The one threshold the orchestrator decides on; a literal, not a
-        # ResponseConfig field, recorded as such (#917).
+        # ResponseConfig field, recorded as such (#917). A missing summary
+        # fails the review on its own, so it is recorded too.
         rule = decision_rule("review.completeness_floor", 0.8, completeness)
+        if not summary:
+            rule = f"{rule}; {decision_rule('review.summary', 'missing')}"
 
         if completeness >= 0.8 and summary:
             self._update_investigation_status(inv_id, "completed")
