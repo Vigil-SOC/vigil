@@ -402,9 +402,7 @@ def _unexpired_clause(now: datetime):
     """Live rows: no expiry, or a window that has not closed."""
     from core.storage.models import ThreatIndicator
 
-    return (ThreatIndicator.valid_until.is_(None)) | (
-        ThreatIndicator.valid_until > now
-    )
+    return (ThreatIndicator.valid_until.is_(None)) | (ThreatIndicator.valid_until > now)
 
 
 def lookup_indicators(
