@@ -8,6 +8,7 @@ import { useWorkflows, useAgents, useAgentMeta, useSkills } from './useWorkflows
 import { workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
 import type { ConsoleScreenProps } from '../../shared/types'
+import { Cost } from '../../shared/cost'
 
 type WfTab = 'workflows' | 'agents' | 'skills'
 
@@ -746,7 +747,7 @@ function fmtStarted(iso?: string | null): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
 
-function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
+export function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
   const [runs, setRuns] = useState<WfRun[]>([])
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -1090,7 +1091,7 @@ function RunRow({ run, onRemoved }: { run: WfRun; onRemoved: () => void }) {
         <td className="muted">{fmtStarted(run.started_at)}</td>
         <td className="muted">{fmtDuration(run.duration_ms)}</td>
         <td className="muted">{run.triggered_by || '—'}</td>
-        <td className="muted">{run.total_cost_usd ? `$${run.total_cost_usd.toFixed(3)}` : '—'}</td>
+        <td className="muted"><Cost usd={run.total_cost_usd} digits={3} /></td>
         <td className="tight" onClick={(e) => e.stopPropagation()}><RemoveRun run={run} onRemoved={onRemoved} /></td>
       </tr>
       {open && (
@@ -1197,7 +1198,7 @@ function RunBar({ d, hunt, onSteered }: { d: WfRunDetail; hunt: HuntView | null;
       <span className="flex-1" />
       <div className="meta">
         {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
-        {typeof cost === 'number' && <span>$<b>{cost.toFixed(2)}</b>{ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>}
+        <span><Cost usd={cost} />{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
         {spent !== null && (
           <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
             <div className="budget-fill" style={{ width: `${spent}%` }} />
@@ -1862,7 +1863,7 @@ function ComposeDetail({ d }: { d: WfRunDetail }) {
                     <td>{agentMeta(p.agent_id).label}{p.error && <span className="ml-2" style={{ color: 'var(--crit)' }} title={p.error}>⚠</span>}</td>
                     <td className="tight"><span style={{ color: runStatusColor(p.status) }}>{p.status}</span></td>
                     <td className="muted tight">{fmtDuration(p.duration_ms)}</td>
-                    <td className="muted tight">{p.cost_usd ? `$${p.cost_usd.toFixed(3)}` : '—'}</td>
+                    <td className="muted tight"><Cost usd={p.cost_usd} digits={3} /></td>
                   </tr>
                 ))}
               </tbody>

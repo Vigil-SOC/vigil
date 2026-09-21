@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Toggle, NumberInput } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
+import { Cost, fmtCost } from '../../shared/cost'
 import { useAutoOps, type Investigation, type OrchestratorStatus } from './useAutoOps'
 import { StatusBadge, PrioBadge } from './statusBadge'
 import InvestigationDetail from './InvestigationDetail'
@@ -150,7 +151,7 @@ export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }:
             onClick={k.statuses.length ? () => toggleFilter(k.statuses) : undefined}
           />
         ))}
-        <KpiCell label="Total Cost" value={`$${cost.total_cost_usd?.toFixed(2) ?? '0.00'}`} note="cumulative spend" />
+        <KpiCell label="Total Cost" value={fmtCost(cost.total_cost_usd)} note="cumulative spend" />
       </div>
 
       {/* ---------- hourly budget (only meaningful while enabled) ---------- */}
@@ -248,7 +249,7 @@ function InvestigationRow({
         </span>
       </td>
       <td>{inv.iteration_count}</td>
-      <td className="muted">${inv.cost_usd?.toFixed(3)}</td>
+      <td className="muted"><Cost usd={inv.cost_usd} digits={3} /></td>
       <td className="muted">{inv.created_at ? new Date(inv.created_at).toLocaleString() : '—'}</td>
       <td>
         <span className="row-act">
