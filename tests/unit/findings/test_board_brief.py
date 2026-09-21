@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
+from core.skills.skill_library import LIBRARY_ROOT, load_skills, read_skill
+
 # ---------------------------------------------------------------------------
 # Fixtures — synthetic findings and cases
 # ---------------------------------------------------------------------------
@@ -199,48 +201,29 @@ def determine_trend(exposures_30d, exposures_60d, exposures_90d):
 # ---------------------------------------------------------------------------
 
 class TestReporterAgentConfig:
-    """Verify the Reporter agent is configured for board briefs."""
+    """The reporter delegates report writing to the executive-summary skill (#929)."""
 
     def test_reporter_agent_exists(self):
         """Reporter agent must exist in AGENT_CONFIGS."""
         from core.agents.builtins import BUILTIN_AGENTS
         assert any(r["id"] == "reporter" for r in BUILTIN_AGENTS)
 
-    def test_reporter_methodology_includes_board_brief(self):
-        """Reporter methodology must reference the board brief report type."""
+    def test_reporter_methodology_points_at_the_skill_not_the_procedure(self):
+        """The procedure lives once, in the skill; the profile only refers to it."""
         from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"]
-        assert "BOARD BRIEF" in methodology
-        assert "board brief" in methodology.lower() or "board-brief" in methodology.lower()
+        reporter = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]
+        assert "read_skill" in reporter["recommended_tools"]
+        methodology = reporter["methodology"]
+        assert 'read_skill("executive-summary")' in methodology
+        for ported in ("BOARD BRIEF", "30/60/90", "Key Metrics", "templates/board-brief"):
+            assert ported not in methodology
 
-    def test_reporter_methodology_mentions_risk_posture(self):
-        """Board brief methodology must mention risk posture indicator."""
+    def test_reporter_base_prompt_renders_with_the_skill_listed(self):
         from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"]
-        assert "RED" in methodology
-        assert "YELLOW" in methodology
-        assert "GREEN" in methodology
-
-    def test_reporter_methodology_mentions_key_metrics(self):
-        """Board brief methodology must reference all four key metrics."""
-        from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"].lower()
-        assert "kill chain" in methodology
-        assert "detection coverage" in methodology
-        assert "remediation" in methodology
-        assert "open critical" in methodology
-
-    def test_reporter_methodology_mentions_trend(self):
-        """Board brief methodology must mention 30/60/90 day trend."""
-        from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"]
-        assert "30/60/90" in methodology
-
-    def test_reporter_no_cve_instruction(self):
-        """Board brief methodology must instruct no CVEs in main body."""
-        from core.agents.builtins import BUILTIN_AGENTS
-        methodology = {r["id"]: r for r in BUILTIN_AGENTS}["reporter"]["methodology"].lower()
-        assert "no cve" in methodology
+        from core.agents.prompts import prompt_for_row
+        prompt = prompt_for_row({r["id"]: r for r in BUILTIN_AGENTS}["reporter"])
+        assert "<available_skills>" in prompt
+        assert "- executive-summary:" in prompt
 
     def test_reporter_description_updated(self):
         """Reporter description should mention board briefs."""
@@ -250,22 +233,75 @@ class TestReporterAgentConfig:
 
 
 # ---------------------------------------------------------------------------
-# Tests — Board brief template
+# Tests — executive-summary skill body (the ported methodology)
+# ---------------------------------------------------------------------------
+
+SKILL_DIR = LIBRARY_ROOT / "executive-summary"
+TEMPLATE_PATH = SKILL_DIR / "assets" / "board-brief.md"
+
+
+def _skill_body():
+    return read_skill("executive-summary", roots=[LIBRARY_ROOT])["content"]
+
+
+class TestExecutiveSummarySkill:
+    """The report-type methodology moved from the reporter profile into the skill."""
+
+    def test_skill_loads_from_the_library_and_serves_its_asset(self):
+        skills = {s.name: s for s in load_skills([LIBRARY_ROOT])}
+        assert skills["executive-summary"].path == SKILL_DIR
+        asset = read_skill("executive-summary", "assets/board-brief.md", roots=[LIBRARY_ROOT])
+        assert asset["file"] == "assets/board-brief.md"
+        assert asset["content"] == TEMPLATE_PATH.read_text()
+
+    def test_skill_methodology_includes_board_brief(self):
+        body = _skill_body()
+        assert "BOARD BRIEF" in body
+        assert 'read_skill("executive-summary", "assets/board-brief.md")' in body
+        assert "core/agents/templates" not in body
+
+    def test_skill_methodology_mentions_risk_posture(self):
+        body = _skill_body()
+        assert "RED" in body
+        assert "YELLOW" in body
+        assert "GREEN" in body
+
+    def test_skill_methodology_mentions_key_metrics(self):
+        body = _skill_body().lower()
+        assert "kill chain" in body
+        assert "detection coverage" in body
+        assert "remediation" in body
+        assert "open critical" in body
+
+    def test_skill_methodology_mentions_trend_and_no_cve(self):
+        body = _skill_body()
+        assert "30/60/90" in body
+        assert "no cve" in body.lower()
+
+    def test_skill_carries_the_report_types(self):
+        body = _skill_body()
+        for section in ("TECHNICAL REPORT", "EXECUTIVE SUMMARY", "Timeline", "Recommendations"):
+            assert section in body
+
+    def test_eval_cases_follow_the_epic_schema(self):
+        cases = json.loads((SKILL_DIR / "evals" / "cases.json").read_text())
+        assert len(cases) >= 3
+        for case in cases:
+            assert set(case) == {"name", "input", "expect"}
+            assert case["name"] and case["input"] and case["expect"]
+
+
+# ---------------------------------------------------------------------------
+# Tests — Board brief template (now the skill's asset)
 # ---------------------------------------------------------------------------
 
 class TestBoardBriefTemplate:
     """Verify the board brief template exists and has required sections."""
 
-    TEMPLATE_PATH = (
-        Path(__file__).parent.parent.parent.parent
-        / "core"
-        / "agents"
-        / "templates"
-        / "board-brief.md"
-    )
+    TEMPLATE_PATH = TEMPLATE_PATH
 
     def test_template_file_exists(self):
-        """Board brief template must exist at core/agents/templates/board-brief.md."""
+        """Template lives under the skill's assets/ directory."""
         assert self.TEMPLATE_PATH.exists(), (
             f"Template not found at {self.TEMPLATE_PATH}"
         )

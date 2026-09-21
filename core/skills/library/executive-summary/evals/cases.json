@@ -1,0 +1,17 @@
+[
+  {
+    "name": "board-brief-carries-posture",
+    "input": "Generate a board brief for case CASE-001 (do not call tools; use only this data): two open critical findings - credential dumping on DC01 and C2 beaconing from WS-42 - both with containment actions in progress, none uncontained; one high finding resolved last month after 36 hours; 5 findings total, all with case coverage.",
+    "expect": ["Risk Posture", "YELLOW", "Key Metrics", "Top 3", "Trend"]
+  },
+  {
+    "name": "executive-summary-for-a-non-technical-reader",
+    "input": "Write an executive summary of case CASE-001 for the CFO (do not call tools; use only this data): findings are T1003 credential dumping on DC01 and exploitation of CVE-2024-3400 on the perimeter firewall, both contained within 4 hours.",
+    "expect": ["Executive Summary", "Business Impact"]
+  },
+  {
+    "name": "technical-report-has-timeline-and-recommendations",
+    "input": "Write a technical report for case CASE-001 (do not call tools; use only this data): credential dumping on DC01 at 02:10 UTC, C2 beaconing from WS-42 from 02:40 UTC, both hosts isolated at 03:15 UTC.",
+    "expect": ["Executive Summary", "Technical Details", "Timeline", "Actions Taken", "Recommendations"]
+  }
+]
