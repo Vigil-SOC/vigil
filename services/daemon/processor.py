@@ -849,15 +849,20 @@ REASONING: [Brief explanation]
                 f"Finding {finding.get('finding_id')} queued for response evaluation"
             )
 
-        if should_respond:
+        # Gate 1 still owns containment. A feed hit is an intake producer: the
+        # same Finding is offered as a detection even when should_respond is
+        # false. The unique queued-finding index collapses a double offer.
+        feed_hits = (finding.get("enrichment") or {}).get("threat_indicators")
+        if should_respond or feed_hits:
             from services.daemon.orchestrator import insert_intake_trigger
 
-            insert_intake_trigger(
+            trigger_id = insert_intake_trigger(
                 kind="detection",
                 finding_id=finding.get("finding_id"),
                 priority=severity or "medium",
             )
-            self.stats["queued_for_investigation"] += 1
-            logger.info(
-                f"Finding {finding.get('finding_id')} queued for autonomous investigation"
-            )
+            if trigger_id is not None:
+                self.stats["queued_for_investigation"] += 1
+                logger.info(
+                    f"Finding {finding.get('finding_id')} queued for autonomous investigation"
+                )
