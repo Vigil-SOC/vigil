@@ -33,8 +33,10 @@ reporting or threat intelligence.
      the indicator type and values.
    - If an MCP server exposes intel tools (reputation, passive DNS, WHOIS,
      sandbox, geolocation), use those too.
-   - If you hold none of these, say so and work from what the finding and
-     memory already contain. Do not invent a lookup result.
+   - If none of these is callable in this turn, say so once and complete the
+     report from what the finding and memory already contain, marking each
+     absent source `not queried`. Never end a turn on an announced lookup,
+     and never invent a lookup result.
 
 4. **Identify actor and infrastructure context.** From the returned data, note
    TTPs, infrastructure overlap, campaign or malware family associations and
@@ -64,6 +66,17 @@ analysis.
 
 ## Output shape
 
-Per indicator: `indicator` (echoed exactly as extracted), `type`, one line per
-`source` with its verdict and `confidence`, then the hunt recommendation.
-Close with the indicators to hunt and the confidence of any attribution.
+Always finish with this report, whatever tools were or were not available.
+One block per external indicator, the indicator echoed exactly as extracted:
+
+```
+indicator: 185.220.101.5
+type: ip
+source: cloudforce_one — c2, tor-exit; confidence: 85 (STIX)
+source: recall_entity — no prior sightings; confidence: n/a
+source: cf_lookup_ip_threat — not queried
+recommendation: hunt
+```
+
+Close with the list of indicators to hunt and the confidence of any
+attribution, labelled as your own where no source supplied one.

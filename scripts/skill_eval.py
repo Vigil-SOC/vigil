@@ -64,11 +64,22 @@ def load_cases(skill: Skill) -> List[Dict[str, Any]]:
     return json.loads((skill.path / "evals" / "cases.json").read_text(encoding="utf-8"))
 
 
+# The base prompt tells the model to call read_skill, but the eval declares no
+# tools; a tool-eager model that tries anyway returns no content at all (Gemini
+# answers MALFORMED_FUNCTION_CALL). Say the body is already here, in one turn.
+_INLINE_NOTE = (
+    "The SKILL.md body of `{name}` follows, already read for you. No tool is "
+    "callable in this turn: do not call read_skill or any lookup; answer in "
+    "full from the input alone, following the skill.\n\n"
+)
+
+
 def system_prompt_for(skill: Skill, role: str, root: Path) -> str:
     body = read_skill(skill.name, roots=[root])["content"]
     return (
         render_base_prompt(role, tools=[READ_SKILL_TOOL], skills=[skill])
         + "\n\n"
+        + _INLINE_NOTE.format(name=skill.name)
         + body
     )
 
