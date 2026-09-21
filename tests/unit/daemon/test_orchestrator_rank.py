@@ -71,7 +71,6 @@ def _orchestrator(**extra) -> Orchestrator:
     orch._create_manual_investigation = AsyncMock()
     orch._decide_trigger = MagicMock()
     orch._data_service = MagicMock()
-    orch._open_case_for_finding = MagicMock(return_value="case-1")
     orch._attach_finding_to_overlap = MagicMock(return_value="case-1")
     orch._in_flight = MagicMock(return_value=0)
     orch._queued_intake_depth = MagicMock(return_value=0)
@@ -349,6 +348,7 @@ async def test_create_investigation_always_saves_assigned(tmp_path):
         findings=[{"finding_id": "f-1", "severity": "high"}],
         trigger_type="finding",
         priority="high",
+        case_id="case-1",
     )
 
     assert orch._save_investigation.call_args[0][0]["status"] == "assigned"

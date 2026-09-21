@@ -46,7 +46,6 @@ def _orchestrator(**extra) -> Orchestrator:
     orch._create_manual_investigation = AsyncMock()
     orch._decide_trigger = MagicMock()
     orch._data_service = MagicMock()
-    orch._open_case_for_finding = MagicMock(return_value="case-1")
     orch._attach_finding_to_overlap = MagicMock(return_value="case-1")
     orch._in_flight = MagicMock(return_value=0)
     orch._queued_intake_depth = MagicMock(return_value=0)
@@ -62,6 +61,15 @@ def test_merged_into_is_wide_enough_for_an_investigation_id():
     assert (
         IntakeTrigger.__table__.c.merged_into.type.length
         == Investigation.__table__.c.investigation_id.type.length
+    )
+
+
+def test_intake_case_id_is_as_wide_as_a_case():
+    from core.storage.models import Case, IntakeTrigger
+
+    assert (
+        IntakeTrigger.__table__.c.case_id.type.length
+        == Case.__table__.c.case_id.type.length
     )
 
 
@@ -177,7 +185,6 @@ async def test_failed_attach_leaves_row_queued():
     orch._attach_finding_to_overlap.assert_called_once_with("f-high", ["inv-1"])
     orch._decide_trigger.assert_not_called()
     orch._create_investigation.assert_not_awaited()
-    orch._open_case_for_finding.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -216,7 +223,8 @@ async def test_a_high_detection_launches_through_the_existing_path():
     kwargs = orch._create_investigation.await_args.kwargs
     assert kwargs["trigger_id"] == 11
     assert kwargs["priority"] == "high"
-    assert kwargs["case_id"] == "case-1"
+    assert kwargs["mint_case"].finding_ids == ["f-high"]
+    assert kwargs["mint_case"].priority == "high"
     orch._log_ai_decision.assert_not_called()
 
 
@@ -260,6 +268,7 @@ async def test_a_failed_cas_creates_no_investigation(tmp_path):
         findings=[HIGH],
         trigger_type="finding",
         priority="high",
+        case_id="case-1",
         trigger_id=4,
     )
 

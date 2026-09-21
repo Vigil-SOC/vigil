@@ -132,7 +132,7 @@ class TestEnqueue:
             },
         ]
         await orch._create_investigation(
-            "incident-response", findings, "alert", "medium"
+            "incident-response", findings, "alert", "medium", case_id="case-1"
         )
         record = orch._save_investigation.call_args[0][0]
 
@@ -154,7 +154,11 @@ class TestEnqueue:
     async def test_a_finding_with_no_entities_carries_no_keys(self, tmp_path):
         orch = _opening(tmp_path)
         await orch._create_investigation(
-            "incident-response", [{"finding_id": "f-1"}], "alert", "medium"
+            "incident-response",
+            [{"finding_id": "f-1"}],
+            "alert",
+            "medium",
+            case_id="case-1",
         )
         record = orch._save_investigation.call_args[0][0]
 

@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import uuid
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -223,6 +224,62 @@ def insert_intake_trigger(
             "intake already has a queued row for finding %s", finding_id or "(none)"
         )
         return None
+
+
+@dataclass(frozen=True)
+class CaseSpec:
+    """Case to mint in the launch transaction. ``case_id`` is assigned before plan files."""
+
+    title: str
+    finding_ids: List[str]
+    priority: str
+    case_id: Optional[str] = None
+
+
+def _new_case_id() -> str:
+    return f"case-{utcnow().strftime('%Y-%m-%d')}-{uuid.uuid4().hex[:8]}"
+
+
+def _human_ask_case_title(
+    hypothesis: Optional[str], findings: List[Dict], workflow_id: str
+) -> str:
+    """Title for a Case minted from a Human Ask: hypothesis first, else the finding."""
+    if hypothesis and str(hypothesis).strip():
+        return str(hypothesis).strip()[:200]
+    if findings:
+        return _infer_title(findings[0], workflow_id)[:200]
+    return _infer_title({}, workflow_id)[:200]
+
+
+def _mint_case(session, spec: CaseSpec) -> str:
+    """Insert a Case and its finding links on the caller's session. Does not commit."""
+    from sqlalchemy import select
+
+    from core.storage.models import Case, Finding
+
+    case_id = spec.case_id or _new_case_id()
+    now = utcnow()
+    case = Case(
+        case_id=case_id,
+        title=(spec.title or "Investigation")[:200],
+        description="",
+        status="open",
+        priority=spec.priority,
+        timeline=[{"timestamp": now.isoformat() + "Z", "event": "Case created"}],
+    )
+    session.add(case)
+    session.flush()
+    if spec.finding_ids:
+        rows = (
+            session.execute(
+                select(Finding).where(Finding.finding_id.in_(spec.finding_ids))
+            )
+            .scalars()
+            .all()
+        )
+        case.findings.extend(rows)
+        session.flush()
+    return case_id
 
 
 class _TriggerAlreadyDecided(Exception):
@@ -547,16 +604,17 @@ class Orchestrator:
             return
 
         workflow_id = select_workflow(finding)
-        # The case opens here, at admission, so the run has one to attach evidence
-        # to from its first step. Failing to open one is logged, not fatal: the
-        # investigation still launches, as it did before cases were opened here.
-        case_id = self._open_case_for_finding(finding, workflow_id, priority)
+        finding_id = finding.get("finding_id")
         await self._create_investigation(
             workflow_id=workflow_id,
             findings=[finding],
             trigger_type="finding",
             priority=priority,
-            case_id=case_id,
+            mint_case=CaseSpec(
+                title=_infer_title(finding, workflow_id)[:200],
+                finding_ids=[finding_id] if finding_id else [],
+                priority=priority,
+            ),
             shutdown_event=shutdown_event,
             trigger_id=trigger_id,
         )
@@ -627,27 +685,6 @@ class Orchestrator:
             logger.error(f"Failed to append trigger id to investigation {inv_id}: {e}")
             return False
 
-    def _open_case_for_finding(
-        self, finding: Dict, workflow_id: str, priority: str
-    ) -> Optional[str]:
-        """Open a case for an admitted finding; ``None`` when one could not be."""
-        finding_id = finding.get("finding_id", "unknown")
-        if not self._data_service:
-            logger.warning(
-                f"No data service; finding {finding_id} launches without a case"
-            )
-            return None
-        case = self._data_service.create_case(
-            _infer_title(finding, workflow_id), [finding_id], priority=priority
-        )
-        case_id = (case or {}).get("case_id")
-        if not case_id:
-            logger.warning(
-                f"Case creation failed for finding {finding_id}; launching without a case"
-            )
-            return None
-        return case_id
-
     async def _create_manual_investigation(
         self,
         item: Dict,
@@ -656,8 +693,8 @@ class Orchestrator:
     ):
         """Create an investigation from a manual request."""
         workflow_id = item.get("workflow_id", "incident-response")
-        finding_ids = item.get("finding_ids", [])
-        case_id = item.get("case_id")
+        finding_ids = item.get("finding_ids") or []
+        case_id = item.get("case_id") or None
         hypothesis = item.get("hypothesis")
         hypothesis_subjects = item.get("hypothesis_subjects")
 
@@ -668,6 +705,14 @@ class Orchestrator:
                 if f:
                     findings.append(f)
 
+        mint = None
+        if not case_id and finding_ids:
+            mint = CaseSpec(
+                title=_human_ask_case_title(hypothesis, findings, workflow_id),
+                finding_ids=list(finding_ids),
+                priority=item.get("priority") or "medium",
+            )
+
         await self._create_investigation(
             workflow_id=workflow_id,
             findings=findings,
@@ -675,6 +720,7 @@ class Orchestrator:
             trigger_type=item.get("trigger_type") or "manual",
             priority=item.get("priority", "medium"),
             case_id=case_id,
+            mint_case=mint,
             hypothesis=hypothesis,
             hypothesis_subjects=hypothesis_subjects,
             shutdown_event=shutdown_event,
@@ -688,12 +734,19 @@ class Orchestrator:
         trigger_type: str,
         priority: str,
         case_id: Optional[str] = None,
+        mint_case: Optional[CaseSpec] = None,
         hypothesis: Optional[str] = None,
         hypothesis_subjects: Optional[Dict[str, List[str]]] = None,
         shutdown_event: Optional[asyncio.Event] = None,
         trigger_id: Optional[int] = None,
     ):
         """Core investigation creation logic."""
+        if mint_case is not None:
+            case_id = case_id or mint_case.case_id or _new_case_id()
+            mint_case = replace(mint_case, case_id=case_id)
+        if findings and not case_id:
+            raise ValueError("a run opened on findings needs a case")
+
         inv_id = f"inv-{utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:8]}"
         total_steps = count_steps(workflow_id)
 
@@ -774,7 +827,9 @@ class Orchestrator:
             "run_id": run_id_for(inv_id),
         }
 
-        saved = self._save_investigation(inv_record, trigger_id=trigger_id)
+        saved = self._save_investigation(
+            inv_record, trigger_id=trigger_id, mint_case=mint_case
+        )
         if not saved:
             logger.warning(
                 "intake row %s already decided; not launching %s",
@@ -1701,9 +1756,17 @@ class Orchestrator:
     # -------------------------------------------------------------------------
 
     def _save_investigation(
-        self, inv_record: Dict, trigger_id: Optional[int] = None
+        self,
+        inv_record: Dict,
+        trigger_id: Optional[int] = None,
+        mint_case: Optional[CaseSpec] = None,
     ) -> bool:
-        """Save a new investigation; with a trigger id, CAS it launched in the same transaction."""
+        """Save a new investigation; with a trigger id, CAS it launched in the same transaction.
+
+        When ``mint_case`` is given, the Case (and ``case_findings``) are written
+        in this session so a crash cannot leave a Case with no run, or a run
+        with no Case.
+        """
         try:
             from sqlalchemy import update
 
@@ -1711,6 +1774,8 @@ class Orchestrator:
             from core.storage.models import IntakeTrigger, Investigation
 
             with get_db_manager().session_scope() as session:
+                if mint_case is not None:
+                    inv_record["case_id"] = _mint_case(session, mint_case)
                 inv = Investigation(
                     investigation_id=inv_record["investigation_id"],
                     case_id=inv_record.get("case_id"),
@@ -1746,6 +1811,7 @@ class Orchestrator:
                     .values(
                         state="launched",
                         investigation_id=inv_record["investigation_id"],
+                        case_id=inv_record.get("case_id"),
                         decided_at=utcnow(),
                     )
                     .returning(IntakeTrigger.id)
