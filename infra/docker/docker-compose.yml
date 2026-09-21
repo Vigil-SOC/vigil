@@ -445,6 +445,11 @@ services:
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Google AI Studio, not Vertex: `vertex` is seeded too, but its Bifrost
+      # shape wants a project, a region and a service-account JSON, and the
+      # project-scoped path refuses a plain key outright. A bare API key is
+      # what `gemini` takes.
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
     volumes:
       # The file is the bootstrap; the volume is where Bifrost keeps what it was

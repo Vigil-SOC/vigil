@@ -823,6 +823,11 @@ _DISCOVERABLE = frozenset({"anthropic", "openai", "ollama"})
 # catalogue's first entry.
 _CATALOG_DEFAULT_PREFERENCE: Dict[str, tuple] = {
     "vertex": ("gemini-2.5-flash", "gemini-2.0-flash", "claude-sonnet-4-5"),
+    # Not `gemini-2.5-flash`, which vertex can still reach: Google AI Studio
+    # answers 404 for it on a key issued after it was retired ("no longer
+    # available to new users"), so flooring a fresh install there hands the
+    # picker a model the key cannot call. The `-latest` alias moves with them.
+    "gemini": ("gemini-flash-latest", "gemini-2.5-flash-lite"),
     # Mid-tier, rather than the opus the bootstrap list leads with or the haiku
     # the marker sweep would otherwise land on.
     "anthropic": ("claude-sonnet-4-6",),
