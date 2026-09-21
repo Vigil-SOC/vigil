@@ -43,6 +43,29 @@ forbidden_modules =
     core.threat_intel
     core.workflows
 
+[importlinter:contract:versioned-api]
+name = the versioned API surface composes the domains; nothing under core imports it back
+type = forbidden
+source_modules =
+    core.agents
+    core.auth
+    core.cases
+    core.chat
+    core.detections
+    core.federation
+    core.findings
+    core.ingestion
+    core.integrations
+    core.llm
+    core.memory
+    core.reporting
+    core.response
+    core.skills
+    core.threat_intel
+    core.workflows
+forbidden_modules =
+    core.api
+
 [importlinter:contract:ingestion]
 name = Federation drives Ingestion, never the reverse
 type = forbidden

@@ -9,9 +9,9 @@ reaches outside `core/`: the **agent layer**'s vocabulary is here because its
 terms collide with the domains' rather than sitting apart from them. A third
 grouping, the **versioned API surface** (`core/api/v1/`), sits above the
 capability domains: it composes them into the frozen HTTP contract and imports
-domains freely. Nothing under `core/` imports it back: where a console router
-and a v1 router answer the same read, the read lives in the domain and both call
-down into it.
+domains freely. Nothing under `core/` imports it back (`.importlinter`): where
+a console router and a v1 router answer the same read, the read lives in the
+domain and both call down into it.
 
 ## Language
 
