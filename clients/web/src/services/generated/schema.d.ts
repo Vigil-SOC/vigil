@@ -9315,7 +9315,7 @@ export interface components {
             run_id: string;
             /**
              * Status
-             * @description running or terminal.
+             * @description queued, running or terminal.
              */
             status: string;
         };
