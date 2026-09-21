@@ -91,18 +91,39 @@ init_sentry()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _startup(app)
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from tools.mcp.vigil import mcp as vigil_mcp
+
     # The MCP session manager runs whether or not the surface is open: the
     # toggle is a runtime one, so turning it on must not need a restart, and
     # with the gate refusing every request the manager simply has nothing to do.
-    from tools.mcp.vigil import mcp as vigil_mcp
-
+    #
     # Built here, not at import: each app carries its own session manager and a
     # manager runs once, so a process that starts the app twice -- a test, a
     # reloader -- needs a new one rather than the same one again.
+    #
     # The app serves at ``/mcp`` of its own accord; mounted at ``/mcp`` that
     # would put the real endpoint at /mcp/mcp. It is the mount that decides
     # where this is served, so the app itself serves at its root.
-    _mcp_gate.app = vigil_mcp.streamable_http_app(streamable_http_path="/")
+    #
+    # Transport security is stated rather than left to the SDK. Its default
+    # host is 127.0.0.1, and on that default it turns on DNS-rebinding
+    # protection with an allow-list of localhost Host headers -- so a request
+    # arriving as vigil.example.com, or as a container or service name, is
+    # refused 421 before any of Vigil's own gates see it. That protection is
+    # for the usual local MCP server, which has no authentication and could
+    # otherwise be driven by a web page that rebound DNS to it. This surface
+    # is the opposite case: it exists to be reached by a caller that is not
+    # Vigil, and McpSurfaceGate already refuses anything without a credential.
+    # Naming hosts here instead would mean keeping a list in step with every
+    # deployment's DNS name, and getting a 421 whenever it drifted.
+    _mcp_gate.app = vigil_mcp.streamable_http_app(
+        streamable_http_path="/",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        ),
+    )
 
     async with vigil_mcp.session_manager.run():
         try:

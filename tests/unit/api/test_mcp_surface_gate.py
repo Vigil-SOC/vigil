@@ -140,3 +140,65 @@ def test_another_token_is_not_the_development_credential():
     from services.api.mcp_surface import _dev_mode_user
 
     assert _dev_mode_user("vgl_mcp_something_else") is None
+
+
+# --- Reachable from somewhere that is not this machine -----------------------
+#
+# The surface exists to be reached by a caller that is not Vigil, so the Host a
+# real deployment carries -- a domain, a container name, a service name -- has
+# to be one it answers. The MCP SDK defaults its host to 127.0.0.1 and, on that
+# default, turns on DNS-rebinding protection with a localhost allow-list: every
+# other Host is refused 421 before Vigil's own gates run. The tests above never
+# reach that check, because 404 and 401 are answered first.
+#
+# The host is set as the client's base URL rather than as a header, because
+# httpx treats a Host header that disagrees with the URL as cross-origin and
+# drops the Authorization header -- which would fail this test for the wrong
+# reason.
+
+
+class _SomeoneWithACredential:
+    username = "nestor"
+
+
+@pytest.fixture
+def client_on_a_domain():
+    from fastapi.testclient import TestClient
+
+    from services.api.main import app
+
+    with TestClient(app, base_url="http://vigil.example.com") as c:
+        yield c
+
+
+def test_a_caller_on_a_domain_reaches_the_server(client_on_a_domain):
+    """A deployment behind a domain name is the point, not an edge case."""
+    with patch("services.api.mcp_surface.is_enabled", return_value=True), patch(
+        "services.api.mcp_surface.authenticate",
+        return_value=_SomeoneWithACredential(),
+    ):
+        response = client_on_a_domain.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "not-vigil", "version": "1"},
+                },
+            },
+            headers={
+                "Authorization": "Bearer vgl_mcp_a_working_one",
+                "Accept": "application/json, text/event-stream",
+            },
+        )
+
+    assert response.status_code != 421, (
+        "The MCP surface refused a Host that is not localhost. Its transport "
+        "security is being inferred from the SDK's 127.0.0.1 default, which "
+        "allow-lists localhost only -- so every deployment behind a domain, a "
+        "container name or an ingress is unreachable."
+    )
+    assert response.status_code == 200
