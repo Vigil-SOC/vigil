@@ -1,5 +1,5 @@
-# Start an agent run and report its outcome. POST enqueues plain JSON and writes
-# nothing; GET makes only the two reads Python is permitted against agent_events.
+# Start an agent run and report its outcome. POST enqueues and writes only
+# workflow_runs; GET reads agent_events (two permitted reads) then workflow_runs.
 
 from __future__ import annotations
 
@@ -139,8 +139,9 @@ def _has_run_row(session: Any, run_id: str) -> bool:
 # against agent_events; workflow_runs says whether the run was accepted at all.
 @router.get("/{run_id}", response_model=RunStatusResponse)
 def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
+    # Canonical form: workflow_runs.run_id is text, so the compare there is exact.
     try:
-        uuid.UUID(run_id)
+        run_id = str(uuid.UUID(run_id))
     except ValueError:
         raise HTTPException(status_code=404, detail=f"no such run: {run_id}") from None
 

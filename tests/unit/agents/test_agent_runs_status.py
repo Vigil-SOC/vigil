@@ -34,7 +34,9 @@ class FakeSession:
         if "workflow_runs" in sql:
             return _one(1 if self.run_row else None)
         if "kind = 'terminal'" in sql:
-            return _one(SimpleNamespace(payload=self.terminal) if self.terminal else None)
+            return _one(
+                SimpleNamespace(payload=self.terminal) if self.terminal else None
+            )
         return _one(SimpleNamespace(events=self.events))
 
 
@@ -68,12 +70,24 @@ class TestStatus:
 
     # Once the worker has written to the ledger, workflow_runs no longer decides.
     def test_events_on_the_ledger_mean_running(self):
-        response = _client(FakeSession(events=3, run_row=True)).get(f"/api/agent-runs/{RUN}")
+        response = _client(FakeSession(events=3, run_row=False)).get(
+            f"/api/agent-runs/{RUN}"
+        )
         assert response.json()["status"] == "running"
         assert response.json()["events"] == 3
 
+    # workflow_runs.run_id is text, so a run must be found under any UUID spelling.
+    def test_a_queued_run_is_found_under_an_uppercase_id(self):
+        response = _client(FakeSession(run_row=True)).get(
+            f"/api/agent-runs/{RUN.upper()}"
+        )
+        assert response.status_code == 200
+        assert response.json()["run_id"] == RUN
+
     def test_a_terminal_event_carries_its_outcome(self):
-        session = FakeSession(events=5, terminal={"outcome": "completed", "reason": "done"})
+        session = FakeSession(
+            events=5, terminal={"outcome": "completed", "reason": "done"}
+        )
         body = _client(session).get(f"/api/agent-runs/{RUN}").json()
         assert body["status"] == "terminal"
         assert body["outcome"] == "completed"

@@ -46,7 +46,8 @@ export VIGIL_ACTOR="${VIGIL_ACTOR:-$(whoami)}"
 
 mkdir -p logs
 cd services/agent
-[ -d node_modules ] || npm install
+# The binary, not just the directory: a partial install has no tsx to run.
+[ -x node_modules/.bin/tsx ] || npm install
 
 # Runs node_modules/.bin/tsx directly rather than through `npx tsx`: with npx,
 # $! is npx's PID, and killing it orphans the tsx child that binds the port, so
