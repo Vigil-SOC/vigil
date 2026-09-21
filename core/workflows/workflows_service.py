@@ -1,14 +1,12 @@
 """Workflows service for discovering, parsing, and executing WORKFLOW.md workflow definitions."""
 
 import logging
-import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-import yaml
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.queue import new_run_id
+from core.frontmatter import FrontmatterError, split_frontmatter
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.workflow_run_service import WorkflowRunService
@@ -158,28 +156,15 @@ def _nothing_to_run(
     return "" if workflow.phases else "phases"
 
 
-# Real YAML rather than the regex reader this replaced. That reader could not carry
-# a phase list, and PyYAML has been a declared dependency the whole time it avoided it.
-def _parse_yaml_frontmatter(content: str) -> Dict[str, Any]:
-    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
-    if not match:
-        return {}
-
+# A workflow with no or unreadable front matter is one with empty metadata; the
+# body is still loaded so the file shows up and the operator can see what is wrong.
+def _read_workflow_file(content: str) -> Tuple[Dict[str, Any], str]:
     try:
-        parsed = yaml.safe_load(match.group(1))
-    except yaml.YAMLError as exc:
+        metadata, body_start = split_frontmatter(content)
+    except FrontmatterError as exc:
         logger.warning("unreadable workflow front matter: %s", exc)
-        return {}
-
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _get_frontmatter_end(content: str) -> int:
-    """Get the character index where frontmatter ends and body begins."""
-    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
-    if match:
-        return match.end()
-    return 0
+        return {}, content[exc.body_offset :].strip()
+    return metadata or {}, content[body_start:].strip()
 
 
 class WorkflowDefinition:
@@ -393,9 +378,7 @@ class WorkflowsService:
 
             try:
                 content = workflow_file.read_text(encoding="utf-8")
-                metadata = _parse_yaml_frontmatter(content)
-                body_start = _get_frontmatter_end(content)
-                body = content[body_start:].strip()
+                metadata, body = _read_workflow_file(content)
 
                 workflow_id = workflow_dir.name
                 workflow = WorkflowDefinition(

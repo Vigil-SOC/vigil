@@ -2,10 +2,7 @@
 # through a Depends provider, so a test swaps in a stub via
 # app.dependency_overrides and never touches a database, an LLM or an MCP process.
 
-import os
 from types import SimpleNamespace
-
-os.environ.setdefault("DEV_MODE", "true")
 
 import pytest
 from fastapi import FastAPI

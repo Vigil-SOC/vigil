@@ -9,13 +9,6 @@ DB-touching flows (authenticate_user, check_permission) are covered by
 integration tests.
 """
 
-import os
-
-# Pin a deterministic JWT secret before importing auth_service so the
-# module's import-time secret loader uses it. Without this, running the
-# test suite without JWT_SECRET_KEY in DEV_MODE=false would fail.
-os.environ.setdefault("DEV_MODE", "true")
-
 import jwt
 import pytest
 

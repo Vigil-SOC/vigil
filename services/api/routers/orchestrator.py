@@ -92,10 +92,17 @@ async def get_orchestrator_status():
         active = [
             i for i in investigations if i.get("status") in ("assigned", "executing")
         ]
-        queued = [i for i in investigations if i.get("status") == "queued"]
         completed = [i for i in investigations if i.get("status") == "completed"]
         failed = [i for i in investigations if i.get("status") == "failed"]
         review = [i for i in investigations if i.get("status") == "review_submitted"]
+
+        # Waiting room is intake_triggers. Count it here like GET /intake;
+        # swallowing a miss as 0 would look like an empty queue.
+        from core.storage.connection import get_db_manager
+        from core.storage.models import IntakeTrigger
+
+        with get_db_manager().session_scope() as session:
+            queued = session.query(IntakeTrigger).filter_by(state="queued").count()
 
         max_agents = 3
         try:
@@ -112,7 +119,7 @@ async def get_orchestrator_status():
             "enabled": enabled,
             "active_agents": len(active),
             "max_concurrent_agents": max_agents,
-            "queued": len(queued),
+            "queued": queued,
             "completed": len(completed),
             "failed": len(failed),
             "pending_review": len(review),
@@ -497,9 +504,11 @@ class ScanFindingsRequest(BaseModel):
 
 @router.post("/scan-findings")
 async def scan_existing_findings(request: ScanFindingsRequest):
-    """Insert human_ask trigger rows for matching findings not already investigated.
+    """Insert detection trigger rows for matching findings not already investigated.
 
-    The intake tick ranks and launches them when a slot is free.
+    A scan is a rerun of Gate 1 by hand, not a Human Ask, so the row merges
+    and dedups with other detections. The intake tick ranks and launches them
+    when a slot is free.
     """
     try:
         from core.storage.connection import get_db_manager
@@ -528,20 +537,22 @@ async def scan_existing_findings(request: ScanFindingsRequest):
                     continue
                 to_investigate.append({"finding_id": fid, "severity": f.severity})
 
-        from services.daemon.orchestrator import insert_intake_trigger
+        from services.daemon.orchestrator import (
+            insert_intake_trigger,
+            intake_severity_band,
+        )
 
         queued = 0
         for finding_data in to_investigate:
             try:
                 trigger_id = insert_intake_trigger(
-                    kind="human_ask",
-                    priority=finding_data.get("severity") or "medium",
+                    kind="detection",
+                    priority=intake_severity_band(
+                        "detection",
+                        finding_severity=finding_data.get("severity"),
+                    ),
                     finding_id=finding_data.get("finding_id"),
-                    payload={
-                        "workflow_id": "incident-response",
-                        "finding_ids": [finding_data["finding_id"]],
-                        "trigger_type": "scan",
-                    },
+                    payload={"trigger_type": "scan"},
                 )
                 if trigger_id is not None:
                     queued += 1

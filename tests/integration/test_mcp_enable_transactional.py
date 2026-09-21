@@ -14,10 +14,7 @@ not an end-to-end MCP spin-up.
 
 from __future__ import annotations
 
-import os
 from contextlib import contextmanager
-
-os.environ.setdefault("DEV_MODE", "true")
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -34,6 +31,12 @@ def client():
 
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _authenticated(client, authenticate_app):
+    """The suite runs with auth on; these are contract checks, not auth checks."""
+    authenticate_app(client.app)
 
 
 @contextmanager

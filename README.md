@@ -2,7 +2,7 @@
 
 Vigil is the leading open source AI SOC: an agentic SOC with 13 specialized AI agents, 30+ MCP integrations, and 7,200+ community detection rules, released under Apache 2.0. Your playbooks are plain-text files, your agent logic is readable Python, and your integrations use an open standard ([MCP](https://modelcontextprotocol.io/)). Every proprietary AI SOC on the market is a black box you rent. Vigil is a capability you own.
 
-Vigil pairs with [LogLM](https://www.deeptempo.ai/platform), a cybersecurity foundation model for [behavioral anomaly detection](https://www.deeptempo.ai/learning-center/behavioral-anomaly-detection), to form the [Intelligent Defense Platform](https://www.deeptempo.ai) from [DeepTempo](https://www.deeptempo.ai). Measured in the open by [SOCBench](https://socbench.org). Docs and community: [vigilsoc.org](https://vigilsoc.org).
+Vigil runs on its own: a local clone, Docker, and any LLM provider (a local Ollama model works). [LogLM](https://www.deeptempo.ai/platform), DeepTempo's cybersecurity foundation model for [behavioral anomaly detection](https://www.deeptempo.ai/learning-center/behavioral-anomaly-detection), is an optional MCP integration you enable in Settings, not a prerequisite. Measured in the open by [SOCBench](https://socbench.org). Docs and community: [vigilsoc.org](https://vigilsoc.org).
 
 The inspiration for the project is in part StackStorm and the experience of some of the founders of this project had in building the Linux Foundation project [StackStorm](https://github.com/StackStorm/st2) and in supporting Netflix and others who used StackStorm to achieve, carefully, very high levels of automation.  You'll sometimes hear us talking about the journey towards full autonomy and lessons learned.  One lesson - the system can only demote itself and only humans can promote additional autonomy.  You'll find this playing out on the way Vigil is designed; for example Vigil will check thresholds for projected costs and confidence levels in completion before executing an automation.  If it looks dodgy or too expensive, it'll double check with the humans before moving ahead.  
 
@@ -42,14 +42,17 @@ Workflows are the operational core of Vigil. Each workflow chains multiple speci
 
 **How it works:** Say `"Run incident response on finding f-20260215-abc123"` and the system sequences four agents — triage scores the alert, investigator digs into root cause, responder submits containment actions with confidence-based approval, and reporter generates the final documentation.
 
-Workflows are defined as `WORKFLOW.md` files in the `workflows/` directory and are fully customizable. Create your own by defining the agent sequence, tools used, and phase-by-phase instructions.
+Workflows are defined as `WORKFLOW.md` files under `core/workflows/definitions/` and are fully customizable. Create your own by defining the agent sequence, tools used, and phase-by-phase instructions.
 
 ```
-workflows/
+core/workflows/definitions/
 ├── incident-response/WORKFLOW.md
 ├── full-investigation/WORKFLOW.md
 ├── threat-hunt/WORKFLOW.md
-└── forensic-analysis/WORKFLOW.md
+├── forensic-analysis/WORKFLOW.md
+├── root-cause-analysis/WORKFLOW.md
+├── cloud-incident/WORKFLOW.md
+└── shadow-adjudication/WORKFLOW.md
 ```
 
 ### Create Your Own Workflow in 60 Seconds
@@ -107,7 +110,7 @@ Scaffold a new workflow instantly with the CLI:
 
 ```bash
 python scripts/create_workflow.py phishing-triage
-# creates workflows/phishing-triage/WORKFLOW.md with a commented template
+# creates core/workflows/definitions/phishing-triage/WORKFLOW.md with a commented template
 ```
 
 ---
@@ -143,9 +146,11 @@ cd vigil
 ./start.sh
 ```
 
-> **Note:** Docker must be running before you start. The startup script handles everything else: creates the Python virtual environment, installs dependencies, starts PostgreSQL, initializes the database with a default admin user, installs frontend packages, and launches both backend and frontend servers.
+> **Note:** Docker must be running before you start. The startup script handles everything else: provisions the Python virtual environment, installs dependencies, starts PostgreSQL, Redis, and the Bifrost LLM gateway in Docker, starts a host Ollama if one is installed (optional — the script continues without it), initializes the database schema and reference data, installs frontend packages, and launches the backend, frontend, and agent layer. No LogLM or cloud API key is needed to reach a running UI.
 
-Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full auth is WIP and while it will turn on it is untested. To activate auth set `DEV_MODE=false`.
+To run workflows, set `AGENT_INTERNAL_TOKEN` before the first start: `cp env.example .env`, fill in the token (generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`), then `./start.sh`. Without it the stack still comes up, but `./start.sh` warns that the agent layer did not start and workflow runs stay queued; edit `.env` and rerun.
+
+Authentication is on by default. No admin user is seeded, so the first visit to http://localhost:6988 shows a bootstrap screen where you create the admin account; `start.sh` mints the JWT signing secret it needs at `~/.vigil/jwt_secret`. For an unauthenticated instance on your own machine, set `DEV_MODE=true` in `.env` — the bypass is documented there, and the backend announces it on every startup.
 
 > **Stable build vs. development build:** The Quick Start above clones `main` —
 > the active development branch (latest, *unreleased* code). For a stable,
@@ -172,18 +177,17 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
   (`.python-version`, currently 3.12) with [uv](https://docs.astral.sh/uv/),
   independent of any system, conda, or pyenv Python you already have
 - **Node.js 18+** (for frontend)
-- **Docker Desktop** (must be running — used for PostgreSQL)
+- **Docker Desktop** (must be running — used for PostgreSQL, Redis, and Bifrost)
 - **Git**
-- An LLM provider key. Vigil supports Anthropic Claude (default), OpenAI, and Ollama (local) — configure providers in Settings → AI Config. See the [Bifrost gateway](https://vigilsoc.org/docs/bifrost/) notes for the multi-provider setup. *(optional for initial testing)*
+- An LLM provider. Vigil supports Anthropic Claude (default), OpenAI, and Ollama (local, no key) — configure providers in Settings → AI Config. See the [Bifrost gateway](https://vigilsoc.org/docs/bifrost/) notes for the multi-provider setup. *(optional for initial testing)*
 
-### Default Login Credentials
+### First Login
 
-| | |
-|---|---|
-| **Username** | `admin` |
-| **Password** | `admin123` |
-
-> Change these in production!
+The user table starts empty and the first visit to http://localhost:6988
+opens a bootstrap screen (backed by `/api/auth/bootstrap`) where you create
+the admin account. No default credentials ship with the repo, and nothing in
+it creates an account with a password you did not choose. With `DEV_MODE=true`
+in `.env` there is no login at all.
 
 ### Manual Install
 
@@ -194,7 +198,7 @@ Auth bypass is enabled by default (`DEV_MODE=true`) for quick development. Full 
 git clone https://github.com/Vigil-SOC/vigil.git
 cd vigil
 
-# Environment (DEV_MODE enabled by default)
+# Environment (authentication on by default; set DEV_MODE=true here to bypass it locally)
 cp env.example .env
 # LLM provider keys (Anthropic / OpenAI / Ollama) are configured in the
 # web UI at Settings → AI / LLM Providers — not in .env.
@@ -210,7 +214,7 @@ uv pip install -r requirements.lock
 # Frontend setup
 cd clients/web
 npm install
-cd ..
+cd ../..
 ```
 
 </details>
@@ -239,27 +243,43 @@ troubleshooting.
 # Interactive mode (keeps terminal attached, Ctrl+C to stop)
 ./start.sh
 
-# OR background mode (frees terminal)
-./start.sh --daemon
+# OR background mode (frees terminal; logs/ + pidfiles, also starts the
+# SOC daemon on the host — the ARQ worker runs in both modes)
+./start.sh -d
+
+# Add a profiled service (splunk, kafka, pgadmin, jaeger, prometheus,
+# grafana, otel-collector), or all of them
+./start.sh --with splunk
+./start.sh --all
 ```
+
+Core services come from `.vigil-autostart` (or `$AUTOSTART_SERVICES`), defaulting to `postgres redis bifrost ollama`. Ollama is host-native and optional: if it is not installed the script warns and continues.
 
 **Option B: Manual (separate terminals)**
 
 ```bash
-# Terminal 1: Start database (Docker must be running)
-cd docker && docker-compose up -d postgres
+# Terminal 1: Start the Docker services (Docker must be running)
+docker compose -f infra/docker/docker-compose.yml up -d postgres redis bifrost
 
-# Terminal 2: Initialize admin user and generate demo data
+# Terminal 2: Initialize the schema and reference data (no admin is seeded;
+# the first visit to the UI is the bootstrap screen)
+[ -f .env ] || cp env.example .env   # then set AGENT_INTERNAL_TOKEN in it
 source venv/bin/activate
-python scripts/init_default_user.py
-python scripts/demo.py
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+python scripts/init_schema.py
+python scripts/seed_reference_data.py
 
 # Terminal 3: Start backend
 source venv/bin/activate
 export PYTHONPATH="${PWD}:${PYTHONPATH}"
 uvicorn services.api.main:app --host 127.0.0.1 --port 6987 --reload
 
-# Terminal 4: Start frontend
+# Terminal 4: Start the agent layer (drains the agent-runs queue that
+# workflow runs are enqueued to; needs AGENT_INTERNAL_TOKEN set in .env).
+# Optionally also `python -m services.worker` for the ARQ consumers.
+scripts/agent_up.sh
+
+# Terminal 5: Start frontend
 cd clients/web && npm run dev
 ```
 
@@ -279,20 +299,48 @@ cd clients/web && npm run dev
 
 ### Run with Docker (Full Stack)
 
+The compose file is [`infra/docker/docker-compose.yml`](infra/docker/docker-compose.yml). Pass the repo-root `.env` explicitly — compose otherwise looks for one next to the compose file, and `AGENT_INTERNAL_TOKEN` would reach the containers empty. Plain `up` is the investigation set:
+
 ```bash
-cd docker && docker-compose up -d
+docker compose --env-file .env -f infra/docker/docker-compose.yml up -d
 ```
 
-Starts PostgreSQL, Backend API, and SOC Daemon.
+Starts `postgres`, `db-seed`, `redis`, `bifrost`, `backend`, `agent-worker`, and `agent-serve` — the services a chat-driven workflow run uses. The SOC daemon is not part of this set.
+
+```bash
+# Add federation polling, auto-enrichment, and the ARQ worker
+docker compose --env-file .env -f infra/docker/docker-compose.yml --profile daemon up -d
+```
+
+`--profile daemon` adds `soc-daemon` and `llm-worker`. Other opt-in profiles (`dev`, `observability`, `splunk`, `kafka`, `elastic`, `misp`) work the same way.
+
+> The `backend` container runs with auth on and fails closed without `JWT_SECRET_KEY`, which the compose file does not forward yet. Until it does, supply one through a second compose file (`-f my-override.yml` with `services.backend.environment: [JWT_SECRET_KEY=<random>]`).
 
 ### Run SOC Daemon (Headless Mode)
 
-For autonomous 24/7 monitoring without the UI:
+For autonomous 24/7 monitoring, run the `daemon` compose profile above, or on the host:
+
+```bash
+# Background mode launches services/daemon/main.py and the ARQ worker
+# alongside the backend; logs land in logs/daemon.log and logs/llm_worker.log
+./start.sh -d
+
+# Or run the daemon on its own against a running stack
+source venv/bin/activate
+export PYTHONPATH="${PWD}:${PYTHONPATH}"
+python services/daemon/main.py
+```
+
+### Tests
+
+The no-service suite needs neither LogLM nor a cloud LLM key — it is the same invocation CI runs:
 
 ```bash
 source venv/bin/activate
-python daemon/main.py
+pytest tests/unit tests/security -m "not external_service"
 ```
+
+"Passes on a local model" is a manual check, not a CI badge: point Settings → AI Config at Ollama, then run incident response on a finding.
 
 ### Desktop App (Standalone)
 
@@ -366,7 +414,6 @@ cd clients/desktop && npm run dist
 
 ## Additional Features 
 
-- **Auto-Contributor** — Automated competitive research against proprietary AI security platforms. Analyzes a vendor's capabilities, maps gaps versus Vigil and the open-source ecosystem, and generates ready-to-file GitHub issues with acceptance criteria. The goal: make Vigil a superset of every proprietary AI SOC, one contribution at a time. See [`contrib/auto-contributor/SKILL.md`](contrib/auto-contributor/SKILL.md)
 - **Chat-Driven Case Management** — Build cases through natural language. Say "add this to case XYZ" and the system handles findings, activities, timelines, and MITRE tagging. [Learn more](https://vigilsoc.org/docs/chat-case-management/)
 - **Detection Engineering** — 7,200+ detection rules (Sigma, Splunk, Elastic, KQL) with coverage analysis, gap identification, and AI-assisted template generation. [Learn more](https://vigilsoc.org/docs/detection-engineering/)
 - **Case Management** — Full lifecycle tracking with PDF reports
@@ -380,11 +427,10 @@ cd clients/desktop && npm run dist
 vigil/
 ├── core/              # Shared library: capability domains (findings, cases,
 │                      #   llm, integrations, …) over a storage/platform tier
-│   └── workflows/definitions/   # WORKFLOW.md definitions (5 built-in)
+│   └── workflows/definitions/   # WORKFLOW.md definitions (7 built-in)
 ├── services/          # Deployables only: api (FastAPI), daemon (headless
 │                      #   autonomous SOC), worker (ARQ llm-worker)
 ├── clients/web/       # React + Tailwind frontend
-├── contrib/           # Community tools: auto-contributor, benchmarking
 ├── tools/mcp/         # MCP servers for Vigil's own services
 ├── infra/             # Docker Compose, Helm chart, DB init SQL
 └── data/schemas/      # JSON validation schemas
@@ -436,8 +482,7 @@ Guides live on the site at **[vigilsoc.org/docs](https://vigilsoc.org/docs/)**.
 | [Chat-driven case management](https://vigilsoc.org/docs/chat-case-management/) | Chat-driven case building guide |
 | [Configuration](https://vigilsoc.org/docs/configuration/) | Environment variables, secrets, deployment |
 | [Helm](https://vigilsoc.org/docs/helm/) | Chart values, secrets, and install |
-| [Contributing](https://vigilsoc.org/docs/contributing/) | How to contribute, auto-contributor workflow, DCO |
-| [`contrib/auto-contributor/SKILL.md`](contrib/auto-contributor/SKILL.md) | Competitive research skill (runtime) |
+| [Contributing](https://vigilsoc.org/docs/contributing/) | How to contribute, DCO |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, disclosure policy |
 
 ## Testing with Splunk & Claude
@@ -493,8 +538,6 @@ python scripts/export_postgres_to_splunk.py \
 ## Contributing
 
 Contributions are welcome! Whether you're fixing bugs, adding new MCP integrations, improving agent prompts, or building new workflows or agents — we'd love your help and leadership.
-
-**Find meaningful work automatically:** Vigil includes an [auto-contributor](contrib/auto-contributor/SKILL.md) tool that researches proprietary AI security platforms, identifies capability gaps, and generates ready-to-file GitHub issues. Pick a vendor, run the tool, and you'll have a scoped contribution spec in minutes.
 
 **Join the community:** Connect with the Vigil community on [Discord](https://discord.gg/Kw68sPJU) to discuss ideas, get help, and collaborate with other contributors.
 

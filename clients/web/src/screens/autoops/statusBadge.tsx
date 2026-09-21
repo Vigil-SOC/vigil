@@ -17,6 +17,14 @@ const STATUS_META: Record<string, Meta> = {
   needs_rework: { fg: 'var(--high)', bg: 'var(--high-dim)', label: 'rework' },
 }
 
+const PRIO_META: Record<string, Meta> = {
+  critical: { fg: 'var(--crit)', bg: 'var(--crit-dim)' },
+  high: { fg: 'var(--high)', bg: 'var(--high-dim)' },
+  medium: { fg: 'var(--med)', bg: 'var(--med-dim)' },
+  low: { fg: 'var(--tx-3)', bg: 'var(--bg-2)' },
+  unknown: { fg: 'var(--tx-faint)', bg: 'var(--bg-2)' },
+}
+
 const FALLBACK: Meta = { fg: 'var(--tx-3)', bg: 'var(--bg-2)' }
 
 export function StatusBadge({ status }: { status: string }) {
@@ -25,6 +33,15 @@ export function StatusBadge({ status }: { status: string }) {
   return (
     <span className="status" style={{ background: meta.bg, color: meta.fg }}>
       {text}
+    </span>
+  )
+}
+
+export function PrioBadge({ prio }: { prio: string }) {
+  const meta = PRIO_META[prio] || FALLBACK
+  return (
+    <span className={`prio ${prio}`} style={{ color: meta.fg }}>
+      {prio}
     </span>
   )
 }

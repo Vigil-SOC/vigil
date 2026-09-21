@@ -5,7 +5,6 @@ import { casesApi, findingsApi, orchestratorApi } from '../../services/api'
 import { notificationService } from '../../services/notifications'
 import { useAuth } from '../../contexts/AuthContext'
 import { useGeneralSettings } from './useSettings'
-import CostAnalyticsCard from './CostAnalyticsCard'
 import type { SectionProps } from './types'
 
 type ClearAction = 'findings' | 'investigations' | 'cases' | 'workspace'
@@ -166,8 +165,6 @@ export default function GeneralSection({ notify }: SectionProps) {
           )}
         </div>
       </SettingsCard>
-
-      <CostAnalyticsCard />
 
       <ConfirmDialog
         open={clearAction != null}

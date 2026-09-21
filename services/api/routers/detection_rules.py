@@ -213,20 +213,7 @@ async def reload_service(
     Returns:
         Success status with updated stats
     """
-
-    # Re-read config
-    service._load_config()
-
-    # Rescan all sources
-    for source in service.sources:
-        from pathlib import Path
-
-        source["rule_count"] = service._count_rules(
-            Path(source["local_path"]), source["format"], source.get("subdirectory", "")
-        )
-        if Path(source["local_path"]).exists():
-            source["status"] = "ready"
-    service._save_config()
+    service.reload()
 
     # Restart the MCP server
     await _restart_security_detections_mcp(mcp_client, service, registry)

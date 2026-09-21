@@ -32,6 +32,7 @@ def _row(*, id: int, state: str, created_at: datetime, finding_id: str = "f-1"):
         priority="high",
         payload={},
         investigation_id=None,
+        case_id=None,
         merged_into=None,
         created_at=created_at,
         decided_at=None,
@@ -57,6 +58,9 @@ class _Query:
 
     def all(self):
         return list(self.rows)
+
+    def count(self):
+        return len(self.rows)
 
 
 class _Session:
@@ -127,3 +131,50 @@ def test_intake_list_does_not_construct_an_orchestrator(client, monkeypatch):
 
     assert resp.status_code == 200
     assert resp.json()["count"] == 3
+
+
+def _patch_status_orchestrator(monkeypatch):
+    orch = MagicMock()
+    orch.get_all_investigations.return_value = [
+        {"status": "assigned"},
+        {"status": "queued"},
+        {"status": "completed"},
+    ]
+    orch.get_cost_summary.return_value = {}
+    orch.stats = {}
+    orch.enabled = False
+    monkeypatch.setattr(
+        "services.api.routers.orchestrator._get_orchestrator", lambda: orch
+    )
+    cfg = MagicMock()
+    cfg.get_system_config.return_value = {
+        "enabled": False,
+        "max_concurrent_agents": 3,
+    }
+    monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: cfg)
+
+
+def test_status_queued_is_intake_depth_not_investigation_status(client, monkeypatch):
+    _patch_status_orchestrator(monkeypatch)
+
+    resp = client.get("/api/orchestrator/status")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["queued"] == 2
+    assert body["completed"] == 1
+    assert body["active_agents"] == 1
+
+
+def test_status_queued_does_not_report_zero_when_intake_count_fails(monkeypatch):
+    _patch_status_orchestrator(monkeypatch)
+    db = MagicMock()
+    db.session_scope.side_effect = RuntimeError("intake table unreachable")
+    monkeypatch.setattr("core.storage.connection.get_db_manager", lambda: db)
+
+    app = FastAPI()
+    app.include_router(orchestrator_router, prefix="/api/orchestrator")
+    resp = TestClient(app).get("/api/orchestrator/status")
+
+    assert resp.status_code == 500
+    assert resp.json() == {"detail": "intake table unreachable"}

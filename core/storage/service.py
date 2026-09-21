@@ -281,15 +281,24 @@ class DatabaseService:
     def get_findings_missing_enrichment(
         self, limit: int = 100, max_age_hours: Optional[int] = None
     ) -> List[Dict[str, Any]]:
-        """Findings stored but never enriched (ai_enrichment IS NULL), oldest first.
-        Returns dicts (FindingSchema.dump inside the session) so callers get detached-safe data.
-        ``max_age_hours`` bounds the working set so ancient, un-enrichable findings
-        aren't retried forever."""
+        """Findings stored but never enriched (ai_enrichment IS NULL) or whose
+        triage failed without a later success (ai_triage_error recorded, no
+        ai_triage — #965), oldest first. Returns dicts (FindingSchema.dump inside
+        the session) so callers get detached-safe data. ``max_age_hours`` bounds
+        the working set so ancient, un-enrichable findings aren't retried forever."""
         with self.db_manager.session_scope() as session:
             query = (
                 select(Finding)
                 .options(selectinload(Finding.mitre_prediction_rows))
-                .where(Finding.ai_enrichment.is_(None))
+                .where(
+                    or_(
+                        Finding.ai_enrichment.is_(None),
+                        and_(
+                            Finding.ai_enrichment.has_key("ai_triage_error"),
+                            ~Finding.ai_enrichment.has_key("ai_triage"),
+                        ),
+                    )
+                )
             )
             if max_age_hours:
                 cutoff = utcnow() - timedelta(hours=max_age_hours)

@@ -76,7 +76,7 @@ function caseStatus(s?: string): CaseRow['status'] {
 
 function casePrio(p?: string): CaseRow['prio'] {
   const v = (p || '').toLowerCase()
-  if (v === 'critical' || v === 'high' || v === 'medium' || v === 'low') return v
+  if (v === 'critical' || v === 'high' || v === 'medium' || v === 'low' || v === 'unknown') return v
   return 'medium'
 }
 

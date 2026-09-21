@@ -1,9 +1,10 @@
 import logging
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 from core.config import DEFAULT_REDIS_URL, get_settings
 from core.ingestion.kafka_config import KafkaConfig  # re-exported for DaemonConfig
+from core.intent import INTENT_FIELDS
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -127,10 +128,22 @@ class DaemonConfig:
     log_level: str = "INFO"
     log_format: str = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
+    # Where each intent knob's value came from (env | db | default), keyed by
+    # attribute path, recorded by from_env() for the INTENT.md observe report.
+    sources: Dict[str, str] = field(default_factory=dict)
+
     @classmethod
     def from_env(cls) -> "DaemonConfig":
         config = cls()
         settings = get_settings()
+
+        # pydantic-settings marks a field set iff env or .env supplied it.
+        for intent_field in INTENT_FIELDS:
+            config.sources[intent_field.path] = (
+                "env"
+                if intent_field.setting in settings.model_fields_set
+                else "default"
+            )
 
         config.log_level = settings.daemon_log_level
 
@@ -233,6 +246,7 @@ class DaemonConfig:
                 for key, cast in field_map.items():
                     if key in db_config:
                         setattr(config.orchestrator, key, cast(db_config[key]))
+                        config.sources[f"orchestrator.{key}"] = "db"
                 logger.info("Orchestrator config overridden from database settings")
         except Exception as e:
             logger.debug(
