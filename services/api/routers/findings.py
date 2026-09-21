@@ -17,6 +17,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from core.api.v1.findings_router import FindingUpdate
+from core.config import vigil_path
 from core.findings.enrichment import (
     FindingNotFound,
     NoProviderConfigured,
@@ -167,3 +168,24 @@ def clear_all_findings(session: UnitOfWorkSession):
 
     logger.info(f"Cleared {count} findings")
     return {"success": True, "deleted": count, "message": f"Deleted {count} findings"}
+
+
+# Not in the frozen surface: this writes a file on the server and answers with
+# its path, which is nothing an external caller can open. It stays unversioned
+# until it answers with the export itself.
+@router.post("/export")
+def export_findings(output_format: str = "json"):
+    from datetime import datetime
+
+    output_dir = vigil_path("exports", write=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_path = output_dir / f"findings_export_{timestamp}.{output_format}"
+
+    success = data_service.export_findings(output_path, format=output_format)
+
+    if success:
+        return {"success": True, "file_path": str(output_path)}
+    else:
+        raise HTTPException(status_code=500, detail="Export failed")

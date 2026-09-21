@@ -1355,24 +1355,6 @@
         "title": "EvidenceAdd",
         "type": "object"
       },
-      "FindingExportResponse": {
-        "properties": {
-          "file_path": {
-            "title": "File Path",
-            "type": "string"
-          },
-          "success": {
-            "title": "Success",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "success",
-          "file_path"
-        ],
-        "title": "FindingExportResponse",
-        "type": "object"
-      },
       "FindingListResponse": {
         "properties": {
           "findings": {
@@ -4826,65 +4808,6 @@
           }
         },
         "summary": "Get Findings",
-        "tags": [
-          "findings"
-        ]
-      }
-    },
-    "/api/v1/findings/export": {
-      "post": {
-        "operationId": "post_api_v1_findings_export",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "output_format",
-            "required": false,
-            "schema": {
-              "default": "json",
-              "title": "Output Format",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "authorization",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FindingExportResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Export Findings",
         "tags": [
           "findings"
         ]

@@ -7099,23 +7099,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/findings/export": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Export Findings */
-        post: operations["post_api_v1_findings_export"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/findings/stats/summary": {
         parameters: {
             query?: never;
@@ -7354,7 +7337,7 @@ export interface paths {
         };
         /**
          * List Workflows
-         * @description List all available workflows. Delegates to the v1 contract handler.
+         * @description List all available workflows.
          */
         get: operations["get_api_workflows"];
         put?: never;
@@ -7646,7 +7629,7 @@ export interface paths {
         };
         /**
          * Get Workflow
-         * @description Get one workflow. Delegates to the v1 contract handler.
+         * @description Get one workflow.
          *
          *     Defined after /workflows/custom so decorator order resolves the {workflow_id}
          *     vs /custom ambiguity within this router.
@@ -9448,13 +9431,6 @@ export interface components {
             max_items?: number | null;
             /** Min Severity */
             min_severity?: string | null;
-        };
-        /** FindingExportResponse */
-        FindingExportResponse: {
-            /** File Path */
-            file_path: string;
-            /** Success */
-            success: boolean;
         };
         /** FindingListResponse */
         FindingListResponse: {
@@ -18088,7 +18064,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FindingExportResponse"];
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -23807,39 +23783,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FindingListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_v1_findings_export: {
-        parameters: {
-            query?: {
-                output_format?: string;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FindingExportResponse"];
                 };
             };
             /** @description Validation Error */

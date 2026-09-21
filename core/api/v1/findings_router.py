@@ -1,10 +1,13 @@
 """Findings — versioned contract surface (``/api/v1/findings``).
 
 The read and record-update routes an external consumer relies on: list, get,
-summary, export, and the enrich-metadata PATCH. Enrichment *generation*
-(``/bulk-enrich``, ``/{id}/enrich``) and the destructive ``/all`` wipe stay on
-the unversioned router in ``services/api/routers/findings.py`` — they are
-operator/console actions, not part of the frozen surface.
+summary, and the enrich-metadata PATCH. Enrichment *generation*
+(``/bulk-enrich``, ``/{id}/enrich``), the destructive ``/all`` wipe and
+``/export`` stay on the unversioned router in
+``services/api/routers/findings.py`` — they are operator/console actions, not
+part of the frozen surface. ``/export`` in particular writes a file on the
+server and answers with its path, which is nothing an external caller can open;
+freezing that shape would promise it for the life of 1.x.
 
 ``FindingUpdate`` is defined here because it is the update contract; the
 unversioned router imports it back for its bulk endpoint (services -> core,
@@ -12,13 +15,11 @@ the allowed direction).
 """
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from core.config import vigil_path
 from core.findings.source_evidence import (
     normalize_finding_source_evidence,
     project_finding_source_evidence_for_list,
@@ -63,11 +64,6 @@ class FindingsSummaryResponse(BaseModel):
     total: int
     by_severity: Dict[str, int] = Field(default_factory=dict)
     by_data_source: Dict[str, int] = Field(default_factory=dict)
-
-
-class FindingExportResponse(BaseModel):
-    success: bool
-    file_path: str
 
 
 class FindingUpdateResponse(BaseModel):
@@ -177,21 +173,6 @@ def get_findings_summary():
         "by_severity": severity_counts,
         "by_data_source": data_source_counts,
     }
-
-
-@router.post("/export", response_model=FindingExportResponse)
-def export_findings(output_format: str = "json"):
-    output_dir = vigil_path("exports", write=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = output_dir / f"findings_export_{timestamp}.{output_format}"
-
-    success = data_service.export_findings(output_path, format=output_format)
-
-    if success:
-        return {"success": True, "file_path": str(output_path)}
-    raise HTTPException(status_code=500, detail="Export failed")
 
 
 @router.patch("/{finding_id}", response_model=FindingUpdateResponse)
