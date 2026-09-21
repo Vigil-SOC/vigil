@@ -46,7 +46,11 @@ CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-_DEFAULT_EXEMPT = ("/api/webhooks/", "/api/ingest/")
+# CSRF defends a browser session driven by a cookie. These are reached with a
+# credential in a header instead, by something that is not a browser, so there
+# is no ambient authority for a forged request to borrow -- and a caller that
+# cannot be handed a csrf_token cookie could not satisfy the check anyway.
+_DEFAULT_EXEMPT = ("/api/webhooks/", "/api/ingest/", "/mcp")
 
 
 def _apply_context_path(path: str, prefix: str) -> str:

@@ -340,9 +340,11 @@ def _record_agent_close(case_id: str) -> None:
     determination calls `close_case` and says which. The service refuses to let
     this overwrite a determination already on record.
 
-    Trust is `agent` unconditionally here. There is no authenticated person
-    behind an MCP call, and `analyst` is the one record this system will not let
-    an agent claim on its own behalf.
+    Trust is `agent` unconditionally here. A credential on this surface is one a
+    program holds, so even over HTTP what closed the Case is a program acting
+    with someone's standing -- `closed_by` says whose, `closed_by_kind` says it
+    was not them at a keyboard. `analyst` is the one record this system will not
+    let an agent claim on its own behalf.
     """
     from core.cases.closure import ClosedByKind, ClosureCategory
 
@@ -1395,9 +1397,11 @@ def close_case(
                 case_id,
                 closure_category=category,
                 closed_by=caller(),
-                # No authenticated person behind an MCP call. Episodic memory
-                # reads this as Trust, and `analyst` is the one record this
-                # system will not let an agent claim on its own behalf.
+                # A credential here is one a program holds, so this is a
+                # program acting with someone's standing rather than that
+                # person closing it. Episodic memory reads this as Trust, and
+                # `analyst` is the one record this system will not let an agent
+                # claim on its own behalf.
                 closed_by_kind=ClosedByKind.AGENT,
                 root_cause=root_cause,
                 lessons_learned=lessons_learned,

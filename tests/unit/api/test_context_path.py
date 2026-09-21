@@ -92,8 +92,12 @@ def test_auth_cookie_paths_follow_context_path(monkeypatch, prefix, access, refr
 @pytest.mark.parametrize(
     "raw, context_path, expected",
     [
-        (None, "", ("/api/webhooks/", "/api/ingest/")),
-        (None, "/vigil", ("/vigil/api/webhooks/", "/vigil/api/ingest/")),
+        (None, "", ("/api/webhooks/", "/api/ingest/", "/mcp")),
+        (
+            None,
+            "/vigil",
+            ("/vigil/api/webhooks/", "/vigil/api/ingest/", "/vigil/mcp"),
+        ),
         (
             "/api/webhooks/,/api/ingest/",
             "/vigil",
@@ -188,3 +192,21 @@ def test_mount_routers_empty_prefix_keeps_root_api_paths():
 
     assert any(p.startswith("/api/") for p in paths)
     assert not any(p.startswith("/vigil/") for p in paths)
+
+
+def test_the_mcp_surface_is_exempt_from_csrf():
+    """It is reached with a credential in a header, by something that is not a
+    browser. There is no cookie session for a forged request to borrow, and a
+    caller that cannot be handed a csrf_token cookie could never satisfy the
+    check -- so enforcing it would refuse every MCP call the day an operator
+    turns enforcement on."""
+    from services.api.middleware.csrf import CSRFMiddleware, _parse_exempt_paths
+
+    middleware = CSRFMiddleware(
+        FastAPI(),
+        enabled=True,
+        exempt_paths=_parse_exempt_paths(None, "/vigil"),
+    )
+    assert middleware._is_exempt("/vigil/mcp")
+    assert middleware._is_exempt("/vigil/mcp/")
+    assert not middleware._is_exempt("/mcp")

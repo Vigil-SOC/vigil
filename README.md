@@ -127,7 +127,7 @@ Vigil uses the [Model Context Protocol](https://modelcontextprotocol.io/) to con
 | **Ticketing** | Jira | Issue creation, updates, search |
 | **Communication** | Slack | Alerts, channel creation, file uploads |
 | **Data Pipeline** | Cribl Stream | Log normalization, noise filtering, multi-destination routing |
-| **Core** | DeepTempo Findings, Approval | Built-in SOC operations |
+| **Core** | Vigil | Built-in SOC operations: findings, cases, approvals, hunts — the same tools an external caller reaches at `/mcp` |
 
 **Coming soon:** AWS Security Hub, Azure Sentinel, GCP Security, Okta, Microsoft Defender, SentinelOne, Carbon Black, PagerDuty.
 
