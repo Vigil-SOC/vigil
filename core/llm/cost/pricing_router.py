@@ -65,12 +65,29 @@ async def rates(
 # here because this is where the catalog lives, and asking the agent to know
 # would be the second copy of it this module exists to prevent -- which is also
 # why this is public: anything that needs the rate needs this first.
+#
+# Who serves a model is configuration, never a guess from its name: "llama" on a
+# commercial host is a paid call, and a self-hosted endpoint may well answer to
+# "gpt-4o". When neither the id nor the caller names a provider, the configured
+# default record is the answer; when no record resolves, "unknown", which the
+# agent already treats as unpriced rather than free.
 def priced_as(provider_type: str, model_id: str) -> tuple[str, str]:
-    from core.llm.providers.registry import _PRICED_PROVIDERS, infer_provider_type
+    from core.llm.providers.registry import _PRICED_PROVIDERS
 
     named, _, bare = model_id.partition("/")
     if bare and named.lower() in _PRICED_PROVIDERS:
         return named.lower(), bare
     if provider_type in _PRICED_PROVIDERS:
         return provider_type, model_id
-    return infer_provider_type(model_id), model_id
+    return _default_provider_type(), model_id
+
+
+def _default_provider_type() -> str:
+    from core.llm.router.router import get_default_provider_spec
+
+    try:
+        provider = get_default_provider_spec()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("default provider lookup failed: %s", exc)
+        return "unknown"
+    return provider.provider_type if provider is not None else "unknown"
