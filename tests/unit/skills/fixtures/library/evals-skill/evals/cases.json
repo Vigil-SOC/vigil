@@ -1,0 +1,31 @@
+[
+  {
+    "name": "high severity powershell finding escalates",
+    "input": {
+      "id": "finding-001",
+      "title": "Suspicious PowerShell Execution",
+      "description": "PowerShell script executed with encoded command, potentially malicious",
+      "severity": "high",
+      "source": "splunk",
+      "mitre_techniques": ["T1059.001", "T1027"]
+    },
+    "expect": ["SEVERITY: high", "T1059.001", "T1027", "VERDICT: ESCALATE"]
+  },
+  {
+    "name": "medium severity brute force is monitored",
+    "input": {
+      "id": "finding-002",
+      "title": "Brute Force Authentication Attempt",
+      "description": "Multiple failed login attempts detected from single source",
+      "severity": "medium",
+      "source": "azure_sentinel",
+      "mitre_techniques": ["T1110.001"]
+    },
+    "expect": ["SEVERITY: medium", "T1110.001", "VERDICT: MONITOR"]
+  },
+  {
+    "name": "a question with no finding gets the sentinel word",
+    "input": "What is the capital of France?",
+    "expect": ["NO-FINDING"]
+  }
+]

@@ -15,6 +15,7 @@ import re
 import zlib
 from datetime import datetime, timezone
 
+from sqlalchemy import Integer
 from sqlalchemy import inspect as sa_inspect
 
 import core.storage.models as models
@@ -88,6 +89,17 @@ def _value_for(model, model_name, column):
     if type_name == "VECTOR":
         return [0.1, 0.2, 0.3]
     if type_name == "ARRAY":
+        # Read the element type. Producing strings for every ARRAY is what let
+        # ARRAY(Integer) columns be described as lists of str and still capture
+        # a green golden -- the sample agreed with the wrong schema.
+        #
+        # isinstance, not a class-name match: BigInteger and SmallInteger are
+        # Integer subclasses, and test_array_element_types.py already resolves
+        # them that way. Disagreeing here would build str samples for a column
+        # whose schema correctly says int, and the parity capture would raise
+        # instead of naming the mismatch.
+        if isinstance(column.type.item_type, Integer):
+            return [_stable_int(key), _stable_int(f"{key}-b")]
         return [f"{column.key}-a", f"{column.key}-b"]
     if type_name == "JSONB":
         if _json_default_is_list(model, column.key):
