@@ -132,9 +132,25 @@ def get_findings_summary():
     }
 
 
+# What the service knows how to write, read from the service so the two cannot
+# drift. Without the check the route answers 200 to any string and hands back
+# JSON in a file named after it. The value also lands in the output filename,
+# where on POSIX a separator cannot escape the directory -- the caller's string
+# follows `findings_export_<timestamp>.`, so the first component is a file that
+# does not exist -- but on Windows `\` splits and `..` cancels lexically, and
+# a closed set is the same one check for both.
+EXPORT_FORMATS = DatabaseDataService.EXPORT_FORMATS
+
+
 @router.post("/export")
 def export_findings(output_format: str = "json"):
     from datetime import datetime
+
+    if output_format not in EXPORT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported export format; use one of {', '.join(EXPORT_FORMATS)}",
+        )
 
     output_dir = vigil_path("exports", write=True)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -142,7 +158,7 @@ def export_findings(output_format: str = "json"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = output_dir / f"findings_export_{timestamp}.{output_format}"
 
-    success = data_service.export_findings(output_path, format=output_format)
+    success = data_service.export_findings(output_path, fmt=output_format)
 
     if success:
         return {"success": True, "file_path": str(output_path)}

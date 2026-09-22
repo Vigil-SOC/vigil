@@ -1,0 +1,90 @@
+[
+  {
+    "name": "c2 beacon with a cloudforce one hit cites source and stix confidence",
+    "input": {
+      "id": "finding-003",
+      "title": "C2 Beacon Communication",
+      "description": "Regular outbound connections to known C2 infrastructure",
+      "severity": "critical",
+      "source": "crowdstrike",
+      "external_id": "cs-detection-11223",
+      "timestamp": "2026-01-27T11:15:00Z",
+      "raw_data": {
+        "src_ip": "10.0.5.120",
+        "dst_ip": "185.220.101.5",
+        "dst_port": 443,
+        "bytes_sent": 1024,
+        "bytes_received": 2048,
+        "frequency": "every 60 seconds"
+      },
+      "mitre_techniques": ["T1071.001", "T1573.001"],
+      "iocs": {
+        "ips": ["10.0.5.120", "185.220.101.5"],
+        "domains": ["malicious-c2.example.com"]
+      },
+      "enrichment": {
+        "threat_indicators": [
+          {
+            "indicator_type": "ip",
+            "indicator_value": "185.220.101.5",
+            "source": "cloudforce_one",
+            "confidence": 85,
+            "labels": ["c2", "tor-exit"],
+            "first_seen": "2026-01-20T00:00:00Z",
+            "last_seen": "2026-01-27T11:00:00Z"
+          }
+        ]
+      }
+    },
+    "expect": [
+      "indicator: 185.220.101.5",
+      "indicator: malicious-c2.example.com",
+      "source: cloudforce_one",
+      "confidence: 85",
+      "recommendation:"
+    ]
+  },
+  {
+    "name": "brute force from a bare external ip",
+    "input": {
+      "id": "finding-002",
+      "title": "Brute Force Authentication Attempt",
+      "description": "Multiple failed login attempts detected from single source",
+      "severity": "medium",
+      "source": "azure_sentinel",
+      "external_id": "sentinel-alert-67890",
+      "timestamp": "2026-01-27T09:30:00Z",
+      "raw_data": {
+        "src_ip": "203.0.113.45",
+        "target_user": "admin",
+        "failed_attempts": 47,
+        "time_window": "5 minutes"
+      },
+      "mitre_techniques": ["T1110.001"],
+      "iocs": {"ips": ["203.0.113.45"], "users": ["admin"]}
+    },
+    "expect": ["indicator: 203.0.113.45", "source:", "confidence:", "recommendation:"]
+  },
+  {
+    "name": "exfiltration to an external domain",
+    "input": {
+      "id": "finding-005",
+      "title": "Data Exfiltration Attempt",
+      "description": "Large file upload to external cloud storage",
+      "severity": "critical",
+      "source": "splunk",
+      "external_id": "splunk-notable-98765",
+      "timestamp": "2026-01-27T12:30:00Z",
+      "raw_data": {
+        "user": "employee.name",
+        "dst_domain": "transfer.sh",
+        "bytes_uploaded": 524288000,
+        "file_count": 15,
+        "duration": "10 minutes"
+      },
+      "mitre_techniques": ["T1567.002"],
+      "iocs": {"domains": ["transfer.sh"], "users": ["employee.name"]}
+    },
+    "expect": ["indicator: transfer.sh", "source:", "confidence:", "recommendation:"]
+  }
+]

@@ -96,11 +96,27 @@ def state_dir_status() -> dict:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def dotenv_allowed() -> bool:
+    """False when this process has already decided where its config comes from.
+
+    A test run sets ``VIGIL_DISABLE_DOTENV`` before collection so that nothing
+    reads a developer's ``.env`` and makes the suite answer differently on one
+    machine than another. Every reader of a ``.env`` has to ask -- pydantic's
+    ``env_file`` here and the secrets backend that reads the state directory's
+    own file -- because a single unguarded one puts the developer's
+    configuration back.
+
+    ``os.environ``, not ``Settings``: this is answered while ``Settings`` is
+    still being defined, like ``VIGIL_DIR``. The vendor tool servers ask the
+    same question inline (GH #974) rather than importing this: spawned outside
+    the repo they may have no ``core`` package to import from.
+    """
+    disabled = os.environ.get("VIGIL_DISABLE_DOTENV")  # noqa: ENV001 - pre-Settings
+    return not disabled
+
+
 def _settings_env_file() -> Optional[Path]:
-    # Tests set this before collection so import-time get_settings() captures
-    # do not read a developer's root .env. os.environ, not Settings: resolved
-    # while Settings is being defined, like VIGIL_DIR.
-    if os.environ.get("VIGIL_DISABLE_DOTENV"):  # noqa: ENV001 - pre-Settings bootstrap
+    if not dotenv_allowed():
         return None
     return REPO_ROOT / ".env"
 
@@ -127,6 +143,8 @@ class Settings(BaseSettings):
     vigil_frontend_url: str = ""
     # Empty means the repo-root INTENT.md, as core.platform.autostart_config does.
     vigil_intent_path: str = ""
+    # One extra root of SKILL.md directories, read alongside core/skills/library.
+    vigil_skills_path: str = ""
 
     # Database. DATABASE_URL is not a field: Settings.extra is ignore so the
     # agent and scripts/migrate_schema.py can keep it in the environment.
@@ -230,6 +248,11 @@ class Settings(BaseSettings):
     daemon_enrich_backfill_max_age_hours: int = 168
     daemon_auto_response: bool = True
     daemon_confidence_threshold: float = 0.90
+    # The rest of the confidence band (#916); see core.response.config.
+    daemon_review_threshold: float = 0.85
+    daemon_monitor_threshold: float = 0.70
+    daemon_critical_action_floor: float = 0.70
+    daemon_high_action_floor: float = 0.80
     daemon_force_approval: bool = False
     daemon_dry_run: bool = False
     daemon_escalation_enabled: bool = True
@@ -241,6 +264,9 @@ class Settings(BaseSettings):
     daemon_pagerduty_enabled: bool = False
     daemon_threat_hunt_enabled: bool = True
     daemon_threat_hunt_interval: int = 86400
+    # Known-answer probes (#923): an hourly sweep, injected once a day by id.
+    daemon_probes_enabled: bool = True
+    daemon_probe_interval: int = 3600
     daemon_cleanup_retention_days: int = 90
     # Separate from cleanup_retention_days on purpose: that governs bulk data
     # retention and wants a long horizon, while an unanswered containment
@@ -262,6 +288,9 @@ class Settings(BaseSettings):
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
     orchestrator_dry_run: bool = False
+    # Shadow mode (#880): every admitted finding also gets an `adjudicate` run
+    # beside the real one. Off by default; env only, no SystemConfig override.
+    orchestrator_shadow_adjudication: bool = False
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False
