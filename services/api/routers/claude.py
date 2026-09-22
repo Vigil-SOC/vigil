@@ -15,7 +15,7 @@ from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import chat_config, run_id_for
 from core.llm.defaults import DEFAULT_MODEL
-from core.llm.providers.registry import get_registry
+from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.system_prompt import validate_system_prompt
 from core.llm.target import model_for, provider_for
 from core.rate_limit import rate_limit_dependency
@@ -420,15 +420,13 @@ async def get_models():
     # stored value, and two providers can advertise the same id. First wins.
     # Embedding-only models (e.g. nomic-embed-text) are dropped here: they show
     # up in provider discovery but can't hold a chat, so they must not appear in
-    # the chat picker. Signal is the registry's is_embedding flag (from the
-    # provider capability array), with a name heuristic as fallback for
-    # providers/paths that don't carry live capability meta.
-    from core.llm.providers.discovery import is_embedding_model_id
-
+    # the chat picker. Kept even though fetch_provider_models() now filters too,
+    # because pinned embedding models still arrive as deprecated orphans and
+    # fallback_models() never passes through that reader.
     seen: set = set()
     models = []
     for m in all_models:
-        if getattr(m, "is_embedding", False) or is_embedding_model_id(m.model_id):
+        if m.is_embedding or not is_chat_model(m.provider_type, m.model_id):
             continue
         if m.model_id in seen:
             continue

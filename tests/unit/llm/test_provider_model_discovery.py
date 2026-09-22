@@ -377,6 +377,39 @@ def test_fetch_provider_models_hard_fallback_when_sync_fails(monkeypatch):
     _reset_registry_state()
 
 
+def test_fetch_provider_models_drops_embedding_by_live_flag():
+    """An id the name heuristic would miss is still dropped when discovery
+    recorded is_embedding=True for it; the cache entry keeps it (#1004)."""
+    from core.llm.providers import registry as model_registry
+
+    _reset_registry_state()
+    cached = ["llama3.1:8b", "vectoriser:latest"]
+    model_registry._MODEL_LIST_CACHE["p1"] = cached
+    model_registry._LIVE_META[("ollama", "vectoriser:latest")] = {"is_embedding": True}
+
+    result = asyncio.run(model_registry.fetch_provider_models(_FakeRow("ollama")))
+
+    assert result == ["llama3.1:8b"]
+    assert model_registry._MODEL_LIST_CACHE["p1"] == ["llama3.1:8b", "vectoriser:latest"]
+    assert model_registry._MODEL_LIST_CACHE["p1"] is cached
+    _reset_registry_state()
+
+
+def test_fetch_provider_models_drops_embedding_by_name_without_live_meta():
+    """No live meta at all → the name heuristic alone keeps
+    nomic-embed-text out of the picker list (#1004)."""
+    from core.llm.providers import registry as model_registry
+
+    _reset_registry_state()
+    model_registry._MODEL_LIST_CACHE["p1"] = ["nomic-embed-text:latest", "qwen2.5:14b"]
+
+    result = asyncio.run(model_registry.fetch_provider_models(_FakeRow("ollama")))
+
+    assert result == ["qwen2.5:14b"]
+    assert model_registry._MODEL_LIST_CACHE["p1"] == ["nomic-embed-text:latest", "qwen2.5:14b"]
+    _reset_registry_state()
+
+
 # ---------------------------------------------------------------------------
 # Embedding-model detection (issue #433 — keep embedders out of chat picker)
 # ---------------------------------------------------------------------------

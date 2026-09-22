@@ -22,6 +22,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.llm.providers.discovery import is_embedding_model_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -643,14 +645,38 @@ def is_extra_model(provider_type: str, model_id: str) -> bool:
     return (provider_type, model_id) in _EXTRA_IDS
 
 
+def is_chat_model(provider_type: str, model_id: str) -> bool:
+    """False for embedding-only models, which can't hold a chat.
+
+    Signal is the live ``is_embedding`` capability flag when discovery
+    recorded one, with the name heuristic as fallback for ids that carry
+    no live meta. Reads ``_LIVE_META`` directly rather than through
+    ``_catalog_entry`` so unknown ids don't trip the pricing warning.
+    """
+    live = _LIVE_META.get((provider_type, model_id))
+    if live and live.get("is_embedding"):
+        return False
+    return not is_embedding_model_id(model_id)
+
+
+def _chat_models(provider_type: str, model_ids: List[str]) -> List[str]:
+    """New list with embedding-only ids dropped; never mutates the input."""
+    return [mid for mid in model_ids if is_chat_model(provider_type, mid)]
+
+
 async def fetch_provider_models(row) -> List[str]:
-    """Return the cached model list for a provider.
+    """Return the cached model list for a provider, minus embedding models.
 
     Cache reader only — the sole writer is
     ``core.llm.bifrost.admin.sync_all_provider_models`` which populates
     this cache at the same time it pushes to Bifrost. That shared-writer
     design is what prevents drift between the UI dropdown and Bifrost's
     allow-list.
+
+    Every caller feeds a chat-model picker, so embedding-only models are
+    filtered out here (#1004). The filter is applied to the returned copy
+    only: ``_MODEL_LIST_CACHE`` keeps the full catalogue because
+    ``catalogue_of`` and Bifrost's allow-list must still see it.
 
     Cold start: if the cache is empty (e.g. startup sync hasn't completed
     or this row was added after the last scheduled refresh), trigger the
@@ -660,7 +686,7 @@ async def fetch_provider_models(row) -> List[str]:
     """
     cached = _MODEL_LIST_CACHE.get(row.provider_id)
     if cached is not None:
-        return cached
+        return _chat_models(row.provider_type, cached)
 
     # Cold: run the canonical refresh. This populates the cache for every
     # active provider, so concurrent lazy-syncs for other rows are free.
@@ -678,7 +704,7 @@ async def fetch_provider_models(row) -> List[str]:
 
     cached = _MODEL_LIST_CACHE.get(row.provider_id)
     if cached is not None:
-        return cached
+        return _chat_models(row.provider_type, cached)
 
     # Hard fallback: upstream unreachable AND sync didn't cache this row
     # (e.g. no API key configured). Populate with bootstrap + extras so
@@ -692,7 +718,7 @@ async def fetch_provider_models(row) -> List[str]:
             fallback.append(mid)
     _MODEL_LIST_CACHE[row.provider_id] = fallback
     _LIVE_CATALOGUES.discard(row.provider_id)
-    return fallback
+    return _chat_models(provider_type, fallback)
 
 
 # Backward-compat alias — kept so existing imports don't break.
