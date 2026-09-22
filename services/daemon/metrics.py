@@ -16,12 +16,13 @@ collector — so the OTEL instruments above appear there when the flag is on.
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from aiohttp import web
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from core.config import get_settings
+from core.telemetry import get_meter
 from core.time import utcnow
 from services.daemon.config import MetricsConfig
 
@@ -29,6 +30,62 @@ logger = logging.getLogger(__name__)
 
 DAEMON_HEALTH_PORT = get_settings().daemon_health_port
 DAEMON_METRICS_PORT = get_settings().daemon_metrics_port
+
+
+# ---------------------------------------------------------------------------
+# ProbeMetrics — known-answer probe scores (#924)
+# ---------------------------------------------------------------------------
+
+
+class ProbeMetrics:
+    """The two probe instruments, in the DaemonMetrics pattern.
+
+    Instruments are created on first record rather than at import, so they
+    bind to the real meter once ``init_telemetry`` has run and to the no-op
+    one when it has not. These names are what the Grafana twin and the
+    health screen (#887) query; they are not aliased to ``soc_daemon_*``.
+    """
+
+    def __init__(self):
+        self._results_counter = None
+        self._time_to_verdict_hist = None
+        self._instruments_ready = False
+        # In-memory shadow, keyed (probe, outcome).
+        self.results: Dict[tuple, int] = defaultdict(int)
+
+    def _ensure_instruments(self):
+        if self._instruments_ready:
+            return
+        self._instruments_ready = True
+        try:
+            meter = get_meter("vigil.daemon")
+            self._results_counter = meter.create_counter(
+                name="vigil.probe.results.total",
+                description="Known-answer probe scores by probe and outcome",
+                unit="1",
+            )
+            self._time_to_verdict_hist = meter.create_histogram(
+                name="vigil.probe.time_to_verdict.seconds",
+                description="Seconds from probe creation to daemon triage verdict",
+                unit="s",
+            )
+        except Exception as _err:
+            logger.debug("OTEL probe instruments unavailable: %s", _err)
+
+    def record(self, probe: str, outcome: str, time_to_verdict_s: Optional[float]):
+        """Count one score; the histogram only sees hit/miss (a verdict exists)."""
+        self.results[(probe, outcome)] += 1
+        self._ensure_instruments()
+        try:
+            if self._results_counter is not None:
+                self._results_counter.add(1, {"probe": probe, "outcome": outcome})
+            if time_to_verdict_s is not None and self._time_to_verdict_hist is not None:
+                self._time_to_verdict_hist.record(time_to_verdict_s, {"probe": probe})
+        except Exception as _err:
+            logger.debug("OTEL probe record failed (non-fatal): %s", _err)
+
+
+probe_metrics = ProbeMetrics()
 
 
 # ---------------------------------------------------------------------------
