@@ -440,8 +440,17 @@ services:
   # services/api/routers/bifrost_config.py. Bifrost's own UI at
   # http://localhost:8080 remains the place for what that passthrough
   # deliberately does not expose: cache and plugin config.
+  #
+  # Pinned, not :latest: Vigil reads this image's management API, so the tag
+  # is a contract. Before bumping BIFROST_IMAGE_TAG (here and in
+  # clients/desktop/standalone/docker-compose.yml), check at the new tag that
+  # /health, /api/models/details (its *_cost_per_token pricing fields —
+  # core/llm/bifrost/admin.py), /api/logs/* and
+  # /api/governance/virtual-keys/quota (core/llm/bifrost/costs.py) and the
+  # models/(base|details|parameters) routes proxied by
+  # services/api/routers/bifrost_config.py still answer in the same shape.
   bifrost:
-    image: maximhq/bifrost:latest
+    image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
     container_name: deeptempo-bifrost
     ports:
       # Loopback-only, for the same reason as postgres and redis above, and

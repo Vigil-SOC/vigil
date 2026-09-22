@@ -95,6 +95,7 @@ NOT_SETTINGS = {
     "REQUESTS_CA_BUNDLE",
     "SSL_CERT_FILE",
     # Consumed outside the Python backend (shell scripts, compose, Vite).
+    "BIFROST_IMAGE_TAG",
     "BIND_HOST",
     "GRAFANA_PASSWORD",
     "VITE_EXTENSION_ORIGIN_ALLOWLIST",

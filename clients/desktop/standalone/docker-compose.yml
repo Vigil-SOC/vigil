@@ -49,7 +49,8 @@ services:
       - vigil
 
   bifrost:
-    image: maximhq/bifrost:latest
+    # Pinned to match infra/docker/docker-compose.yml; see the note there before bumping.
+    image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
     environment:
       - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
     volumes:
