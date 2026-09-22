@@ -24,6 +24,7 @@ from opentelemetry.metrics import Observation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from core.response.config import ResponseConfig, decision_rule
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
@@ -167,7 +168,12 @@ def _nonfailed_by_key(session, key: str) -> Optional[ApprovalActionRow]:
 class ApprovalService:
     """Service for managing approval workflow for autonomous actions."""
 
-    def __init__(self, data_dir: Optional[Path] = None, dry_run: bool = False):
+    def __init__(
+        self,
+        data_dir: Optional[Path] = None,
+        dry_run: bool = False,
+        config: Optional[ResponseConfig] = None,
+    ):
         """
         Initialize approval service.
 
@@ -176,8 +182,11 @@ class ApprovalService:
                 that previously passed a data directory; ignored now
                 that storage lives in Postgres.
             dry_run: If True, don't execute actions, just log them
+            config: the confidence band; read from Settings when omitted so
+                the no-arg form callers use still honours env (#916).
         """
         self.dry_run = dry_run
+        self.config = config or ResponseConfig.from_settings()
         # data_dir retained as attribute so any caller introspecting
         # it doesn't break; no filesystem I/O is performed anymore.
         self.data_dir = data_dir
@@ -231,36 +240,6 @@ class ApprovalService:
     def get_force_manual_approval(self) -> bool:
         """Get the current force manual approval setting."""
         return self.force_manual_approval
-
-    def should_auto_approve(
-        self,
-        action: Dict,
-        threshold: float = 0.90,
-        force_manual: bool = False,
-    ) -> bool:
-        """Decide if an action should auto-approve based on confidence."""
-        if force_manual or self.get_force_manual_approval():
-            return False
-        confidence = action.get("confidence", 0.0)
-        if confidence >= threshold:
-            return True
-        if confidence >= 0.85:
-            return True
-        return False
-
-    def needs_flag(self, confidence: float) -> bool:
-        """Check if an action needs a flag (confidence 0.85-0.89)."""
-        return 0.85 <= confidence < 0.90
-
-    def get_action_decision(self, action: Dict, threshold: float = 0.90) -> str:
-        """Get the decision for an action based on confidence."""
-        confidence = action.get("confidence", 0.0)
-        if confidence < 0.70:
-            return "monitor_only"
-        elif confidence < 0.85:
-            return "manual_approval"
-        else:
-            return "auto_approve"
 
     def is_valid_action_type(self, action_type: str) -> bool:
         """Check if an action type is valid."""
@@ -356,14 +335,24 @@ class ApprovalService:
         """
         key = idempotency_key or None
 
+        # The branch that set requires_approval is appended to the caller's
+        # narrative so the row records the rule it was decided by (#917).
         if self.force_manual_approval:
             requires_approval = True
+            rule = decision_rule("approval.force_manual_approval", True)
         elif reversibility is Reversibility.IRREVERSIBLE:
             requires_approval = True
+            rule = decision_rule("reversibility", reversibility.value)
         elif reversibility is Reversibility.REVERSIBLE:
-            requires_approval = confidence < 0.90
+            requires_approval = confidence < self.config.confidence_threshold
+            rule = decision_rule(
+                "response.confidence_threshold",
+                self.config.confidence_threshold,
+                confidence,
+            )
         else:
             raise ValueError(f"Unknown reversibility: {reversibility}")
+        reason = f"{reason}; {rule}" if reason else rule
 
         action_id = f"action-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
         status = (

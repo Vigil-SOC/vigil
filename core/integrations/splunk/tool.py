@@ -20,22 +20,17 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
-# Spawned as its own server with a narrowed environment, reading `.env` is this
-# module's job -- nothing else would tell it where Splunk lives. Imported into a
-# process that has already decided where its configuration comes from, it is
-# not: `load_dotenv()` writes the whole file into `os.environ`, which pydantic
-# reads whatever `env_file` says. `core.config.dotenv_allowed()` is the one
-# place that answers which of the two this is, so a third reader cannot come to
-# disagree with these.
-from core.config import dotenv_allowed  # noqa: E402
+try:
+    from dotenv import load_dotenv
 
-if dotenv_allowed():
-    try:
-        from dotenv import load_dotenv
-
+    # Spawned as a server, .env is the config source. Imported into a process
+    # that already decided where its config comes from (the test suite sets
+    # VIGIL_DISABLE_DOTENV), loading it would write .env into os.environ, which
+    # pydantic reads regardless of env_file.
+    if not os.environ.get("VIGIL_DISABLE_DOTENV"):
         load_dotenv()
-    except ImportError:
-        pass
+except ImportError:
+    pass
 
 # GH #84 PR-F follow-up: prefer the secrets layer over direct env reads so
 # SPLUNK_* credentials can be rotated without editing .env. If the import

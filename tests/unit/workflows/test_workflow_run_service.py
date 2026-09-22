@@ -83,7 +83,6 @@ class TestBeginAndFinalize:
             workflow_source="file",
             trigger_context={"finding_id": "f-test-123"},
             triggered_by="pytest",
-            skill_tools_available=["skill_x"],
         )
         assert run_id is not None
         row = service.get_run(run_id)
@@ -93,7 +92,6 @@ class TestBeginAndFinalize:
         assert row["workflow_name"] == "Test WF"
         assert row["triggered_by"] == "pytest"
         assert row["trigger_context"] == {"finding_id": "f-test-123"}
-        assert row["skill_tools_available"] == ["skill_x"]
         assert row["finished_at"] is None
         assert row["duration_ms"] is None
 

@@ -10,6 +10,7 @@ from core.config import get_settings
 from core.storage.connection import get_db_manager
 from core.time import utcnow
 from services.daemon.config import SchedulerConfig
+from services.daemon.probes import inject_probes, score_probes
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,8 @@ class TaskScheduler:
     def __init__(self, config: SchedulerConfig):
         self.config = config
         self._tasks: List[ScheduledTask] = []
+        # The processor's input queue; probes go on it like polled findings.
+        self._processor_queue: Optional[asyncio.Queue] = None
 
         # Services (lazy loaded)
         self._data_service = None
@@ -49,6 +52,8 @@ class TaskScheduler:
         self.stats = {
             "tasks_run": 0,
             "threat_hunts": 0,
+            "probes_injected": 0,
+            "probes_scored": 0,
             "reports_generated": 0,
             "cleanups_run": 0,
             "errors": 0,
@@ -87,6 +92,18 @@ class TaskScheduler:
                     name="cleanup",
                     func=self._run_cleanup,
                     interval=self.config.cleanup_interval,
+                    enabled=True,
+                    run_on_start=False,
+                )
+            )
+
+        # Hourly tick; the day-scoped finding_id makes the injection once a day.
+        if self.config.probes_enabled:
+            self._tasks.append(
+                ScheduledTask(
+                    name="probe_sweep",
+                    func=self._run_probe_sweep,
+                    interval=self.config.probe_interval,
                     enabled=True,
                     run_on_start=False,
                 )
@@ -131,6 +148,10 @@ class TaskScheduler:
                 )
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Threat feed poller unavailable: {e}")
+
+    def set_processor_queue(self, queue: asyncio.Queue):
+        """Set the processor's input queue that probe sweeps inject onto."""
+        self._processor_queue = queue
 
     def _init_services(self):
         """Initialize required services."""
@@ -365,6 +386,19 @@ class TaskScheduler:
             "approvals_expired": expired,
             "read_log_removed": reads,
         }
+
+    async def _run_probe_sweep(self):
+        """Score the probes past their hour (#924), then queue today's (#923)."""
+        if self._processor_queue is None or not self._data_service:
+            logger.warning(
+                "Probe sweep skipped: processor queue or database unavailable"
+            )
+            return 0
+        scored = await asyncio.to_thread(score_probes, self._data_service)
+        self.stats["probes_scored"] += scored
+        injected = await inject_probes(self._processor_queue, self._data_service)
+        self.stats["probes_injected"] += injected
+        return injected
 
     async def _run_sandbox_poll(self):
         """Advance pending sandbox submissions to completed reports."""
