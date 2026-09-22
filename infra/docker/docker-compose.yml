@@ -185,6 +185,9 @@ services:
       bifrost:
         condition: service_healthy
     restart: unless-stopped
+    # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
 
@@ -304,6 +307,9 @@ services:
       bifrost:
         condition: service_healthy
     restart: unless-stopped
+    # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
 
@@ -349,6 +355,9 @@ services:
       bifrost:
         condition: service_healthy
     restart: unless-stopped
+    # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
 
@@ -461,6 +470,9 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+    # Host Ollama: implicit on Docker Desktop, required on native Linux Docker.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - deeptempo-network
 
