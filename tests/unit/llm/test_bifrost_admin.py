@@ -928,3 +928,100 @@ def test_sync_all_pushes_default_openai_row_base_url(monkeypatch):
     key_put = _key_writes(rec)[0]
     assert "anthropic/claude-sonnet-5" in key_put["kwargs"]["json"]["models"]
     _reset_registry()
+
+
+# ---------------------------------------------------------------------------
+# default_model_for_provider_type — ollama floors to a chat model (#1003)
+# ---------------------------------------------------------------------------
+
+
+def _ollama_meta(*specs):
+    """``ModelMeta`` stand-ins from ``(id, is_embedding)`` pairs.
+
+    ``is_embedding=None`` leaves the key absent, as ``fetch_ollama_models``
+    does for a server that reports no capabilities.
+    """
+    from core.llm.providers.discovery import ModelMeta
+
+    return [
+        ModelMeta(
+            id=mid,
+            display_name=mid,
+            capabilities={} if emb is None else {"is_embedding": emb},
+        )
+        for mid, emb in specs
+    ]
+
+
+def _ollama_floor(monkeypatch, models):
+    import asyncio
+
+    async def _fake_list(base_url, discovery=None):
+        return models
+
+    monkeypatch.setattr(bifrost_admin, "_list_ollama_models", _fake_list)
+    return asyncio.run(bifrost_admin.default_model_for_provider_type("ollama"))
+
+
+def test_ollama_floor_skips_embedding_model_listed_first(monkeypatch):
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", True),
+        ("qwen2.5:14b", False),
+        ("llama3.1:8b", False),
+    )
+    assert _ollama_floor(monkeypatch, models) == "qwen2.5:14b"
+
+
+def test_ollama_floor_skips_embedding_model_listed_last(monkeypatch):
+    models = _ollama_meta(
+        ("qwen2.5:14b", False),
+        ("llama3.1:8b", False),
+        ("nomic-embed-text:latest", True),
+    )
+    assert _ollama_floor(monkeypatch, models) == "qwen2.5:14b"
+
+
+def test_ollama_floor_is_none_when_only_embedding_models_pulled(monkeypatch, caplog):
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", True),
+        ("mxbai-embed-large:latest", True),
+    )
+    with caplog.at_level("WARNING"):
+        assert _ollama_floor(monkeypatch, models) is None
+    assert "No pulled model to floor a mirrored ollama row to" in caplog.text
+
+
+def test_ollama_floor_falls_back_to_name_when_capability_flag_absent(monkeypatch):
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", None),
+        ("llama3.1:8b", None),
+    )
+    assert _ollama_floor(monkeypatch, models) == "llama3.1:8b"
+
+
+def test_ollama_floor_prefers_mid_tier_chat_model(monkeypatch):
+    """The surviving ids go through ``_preferred_floor``, not index 0."""
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", True),
+        ("qwen2.5:72b", False),
+        ("mistral-small:latest", False),
+    )
+    assert _ollama_floor(monkeypatch, models) == "mistral-small:latest"
+
+
+def test_servable_models_excludes_embedding_ids(monkeypatch):
+    """So ``_upsert_row`` corrects a row already floored to an embedding model."""
+    import asyncio
+
+    from core.llm.bifrost import mirror
+
+    models = _ollama_meta(
+        ("nomic-embed-text:latest", True),
+        ("llama3.1:8b", False),
+    )
+
+    async def _fake_list(base_url, discovery=None):
+        return models
+
+    monkeypatch.setattr(bifrost_admin, "_list_ollama_models", _fake_list)
+    assert asyncio.run(mirror._servable_models("ollama")) == {"llama3.1:8b"}

@@ -222,13 +222,21 @@ async def _servable_models(provider: str) -> Optional[set]:
     Only asked of a self-hosted server, whose set changes under the operator's
     hands. A cloud provider's catalogue does not shrink out from under a stored
     default, so there is nothing to re-heal and no request worth making.
+
+    "Servable" means servable as a ``default_model``, which is a chat floor:
+    an embedding-only id is excluded so a row already floored to one (#1003)
+    is corrected by ``_upsert_row`` on the next sync.
     """
-    from core.llm.bifrost.admin import _HOST_OWNED_CATALOGUE, _list_ollama_models
+    from core.llm.bifrost.admin import (
+        _HOST_OWNED_CATALOGUE,
+        _list_ollama_models,
+        chat_capable_ids,
+    )
 
     if provider not in _HOST_OWNED_CATALOGUE:
         return None
-    models = await _list_ollama_models(None)
-    return {m.id for m in models} if models else None
+    ids = chat_capable_ids(await _list_ollama_models(None))
+    return set(ids) if ids else None
 
 
 async def sync_provider(provider: str) -> None:
