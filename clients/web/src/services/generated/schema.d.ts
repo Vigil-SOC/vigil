@@ -9718,6 +9718,8 @@ export interface components {
         InvestigationCreateRequest: {
             /** Case Id */
             case_id?: string | null;
+            /** Document */
+            document?: string | null;
             /**
              * Finding Ids
              * @default []
