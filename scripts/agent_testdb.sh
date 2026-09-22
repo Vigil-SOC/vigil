@@ -21,7 +21,17 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$NAME"; then
     -p "$PORT:5432" postgres:16-alpine >/dev/null
 fi
 
-until docker exec "$NAME" pg_isready -U vigil -d vigil_test >/dev/null 2>&1; do sleep 1; done
+# Poll over TCP, not the socket: the image's first-run init serves a socket-only
+# temporary server before vigil_test exists, and pg_isready would pass against it.
+for _ in $(seq 60); do
+  docker exec "$NAME" pg_isready -h 127.0.0.1 -p 5432 -U vigil -d vigil_test >/dev/null 2>&1 && break
+  sleep 1
+done
+if ! docker exec "$NAME" pg_isready -h 127.0.0.1 -p 5432 -U vigil -d vigil_test >/dev/null 2>&1; then
+  echo "$NAME did not accept TCP connections within 60s" >&2
+  docker logs --tail 20 "$NAME" >&2 || true
+  exit 1
+fi
 
 # Only the agent layer's own tables: these tests touch no other schema, and the
 # rest of infra/database/init assumes an ordering this does not need.
