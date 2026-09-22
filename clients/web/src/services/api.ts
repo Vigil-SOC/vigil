@@ -991,6 +991,10 @@ export const workflowApi = {
     iterations?: number
     approve_hypotheses?: boolean
   }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
+  // Read-only: is this report already hunted? Answers running | concluded | uncovered,
+  // the last two with a `proposal` body execute() accepts as-is. Never starts anything.
+  checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
+    api.post('/workflows/threat-hunt/coverage', body),
   reloadFiles: () => api.post('/workflows/reload'),
 
   // persisted to workflow_runs, so History lists past runs without retrieving

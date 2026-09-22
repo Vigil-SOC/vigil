@@ -1,14 +1,16 @@
 /* The run modal. Everything here is a fact the deployment already knew and the
    console used to withhold until after the money was spent: what the run will
    cost at most, what it will not be able to look at, and where it went. */
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { RunModal } from './WorkflowsScreen'
 
 const execute = vi.fn(() => Promise.resolve({ data: { run_id: 'run-abc12345' } }))
 const getWorkflow = vi.fn()
 const getRun = vi.fn(() => Promise.resolve({ data: { run_id: 'run-abc12345', status: 'running' } }))
 const steer = vi.fn(() => Promise.resolve({ data: {} }))
+const checkCoverage = vi.fn()
 
 vi.mock('../../services/api', () => ({
   workflowApi: {
@@ -16,6 +18,7 @@ vi.mock('../../services/api', () => ({
     get: (...a: unknown[]) => getWorkflow(...(a as [])),
     getRun: (...a: unknown[]) => getRun(...(a as [])),
     steer: (...a: unknown[]) => steer(...(a as [])),
+    checkCoverage: (...a: unknown[]) => checkCoverage(...(a as [])),
     cancelRun: vi.fn(() => Promise.resolve({ data: {} })),
   },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
@@ -42,8 +45,13 @@ const limits = (unbound: string[], source = 'heuristic') => ({
   },
 })
 
+// The coverage panel links to ?run=<id> through the router, so the modal renders inside one.
 const open = (runKind = 'hunt') =>
-  render(<RunModal wf={wf(runKind)} onStarted={() => {}} onClose={() => {}} />)
+  render(
+    <MemoryRouter>
+      <RunModal wf={wf(runKind)} onStarted={() => {}} onClose={() => {}} />
+    </MemoryRouter>,
+  )
 
 /* A cost ceiling nothing can measure is not a ceiling, so the hunt stops after its
    first few calls. That refusal is right; arriving after the spend, naming neither the
@@ -278,7 +286,7 @@ describe('a hunt tests what the operator states', () => {
 describe('what the hypothesis field will actually put on the board', () => {
   it('counts the beliefs the splitter will make', async () => {
     getWorkflow.mockResolvedValueOnce(limits([]))
-    render(<RunModal wf={wf()} onStarted={() => {}} onClose={() => {}} />)
+    open()
     fireEvent.change(screen.getByPlaceholderText(/Credentials taken from HOST-42/), {
       target: { value: 'a host is beaconing out\nanother host is doing the same' },
     })
@@ -290,7 +298,7 @@ describe('what the hypothesis field will actually put on the board', () => {
 
   it('marks a line that reads as a fragment rather than a claim', async () => {
     getWorkflow.mockResolvedValueOnce(limits([]))
-    render(<RunModal wf={wf()} onStarted={() => {}} onClose={() => {}} />)
+    open()
     fireEvent.change(screen.getByPlaceholderText(/Credentials taken from HOST-42/), {
       target: { value: 'A host is beaconing to 45.77.53.176 over HTTPS\nat a regular interval, and another host is too.' },
     })
@@ -300,12 +308,125 @@ describe('what the hypothesis field will actually put on the board', () => {
 
   it('says nothing when every line reads as a claim', async () => {
     getWorkflow.mockResolvedValueOnce(limits([]))
-    render(<RunModal wf={wf()} onStarted={() => {}} onClose={() => {}} />)
+    open()
     fireEvent.change(screen.getByPlaceholderText(/Credentials taken from HOST-42/), {
       target: { value: 'A host is beaconing out.\nData left over DNS.' },
     })
 
     expect(await screen.findByText('H1')).toBeInTheDocument()
     expect(screen.queryByText(/reads as a fragment/)).toBeNull()
+  })
+})
+
+/* Report in, one of three answers out. The backend already said running, concluded
+   or uncovered and handed back an execute body; the console gave an operator holding
+   a report no way to ask. Whatever the answer, only the Run button ever executes. */
+describe('checking a report against what is already hunted', () => {
+  const proposal = {
+    hypothesis: 'Activity from the reported indicators ip:45.77.53.176 and techniques T1071 is present in the environment',
+    hypothesis_subjects: { 'Activity from the reported indicators ip:45.77.53.176 and techniques T1071 is present in the environment': ['ip:45.77.53.176'] },
+    approve_hypotheses: true,
+  }
+  const split = {
+    keys: ['ip:45.77.53.176'], techniques: ['T1071'],
+    matched_keys: ['ip:45.77.53.176'], unmatched_keys: [], matched_techniques: [], unmatched_techniques: ['T1071'],
+  }
+
+  const check = async (report = 'Beaconing to 45[.]77[.]53[.]176 via T1071') => {
+    getWorkflow.mockResolvedValueOnce(limits([]))
+    open()
+    await screen.findByText(/It stops at/)
+    fireEvent.change(screen.getByLabelText(/^Report/), { target: { value: report } })
+    fireEvent.click(screen.getByRole('button', { name: 'Check coverage' }))
+    await waitFor(() => expect(checkCoverage).toHaveBeenCalled())
+  }
+
+  beforeEach(() => { execute.mockClear(); steer.mockClear(); checkCoverage.mockReset() })
+
+  it('lists the in-flight runs, each linked to ?run=, and extends one with the report', async () => {
+    checkCoverage.mockResolvedValueOnce({ data: {
+      ...split, status: 'running',
+      in_flight: [{ run_id: 'run-11111111', status: 'running', matched_keys: ['ip:45.77.53.176'], matched_techniques: [] }],
+    } })
+    await check()
+
+    const link = await screen.findByRole('link', { name: 'run-1111' })
+    expect(link).toHaveAttribute('href', '/?run=run-11111111')
+    expect(screen.getByText('T1071')).toBeInTheDocument() // the unmatched half stays visible
+
+    fireEvent.click(screen.getByRole('button', { name: 'Extend' }))
+    await waitFor(() => expect(steer).toHaveBeenCalledTimes(1))
+    expect(steer.mock.calls[0]).toEqual(['run-11111111', 'extend', 'Beaconing to 45[.]77[.]53[.]176 via T1071'])
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('lists the verdicts linked by origin_run_id and reopens from the proposal', async () => {
+    checkCoverage.mockResolvedValueOnce({ data: {
+      ...split, status: 'concluded', proposal,
+      concluded: [
+        { statement: 'the host beacons out', outcome: 'refuted', concluded_at: '2026-09-01T10:00:00Z', origin_run_id: 'run-22222222', matched_keys: ['ip:45.77.53.176'], matched_techniques: [] },
+        { statement: 'an orphaned verdict', outcome: 'supported', concluded_at: null, origin_run_id: null, matched_keys: [], matched_techniques: [] },
+      ],
+    } })
+    await check()
+
+    expect(await screen.findByRole('link', { name: 'run-2222' })).toHaveAttribute('href', '/?run=run-22222222')
+    expect(screen.getByText('an orphaned verdict')).toBeInTheDocument()
+    expect(screen.getAllByRole('link')).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen' }))
+    expect(screen.getByLabelText(/Hypothesis/)).toHaveValue(proposal.hypothesis)
+    expect(screen.getByLabelText('What H1 is about')).toHaveValue('ip:45.77.53.176')
+    expect(screen.getByRole('checkbox')).toBeChecked()
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it('sends the proposal body unchanged when Run follows Use proposal', async () => {
+    checkCoverage.mockResolvedValueOnce({ data: { ...split, status: 'uncovered', proposal } })
+    await check()
+    expect(checkCoverage).toHaveBeenCalledWith({ report: 'Beaconing to 45[.]77[.]53[.]176 via T1071' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Use proposal' }))
+    expect(execute).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText(/Iterations/), { target: { value: '3' } })
+    fireEvent.click(screen.getByRole('button', { name: /Run workflow/ }))
+
+    await waitFor(() => expect(execute).toHaveBeenCalledTimes(1))
+    expect(execute.mock.calls[0]).toEqual(['threat-hunt', { ...proposal, iterations: 3 }])
+    expect(steer).not.toHaveBeenCalled()
+  })
+
+  it('sends the subjects already typed as entity_keys', async () => {
+    checkCoverage.mockResolvedValueOnce({ data: { ...split, status: 'uncovered', proposal } })
+    getWorkflow.mockResolvedValueOnce(limits([]))
+    open()
+    await screen.findByText(/It stops at/)
+    fireEvent.change(screen.getByLabelText(/Hypothesis/), { target: { value: 'a host beacons' } })
+    fireEvent.change(screen.getByLabelText('What H1 is about'), { target: { value: 'host:dev-830, ip:10.0.0.1' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Check coverage' }))
+
+    await waitFor(() => expect(checkCoverage).toHaveBeenCalledWith({ entity_keys: ['host:dev-830', 'ip:10.0.0.1'] }))
+  })
+
+  it('shows a 400 as the modal error and leaves the form alone', async () => {
+    checkCoverage.mockRejectedValueOnce({ response: { data: { detail: 'nothing to check: no entity keys or techniques were found' } } })
+    getWorkflow.mockResolvedValueOnce(limits([]))
+    open()
+    await screen.findByText(/It stops at/)
+    fireEvent.change(screen.getByLabelText(/Hypothesis/), { target: { value: 'a host beacons' } })
+    fireEvent.change(screen.getByLabelText(/^Report/), { target: { value: 'nothing useful here' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Check coverage' }))
+
+    expect(await screen.findByText(/nothing to check: no entity keys/)).toBeInTheDocument()
+    expect(screen.getByLabelText(/Hypothesis/)).toHaveValue('a host beacons')
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+    expect(screen.queryByTestId('coverage-answer')).toBeNull()
+  })
+
+  it('offers no report field to a workflow that walks phases', async () => {
+    getWorkflow.mockResolvedValueOnce({ data: {} })
+    open('compose')
+    await waitFor(() => expect(getWorkflow).toHaveBeenCalled())
+    expect(screen.queryByLabelText(/^Report/)).toBeNull()
   })
 })
