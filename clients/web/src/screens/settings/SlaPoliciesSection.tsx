@@ -75,7 +75,6 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
   const [dialogError, setDialogError] = useState('')
   const [saving, setSaving] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState<SlaPolicy | null>(null)
-  const [forceDelete, setForceDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
 
   if (phase === 'loading') {
@@ -168,10 +167,9 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
     if (!confirmDelete) return
     setDeleting(true)
     try {
-      await remove(confirmDelete.policy_id, forceDelete)
+      await remove(confirmDelete.policy_id)
       notify('ok', `Deleted ${confirmDelete.name}.`)
       setConfirmDelete(null)
-      setForceDelete(false)
     } catch (e) {
       notify('err', errText(e, 'Failed to delete policy'))
     } finally {
@@ -224,7 +222,7 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
                       <button className="btn ghost icon" title="Set as default for its priority" onClick={() => handleSetDefault(p)}><Icon name="bolt" size={15} /></button>
                     )}
                     <button className="btn ghost icon" title="Edit" onClick={() => openEdit(p)}><Icon name="edit" size={15} /></button>
-                    <button className="btn ghost icon" title="Delete" onClick={() => { setForceDelete(false); setConfirmDelete(p) }}><Icon name="trash" size={15} /></button>
+                    <button className="btn ghost icon" title="Delete" onClick={() => setConfirmDelete(p)}><Icon name="trash" size={15} /></button>
                   </div>
                 </td>
               </tr>
@@ -268,18 +266,17 @@ export default function SlaPoliciesSection({ notify }: SectionProps) {
         body={
           <div className="flex flex-col gap-3">
             <span>Permanently delete {confirmDelete?.name ?? 'this policy'}? This cannot be undone.</span>
-            <ToggleRow
-              label="Force delete"
-              hint="Delete even if cases currently reference this policy."
-              checked={forceDelete}
-              onChange={setForceDelete}
-            />
+            <span className="text-sm opacity-70">
+              A policy that cases still reference cannot be deleted. Deactivate it
+              instead: no new case will take it, and the cases that used it keep
+              their SLA history.
+            </span>
           </div>
         }
         confirmLabel="Delete"
         busy={deleting}
         onConfirm={handleDelete}
-        onClose={() => { setConfirmDelete(null); setForceDelete(false) }}
+        onClose={() => setConfirmDelete(null)}
       />
     </SettingsCard>
   )

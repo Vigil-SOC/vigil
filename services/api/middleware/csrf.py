@@ -18,9 +18,10 @@ How it works:
 
 Exempt paths:
 - Endpoints that authenticate themselves (webhooks using HMAC, ingestion
-  endpoints using bearer/API-key) opt out via `VIGIL_CSRF_EXEMPT_PATHS`.
-  Any request whose path starts with one of the configured prefixes skips
-  both the cookie check and the cookie seeding.
+  endpoints using bearer/API-key, the MCP surface using a minted credential)
+  are always exempt; `VIGIL_CSRF_EXEMPT_PATHS` adds to that set rather than
+  replacing it. Any request whose path starts with one of those prefixes
+  skips both the cookie check and the cookie seeding.
 
 Report-only mode:
 - `VIGIL_CSRF_REPORT_ONLY=true` logs violations at WARNING but lets the
@@ -46,7 +47,18 @@ CSRF_COOKIE_NAME = "csrf_token"
 CSRF_HEADER_NAME = "X-CSRF-Token"
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
-_DEFAULT_EXEMPT = ("/api/webhooks/", "/api/ingest/")
+# CSRF defends a browser session driven by a cookie. These are reached with a
+# credential in a header instead, by something that is not a browser, so there
+# is no ambient authority for a forged request to borrow -- and a caller that
+# cannot be handed a csrf_token cookie could not satisfy the check anyway.
+#
+# Always, rather than by default. An operator's list is added to these, not
+# substituted for them: every shipped config already names a list, so a default
+# that a list replaces is a default nothing runs. The one thing dropping one of
+# these could achieve is refusing every call to it -- there is no protection on
+# the other side of the trade, because the check these skip is one their callers
+# have no way to pass.
+_ALWAYS_EXEMPT = ("/api/webhooks/", "/api/ingest/", "/mcp")
 
 
 def _apply_context_path(path: str, prefix: str) -> str:
@@ -71,12 +83,17 @@ def _parse_exempt_paths(
     raw: Optional[str], context_path: Optional[str] = None
 ) -> tuple:
     prefix = context_path_prefix() if context_path is None else context_path.rstrip("/")
-    bases = (
-        tuple(p.strip() for p in raw.split(",") if p.strip())
-        if raw
-        else _DEFAULT_EXEMPT
+    configured = tuple(p.strip() for p in raw.split(",") if p.strip()) if raw else ()
+    # Deduplicated after the context path is applied, not before: an operator
+    # who wrote a path fully qualified names the same prefix as the always-exempt
+    # one that gets qualified here, and the two are only equal once both are.
+    # dict.fromkeys rather than a set so the order stays the one a reader of the
+    # config sees.
+    return tuple(
+        dict.fromkeys(
+            _apply_context_path(p, prefix) for p in _ALWAYS_EXEMPT + configured
+        )
     )
-    return tuple(_apply_context_path(p, prefix) for p in bases)
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):

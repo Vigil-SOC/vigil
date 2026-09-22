@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.auth.current_user import get_current_user
+from core.cases import case_journal_service
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
 from core.cases.closure import ClosedByKind, ClosureCategory
@@ -311,7 +312,7 @@ async def create_case(case_data: CaseCreate):
         if case_id:
             # This will auto-select the default policy for the case priority
             sla_result = sla_service.assign_sla_to_case(case_id, sla_policy_id=None)
-            if sla_result:
+            if sla_result:  # truthy only when the case ends up with an SLA
                 import logging
 
                 logger = logging.getLogger(__name__)
@@ -404,16 +405,11 @@ async def add_finding_to_case(case_id: str, finding_id: str):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    finding_ids = case.get("finding_ids", [])
-    if finding_id not in finding_ids:
-        finding_ids.append(finding_id)
-        success = data_service.update_case(case_id, finding_ids=finding_ids)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to add finding")
+    linked = case_journal_service.link_finding(data_service, case_id, finding_id)
+    if linked is None:
+        if not data_service.get_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
+        raise HTTPException(status_code=500, detail="Failed to add finding")
 
     return data_service.get_case(case_id)
 
@@ -430,16 +426,11 @@ async def remove_finding_from_case(case_id: str, finding_id: str):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
-        raise HTTPException(status_code=404, detail="Case not found")
-
-    finding_ids = case.get("finding_ids", [])
-    if finding_id in finding_ids:
-        finding_ids.remove(finding_id)
-        success = data_service.update_case(case_id, finding_ids=finding_ids)
-        if not success:
-            raise HTTPException(status_code=500, detail="Failed to remove finding")
+    unlinked = case_journal_service.unlink_finding(data_service, case_id, finding_id)
+    if unlinked is None:
+        if not data_service.get_case(case_id):
+            raise HTTPException(status_code=404, detail="Case not found")
+        raise HTTPException(status_code=500, detail="Failed to remove finding")
 
     return data_service.get_case(case_id)
 

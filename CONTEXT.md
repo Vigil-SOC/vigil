@@ -254,9 +254,12 @@ _Avoid_: corroboration (that is the effect of several sources agreeing, not one
 source's direction), confidence, polarity, sentiment
 
 **Trust**:
-Who concluded — `analyst` when a person closed it, `agent` when the daemon did.
-The other axis on a **Verdict**'s sources, alongside **Source Tier**. Unrelated
-to **Connector Trust**, which is about admitting a third-party origin.
+Who concluded — `analyst` when a person closed it at a keyboard, `agent` when a
+program did. A program holding a credential minted by a person is still a
+program: it acts with that person's standing, `closed_by` records whose, and
+`analyst` is the one record this system will not let an agent claim on its own
+behalf. The other axis on a **Verdict**'s sources, alongside **Source Tier**.
+Unrelated to **Connector Trust**, which is about admitting a third-party origin.
 _Avoid_: connector trust, source tier, confidence
 
 **Verdict**:
@@ -418,7 +421,9 @@ _Avoid_: page, tab, view
   terminates, and from a **Case** when it closes; it never writes during a run,
   and a run reads it once at start (ADR 0015)
 - Closing a **Case** writes one **Verdict**, whose Trust is `analyst` when a
-  person closed it and `agent` otherwise; reopening the Case withdraws it
+  person closed it and `agent` otherwise — including when a program closed it
+  with a person's credential, which `closed_by` names; reopening the Case
+  withdraws the Verdict
 - A **Verdict**'s sources each carry a **Source Tier** and the Verdict carries
   one **Trust**. The two are independent axes: **Trust** is who concluded, and
   a `feed`-tier source can be cited by an `analyst`

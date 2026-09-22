@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Toggle, NumberInput } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
+import { Cost, fmtCost } from '../../shared/cost'
 import { useAutoOps, type Investigation, type OrchestratorStatus } from './useAutoOps'
 import { StatusBadge, PrioBadge } from './statusBadge'
 import InvestigationDetail from './InvestigationDetail'
@@ -150,7 +151,7 @@ export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }:
             onClick={k.statuses.length ? () => toggleFilter(k.statuses) : undefined}
           />
         ))}
-        <KpiCell label="Total Cost" value={`$${cost.total_cost_usd?.toFixed(2) ?? '0.00'}`} note="cumulative spend" />
+        <KpiCell label="Total Cost" value={fmtCost(cost.total_cost_usd)} note="cumulative spend" />
       </div>
 
       {/* ---------- hourly budget (only meaningful while enabled) ---------- */}
@@ -248,7 +249,7 @@ function InvestigationRow({
         </span>
       </td>
       <td>{inv.iteration_count}</td>
-      <td className="muted">${inv.cost_usd?.toFixed(3)}</td>
+      <td className="muted"><Cost usd={inv.cost_usd} digits={3} /></td>
       <td className="muted">{inv.created_at ? new Date(inv.created_at).toLocaleString() : '—'}</td>
       <td>
         <span className="row-act">
@@ -305,8 +306,8 @@ function BudgetBar({ used, remaining }: { used: number; remaining: number }) {
   return (
     <div className="px-[22px] pt-4">
       <div className="flex items-center justify-between mb-1.5 text-xs text-tx-3">
-        <span>Hourly budget · ${used?.toFixed(2)} of ${total?.toFixed(2)}</span>
-        <span style={low ? { color: 'var(--crit)', fontWeight: 600 } : undefined}>${remaining?.toFixed(2)} remaining</span>
+        <span>Hourly budget · {fmtCost(used)} of ${total.toFixed(2)}</span>
+        <span style={low ? { color: 'var(--crit)', fontWeight: 600 } : undefined}>${remaining.toFixed(2)} remaining</span>
       </div>
       <div style={{ height: 8, borderRadius: 6, background: 'var(--bg-2)', overflow: 'hidden' }}>
         <div style={{ width: `${pct}%`, height: '100%', background: low ? 'var(--crit)' : 'var(--accent)', borderRadius: 6, transition: 'width .3s' }} />

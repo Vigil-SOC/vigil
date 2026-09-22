@@ -6,7 +6,9 @@ notifications, and reporting.
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 from sqlalchemy import and_
@@ -18,6 +20,43 @@ from core.storage.unit_of_work import unit_of_work
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+
+class SlaOutcome(str, Enum):
+    """Why an assignment ended the way it did.
+
+    Assigning used to answer ``None`` to five different questions -- no such
+    case, no such policy, a policy that was retired, no default for the
+    priority, and anything that raised -- and its callers each guessed
+    differently. One answered 500 to an operator naming a retired policy;
+    another discarded the answer, so a case created from a template naming one
+    was created with no SLA at all: no deadlines, no breach tracking, and a log
+    line as the only trace.
+    """
+
+    ASSIGNED = "assigned"
+    ALREADY_ASSIGNED = "already_assigned"
+    NO_SUCH_CASE = "no_such_case"
+    POLICY_NOT_FOUND = "policy_not_found"
+    POLICY_RETIRED = "policy_retired"
+    NO_DEFAULT_POLICY = "no_default_policy"
+
+
+@dataclass(frozen=True)
+class SlaAssignment:
+    """What happened, and the row if there is one.
+
+    Truthy exactly when a case has an SLA at the end of it, so a caller that
+    only wants to know that still reads correctly.
+    """
+
+    outcome: SlaOutcome
+    sla: Optional[CaseSLA] = None
+    # The policy the caller named, so a refusal can say which one it means.
+    policy_id: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        return self.sla is not None
 
 
 class BusinessHoursCalculator:
@@ -119,13 +158,14 @@ class CaseSLAService:
         """Initialize the SLA service."""
         self.business_hours_calc = BusinessHoursCalculator()
 
-    @default_on_error(None)
     def assign_sla_to_case(
         self,
         case_id: str,
         sla_policy_id: Optional[str] = None,
         session: Optional[Session] = None,
-    ) -> Optional[CaseSLA]:
+        *,
+        fall_back_to_default: bool = False,
+    ) -> SlaAssignment:
         """
         Assign an SLA policy to a case.
 
@@ -133,16 +173,28 @@ class CaseSLAService:
             case_id: Case ID
             sla_policy_id: SLA policy ID (if None, uses default for priority)
             session: Database session (optional)
+            fall_back_to_default: when the named policy cannot be used, assign
+                the default for the case's priority instead of refusing. For a
+                caller with nobody to tell -- a case being created from a
+                template that names a retired policy, where refusing means a
+                case with no deadlines and no breach tracking. A person naming
+                a policy by hand is told instead.
 
         Returns:
-            Created CaseSLA object or None
+            An ``SlaAssignment`` saying what happened, carrying the row when
+            there is one.
+
+        Not wrapped in ``default_on_error``: ``core/exceptions.py`` says not to
+        use it where a caller needs to tell failure from a legitimately empty
+        result, and that is this method exactly. A database that cannot be read
+        is a defect and reaches the error handler as one.
         """
         with unit_of_work(session) as session:
             # Get case
             case = session.query(Case).filter(Case.case_id == case_id).first()
             if not case:
                 logger.error(f"Case {case_id} not found")
-                return None
+                return SlaAssignment(SlaOutcome.NO_SUCH_CASE)
 
             # Check if SLA already assigned
             existing_sla = (
@@ -150,17 +202,48 @@ class CaseSLAService:
             )
             if existing_sla:
                 logger.warning(f"SLA already assigned to case {case_id}")
-                return existing_sla
+                return SlaAssignment(
+                    SlaOutcome.ALREADY_ASSIGNED,
+                    existing_sla,
+                    existing_sla.sla_policy_id,
+                )
 
-            # Get SLA policy
+            policy = None
+            named_but_unusable: Optional[SlaOutcome] = None
+
+            # Deactivating is what an operator is told to do with a policy they
+            # cannot delete, and that promise only holds if a named policy is
+            # checked the same way the default one is: a template carrying
+            # `default_sla_policy_id` names it explicitly, so without the
+            # is_active filter an inactive policy keeps being assigned to new
+            # cases. Retired and missing are looked up separately so the answer
+            # can say which it was -- they are the same to a WHERE clause and
+            # very different to whoever asked.
             if sla_policy_id:
-                policy = (
+                named = (
                     session.query(SLAPolicy)
                     .filter(SLAPolicy.policy_id == sla_policy_id)
                     .first()
                 )
-            else:
-                # Get default policy for case priority
+                if named is None:
+                    named_but_unusable = SlaOutcome.POLICY_NOT_FOUND
+                elif not named.is_active:
+                    named_but_unusable = SlaOutcome.POLICY_RETIRED
+                else:
+                    policy = named
+
+                if named_but_unusable and not fall_back_to_default:
+                    logger.error(
+                        "SLA policy %s cannot be assigned to case %s: %s",
+                        sla_policy_id,
+                        case_id,
+                        named_but_unusable.value,
+                    )
+                    return SlaAssignment(named_but_unusable, policy_id=sla_policy_id)
+
+            if policy is None:
+                # The default for the case's priority: the path a caller naming
+                # nothing already takes, and the one a fallback lands on.
                 policy = (
                     session.query(SLAPolicy)
                     .filter(
@@ -172,10 +255,22 @@ class CaseSLAService:
                     )
                     .first()
                 )
+                if policy is not None and named_but_unusable:
+                    logger.warning(
+                        "Case %s named SLA policy %s (%s); assigning the "
+                        "default for priority %s instead.",
+                        case_id,
+                        sla_policy_id,
+                        named_but_unusable.value,
+                        case.priority,
+                    )
 
             if not policy:
                 logger.error(f"No SLA policy found for case {case_id}")
-                return None
+                return SlaAssignment(
+                    named_but_unusable or SlaOutcome.NO_DEFAULT_POLICY,
+                    policy_id=sla_policy_id,
+                )
 
             # Calculate deadlines
             case_created = case.created_at
@@ -213,7 +308,7 @@ class CaseSLAService:
                 f"response_due={response_due}, resolution_due={resolution_due}"
             )
 
-            return case_sla
+            return SlaAssignment(SlaOutcome.ASSIGNED, case_sla, policy.policy_id)
 
     def check_sla_breach(
         self,

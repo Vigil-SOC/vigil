@@ -9,6 +9,7 @@
 root_packages =
     core
     services
+    tools
 
 [importlinter:contract:deployables]
 name = core is a library: it must not import the deployables
@@ -73,3 +74,16 @@ source_modules =
     core.ingestion
 forbidden_modules =
     core.federation
+
+[importlinter:contract:tools]
+name = core reaches tools/ at exactly one place, and that place is named here
+type = forbidden
+source_modules =
+    core
+forbidden_modules =
+    tools
+ignore_imports =
+    ; Vigil's own MCP server is defined in tools/ and called in this process
+    ; rather than spoken to down a pipe. The bridge is the one crossing, and
+    ; naming it here is what stops it becoming the precedent for the next one.
+    core.integrations.mcp.in_process -> tools.mcp.vigil

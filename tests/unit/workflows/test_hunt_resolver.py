@@ -349,12 +349,12 @@ class TestThePricingPreflight:
 
         registry = get_registry()
         for model in (
-            "claude-opus-5",
-            "claude-sonnet-5",
+            "anthropic/claude-opus-5",
+            "anthropic/claude-sonnet-5",
             "openai/gpt-5",
             "openai/o4-mini",
             "vertex/gemini-3.5-flash",
-            "gemini-2.5-pro",
+            "gemini/gemini-2.5-pro",
             "bedrock/claude-sonnet-4",
         ):
             provider, bare = priced_as("bifrost", model)

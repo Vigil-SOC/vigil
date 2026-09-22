@@ -32,10 +32,18 @@ class MCPFailure(Exception):
 # gcp-secops -- so the prefix is matched against the registered names, longest
 # first, rather than split on the separator.
 def split_tool_name(flat: str, servers: List[str]) -> Optional[Tuple[str, str]]:
+    from core.integrations.mcp.surface import VIGIL_SERVER
+
     for server in sorted(servers, key=len, reverse=True):
         prefix = f"{server}_"
         if flat.startswith(prefix) and len(flat) > len(prefix):
             return server, flat[len(prefix) :]
+
+    # Vigil's own tools carry no prefix, so a name that matches no server is
+    # one of them -- checked after the prefixes, so a vendor tool whose name
+    # happens to look bare is still routed to the vendor.
+    if VIGIL_SERVER in servers:
+        return VIGIL_SERVER, flat
     return None
 
 
@@ -111,15 +119,26 @@ async def execute_mcp_tool(
     if tool_name not in registry.get_tool_names():
         return None, False
 
-    from core.integrations.mcp.client import process_mcp_client
+    from core.integrations.mcp.surface import VIGIL_SERVER
 
-    client = process_mcp_client()
-    if client is None:
-        raise MCPFailure(
-            UNAVAILABLE, f"{server} is configured but no client is running"
-        )
+    if server == VIGIL_SERVER:
+        # Vigil's own tools are functions in this process. Reaching them by
+        # starting a second copy of Vigil and speaking down a pipe to it bought
+        # isolation that was already spent: the HTTP surface is served by this
+        # same app, so a Vigil that is down takes its tools with it either way.
+        from core.integrations.mcp import in_process
 
-    result = await client.call_tool(server, tool, args, timeout=timeout_s)
+        result = await in_process.call_tool(tool, args, timeout=timeout_s)
+    else:
+        from core.integrations.mcp.client import process_mcp_client
+
+        client = process_mcp_client()
+        if client is None:
+            raise MCPFailure(
+                UNAVAILABLE, f"{server} is configured but no client is running"
+            )
+
+        result = await client.call_tool(server, tool, args, timeout=timeout_s)
     if not isinstance(result, dict):
         return [result], True
     if result.get("error"):

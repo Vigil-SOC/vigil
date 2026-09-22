@@ -94,10 +94,45 @@ init_sentry()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _startup(app)
-    try:
-        yield
-    finally:
-        await _shutdown(app)
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from tools.mcp.vigil import mcp as vigil_mcp
+
+    # The MCP session manager runs whether or not the surface is open: the
+    # toggle is a runtime one, so turning it on must not need a restart, and
+    # with the gate refusing every request the manager simply has nothing to do.
+    #
+    # Built here, not at import: each app carries its own session manager and a
+    # manager runs once, so a process that starts the app twice -- a test, a
+    # reloader -- needs a new one rather than the same one again.
+    #
+    # The app serves at ``/mcp`` of its own accord; mounted at ``/mcp`` that
+    # would put the real endpoint at /mcp/mcp. It is the mount that decides
+    # where this is served, so the app itself serves at its root.
+    #
+    # Transport security is stated rather than left to the SDK. Its default
+    # host is 127.0.0.1, and on that default it turns on DNS-rebinding
+    # protection with an allow-list of localhost Host headers -- so a request
+    # arriving as vigil.example.com, or as a container or service name, is
+    # refused 421 before any of Vigil's own gates see it. That protection is
+    # for the usual local MCP server, which has no authentication and could
+    # otherwise be driven by a web page that rebound DNS to it. This surface
+    # is the opposite case: it exists to be reached by a caller that is not
+    # Vigil, and McpSurfaceGate already refuses anything without a credential.
+    # Naming hosts here instead would mean keeping a list in step with every
+    # deployment's DNS name, and getting a 421 whenever it drifted.
+    _mcp_gate.app = vigil_mcp.streamable_http_app(
+        streamable_http_path="/",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        ),
+    )
+
+    async with vigil_mcp.session_manager.run():
+        try:
+            yield
+        finally:
+            await _shutdown(app)
 
 
 # `version` is the version of the API this document describes, not the version
@@ -421,6 +456,29 @@ def _build_services(app: FastAPI):
     app.state.demo_data = DemoDataService() if is_demo_mode() else None
 
 
+def _announce_mcp_surface() -> None:
+    """Say what this install is serving on /mcp, and whether anyone can open it."""
+    from core.integrations.mcp.surface import is_enabled
+    from services.api.mcp_surface import announce
+
+    try:
+        enabled = is_enabled()
+        count = 0
+        if enabled:
+            from core.storage.models import McpCredential
+            from core.storage.unit_of_work import unit_of_work
+
+            with unit_of_work() as session:
+                count = (
+                    session.query(McpCredential)
+                    .filter(McpCredential.revoked_at.is_(None))
+                    .count()
+                )
+        announce(enabled, count)
+    except Exception:  # noqa: BLE001 - an announcement must never fail a boot
+        logger.exception("Could not report the state of the MCP surface")
+
+
 async def _startup(app: FastAPI):
     """Initialize database and MCP tools on startup."""
     logger.info("=" * 60)
@@ -428,6 +486,7 @@ async def _startup(app: FastAPI):
     logger.info("=" * 60)
 
     _build_services(app)
+    _announce_mcp_surface()
 
     _testing = get_settings().testing
 
@@ -742,6 +801,20 @@ def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool
         path == f"{context_path}{prefix}" or path.startswith(f"{context_path}{prefix}/")
         for prefix in _SERVED_BY_THE_BACKEND
     )
+
+
+# Vigil's own MCP server, given an address. Mounted before the SPA catch-all so
+# /mcp reaches the server rather than index.html, and behind a gate that decides
+# whether the surface is open at all and, if it is, whose request this is.
+#
+# serve_at, rather than a mount here, because the address has two spellings and
+# only one of them is a mount: see mcp_surface.BareMountPath for why the bare
+# one -- the advertised one -- otherwise answers 405 wherever a frontend build
+# exists, and 307 wherever one does not.
+from services.api.mcp_surface import McpSurfaceGate, serve_at  # noqa: E402
+
+_mcp_gate = McpSurfaceGate()
+serve_at(app, _mcp_gate, _CONTEXT_PATH)
 
 
 # Serve React static files in production

@@ -107,8 +107,24 @@ _ROW_CAP_ARGS = ("limit", "max_results", "max_count")
 # tool a keyword its signature does not take. When the call names none, a cap is
 # attached only if the tool's schema already declares one — get_finding takes
 # finding_id alone, and injecting limit made every point-read invalid_args.
-def _schema_row_caps(tool: str) -> Optional[Tuple[str, ...]]:
+def _schema_row_caps(
+    tool: str, registry: Optional["MCPRegistry"] = None
+) -> Optional[Tuple[str, ...]]:
+    """The row-cap arguments ``tool`` declares, or None if nothing describes it.
+
+    MANIFEST covers the backend tools. An MCP tool is described by the registry
+    instead, and looking only in MANIFEST reported every one of them as
+    undescribed -- which is how ``limit`` came to be sent to tools that do not
+    take one.
+    """
     spec = MANIFEST.get(tool)
+    if spec is None and registry is not None:
+        try:
+            spec = next(
+                (t for t in registry.get_all_tools() if t.get("name") == tool), None
+            )
+        except Exception:  # noqa: BLE001 - an unreadable registry describes nothing
+            spec = None
     if spec is None:
         return None
     properties = (spec.get("input_schema") or spec.get("inputSchema") or {}).get(
@@ -117,7 +133,12 @@ def _schema_row_caps(tool: str) -> Optional[Tuple[str, ...]]:
     return tuple(name for name in _ROW_CAP_ARGS if name in properties)
 
 
-def _bounded(args: Dict[str, Any], max_rows: int, tool: str) -> Dict[str, Any]:
+def _bounded(
+    args: Dict[str, Any],
+    max_rows: int,
+    tool: str,
+    registry: Optional["MCPRegistry"] = None,
+) -> Dict[str, Any]:
     named = [name for name in _ROW_CAP_ARGS if name in args]
     if named:
         lowered = {
@@ -126,10 +147,11 @@ def _bounded(args: Dict[str, Any], max_rows: int, tool: str) -> Dict[str, Any]:
         }
         return {**args, **lowered}
 
-    declared = _schema_row_caps(tool)
-    if declared is None:
-        return {**args, "limit": max_rows}
+    declared = _schema_row_caps(tool, registry)
     if not declared:
+        # Nothing describes a row cap on this tool, or it has none. Sending one
+        # anyway is a keyword its signature does not take; what it answers is
+        # still truncated below, so the cap is not lost by not being sent.
         return {**args}
     return {**args, declared[0]: max_rows}
 
@@ -148,7 +170,7 @@ def _source_system(tool: str, registry: MCPRegistry) -> str:
 # does not get a second timeout by virtue of living on the other side.
 async def _run(body: InvokeRequest, registry: MCPRegistry) -> Tuple[Any, bool, str]:
     seconds = body.bounds.timeout_ms / 1000
-    args = _bounded(body.args, body.bounds.max_rows, body.tool)
+    args = _bounded(body.args, body.bounds.max_rows, body.tool, registry)
 
     result, handled = await asyncio.wait_for(
         execute_backend_tool(body.tool, args), timeout=seconds

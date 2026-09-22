@@ -345,8 +345,7 @@ export const slaPoliciesApi = {
     is_default?: boolean
   }) => api.put(`/sla-policies/${policyId}`, data),
   
-  delete: (policyId: string, force?: boolean) =>
-    api.delete(`/sla-policies/${policyId}`, { params: { force } }),
+  delete: (policyId: string) => api.delete(`/sla-policies/${policyId}`),
   
   setDefault: (policyId: string) =>
     api.post(`/sla-policies/${policyId}/set-default`),
@@ -401,6 +400,21 @@ export const mcpApi = {
 
   setServerEnabled: (name: string, enabled: boolean) =>
     api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+
+  // Vigil's own MCP surface: whether it listens, and what may open it.
+  getSurface: () => api.get('/mcp/surface'),
+
+  setSurfaceEnabled: (enabled: boolean) => api.put('/mcp/surface', { enabled }),
+
+  // The token is in this response and nowhere else.
+  mintCredential: (label: string, expiresInDays?: number) =>
+    api.post('/mcp/surface/credentials', {
+      label,
+      expires_in_days: expiresInDays ?? null,
+    }),
+
+  revokeCredential: (credentialId: string) =>
+    api.delete(`/mcp/surface/credentials/${credentialId}`),
 }
 
 export const claudeApi = {

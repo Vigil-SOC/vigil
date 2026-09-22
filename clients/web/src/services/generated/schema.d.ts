@@ -5051,6 +5051,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/surface": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Surface
+         * @description Whether Vigil's own tools are reachable, and whether anything can reach them.
+         */
+        get: operations["get_api_mcp_surface"];
+        /**
+         * Set Surface
+         * @description Open or close the surface. Takes effect without a restart.
+         */
+        put: operations["put_api_mcp_surface"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/surface/credentials": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint Credential
+         * @description Issue a credential for the signed-in user.
+         *
+         *     The token is in this response and nowhere else. It is not stored and cannot
+         *     be shown again; an operator who loses one mints another and revokes this.
+         */
+        post: operations["post_api_mcp_surface_credentials"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/surface/credentials/{credential_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Revoke Credential
+         * @description Withdraw a credential. What it could reach, it can no longer reach.
+         */
+        delete: operations["delete_api_mcp_surface_credentials_credential_id"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/orchestrator/cost": {
         parameters: {
             query?: never;
@@ -5765,11 +5832,10 @@ export interface paths {
         post?: never;
         /**
          * Delete Sla Policy
-         * @description Delete an SLA policy.
+         * @description Delete an SLA policy that no case references.
          *
          *     Args:
          *         policy_id: The policy ID
-         *         force: Force delete even if policy is in use
          *
          *     Returns:
          *         Success message
@@ -9005,6 +9071,13 @@ export interface components {
             /** Username */
             username: string;
         };
+        /** CredentialMint */
+        CredentialMint: {
+            /** Expires In Days */
+            expires_in_days?: number | null;
+            /** Label */
+            label: string;
+        };
         /**
          * CustomAgentCreate
          * @description Request body for creating a custom agent.
@@ -10663,6 +10736,11 @@ export interface components {
              * @description Estimated time saved by AI
              */
             time_saved_minutes?: number | null;
+        };
+        /** SurfaceToggle */
+        SurfaceToggle: {
+            /** Enabled */
+            enabled: boolean;
         };
         /**
          * TaskAdd
@@ -20051,6 +20129,140 @@ export interface operations {
             };
         };
     };
+    get_api_mcp_surface: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_api_mcp_surface: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SurfaceToggle"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_mcp_surface_credentials: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CredentialMint"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_mcp_surface_credentials_credential_id: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                credential_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_orchestrator_cost: {
         parameters: {
             query?: never;
@@ -21339,9 +21551,7 @@ export interface operations {
     };
     "delete_api_sla-policies_policy_id": {
         parameters: {
-            query?: {
-                force?: boolean;
-            };
+            query?: never;
             header?: {
                 authorization?: string | null;
             };

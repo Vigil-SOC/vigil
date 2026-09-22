@@ -149,9 +149,7 @@ const fs = require('fs');
       'get_mcp_connection_status',
       'create_case',
       'analyze_with_agent',
-      'deeptempo-findings',
-      'tempo-flow',
-      'approval',
+      'vigil',
     ];
     
     const foundTools = toolNames.filter(tool => 

@@ -74,8 +74,10 @@ export function harnessFor<K extends Record<string, unknown>>(
     // Bare id for pricing, namespaced id on the wire — see openAiSurface. Without
     // the namespace the gateway matched "gemini-2.5-flash" to whichever provider
     // claimed it first, so a chat pointed at Vertex was answered (or refused) by
-    // a different account entirely.
-    provider: openAiSurface(client, spec.model, limiter, "bifrost", wireModel(spec)),
+    // a different account entirely. The same provider is handed to pricing: the
+    // gateway bills nothing of its own, and a catalog left to guess from the
+    // model's name priced a paid "llama" on a commercial host at $0.
+    provider: openAiSurface(client, spec.model, limiter, spec.provider ?? "bifrost", wireModel(spec)),
     registry: registryOf(toolsFrom(spec.tools), grantsFor(kind, spec)),
     dispatch: remoteDispatch({ url: tools, token: internalToken() }),
     budget: budgetOf(spec.budgets, unmeteredQuota, Date.now, seed, prices),

@@ -37,8 +37,9 @@ class ClosedByKind(str, Enum):
     Not derived from ``closed_by`` afterwards: an agent closing as
     "soc-automation" and a person closing as "nestor" are the same shape of
     string, and a lookup against users would grade a departed analyst's close as
-    an agent's. The HTTP close has an authenticated principal behind it and the
-    MCP tool does not, so each writer already knows the answer.
+    an agent's. The HTTP close has a person behind it and the MCP tool has a
+    program holding someone's credential, so each writer already knows the
+    answer.
     """
 
     ANALYST = "analyst"

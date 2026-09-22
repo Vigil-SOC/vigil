@@ -9,11 +9,11 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
 from core.auth.auth_service import AuthService
-from core.cases import case_records_service
+from core.cases import case_journal_service, case_records_service
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
-from core.cases.case_sla_service import CaseSLAService
+from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
@@ -38,7 +38,6 @@ from core.storage.schemas.case_api import (
     CaseTasksResponse,
     CaseWatchersResponse,
 )
-from core.time import utcnow
 from services.api.middleware.auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -140,26 +139,17 @@ async def add_case_activity(case_id: str, activity: ActivityAdd):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
+    if not data_service.get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # Get or initialize activities list
-    activities = case.get("activities", [])
-
-    # Add new activity
-    new_activity = {
-        "timestamp": utcnow().isoformat() + "Z",
-        "activity_type": activity.activity_type,
-        "description": activity.description,
-        "details": activity.details or {},
-    }
-    activities.append(new_activity)
-
-    # Update case
-    success = data_service.update_case(case_id, activities=activities)
-
-    if not success:
+    added = case_journal_service.append_activity(
+        data_service,
+        case_id,
+        activity_type=activity.activity_type,
+        description=activity.description,
+        details=activity.details,
+    )
+    if added is None:
         raise HTTPException(status_code=500, detail="Failed to add activity")
 
     return data_service.get_case(case_id)
@@ -177,26 +167,17 @@ async def add_resolution_step(case_id: str, step: ResolutionStepAdd):
     Returns:
         Updated case
     """
-    case = data_service.get_case(case_id)
-    if not case:
+    if not data_service.get_case(case_id):
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # Get or initialize resolution steps list
-    resolution_steps = case.get("resolution_steps", [])
-
-    # Add new step
-    new_step = {
-        "timestamp": utcnow().isoformat() + "Z",
-        "description": step.description,
-        "action_taken": step.action_taken,
-        "result": step.result,
-    }
-    resolution_steps.append(new_step)
-
-    # Update case
-    success = data_service.update_case(case_id, resolution_steps=resolution_steps)
-
-    if not success:
+    added = case_journal_service.append_resolution_step(
+        data_service,
+        case_id,
+        description=step.description,
+        action_taken=step.action_taken,
+        result=step.result,
+    )
+    if added is None:
         raise HTTPException(status_code=500, detail="Failed to add resolution step")
 
     return data_service.get_case(case_id)
@@ -287,14 +268,42 @@ class SLAAssign(BaseModel):
     sla_policy_id: Optional[str] = None
 
 
+# Why an assignment was refused, in the caller's terms. A 500 said "something
+# went wrong here", which was never true of any of these: each one is a thing
+# the operator named and can act on.
+_SLA_REFUSALS = {
+    SlaOutcome.NO_SUCH_CASE: (404, "Case {case_id} not found"),
+    SlaOutcome.POLICY_NOT_FOUND: (404, "SLA policy {policy_id} not found"),
+    SlaOutcome.POLICY_RETIRED: (
+        409,
+        "SLA policy {policy_id} is deactivated, so no new case takes it. "
+        "Name an active policy, or reactivate this one with "
+        "PUT /api/sla-policies/{policy_id} (is_active=true).",
+    ),
+    SlaOutcome.NO_DEFAULT_POLICY: (
+        409,
+        "No active default SLA policy exists for this case's priority.",
+    ),
+}
+
+
 @router.post("/{case_id}/sla", response_model=CaseSLASchema)
 async def assign_sla(case_id: str, data: SLAAssign):
     """Assign SLA policy to case."""
     sla_service = CaseSLAService()
-    result = sla_service.assign_sla_to_case(case_id, data.sla_policy_id)
-    if not result:
-        raise HTTPException(status_code=500, detail="Failed to assign SLA")
-    return CaseSLASchema.dump(result)
+    assignment = sla_service.assign_sla_to_case(case_id, data.sla_policy_id)
+
+    refusal = _SLA_REFUSALS.get(assignment.outcome)
+    if refusal is not None:
+        status_code, detail = refusal
+        raise HTTPException(
+            status_code=status_code,
+            detail=detail.format(
+                case_id=case_id, policy_id=assignment.policy_id or data.sla_policy_id
+            ),
+        )
+
+    return CaseSLASchema.dump(assignment.sla)
 
 
 @router.get("/{case_id}/sla", response_model=CaseSLAStatusSchema)
