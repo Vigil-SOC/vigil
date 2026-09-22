@@ -1413,13 +1413,37 @@ class Orchestrator:
             logger.error(f"Failed to read hourly cost: {e}")
             return 0.0
 
+    def _hourly_cost_limit(self) -> float:
+        """The cap as saved in Settings, falling back to startup config.
+
+        Read live so the daemon's gate and the API's status payload (a separate
+        process on default config) agree, and a saved change applies at once.
+        """
+        try:
+            from core.storage.connection import get_db_manager
+            from core.storage.models import SystemConfig
+
+            with get_db_manager().session_scope() as session:
+                cfg = (
+                    session.query(SystemConfig)
+                    .filter_by(key="orchestrator.settings")
+                    .first()
+                )
+                if cfg and isinstance(cfg.value, dict):
+                    saved = cfg.value.get("max_total_hourly_cost")
+                    if saved is not None:
+                        return float(saved)
+        except Exception as e:
+            logger.debug(f"Hourly cost limit read failed, using config: {e}")
+        return self.config.max_total_hourly_cost
+
     def _hourly_budget_exhausted(self) -> bool:
         """Gate intake on the rolling hour; logs once per pause/resume transition.
 
         Not a write to _enabled: _sync_enabled_from_db would undo it within 5s.
         """
         spent = self._hourly_cost()
-        limit = self.config.max_total_hourly_cost
+        limit = self._hourly_cost_limit()
         paused = spent >= limit
         if paused != getattr(self, "_hourly_paused", False):
             self._hourly_paused = paused
@@ -2218,9 +2242,7 @@ class Orchestrator:
             "total_cost_usd": round(total, 4),
             "active_cost_usd": round(active_cost, 4),
             "hourly_cost_usd": round(hourly, 4),
-            "hourly_budget_remaining": round(
-                self.config.max_total_hourly_cost - hourly, 4
-            ),
+            "hourly_budget_remaining": round(self._hourly_cost_limit() - hourly, 4),
             "per_investigation_limit": self.config.max_cost_per_investigation,
         }
 

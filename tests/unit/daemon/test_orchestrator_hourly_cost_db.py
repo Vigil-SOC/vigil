@@ -21,14 +21,22 @@ pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.databa
 CAP = 5.0
 
 
-def _seed(*rows: tuple[str, float, timedelta]) -> None:
+def _seed(*rows: tuple[str, float, timedelta], saved_cap: float | None = None) -> None:
     """Replace every investigation with ``(id, cost_usd, idle)`` completed rows."""
     from core.storage.connection import get_db_manager
-    from core.storage.models import Investigation
+    from core.storage.models import Investigation, SystemConfig
 
     now = utcnow()
     with get_db_manager().session_scope() as session:
         session.query(Investigation).delete()
+        session.query(SystemConfig).filter_by(key="orchestrator.settings").delete()
+        if saved_cap is not None:
+            session.add(
+                SystemConfig(
+                    key="orchestrator.settings",
+                    value={"enabled": True, "max_total_hourly_cost": saved_cap},
+                )
+            )
         for inv_id, cost, idle in rows:
             session.add(
                 Investigation(
@@ -94,3 +102,19 @@ async def test_cost_older_than_an_hour_falls_out_and_intake_launches():
     orch._process_intake_row.assert_awaited_once()
     orch._enqueue_investigation.assert_awaited_once()
     assert orch.get_cost_summary()["hourly_cost_usd"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_the_saved_cap_wins_over_startup_config():
+    # The API's status payload runs on default config; both must read Settings.
+    _seed(
+        ("inv-hour-a", 3.0, timedelta(minutes=10)),
+        ("inv-hour-b", 2.5, timedelta(minutes=40)),
+        saved_cap=10.0,
+    )
+    orch = _orchestrator()
+
+    await _run_intake(orch, [{"investigation_id": "inv-assigned"}])
+
+    orch._process_intake_row.assert_awaited_once()
+    assert orch.get_cost_summary()["hourly_budget_remaining"] == 4.5
