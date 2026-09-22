@@ -75,7 +75,7 @@ def app():
 # Each tuple: HTTP method, URL path, optional JSON body.
 # These paths were called out as unauthenticated in the disclosure.
 PROTECTED_ROUTES = [
-    ("GET", "/api/findings/", None),
+    ("GET", "/api/findings", None),
     ("DELETE", "/api/findings/all", None),
     ("GET", "/api/config/secrets/status", None),
     ("GET", "/api/llm/providers/", None),
@@ -137,11 +137,11 @@ PROTECTED_ROUTES = [
     ("POST", "/api/integrations/vstrike/ui/rightpanel-focus", None),
     # Versioned contract surface — the frozen /api/v1 routes must enforce auth
     # too (the epic is "auth on by default"). One per resource.
-    ("GET", "/api/v1/findings/", None),
-    ("GET", "/api/v1/cases/", None),
+    ("GET", "/api/v1/findings", None),
+    ("GET", "/api/v1/cases", None),
     ("GET", "/api/v1/approvals", None),
     ("GET", "/api/v1/agent-runs", None),
-    ("GET", "/api/v1/workflows/", None),
+    ("GET", "/api/v1/workflows", None),
     ("GET", "/api/v1/cases/metrics/mttr", None),
 ]
 

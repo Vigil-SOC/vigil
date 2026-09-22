@@ -40,21 +40,43 @@ def _collection_roots() -> list[tuple[str, str]]:
 
 @pytest.fixture
 def client_with_a_frontend_build():
-    """The app as an install serves it: the SPA fallback registered."""
+    """The app as an install serves it: the SPA fallback in place.
+
+    Registered the same way main.py registers it -- as a handler for a 404 that
+    has already been decided, not as a route that decides one -- so what is
+    under test here is the real arrangement rather than a copy of it.
+    """
+    from fastapi.exception_handlers import http_exception_handler
+    from fastapi.responses import HTMLResponse
     from fastapi.testclient import TestClient
+    from starlette.exceptions import HTTPException as StarletteHTTPException
 
-    from services.api.main import app, spa_fallback
+    from services.api.main import app, serves_the_app_shell
 
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_react_app(full_path: str):  # pragma: no cover - via routing
-        return spa_fallback(full_path, lambda: "<html></html>")
+    async def app_shell_or_error(request, exc):
+        if exc.status_code == 404 and serves_the_app_shell(
+            request.url.path, request.method
+        ):
+            return HTMLResponse("<html></html>")
+        return await http_exception_handler(request, exc)
 
-    added = app.router.routes[-1]
+    previous = app.exception_handlers.get(StarletteHTTPException)
+    app.add_exception_handler(StarletteHTTPException, app_shell_or_error)
+    # Starlette builds the middleware stack once and the exception middleware
+    # keeps its own copy of the handlers, so a handler added after some earlier
+    # test has already started the app is simply not in force. Dropping the
+    # stack makes the next start rebuild it; dropping it again afterwards
+    # leaves the app as it was found.
+    app.middleware_stack = None
     try:
         with TestClient(app) as client:
             yield client
     finally:
-        app.router.routes.remove(added)
+        if previous is None:
+            app.exception_handlers.pop(StarletteHTTPException, None)
+        else:
+            app.exception_handlers[StarletteHTTPException] = previous
+        app.middleware_stack = None
 
 
 def test_every_frozen_collection_answers_at_the_path_it_promises(
@@ -109,3 +131,46 @@ def test_the_app_shell_still_answers_a_path_that_is_not_the_api(
 
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/api/findings/", "/api/cases/", "/api/v1/findings/", "/api/v1/cases/"],
+)
+def test_the_other_spelling_is_redirected_rather_than_swallowed(
+    client_with_a_frontend_build, path
+):
+    """A caller who types the slash is sent to the route, not told it is gone.
+
+    The legacy mounts exist so callers that predate the versioned surface keep
+    working, and the slash is the spelling they were using. A fallback that
+    claims every address answers these itself; one that runs after routing has
+    failed leaves Starlette free to redirect them.
+    """
+    response = client_with_a_frontend_build.get(path, follow_redirects=False)
+
+    assert response.status_code == 307, (
+        f"GET {path} answered {response.status_code}. The bare form is the "
+        "route; the slash form has to reach it rather than 404."
+    )
+    assert response.headers["location"].endswith(path.rstrip("/"))
+
+
+@pytest.mark.parametrize(
+    "path", ["/static/nope.js", "/assets/nope.css", "/internal/nope", "/mcp"]
+)
+def test_a_miss_under_a_backend_prefix_is_not_the_app_shell(
+    client_with_a_frontend_build, path
+):
+    """The SPA's router knows nothing about these, so HTML is the wrong answer.
+
+    For a bundle it is worse than wrong: the browser refuses to execute HTML as
+    a module, which is the failure the /assets mount above exists to prevent.
+    """
+    response = client_with_a_frontend_build.get(path)
+
+    assert response.status_code == 404, (
+        f"GET {path} answered {response.status_code}. A path this process "
+        "serves itself is a miss when nothing claims it, not a client-side route."
+    )
+    assert not response.headers["content-type"].startswith("text/html")

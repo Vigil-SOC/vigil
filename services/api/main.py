@@ -23,12 +23,14 @@ from core.config import get_settings, validate_settings_or_exit
 
 validate_settings_or_exit()
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.platform.monitoring import get_metrics_response, init_sentry
 from core.version import __version__
@@ -702,24 +704,44 @@ async def health_check():
         return payload
 
 
-def spa_fallback(full_path: str, index_html):
-    """What a path no route claimed gets: the app shell, or a real 404.
+# Everything this process serves itself. A 404 under one of these is a miss,
+# not a client-side route: the SPA's router knows nothing about them, so
+# answering with the app shell hands a caller HTML where it asked for an API
+# result -- or, for a bundle under /static, HTML the browser then refuses to
+# execute as a module.
+_SERVED_BY_THE_BACKEND = (
+    "/api",
+    "/internal",
+    "/mcp",
+    "/static",
+    "/assets",
+    "/metrics",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+)
 
-    Named and module-level because it is only registered when a frontend build
-    happens to be on disk, and the backend CI job never builds the frontend --
-    so the handler that runs in every install is the one nothing could reach
-    from a test. Registering it in a test means calling this, not copying it.
 
-    An API path that reached here matched no route, which is a 404 and has to
-    read as one. ``return {...}, 404`` is Flask's way of saying that and FastAPI
-    has no idea it was meant: the tuple is serialised as a two-element JSON array
-    and the status stays 200, so every miss under /api came back as a success
-    carrying nonsense. A caller checking ``response.ok`` saw one and parsed the
-    other.
+def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool:
+    """Whether a 404 at ``path`` is a client-side route rather than a miss.
+
+    The SPA owns every address the API does not. Reading that as a route --
+    ``@app.get("/{full_path:path}")`` -- reads it as *every* address, including
+    the API's own, and the route then stands in front of the routing it was
+    meant to sit behind: a path that differs from a real route only by a
+    trailing slash matched this instead, so Starlette never got to redirect it,
+    and a POST matched it by path and not by method, so the answer was 405.
+    Asking the question after routing has failed leaves all of that intact.
+
+    A path this process serves itself is never the app shell. It reached a 404
+    because nothing claims it, and that is the answer it gets.
     """
-    if full_path.startswith("api/"):
-        return JSONResponse({"detail": "Not Found"}, status_code=404)
-    return HTMLResponse(index_html())
+    if method not in ("GET", "HEAD"):
+        return False
+    return not any(
+        path == f"{context_path}{prefix}" or path.startswith(f"{context_path}{prefix}/")
+        for prefix in _SERVED_BY_THE_BACKEND
+    )
 
 
 # Serve React static files in production
@@ -804,10 +826,17 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
     # is only registered when a frontend build happens to be present. Leaving it
     # in makes the generated types (scripts/generate_frontend_types.py) depend on
     # whether the developer regenerating them had run `npm run build`.
-    @app.get(f"{_CONTEXT_PATH}/{{full_path:path}}", include_in_schema=False)
-    async def serve_react_app(full_path: str):
-        """Serve React app for all non-API routes."""
-        return spa_fallback(full_path, _get_index_html)
+    # A handler, not a route. See ``serves_the_app_shell``: a catch-all route
+    # matches before the router can redirect a trailing slash or report a wrong
+    # method, so the SPA fallback silently became the answer to questions about
+    # the API. This runs only once routing has already failed.
+    @app.exception_handler(StarletteHTTPException)
+    async def app_shell_or_error(request: Request, exc: StarletteHTTPException):
+        if exc.status_code == 404 and serves_the_app_shell(
+            request.url.path, request.method, _CONTEXT_PATH
+        ):
+            return HTMLResponse(_get_index_html())
+        return await http_exception_handler(request, exc)
 
 
 if __name__ == "__main__":
