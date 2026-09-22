@@ -72,7 +72,7 @@ class FindingUpdateResponse(BaseModel):
     updated_fields: List[str] = Field(default_factory=list)
 
 
-@router.get("/", response_model=FindingListResponse)
+@router.get("", response_model=FindingListResponse)
 def get_findings(
     severity: Optional[str] = Query(None),
     data_source: Optional[str] = Query(None),

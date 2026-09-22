@@ -239,7 +239,7 @@ class SearchRequest(BaseModel):
     offset: int = 0
 
 
-@router.get("/", response_model=CaseListResponse)
+@router.get("", response_model=CaseListResponse)
 async def get_cases(status: Optional[str] = None, priority: Optional[str] = None):
     """
     Get all cases with optional filters.
@@ -279,7 +279,7 @@ async def get_case(case_id: str):
     return case
 
 
-@router.post("/", response_model=CaseSchema)
+@router.post("", response_model=CaseSchema)
 async def create_case(case_data: CaseCreate):
     """
     Create a new case.

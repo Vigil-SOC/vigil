@@ -25,6 +25,7 @@ validate_settings_or_exit()
 
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -701,6 +702,26 @@ async def health_check():
         return payload
 
 
+def spa_fallback(full_path: str, index_html):
+    """What a path no route claimed gets: the app shell, or a real 404.
+
+    Named and module-level because it is only registered when a frontend build
+    happens to be on disk, and the backend CI job never builds the frontend --
+    so the handler that runs in every install is the one nothing could reach
+    from a test. Registering it in a test means calling this, not copying it.
+
+    An API path that reached here matched no route, which is a 404 and has to
+    read as one. ``return {...}, 404`` is Flask's way of saying that and FastAPI
+    has no idea it was meant: the tuple is serialised as a two-element JSON array
+    and the status stays 200, so every miss under /api came back as a success
+    carrying nonsense. A caller checking ``response.ok`` saw one and parsed the
+    other.
+    """
+    if full_path.startswith("api/"):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+    return HTMLResponse(index_html())
+
+
 # Serve React static files in production
 frontend_build_dir = _repo_root / "clients" / "web" / "build"
 static_dir = frontend_build_dir / "static"
@@ -737,8 +758,6 @@ if frontend_build_dir.exists() and assets_dir.exists():
         logger.warning(f"Failed to mount frontend assets: {e}")
 
 if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
-    from fastapi.responses import HTMLResponse
-
     # index.html is served with the active context path injected as a
     # <meta name="vigil-base-path"> tag so the SPA (see frontend
     # src/config/basePath.ts) can prefix its router basename and API calls at
@@ -788,10 +807,7 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
     @app.get(f"{_CONTEXT_PATH}/{{full_path:path}}", include_in_schema=False)
     async def serve_react_app(full_path: str):
         """Serve React app for all non-API routes."""
-        # Don't interfere with API routes
-        if full_path.startswith("api/"):
-            return {"error": "Not found"}, 404
-        return HTMLResponse(_get_index_html())
+        return spa_fallback(full_path, _get_index_html)
 
 
 if __name__ == "__main__":

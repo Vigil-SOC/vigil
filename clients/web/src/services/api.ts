@@ -166,7 +166,7 @@ export const findingsApi = {
     cluster_id?: number
     min_anomaly_score?: number
     limit?: number
-  }) => api.get('/findings/', { params }),
+  }) => api.get('/findings', { params }),
   
   getById: (id: string) => api.get(`/findings/${id}`),
   
@@ -193,12 +193,12 @@ export const casesApi = {
   getAll: (params?: {
     status?: string
     priority?: string
-  }) => api.get<Schema<'CaseListResponse'>>('/cases/', { params }),
+  }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
 
   getById: (id: string) => api.get<Schema<'CaseSchema'>>(`/cases/${id}`),
 
   create: (data: Schema<'CaseCreate'>) =>
-    api.post<Schema<'CaseSchema'>>('/cases/', data),
+    api.post<Schema<'CaseSchema'>>('/cases', data),
 
   update: (id: string, data: Schema<'CaseUpdate'>) =>
     api.patch<Schema<'CaseSuccessResponse'>>(`/cases/${id}`, data),

@@ -56,7 +56,7 @@ ROUTER_META = RouterMeta(
 logger = logging.getLogger(__name__)
 
 
-@router.get("/", response_model=WorkflowListResponse)
+@router.get("", response_model=WorkflowListResponse)
 async def list_workflows(service: WorkflowsService = Depends(provide_workflows)):
     """
     List all available workflows (file-based + database-backed custom).

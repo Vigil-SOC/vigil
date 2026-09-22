@@ -1201,7 +1201,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/cases/": {
+    "/api/cases": {
         parameters: {
             query?: never;
             header?: never;
@@ -3590,7 +3590,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/findings/": {
+    "/api/findings": {
         parameters: {
             query?: never;
             header?: never;
@@ -6398,7 +6398,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/cases/": {
+    "/api/v1/cases": {
         parameters: {
             query?: never;
             header?: never;
@@ -7006,7 +7006,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/findings/": {
+    "/api/v1/findings": {
         parameters: {
             query?: never;
             header?: never;
@@ -7092,7 +7092,7 @@ export interface paths {
         patch: operations["patch_api_v1_findings_finding_id"];
         trace?: never;
     };
-    "/api/v1/workflows/": {
+    "/api/v1/workflows": {
         parameters: {
             query?: never;
             header?: never;

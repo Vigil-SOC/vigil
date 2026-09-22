@@ -15,6 +15,15 @@ review as a unit. Putting a route in the contract is then a deliberate act — y
 move a file into this folder — not one stray line in a PR about something else,
 and a reviewer sees what is promised by reading the tree.
 
+## Collection paths carry no trailing slash
+
+`/api/v1/findings`, not `/api/v1/findings/`. One spelling, and it is the one
+this document gives, because the other spelling is not a route: it falls
+through to the SPA fallback, which is GET-only, so a `POST` to it answers 405
+and a `GET` answers the fallback. Register a collection as `@router.get("")`,
+never `@router.get("/")` — the difference is one character and it moves the
+frozen path. `tests/unit/api/test_api_v1_reachable.py` holds the line.
+
 ## How dual-mounting works
 
 Each contract router is mounted twice: at its versioned path and at its old
@@ -44,6 +53,14 @@ console would rely on it. Ask, in order:
 2. Would the platform or an outside script read/write it to do its job? -> external
 3. Is it a UI button? (pause SLA, add watcher, post comment, toggle setting) -> internal
 4. Is it plumbing or destructive? (config, `reload`, harness write-back, `DELETE /all`) -> internal
+
+Rule 4 beats rule 1 when they disagree, which is why deleting a **case** is not
+in the contract. A case is a durable record, so rule 1 says external; but
+destroying one is an administrative act on an audit trail, and freezing its
+semantics for a 1.x lifetime is a promise about what happens to evidence.
+`DELETE /api/cases/{case_id}` therefore stays unversioned, deliberately, and so
+does anything else that removes a record rather than changing it. Closing a case
+is the external way to end one, and it is frozen.
 
 Tie-breaker when fuzzy: **"If I freeze this shape for a year, will I regret
 it?"** Confident it is stable -> freeze. Shape will churn as the feature matures

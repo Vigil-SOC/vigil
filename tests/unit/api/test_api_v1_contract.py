@@ -26,7 +26,6 @@ import pytest
 REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO))
 os.environ.setdefault("JWT_SECRET_KEY", "test-only-secret-not-for-prod")
-os.environ.setdefault("DEV_MODE", "true")
 
 pytestmark = pytest.mark.unit
 

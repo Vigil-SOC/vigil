@@ -3073,7 +3073,7 @@
         ]
       }
     },
-    "/api/v1/cases/": {
+    "/api/v1/cases": {
       "get": {
         "operationId": "get_api_v1_cases",
         "parameters": [
@@ -4623,7 +4623,7 @@
         ]
       }
     },
-    "/api/v1/findings/": {
+    "/api/v1/findings": {
       "get": {
         "operationId": "get_api_v1_findings",
         "parameters": [
@@ -4984,7 +4984,7 @@
         ]
       }
     },
-    "/api/v1/workflows/": {
+    "/api/v1/workflows": {
       "get": {
         "operationId": "get_api_v1_workflows",
         "parameters": [
