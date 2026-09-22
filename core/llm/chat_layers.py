@@ -142,7 +142,13 @@ def _declare(
     static_names = [n for n in static_names if n not in EXECUTE_IDS]
     mcp_names = [n for n in mcp if n not in static_names and not _is_destructive_mcp(n)]
     names = static_names + mcp_names
-    catalogue = {**static, **mcp}
+    # Static last, so a name both sides carry is described by the side that will
+    # answer it: tools_router tries the backend first and only reaches an MCP
+    # server for a name the backend does not claim. Spreading mcp last instead
+    # declared the MCP tool's schema against the backend's implementation -- and
+    # dropped six tools outright below, because those MCP tools carry no
+    # docstring and a tool with no description is not offered at all.
+    catalogue = {**mcp, **static}
     declared = []
     for name in names:
         entry = catalogue[name]
