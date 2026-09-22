@@ -235,14 +235,32 @@ class CaseWorkflowService:
                     )
                     session.add(task)
 
-            # Assign SLA if template has one
+            # Assign SLA if template has one.
+            #
+            # Falling back rather than refusing: a template is edited once and
+            # used for a long time, so the policy it names can be retired or
+            # deleted long afterwards, and nobody is present to be told. The
+            # alternative is a case with no response deadline, no resolution
+            # deadline and no breach tracking, discovered when the numbers do
+            # not add up. The service says out loud which policy it could not
+            # use and what it assigned instead.
             if template.default_sla_policy_id:
                 from core.cases.case_sla_service import CaseSLAService
 
                 sla_service = CaseSLAService()
-                sla_service.assign_sla_to_case(
-                    case.case_id, template.default_sla_policy_id, session
+                assignment = sla_service.assign_sla_to_case(
+                    case.case_id,
+                    template.default_sla_policy_id,
+                    session,
+                    fall_back_to_default=True,
                 )
+                if not assignment:
+                    logger.error(
+                        "Case %s was created from template %s with no SLA: %s",
+                        case.case_id,
+                        template.template_id,
+                        assignment.outcome.value,
+                    )
 
             # Increment template usage
             template.usage_count += 1

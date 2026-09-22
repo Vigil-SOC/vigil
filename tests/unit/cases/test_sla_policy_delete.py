@@ -109,8 +109,12 @@ async def test_the_refusal_does_not_promise_an_escape_that_cannot_work():
 
 
 @pytest.mark.asyncio
-async def test_a_reference_the_count_could_not_see_is_still_an_answer():
-    """The count is request-scoped; the constraint is global. Flush, then explain."""
+async def test_a_reference_that_arrived_after_the_count_is_still_an_answer():
+    """Counting and deleting are two statements, so a case_slas row can land
+    between them: the policy reads as unused and is referenced by the time this
+    commits. Flushing here makes the constraint speak while there is still
+    something to translate it into an answer, rather than a bare 500 at commit
+    time after the handler has returned."""
     from core.cases import sla_policies_router as router
 
     session = _session(in_use=0, flush_raises=True)
@@ -120,3 +124,6 @@ async def test_a_reference_the_count_could_not_see_is_still_an_answer():
 
     assert exc.value.status_code == 409
     assert "deactivat" in exc.value.detail.lower()
+    # No count, because this path never saw one -- the sentence still reads.
+    assert "case(s)" not in exc.value.detail
+    assert POLICY_ID in exc.value.detail

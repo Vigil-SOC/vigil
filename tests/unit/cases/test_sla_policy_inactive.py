@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.cases.case_sla_service import CaseSLAService
+from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.storage.connection import get_db_session
 from core.storage.models import Case, CaseSLA, SLAPolicy
 from core.time import utcnow
@@ -79,16 +79,63 @@ def test_a_policy_named_outright_is_still_refused_once_deactivated(session):
     _policy(session, RETIRED, is_active=False)
     session.flush()
 
-    assigned = CaseSLAService().assign_sla_to_case(
+    assignment = CaseSLAService().assign_sla_to_case(
         CASE_ID, sla_policy_id=RETIRED, session=session
     )
 
-    assert assigned is None, (
+    assert not assignment, (
         "A deactivated policy was assigned to a case that named it explicitly. "
         "Deactivating is what an operator is told to do with a policy they "
         "cannot delete, so the explicit branch has to filter on is_active like "
         "the default lookup does."
     )
+    assert assignment.outcome is SlaOutcome.POLICY_RETIRED, (
+        "Refused, but indistinguishable from a policy that does not exist. "
+        "The two want different answers: one is a typo, the other is a policy "
+        "an operator retired and can reactivate."
+    )
+    assert assignment.policy_id == RETIRED
+
+
+def test_a_policy_that_never_existed_does_not_read_as_retired(session):
+    """Guards the distinction the refusal above depends on."""
+    _case(session)
+    session.flush()
+
+    assignment = CaseSLAService().assign_sla_to_case(
+        CASE_ID, sla_policy_id="sla-test-no-such-policy", session=session
+    )
+
+    assert not assignment
+    assert assignment.outcome is SlaOutcome.POLICY_NOT_FOUND
+
+
+def test_a_template_naming_a_retired_policy_still_gets_deadlines(session):
+    """The case nobody is present for.
+
+    A template is edited once and used for a long time, so the policy it names
+    can be retired long afterwards. Refusing there does not tell anyone; it
+    creates a case with no response deadline, no resolution deadline and no
+    breach tracking, found when the numbers do not add up.
+    """
+    case = _case(session)
+    _policy(session, RETIRED, is_active=False)
+    default = _policy(session, ACTIVE, is_active=True)
+    default.is_default = True
+    default.priority_level = case.priority
+    session.flush()
+
+    assignment = CaseSLAService().assign_sla_to_case(
+        CASE_ID, sla_policy_id=RETIRED, session=session, fall_back_to_default=True
+    )
+
+    assert assignment, (
+        "A case created from a template naming a retired policy was left with "
+        "no SLA at all."
+    )
+    assert assignment.sla.sla_policy_id == ACTIVE
+    assert assignment.sla.response_due is not None
+    assert assignment.sla.resolution_due is not None
 
 
 def test_an_active_policy_named_outright_is_still_assigned(session):
@@ -97,9 +144,10 @@ def test_an_active_policy_named_outright_is_still_assigned(session):
     _policy(session, ACTIVE, is_active=True)
     session.flush()
 
-    assigned = CaseSLAService().assign_sla_to_case(
+    assignment = CaseSLAService().assign_sla_to_case(
         CASE_ID, sla_policy_id=ACTIVE, session=session
     )
 
-    assert assigned is not None
-    assert assigned.sla_policy_id == ACTIVE
+    assert assignment
+    assert assignment.outcome is SlaOutcome.ASSIGNED
+    assert assignment.sla.sla_policy_id == ACTIVE

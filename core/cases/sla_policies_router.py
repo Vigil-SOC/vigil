@@ -267,11 +267,19 @@ async def update_sla_policy(
 # time. Deactivating retires the policy exactly as intended:
 # `CaseSLAService` selects on `is_active`, so no new case takes it, and the
 # cases that used it keep their deadlines and their breaches.
+# {cases} is a parenthetical naming how many, or nothing when the count could
+# not see them -- not a number, so the sentence reads either way.
 _STILL_REFERENCED = (
-    "Cannot delete an SLA policy that cases still reference{count}. "
-    "Deactivate it instead (is_active=false): no new case will take it, and "
-    "the cases that used it keep their SLA history."
+    "Cannot delete an SLA policy that cases still reference{cases}. "
+    "Deactivate it instead with PUT /api/sla-policies/{{policy_id}} "
+    "(is_active=false): no new case will take it, and the cases that used it "
+    "keep their SLA history."
 )
+
+
+def _still_referenced(policy_id: str, count: int | None = None) -> str:
+    cases = f" ({count} case(s))" if count else ""
+    return _STILL_REFERENCED.format(cases=cases).replace("{policy_id}", policy_id)
 
 
 @router.delete("/{policy_id}")
@@ -297,22 +305,23 @@ async def delete_sla_policy(
 
     if in_use > 0:
         raise HTTPException(
-            status_code=409,
-            detail=_STILL_REFERENCED.format(count=f" ({in_use} case(s))"),
+            status_code=409, detail=_still_referenced(policy_id, in_use)
         )
 
     session.delete(policy)
 
     # Flush inside the handler so the constraint speaks while there is still
-    # something here to translate it. The count above is read under whatever
-    # scope the request has, while the foreign key is global, so a policy can
-    # read as unused and still be referenced -- and at commit time, after this
-    # handler has returned, that surfaces as a bare "Internal server error".
+    # something here to translate it. The count above and the delete are two
+    # statements, so another transaction can insert a case_slas row between
+    # them: the policy reads as unused and is referenced by the time this
+    # commits. At commit time, after this handler has returned, that surfaces
+    # as a bare "Internal server error"; here it is the same 409 the count
+    # would have given, without the number, because this path never saw one.
     try:
         session.flush()
     except IntegrityError:
         raise HTTPException(
-            status_code=409, detail=_STILL_REFERENCED.format(count="")
+            status_code=409, detail=_still_referenced(policy_id)
         ) from None
 
     return {"success": True, "message": f"SLA policy {policy_id} deleted successfully"}
