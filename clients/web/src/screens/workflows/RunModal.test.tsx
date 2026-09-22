@@ -354,10 +354,27 @@ describe('checking a report against what is already hunted', () => {
     expect(link).toHaveAttribute('href', '/?run=run-11111111')
     expect(screen.getByText('T1071')).toBeInTheDocument() // the unmatched half stays visible
 
-    fireEvent.click(screen.getByRole('button', { name: 'Extend' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Extend run-1111' }))
     await waitFor(() => expect(steer).toHaveBeenCalledTimes(1))
     expect(steer.mock.calls[0]).toEqual(['run-11111111', 'extend', 'Beaconing to 45[.]77[.]53[.]176 via T1071'])
     expect(execute).not.toHaveBeenCalled()
+  })
+
+  // A check on typed subjects alone still answers running; an extend with no report is not a directive.
+  it('cannot extend when there is no report to extend with', async () => {
+    checkCoverage.mockResolvedValueOnce({ data: {
+      ...split, status: 'running',
+      in_flight: [{ run_id: 'run-11111111', status: 'running', matched_keys: ['ip:45.77.53.176'], matched_techniques: [] }],
+    } })
+    getWorkflow.mockResolvedValueOnce(limits([]))
+    open()
+    await screen.findByText(/It stops at/)
+    fireEvent.change(screen.getByLabelText(/Hypothesis/), { target: { value: 'a host beacons' } })
+    fireEvent.change(screen.getByLabelText('What H1 is about'), { target: { value: 'ip:45.77.53.176' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Check coverage' }))
+
+    expect(await screen.findByRole('button', { name: 'Extend run-1111' })).toBeDisabled()
+    expect(steer).not.toHaveBeenCalled()
   })
 
   it('lists the verdicts linked by origin_run_id and reopens from the proposal', async () => {

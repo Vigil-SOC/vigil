@@ -562,15 +562,19 @@ interface HuntProposal {
   hypothesis_subjects: Record<string, string[]>
   approve_hypotheses?: boolean
 }
-interface CoverageRow {
-  run_id?: string
-  status?: string
-  statement?: string
-  outcome?: string
-  concluded_at?: string | null
-  origin_run_id?: string | null
-  matched_keys?: string[]
-  matched_techniques?: string[]
+interface InFlightRow {
+  run_id: string
+  status: string
+  matched_keys: string[]
+  matched_techniques: string[]
+}
+interface ConcludedRow {
+  statement: string
+  outcome: string
+  concluded_at: string | null
+  origin_run_id: string | null
+  matched_keys: string[]
+  matched_techniques: string[]
 }
 interface HuntCoverage {
   status: 'running' | 'concluded' | 'uncovered'
@@ -580,8 +584,8 @@ interface HuntCoverage {
   unmatched_keys: string[]
   matched_techniques: string[]
   unmatched_techniques: string[]
-  in_flight?: CoverageRow[]
-  concluded?: CoverageRow[]
+  in_flight?: InFlightRow[]
+  concluded?: ConcludedRow[]
   proposal?: HuntProposal
 }
 
@@ -629,6 +633,8 @@ function CoveragePanel({ entityKeys, onError, onProposal }: {
   const [extended, setExtended] = useState<Record<string, 'sending' | 'sent'>>({})
 
   const canCheck = !checking && (report.trim() !== '' || entityKeys.length > 0)
+  // A check can run on typed subjects alone, but an extend with nothing to say is no directive.
+  const canExtend = report.trim() !== ''
 
   const check = async () => {
     setChecking(true)
@@ -666,14 +672,19 @@ function CoveragePanel({ entityKeys, onError, onProposal }: {
             <div className="text-[12.5px] leading-[1.5]">Already being hunted. Extend a run with this report rather than starting another.</div>
             <ul className="flex flex-col gap-1.5 text-[12px] leading-[1.5]" aria-label="In-flight hunts">
               {(a.in_flight ?? []).map((row) => {
-                const id = row.run_id ?? ''
-                const state = extended[id]
+                const state = extended[row.run_id]
                 return (
-                  <li key={id} className="flex items-center gap-2 flex-wrap">
-                    <RunLink runId={id} />
+                  <li key={row.run_id} className="flex items-center gap-2 flex-wrap">
+                    <RunLink runId={row.run_id} />
                     <span className="text-tx-3">{row.status}</span>
-                    <span className="font-mono text-tx-3">{[...(row.matched_keys ?? []), ...(row.matched_techniques ?? [])].join(', ')}</span>
-                    <button className="btn ghost" disabled={state !== undefined} onClick={() => extend(id)}>
+                    <span className="font-mono text-tx-3">{[...row.matched_keys, ...row.matched_techniques].join(', ')}</span>
+                    <button
+                      className="btn ghost"
+                      disabled={!canExtend || state !== undefined}
+                      title={canExtend ? undefined : 'Paste the report to extend with'}
+                      aria-label={`Extend ${row.run_id.slice(0, 8)}`}
+                      onClick={() => extend(row.run_id)}
+                    >
                       {state === 'sent' ? 'Extended' : state === 'sending' ? 'Extending…' : 'Extend'}
                     </button>
                   </li>
