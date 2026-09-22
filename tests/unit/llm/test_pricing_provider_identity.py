@@ -31,7 +31,16 @@ class TestACommerciallyHostedOpenWeightModel:
 
         assert provider == "groq"
         assert bare == "llama-3.3-70b-versatile"
-        assert get_registry().get_pricing_source(bare, provider) != "zero"
+        # No rate card for the host, so unpriced -- which the agent refuses to
+        # spend against. Never the free-looking "zero".
+        assert get_registry().get_pricing_source(bare, provider) == "unknown"
+
+    def test_the_caller_named_host_is_final_even_without_a_rate_card(self, monkeypatch):
+        monkeypatch.setattr(router_mod, "get_default_provider_spec", _default("ollama"))
+
+        provider, _ = priced_as("groq", "llama-3.3-70b-versatile")
+
+        assert provider == "groq"
 
     def test_is_never_labelled_zero_when_no_record_resolves(self, monkeypatch):
         monkeypatch.setattr(router_mod, "get_default_provider_spec", lambda: None)

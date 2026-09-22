@@ -60,6 +60,10 @@ async def rates(
     }
 
 
+# What the agent layer names when it knows only the gateway it called.
+GATEWAY = "bifrost"
+
+
 # The agent layer calls one gateway and says so, but a gateway bills nothing of
 # its own: the catalog is keyed by whoever actually served the model. Resolved
 # here because this is where the catalog lives, and asking the agent to know
@@ -68,17 +72,19 @@ async def rates(
 #
 # Who serves a model is configuration, never a guess from its name: "llama" on a
 # commercial host is a paid call, and a self-hosted endpoint may well answer to
-# "gpt-4o". When neither the id nor the caller names a provider, the configured
-# default record is the answer; when no record resolves, "unknown", which the
-# agent already treats as unpriced rather than free.
+# "gpt-4o". A provider the caller names is final even when the catalog holds no
+# rates for it -- "unknown" is the honest answer, and the agent treats it as
+# unpriced rather than free. Only a bare id under the gateway itself falls back
+# to the configured default record; when no record resolves, "unknown" again.
 def priced_as(provider_type: str, model_id: str) -> tuple[str, str]:
     from core.llm.providers.registry import _PRICED_PROVIDERS
 
     named, _, bare = model_id.partition("/")
     if bare and named.lower() in _PRICED_PROVIDERS:
         return named.lower(), bare
-    if provider_type in _PRICED_PROVIDERS:
-        return provider_type, model_id
+    caller = provider_type.lower()
+    if caller and caller != GATEWAY:
+        return caller, model_id
     return _default_provider_type(), model_id
 
 
