@@ -642,6 +642,7 @@ function CoveragePanel({ entityKeys, onError, onProposal }: {
       setExtended({})
     } catch (e) {
       onError(errMsg(e))
+      setAnswer(null) // the old answer was about a different report
     }
     setChecking(false)
   }
