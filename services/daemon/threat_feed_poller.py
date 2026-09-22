@@ -177,8 +177,8 @@ class ThreatFeedPoller:
         on the next poll and go into its row.
 
         Does not open the hunt: the drain tick launches it. One intel row is
-        queued at a time, and keys an intel row already named are skipped for
-        `INTEL_RECHECK_AFTER`.
+        queued at a time, and keys a launched intel row named are skipped for
+        `INTEL_RECHECK_AFTER` after its launch.
         """
         try:
             from core.memory.hunt_coverage import build_proposal
@@ -249,14 +249,16 @@ def _intel_intake_state() -> _IntelIntake:
 
     One query for both, filtered on the payload rather than read back and
     sifted in Python. A row still `queued` counts however old it is: a poll
-    while one waits neither restates its keys nor adds a second row.
+    while one waits neither restates its keys nor adds a second row. Past that,
+    only a row that launched speaks for its keys, and its window runs from the
+    launch (`decided_at`): a row the TTL expired never hunted anything.
 
     A read that fails answers "nothing is queued, nothing is spoken for". The
     insert is the guarded step, and holding every poll because the intake would
     not read would stop intel reaching the queue at all.
     """
     try:
-        from sqlalchemy import or_
+        from sqlalchemy import and_, or_
 
         from core.storage.connection import get_db_manager
         from core.storage.models import IntakeTrigger
@@ -272,7 +274,10 @@ def _intel_intake_state() -> _IntelIntake:
                     IntakeTrigger.payload["trigger_type"].astext == "intel",
                     or_(
                         IntakeTrigger.state == "queued",
-                        IntakeTrigger.created_at >= utcnow() - INTEL_RECHECK_AFTER,
+                        and_(
+                            IntakeTrigger.state == "launched",
+                            IntakeTrigger.decided_at >= utcnow() - INTEL_RECHECK_AFTER,
+                        ),
                     ),
                 )
                 .all()

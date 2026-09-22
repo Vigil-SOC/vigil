@@ -36,7 +36,7 @@ def _empty_intake():
     yield
 
 
-def _intel_row(*keys, state="queued", age=None):
+def _intel_row(*keys, state="queued", age=None, launched_age=None):
     body = build_proposal(list(keys), [])
     trigger_id = insert_intake_trigger(
         kind="schedule",
@@ -50,11 +50,13 @@ def _intel_row(*keys, state="queued", age=None):
         },
     )
     if state != "queued" or age is not None:
-        _age(trigger_id, state=state, age=age)
+        _age(trigger_id, state=state, age=age, launched_age=launched_age)
     return trigger_id
 
 
-def _age(trigger_id, *, state, age):
+# A decided row is decided when it is aged, as the drain would have it, unless
+# the test says the launch came later than the insert.
+def _age(trigger_id, *, state, age, launched_age=None):
     from core.storage.connection import get_db_manager
     from core.storage.models import IntakeTrigger
 
@@ -63,6 +65,9 @@ def _age(trigger_id, *, state, age):
         row.state = state
         if age is not None:
             row.created_at = utcnow() - age
+        if state != "queued":
+            decided = launched_age if launched_age is not None else age
+            row.decided_at = utcnow() - decided if decided is not None else utcnow()
 
 
 def test_a_queued_intel_row_speaks_for_its_keys():
@@ -87,6 +92,25 @@ def test_a_launched_row_past_the_window_is_due_a_fresh_look():
     _intel_row(KEY, state="launched", age=INTEL_RECHECK_AFTER * 2)
 
     assert KEY not in _intel_intake_state().spoken_for
+
+
+def test_the_window_runs_from_the_launch_not_the_insert():
+    _intel_row(
+        KEY,
+        state="launched",
+        age=INTEL_RECHECK_AFTER * 2,
+        launched_age=INTEL_RECHECK_AFTER / 2,
+    )
+
+    assert KEY in _intel_intake_state().spoken_for
+
+
+def test_a_row_the_ttl_expired_speaks_for_nothing():
+    _intel_row(KEY, state="expired", age=INTEL_RECHECK_AFTER / 2)
+
+    state = _intel_intake_state()
+    assert KEY not in state.spoken_for
+    assert state.queued is False
 
 
 def test_the_nightly_scheduled_hunt_speaks_for_nothing():
