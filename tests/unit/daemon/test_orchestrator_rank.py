@@ -77,6 +77,7 @@ def _orchestrator(**extra) -> Orchestrator:
     )
     orch._in_flight = MagicMock(return_value=0)
     orch._queued_intake_depth = MagicMock(return_value=0)
+    orch._hourly_cost = MagicMock(return_value=0.0)
     orch._intake_surge_active = False
     for key, value in extra.items():
         setattr(orch, key, value)

@@ -41,7 +41,6 @@ def _make_orchestrator(executing_rows) -> Orchestrator:
     orch._send_notification = MagicMock()
     orch._send_slack_for_notification = AsyncMock()
     orch._update_investigation_status = MagicMock()
-    orch._track_hourly_cost = MagicMock()
     orch._check_cross_correlations = AsyncMock()
     return orch
 
@@ -80,7 +79,7 @@ def test_stale_executing_row_is_killed(caplog):
     assert orch.stats["stuck_agents_killed"] == 1
     assert not any("Supervision loop error" in r.message for r in caplog.records)
     # The rest of the tick must have run too; the raise used to abort it.
-    orch._track_hourly_cost.assert_called_once()
+    assert orch._supervision_tick == 1
 
 
 def test_fresh_executing_row_is_left_alone(caplog):
