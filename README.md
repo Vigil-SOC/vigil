@@ -354,7 +354,7 @@ reach Ollama on the host via `host.docker.internal`.
 Build a local DMG (Apple Silicon shown; the image tarball is arch-specific):
 
 ```bash
-# 1. Build the backend image from source and stage it as an offline tarball
+# 1. Build the backend and agent images from source and stage them as an offline tarball
 bash clients/desktop/scripts/bundle-image.sh linux/arm64
 
 # 2. Package the app (copies the Bifrost config, bundles the tarball)

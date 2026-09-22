@@ -4,9 +4,28 @@
 #
 # Its own project name and unnamed containers keep it isolated from a dev stack
 # (project "docker", containers deeptempo-*) so both can coexist on one machine.
-# Only the backend publishes a port; postgres/redis/bifrost stay on the internal
+# Only the backend publishes a port; everything else stays on the internal
 # network, which is what keeps the default postgres password unreachable.
 name: vigil
+
+# Both agent processes take the same environment (see x-agent-env in
+# infra/docker/docker-compose.yml): a URL that drifts between them is a run that
+# behaves differently depending on which process picked it up.
+x-agent-env: &agent-env
+  - POSTGRES_HOST=postgres
+  - POSTGRES_PORT=5432
+  - POSTGRES_DB=deeptempo_soc
+  - POSTGRES_USER=vigil_app
+  - POSTGRES_PASSWORD=deeptempo_secure_password_change_me
+  - REDIS_URL=redis://redis:6379/0
+  # Each defaults to localhost:6987, which is the agent container itself here.
+  - VIGIL_PLAYBOOKS_URL=http://backend:6987/internal/playbooks
+  - VIGIL_PRICING_URL=http://backend:6987/internal/pricing
+  - VIGIL_RUNS_URL=http://backend:6987/internal/runs
+  - VIGIL_TOOLS_URL=http://backend:6987/internal/tools/invoke
+  # Same secret the backend checks; empty means every /internal call is a 503.
+  - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:?set by the desktop app}
+  - BIFROST_URL=http://bifrost:8080
 
 services:
   postgres:
@@ -85,6 +104,9 @@ services:
       # Auth stays on (DEV_MODE defaults to false in the image). The app mints
       # this per install and persists it; the backend fails closed without it.
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:?set by the desktop app}
+      - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:?set by the desktop app}
+      # core/config.py defaults to localhost:6989, which is nothing here.
+      - AGENT_URL=http://agent-serve:6989
     ports:
       - "127.0.0.1:6987:6987"
     volumes:
@@ -108,6 +130,49 @@ services:
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - vigil
+
+  # Agent layer: one image, two commands. The worker drains BullMQ `agent-runs`;
+  # serve answers AGENT_URL. Neither publishes a port — the private network plus
+  # the bearer token is what keeps them off the host.
+  agent-worker:
+    image: ghcr.io/vigil-soc/vigil-agent:${VIGIL_VERSION}
+    command: ["node", "dist/worker.js"]
+    environment: *agent-env
+    healthcheck:
+      # 6990 is probes only; Node 20 has global fetch, so no curl in the image.
+      test: ["CMD", "node", "-e", "fetch('http://localhost:6990/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - vigil
+
+  agent-serve:
+    image: ghcr.io/vigil-soc/vigil-agent:${VIGIL_VERSION}
+    command: ["node", "dist/serve.js"]
+    environment: *agent-env
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:6989/healthz').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # An SSE stream can sit on one model call for minutes.
+    stop_grace_period: 120s
+    # Postgres only: serve never touches the queue.
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
     networks:
       - vigil
 

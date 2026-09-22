@@ -75,6 +75,7 @@ const configPath = () => path.join(app.getPath("userData"), "config.json");
 interface Config {
   repoRoot?: string;
   jwtSecret?: string;
+  agentInternalToken?: string;
 }
 
 function readConfig(): Config {
@@ -104,6 +105,16 @@ function jwtSecret(): string {
   const secret = crypto.randomBytes(48).toString("base64url");
   writeConfig({ jwtSecret: secret });
   return secret;
+}
+
+// Shared secret between the backend and the agent containers on /internal; the
+// backend refuses those calls without one, so no workflow could run.
+function agentInternalToken(): string {
+  const saved = readConfig().agentInternalToken;
+  if (saved) return saved;
+  const token = crypto.randomBytes(48).toString("base64url");
+  writeConfig({ agentInternalToken: token });
+  return token;
 }
 
 /* ---------------- locating the Vigil source tree ---------------- */
@@ -426,12 +437,17 @@ function runScript(name: string, args: string[] = [], doneWhen?: string): Promis
   });
 }
 
-// VIGIL_VERSION pins the backend image to this app's version so the two can
-// never drift apart.
+// VIGIL_VERSION pins the backend and agent images to this app's version so
+// they can never drift apart.
 const spawnCompose = (args: string[]) =>
   spawn("docker", args, {
     cwd: standaloneDir(),
-    env: { ...augmentedEnv(), VIGIL_VERSION: app.getVersion(), JWT_SECRET_KEY: jwtSecret() },
+    env: {
+      ...augmentedEnv(),
+      VIGIL_VERSION: app.getVersion(),
+      JWT_SECRET_KEY: jwtSecret(),
+      AGENT_INTERNAL_TOKEN: agentInternalToken(),
+    },
   });
 
 // Run `docker compose …`, streaming progress to the splash.
