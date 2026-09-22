@@ -1198,7 +1198,7 @@ function RunBar({ d, hunt, onSteered }: { d: WfRunDetail; hunt: HuntView | null;
       <span className="flex-1" />
       <div className="meta">
         {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
-        <span><Cost usd={cost} />{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
+        <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
         {spent !== null && (
           <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
             <div className="budget-fill" style={{ width: `${spent}%` }} />

@@ -15,6 +15,7 @@ describe('the one rule for a spend amount', () => {
       expect(fmtCost(usd)).not.toMatch(/[$—]/)
     }
     expect(fmtCost(12.5, 'unknown')).toBe('not priced')
+    expect(describeCost({ usd: 0.001, high: NaN, digits: 3 }).text).toBe('$0.001')
     expect(describeCost({ usd: 0, high: 0, source: 'unknown' }).kind).toBe('not-priced')
   })
 
@@ -34,6 +35,11 @@ describe('the one rule for a spend amount', () => {
     const el = screen.getByText('not billed')
     expect(el).toHaveAttribute('title', expect.stringMatching(/gateway’s pricing overrides/))
     expect(el.style.color).toBe('')
+  })
+
+  it('keeps a caller title behind the hint on a label', () => {
+    render(<Cost usd={null} title="Token count via tiktoken." />)
+    expect(screen.getByText('not priced')).toHaveAttribute('title', expect.stringMatching(/pricing overrides\. Token count via tiktoken\.$/))
   })
 
   it('drops the ~ when there is nothing to approximate', () => {

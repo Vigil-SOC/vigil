@@ -194,7 +194,7 @@ function OverviewTab({
                   <span style={{ color: 'var(--tx-faint)' }}>{e.ts?.split('T')[1]?.split('.')[0] || ''}</span>{' '}
                   <span style={{ color: e.event === 'error' ? 'var(--crit)' : 'var(--ok)' }}>{e.event}</span>{' '}
                   {e.iteration ? <span className="text-tx-3">iter={e.iteration} </span> : null}
-                  {e.cost_usd !== undefined && <span className="text-tx-3"><Cost usd={e.cost_usd} digits={4} /> </span>}
+                  {e.cost_usd != null && <span className="text-tx-3"><Cost usd={e.cost_usd} digits={4} /> </span>}
                   <span className="text-tx-2">{e.reason || ''}</span>
                 </div>
               ))}
