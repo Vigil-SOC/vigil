@@ -929,9 +929,10 @@ async def _list_ollama_models(
 def chat_capable_ids(models: Optional[List[Any]]) -> List[str]:
     """Ids of the pulled ``ModelMeta`` entries that can hold a chat, in order.
 
-    ``fetch_ollama_models`` sets ``is_embedding`` from Ollama's own capability
-    array; a server that reports none leaves the flag absent, so fall back to
-    the same name heuristic it would have used. Nothing is re-probed here.
+    ``fetch_ollama_models`` always sets ``is_embedding`` (Ollama's capability
+    array, else the name heuristic), so that flag is authoritative when
+    present; ``ModelMeta`` built anywhere else may omit it, and then the same
+    name heuristic decides. Nothing is re-probed here.
     """
     ids: List[str] = []
     for m in models or []:
