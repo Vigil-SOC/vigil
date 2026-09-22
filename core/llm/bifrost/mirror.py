@@ -70,14 +70,31 @@ def _cred_from_env(key: Dict[str, Any]) -> bool:
     which on a fresh install are unset. Mirroring those would offer providers
     that cannot route and would green the setup step for a install nobody has
     configured — exactly what #761 exists to prevent.
+
+    Bifrost >= 1.6 serialises a credential as ``{"value", "ref", "type"}``
+    (``type`` is ``env`` or ``vault``); older gateways sent
+    ``{"env_var", "from_env"}``. Both shapes are honoured. A reference alone is
+    not enough: a *resolved* env credential comes back with a masked, non-empty
+    ``value`` (Ollama's ``http***1434`` URL), and that emptiness is the only
+    thing separating a placeholder from a working env-backed key.
     """
     for candidate in (
         key.get("value"),
         (key.get("vertex_key_config") or {}).get("auth_credentials"),
     ):
-        if isinstance(candidate, dict) and candidate.get("from_env"):
+        if isinstance(candidate, dict) and _is_unresolved_ref(candidate):
             return True
     return False
+
+
+def _is_unresolved_ref(cred: Dict[str, Any]) -> bool:
+    ref = cred.get("ref")
+    referenced = (
+        cred.get("type") in ("env", "vault")
+        or (isinstance(ref, str) and ref.startswith(("env.", "vault.")))
+        or bool(cred.get("from_env"))
+    )
+    return referenced and not cred.get("value")
 
 
 def key_is_routable(key: Dict[str, Any], provider: Optional[str] = None) -> bool:
