@@ -430,9 +430,14 @@ class TestConfiguredFloors:
             assert insert.call_args.kwargs["finding_id"] == "f-hit"
             assert queue.empty()
 
+        # No hit: the key is absent when the lookup found nothing, and the
+        # whole enrichment block is absent when enrichment is off.
         with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
             await processor._evaluate_for_response(
-                {"finding_id": "f-miss", "enrichment": {"threat_indicators": {}}, **below_gate}
+                {"finding_id": "f-miss", "enrichment": {"geo": {}}, **below_gate}
+            )
+            await processor._evaluate_for_response(
+                {"finding_id": "f-bare", **below_gate}
             )
             insert.assert_not_called()
             assert queue.empty()
