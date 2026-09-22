@@ -223,6 +223,10 @@ jobs:
             node --input-type=module -e "
               await import('/app/dist/worker.js');
               await import('/app/dist/serve.js');
+              const { existsSync } = await import('node:fs');
+              const { archFor, registeredKinds } = await import('/app/dist/arch/registry.js');
+              const missing = registeredKinds().map((k) => archFor(k).arch).filter((p) => !existsSync(p));
+              if (missing.length) throw new Error('arch files missing from image: ' + missing.join(', '));
               console.log('agent ok');
             "
 
