@@ -244,19 +244,25 @@ def disable(provider, key):
     # Ollama's credential is a URL the operator typed, not a secret the proxy
     # masks or stores, so the block has to come along or Bifrost loses the
     # endpoint. Vertex's project/region travel the same way; its
-    # service-account JSON is left out so the proxy substitutes the stored one.
-    # Any of these may itself be an env reference (returned masked): re-declare
-    # the reference, never echo the masked dict; a typed literal goes as-is.
+    # service-account JSON is left out so the proxy substitutes the stored one
+    # — unless it is an env reference, which the proxy holds no copy of and the
+    # gateway would blank if omitted. Any of these may be an env reference
+    # (returned masked): re-declare the reference, never echo the masked dict;
+    # a typed literal goes as-is.
     def carry(field):
         return env_ref(field) or field
 
+    url_ref = None
     ollama = key.get("ollama_key_config")
     if isinstance(ollama, dict):
-        body["ollama_key_config"] = {"url": carry(ollama.get("url"))}
+        url_ref = env_ref(ollama.get("url"))
+        body["ollama_key_config"] = {"url": url_ref or ollama.get("url")}
     vertex = key.get("vertex_key_config")
     if isinstance(vertex, dict):
         body["vertex_key_config"] = {
-            f: carry(v) for f, v in vertex.items() if f != "auth_credentials"
+            f: carry(v)
+            for f, v in vertex.items()
+            if f != "auth_credentials" or env_ref(v) is not None
         }
 
     # The proxy first: it substitutes the plaintext it holds for any key a human
@@ -268,10 +274,16 @@ def disable(provider, key):
     except urllib.error.HTTPError as exc:
         if exc.code != 400:
             raise
-    ref = env_ref(key.get("value"))
-    if ref is None:
+    # Ollama's credential is its URL; `value` is an optional bearer token that
+    # is legitimately empty, so an env-referenced URL with no token qualifies
+    # too. A masked literal token cannot be carried, so that key stays put.
+    val = key.get("value")
+    ref = env_ref(val)
+    token = val.get("value") if isinstance(val, dict) else val
+    if ref is not None:
+        body["value"] = ref
+    elif url_ref is None or token:
         return False
-    body["value"] = ref
     req(f"{BF}/providers/{provider}/keys/{key['id']}", "PUT", body)
     return True
 
