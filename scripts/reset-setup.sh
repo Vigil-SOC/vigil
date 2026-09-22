@@ -246,17 +246,24 @@ def disable(provider, key):
     # endpoint. Vertex's project/region travel the same way; its
     # service-account JSON is left out so the proxy substitutes the stored one
     # — unless it is an env reference, which the proxy holds no copy of and the
-    # gateway would blank if omitted. Any of these may be an env reference
-    # (returned masked): re-declare the reference, never echo the masked dict;
-    # a typed literal goes as-is.
-    def carry(field):
-        return env_ref(field) or field
+    # gateway would blank if omitted. An env reference is re-declared; anything
+    # else is carried as returned and, if it is a mask, only the proxy may
+    # substitute it (see the fallback below).
+    cfg_refs = cfg_masks = 0
 
-    url_ref = None
+    def carry(field):
+        nonlocal cfg_refs, cfg_masks
+        ref = env_ref(field)
+        if ref is not None:
+            cfg_refs += 1
+            return ref
+        if isinstance(field, dict) and field.get("value"):
+            cfg_masks += 1
+        return field
+
     ollama = key.get("ollama_key_config")
     if isinstance(ollama, dict):
-        url_ref = env_ref(ollama.get("url"))
-        body["ollama_key_config"] = {"url": url_ref or ollama.get("url")}
+        body["ollama_key_config"] = {"url": carry(ollama.get("url"))}
     vertex = key.get("vertex_key_config")
     if isinstance(vertex, dict):
         body["vertex_key_config"] = {
@@ -274,15 +281,18 @@ def disable(provider, key):
     except urllib.error.HTTPError as exc:
         if exc.code != 400:
             raise
-    # Ollama's credential is its URL; `value` is an optional bearer token that
-    # is legitimately empty, so an env-referenced URL with no token qualifies
-    # too. A masked literal token cannot be carried, so that key stays put.
+    # The credential may live in `value` or in the config block (Ollama's URL,
+    # Vertex's service account); either as an env reference qualifies. A masked
+    # literal anywhere in the body cannot be carried without the proxy, so that
+    # key stays put rather than have the mask written over it.
     val = key.get("value")
     ref = env_ref(val)
     token = val.get("value") if isinstance(val, dict) else val
     if ref is not None:
         body["value"] = ref
-    elif url_ref is None or token:
+    elif token:
+        return False
+    if (ref is None and not cfg_refs) or cfg_masks:
         return False
     req(f"{BF}/providers/{provider}/keys/{key['id']}", "PUT", body)
     return True
