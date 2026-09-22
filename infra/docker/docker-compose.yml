@@ -444,11 +444,15 @@ services:
   # Pinned, not :latest: Vigil reads this image's management API, so the tag
   # is a contract. Before bumping BIFROST_IMAGE_TAG (here and in
   # clients/desktop/standalone/docker-compose.yml), check at the new tag that
-  # /health, /api/models/details (its *_cost_per_token pricing fields —
-  # core/llm/bifrost/admin.py), /api/logs/* and
-  # /api/governance/virtual-keys/quota (core/llm/bifrost/costs.py) and the
-  # models/(base|details|parameters) routes proxied by
-  # services/api/routers/bifrost_config.py still answer in the same shape.
+  # these still answer in the same shape:
+  #   /health (healthcheck below, core/llm/providers/recovery.py)
+  #   /api/providers/{name}[/keys] and /api/models/details
+  #     (core/llm/bifrost/admin.py); /api/models/details also carries the
+  #     *_cost_per_token / *_input_token_cost pricing fields
+  #   /api/logs/* and /api/governance/virtual-keys/quota
+  #     (core/llm/bifrost/costs.py)
+  #   everything in _ALLOWED_PATHS in services/api/routers/bifrost_config.py,
+  #     including models/(base|details|parameters)
   bifrost:
     image: maximhq/bifrost:${BIFROST_IMAGE_TAG:-v2.2.1}
     container_name: deeptempo-bifrost
