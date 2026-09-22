@@ -7,12 +7,10 @@ acts as the person its credential belongs to.
 
 from __future__ import annotations
 
-import os
+from contextlib import contextmanager
 from unittest.mock import patch
 
 import pytest
-
-os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
 
 
 @pytest.fixture
@@ -142,6 +140,25 @@ def test_another_token_is_not_the_development_credential():
     assert _dev_mode_user("vgl_mcp_something_else") is None
 
 
+def test_the_development_credential_resolves_to_the_developer():
+    """The bypass-on path, which every other test here returns before reaching.
+
+    It is the only caller of ``_get_dev_user`` outside the auth middleware, and
+    it imports it inside the function -- so a move of that function lands as an
+    ImportError the first time somebody presents this token, on a machine, not
+    here. Taking the path is what turns that into a red test.
+    """
+    from services.api.mcp_surface import DEV_MODE_TOKEN, _dev_mode_user
+
+    a_developer = object()
+    with patch("core.config.get_settings") as settings:
+        settings.return_value.dev_mode = True
+        with patch(
+            "services.api.middleware.auth._get_dev_user", return_value=a_developer
+        ):
+            assert _dev_mode_user(DEV_MODE_TOKEN) is a_developer
+
+
 # --- Reachable from somewhere that is not this machine -----------------------
 #
 # The surface exists to be reached by a caller that is not Vigil, so the Host a
@@ -263,3 +280,76 @@ def test_one_callers_session_is_not_another_callers(client_on_a_domain):
         "AuthenticatedUser; Vigil authenticates ahead of the server, so the "
         "principal must be put on the scope for the check to mean anything."
     )
+
+
+# --- Reachable at the address we advertise -----------------------------------
+#
+# A mount at /mcp compiles to ^/mcp/(?P<path>.*)$, so the bare spelling -- the
+# one MOUNT_PATH, the docstring, the README and env.example all give, and the
+# one anyone configuring a client will paste -- does not match it. What answers
+# instead depends on whether the SPA catch-all is registered, and that depends
+# on whether clients/web/build/index.html exists:
+#
+#   no build   nothing matches, so redirect_slashes rescues it with a 307
+#   a build    the catch-all matches by path and not by method, which is a
+#              partial match, which stops the search at 405
+#
+# CI never builds the frontend, so every test above rode the 307 and the 405
+# every real install answers was unreachable from here. This registers a
+# catch-all shaped like main.py's so both are exercised.
+
+
+@contextmanager
+def _as_if_the_frontend_were_built(app):
+    """The SPA catch-all main.py registers when a build is on disk."""
+    from fastapi.responses import HTMLResponse
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_react_app(full_path: str):  # pragma: no cover - never reached
+        return HTMLResponse("<html></html>")
+
+    added = app.router.routes[-1]
+    try:
+        yield
+    finally:
+        app.router.routes.remove(added)
+
+
+@pytest.fixture
+def client_with_a_frontend_build():
+    from fastapi.testclient import TestClient
+
+    from services.api.main import app
+
+    with _as_if_the_frontend_were_built(app):
+        with TestClient(app) as c:
+            yield c
+
+
+@pytest.mark.parametrize("address", ["/mcp", "/mcp/"])
+def test_the_surface_answers_at_the_address_it_advertises(
+    client_with_a_frontend_build, address
+):
+    """Both spellings, with the catch-all standing in front of the mount."""
+    with patch("services.api.mcp_surface.is_enabled", return_value=True):
+        response = client_with_a_frontend_build.post(address, json={})
+
+    assert response.status_code == 401, (
+        f"POST {address} did not reach the gate with a frontend build present. "
+        "The SPA catch-all is GET-only, so a POST it matches by path answers "
+        "405 and no gate runs -- which is what every real install does, and "
+        "what CI cannot see because it never builds the frontend."
+    )
+    assert response.headers.get("WWW-Authenticate") == "Bearer"
+
+
+@pytest.mark.parametrize("address", ["/mcp", "/mcp/"])
+def test_a_closed_surface_is_still_the_one_answering(
+    client_with_a_frontend_build, address
+):
+    """404 because the gate said so, not because the catch-all swallowed it."""
+    with patch("services.api.mcp_surface.is_enabled", return_value=False):
+        response = client_with_a_frontend_build.post(address, json={})
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Not Found"}

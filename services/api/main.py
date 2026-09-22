@@ -753,11 +753,15 @@ async def health_check():
 # Vigil's own MCP server, given an address. Mounted before the SPA catch-all so
 # /mcp reaches the server rather than index.html, and behind a gate that decides
 # whether the surface is open at all and, if it is, whose request this is.
-from services.api.mcp_surface import MOUNT_PATH as _MCP_MOUNT  # noqa: E402
-from services.api.mcp_surface import McpSurfaceGate  # noqa: E402
+#
+# serve_at, rather than a mount here, because the address has two spellings and
+# only one of them is a mount: see mcp_surface.BareMountPath for why the bare
+# one -- the advertised one -- otherwise answers 405 wherever a frontend build
+# exists, and 307 wherever one does not.
+from services.api.mcp_surface import McpSurfaceGate, serve_at  # noqa: E402
 
 _mcp_gate = McpSurfaceGate()
-app.mount(f"{_CONTEXT_PATH}{_MCP_MOUNT}", _mcp_gate, name="mcp")
+serve_at(app, _mcp_gate, _CONTEXT_PATH)
 
 
 # Serve React static files in production

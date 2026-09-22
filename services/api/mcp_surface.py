@@ -1,9 +1,9 @@
 """Serving Vigil's own MCP server at /mcp, to callers that are not Vigil.
 
-The same server the agent reaches over a pipe, given an address. Nothing about
-a tool changes: what changes is that a request arrives from somewhere, so it
-has to say who it is, and what it does is recorded against that person rather
-than against "an agent".
+The same server the agent calls directly in this process, given an address.
+Nothing about a tool changes: what changes is that a request arrives from
+somewhere, so it has to say who it is, and what it does is recorded against
+that person rather than against "an agent".
 
 Three gates, in order, because each one's answer means something different:
 
@@ -42,6 +42,52 @@ MOUNT_PATH = "/mcp"
 # off -- which is every packaged path and every install that did not opt in --
 # and its use is announced, like the other gates the bypass opens.
 DEV_MODE_TOKEN = "vgl_mcp_DEV_MODE_ONLY_not_a_secret"
+
+
+class BareMountPath:
+    """Makes ``/mcp`` and ``/mcp/`` the same address, before routing decides.
+
+    A Starlette mount at ``/mcp`` compiles to ``^/mcp/(?P<path>.*)$``, so the
+    bare spelling -- the one MOUNT_PATH, the README and env.example all
+    advertise, and the one anyone configuring a client will paste -- does not
+    match it. What answers instead depends on what else is registered:
+
+    * With no frontend build, nothing matches, and Starlette's redirect_slashes
+      rescues it with a 307 to the slash form.
+    * With a frontend build, the SPA catch-all claims every path. It is GET-only,
+      so a POST matches it by path and not by method -- a partial match, which is
+      still a match, so the search stops and answers 405 and the redirect never
+      runs. The gate is never reached.
+
+    Since CI never builds the frontend, only the first case is ever exercised
+    there, which is why a surface unreachable in every real install looked fine.
+
+    Rewriting the path here rather than registering a second route puts this
+    ahead of routing, so it cannot be decided by what is registered around it.
+    """
+
+    def __init__(self, app: ASGIApp, path: str):
+        self.app = app
+        self.bare = path
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and scope.get("path") == self.bare:
+            scope = {**scope, "path": self.bare + "/"}
+            raw = scope.get("raw_path")
+            if raw is not None:
+                scope["raw_path"] = raw + b"/"
+        await self.app(scope, receive, send)
+
+
+def serve_at(app, gate: ASGIApp, context_path: str = "") -> str:
+    """Put ``gate`` at the advertised address, both ways of writing it.
+
+    Returns the address, which is what an operator is told at startup.
+    """
+    address = f"{context_path}{MOUNT_PATH}"
+    app.mount(address, gate, name="mcp")
+    app.add_middleware(BareMountPath, path=address)
+    return address
 
 
 def _bearer(scope: Scope) -> Optional[str]:
