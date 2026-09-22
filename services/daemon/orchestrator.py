@@ -1449,11 +1449,11 @@ class Orchestrator:
             self._hourly_paused = paused
             if paused:
                 logger.warning(
-                    f"Hourly cost ${spent:.2f} reached limit ${limit:.2f}, pausing intake"
+                    f"Hourly cost ${spent:.4f} reached limit ${limit:.4f}, pausing intake"
                 )
             else:
                 logger.info(
-                    f"Hourly cost ${spent:.2f} below limit ${limit:.2f}, resuming intake"
+                    f"Hourly cost ${spent:.4f} below limit ${limit:.4f}, resuming intake"
                 )
         return paused
 
