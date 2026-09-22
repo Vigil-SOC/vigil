@@ -404,6 +404,32 @@
       display: none;
    }
 
+   /* The bypass indicator. Every other rail item is an icon whose label the
+      operator can go and read; this one is a warning they must not have to go
+      looking for, and the rail is collapsed until someone expands it. So the
+      collapsed state has to carry the meaning on its own: an amber chip that
+      no other item wears, rather than one more monochrome glyph. Its tip also
+      opens on focus, so it is reachable without a mouse. */
+   .rail .nav-btn.dev-mode-warning {
+      background: rgba(224, 164, 74, .14);
+      box-shadow: inset 0 0 0 1px rgba(224, 164, 74, .55);
+   }
+
+   .rail .nav-btn.dev-mode-warning:hover {
+      background: rgba(224, 164, 74, .22);
+   }
+
+   .rail .nav-btn.dev-mode-warning:focus-visible .tip,
+   .rail .nav-btn.dev-mode-warning:focus .tip {
+      opacity: 1;
+      transform: translateX(0);
+   }
+
+   /* Expanded, the label is the warning, so the chip stops doing that work. */
+   .rail.expanded .nav-btn.dev-mode-warning {
+      background: rgba(224, 164, 74, .12);
+   }
+
    /* ---------- account menu (rail footer) ---------- */
    .rail .nav-spacer {
       flex: 1 1 auto;
@@ -852,6 +878,10 @@
 
    .prio.low {
       color: var(--tx-3);
+   }
+
+   .prio.unknown {
+      color: var(--tx-faint);
    }
 
    /* view scroll region */

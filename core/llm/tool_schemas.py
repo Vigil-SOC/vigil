@@ -7,6 +7,7 @@ Defines all tools available to Claude via function calling
 # (#729) rather than transcribed here: a schema that drifts from the handler's
 # arguments fails as "no history", which reads as an entity nobody has looked at.
 from core.memory.recall_contract import RECALL_PARAMETERS, RECALL_TOOL
+from core.skills.skill_library import READ_SKILL_TOOL
 
 # Security-Detections Tools (Core functionality)
 SECURITY_DETECTION_TOOLS = [
@@ -391,6 +392,73 @@ DEEPTEMPO_FINDING_TOOLS = [
         },
     },
     {
+        "name": "list_learning_episodes",
+        "description": (
+            "What Vigil learned in a window: one episode per concluded hunt or "
+            "case, read from distilled memory. Each carries kind, "
+            "investigation_id, origin_run_id (null for a case), concluded_at, "
+            "and a payload of the verdicts (with source stances) and gaps that "
+            "investigation recorded. An investigation that concluded nothing is "
+            "still an episode. Read-only."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "start": {
+                    "type": "string",
+                    "description": "Window start (ISO-8601 timestamp or date)",
+                },
+                "end": {
+                    "type": "string",
+                    "description": "Window end (ISO-8601 timestamp or date, inclusive)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum number of episodes to return, newest first",
+                    "default": 200,
+                },
+            },
+            "required": ["start", "end"],
+        },
+    },
+    {
+        "name": "export_learning_episodes",
+        "description": (
+            "Write a chosen set of learning episodes to a JSONL file in the "
+            "exports directory, one episode per line, selected by "
+            "{kind, investigation_id} pairs from list_learning_episodes. By "
+            "default entity values are redacted to their type (ip:*); pass "
+            "identified=true to keep them. An empty selection writes no file."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "episodes": {
+                    "type": "array",
+                    "description": "Episodes to export, as returned by list_learning_episodes",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "kind": {"type": "string", "enum": ["hunt", "case"]},
+                            "investigation_id": {"type": "string"},
+                        },
+                        "required": ["kind", "investigation_id"],
+                    },
+                },
+                "identified": {
+                    "type": "boolean",
+                    "description": "Keep entity values instead of redacting them to their type",
+                    "default": False,
+                },
+                "name": {
+                    "type": "string",
+                    "description": "File stem under the exports directory; defaults to a timestamped name",
+                },
+            },
+            "required": ["episodes"],
+        },
+    },
+    {
         "name": "replay_hunt",
         "description": (
             "Replay a completed threat hunt: for each decision the hunt lead "
@@ -538,7 +606,33 @@ THREAT_INTEL_TOOLS = [
             },
             "required": ["values"],
         },
-    }
+    },
+    {
+        "name": "propose_feed_hunts",
+        "description": (
+            "Which recently fed threat indicators has nobody hunted? Reads the "
+            "newest rows of Vigil's threat-indicator database and runs each "
+            "through the same coverage check as `check_hunt_coverage`. Returns "
+            "one entry per uncovered indicator with its Entity Key, the feed row "
+            "(type, value, source, last_seen) and a `proposal` body for "
+            "POST /api/workflows/threat-hunt/execute; indicators already "
+            "`running` or `concluded` are counted and omitted. Read-only: this "
+            "never starts a hunt."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": (
+                        "How many of the most recent indicators to classify "
+                        "(capped at 200)"
+                    ),
+                    "default": 200,
+                },
+            },
+        },
+    },
 ]
 
 # Episodic memory (#732). Reading it is a backend tool rather than an MCP server
@@ -597,6 +691,38 @@ MEMORY_TOOLS = [
     },
 ]
 
+# Agent skills (#925). One static tool for every skill rather than one per
+# skill: the library is a set of documents, and the prompt lists which exist.
+SKILL_TOOLS = [
+    {
+        "name": READ_SKILL_TOOL,
+        "description": (
+            "Read a skill from the library listed in <available_skills>. Without "
+            "`file` this returns the skill's SKILL.md body: the procedure to follow. "
+            "A body may point at supporting files (references/, assets/); pass one "
+            "as `file`, a path relative to the skill directory, to read it. Text "
+            "only, nothing is executed, and a path outside the skill is refused."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill name exactly as listed in <available_skills>",
+                },
+                "file": {
+                    "type": "string",
+                    "description": (
+                        "Optional file inside the skill directory, e.g. "
+                        "references/checklist.md. Omit for the SKILL.md body."
+                    ),
+                },
+            },
+            "required": ["name"],
+        },
+    },
+]
+
 # Combine all tools
 ALL_TOOLS = (
     SECURITY_DETECTION_TOOLS
@@ -605,4 +731,5 @@ ALL_TOOLS = (
     + THREAT_INTEL_TOOLS
     + APPROVAL_TOOLS
     + MEMORY_TOOLS
+    + SKILL_TOOLS
 )

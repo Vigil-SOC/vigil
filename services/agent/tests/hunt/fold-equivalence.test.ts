@@ -11,6 +11,10 @@ const RUNS = historicalRuns();
 
 // Maps do not survive JSON, and the goldens were written from the file ledger's
 // fold. Ordering is preserved: a Map keeps insertion order and so does this.
+//
+// hunt.cost_usd is compared exactly, not set aside: the harness fold now sums spend
+// events, but these file-ledger runs carry no spend events and recorded cost as hunt
+// patches, which the patch arm still applies. So the goldens' figures fold unchanged.
 function comparable(projection: ReturnType<typeof fold>): unknown {
   return JSON.parse(
     JSON.stringify({

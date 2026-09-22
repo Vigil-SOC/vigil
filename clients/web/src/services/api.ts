@@ -561,7 +561,6 @@ export const configApi = {
   setOrchestrator: (data: {
     enabled: boolean
     dry_run: boolean
-    auto_assign_severities: string[]
     max_concurrent_agents: number
     max_iterations_per_agent: number
     max_runtime_per_investigation: number

@@ -64,11 +64,15 @@ DEFAULT_TIER = SourceTier.FEED
 # findings, and a worker naming it collapses to `undeclared` first. It is
 # listed because AC 4 asks for the guard, and a guard is meant to have no hits
 # in healthy data.
+#
+# `probe` is the daemon's own known-answer self-test (#923): a Finding the
+# pipeline fed itself, so it observes the pipeline, never the estate.
 _NOT_EVIDENCE: Set[str] = {
     "security-detections",
     "critic",
     "operator",
     "dispatcher",
+    "probe",
 }
 
 # The nine values present in `findings.data_source`, enumerated against live

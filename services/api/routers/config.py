@@ -1125,7 +1125,6 @@ class OrchestratorSettingsConfig(BaseModel):
     # which already defaults False.
     enabled: bool = False
     dry_run: bool = False
-    auto_assign_severities: List[str] = ["critical", "high"]
     max_concurrent_agents: int = 3
     max_iterations_per_agent: int = 50
     max_runtime_per_investigation: int = 3600
@@ -1148,7 +1147,7 @@ async def get_orchestrator_config():
 
         if config_value:
             merged = {**ORCHESTRATOR_DEFAULTS, **config_value}
-            return merged
+            return {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
 
         return ORCHESTRATOR_DEFAULTS
     except Exception as e:

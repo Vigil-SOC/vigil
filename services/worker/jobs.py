@@ -293,9 +293,8 @@ async def on_startup(ctx: Dict[str, Any]):
         )
         logger.warning("Telemetry init failed (non-fatal): %s", _tel_err)
 
-    # Initialize the SQLAlchemy DB manager so downstream code (skill tool
-    # loading, reasoning-trace persistence, provider-key resolution) can
-    # query the DB. The backend process does this in its FastAPI startup
+    # Initialize the SQLAlchemy DB manager so downstream code (reasoning-trace
+    # persistence, provider-key resolution) can query the DB. The backend process does this in its FastAPI startup
     # hook; the worker is a separate process and must do it itself.
     try:
         from core.storage.connection import get_db_manager
@@ -306,7 +305,7 @@ async def on_startup(ctx: Dict[str, Any]):
             logger.info("LLM worker: DB manager initialized")
     except Exception as _db_err:
         logger.warning(
-            "LLM worker DB init failed (skill tools + reasoning traces will be disabled): %s",
+            "LLM worker DB init failed (reasoning traces will be disabled): %s",
             _db_err,
         )
 

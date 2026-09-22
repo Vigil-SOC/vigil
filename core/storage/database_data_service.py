@@ -402,6 +402,12 @@ class DatabaseDataService:
                 return False
         return False
 
+    # The formats this knows how to write. Named here rather than at the route,
+    # because the branch below is what decides them: a route that keeps its own
+    # list can come to disagree with the writer, and answer 200 for a format
+    # that silently lands as JSON.
+    EXPORT_FORMATS = ("json", "jsonl")
+
     def export_findings(self, output_path: Path, fmt: str = "json") -> bool:
         findings = self.get_findings()
         try:

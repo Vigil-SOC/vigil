@@ -11,6 +11,7 @@ import pytest
 from services.daemon.config import DaemonConfig, OrchestratorConfig
 from services.daemon.orchestrator import (
     Orchestrator,
+    _Overlap,
     intake_age_seconds,
     intake_severity_band,
     rank_intake_row,
@@ -71,9 +72,12 @@ def _orchestrator(**extra) -> Orchestrator:
     orch._create_manual_investigation = AsyncMock()
     orch._decide_trigger = MagicMock()
     orch._data_service = MagicMock()
-    orch._open_case_for_finding = MagicMock(return_value="case-1")
-    orch._attach_finding_to_overlap = MagicMock(return_value="case-1")
+    orch._attach_to_overlapping_case = MagicMock(
+        return_value=(_Overlap.MERGED, "case-1")
+    )
     orch._in_flight = MagicMock(return_value=0)
+    orch._queued_intake_depth = MagicMock(return_value=0)
+    orch._intake_surge_active = False
     for key, value in extra.items():
         setattr(orch, key, value)
     return orch
@@ -83,7 +87,9 @@ def test_ttl_constants_are_not_settings():
     cfg = OrchestratorConfig()
     assert cfg.intake_ttl_seconds == TTL
     assert cfg.intake_ttl_promote_fraction == FRAC
+    assert cfg.intake_surge_depth == 20
     assert "intake_ttl" not in getsource(DaemonConfig.from_env)
+    assert "intake_surge" not in getsource(DaemonConfig.from_env)
 
 
 def test_critical_launches_before_high_and_older_high_before_newer():
@@ -345,6 +351,7 @@ async def test_create_investigation_always_saves_assigned(tmp_path):
         findings=[{"finding_id": "f-1", "severity": "high"}],
         trigger_type="finding",
         priority="high",
+        case_id="case-1",
     )
 
     assert orch._save_investigation.call_args[0][0]["status"] == "assigned"
@@ -358,7 +365,7 @@ async def test_pickup_only_walks_assigned():
     orch._enqueue_investigation = AsyncMock()
     orch._update_investigation_status = MagicMock()
 
-    await orch._pickup_queued_investigations(None)
+    await orch._pickup_assigned_investigations(None)
 
     assert seen == ["assigned"]
     orch._enqueue_investigation.assert_not_awaited()

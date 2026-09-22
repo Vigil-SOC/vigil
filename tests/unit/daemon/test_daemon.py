@@ -3,11 +3,13 @@ Unit tests for daemon/autonomous operations.
 Tests polling, processing, auto-response, and escalation logic.
 """
 
+import asyncio
 import pytest
 from datetime import timedelta
 from core.time import utcnow
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
+from services.daemon.config import ProcessingConfig
 from services.daemon.poller import DataPoller
 from services.daemon.processor import FindingProcessor
 from services.daemon.responder import AutonomousResponder
@@ -318,6 +320,95 @@ class TestAutoResponse:
         mock_approval.create_action.assert_called_once()
 
 
+class TestConfiguredFloors:
+    """The responder's severity floors and the processor's queue line read
+    ResponseConfig rather than literals (#916)."""
+
+    def _responder(self, **overrides):
+        from services.daemon.config import EscalationConfig, ResponseConfig
+
+        return AutonomousResponder(
+            ResponseConfig(**overrides),
+            EscalationConfig(),
+            response_service=Mock(),
+            approvals=Mock(),
+        )
+
+    def test_default_floors_match_the_old_literals(self):
+        responder = self._responder()
+        assert responder._determine_action("critical", 0.70, "")[0] == "isolate"
+        assert responder._determine_action("critical", 0.69, "") is None
+        assert responder._determine_action("high", 0.80, "")[0] == "investigate"
+        assert responder._determine_action("high", 0.79, "") is None
+
+    def test_raised_floors_move_the_decision(self):
+        responder = self._responder(critical_action_floor=0.90, high_action_floor=0.95)
+        assert responder._determine_action("critical", 0.85, "") is None
+        assert responder._determine_action("high", 0.90, "") is None
+
+    def test_decision_records_the_branch_that_fired(self):
+        """Two findings decided by different branches record different rules (#917)."""
+        responder = self._responder()
+        assert responder._determine_action("critical", 0.70, "") == (
+            "isolate",
+            "response.critical_action_floor=0.70 met (0.70)",
+        )
+        assert responder._determine_action("medium", 0.92, "isolate") == (
+            "isolate",
+            "response.confidence_threshold=0.90 met (0.92)",
+        )
+
+    @pytest.mark.asyncio
+    async def test_reason_carries_rule_and_dry_run_logs_it(self, caplog):
+        from services.daemon.config import EscalationConfig, ResponseConfig
+
+        finding = {
+            "finding_id": "f-917",
+            "severity": "critical",
+            "triage_confidence": 0.75,
+            "entity_context": {"src_ips": ["10.0.0.9"]},
+        }
+        responder = self._responder()
+        await responder._evaluate_response(finding)
+        reason = responder._response_service.create_isolation_action.call_args.kwargs[
+            "reason"
+        ]
+        assert reason == (
+            "Automated response to f-917; "
+            "response.critical_action_floor=0.70 met (0.75)"
+        )
+
+        dry = AutonomousResponder(
+            ResponseConfig(dry_run=True),
+            EscalationConfig(),
+            response_service=Mock(),
+            approvals=Mock(),
+        )
+        with caplog.at_level("INFO", logger="services.daemon.responder"):
+            await dry._evaluate_response(finding)
+        assert "response.critical_action_floor=0.70 met (0.75)" in caplog.text
+        dry._response_service.create_isolation_action.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_processor_queues_at_review_threshold(self):
+        from services.daemon.config import ResponseConfig
+
+        processor = FindingProcessor(
+            ProcessingConfig(), response_config=ResponseConfig(review_threshold=0.95)
+        )
+        queue = asyncio.Queue()
+        processor.set_response_queue(queue)
+        with patch("services.daemon.orchestrator.insert_intake_trigger"):
+            await processor._evaluate_for_response(
+                {"finding_id": "f-1", "severity": "low", "triage_confidence": 0.90}
+            )
+            assert queue.empty()
+            await processor._evaluate_for_response(
+                {"finding_id": "f-2", "severity": "low", "triage_confidence": 0.95}
+            )
+            assert queue.qsize() == 1
+
+
 class TestEscalation:
     """Test escalation logic."""
     
@@ -518,3 +609,79 @@ class TestDaemonLifecycle:
         
         assert daemon.is_running is False
 
+
+class TestTriageProviderResolution:
+    """Daemon triage resolves a provider like chat does and records failures (#965)."""
+
+    @staticmethod
+    def _spec(provider_id="openai-1", provider_type="openai", model="gpt-4o"):
+        from core.llm.router.router import ProviderSpec
+
+        return ProviderSpec(
+            provider_id=provider_id,
+            provider_type=provider_type,
+            base_url=None,
+            api_key_ref=None,
+            default_model=model,
+            config={},
+        )
+
+    def test_openai_only_install_routes_to_default_provider(self):
+        """No Anthropic default: registry yields None, default provider row wins."""
+        registry = Mock()
+        registry.resolve_model_for_component.return_value = None
+        with patch("core.llm.providers.registry.get_registry", return_value=registry), patch(
+            "core.llm.target.provider_for", return_value=self._spec()
+        ) as pf, patch("core.llm.target.model_for", return_value="gpt-4o"):
+            assert FindingProcessor._resolve_triage_target() == ("openai-1", "gpt-4o")
+        registry.resolve_model_for_component.assert_called_once_with("triage")
+        pf.assert_called_once_with(None)
+
+    def test_no_provider_records_error(self):
+        processor = FindingProcessor(ProcessingConfig())
+        processor._llm_gateway = Mock()
+        with patch.object(FindingProcessor, "_resolve_triage_target", return_value=None):
+            content, error = asyncio.run(processor._get_ai_triage("p"))
+        assert content is None and "no LLM provider" in error
+        processor._llm_gateway.submit_triage.assert_not_called()
+
+    def test_gateway_gets_resolved_provider_and_worker_error_is_surfaced(self):
+        processor = FindingProcessor(ProcessingConfig())
+        gateway = Mock()
+        gateway.submit_triage = AsyncMock(
+            return_value={"content": "", "type": "error", "error": "AuthenticationError: bad key"}
+        )
+        processor._llm_gateway = gateway
+        with patch.object(
+            FindingProcessor, "_resolve_triage_target", return_value=("openai-1", "gpt-4o")
+        ):
+            content, error = asyncio.run(processor._get_ai_triage("p"))
+        gateway.submit_triage.assert_awaited_once_with("p", provider_id="openai-1", model="gpt-4o")
+        assert content is None and error == "AuthenticationError: bad key"
+
+    def test_failed_triage_lands_in_ai_enrichment_without_ai_triage(self):
+        processor = FindingProcessor(ProcessingConfig())
+        finding = {"finding_id": "f1", "severity": "high"}
+        with patch.object(
+            FindingProcessor, "_get_ai_triage", AsyncMock(return_value=(None, "boom"))
+        ):
+            finding = asyncio.run(processor._triage_finding(finding))
+        assert finding["ai_triage_error"] == "boom"
+        assert "ai_triage" not in finding
+        processor._data_service = Mock()
+        processor._data_service.update_finding.return_value = True
+        asyncio.run(processor._update_finding(finding))
+        kwargs = processor._data_service.update_finding.call_args.kwargs
+        assert kwargs["ai_enrichment"] == {"ai_triage_error": "boom"}
+
+    def test_success_clears_previous_error(self):
+        processor = FindingProcessor(ProcessingConfig())
+        finding = {"finding_id": "f1", "ai_triage_error": "old"}
+        with patch.object(
+            FindingProcessor,
+            "_get_ai_triage",
+            AsyncMock(return_value=("SEVERITY: low\nREASONING: fine", None)),
+        ):
+            finding = asyncio.run(processor._triage_finding(finding))
+        assert "ai_triage_error" not in finding
+        assert finding["ai_triage"]["result"]["severity"] == "low"

@@ -4,21 +4,38 @@ import {
   MISSING_FINDING_SEVERITY,
   MISSING_FINDING_TIME,
 } from './data'
-import { formatFindingScore, mapApiFinding, mapApiSkill } from './mappers'
+import { formatFindingScore, mapApiCase, mapApiFinding, mapApiSkill } from './mappers'
+import type { ApiCase } from './mappers'
 
-describe('mapApiSkill', () => {
-  it('maps the current DB row and ignores retired fields', () => {
-    expect(
-      mapApiSkill({ skill_id: 's-1', name: 'IP Enrichment', description: 'Enrich an IP.', category: 'enrichment', version: 2, is_active: false }),
-    ).toEqual({ id: 's-1', name: 'IP Enrichment', desc: 'Enrich an IP.', source: undefined })
+const caseStub = (priority?: string | null): ApiCase =>
+  ({
+    case_id: 'c-1',
+    priority,
+    activities: [],
+    mitre_techniques: [],
+    notes: [],
+    resolution_steps: [],
+    tags: [],
+    timeline: [],
   })
 
-  it('maps the file-loader shape, keying by name and surfacing the source path', () => {
-    expect(mapApiSkill({ name: 'triage', description: null, source_path: 'skills/triage/SKILL.md' })).toEqual({
+describe('mapApiCase priority', () => {
+  it('keeps unknown instead of falling through to medium', () => {
+    expect(mapApiCase(caseStub('unknown')).prio).toBe('unknown')
+  })
+
+  it('still maps a rated priority', () => {
+    expect(mapApiCase(caseStub('high')).prio).toBe('high')
+  })
+})
+
+describe('mapApiSkill', () => {
+  it('keys the loaded skill by name and surfaces its source path', () => {
+    expect(mapApiSkill({ name: 'triage', description: 'Triage a finding.', source_path: 'skills/triage' })).toEqual({
       id: 'triage',
       name: 'triage',
-      desc: '',
-      source: 'skills/triage/SKILL.md',
+      desc: 'Triage a finding.',
+      source: 'skills/triage',
     })
   })
 })

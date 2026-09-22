@@ -23,6 +23,11 @@ from core.threat_intel.mitre_lookup import get_time_range, resolve_technique
 
 logger = logging.getLogger(__name__)
 
+# Known-answer probes (#923) are the daemon testing itself, not activity in the
+# estate: out of the headline totals and trend buckets, left in the per-source
+# breakdowns so they stay visible as what they are.
+_NOT_PROBE = Finding.data_source != "probe"
+
 
 async def collect_insights_inputs(
     db: Session, time_range: str
@@ -53,7 +58,7 @@ async def calculate_metrics(
     # Current period metrics
     total_findings = (
         db.query(func.count(Finding.finding_id))
-        .filter(Finding.created_at.between(start_time, end_time))
+        .filter(Finding.created_at.between(start_time, end_time), _NOT_PROBE)
         .scalar()
         or 0
     )
@@ -108,7 +113,7 @@ async def calculate_metrics(
     # Previous period metrics for comparison
     prev_total_findings = (
         db.query(func.count(Finding.finding_id))
-        .filter(Finding.created_at.between(prev_start, prev_end))
+        .filter(Finding.created_at.between(prev_start, prev_end), _NOT_PROBE)
         .scalar()
         or 0
     )
@@ -237,7 +242,7 @@ async def get_time_series_data(
 
         findings_count = (
             db.query(func.count(Finding.finding_id))
-            .filter(Finding.created_at.between(current_time, bucket_end))
+            .filter(Finding.created_at.between(current_time, bucket_end), _NOT_PROBE)
             .scalar()
             or 0
         )
@@ -256,6 +261,7 @@ async def get_time_series_data(
                 and_(
                     Finding.created_at.between(current_time, bucket_end),
                     Finding.severity.in_(["high", "critical"]),
+                    _NOT_PROBE,
                 )
             )
             .scalar()

@@ -144,6 +144,7 @@ def _isolate_database(request):
 def episodic_session():
     from core.storage.connection import get_db_session
     from core.storage.models import (
+        EpisodicDistilMarker,
         EpisodicGap,
         EpisodicReadLog,
         EpisodicSighting,
@@ -158,6 +159,7 @@ def episodic_session():
             EpisodicVerdict,
             EpisodicSighting,
             EpisodicGap,
+            EpisodicDistilMarker,
             EpisodicReadLog,
         ):
             db.query(model).delete()

@@ -31,6 +31,14 @@ class SOCDaemon:
         self.config = config
         self.config.setup_logging()
 
+        # Observe mode (#915): log declared-vs-effective intent, enforce nothing.
+        try:
+            from services.daemon.intent import report_intent
+
+            report_intent(self.config)
+        except Exception as _intent_err:
+            logger.warning("Intent report failed (non-fatal): %s", _intent_err)
+
         # Initialize OTEL telemetry after logging is set up
         try:
             from core.telemetry import init_telemetry
@@ -87,17 +95,21 @@ class SOCDaemon:
 
         self._poller = DataPoller(self.config.polling)
         self._kafka_ingestor = KafkaIngestor(self.config.kafka)
-        self._processor = FindingProcessor(self.config.processing)
+        self._processor = FindingProcessor(
+            self.config.processing, response_config=self.config.response
+        )
         # The daemon owns its own copies: it is a separate process from the API, so
         # nothing on the API's app.state is reachable from here.
         self._mcp_client = build_mcp_client()
         set_process_mcp_client(self._mcp_client)
-        approvals = ApprovalService()
+        approvals = ApprovalService(config=self.config.response)
 
         self._responder = AutonomousResponder(
             self.config.response,
             self.config.escalation,
-            response_service=AutonomousResponseService(approvals=approvals),
+            response_service=AutonomousResponseService(
+                approvals=approvals, config=self.config.response
+            ),
             approvals=approvals,
         )
         self._scheduler = TaskScheduler(self.config.scheduler)
@@ -114,6 +126,7 @@ class SOCDaemon:
         self._poller.set_output_queue(self._processor.input_queue)
         self._kafka_ingestor.set_output_queue(self._processor.input_queue)
         self._processor.set_response_queue(self._responder.input_queue)
+        self._scheduler.set_processor_queue(self._processor.input_queue)
 
         # Wire up metrics server with component references
         if self._metrics_server:

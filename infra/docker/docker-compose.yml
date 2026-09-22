@@ -542,7 +542,7 @@ services:
     profiles:
       - observability
 
-  # Grafana — dashboards for system overview, LLM costs, investigation lifecycle
+  # Grafana — provisions the single Vigil SOC health dashboard
   grafana:
     image: grafana/grafana:10.4.0
     container_name: deeptempo-grafana

@@ -1863,13 +1863,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Case
-         * @description Delete a case.
-         *
-         *     Args:
-         *         case_id: The case ID
-         *
-         *     Returns:
-         *         Success status
+         * @description Delete a case that has no live Investigation (#1001).
          */
         delete: operations["delete_api_cases_case_id"];
         options?: never;
@@ -5229,6 +5223,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/orchestrator/intake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Intake Triggers
+         * @description List intake trigger rows, newest first, with an optional state filter.
+         */
+        get: operations["get_api_orchestrator_intake"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/orchestrator/investigations": {
         parameters: {
             query?: never;
@@ -5451,9 +5465,11 @@ export interface paths {
         put?: never;
         /**
          * Scan Existing Findings
-         * @description Insert human_ask trigger rows for matching findings not already investigated.
+         * @description Insert detection trigger rows for matching findings not already investigated.
          *
-         *     The intake tick ranks and launches them when a slot is free.
+         *     A scan is a rerun of Gate 1 by hand, not a Human Ask, so the row merges
+         *     and dedups with other detections. The intake tick ranks and launches them
+         *     when a slot is free.
          */
         post: operations["post_api_orchestrator_scan-findings"];
         delete?: never;
@@ -5779,82 +5795,12 @@ export interface paths {
         };
         /**
          * List Skills
-         * @description List skills, optionally filtered by category and is_active.
+         * @description Every valid skill under the configured roots, bundled library first.
          */
         get: operations["get_api_skills"];
         put?: never;
-        /**
-         * Create Skill
-         * @description Persist a new skill.
-         */
-        post: operations["post_api_skills"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/skills/generate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Generate Skill
-         * @description Generate a skill draft from a natural-language description.
-         *
-         *     Supports multi-turn clarification. If Claude asks a question, the client
-         *     re-submits with the prior conversation_history plus user_response.
-         */
-        post: operations["post_api_skills_generate"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/skills/import": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Import Skill
-         * @description Import a Claude Desktop-compatible skill ``.zip`` bundle (Issue #130).
-         *
-         *     The zip must contain a ``SKILL.md`` (YAML frontmatter + markdown body).
-         *     If a skill with the same name already exists, it is overwritten and its
-         *     version bumped; otherwise a new row is created.
-         */
-        post: operations["post_api_skills_import"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/skills/{skill_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Skill */
-        get: operations["get_api_skills_skill_id"];
-        /** Update Skill */
-        put: operations["put_api_skills_skill_id"];
         post?: never;
-        /** Delete Skill */
-        delete: operations["delete_api_skills_skill_id"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6801,6 +6747,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/threat-hunt/feed-proposals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Propose Feed Hunts
+         * @description Recent feed indicators nobody has hunted, each with a ``proposal`` body
+         *     for ``/workflows/threat-hunt/execute`` (#905). Read-only, like the
+         *     coverage route above and the ``propose_feed_hunts`` agent tool.
+         */
+        get: operations["get_api_workflows_threat-hunt_feed-proposals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/{workflow_id}": {
         parameters: {
             query?: never;
@@ -7245,13 +7213,6 @@ export interface components {
             /** Integration Name */
             integration_name?: string | null;
         };
-        /** Body_import_skill_api_skills_import_post */
-        Body_import_skill_api_skills_import_post: {
-            /** Created By */
-            created_by?: string | null;
-            /** File */
-            file: string;
-        };
         /** Body_ingest_from_string_api_ingest_ingest_string_post */
         Body_ingest_from_string_api_ingest_ingest_string_post: {
             /** Data */
@@ -7405,7 +7366,7 @@ export interface components {
          */
         CaseCommentSchema: {
             /** Attachment Ids */
-            attachment_ids?: string[];
+            attachment_ids?: number[];
             /** Author */
             author?: string | null;
             /** Case Id */
@@ -7631,6 +7592,11 @@ export interface components {
         CasePurgeResponse: {
             /** Deleted */
             deleted: number;
+            /**
+             * Killed Investigations
+             * @default 0
+             */
+            killed_investigations: number;
             /** Message */
             message: string;
             /** Success */
@@ -9131,14 +9097,6 @@ export interface components {
          */
         OrchestratorSettingsConfig: {
             /**
-             * Auto Assign Severities
-             * @default [
-             *       "critical",
-             *       "high"
-             *     ]
-             */
-            auto_assign_severities: string[];
-            /**
              * Dry Run
              * @default false
              */
@@ -9431,7 +9389,7 @@ export interface components {
             run_id: string;
             /**
              * Status
-             * @description running or terminal.
+             * @description queued, running or terminal.
              */
             status: string;
         };
@@ -9625,207 +9583,14 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
-        /**
-         * SkillCreate
-         * @description Request body for `POST /api/skills`.
-         */
-        SkillCreate: {
-            /** Category */
-            category: string;
-            /** Created By */
-            created_by?: string | null;
-            /** Description */
-            description?: string | null;
-            /** Execution Steps */
-            execution_steps?: {
-                [key: string]: unknown;
-            }[];
-            /** Input Schema */
-            input_schema?: {
-                [key: string]: unknown;
-            };
-            /**
-             * Is Active
-             * @default true
-             */
-            is_active: boolean;
-            /** Name */
-            name: string;
-            /** Output Schema */
-            output_schema?: {
-                [key: string]: unknown;
-            };
-            /** Prompt Template */
-            prompt_template: string;
-            /** Required Tools */
-            required_tools?: string[];
-        };
-        /**
-         * SkillDraft
-         * @description Skill generated by the AI builder, before the user saves it. No skill_id yet.
-         */
-        SkillDraft: {
-            /** Category */
-            category: string;
-            /** Description */
-            description?: string | null;
-            /** Execution Steps */
-            execution_steps?: {
-                [key: string]: unknown;
-            }[];
-            /** Input Schema */
-            input_schema?: {
-                [key: string]: unknown;
-            };
-            /**
-             * Is Active
-             * @default true
-             */
-            is_active: boolean;
-            /** Name */
-            name: string;
-            /** Output Schema */
-            output_schema?: {
-                [key: string]: unknown;
-            };
-            /** Prompt Template */
-            prompt_template: string;
-            /** Required Tools */
-            required_tools?: string[];
-        };
-        /**
-         * SkillGenerateRequest
-         * @description Request body for `POST /api/skills/generate`.
-         *
-         *     Supports multi-turn clarification: if Claude asks a question, the client
-         *     sends the current `conversation_history` plus the user's `user_response`.
-         */
-        SkillGenerateRequest: {
-            /** Category */
-            category?: string | null;
-            /** Conversation History */
-            conversation_history?: {
-                [key: string]: string;
-            }[] | null;
+        /** SkillResponse */
+        SkillResponse: {
             /** Description */
             description: string;
-            /** User Response */
-            user_response?: string | null;
-        };
-        /**
-         * SkillGenerateResponse
-         * @description Response from `POST /api/skills/generate`.
-         *
-         *     Either `needs_clarification=True` with a `message` question, or
-         *     `needs_clarification=False` with a populated `skill` draft.
-         */
-        SkillGenerateResponse: {
-            /** Conversation History */
-            conversation_history?: {
-                [key: string]: string;
-            }[] | null;
-            /** Error */
-            error?: string | null;
-            /** Message */
-            message?: string | null;
-            /**
-             * Needs Clarification
-             * @default false
-             */
-            needs_clarification: boolean;
-            skill?: components["schemas"]["SkillDraft"] | null;
-            /** Success */
-            success: boolean;
-        };
-        /**
-         * SkillImportResponse
-         * @description Response from `POST /api/skills/import` (Issue #130).
-         *
-         *     ``replaced`` is True when an existing skill with the same name was
-         *     overwritten (and its version bumped); False when a new row was created.
-         */
-        SkillImportResponse: {
             /** Name */
             name: string;
-            /** Replaced */
-            replaced: boolean;
-            /** Skill Id */
-            skill_id: string;
-            /** Version */
-            version: number;
-        };
-        /**
-         * SkillResponse
-         * @description Full skill as returned by the API.
-         */
-        SkillResponse: {
-            /** Category */
-            category: string;
-            /** Created At */
-            created_at?: string | null;
-            /** Created By */
-            created_by?: string | null;
-            /** Description */
-            description?: string | null;
-            /** Execution Steps */
-            execution_steps?: {
-                [key: string]: unknown;
-            }[];
-            /** Input Schema */
-            input_schema?: {
-                [key: string]: unknown;
-            };
-            /**
-             * Is Active
-             * @default true
-             */
-            is_active: boolean;
-            /** Name */
-            name: string;
-            /** Output Schema */
-            output_schema?: {
-                [key: string]: unknown;
-            };
-            /** Prompt Template */
-            prompt_template: string;
-            /** Required Tools */
-            required_tools?: string[];
-            /** Skill Id */
-            skill_id: string;
-            /** Updated At */
-            updated_at?: string | null;
-            /** Version */
-            version: number;
-        };
-        /**
-         * SkillUpdate
-         * @description Partial update for `PUT /api/skills/{id}`. All fields optional.
-         */
-        SkillUpdate: {
-            /** Category */
-            category?: string | null;
-            /** Description */
-            description?: string | null;
-            /** Execution Steps */
-            execution_steps?: {
-                [key: string]: unknown;
-            }[] | null;
-            /** Input Schema */
-            input_schema?: {
-                [key: string]: unknown;
-            } | null;
-            /** Is Active */
-            is_active?: boolean | null;
-            /** Name */
-            name?: string | null;
-            /** Output Schema */
-            output_schema?: {
-                [key: string]: unknown;
-            } | null;
-            /** Prompt Template */
-            prompt_template?: string | null;
-            /** Required Tools */
-            required_tools?: string[] | null;
+            /** Source Path */
+            source_path: string;
         };
         /** StartRunRequest */
         StartRunRequest: {
@@ -19492,6 +19257,40 @@ export interface operations {
             };
         };
     };
+    get_api_orchestrator_intake: {
+        parameters: {
+            query?: {
+                state?: string | null;
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_api_orchestrator_investigations: {
         parameters: {
             query?: {
@@ -20482,10 +20281,7 @@ export interface operations {
     };
     get_api_skills: {
         parameters: {
-            query?: {
-                category?: string | null;
-                is_active?: boolean | null;
-            };
+            query?: never;
             header?: {
                 authorization?: string | null;
             };
@@ -20501,214 +20297,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_skills: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SkillCreate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SkillResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_skills_generate: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SkillGenerateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SkillGenerateResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    post_api_skills_import: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "multipart/form-data": components["schemas"]["Body_import_skill_api_skills_import_post"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SkillImportResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_skills_skill_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                skill_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SkillResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    put_api_skills_skill_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                skill_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SkillUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SkillResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_api_skills_skill_id: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                skill_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
@@ -22202,6 +21790,39 @@ export interface operations {
                 "application/json": components["schemas"]["HuntCoverageRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "get_api_workflows_threat-hunt_feed-proposals": {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

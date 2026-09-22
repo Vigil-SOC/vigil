@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts, read_replay
 from core.memory.recall_contract import RECALL_TOOL
+from core.skills.skill_library import READ_SKILL_TOOL, read_skill
 
 logger = logging.getLogger(__name__)
 
@@ -251,8 +252,23 @@ def _indicator_lookup(args: Args) -> Any:
     ]
 
 
+# Recent feed rows through the coverage check (#905). Proposes; never hunts.
+def _propose_feed_hunts(args: Args) -> Any:
+    from core.threat_intel.threat_feed_service import (
+        RECENT_INDICATOR_LIMIT,
+        propose_hunts_from_recent_indicators,
+    )
+
+    try:
+        limit = int(args.get("limit", RECENT_INDICATOR_LIMIT))
+    except (TypeError, ValueError):
+        return {"error": f"limit must be an integer, got {args.get('limit')!r}"}
+    return propose_hunts_from_recent_indicators(limit=limit)
+
+
 _INTEL_TOOLS: Dict[str, Callable[[Args], Any]] = {
     "lookup_indicators": _indicator_lookup,
+    "propose_feed_hunts": _propose_feed_hunts,
 }
 
 
@@ -281,9 +297,25 @@ def _check_hunt_coverage(args: Args) -> Any:
         return {"error": str(exc)}
 
 
+# Learning episodes (#906): a window over Distil markers, and a JSONL export of a
+# chosen subset. Mappings, for the same reason as _recall.
+def _list_learning_episodes(args: Args) -> Any:
+    from core.memory.learning_episodes import list_learning_episodes
+
+    return list_learning_episodes(args)
+
+
+def _export_learning_episodes(args: Args) -> Any:
+    from core.memory.learning_episodes import export_learning_episodes
+
+    return export_learning_episodes(args)
+
+
 _MEMORY_TOOLS: Dict[str, Callable[[Args], Any]] = {
     RECALL_TOOL: _recall,
     "check_hunt_coverage": _check_hunt_coverage,
+    "list_learning_episodes": _list_learning_episodes,
+    "export_learning_episodes": _export_learning_episodes,
 }
 
 _APPROVAL_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
@@ -304,37 +336,13 @@ _APPROVAL_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
 }
 
 
-# A skill's tool name is user-authored, so a dispatch failure falls through to
-# the table below in case the name merely looks like one.
-def _skill_result(
-    name: str, args: Args, index: Optional[Args]
-) -> Optional[Tuple[Any, bool]]:
-    try:
-        from core.skills import skill_tools_bridge as skills
-
-        if skills.is_skill_tool_name(name):
-            return (
-                skills.execute_skill_tool(name, args, skills_by_tool_name=index),
-                True,
-            )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Skill tool dispatch failed for %s: %s", name, exc)
-    return None
-
-
 # Returns (result, handled). handled is False only when the name is no backend
 # tool at all, which is the caller's cue to try MCP.
 async def execute_backend_tool(
     tool_name: str,
     tool_input: Optional[Args],
-    *,
-    skill_index: Optional[Args] = None,
 ) -> Tuple[Any, bool]:
     args = dict(tool_input or {})
-
-    skill = _skill_result(tool_name, args, skill_index)
-    if skill is not None:
-        return skill
 
     if tool_name == "case_records":
         return _case_records(args), True
@@ -363,6 +371,10 @@ async def execute_backend_tool(
 
     if tool_name in _MEMORY_TOOLS:
         return _MEMORY_TOOLS[tool_name](args), True
+
+    # Agent skills (#925): reads from disk only, never a database.
+    if tool_name == READ_SKILL_TOOL:
+        return read_skill(args.get("name"), args.get("file")), True
 
     if tool_name in _APPROVAL_TOOLS:
         from core.response.approval_service import ApprovalService

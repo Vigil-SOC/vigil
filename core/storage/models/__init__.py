@@ -56,13 +56,14 @@ from core.storage.models.episodic import (
 )
 from core.storage.models.finding import Finding, FindingMitrePrediction
 from core.storage.models.workflow import (
+    IN_FLIGHT_INVESTIGATION_STATUSES,
+    LIVE_INVESTIGATION_STATUSES,
     ApprovalAction,
     CustomAgent,
     CustomWorkflow,
     IntakeTrigger,
     Investigation,
     InvestigationLog,
-    Skill,
     WorkflowRun,
     WorkflowRunPhase,
 )
@@ -103,10 +104,12 @@ __all__ = [
     "Finding",
     "FindingMitrePrediction",
     "IntakeTrigger",
+    "IN_FLIGHT_INVESTIGATION_STATUSES",
     "IntegrationConfig",
     "Investigation",
     "InvestigationLog",
     "JSONBList",
+    "LIVE_INVESTIGATION_STATUSES",
     "LLMInteractionLog",
     "LLMProviderConfig",
     "McpCredential",
@@ -114,7 +117,6 @@ __all__ = [
     "SLAPolicy",
     "SharedIOC",
     "SketchMapping",
-    "Skill",
     "SystemConfig",
     "ThreatIndicator",
     "User",

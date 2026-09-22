@@ -738,7 +738,7 @@ export class HuntController {
 
       // A stalled iteration is a fact about the hunt, not an absence of one: it
       // presented a digest and was billed for emissions. Journaling it before the
-      this.recordStall(presented, digestSeq, rejected, spent, attribution);
+      await this.recordStall(presented, digestSeq, rejected, spent, attribution);
 
       throw new InvalidDecision(
         `the Hunt Lead emitted nothing valid in ${MAX_DECISION_ATTEMPTS} attempts ` +
@@ -751,13 +751,13 @@ export class HuntController {
 
   // Reuses the decision event rather than adding a kind of its own: what that
   // record means is "a digest was presented and paid for", which is exactly what
-  private recordStall(
+  private async recordStall(
     presented: Digest,
     digestSeq: number,
     rejected: readonly string[],
     spent: number,
     attribution: { model_id: string; prompt_version: string },
-  ): void {
+  ): Promise<void> {
     this.ledger.append({
       kind: "decision",
       payload: {
@@ -778,12 +778,10 @@ export class HuntController {
       },
     });
 
-    const hunt = this.ledger.projection.hunt;
-    this.ledger.patch("hunt", hunt.hunt_id, {
-      cost_usd: Number((hunt.cost_usd + spent).toFixed(6)),
-    });
     // The iteration counter deliberately does not advance: a resume retries this
-    // iteration. So only the cost arm of the budget can newly trip here.
+    // iteration. So only the cost arm of the budget can newly trip here -- and the
+    // fold has to see the attempts' spend, which the stream wrote past this journal.
+    await this.ledger.refresh();
     if (this.budgetExhausted()) this.terminate("budget_terminated");
   }
 
@@ -1842,18 +1840,22 @@ export class HuntController {
     // rulings land against the observations the lead was actually shown.
     this.applyRelations(result.decision);
 
-    // Every paid call in the iteration lands in the budget counter: the workers
-    // are the largest share of a real hunt's spend, and a max_cost_usd that only
+    // What this iteration cost, for its own record. Not written to hunt.cost_usd:
+    // that is folded from the spend events the stream journals per call, so the
+    // budget counter is never a second tally of the same money.
     const workers = dispatchResults.reduce((total, dispatchResult) => total + dispatchResult.cost_usd, 0);
     const spent = Number((result.cost_usd + workers + nullCheck.cost_usd).toFixed(6));
     const hunt = this.ledger.projection.hunt;
-    this.ledger.patch("hunt", hunt.hunt_id, {
-      iteration,
-      cost_usd: Number((hunt.cost_usd + spent).toFixed(6)),
-    });
+    this.ledger.patch("hunt", hunt.hunt_id, { iteration });
 
     const appended = dispatchResults.flatMap((dispatchResult) => this.persistDispatch(iteration, dispatchResult));
     const enriched = await this.enrich(iteration, appended.flatMap((record) => record.entities));
+
+    // The lead's, the workers' and the critic's spend this iteration went to State
+    // behind this journal. Read it back here, before anything below can end the
+    // hunt: a report or a park written off a stale fold would under-report by the
+    // whole final iteration, which is the iteration that always matters.
+    await this.ledger.refresh();
 
     // Before termination: a verdict reached this iteration must be on the record
     // when the terminal path coerces whatever is still active.

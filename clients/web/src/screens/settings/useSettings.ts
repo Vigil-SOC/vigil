@@ -333,7 +333,6 @@ export function useUsers() {
 export interface OrchestratorConfig {
   enabled: boolean
   dry_run: boolean
-  auto_assign_severities: string[]
   max_concurrent_agents: number
   max_iterations_per_agent: number
   max_runtime_per_investigation: number
@@ -347,7 +346,6 @@ export interface OrchestratorConfig {
 export const ORCHESTRATOR_DEFAULTS: OrchestratorConfig = {
   enabled: true,
   dry_run: false,
-  auto_assign_severities: ['critical', 'high'],
   max_concurrent_agents: 3,
   max_iterations_per_agent: 50,
   max_runtime_per_investigation: 3600,
