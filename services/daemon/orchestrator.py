@@ -1390,12 +1390,12 @@ class Orchestrator:
             parameters={"investigation_id": inv_id},
         )
 
-    def _hourly_cost(self) -> float:
-        """Recorded cost of investigations active in the last hour.
+    def _hourly_cost(self) -> Optional[float]:
+        """Recorded cost of investigations active in the last hour; None if unreadable.
 
-        Keyed on last_activity_at, which _record_progress stamps with each cost
-        write: an executing run's spend counts toward now, and a run idle for
-        over an hour drops out. An unpriced run is stored as 0.0 (#985).
+        Keyed on last_activity_at, which every reconcile of an in-flight run
+        stamps, so in-flight runs count in full and a finished run drops out an
+        hour after its last update. An unpriced run is stored as 0.0 (#985).
         """
         try:
             from core.storage.connection import get_db_manager
@@ -1411,7 +1411,7 @@ class Orchestrator:
             return float(total or 0.0)
         except Exception as e:
             logger.error(f"Failed to read hourly cost: {e}")
-            return 0.0
+            return None
 
     def _hourly_cost_limit(self) -> float:
         """The cap as saved in Settings, falling back to startup config.
@@ -1443,6 +1443,9 @@ class Orchestrator:
         Not a write to _enabled: _sync_enabled_from_db would undo it within 5s.
         """
         spent = self._hourly_cost()
+        if spent is None:
+            # Unknown spend keeps the last decision rather than releasing a pause.
+            return getattr(self, "_hourly_paused", False)
         limit = self._hourly_cost_limit()
         paused = spent >= limit
         if paused != getattr(self, "_hourly_paused", False):
@@ -2237,7 +2240,7 @@ class Orchestrator:
             for i in all_inv
             if i.get("status") in ("assigned", "executing")
         )
-        hourly = self._hourly_cost()
+        hourly = self._hourly_cost() or 0.0
         return {
             "total_cost_usd": round(total, 4),
             "active_cost_usd": round(active_cost, 4),

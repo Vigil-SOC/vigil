@@ -118,3 +118,16 @@ async def test_the_saved_cap_wins_over_startup_config():
 
     orch._process_intake_row.assert_awaited_once()
     assert orch.get_cost_summary()["hourly_budget_remaining"] == 4.5
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_hour_keeps_intake_paused():
+    _seed(("inv-hour-a", 6.0, timedelta(minutes=10)))
+    orch = _orchestrator()
+    assert orch._hourly_budget_exhausted() is True
+
+    orch._hourly_cost = MagicMock(return_value=None)
+    await _run_intake(orch, [{"investigation_id": "inv-assigned"}])
+
+    orch._process_intake_row.assert_not_awaited()
+    orch._enqueue_investigation.assert_not_awaited()

@@ -14,6 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from core.config import get_settings
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
@@ -38,7 +39,10 @@ def _get_orchestrator():
         from services.daemon.config import OrchestratorConfig
         from services.daemon.orchestrator import Orchestrator
 
-        config = OrchestratorConfig()
+        # The daemon's fallback when Settings holds no hourly cap; must match it.
+        config = OrchestratorConfig(
+            max_total_hourly_cost=get_settings().orchestrator_max_hourly_cost
+        )
         orch = Orchestrator(config)
         orch._init_services()
         _cached_orchestrator = orch
