@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from core.config import vigil_path
+from core.config import dotenv_allowed, vigil_path
 from core.exceptions import default_on_error
 
 logger = logging.getLogger(__name__)
@@ -128,8 +128,6 @@ class DotEnvBackend(SecretsBackend):
         leak wearing a different coat. A file the caller named is read either
         way: naming it is the asking.
         """
-        from core.config import dotenv_allowed
-
         if not self._file_was_named and not dotenv_allowed():
             return
         if self.env_file.exists():

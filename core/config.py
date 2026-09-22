@@ -102,12 +102,14 @@ def dotenv_allowed() -> bool:
     A test run sets ``VIGIL_DISABLE_DOTENV`` before collection so that nothing
     reads a developer's ``.env`` and makes the suite answer differently on one
     machine than another. Every reader of a ``.env`` has to ask -- pydantic's
-    ``env_file`` here, ``load_dotenv()`` in the standalone tool servers, and the
-    secrets backend that reads the state directory's own file -- because a
-    single unguarded one puts the developer's configuration back.
+    ``env_file`` here and the secrets backend that reads the state directory's
+    own file -- because a single unguarded one puts the developer's
+    configuration back.
 
     ``os.environ``, not ``Settings``: this is answered while ``Settings`` is
-    still being defined, like ``VIGIL_DIR``.
+    still being defined, like ``VIGIL_DIR``. The vendor tool servers ask the
+    same question inline (GH #974) rather than importing this: spawned outside
+    the repo they may have no ``core`` package to import from.
     """
     disabled = os.environ.get("VIGIL_DISABLE_DOTENV")  # noqa: ENV001 - pre-Settings
     return not disabled
