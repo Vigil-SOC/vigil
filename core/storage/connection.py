@@ -59,7 +59,6 @@ from core.storage.models import (  # noqa: F401
     Role,
     SharedIOC,
     SketchMapping,
-    Skill,
     SLAPolicy,
     SystemConfig,
     User,

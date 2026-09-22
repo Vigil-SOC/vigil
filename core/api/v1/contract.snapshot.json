@@ -2178,7 +2178,7 @@
             "type": "string"
           },
           "status": {
-            "description": "running or terminal.",
+            "description": "queued, running or terminal.",
             "title": "Status",
             "type": "string"
           }

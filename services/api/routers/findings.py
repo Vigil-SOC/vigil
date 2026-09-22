@@ -37,6 +37,8 @@ ROUTER_META = RouterMeta(
 logger = logging.getLogger(__name__)
 data_service = DatabaseDataService()
 
+EXPORT_FORMATS = DatabaseDataService.EXPORT_FORMATS
+
 
 class BulkEnrichmentRequest(BaseModel):
     """Schema for bulk enrichment request."""
@@ -177,13 +179,19 @@ def clear_all_findings(session: UnitOfWorkSession):
 def export_findings(output_format: str = "json"):
     from datetime import datetime
 
+    if output_format not in EXPORT_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported export format; use one of {', '.join(EXPORT_FORMATS)}",
+        )
+
     output_dir = vigil_path("exports", write=True)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_path = output_dir / f"findings_export_{timestamp}.{output_format}"
 
-    success = data_service.export_findings(output_path, format=output_format)
+    success = data_service.export_findings(output_path, fmt=output_format)
 
     if success:
         return {"success": True, "file_path": str(output_path)}

@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Starts the TypeScript agent layer against a stack already running locally.
 #
-# start.sh does not launch these, and nothing else drains the BullMQ queue the
-# backend enqueues to: without them the console accepts a run, reports it queued
-# and nothing ever picks it up. Same two commands and the same environment as
-# infra/docker/docker-compose.yml's x-agent-env anchor, with host-side hosts.
+# start.sh calls this from start_agent_layer (SKIP_AGENT=1 to run it by hand).
+# Nothing else drains the BullMQ queue the backend enqueues to: without these the
+# console accepts a run, reports it queued and nothing ever picks it up. Same two
+# commands and the same environment as infra/docker/docker-compose.yml's
+# x-agent-env anchor, with host-side hosts.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -45,11 +46,17 @@ export VIGIL_ACTOR="${VIGIL_ACTOR:-$(whoami)}"
 
 mkdir -p logs
 cd services/agent
-[ -d node_modules ] || npm install
+# The binary, not just the directory: a partial install has no tsx to run.
+[ -x node_modules/.bin/tsx ] || npm install
 
+# Runs node_modules/.bin/tsx directly rather than through `npx tsx`: with npx,
+# $! is npx's PID, and killing it orphans the tsx child that binds the port, so
+# shutdown_all.sh and start.sh's cleanup left the listeners running and the next
+# start hit EADDRINUSE (#970). tsx itself relays SIGTERM/SIGINT to the node
+# process it spawns, so the recorded PID is one whose death stops the listener.
 start() {
     AGENT_HEALTH_PORT=6990 AGENT_HTTP_PORT=6989 \
-        nohup npx tsx "$1.ts" > "$ROOT/logs/agent-$1.log" 2>&1 &
+        nohup node_modules/.bin/tsx "$1.ts" > "$ROOT/logs/agent-$1.log" 2>&1 &
     echo $! > "$ROOT/logs/agent-$1.pid"
 }
 start worker

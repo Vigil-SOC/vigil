@@ -59,7 +59,6 @@ from core.storage.schemas.workflow import (
     IntakeTriggerSchema,
     InvestigationLogSchema,
     InvestigationSchema,
-    SkillSchema,
     WorkflowRunPhaseSchema,
     WorkflowRunSchema,
 )
@@ -105,7 +104,6 @@ __all__ = [
     "SLAPolicySchema",
     "SharedIOCSchema",
     "SketchMappingSchema",
-    "SkillSchema",
     "SystemConfigSchema",
     "ThreatIndicatorSchema",
     "UserPreferenceSchema",

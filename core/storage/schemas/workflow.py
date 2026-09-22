@@ -1,4 +1,4 @@
-"""Serialization schemas for the workflow, skill and agent models."""
+"""Serialization schemas for the workflow and agent models."""
 
 from typing import Any, Optional
 
@@ -50,7 +50,6 @@ class WorkflowRunSchema(ORMSchema):
     finished_at: OptDateTime = None
     duration_ms: Optional[int] = None
     total_cost_usd: ZeroFloat = 0.0
-    skill_tools_available: JsonList = Field(default_factory=list)
     error: Optional[str] = None
     result_summary: Optional[str] = None
 
@@ -76,25 +75,6 @@ class WorkflowRunPhaseSchema(ORMSchema):
     approval_state: Optional[str] = None
     cost_usd: ZeroFloat = 0.0
     error: Optional[str] = None
-
-
-class SkillSchema(ORMSchema):
-    """Skill."""
-
-    skill_id: Optional[str] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[str] = None
-    input_schema: JsonDict = Field(default_factory=dict)
-    output_schema: JsonDict = Field(default_factory=dict)
-    required_tools: JsonList = Field(default_factory=list)
-    prompt_template: Optional[str] = None
-    execution_steps: JsonList = Field(default_factory=list)
-    is_active: Optional[bool] = None
-    created_by: Optional[str] = None
-    version: Optional[int] = None
-    created_at: OptDateTime = None
-    updated_at: OptDateTime = None
 
 
 class CustomAgentSchema(ORMSchema):

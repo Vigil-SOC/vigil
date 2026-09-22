@@ -60,7 +60,7 @@ class StartRunResponse(BaseModel):
 
 class RunStatusResponse(BaseModel):
     run_id: str
-    status: str = Field(..., description="running or terminal.")
+    status: str = Field(..., description="queued, running or terminal.")
     events: int = Field(
         ..., description="Events on the ledger, so progress is visible."
     )
@@ -174,11 +174,21 @@ def _begin_run_row(run_id: str, request: StartRunRequest) -> None:
     )
 
 
-# Reports from state the worker persisted, using only the two permitted reads.
+def _has_run_row(session: Any, run_id: str) -> bool:
+    row = session.execute(
+        text("SELECT 1 FROM workflow_runs WHERE run_id = :run_id"),
+        {"run_id": run_id},
+    ).one_or_none()
+    return row is not None
+
+
+# Reports from state the worker persisted, using only the two permitted reads
+# against agent_events; workflow_runs says whether the run was accepted at all.
 @router.get("/{run_id}", response_model=RunStatusResponse)
 def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
+    # Canonical form: workflow_runs.run_id is text, so the compare there is exact.
     try:
-        uuid.UUID(run_id)
+        run_id = str(uuid.UUID(run_id))
     except ValueError:
         raise HTTPException(status_code=404, detail=f"no such run: {run_id}") from None
 
@@ -190,6 +200,10 @@ def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
     ).one_or_none()
     events = int(counted.events) if counted is not None else 0
     if events == 0:
+        # Only the worker writes agent_events; POST wrote workflow_runs. A run with
+        # that row and no events is accepted but not picked up yet, not unknown.
+        if _has_run_row(session, run_id):
+            return RunStatusResponse(run_id=run_id, status="queued", events=0)
         raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
 
     terminal = session.execute(

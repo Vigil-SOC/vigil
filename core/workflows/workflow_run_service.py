@@ -59,7 +59,6 @@ class WorkflowRunService:
         workflow_version: Optional[int] = None,
         trigger_context: Optional[Dict[str, Any]] = None,
         triggered_by: Optional[str] = None,
-        skill_tools_available: Optional[List[str]] = None,
         run_id: Optional[str] = None,
     ) -> Optional[str]:
         """Create a ``workflow_runs`` row with ``status='running'``.
@@ -85,7 +84,6 @@ class WorkflowRunService:
                     triggered_by=triggered_by,
                     trigger_context=trigger_context or {},
                     started_at=utcnow(),
-                    skill_tools_available=list(skill_tools_available or []),
                 )
                 session.add(row)
                 session.flush()

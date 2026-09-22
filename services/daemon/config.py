@@ -5,6 +5,7 @@ from typing import Dict, List
 from core.config import DEFAULT_REDIS_URL, get_settings
 from core.ingestion.kafka_config import KafkaConfig  # re-exported for DaemonConfig
 from core.intent import INTENT_FIELDS
+from core.response.config import ResponseConfig  # re-exported for DaemonConfig
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -39,14 +40,6 @@ class ProcessingConfig:
 
 
 @dataclass
-class ResponseConfig:
-    auto_response_enabled: bool = True
-    confidence_threshold: float = 0.90
-    force_manual_approval: bool = False
-    dry_run: bool = False  # Log actions without executing
-
-
-@dataclass
 class EscalationConfig:
     enabled: bool = True
     escalate_severities: List[str] = field(default_factory=lambda: ["critical", "high"])
@@ -67,6 +60,8 @@ class EscalationConfig:
 class SchedulerConfig:
     threat_hunt_enabled: bool = True
     threat_hunt_interval: int = 86400  # Daily (24 hours)
+    probes_enabled: bool = True  # known-answer probes (#923)
+    probe_interval: int = 3600  # hourly tick; the day-scoped id makes it daily
     report_generation_enabled: bool = True
     report_interval: int = 604800  # Weekly (7 days)
     cleanup_enabled: bool = True
@@ -94,6 +89,9 @@ class OrchestratorConfig:
     stale_threshold: int = 300
     workdir_base: str = "data/investigations"
     dry_run: bool = False
+    # ORCHESTRATOR_SHADOW_ADJUDICATION: enqueue a second, non-executing
+    # `adjudicate` run beside every detection-finding investigation (#880).
+    shadow_adjudication: bool = False
     # How long a queued trigger may wait, the last-quarter promotion
     # window, and the queued depth that warrants one human signal.
     # Constants, not settings: one policy, not an operator dial.
@@ -166,10 +164,7 @@ class DaemonConfig:
             settings.daemon_enrich_backfill_max_age_hours
         )
 
-        config.response.auto_response_enabled = settings.daemon_auto_response
-        config.response.confidence_threshold = settings.daemon_confidence_threshold
-        config.response.force_manual_approval = settings.daemon_force_approval
-        config.response.dry_run = settings.daemon_dry_run
+        config.response = ResponseConfig.from_settings(settings)
 
         config.escalation.enabled = settings.daemon_escalation_enabled
         config.escalation.slack_enabled = (
@@ -185,6 +180,8 @@ class DaemonConfig:
 
         config.scheduler.threat_hunt_enabled = settings.daemon_threat_hunt_enabled
         config.scheduler.threat_hunt_interval = settings.daemon_threat_hunt_interval
+        config.scheduler.probes_enabled = settings.daemon_probes_enabled
+        config.scheduler.probe_interval = settings.daemon_probe_interval
         config.scheduler.cleanup_retention_days = settings.daemon_cleanup_retention_days
         config.scheduler.approval_expiry_days = settings.daemon_approval_expiry_days
 
@@ -207,6 +204,9 @@ class DaemonConfig:
         config.orchestrator.stale_threshold = settings.orchestrator_stale_threshold
         config.orchestrator.workdir_base = settings.orchestrator_workdir
         config.orchestrator.dry_run = settings.orchestrator_dry_run
+        config.orchestrator.shadow_adjudication = (
+            settings.orchestrator_shadow_adjudication
+        )
 
         config.llm_queue.redis_url = settings.redis_url or DEFAULT_REDIS_URL
         config.llm_queue.max_concurrent_llm_calls = settings.llm_max_concurrent

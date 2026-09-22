@@ -320,6 +320,95 @@ class TestAutoResponse:
         mock_approval.create_action.assert_called_once()
 
 
+class TestConfiguredFloors:
+    """The responder's severity floors and the processor's queue line read
+    ResponseConfig rather than literals (#916)."""
+
+    def _responder(self, **overrides):
+        from services.daemon.config import EscalationConfig, ResponseConfig
+
+        return AutonomousResponder(
+            ResponseConfig(**overrides),
+            EscalationConfig(),
+            response_service=Mock(),
+            approvals=Mock(),
+        )
+
+    def test_default_floors_match_the_old_literals(self):
+        responder = self._responder()
+        assert responder._determine_action("critical", 0.70, "")[0] == "isolate"
+        assert responder._determine_action("critical", 0.69, "") is None
+        assert responder._determine_action("high", 0.80, "")[0] == "investigate"
+        assert responder._determine_action("high", 0.79, "") is None
+
+    def test_raised_floors_move_the_decision(self):
+        responder = self._responder(critical_action_floor=0.90, high_action_floor=0.95)
+        assert responder._determine_action("critical", 0.85, "") is None
+        assert responder._determine_action("high", 0.90, "") is None
+
+    def test_decision_records_the_branch_that_fired(self):
+        """Two findings decided by different branches record different rules (#917)."""
+        responder = self._responder()
+        assert responder._determine_action("critical", 0.70, "") == (
+            "isolate",
+            "response.critical_action_floor=0.70 met (0.70)",
+        )
+        assert responder._determine_action("medium", 0.92, "isolate") == (
+            "isolate",
+            "response.confidence_threshold=0.90 met (0.92)",
+        )
+
+    @pytest.mark.asyncio
+    async def test_reason_carries_rule_and_dry_run_logs_it(self, caplog):
+        from services.daemon.config import EscalationConfig, ResponseConfig
+
+        finding = {
+            "finding_id": "f-917",
+            "severity": "critical",
+            "triage_confidence": 0.75,
+            "entity_context": {"src_ips": ["10.0.0.9"]},
+        }
+        responder = self._responder()
+        await responder._evaluate_response(finding)
+        reason = responder._response_service.create_isolation_action.call_args.kwargs[
+            "reason"
+        ]
+        assert reason == (
+            "Automated response to f-917; "
+            "response.critical_action_floor=0.70 met (0.75)"
+        )
+
+        dry = AutonomousResponder(
+            ResponseConfig(dry_run=True),
+            EscalationConfig(),
+            response_service=Mock(),
+            approvals=Mock(),
+        )
+        with caplog.at_level("INFO", logger="services.daemon.responder"):
+            await dry._evaluate_response(finding)
+        assert "response.critical_action_floor=0.70 met (0.75)" in caplog.text
+        dry._response_service.create_isolation_action.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_processor_queues_at_review_threshold(self):
+        from services.daemon.config import ResponseConfig
+
+        processor = FindingProcessor(
+            ProcessingConfig(), response_config=ResponseConfig(review_threshold=0.95)
+        )
+        queue = asyncio.Queue()
+        processor.set_response_queue(queue)
+        with patch("services.daemon.orchestrator.insert_intake_trigger"):
+            await processor._evaluate_for_response(
+                {"finding_id": "f-1", "severity": "low", "triage_confidence": 0.90}
+            )
+            assert queue.empty()
+            await processor._evaluate_for_response(
+                {"finding_id": "f-2", "severity": "low", "triage_confidence": 0.95}
+            )
+            assert queue.qsize() == 1
+
+
 class TestEscalation:
     """Test escalation logic."""
     
