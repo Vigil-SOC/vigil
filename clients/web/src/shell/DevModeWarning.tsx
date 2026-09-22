@@ -61,8 +61,8 @@ export default function DevModeWarning() {
       tabIndex={0}
       aria-label="Authentication bypassed: DEV_MODE is on"
       style={{
-        // Not theme tokens: this must read the same under every theme, and it
-        // should not blend into a palette someone has customised.
+        // The same amber as --high, written out rather than referenced: a
+        // re-theme must not be able to move a security warning.
         color: '#e0a44a',
         cursor: 'default',
       }}
