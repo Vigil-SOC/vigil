@@ -863,7 +863,12 @@ REASONING: [Brief explanation]
                 f"Finding {finding.get('finding_id')} queued for response evaluation"
             )
 
-        if should_respond:
+        # A threat-intel feed hit (stamped by _enrich_finding) offers the same
+        # Finding to intake as a detection, but never widens the response queue
+        # above: containment stays on Gate 1 alone.
+        feed_hit = bool((finding.get("enrichment") or {}).get("threat_indicators"))
+
+        if should_respond or feed_hit:
             from services.daemon.orchestrator import insert_intake_trigger
 
             insert_intake_trigger(
