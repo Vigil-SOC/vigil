@@ -216,8 +216,9 @@ jobs:
       # process.argv[1], which --eval leaves undefined. That is the whole point --
       # it proves every import resolves inside the image (the failure mode that
       # typecheck cannot see, since tsc reads .ts and node runs the emitted .js)
-      # without needing a Postgres or a Redis to connect to.
-      - name: Smoke test — both entry points load
+      # without needing a Postgres or a Redis to connect to. It also checks every
+      # registered arch file shipped, since tsc emits none of the YAML.
+      - name: Smoke test — entry points load and arch files ship
         run: |
           docker run --rm vigil-agent:ci \
             node --input-type=module -e "
