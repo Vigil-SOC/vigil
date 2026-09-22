@@ -40,6 +40,7 @@ from urllib.parse import urlparse
 import httpx
 
 from core.config import get_settings
+from core.llm.providers.discovery import is_embedding_model_id
 from core.platform.url_safety import DEFAULT_ALLOWED_PROVIDER_HOSTS
 
 logger = logging.getLogger(__name__)
@@ -838,8 +839,6 @@ def _is_chat_catalogue_entry(entry: Dict[str, Any]) -> bool:
     limit only and are also caught by name, since their families are the one
     set ``discovery.py`` already knows how to spot.
     """
-    from core.llm.providers.discovery import is_embedding_model_id
-
     name = entry.get("name") or ""
     if not name or is_embedding_model_id(name):
         return False
@@ -927,10 +926,33 @@ async def _list_ollama_models(
     return None
 
 
+def chat_capable_ids(models: Optional[List[Any]]) -> List[str]:
+    """Ids of the pulled ``ModelMeta`` entries that can hold a chat, in order.
+
+    ``fetch_ollama_models`` always sets ``is_embedding`` (Ollama's capability
+    array, else the name heuristic), so that flag is authoritative when
+    present; ``ModelMeta`` built anywhere else may omit it, and then the same
+    name heuristic decides. Nothing is re-probed here.
+    """
+    ids: List[str] = []
+    for m in models or []:
+        is_embedding = (m.capabilities or {}).get("is_embedding")
+        if is_embedding is None:
+            is_embedding = is_embedding_model_id(m.id)
+        if not is_embedding:
+            ids.append(m.id)
+    return ids
+
+
 async def _first_pulled_ollama_model() -> Optional[str]:
-    """The first model this host has actually pulled, or None if it can't say."""
-    models = await _list_ollama_models(None)
-    return models[0].id if models else None
+    """A chat model this host has actually pulled, or None if it has none.
+
+    Taking index 0 floored a host whose list led with ``nomic-embed-text`` to
+    a model Bifrost refuses to chat with (#1003); an absent row self-heals on
+    the next sync where a wrong default cannot.
+    """
+    ids = chat_capable_ids(await _list_ollama_models(None))
+    return _preferred_floor("ollama", ids) if ids else None
 
 
 async def default_model_for_provider_type(provider_type: str) -> Optional[str]:

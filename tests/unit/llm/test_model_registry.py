@@ -381,6 +381,36 @@ async def test_list_available_models_uses_live_ids_when_present(monkeypatch):
     assert "qwen:0.5b" not in ids
 
 
+async def test_list_available_models_keeps_pinned_embedding_as_deprecated():
+    """fetch_provider_models() drops embedding ids from the cached list, so
+    a pinned one must resurface through the orphan-pin branch as
+    deprecated=True rather than vanish — the operator needs to see the bad
+    assignment (#1004). Seeds the real cache so the filter is exercised."""
+    from core.llm.providers import registry as model_registry
+
+    model_registry._MODEL_LIST_CACHE["ollama-local"] = [
+        "llama3.1:8b",
+        "nomic-embed-text:latest",
+    ]
+    reg = _StubRegistry(
+        assignments={
+            "triage": ComponentAssignment(
+                component="triage",
+                provider_id="ollama-local",
+                model_id="nomic-embed-text:latest",
+            ),
+        },
+        active_providers=[_Prov("ollama-local", "ollama", default_model="llama3.1:8b")],
+    )
+    try:
+        by_id = {m.model_id: m for m in await reg.list_available_models()}
+    finally:
+        model_registry._MODEL_LIST_CACHE.pop("ollama-local", None)
+    assert set(by_id) == {"llama3.1:8b", "nomic-embed-text:latest"}
+    assert by_id["llama3.1:8b"].deprecated is False
+    assert by_id["nomic-embed-text:latest"].deprecated is True
+
+
 async def test_fallback_models_reflects_ollama_not_anthropic():
     """fallback_models() must return the configured provider's models
     (Ollama here), never a hardcoded Anthropic set (#409)."""

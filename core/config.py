@@ -96,11 +96,27 @@ def state_dir_status() -> dict:
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def dotenv_allowed() -> bool:
+    """False when this process has already decided where its config comes from.
+
+    A test run sets ``VIGIL_DISABLE_DOTENV`` before collection so that nothing
+    reads a developer's ``.env`` and makes the suite answer differently on one
+    machine than another. Every reader of a ``.env`` has to ask -- pydantic's
+    ``env_file`` here and the secrets backend that reads the state directory's
+    own file -- because a single unguarded one puts the developer's
+    configuration back.
+
+    ``os.environ``, not ``Settings``: this is answered while ``Settings`` is
+    still being defined, like ``VIGIL_DIR``. The vendor tool servers ask the
+    same question inline (GH #974) rather than importing this: spawned outside
+    the repo they may have no ``core`` package to import from.
+    """
+    disabled = os.environ.get("VIGIL_DISABLE_DOTENV")  # noqa: ENV001 - pre-Settings
+    return not disabled
+
+
 def _settings_env_file() -> Optional[Path]:
-    # Tests set this before collection so import-time get_settings() captures
-    # do not read a developer's root .env. os.environ, not Settings: resolved
-    # while Settings is being defined, like VIGIL_DIR.
-    if os.environ.get("VIGIL_DISABLE_DOTENV"):  # noqa: ENV001 - pre-Settings bootstrap
+    if not dotenv_allowed():
         return None
     return REPO_ROOT / ".env"
 
@@ -163,6 +179,11 @@ class Settings(BaseSettings):
     vigil_frame_options_enabled: bool = True
     vigil_content_type_options_enabled: bool = True
     vigil_referrer_policy_enabled: bool = True
+    # Vigil's own MCP surface, served over HTTP for callers that are not Vigil.
+    # Off on a fresh install: it is another front door into a SOC, and one
+    # nobody asked for should not be listening. This is the floor an operator
+    # sets before boot; the Settings toggle overrides it at runtime.
+    vigil_mcp_enabled: bool = False
     vigil_csrf_enabled: bool = True
     vigil_csrf_report_only: bool = True
     vigil_csrf_exempt_paths: Optional[str] = None
@@ -272,6 +293,9 @@ class Settings(BaseSettings):
     orchestrator_stale_threshold: int = 300
     orchestrator_workdir: str = "data/investigations"
     orchestrator_dry_run: bool = False
+    # Shadow mode (#880): every admitted finding also gets an `adjudicate` run
+    # beside the real one. Off by default; env only, no SystemConfig override.
+    orchestrator_shadow_adjudication: bool = False
 
     # Kafka ingestion. Credentials go through the secrets store, not here.
     kafka_enabled: bool = False

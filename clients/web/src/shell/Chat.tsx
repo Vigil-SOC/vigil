@@ -9,6 +9,7 @@ import {
 import { format } from 'date-fns'
 import { Markdown } from '../shared/Markdown'
 import { Icon } from '../shared/icons'
+import { Cost, PROVENANCE_LABEL } from '../shared/cost'
 import {
   agentsApi,
   aiConfigApi,
@@ -492,7 +493,7 @@ export default function Chat({
           : costEstimate.token_count_method === 'tiktoken'
             ? 'Token count via tiktoken.'
             : 'Approximate token count (chars ÷ 4).'
-      } Pricing: ${costEstimate.pricing_source}.`
+      } Pricing: ${PROVENANCE_LABEL[costEstimate.pricing_source]}.`
     : ''
 
   const send = async (override?: string, opts?: { fresh?: boolean }) => {
@@ -944,12 +945,7 @@ export default function Chat({
               {estimatedTokens.toLocaleString()} / {CONTEXT_WINDOW / 1000}k tokens
             </span>
             {costEstimate && (
-              <span className="cm-cost" title={costTitle}>
-                ~${costEstimate.low_usd.toFixed(4)}–${costEstimate.high_usd.toFixed(4)}
-                {costEstimate.pricing_source !== 'exact' && (
-                  <span className="cm-src"> · {costEstimate.pricing_source}</span>
-                )}
-              </span>
+              <Cost className="cm-cost" sourceClassName="cm-src" title={costTitle} approx usd={costEstimate.low_usd} high={costEstimate.high_usd} source={costEstimate.pricing_source} digits={4} />
             )}
           </div>
           <div className="cm-bar"><span className={`cm-bar-fill ${ctxState}`} style={{ width: `${ctxPct}%` }} /></div>
@@ -1137,10 +1133,7 @@ export default function Chat({
           {costEstimate && (
             <div className="cs-stat-row" title={costTitle}>
               <span className="cs-name">Est. cost</span>
-              <span className="cs-cost-val">
-                ${costEstimate.low_usd.toFixed(4)}–${costEstimate.high_usd.toFixed(4)}
-                {costEstimate.pricing_source !== 'exact' && <span className="cs-ctx-sub"> · {costEstimate.pricing_source}</span>}
-              </span>
+              <Cost className="cs-cost-val" sourceClassName="cs-ctx-sub" usd={costEstimate.low_usd} high={costEstimate.high_usd} source={costEstimate.pricing_source} digits={4} />
             </div>
           )}
         </section>
@@ -1213,7 +1206,7 @@ export default function Chat({
       {sessionSummary && (
         <div className="trace-sum">
           {sessionSummary.total_interactions} call{sessionSummary.total_interactions === 1 ? '' : 's'}
-          {' · '}${sessionSummary.total_cost_usd.toFixed(4)}
+          {' · '}<Cost usd={sessionSummary.total_cost_usd} digits={4} />
           {' · '}{(sessionSummary.total_input_tokens + sessionSummary.total_output_tokens).toLocaleString()} tokens
         </div>
       )}
@@ -1237,7 +1230,7 @@ export default function Chat({
                   <span className="trace-row-agent">{it.agent_id || 'chat'}</span>
                 </span>
                 <span className="trace-row-meta">
-                  {(it.input_tokens ?? 0).toLocaleString()} in · {(it.output_tokens ?? 0).toLocaleString()} out · ${(it.cost_usd ?? 0).toFixed(4)}
+                  {(it.input_tokens ?? 0).toLocaleString()} in · {(it.output_tokens ?? 0).toLocaleString()} out · <Cost usd={it.cost_usd} digits={4} />
                 </span>
               </button>
             ))
@@ -1252,7 +1245,7 @@ export default function Chat({
                 <span>{traceSelected.model || '—'}</span>
                 {traceSelected.stop_reason && <span>· {traceSelected.stop_reason}</span>}
                 {typeof traceSelected.duration_ms === 'number' && <span>· {(traceSelected.duration_ms / 1000).toFixed(1)}s</span>}
-                {typeof traceSelected.cost_usd === 'number' && <span>· ${traceSelected.cost_usd.toFixed(4)}</span>}
+                <span>· <Cost usd={traceSelected.cost_usd} digits={4} /></span>
               </div>
               {traceSelected.thinking_content && (
                 <div className="trace-block thinking">

@@ -23,11 +23,14 @@ from core.config import get_settings, validate_settings_or_exit
 
 validate_settings_or_exit()
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from core.platform.monitoring import get_metrics_response, init_sentry
 from core.version import __version__
@@ -91,17 +94,62 @@ init_sentry()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await _startup(app)
-    try:
-        yield
-    finally:
-        await _shutdown(app)
+    from mcp.server.transport_security import TransportSecuritySettings
+
+    from tools.mcp.vigil import mcp as vigil_mcp
+
+    # The MCP session manager runs whether or not the surface is open: the
+    # toggle is a runtime one, so turning it on must not need a restart, and
+    # with the gate refusing every request the manager simply has nothing to do.
+    #
+    # Built here, not at import: each app carries its own session manager and a
+    # manager runs once, so a process that starts the app twice -- a test, a
+    # reloader -- needs a new one rather than the same one again.
+    #
+    # The app serves at ``/mcp`` of its own accord; mounted at ``/mcp`` that
+    # would put the real endpoint at /mcp/mcp. It is the mount that decides
+    # where this is served, so the app itself serves at its root.
+    #
+    # Transport security is stated rather than left to the SDK. Its default
+    # host is 127.0.0.1, and on that default it turns on DNS-rebinding
+    # protection with an allow-list of localhost Host headers -- so a request
+    # arriving as vigil.example.com, or as a container or service name, is
+    # refused 421 before any of Vigil's own gates see it. That protection is
+    # for the usual local MCP server, which has no authentication and could
+    # otherwise be driven by a web page that rebound DNS to it. This surface
+    # is the opposite case: it exists to be reached by a caller that is not
+    # Vigil, and McpSurfaceGate already refuses anything without a credential.
+    # Naming hosts here instead would mean keeping a list in step with every
+    # deployment's DNS name, and getting a 421 whenever it drifted.
+    _mcp_gate.app = vigil_mcp.streamable_http_app(
+        streamable_http_path="/",
+        transport_security=TransportSecuritySettings(
+            enable_dns_rebinding_protection=False,
+        ),
+    )
+
+    async with vigil_mcp.session_manager.run():
+        try:
+            yield
+        finally:
+            await _shutdown(app)
 
 
-# Create FastAPI app
+# `version` is the version of the API this document describes, not the version
+# of the build serving it. Those are different things: the build moves every
+# release, and a document whose version renumbers itself every release is the
+# opposite of what a version in the path is for. The frozen surface is
+# `/api/v1/**`, so this says 1 and stays at 1 until there is a v2. The build
+# version is still reported, by the health and root endpoints below.
 app = FastAPI(
     title="Vigil SOC API",
-    description="REST API for Vigil SOC Application",
-    version=__version__,
+    description=(
+        "REST API for Vigil SOC Application. The frozen contract is "
+        "`/api/v1/**` (excluding operations marked `x-vigil-beta`); paths "
+        "under a bare `/api` are console wiring and carry no stability "
+        "promise."
+    ),
+    version="1",
     lifespan=lifespan,
 )
 
@@ -408,6 +456,29 @@ def _build_services(app: FastAPI):
     app.state.demo_data = DemoDataService() if is_demo_mode() else None
 
 
+def _announce_mcp_surface() -> None:
+    """Say what this install is serving on /mcp, and whether anyone can open it."""
+    from core.integrations.mcp.surface import is_enabled
+    from services.api.mcp_surface import announce
+
+    try:
+        enabled = is_enabled()
+        count = 0
+        if enabled:
+            from core.storage.models import McpCredential
+            from core.storage.unit_of_work import unit_of_work
+
+            with unit_of_work() as session:
+                count = (
+                    session.query(McpCredential)
+                    .filter(McpCredential.revoked_at.is_(None))
+                    .count()
+                )
+        announce(enabled, count)
+    except Exception:  # noqa: BLE001 - an announcement must never fail a boot
+        logger.exception("Could not report the state of the MCP surface")
+
+
 async def _startup(app: FastAPI):
     """Initialize database and MCP tools on startup."""
     logger.info("=" * 60)
@@ -415,6 +486,7 @@ async def _startup(app: FastAPI):
     logger.info("=" * 60)
 
     _build_services(app)
+    _announce_mcp_surface()
 
     _testing = get_settings().testing
 
@@ -657,6 +729,11 @@ async def health_check():
             "status": "healthy",
             "version": __version__,
             "demo_mode": is_demo_mode(),
+            # The SPA's bypass indicator reads this. It cannot use its own build
+            # flag: DEV_MODE is set at runtime, and a prebuilt bundle served by a
+            # bypassed backend would otherwise show nothing. Public on purpose --
+            # an unauthenticated caller can already tell by being served.
+            "auth_bypassed": get_settings().dev_mode,
             # Booleans only — this route is public, and the resolved path names
             # where credentials live. Full status: GET /api/config/state-directory.
             "state_directory": {
@@ -678,11 +755,66 @@ async def health_check():
             "status": "healthy",
             "version": __version__,
             "demo_mode": False,
+            "auth_bypassed": get_settings().dev_mode,
             "storage": {"backend": "unknown", "error": str(e)},
         }
         if schema_block is not None:
             payload["schema"] = schema_block
         return payload
+
+
+# Everything this process serves itself. A 404 under one of these is a miss,
+# not a client-side route: the SPA's router knows nothing about them, so
+# answering with the app shell hands a caller HTML where it asked for an API
+# result -- or, for a bundle under /static, HTML the browser then refuses to
+# execute as a module.
+_SERVED_BY_THE_BACKEND = (
+    "/api",
+    "/internal",
+    "/mcp",
+    "/static",
+    "/assets",
+    "/metrics",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+)
+
+
+def serves_the_app_shell(path: str, method: str, context_path: str = "") -> bool:
+    """Whether a 404 at ``path`` is a client-side route rather than a miss.
+
+    The SPA owns every address the API does not. Reading that as a route --
+    ``@app.get("/{full_path:path}")`` -- reads it as *every* address, including
+    the API's own, and the route then stands in front of the routing it was
+    meant to sit behind: a path that differs from a real route only by a
+    trailing slash matched this instead, so Starlette never got to redirect it,
+    and a POST matched it by path and not by method, so the answer was 405.
+    Asking the question after routing has failed leaves all of that intact.
+
+    A path this process serves itself is never the app shell. It reached a 404
+    because nothing claims it, and that is the answer it gets.
+    """
+    if method not in ("GET", "HEAD"):
+        return False
+    return not any(
+        path == f"{context_path}{prefix}" or path.startswith(f"{context_path}{prefix}/")
+        for prefix in _SERVED_BY_THE_BACKEND
+    )
+
+
+# Vigil's own MCP server, given an address. Mounted before the SPA catch-all so
+# /mcp reaches the server rather than index.html, and behind a gate that decides
+# whether the surface is open at all and, if it is, whose request this is.
+#
+# serve_at, rather than a mount here, because the address has two spellings and
+# only one of them is a mount: see mcp_surface.BareMountPath for why the bare
+# one -- the advertised one -- otherwise answers 405 wherever a frontend build
+# exists, and 307 wherever one does not.
+from services.api.mcp_surface import McpSurfaceGate, serve_at  # noqa: E402
+
+_mcp_gate = McpSurfaceGate()
+serve_at(app, _mcp_gate, _CONTEXT_PATH)
 
 
 # Serve React static files in production
@@ -721,8 +853,6 @@ if frontend_build_dir.exists() and assets_dir.exists():
         logger.warning(f"Failed to mount frontend assets: {e}")
 
 if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
-    from fastapi.responses import HTMLResponse
-
     # index.html is served with the active context path injected as a
     # <meta name="vigil-base-path"> tag so the SPA (see frontend
     # src/config/basePath.ts) can prefix its router basename and API calls at
@@ -769,13 +899,17 @@ if frontend_build_dir.exists() and (frontend_build_dir / "index.html").exists():
     # is only registered when a frontend build happens to be present. Leaving it
     # in makes the generated types (scripts/generate_frontend_types.py) depend on
     # whether the developer regenerating them had run `npm run build`.
-    @app.get(f"{_CONTEXT_PATH}/{{full_path:path}}", include_in_schema=False)
-    async def serve_react_app(full_path: str):
-        """Serve React app for all non-API routes."""
-        # Don't interfere with API routes
-        if full_path.startswith("api/"):
-            return {"error": "Not found"}, 404
-        return HTMLResponse(_get_index_html())
+    # A handler, not a route. See ``serves_the_app_shell``: a catch-all route
+    # matches before the router can redirect a trailing slash or report a wrong
+    # method, so the SPA fallback silently became the answer to questions about
+    # the API. This runs only once routing has already failed.
+    @app.exception_handler(StarletteHTTPException)
+    async def app_shell_or_error(request: Request, exc: StarletteHTTPException):
+        if exc.status_code == 404 and serves_the_app_shell(
+            request.url.path, request.method, _CONTEXT_PATH
+        ):
+            return HTMLResponse(_get_index_html())
+        return await http_exception_handler(request, exc)
 
 
 if __name__ == "__main__":

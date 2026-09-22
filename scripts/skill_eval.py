@@ -3,9 +3,10 @@
 
 Nightly harness, not a PR gate: the deterministic gate is
 ``tests/unit/skills/test_library_gate.py``. For each skill the system prompt is
-``render_base_prompt`` for a role plus the SKILL.md body; each case's ``input``
-is sent as one user turn through ``LLMRouter.dispatch`` (Bifrost, any provider)
-and graded by substring containment against ``expect``. Exit is nonzero below
+``render_base_prompt`` for a role, a note that no tool is callable, and the
+SKILL.md body inlined; each case's ``input`` is sent as one user turn through
+``LLMRouter.dispatch`` (Bifrost, any provider) and graded by substring
+containment against ``expect``. Exit is nonzero below
 100 percent. Without a provider key in the environment the run is skipped with
 exit 0 so a nightly without secrets stays green; a key with Bifrost unreachable
 is a real failure.
@@ -34,7 +35,6 @@ from core.config import get_settings  # noqa: E402
 from core.llm.router.router import LLMRouter, ProviderSpec  # noqa: E402
 from core.skills.skill_library import (  # noqa: E402
     LIBRARY_ROOT,
-    READ_SKILL_TOOL,
     Skill,
     load_skills,
     read_skill,
@@ -64,11 +64,24 @@ def load_cases(skill: Skill) -> List[Dict[str, Any]]:
     return json.loads((skill.path / "evals" / "cases.json").read_text(encoding="utf-8"))
 
 
+# The eval declares no tools, so the base prompt is rendered without the
+# read_skill grant and the body is inlined with a note saying so: a model told
+# to call a tool it does not hold answers with no content at all (Gemini
+# returns MALFORMED_FUNCTION_CALL), and the base prompt's static tool list
+# still tempts it to stop mid-turn on a lookup.
+_INLINE_NOTE = (
+    "The SKILL.md body of `{name}` follows, already read for you. No tool is "
+    "callable in this turn: answer in full from the input alone, following "
+    "the skill.\n\n"
+)
+
+
 def system_prompt_for(skill: Skill, role: str, root: Path) -> str:
     body = read_skill(skill.name, roots=[root])["content"]
     return (
-        render_base_prompt(role, tools=[READ_SKILL_TOOL], skills=[skill])
+        render_base_prompt(role, tools=())
         + "\n\n"
+        + _INLINE_NOTE.format(name=skill.name)
         + body
     )
 

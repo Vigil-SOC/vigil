@@ -1,5 +1,5 @@
-# Start an agent run and report its outcome. POST enqueues plain JSON and writes
-# nothing; GET makes only the two reads Python is permitted against agent_events.
+# Agent runs — the frozen /api/v1/agent-runs surface: start, list, get, steer.
+# "Runs" in 1.0 means agent runs (not workflow runs); see core/api/v1/README.md.
 
 from __future__ import annotations
 
@@ -30,9 +30,10 @@ from core.routing import Auth, RouterMeta, UnitOfWorkSession
 router = APIRouter()
 
 ROUTER_META = RouterMeta(
-    prefix="/api/agent-runs",
+    prefix="/api/v1/agent-runs",
     tags=["agent-runs"],
     auth=Auth.REQUIRED,
+    legacy_prefixes=("/api/agent-runs",),
 )
 logger = logging.getLogger(__name__)
 
@@ -59,12 +60,60 @@ class StartRunResponse(BaseModel):
 
 class RunStatusResponse(BaseModel):
     run_id: str
-    status: str = Field(..., description="running or terminal.")
+    status: str = Field(..., description="queued, running or terminal.")
     events: int = Field(
         ..., description="Events on the ledger, so progress is visible."
     )
     outcome: Optional[str] = None
     reason: Optional[str] = None
+
+
+class RunListItem(BaseModel):
+    run_id: Optional[str] = None
+    run_kind: Optional[str] = Field(
+        default=None, description="hunt, lead, compose, ... — from the run's trigger."
+    )
+    status: Optional[str] = None
+    triggered_by: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+
+
+class RunListResponse(BaseModel):
+    runs: list[RunListItem]
+    count: int = Field(..., description="Number of runs in this page.")
+
+
+# List agent runs newest-first from workflow_runs (filtered to source=agent);
+# per-run detail is GET /{run_id}, which reads the ledger. See README.
+@router.get("", response_model=RunListResponse)
+def list_runs(
+    status: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> RunListResponse:
+    from core.workflows.workflow_run_service import WorkflowRunService
+
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    rows = WorkflowRunService().list_runs(
+        workflow_source="agent",
+        status=status,
+        limit=limit,
+        offset=offset,
+    )
+    items = [
+        RunListItem(
+            run_id=r.get("run_id"),
+            run_kind=(r.get("trigger_context") or {}).get("run_kind"),
+            status=r.get("status"),
+            triggered_by=r.get("triggered_by"),
+            started_at=(str(r["started_at"]) if r.get("started_at") else None),
+            finished_at=(str(r["finished_at"]) if r.get("finished_at") else None),
+        )
+        for r in rows
+    ]
+    return RunListResponse(runs=items, count=len(items))
 
 
 # Mint a run id and enqueue it. The worker opens the ledger, not this call.
@@ -85,10 +134,8 @@ async def start_run(request: StartRunRequest) -> StartRunResponse:
     if request.overrides is not None:
         payload["overrides"] = request.overrides
 
-    # approval_actions.workflow_run_id references workflow_runs, so a run with no
-    # row there cannot raise an answerable checkpoint: the announce 500s and the
-    # parked run waits out max_park_ms with nobody able to see it. Best-effort,
-    # like every other write to that table -- the ledger is the record.
+    # Best-effort: without a workflow_runs row a parked run cannot raise an
+    # answerable checkpoint. Like every write to that table, the ledger is truth.
     _begin_run_row(run_id, request)
 
     job = build_start_job(
@@ -127,11 +174,21 @@ def _begin_run_row(run_id: str, request: StartRunRequest) -> None:
     )
 
 
-# Reports from state the worker persisted, using only the two permitted reads.
+def _has_run_row(session: Any, run_id: str) -> bool:
+    row = session.execute(
+        text("SELECT 1 FROM workflow_runs WHERE run_id = :run_id"),
+        {"run_id": run_id},
+    ).one_or_none()
+    return row is not None
+
+
+# Reports from state the worker persisted, using only the two permitted reads
+# against agent_events; workflow_runs says whether the run was accepted at all.
 @router.get("/{run_id}", response_model=RunStatusResponse)
 def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
+    # Canonical form: workflow_runs.run_id is text, so the compare there is exact.
     try:
-        uuid.UUID(run_id)
+        run_id = str(uuid.UUID(run_id))
     except ValueError:
         raise HTTPException(status_code=404, detail=f"no such run: {run_id}") from None
 
@@ -143,6 +200,10 @@ def get_run(run_id: str, session: UnitOfWorkSession) -> RunStatusResponse:
     ).one_or_none()
     events = int(counted.events) if counted is not None else 0
     if events == 0:
+        # Only the worker writes agent_events; POST wrote workflow_runs. A run with
+        # that row and no events is accepted but not picked up yet, not unknown.
+        if _has_run_row(session, run_id):
+            return RunStatusResponse(run_id=run_id, status="queued", events=0)
         raise HTTPException(status_code=404, detail=f"no such run: {run_id}")
 
     terminal = session.execute(

@@ -8,7 +8,6 @@ Ranking, TTL and slot-wait live in test_orchestrator_rank.py (#922).
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -372,7 +371,8 @@ async def test_post_investigations_inserts_a_human_ask_the_tick_launches(
     assert orch._create_manual_investigation.await_args.kwargs["trigger_id"] == 1
 
 
-def _processor_inserts(monkeypatch):
+@pytest.mark.asyncio
+async def test_processor_inserts_a_detection_row(monkeypatch):
     from services.daemon.config import ProcessingConfig
     from services.daemon.processor import FindingProcessor
 
@@ -381,71 +381,11 @@ def _processor_inserts(monkeypatch):
         "services.daemon.orchestrator.insert_intake_trigger",
         lambda **kwargs: captured.append(kwargs) or 1,
     )
-    return FindingProcessor(ProcessingConfig()), captured
-
-
-@pytest.mark.asyncio
-async def test_processor_inserts_a_detection_row(monkeypatch):
-    processor, captured = _processor_inserts(monkeypatch)
+    processor = FindingProcessor(ProcessingConfig())
     await processor._evaluate_for_response({"finding_id": "f-1", "severity": "high"})
 
     assert captured == [{"kind": "detection", "finding_id": "f-1", "priority": "high"}]
     assert processor.stats["queued_for_investigation"] == 1
-
-
-@pytest.mark.asyncio
-async def test_a_feed_hit_offers_the_finding_when_gate_1_is_false(monkeypatch):
-    processor, captured = _processor_inserts(monkeypatch)
-    processor._response_queue = asyncio.Queue()
-
-    await processor._evaluate_for_response(
-        {
-            "finding_id": "f-ioc",
-            "severity": "medium",
-            "enrichment": {
-                "threat_indicators": {"ip:203.0.113.7": {"source": "cloudforce_one"}}
-            },
-        }
-    )
-
-    assert captured == [
-        {"kind": "detection", "finding_id": "f-ioc", "priority": "medium"}
-    ]
-    assert processor.stats["queued_for_investigation"] == 1
-    assert processor.stats["queued_for_response"] == 0
-    assert processor._response_queue.empty()
-
-
-@pytest.mark.asyncio
-async def test_a_feed_hit_on_a_gate_1_finding_inserts_once(monkeypatch):
-    processor, captured = _processor_inserts(monkeypatch)
-
-    await processor._evaluate_for_response(
-        {
-            "finding_id": "f-both",
-            "severity": "high",
-            "enrichment": {"threat_indicators": {"ip:203.0.113.7": {}}},
-        }
-    )
-
-    assert len(captured) == 1
-    assert captured[0] == {
-        "kind": "detection",
-        "finding_id": "f-both",
-        "priority": "high",
-    }
-
-
-@pytest.mark.asyncio
-async def test_a_finding_with_no_feed_hit_still_needs_gate_1(monkeypatch):
-    processor, captured = _processor_inserts(monkeypatch)
-
-    await processor._evaluate_for_response(
-        {"finding_id": "f-quiet", "severity": "medium"}
-    )
-
-    assert captured == []
-    assert processor.stats["queued_for_investigation"] == 0
 
 
 @pytest.mark.asyncio

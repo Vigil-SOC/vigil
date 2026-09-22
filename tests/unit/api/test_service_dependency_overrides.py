@@ -2,17 +2,14 @@
 # through a Depends provider, so a test swaps in a stub via
 # app.dependency_overrides and never touches a database, an LLM or an MCP process.
 
-import os
 from types import SimpleNamespace
-
-os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from core.deps import provide_approvals, provide_workflows
-from core.response.approvals_router import router as approvals_router
+from core.api.v1.approvals_router import router as approvals_router
 
 
 def _action(action_id="ACT-1", workflow_run_id=None):

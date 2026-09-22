@@ -10,7 +10,7 @@ import logging
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.deps import provide_mcp_client, provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, deactivate, register_connected
@@ -385,3 +385,114 @@ async def reload_servers(
         "total_servers": len(new_servers),
         "servers": new_servers,
     }
+
+
+# --- Vigil's own MCP surface ------------------------------------------------
+#
+# Everything above configures the servers Vigil calls out to. These configure
+# the one Vigil is: whether it listens, and which credentials open it.
+
+
+class SurfaceToggle(BaseModel):
+    enabled: bool
+
+
+class CredentialMint(BaseModel):
+    label: str = Field(min_length=1, max_length=200)
+    expires_in_days: Optional[int] = Field(default=None, ge=1, le=3650)
+
+
+@router.get("/surface")
+async def get_surface(current_user: User = Depends(get_current_active_user)):
+    """Whether Vigil's own tools are reachable, and whether anything can reach them."""
+    from core.auth.mcp_credential_service import list_for_user
+    from core.integrations.mcp.surface import is_enabled
+    from services.api.mcp_surface import MOUNT_PATH
+
+    credentials = list_for_user(current_user.user_id)
+    return {
+        "enabled": is_enabled(),
+        "path": MOUNT_PATH,
+        "credentials": [c.to_dict() for c in credentials],
+    }
+
+
+@router.put("/surface")
+async def set_surface(
+    body: SurfaceToggle,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Open or close the surface. Takes effect without a restart."""
+    require_integrations_admin(current_user)
+
+    from core.integrations.mcp.surface import set_enabled
+
+    if not set_enabled(body.enabled):
+        raise HTTPException(status_code=500, detail="Could not save the setting")
+
+    logger.warning(
+        "MCP surface %s by %s",
+        "opened" if body.enabled else "closed",
+        current_user.username,
+    )
+    return {"enabled": body.enabled}
+
+
+@router.post("/surface/credentials", status_code=201)
+async def mint_credential(
+    body: CredentialMint,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Issue a credential for the signed-in user.
+
+    The token is in this response and nowhere else. It is not stored and cannot
+    be shown again; an operator who loses one mints another and revokes this.
+    """
+    require_integrations_admin(current_user)
+
+    from datetime import timedelta
+
+    from core.auth.mcp_credential_service import mint
+    from core.time import utcnow
+
+    expires_at = (
+        utcnow() + timedelta(days=body.expires_in_days)
+        if body.expires_in_days
+        else None
+    )
+    minted = mint(current_user.user_id, body.label, expires_at=expires_at)
+    if minted is None:
+        raise HTTPException(status_code=500, detail="Could not mint a credential")
+
+    return {
+        "token": minted.token,
+        "credential": minted.record.to_dict(),
+        "warning": "This token is shown once. Store it now; it cannot be recovered.",
+    }
+
+
+@router.delete("/surface/credentials/{credential_id}")
+async def revoke_credential(
+    credential_id: str,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Withdraw a credential. What it could reach, it can no longer reach."""
+    require_integrations_admin(current_user)
+
+    from core.auth.mcp_credential_service import list_for_user, revoke
+
+    # Only your own: a credential names a principal, and revoking someone
+    # else's is an act on their account rather than on your configuration.
+    if credential_id not in {
+        c.credential_id
+        for c in list_for_user(current_user.user_id, include_revoked=True)
+    }:
+        raise HTTPException(status_code=404, detail="Credential not found")
+
+    if not revoke(credential_id):
+        raise HTTPException(status_code=409, detail="Already revoked")
+
+    logger.warning(
+        "MCP credential %s revoked by %s", credential_id, current_user.username
+    )
+    return {"revoked": credential_id}

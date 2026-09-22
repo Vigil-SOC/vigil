@@ -863,11 +863,12 @@ REASONING: [Brief explanation]
                 f"Finding {finding.get('finding_id')} queued for response evaluation"
             )
 
-        # Gate 1 still owns containment. A feed hit is an intake producer: the
-        # same Finding is offered as a detection even when should_respond is
-        # false. The unique queued-finding index collapses a double offer.
-        feed_hits = (finding.get("enrichment") or {}).get("threat_indicators")
-        if should_respond or feed_hits:
+        # A threat-intel feed hit (stamped by _enrich_finding) offers the same
+        # Finding to intake as a detection, but never widens the response queue
+        # above: containment stays on Gate 1 alone.
+        feed_hit = bool((finding.get("enrichment") or {}).get("threat_indicators"))
+
+        if should_respond or feed_hit:
             from services.daemon.orchestrator import insert_intake_trigger
 
             trigger_id = insert_intake_trigger(

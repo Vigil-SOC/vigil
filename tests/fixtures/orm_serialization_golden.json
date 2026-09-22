@@ -465,8 +465,8 @@
     },
     "populated.to_dict.default": {
       "attachment_ids": [
-        "attachment_ids-a",
-        "attachment_ids-b"
+        52,
+        504
       ],
       "author": "author-value",
       "case_id": "case_id-value",
@@ -1513,8 +1513,8 @@
       "is_default": true,
       "name": "name-value",
       "notification_thresholds": [
-        "notification_thresholds-a",
-        "notification_thresholds-b"
+        283,
+        960
       ],
       "policy_id": "policy_id-value",
       "priority_level": "priority_level-value",

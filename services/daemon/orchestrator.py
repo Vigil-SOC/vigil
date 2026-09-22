@@ -10,6 +10,7 @@ All routine operations are pure Python logic.
 """
 
 import asyncio
+import copy
 import json
 import logging
 import uuid
@@ -84,7 +85,9 @@ from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
 from core.response.config import decision_rule
 from core.storage.models import IN_FLIGHT_INVESTIGATION_STATUSES
+from core.threat_intel.mitre_lookup import iter_techniques, resolve_technique
 from core.workflows.hypothesis_subjects import kept_subjects
+from core.workflows.workflow_run_service import WorkflowRunService
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon.plan_generator import (
     _infer_title,
@@ -265,6 +268,60 @@ def _human_ask_case_title(
     if findings:
         return _infer_title(findings[0], workflow_id)[:200]
     return _infer_title({}, workflow_id)[:200]
+
+
+# Shadow adjudication (#880). The second run over an admitted finding is addressed
+# from the investigation id like the real one, so the pair joins by recomputing
+# rather than by a column. A uuid5 of the suffixed id rather than a suffixed uuid:
+# agent_events.run_id is a uuid column and would refuse the string.
+SHADOW_WORKFLOW_ID = "shadow-adjudication"
+SHADOW_HYPOTHESIS_FILE = "shadow_hypothesis.txt"
+
+
+def shadow_run_id_for(investigation_id: str) -> str:
+    return run_id_for(f"{investigation_id}-shadow")
+
+
+def _shadow_hypothesis(findings: List[Dict]) -> str:
+    """One line the adjudicator puts on its board: what intake read into the finding.
+
+    The definition declares ``hypotheses: []`` and the hunt loop refuses a run with
+    none stated, so this is required, not decorative. Title, the entities the
+    finding names, and the tactic of its top predicted technique -- the same
+    reading ``_infer_title`` makes, spelled out as a claim."""
+    if not findings:
+        return ""
+    finding = findings[0]
+    title = str(finding.get("title") or finding.get("description") or "").strip()
+    subject = title or "the admitted finding"
+
+    # All of them, because the same keys become the claim's subjects: a subject
+    # set wider than what the line names would be a guess, not a statement.
+    entities = finding_entity_keys([finding])
+    where = f" involving {', '.join(entities)}" if entities else ""
+
+    # iter_techniques spans every shape mitre_predictions is stored in.
+    techniques = list(iter_techniques(finding))
+    intent = ""
+    if techniques:
+        top = max(techniques, key=lambda t: _confidence(t.get("confidence")))
+        tid, name, tactic = resolve_technique(top)
+        if tid:
+            technique = f"{tid} {name}" if name and name != tid else tid
+            # The tactic when the taxonomy knows it; the technique alone when not.
+            intent = (
+                f" and is {technique} activity"
+                if tactic == "Unknown"
+                else f" and is {tactic} activity ({technique})"
+            )
+    return f"{subject}{where} is what intake says it is{intent}"
+
+
+def _confidence(value: Any) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _mint_case(session, spec: CaseSpec) -> str:
@@ -825,6 +882,18 @@ class Orchestrator:
             self.workdir.write_file(
                 inv_id, "hypothesis_subjects.json", json.dumps(hypothesis_subjects)
             )
+        # The shadow run's one hypothesis, derived here where the finding is in
+        # hand and read back at enqueue, which sees only ids. Only a detection
+        # finding gets a shadow; a manual or scheduled run has nothing to adjudicate.
+        if self.config.shadow_adjudication and trigger_type == "finding":
+            try:
+                line = _shadow_hypothesis(findings)
+            except (
+                Exception
+            ) as exc:  # noqa: BLE001 — an odd finding costs the shadow, not intake
+                logger.warning("no shadow hypothesis for %s: %s", inv_id, exc)
+                line = ""
+            self.workdir.write_file(inv_id, SHADOW_HYPOTHESIS_FILE, line)
 
         shutting_down = shutdown_event is not None and shutdown_event.is_set()
 
@@ -1171,6 +1240,90 @@ class Orchestrator:
 
         self._update_investigation_status(inv_id, "executing")
         logger.info("enqueued investigation %s as run %s", inv_id, run_id)
+
+        # After the real run is queued and its row says so: a shadow that fails
+        # must never mark the investigation failed or hold up its transition.
+        try:
+            await self._enqueue_shadow_adjudication(inv_record, request)
+        except Exception as exc:  # noqa: BLE001 — the shadow is best-effort
+            logger.error(
+                "could not enqueue shadow adjudication for %s: %s", inv_id, exc
+            )
+
+    # Shadow mode (#880): one more job over the same finding, on the adjudicate
+    # loop, that executes nothing and journals which workflow it would have run.
+    # No investigations row and no AIDecisionLog entry: the ledger is its record,
+    # and the workflow_runs row is what lets Workflows History and replay reach it.
+    async def _enqueue_shadow_adjudication(
+        self, inv_record: Dict, request: Dict[str, Any]
+    ) -> None:
+        if not self.config.shadow_adjudication:
+            return
+        if inv_record.get("trigger_type") != "finding":
+            return
+        inv_id = inv_record["investigation_id"]
+        hypothesis = (
+            self.workdir.read_file(inv_id, SHADOW_HYPOTHESIS_FILE) or ""
+        ).strip()
+        if not hypothesis:
+            # The definition refuses a run with none stated; nothing here reads the
+            # finding back from the DB to invent one.
+            logger.info("no shadow hypothesis for %s; no shadow run", inv_id)
+            return
+
+        intake_workflow = inv_record["workflow_id"]
+        shadow_id = shadow_run_id_for(inv_id)
+        # The same brief, budgets and recall keys the real run got, so the two
+        # decisions are over the same evidence; only the framing differs.
+        shadow = copy.deepcopy(request)
+        shadow["playbook"] = f"workflow:{SHADOW_WORKFLOW_ID}"
+        shadow["prompt"] = (
+            f"{request['prompt']}\n\n## Intake's choice\n\n"
+            f"Intake admitted this finding and chose the `{intake_workflow}` "
+            "workflow. Decide independently whether the finding is what intake "
+            "says it is and which catalogue workflow it warrants; execute nothing."
+        )
+        shadow["hypotheses"] = [hypothesis]
+        # Stated, not guessed: the claim names these very entities.
+        keys = list(request.get("recall_keys") or [])
+        shadow["hypothesis_subjects"] = {hypothesis: keys} if keys else {}
+
+        runs = WorkflowRunService()
+        # A restart re-enqueues assigned investigations; a shadow already on
+        # record is not started twice.
+        if runs.get_run(shadow_id) is not None:
+            logger.info("shadow run %s already recorded; not re-enqueued", shadow_id)
+            return
+        # Row first, as the API does: an answerable checkpoint needs it to exist.
+        # begin_run returns None on a DB failure rather than raising.
+        row = runs.begin_run(
+            run_id=shadow_id,
+            workflow_id=SHADOW_WORKFLOW_ID,
+            workflow_name=SHADOW_WORKFLOW_ID,
+            workflow_source="agent",
+            trigger_context={
+                "run_kind": "adjudicate",
+                "investigation_id": inv_id,
+                "intake_workflow_id": intake_workflow,
+            },
+            triggered_by="orchestrator",
+        )
+        if row is None:
+            logger.warning("no workflow_runs row for shadow run %s", shadow_id)
+
+        job = build_start_job(
+            shadow_id, "adjudicate", shadow, enqueued_by="orchestrator"
+        )
+        try:
+            await enqueue_run(job, job_id=shadow_id)
+        except Exception as exc:
+            # Otherwise the row reads as running forever with no job behind it.
+            if row is not None:
+                runs.finalize_run(
+                    shadow_id, status="failed", error=f"Could not enqueue: {exc}"
+                )
+            raise
+        logger.info("enqueued shadow adjudication of %s as run %s", inv_id, shadow_id)
 
     # The ledger is the record and this row is the copy an operator reads, so the
     # copy is reconciled from the projection rather than written alongside it.

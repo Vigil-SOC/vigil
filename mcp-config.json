@@ -15,26 +15,6 @@
       }
     },
 
-    "_comment_internal": "--- DeepTempo Internal Servers ---",
-
-    "deeptempo-findings": {
-      "command": "python3",
-      "args": ["tools/mcp/deeptempo_findings.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
-    "tempo-flow": {
-      "command": "python3",
-      "args": ["tools/mcp/tempo_flow.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
-    "approval": {
-      "command": "python3",
-      "args": ["tools/mcp/approval.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
     "security-detections": {
       "command": "npx",
       "args": ["-y", "security-detections-mcp@3.3.0"],

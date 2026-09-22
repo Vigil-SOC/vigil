@@ -257,41 +257,9 @@ Confidence scoring:
         "max_tokens": 8192,
         "enable_thinking": False,
         "extra_principles": '- Clear language, avoid jargon for executives\n- Focus on actionable insights\n- Never speculate - report only retrieved data\n- For board briefs: one page max, lead with risk posture, no CVEs or ATT&CK IDs in main body\n- Memory: recall_entity on case entities; read-only, and it orients your search rather than deciding its outcome\n- Learning: for "what did we learn" over a period call list_learning_episodes with the window, then export_learning_episodes for the episodes the user picks; redacted unless they ask for identified',
+        # The report procedure lives in core/skills/library/executive-summary (#929).
         "methodology": """<methodology>
-1. Gather data via tools (cases, findings, actions)
-2. Analyze context: severity, timeline, impact
-3. Determine report type from user request:
-
-   TECHNICAL REPORT (default):
-   - Executive Summary: Business impact, plain language
-   - Technical Details: Evidence for security team
-   - Timeline: Chronological events
-   - Actions Taken: Response measures
-   - Recommendations: Next steps
-
-   EXECUTIVE SUMMARY:
-   - Tailor to executive audience, minimize technical jargon
-
-   BOARD BRIEF (triggered by "board brief", "board report", "risk posture report"):
-   - Follow the board-brief template (core/agents/templates/board-brief.md)
-   - Structure: Risk Posture → Key Metrics → Top 3 Actions → Trend
-   - Risk Posture: RED (active breach or uncontained critical threats),
-     YELLOW (open critical findings with remediation in progress),
-     GREEN (no open criticals, remediation on track)
-   - Key Metrics (pull from actual data, never hallucinate):
-     * Validated kill chains or critical finding chains (current vs prior period)
-     * Detection coverage percentage (findings with case coverage)
-     * Mean time to remediation (from case open to resolved)
-     * Open critical findings count
-   - Top 3 Action Items: Each with risk (one sentence), fix type
-     (budget/policy/technical), estimated impact if addressed
-   - 30/60/90 Day Trend: Exposure count direction (improving/stable/degrading)
-   - Language: Non-technical throughout. No CVE numbers, no ATT&CK IDs
-     in the main body. Use plain business language.
-   - Length: One page equivalent. Brevity is mandatory.
-   - Output: Markdown for chat, note PDF export is available
-
-4. Tailor to audience: Board/CEO vs Executive vs Technical vs Compliance
+For any report request (technical report, executive summary, board brief) call read_skill("executive-summary") first and follow it.
 </methodology>""",
     },
     {
@@ -370,15 +338,9 @@ Given an environment_id and a goal, assess coverage, execute only via the gated 
         "max_tokens": 16384,
         "enable_thinking": True,
         "thinking_budget": 6000,
-        "extra_principles": "- Focus on actionable intelligence\n- State confidence in attribution\n- Query multiple threat intel sources in parallel\n- Memory: recall_entity on IOCs before spending an external lookup; read-only, and it orients your search rather than deciding its outcome\n- Cloudflare context: when finding.enrichment.threat_indicators contains Cloudforce One hits, treat them as ground-truth edge-observed indicators (cite source='cloudforce_one' and the STIX confidence). Cloudy summaries (finding.evidence.cloudy_summary) are premium per-event context — quote them with provenance, do not paraphrase as your own analysis.",
-        "methodology": """<methodology>
-1. Retrieve context and extract IOCs
-2. Enrich IOCs: IP geolocation, Shodan, VirusTotal, OTX
-3. Identify threat actors: TTPs, infrastructure overlap, campaign patterns
-4. Assess threat context: Motivations, objectives, targeting
-5. Predict future threats based on patterns
-6. Provide actionable intelligence and IOCs to hunt
-</methodology>""",
+        # Enrichment procedure and Cloudforce One rule live in the `ioc-enrichment`
+        # skill (#882 decision 8); the Memory line stays, ADR 0015 requires it.
+        "extra_principles": "- Focus on actionable intelligence\n- State confidence in attribution\n- Memory: recall_entity on IOCs; read-only, and it orients your search rather than deciding its outcome",
     },
     {
         "id": "compliance",

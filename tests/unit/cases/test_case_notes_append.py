@@ -24,7 +24,7 @@ ANALYST = SimpleNamespace(username="nestor")
 
 
 def _patch_data_service(monkeypatch, *, case, update=None):
-    from services.api.routers import cases
+    from core.api.v1 import cases_router as cases
 
     captured = {}
 
@@ -44,7 +44,7 @@ def _patch_data_service(monkeypatch, *, case, update=None):
 
 @pytest.mark.asyncio
 async def test_patch_appends_a_note_entry(monkeypatch):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     existing = {
         "case_id": "c1",
@@ -66,7 +66,7 @@ async def test_patch_appends_a_note_entry(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_patch_notes_starts_a_list_when_case_has_none(monkeypatch):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, captured = _patch_data_service(
         monkeypatch, case={"case_id": "c1", "notes": None}
@@ -81,7 +81,7 @@ async def test_patch_notes_starts_a_list_when_case_has_none(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_patch_keeps_other_fields_when_appending_notes(monkeypatch):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, captured = _patch_data_service(
         monkeypatch, case={"case_id": "c1", "notes": []}
@@ -99,8 +99,8 @@ async def test_patch_keeps_other_fields_when_appending_notes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_patch_notes_404_when_case_missing(monkeypatch):
-    from services.api.routers import cases
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1 import cases_router as cases
+    from core.api.v1.cases_router import CaseUpdate
 
     monkeypatch.setattr(cases.data_service, "get_case", lambda case_id: None)
     monkeypatch.setattr(cases.data_service, "update_case", MagicMock())

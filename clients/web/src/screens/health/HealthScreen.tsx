@@ -2,20 +2,22 @@ import { useState, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import { Hbars, Pie } from '../../shared/charts'
+import { Cost, PROVENANCE_LABEL, fmtCost, type PricingSource } from '../../shared/cost'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { useCostAnalytics, type CostData, type CostModelRow, type CostTimeRange } from '../settings/useSettings'
+import { useCostAnalytics, type CostData, type CostTimeRange } from '../settings/useSettings'
 import { usePendingApprovals } from '../decisions/useDecisions'
 import { RUNS_PER_WORKFLOW, RUN_STATUSES, useRunOutcomes, type RunKindOutcomes, type RunStatus } from './useHealth'
 
 const RANGE_LABEL: Record<CostTimeRange, string> = { '24h': '24h', '7d': '7d', '30d': '30d', all: 'All' }
 const RANGES = Object.keys(RANGE_LABEL) as CostTimeRange[]
 
-const PRICING_LABEL = {
-  exact: { label: 'exact', color: 'var(--ok)' },
-  heuristic: { label: 'heuristic', color: 'var(--high)' },
-  zero: { label: 'free', color: 'var(--med)' },
-  unknown: { label: 'unknown', color: 'var(--crit)' },
-} satisfies Record<CostModelRow['pricing_source'], { label: string; color: string }>
+// colour rides on top of the shared label; the word carries the meaning
+const PRICING_COLOR: Record<PricingSource, string> = {
+  exact: 'var(--ok)',
+  heuristic: 'var(--high)',
+  zero: 'var(--med)',
+  unknown: 'var(--crit)',
+}
 
 const STATUS_COLOR: Record<RunStatus, string> = {
   completed: 'var(--ok)',
@@ -27,7 +29,6 @@ const STATUS_COLOR: Record<RunStatus, string> = {
 }
 
 const fmtTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n))
-const fmtCost = (n: number) => `$${n.toFixed(2)}`
 const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`
 
 /** Spend, approvals waiting, and recent run outcomes — the facts the Grafana
@@ -138,17 +139,17 @@ function SpendBody({ data }: { data: CostData }) {
           </thead>
           <tbody>
             {data.by_model.map((m) => {
-              const pricing = PRICING_LABEL[m.pricing_source] || PRICING_LABEL.unknown
+              const source: PricingSource = m.pricing_source in PRICING_COLOR ? m.pricing_source : 'unknown'
               return (
                 <tr key={`${m.provider_type}-${m.model}`}>
                   <td className="font-mono text-xs">{m.model}</td>
                   <td className="muted">{m.provider_type}</td>
-                  <td><span className="chip" style={{ color: pricing.color }}>{pricing.label}</span></td>
+                  <td><span className="chip" style={{ color: PRICING_COLOR[source] }}>{PROVENANCE_LABEL[source]}</span></td>
                   <td>{m.calls.toLocaleString()}</td>
                   <td className="muted">{fmtTokens(m.input_tokens)}</td>
                   <td className="muted">{fmtTokens(m.output_tokens)}</td>
                   <td className="muted">{fmtPct(m.cache_hit_rate)}</td>
-                  <td style={{ textAlign: 'right' }}>{fmtCost(m.cost_usd)}</td>
+                  <td style={{ textAlign: 'right' }}><Cost usd={m.cost_usd} source={source} /></td>
                 </tr>
               )
             })}

@@ -1,5 +1,5 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
@@ -8,6 +8,7 @@ import { useWorkflows, useAgents, useAgentMeta, useSkills } from './useWorkflows
 import { workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
 import type { ConsoleScreenProps } from '../../shared/types'
+import { Cost } from '../../shared/cost'
 
 type WfTab = 'workflows' | 'agents' | 'skills'
 
@@ -553,6 +554,205 @@ function Unpriced({ pricing }: { pricing?: { model: string; source: string } }) 
   )
 }
 
+/** What `/workflows/threat-hunt/coverage` answers. `in_flight` rows arrive on
+ *  `running`, `concluded` rows plus a `proposal` on `concluded`, only the
+ *  `proposal` on `uncovered`. The proposal is an execute body as-is. */
+interface HuntProposal {
+  hypothesis: string
+  hypothesis_subjects: Record<string, string[]>
+  approve_hypotheses?: boolean
+}
+interface InFlightRow {
+  run_id: string
+  status: string
+  matched_keys: string[]
+  matched_techniques: string[]
+}
+interface ConcludedRow {
+  statement: string
+  outcome: string
+  concluded_at: string | null
+  origin_run_id: string | null
+  matched_keys: string[]
+  matched_techniques: string[]
+}
+interface HuntCoverage {
+  status: 'running' | 'concluded' | 'uncovered'
+  keys: string[]
+  techniques: string[]
+  matched_keys: string[]
+  unmatched_keys: string[]
+  matched_techniques: string[]
+  unmatched_techniques: string[]
+  in_flight?: InFlightRow[]
+  concluded?: ConcludedRow[]
+  proposal?: HuntProposal
+}
+
+/** Matched and unmatched keys/T-IDs side by side, so a report only half
+ *  covered reads as half covered rather than as covered. */
+function CoverageSplit({ answer }: { answer: HuntCoverage }) {
+  const rows: [string, string[]][] = [
+    ['Matched', [...answer.matched_keys, ...answer.matched_techniques]],
+    ['Unmatched', [...answer.unmatched_keys, ...answer.unmatched_techniques]],
+  ]
+  return (
+    <div className="flex flex-col gap-1 text-[12px] leading-[1.5]">
+      {rows.map(([label, list]) => (
+        <div key={label}>
+          <span className="text-tx-3">{label}: </span>
+          <span className="font-mono">{list.length > 0 ? list.join(', ') : '—'}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** The `?run=` deep link WorkflowsScreen already honours; following it swaps the
+ *  catalog, and this modal with it, for the run. */
+function RunLink({ runId }: { runId: string }) {
+  return (
+    <Link to={{ search: `?run=${encodeURIComponent(runId)}` }} className="font-mono underline">
+      {runId.slice(0, 8)}
+    </Link>
+  )
+}
+
+/** Report in, one of three answers out. Owns only the report text and the answer:
+ *  the hypothesis, subjects and approve state stay in RunModal, which is why the
+ *  two prefill actions hand a proposal back up rather than posting anything. Errors
+ *  land in the modal's one error slot, and only the existing Run button executes. */
+function CoveragePanel({ entityKeys, onError, onProposal }: {
+  entityKeys: string[]
+  onError: (msg: string | null) => void
+  onProposal: (p: HuntProposal) => void
+}) {
+  const [report, setReport] = useState('')
+  const [answer, setAnswer] = useState<HuntCoverage | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [extended, setExtended] = useState<Record<string, 'sending' | 'sent'>>({})
+
+  const canCheck = !checking && (report.trim() !== '' || entityKeys.length > 0)
+  // A check can run on typed subjects alone, but an extend with nothing to say is no directive.
+  const canExtend = report.trim() !== ''
+
+  const check = async () => {
+    setChecking(true)
+    onError(null)
+    try {
+      const res = await workflowApi.checkCoverage({
+        ...(report.trim() && { report: report.trim() }),
+        ...(entityKeys.length > 0 && { entity_keys: entityKeys }),
+      })
+      setAnswer(res.data as HuntCoverage)
+      setExtended({})
+    } catch (e) {
+      onError(errMsg(e))
+      setAnswer(null) // the old answer was about a different report
+    }
+    setChecking(false)
+  }
+
+  // One directive of kind extend, carrying the report text, against the run that already covers it.
+  const extend = (runId: string) => {
+    setExtended((held) => ({ ...held, [runId]: 'sending' }))
+    workflowApi.steer(runId, 'extend', report.trim())
+      .then(() => setExtended((held) => ({ ...held, [runId]: 'sent' })))
+      .catch((e) => {
+        onError(errMsg(e))
+        setExtended((held) => { const next = { ...held }; delete next[runId]; return next })
+      })
+  }
+
+  const verdict = (a: HuntCoverage) => {
+    switch (a.status) {
+      case 'running':
+        return (
+          <>
+            <div className="text-[12.5px] leading-[1.5]">Already being hunted. Extend a run with this report rather than starting another.</div>
+            <ul className="flex flex-col gap-1.5 text-[12px] leading-[1.5]" aria-label="In-flight hunts">
+              {(a.in_flight ?? []).map((row) => {
+                const state = extended[row.run_id]
+                return (
+                  <li key={row.run_id} className="flex items-center gap-2 flex-wrap">
+                    <RunLink runId={row.run_id} />
+                    <span className="text-tx-3">{row.status}</span>
+                    <span className="font-mono text-tx-3">{[...row.matched_keys, ...row.matched_techniques].join(', ')}</span>
+                    <button
+                      className="btn ghost"
+                      disabled={!canExtend || state !== undefined}
+                      title={canExtend ? undefined : 'Paste the report to extend with'}
+                      aria-label={`Extend ${row.run_id.slice(0, 8)}`}
+                      onClick={() => extend(row.run_id)}
+                    >
+                      {state === 'sent' ? 'Extended' : state === 'sending' ? 'Extending…' : 'Extend'}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </>
+        )
+      case 'concluded':
+        return (
+          <>
+            <div className="text-[12.5px] leading-[1.5]">Hunted before. Reopen puts the proposal in the form below; Run starts it.</div>
+            <ul className="flex flex-col gap-1.5 text-[12px] leading-[1.5]" aria-label="Concluded verdicts">
+              {(a.concluded ?? []).map((row, at) => (
+                <li key={at} className="flex items-center gap-2 flex-wrap">
+                  {row.origin_run_id ? <RunLink runId={row.origin_run_id} /> : null}
+                  <span>{row.statement}</span>
+                  <span className="text-tx-3">{row.outcome} · {fmtStarted(row.concluded_at)}</span>
+                </li>
+              ))}
+            </ul>
+            {a.proposal && (
+              <div><button className="btn ghost" onClick={() => onProposal(a.proposal as HuntProposal)}>Reopen</button></div>
+            )}
+          </>
+        )
+      case 'uncovered':
+        return (
+          <>
+            <div className="text-[12.5px] leading-[1.5]">Nobody has hunted this. Use proposal fills the form below; Run starts it.</div>
+            {a.proposal && (
+              <div><button className="btn ghost" onClick={() => onProposal(a.proposal as HuntProposal)}>Use proposal</button></div>
+            )}
+          </>
+        )
+      default: {
+        const never: never = a.status
+        return never
+      }
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5 p-3 rounded border border-line">
+      <Field
+        label="Report"
+        value={report}
+        onChange={setReport}
+        placeholder="Paste a threat report — STIX JSON or text with indicators and T-IDs…"
+        textarea
+        hint="Checks whether its indicators are already being hunted, were hunted, or are untouched. Read-only: nothing starts until you press Run."
+      />
+      <div className="flex justify-end">
+        <button className="btn ghost" disabled={!canCheck} style={{ opacity: canCheck ? 1 : 0.5 }} onClick={check}>
+          {checking ? 'Checking…' : 'Check coverage'}
+        </button>
+      </div>
+      {answer && (
+        <div className="flex flex-col gap-2" data-testid="coverage-answer" data-status={answer.status}>
+          <div className="text-[11px] uppercase tracking-[0.06em] text-tx-3">Coverage · {answer.status}</div>
+          <CoverageSplit answer={answer} />
+          {verdict(answer)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Run a workflow — collects a target, starts it on the agent layer, then hands
     off to History, which reports phases, beliefs and anything the run waits on. */
 export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: () => void; onClose: () => void }) {
@@ -622,6 +822,14 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   const needsHypothesis = isHuntLike && hypothesis.trim() === ''
   const canRun = Object.keys(params).length > 0 && !turnsBad && !costBad && !starting
 
+  // The proposal is an execute body already; it lands in the same three fields the
+  // operator would have typed, so Run sends it through the same withTurns build.
+  const takeProposal = (p: HuntProposal) => {
+    setHypothesis(p.hypothesis)
+    setSubjects(Object.fromEntries(Object.entries(p.hypothesis_subjects).map(([line, keys]) => [line, keys.join(', ')])))
+    setApprove(p.approve_hypotheses === true)
+  }
+
   const run = async () => {
     if (needsHypothesis) {
       setError('This run tests a claim you state. Put at least one in Hypothesis — the benign account is added for you.')
@@ -665,6 +873,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         <ComboField label="Finding ID" value={findingId} onChange={setFindingId} placeholder="f-20260614-3b5c585e" options={findingOpts} hint={findingOpts.length ? `${findingOpts.length} recent findings — start typing to filter.` : undefined} />
         <ComboField label="Case ID" value={caseId} onChange={setCaseId} placeholder="case-2026-0142" options={caseOpts} />
         <Field label="Context" value={context} onChange={setContext} placeholder="Active ransomware on HOST-42…" textarea />
+        {isHuntLike && (
+          <CoveragePanel entityKeys={Object.values(asked).flat()} onError={setError} onProposal={takeProposal} />
+        )}
         <Field
           label="Hypothesis"
           value={hypothesis}
@@ -746,7 +957,7 @@ function fmtStarted(iso?: string | null): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
 
-function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
+export function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
   const [runs, setRuns] = useState<WfRun[]>([])
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -1090,7 +1301,7 @@ function RunRow({ run, onRemoved }: { run: WfRun; onRemoved: () => void }) {
         <td className="muted">{fmtStarted(run.started_at)}</td>
         <td className="muted">{fmtDuration(run.duration_ms)}</td>
         <td className="muted">{run.triggered_by || '—'}</td>
-        <td className="muted">{run.total_cost_usd ? `$${run.total_cost_usd.toFixed(3)}` : '—'}</td>
+        <td className="muted"><Cost usd={run.total_cost_usd} digits={3} /></td>
         <td className="tight" onClick={(e) => e.stopPropagation()}><RemoveRun run={run} onRemoved={onRemoved} /></td>
       </tr>
       {open && (
@@ -1197,7 +1408,7 @@ function RunBar({ d, hunt, onSteered }: { d: WfRunDetail; hunt: HuntView | null;
       <span className="flex-1" />
       <div className="meta">
         {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
-        {typeof cost === 'number' && <span>$<b>{cost.toFixed(2)}</b>{ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>}
+        <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
         {spent !== null && (
           <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
             <div className="budget-fill" style={{ width: `${spent}%` }} />
@@ -1862,7 +2073,7 @@ function ComposeDetail({ d }: { d: WfRunDetail }) {
                     <td>{agentMeta(p.agent_id).label}{p.error && <span className="ml-2" style={{ color: 'var(--crit)' }} title={p.error}>⚠</span>}</td>
                     <td className="tight"><span style={{ color: runStatusColor(p.status) }}>{p.status}</span></td>
                     <td className="muted tight">{fmtDuration(p.duration_ms)}</td>
-                    <td className="muted tight">{p.cost_usd ? `$${p.cost_usd.toFixed(3)}` : '—'}</td>
+                    <td className="muted tight"><Cost usd={p.cost_usd} digits={3} /></td>
                   </tr>
                 ))}
               </tbody>

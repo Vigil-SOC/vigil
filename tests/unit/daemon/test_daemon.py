@@ -408,6 +408,47 @@ class TestConfiguredFloors:
             )
             assert queue.qsize() == 1
 
+    @pytest.mark.asyncio
+    async def test_processor_feed_hit_offers_detection_without_response(self):
+        """#1008: a threat_indicators hit reaches intake even when Gate 1 is false."""
+        from services.daemon.config import ResponseConfig
+
+        processor = FindingProcessor(
+            ProcessingConfig(), response_config=ResponseConfig(review_threshold=0.95)
+        )
+        queue = asyncio.Queue()
+        processor.set_response_queue(queue)
+        below_gate = {"severity": "medium", "triage_confidence": 0.5}
+        hit = {"threat_indicators": {"src_ip": [{"indicator": "10.0.0.9"}]}}
+
+        with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
+            await processor._evaluate_for_response(
+                {"finding_id": "f-hit", "enrichment": hit, **below_gate}
+            )
+            insert.assert_called_once()
+            assert insert.call_args.kwargs["kind"] == "detection"
+            assert insert.call_args.kwargs["finding_id"] == "f-hit"
+            assert queue.empty()
+
+        # No hit: the key is absent when the lookup found nothing, and the
+        # whole enrichment block is absent when enrichment is off.
+        with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
+            await processor._evaluate_for_response(
+                {"finding_id": "f-miss", "enrichment": {"geo": {}}, **below_gate}
+            )
+            await processor._evaluate_for_response(
+                {"finding_id": "f-bare", **below_gate}
+            )
+            insert.assert_not_called()
+            assert queue.empty()
+
+        with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
+            await processor._evaluate_for_response(
+                {"finding_id": "f-both", "severity": "high", "enrichment": hit}
+            )
+            insert.assert_called_once()
+            assert queue.qsize() == 1
+
 
 class TestEscalation:
     """Test escalation logic."""

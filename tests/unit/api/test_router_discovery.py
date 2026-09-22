@@ -111,10 +111,14 @@ def test_no_cross_router_path_shadowing():
     """
     routes = []  # (full_path, methods, owner)
     for name, router, meta in _specs():
-        for route in router.routes:
-            full = meta.prefix + getattr(route, "path", "")
-            methods = frozenset(getattr(route, "methods", None) or ())
-            routes.append((full, methods, name))
+        # A router is mounted at its prefix and again at each legacy prefix, so
+        # shadowing has to be checked at every mount point — a v1 router's
+        # legacy mount can collide with the unversioned router it split from.
+        for mount_prefix in (meta.prefix, *meta.legacy_prefixes):
+            for route in router.routes:
+                full = mount_prefix + getattr(route, "path", "")
+                methods = frozenset(getattr(route, "methods", None) or ())
+                routes.append((full, methods, name))
 
     # Identical path in two routers, sharing a method: never looks like
     # "param vs literal", so the comparison below would miss it entirely.

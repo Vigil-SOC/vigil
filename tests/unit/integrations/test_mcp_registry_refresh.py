@@ -48,8 +48,11 @@ def test_dropped_session_still_appears_in_live_mcp_tools(monkeypatch):
     registry.register_server("splunk-selfhosted", {}, [TOOL])
     assert registry.get_tool_names() == [FLAT]
 
+    # Vigil's own tools are in this process and always present, so the
+    # question is whether the vendor's survived a dropped session, not what
+    # else the registry holds.
     names = [t["name"] for t in live_mcp_tools(registry)]
-    assert names == [FLAT]
+    assert FLAT in names
 
 
 def test_enable_then_disable_changes_tools_without_a_refresh():
@@ -78,7 +81,7 @@ def test_live_mcp_tools_does_not_revive_a_disabled_server(monkeypatch):
     register_connected(registry, _Client(connected=True), "splunk-selfhosted")
     deactivate(registry, "splunk-selfhosted")
 
-    assert [t["name"] for t in live_mcp_tools(registry)] == []
+    assert FLAT not in [t["name"] for t in live_mcp_tools(registry)]
 
 
 @pytest.mark.asyncio

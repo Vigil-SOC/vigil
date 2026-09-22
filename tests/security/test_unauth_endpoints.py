@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from services.api import main as backend_main  # noqa: E402
 from core.config import get_settings  # noqa: E402
 from services.api.middleware import auth as auth_module  # noqa: E402
+from core.auth import current_user as current_user_module  # noqa: E402  (DEV_MODE lives here)
 
 pytestmark = pytest.mark.unit
 
@@ -38,7 +39,7 @@ pytestmark = pytest.mark.unit
 def app():
     """Build a TestClient with auth force-enabled regardless of DEV_MODE.
 
-    Two places have to be forced, not one. ``services.api.middleware.auth``
+    Two places have to be forced, not one. ``core.auth.current_user``
     reads a module-level ``DEV_MODE`` captured at import, so patching the
     attribute is enough there. Routers that carry their own dev-mode bypass
     — the VStrike inbound receiver is the current one — instead call
@@ -54,8 +55,8 @@ def app():
     every test, and function-scoped autouse runs after this module-scoped
     fixture, so a patched instance is discarded before the request runs.
     """
-    prev = auth_module.DEV_MODE
-    auth_module.DEV_MODE = False
+    prev = current_user_module.DEV_MODE
+    current_user_module.DEV_MODE = False
     prev_env = os.environ.get("DEV_MODE")
     os.environ["DEV_MODE"] = "false"
     get_settings.cache_clear()
@@ -63,7 +64,7 @@ def app():
         with TestClient(backend_main.app) as c:
             yield c
     finally:
-        auth_module.DEV_MODE = prev
+        current_user_module.DEV_MODE = prev
         if prev_env is None:
             os.environ.pop("DEV_MODE", None)
         else:
@@ -74,7 +75,7 @@ def app():
 # Each tuple: HTTP method, URL path, optional JSON body.
 # These paths were called out as unauthenticated in the disclosure.
 PROTECTED_ROUTES = [
-    ("GET", "/api/findings/", None),
+    ("GET", "/api/findings", None),
     ("DELETE", "/api/findings/all", None),
     ("GET", "/api/config/secrets/status", None),
     ("GET", "/api/llm/providers/", None),
@@ -94,7 +95,11 @@ PROTECTED_ROUTES = [
         },
     ),
     ("GET", "/api/mcp/servers/enabled", None),
-    ("PUT", "/api/mcp/servers/deeptempo-findings/enabled", {"enabled": False}),
+    ("PUT", "/api/mcp/servers/vigil/enabled", {"enabled": False}),
+    ("GET", "/api/mcp/surface", None),
+    ("PUT", "/api/mcp/surface", {"enabled": True}),
+    ("POST", "/api/mcp/surface/credentials", {"label": "x"}),
+    ("DELETE", "/api/mcp/surface/credentials/mcpc-none", None),
     ("GET", "/api/orchestrator/status", None),
     ("POST", "/api/orchestrator/investigations/purge", None),
     ("GET", "/api/approvals/pending", None),
@@ -134,6 +139,14 @@ PROTECTED_ROUTES = [
     ("POST", "/api/integrations/vstrike/network-graph", {"network_id": "test"}),
     ("POST", "/api/integrations/vstrike/ui/legend-apply", {"legend_run_id": "test"}),
     ("POST", "/api/integrations/vstrike/ui/rightpanel-focus", None),
+    # Versioned contract surface — the frozen /api/v1 routes must enforce auth
+    # too (the epic is "auth on by default"). One per resource.
+    ("GET", "/api/v1/findings", None),
+    ("GET", "/api/v1/cases", None),
+    ("GET", "/api/v1/approvals", None),
+    ("GET", "/api/v1/agent-runs", None),
+    ("GET", "/api/v1/workflows", None),
+    ("GET", "/api/v1/cases/metrics/mttr", None),
 ]
 
 
@@ -165,7 +178,11 @@ INTERNAL_ROUTES = [
     (
         "POST",
         "/internal/runs/run-auth-gate/checkpoints",
-        {"checkpoint_id": "apr-1", "checkpoint_class": "tool_approval", "question": "Approve?"},
+        {
+            "checkpoint_id": "apr-1",
+            "checkpoint_class": "tool_approval",
+            "question": "Approve?",
+        },
     ),
     (
         "POST",
@@ -184,9 +201,9 @@ def test_internal_route_without_the_shared_secret_is_rejected(
 
     monkeypatch.setattr(internal_auth, "get_secret", lambda name: "configured-secret")
     response = app.request(method, path, json=body)
-    assert response.status_code == 401, (
-        f"{method} {path} returned {response.status_code} (body: {response.text[:200]})"
-    )
+    assert (
+        response.status_code == 401
+    ), f"{method} {path} returned {response.status_code} (body: {response.text[:200]})"
 
 
 @pytest.mark.parametrize("method,path,body", INTERNAL_ROUTES)
@@ -225,7 +242,10 @@ ADMIN_ONLY_ROUTES = [
         },
     ),
     ("GET", "/api/custom-integrations/list", None),
-    ("PUT", "/api/mcp/servers/deeptempo-findings/enabled", {"enabled": False}),
+    ("PUT", "/api/mcp/servers/vigil/enabled", {"enabled": False}),
+    ("PUT", "/api/mcp/surface", {"enabled": True}),
+    ("POST", "/api/mcp/surface/credentials", {"label": "x"}),
+    ("DELETE", "/api/mcp/surface/credentials/mcpc-none", None),
     ("POST", "/api/mcp/servers/reload", None),
     (
         "POST",
@@ -283,3 +303,40 @@ def test_authenticated_non_admin_is_rejected(method, path, body, monkeypatch):
             auth_module.get_current_active_user, None
         )
         backend_main.app.dependency_overrides.pop(auth_module.get_current_user, None)
+
+
+# --- An MCP credential is not a session -------------------------------------
+#
+# It says a program was given standing access, not that a person signed in, and
+# it opens the MCP surface alone. Presenting one here is refused by name: the
+# holder has a working credential and needs to know it is working in the wrong
+# place, which "invalid token" does not tell them.
+
+
+def test_an_mcp_credential_does_not_authenticate_the_api(app):
+    from core.auth.mcp_credential_service import TOKEN_PREFIX
+
+    response = app.get(
+        "/api/mcp/servers/enabled",
+        headers={"Authorization": f"Bearer {TOKEN_PREFIX}whatever-it-holds"},
+    )
+
+    assert response.status_code == 401, response.text
+    assert "MCP credential" in response.json()["detail"]
+
+
+def test_the_api_says_why_rather_than_calling_it_invalid(app):
+    """Distinct from an expired or malformed session, which reads differently."""
+    from core.auth.mcp_credential_service import TOKEN_PREFIX
+
+    as_credential = app.get(
+        "/api/mcp/servers/enabled",
+        headers={"Authorization": f"Bearer {TOKEN_PREFIX}whatever-it-holds"},
+    )
+    as_bad_session = app.get(
+        "/api/mcp/servers/enabled",
+        headers={"Authorization": "Bearer not.a.jwt"},
+    )
+
+    assert as_credential.status_code == as_bad_session.status_code == 401
+    assert as_credential.json()["detail"] != as_bad_session.json()["detail"]

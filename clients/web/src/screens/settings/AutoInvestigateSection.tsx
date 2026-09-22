@@ -15,6 +15,7 @@ import {
   type OrchestratorConfig,
 } from './useSettings'
 import type { SectionProps } from './types'
+import { fmtCost } from '../../shared/cost'
 
 type PresetKey = 'conservative' | 'balanced' | 'aggressive'
 type PresetValues = Pick<
@@ -164,7 +165,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               {status.total_investigations !== undefined &&
                 ` · ${status.total_investigations} investigation(s)`}
               {status.cost?.total_cost_usd !== undefined &&
-                ` · Total cost: $${status.cost.total_cost_usd.toFixed(2)}`}
+                ` · Total cost: ${fmtCost(status.cost.total_cost_usd)}`}
             </span>
           </div>
         )}

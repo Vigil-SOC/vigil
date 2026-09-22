@@ -330,18 +330,18 @@ class TestTheTurnBudget:
 # call, which is correct and arrives too late to be useful.
 class TestThePricingPreflight:
     def test_answers_how_confidently_the_model_resolved(self):
-        from core.workflows.workflows_router import _pricing
+        from core.workflows.catalog import pricing
 
-        reported = _pricing()
+        reported = pricing()
         assert reported["model"]
         assert reported["source"] in {"exact", "heuristic", "zero", "unknown"}
 
     def test_calls_a_model_no_rate_table_carries_unknown(self, monkeypatch):
         import core.llm.defaults as defaults
-        from core.workflows import workflows_router
+        from core.workflows import catalog
 
         monkeypatch.setattr(defaults, "DEFAULT_MODEL", "groq/some-model-nobody-priced")
-        assert workflows_router._pricing()["source"] == "unknown"
+        assert catalog.pricing()["source"] == "unknown"
 
     def test_prices_the_families_a_deployment_actually_runs(self):
         from core.llm.cost.pricing_router import priced_as
@@ -349,12 +349,12 @@ class TestThePricingPreflight:
 
         registry = get_registry()
         for model in (
-            "claude-opus-5",
-            "claude-sonnet-5",
+            "anthropic/claude-opus-5",
+            "anthropic/claude-sonnet-5",
             "openai/gpt-5",
             "openai/o4-mini",
             "vertex/gemini-3.5-flash",
-            "gemini-2.5-pro",
+            "gemini/gemini-2.5-pro",
             "bedrock/claude-sonnet-4",
         ):
             provider, bare = priced_as("bifrost", model)

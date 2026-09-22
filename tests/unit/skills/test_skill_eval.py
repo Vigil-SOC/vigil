@@ -69,8 +69,11 @@ def test_a_perfect_run_passes_every_case_and_exits_zero(monkeypatch, capsys):
     provider, messages, system_prompt, kwargs = seen[0]
     assert provider.provider_type == "anthropic"
     assert messages[0]["role"] == "user"
-    # Base prompt for the role, then the SKILL.md body; no tools on the call.
+    # Base prompt for the role, the no-tools note, then the SKILL.md body; no
+    # tools on the call and no read_skill instruction the model cannot follow.
     assert system_prompt.startswith("You are a SOC analyst")
+    assert "No tool is callable in this turn" in system_prompt
+    assert "call read_skill" not in system_prompt
     assert "VERDICT: ESCALATE" in system_prompt
     assert "tools" not in kwargs
 

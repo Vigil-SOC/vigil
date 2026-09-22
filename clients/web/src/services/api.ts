@@ -166,7 +166,7 @@ export const findingsApi = {
     cluster_id?: number
     min_anomaly_score?: number
     limit?: number
-  }) => api.get('/findings/', { params }),
+  }) => api.get('/findings', { params }),
   
   getById: (id: string) => api.get(`/findings/${id}`),
   
@@ -193,12 +193,12 @@ export const casesApi = {
   getAll: (params?: {
     status?: string
     priority?: string
-  }) => api.get<Schema<'CaseListResponse'>>('/cases/', { params }),
+  }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
 
   getById: (id: string) => api.get<Schema<'CaseSchema'>>(`/cases/${id}`),
 
   create: (data: Schema<'CaseCreate'>) =>
-    api.post<Schema<'CaseSchema'>>('/cases/', data),
+    api.post<Schema<'CaseSchema'>>('/cases', data),
 
   update: (id: string, data: Schema<'CaseUpdate'>) =>
     api.patch<Schema<'CaseSuccessResponse'>>(`/cases/${id}`, data),
@@ -345,8 +345,7 @@ export const slaPoliciesApi = {
     is_default?: boolean
   }) => api.put(`/sla-policies/${policyId}`, data),
   
-  delete: (policyId: string, force?: boolean) =>
-    api.delete(`/sla-policies/${policyId}`, { params: { force } }),
+  delete: (policyId: string) => api.delete(`/sla-policies/${policyId}`),
   
   setDefault: (policyId: string) =>
     api.post(`/sla-policies/${policyId}/set-default`),
@@ -401,6 +400,21 @@ export const mcpApi = {
 
   setServerEnabled: (name: string, enabled: boolean) =>
     api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+
+  // Vigil's own MCP surface: whether it listens, and what may open it.
+  getSurface: () => api.get('/mcp/surface'),
+
+  setSurfaceEnabled: (enabled: boolean) => api.put('/mcp/surface', { enabled }),
+
+  // The token is in this response and nowhere else.
+  mintCredential: (label: string, expiresInDays?: number) =>
+    api.post('/mcp/surface/credentials', {
+      label,
+      expires_in_days: expiresInDays ?? null,
+    }),
+
+  revokeCredential: (credentialId: string) =>
+    api.delete(`/mcp/surface/credentials/${credentialId}`),
 }
 
 export const claudeApi = {
@@ -991,6 +1005,10 @@ export const workflowApi = {
     iterations?: number
     approve_hypotheses?: boolean
   }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
+  // Read-only: is this report already hunted? Answers running | concluded | uncovered,
+  // the last two with a `proposal` body execute() accepts as-is. Never starts anything.
+  checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
+    api.post('/workflows/threat-hunt/coverage', body),
   reloadFiles: () => api.post('/workflows/reload'),
 
   // persisted to workflow_runs, so History lists past runs without retrieving
