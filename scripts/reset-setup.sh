@@ -167,13 +167,27 @@ def req(url, method="GET", body=None):
 def env_ref(field):
     """Re-declare a credential that lives in the environment, or None.
 
-    Returns the same {value, env_var, from_env} shape Bifrost hands back, with
-    the masked value dropped — echoing a mask back would store the mask as the
-    credential and every call would then 401.
+    Bifrost emits an env-backed field as {"value": <masked>, "ref": "env.X",
+    "type": "env"}; older builds used {"value", "env_var", "from_env"}. Either
+    is re-declared as the current shape with the masked value emptied — the
+    gateway re-resolves it from the environment, whereas echoing the mask back
+    would store the mask as the credential and every call would then 401.
+    A plain literal or a missing field is not an env reference: None.
     """
-    if isinstance(field, dict) and field.get("from_env") and field.get("env_var"):
-        return {"value": "", "env_var": field["env_var"], "from_env": True}
-    return None
+    if not isinstance(field, dict):
+        return None
+    ref = field.get("ref") or ""
+    if field.get("type") == "env" or ref.startswith("env."):
+        ref = ref or field.get("env_var") or ""
+    elif field.get("from_env") and field.get("env_var"):
+        ref = field["env_var"]
+    else:
+        return None
+    if not ref:
+        return None
+    if not ref.startswith("env."):
+        ref = f"env.{ref}"
+    return {"value": "", "ref": ref, "type": "env"}
 
 
 _verdicts = None
@@ -231,13 +245,18 @@ def disable(provider, key):
     # masks or stores, so the block has to come along or Bifrost loses the
     # endpoint. Vertex's project/region travel the same way; its
     # service-account JSON is left out so the proxy substitutes the stored one.
+    # Any of these may itself be an env reference (returned masked): re-declare
+    # the reference, never echo the masked dict; a typed literal goes as-is.
+    def carry(field):
+        return env_ref(field) or field
+
     ollama = key.get("ollama_key_config")
     if isinstance(ollama, dict):
-        body["ollama_key_config"] = {"url": env_ref(ollama.get("url")) or ollama.get("url")}
+        body["ollama_key_config"] = {"url": carry(ollama.get("url"))}
     vertex = key.get("vertex_key_config")
     if isinstance(vertex, dict):
         body["vertex_key_config"] = {
-            f: v for f, v in vertex.items() if f != "auth_credentials"
+            f: carry(v) for f, v in vertex.items() if f != "auth_credentials"
         }
 
     # The proxy first: it substitutes the plaintext it holds for any key a human
