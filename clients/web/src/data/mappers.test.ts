@@ -30,18 +30,12 @@ describe('mapApiCase priority', () => {
 })
 
 describe('mapApiSkill', () => {
-  it('maps the current DB row and ignores retired fields', () => {
-    expect(
-      mapApiSkill({ skill_id: 's-1', name: 'IP Enrichment', description: 'Enrich an IP.', category: 'enrichment', version: 2, is_active: false }),
-    ).toEqual({ id: 's-1', name: 'IP Enrichment', desc: 'Enrich an IP.', source: undefined })
-  })
-
-  it('maps the file-loader shape, keying by name and surfacing the source path', () => {
-    expect(mapApiSkill({ name: 'triage', description: null, source_path: 'skills/triage/SKILL.md' })).toEqual({
+  it('keys the loaded skill by name and surfaces its source path', () => {
+    expect(mapApiSkill({ name: 'triage', description: 'Triage a finding.', source_path: 'skills/triage' })).toEqual({
       id: 'triage',
       name: 'triage',
-      desc: '',
-      source: 'skills/triage/SKILL.md',
+      desc: 'Triage a finding.',
+      source: 'skills/triage',
     })
   })
 })

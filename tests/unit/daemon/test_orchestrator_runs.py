@@ -8,6 +8,7 @@ projection the agent layer serves.
 from __future__ import annotations
 
 import sys
+import uuid
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,7 +20,11 @@ sys.path.insert(0, str(REPO))
 from core.agents.projections import run_id_for
 from core.workflows.workflows_service import WorkflowDefinition, WorkflowsService
 from services.daemon.config import OrchestratorConfig
-from services.daemon.orchestrator import Orchestrator
+from services.daemon.orchestrator import (
+    Orchestrator,
+    _shadow_hypothesis,
+    shadow_run_id_for,
+)
 from services.daemon.workdir import WorkdirManager
 
 pytestmark = pytest.mark.unit
@@ -185,6 +190,200 @@ class TestEnqueue:
         status, reason = orch._update_investigation_status.call_args[0][1:3]
         assert status == "failed"
         assert "redis down" in reason
+
+
+C2_FINDING = {
+    "finding_id": "f-9",
+    "title": "Beaconing to 198.51.100.7",
+    "entity_context": {"hostnames": ["WS-042"], "dest_ips": ["198.51.100.7"]},
+    "mitre_predictions": {"T1071.001": 0.91, "T1059.001": 0.2},
+}
+
+
+# Shadow mode (#880): a second, non-executing `adjudicate` run beside the real one,
+# journaled on the ledger under an id derived from the same investigation.
+class TestShadowAdjudication:
+    async def _admit(
+        self,
+        tmp_path,
+        trigger_type,
+        *,
+        shadow=True,
+        queue=None,
+        runs=None,
+        finding=None,
+    ):
+        orch = _opening(tmp_path)
+        orch.config.shadow_adjudication = shadow
+        await orch._create_investigation(
+            "incident-response",
+            [finding or C2_FINDING],
+            trigger_type,
+            "high",
+            case_id="case-1",
+        )
+        record = orch._save_investigation.call_args[0][0]
+        if runs is None:
+            runs = MagicMock()
+            runs.get_run.return_value = None
+        with (
+            patch(
+                "services.daemon.orchestrator.enqueue_run", new=queue or AsyncMock()
+            ) as enqueued,
+            patch("services.daemon.orchestrator.WorkflowRunService", return_value=runs),
+        ):
+            await orch._enqueue_investigation(record)
+        return orch, record, enqueued, runs.begin_run
+
+    @pytest.mark.asyncio
+    async def test_off_by_default_enqueues_one_run_and_no_row(self, tmp_path):
+        orch, record, enqueued, begin_run = await self._admit(
+            tmp_path, "finding", shadow=False
+        )
+        assert enqueued.await_count == 1
+        begin_run.assert_not_called()
+        assert not (
+            tmp_path / record["investigation_id"] / "shadow_hypothesis.txt"
+        ).exists()
+
+    @pytest.mark.asyncio
+    async def test_on_enqueues_exactly_one_more_adjudicate_run(self, tmp_path):
+        orch, record, enqueued, begin_run = await self._admit(tmp_path, "finding")
+        inv_id = record["investigation_id"]
+        real, shadow = [c.args[0] for c in enqueued.await_args_list]
+
+        assert enqueued.await_count == 2
+        assert real["run_kind"] == "investigate"
+        assert shadow["run_kind"] == "adjudicate"
+        assert shadow["enqueued_by"] == "orchestrator"
+        # Derived from the investigation id so the pair joins by recomputing; a
+        # uuid because agent_events.run_id is one, and not the real run's.
+        assert shadow["run_id"] == shadow_run_id_for(inv_id)
+        assert shadow["run_id"] != run_id_for(inv_id)
+        assert str(uuid.UUID(shadow["run_id"])) == shadow["run_id"]
+        # Same job id as run id, so a restart re-enqueue dedupes in BullMQ.
+        assert enqueued.await_args_list[1].kwargs == {"job_id": shadow["run_id"]}
+
+        req, shadow_req = real["request"], shadow["request"]
+        assert shadow_req["playbook"] == "workflow:shadow-adjudication"
+        assert shadow_req["prompt"].startswith(req["prompt"])
+        assert "incident-response" in shadow_req["prompt"][len(req["prompt"]) :]
+        assert shadow_req["recall_keys"] == req["recall_keys"]
+        assert shadow_req["overrides"] == req["overrides"]
+        # One stated line, from the finding: title, entities, tactic of the top
+        # technique. The definition refuses a run with none.
+        assert req["hypotheses"] == []
+        (line,) = shadow_req["hypotheses"]
+        for part in (
+            "Beaconing to 198.51.100.7",
+            "host:ws-042",
+            "Command and Control",
+            "T1071.001",
+        ):
+            assert part in line
+        # The claim names every entity it is filed under, so the subjects are
+        # what it states rather than a wider set read off the finding.
+        assert shadow_req["hypothesis_subjects"] == {line: req["recall_keys"]}
+        assert all(key in line for key in req["recall_keys"])
+
+        # One investigations row and one workflow_runs row; the shadow is on the
+        # ledger, not in any table the daemon writes.
+        assert orch._save_investigation.call_count == 1
+        begin_run.assert_called_once()
+        assert begin_run.call_args.kwargs["run_id"] == shadow["run_id"]
+        assert begin_run.call_args.kwargs["workflow_id"] == "shadow-adjudication"
+        assert begin_run.call_args.kwargs["trigger_context"] == {
+            "run_kind": "adjudicate",
+            "investigation_id": inv_id,
+            "intake_workflow_id": "incident-response",
+        }
+        assert orch._update_investigation_status.call_args[0][1] == "executing"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("trigger_type", ["manual", "scheduled", "case_review"])
+    async def test_only_a_detection_finding_gets_a_shadow(self, tmp_path, trigger_type):
+        _, _, enqueued, begin_run = await self._admit(tmp_path, trigger_type)
+        assert enqueued.await_count == 1
+        begin_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_shadow_that_fails_never_fails_the_real_run(self, tmp_path):
+        queue = AsyncMock(side_effect=[None, RuntimeError("queue full")])
+        runs = MagicMock()
+        runs.get_run.return_value = None
+        runs.begin_run.return_value = "row"
+        orch, record, enqueued, _ = await self._admit(
+            tmp_path, "finding", queue=queue, runs=runs
+        )
+        assert enqueued.await_count == 2
+        statuses = [c.args[1] for c in orch._update_investigation_status.call_args_list]
+        assert "failed" not in statuses
+        assert statuses[-1] == "executing"
+        # The row it opened does not read as running with no job behind it.
+        runs.finalize_run.assert_called_once()
+        assert runs.finalize_run.call_args.args == (
+            shadow_run_id_for(record["investigation_id"]),
+        )
+        assert runs.finalize_run.call_args.kwargs["status"] == "failed"
+
+    @pytest.mark.asyncio
+    async def test_a_row_that_cannot_be_written_never_fails_the_real_run(
+        self, tmp_path
+    ):
+        runs = MagicMock()
+        runs.get_run.return_value = None
+        runs.begin_run.side_effect = RuntimeError("no database configured")
+        orch, _, enqueued, _ = await self._admit(tmp_path, "finding", runs=runs)
+        assert enqueued.await_count == 1
+        assert orch._update_investigation_status.call_args[0][1] == "executing"
+
+    # A restart re-enqueues assigned investigations through the same path.
+    @pytest.mark.asyncio
+    async def test_a_shadow_already_on_record_is_not_started_twice(self, tmp_path):
+        runs = MagicMock()
+        runs.get_run.return_value = {"run_id": "already-there"}
+        _, _, enqueued, begin_run = await self._admit(tmp_path, "finding", runs=runs)
+        assert enqueued.await_count == 1
+        begin_run.assert_not_called()
+
+    # mitre_predictions is stored in more than one shape (iter_techniques lists
+    # them); the line must come out of every one and never name an Unknown tactic.
+    @pytest.mark.parametrize(
+        "mitre, intent",
+        [
+            (
+                {"T1071.001": 0.91, "T1059.001": 0.2},
+                " and is Command and Control activity (T1071.001 Web Protocols)",
+            ),
+            (
+                {
+                    "techniques": [{"technique_id": "T1021.001", "confidence": 0.7}],
+                    "model": "v2",
+                },
+                " and is Lateral Movement activity (T1021.001 RDP)",
+            ),
+            (
+                [{"id": "T1190", "confidence": "0.8"}],
+                " and is Initial Access activity (T1190 Exploit Public-Facing Application)",
+            ),
+            # A technique the taxonomy has no tactic for is named on its own.
+            ({"T9999": 0.9}, " and is T9999 activity"),
+            ({"T1071": None, "T1059": 0.3}, ""),
+            ("garbage", ""),
+            (None, ""),
+        ],
+    )
+    def test_the_hypothesis_reads_every_prediction_shape(self, mitre, intent):
+        line = _shadow_hypothesis([{**C2_FINDING, "mitre_predictions": mitre}])
+        assert line.startswith("Beaconing to 198.51.100.7 involving ")
+        assert line.endswith(f"is what intake says it is{intent}")
+        assert "Unknown" not in line
+
+    def test_no_finding_means_no_line(self):
+        assert _shadow_hypothesis([]) == ""
+        assert (
+            _shadow_hypothesis([{}]) == "the admitted finding is what intake says it is"
+        )
 
 
 # The worker picks its loop from job.run_kind alone, so the kind the definition

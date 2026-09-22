@@ -10,12 +10,6 @@ a persisted user (lockout, history, reset flow end-to-end) are validated
 via unit tests in tests/unit/ against the underlying services.
 """
 
-import os
-
-# Keep CSRF out of the way for these contract checks; CSRF is exercised
-# by frontend Playwright / manual validation.
-os.environ.setdefault("VIGIL_CSRF_ENABLED", "false")
-
 import pytest
 from fastapi.testclient import TestClient
 
