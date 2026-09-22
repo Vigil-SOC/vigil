@@ -131,6 +131,14 @@ def _declare(
     # Chat has no approval-resume path. Isolate/contain drop via the verb set;
     # ART execute is an explicit id (native and flattened) so ``execute`` stays
     # off that set and splunk_execute remains callable.
+    #
+    # ``approve_action`` is not dropped, and that is the decision rather than an
+    # oversight: what it approves is an action a person already queued and can
+    # already release from the approvals screen, so chat releasing it is the same
+    # authority reached by a different door -- whereas ``isolate_host`` in chat
+    # would be a detonation nobody queued. If that reading is ever revisited, the
+    # thing to change is this list, not the verb set, which decides a different
+    # question.
     static_names = [n for n in static_names if n not in EXECUTE_IDS]
     mcp_names = [n for n in mcp if n not in static_names and not _is_destructive_mcp(n)]
     names = static_names + mcp_names

@@ -22,8 +22,9 @@ import type { SectionProps } from './types'
 
 type IntegrationsTab = 'servers' | 'surface' | 'ingestion' | 'detection'
 const TABS: [IntegrationsTab, string][] = [
-  ['servers', 'Connectors'],
-  // Connectors are the servers Vigil calls out to; this is the one Vigil is.
+  // "Connector" is the page extension (CONTEXT.md); these are the MCP servers
+  // Vigil calls out to, and the next tab is the one Vigil is.
+  ['servers', 'MCP Servers'],
   ['surface', 'Vigil’s MCP Server'],
   ['ingestion', 'Manual Upload'],
   ['detection', 'Detection Rules'],
@@ -129,7 +130,7 @@ function ServersPanel({ notify }: SectionProps) {
       </div>
 
       {phase === 'loading' && <EmptyState loading icon="link" title="Loading integrations…" />}
-      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load connectors" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
+      {phase === 'error' && <EmptyState error icon="alert" title="Couldn’t load MCP servers" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />}
 
       {phase === 'ready' && grouped.length === 0 && (
         <EmptyState
@@ -246,7 +247,7 @@ function ServersPanel({ notify }: SectionProps) {
           onClose={() => setBuilderOpen(false)}
           onSave={(id) => {
             setBuilderOpen(false)
-            notify('ok', `Custom integration "${id}" saved. Restart connectors to load it.`)
+            notify('ok', `Custom integration "${id}" saved. Restart the MCP servers to load it.`)
             reload()
             reloadInt()
           }}

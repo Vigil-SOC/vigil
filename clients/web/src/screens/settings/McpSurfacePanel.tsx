@@ -129,8 +129,10 @@ export default function McpSurfacePanel({ notify }: SectionProps) {
 
       <h4>Credentials</h4>
       <p className="muted">
-        A credential acts as you: what its holder may do is what your account may do. Mint one for
-        each caller, so it can be revoked on its own.
+        A credential carries your standing: what its holder may do is what your account may do, and
+        what it does is recorded against your name. It is still a program acting, not you — a case
+        it closes is closed by an agent with your credential, never by you at a keyboard. Mint one
+        for each caller, so it can be revoked on its own.
       </p>
 
       {minted && (

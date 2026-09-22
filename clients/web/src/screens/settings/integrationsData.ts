@@ -52,7 +52,6 @@ export const MCP_CATEGORIES: McpCategory[] = [
 
 export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   firecrawl: 'Web search and page retrieval for an investigation. Retrieved pages are scrubbed and delimited before a model sees them — a page is data, not direction.',
-  approval: 'Human-in-the-loop approval queue for response actions (isolate host, block IP, etc.). Prevents the AI from taking destructive actions without analyst review.',
   'security-detections': 'Searches across 30,000+ detection rules (Sigma, Splunk, Elastic, KQL). Powers detection gap analysis and rule recommendations.',
   github: 'Access GitHub repos, issues, PRs, and code search. Useful for looking up detection rule history, IaC configs, or creating remediation issues.',
   crowdstrike: 'Query CrowdStrike Falcon for endpoint detections, host info, and IOC management. Requires Falcon API credentials.',
