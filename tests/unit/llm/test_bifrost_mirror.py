@@ -34,7 +34,8 @@ LITERAL = {"value": "sk-***abcd", "ref": "", "type": ""}
         ({"value": "", "ref": "vault.secret/x", "type": "vault"}, True),
         ({"value": "", "ref": "env.X"}, True),  # ref only, no type
         ({"env_var": "ANTHROPIC_API_KEY", "from_env": True}, True),  # legacy
-        ({"env_var": "ANTHROPIC_API_KEY", "from_env": False, "value": "x"}, False),
+        # legacy marker but resolved: same "empty value" rule as the new shape
+        ({"env_var": "ANTHROPIC_API_KEY", "from_env": True, "value": "sk-***"}, False),
         ({"value": ""}, False),  # empty but not a reference: not our call
     ],
 )

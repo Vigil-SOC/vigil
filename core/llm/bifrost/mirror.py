@@ -68,7 +68,7 @@ def _cred_from_env(key: Dict[str, Any]) -> bool:
 
     A first-boot seed's keys reference ``env.ANTHROPIC_API_KEY`` and friends,
     which on a fresh install are unset. Mirroring those would offer providers
-    that cannot route and would green the setup step for a install nobody has
+    that cannot route and would green the setup step for an install nobody has
     configured — exactly what #761 exists to prevent.
 
     Bifrost >= 1.6 serialises a credential as ``{"value", "ref", "type"}``
