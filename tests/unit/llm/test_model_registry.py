@@ -381,16 +381,17 @@ async def test_list_available_models_uses_live_ids_when_present(monkeypatch):
     assert "qwen:0.5b" not in ids
 
 
-async def test_list_available_models_keeps_pinned_embedding_as_deprecated(monkeypatch):
-    """fetch_provider_models() now drops embedding ids, so a pinned one
-    must resurface through the orphan-pin branch as deprecated=True rather
-    than vanish — the operator needs to see the bad assignment (#1004)."""
+async def test_list_available_models_keeps_pinned_embedding_as_deprecated():
+    """fetch_provider_models() drops embedding ids from the cached list, so
+    a pinned one must resurface through the orphan-pin branch as
+    deprecated=True rather than vanish — the operator needs to see the bad
+    assignment (#1004). Seeds the real cache so the filter is exercised."""
     from core.llm.providers import registry as model_registry
 
-    async def _chat_only(_row):
-        return ["llama3.1:8b"]
-
-    monkeypatch.setattr(model_registry, "fetch_provider_models", _chat_only)
+    model_registry._MODEL_LIST_CACHE["ollama-local"] = [
+        "llama3.1:8b",
+        "nomic-embed-text:latest",
+    ]
     reg = _StubRegistry(
         assignments={
             "triage": ComponentAssignment(
@@ -401,7 +402,11 @@ async def test_list_available_models_keeps_pinned_embedding_as_deprecated(monkey
         },
         active_providers=[_Prov("ollama-local", "ollama", default_model="llama3.1:8b")],
     )
-    by_id = {m.model_id: m for m in await reg.list_available_models()}
+    try:
+        by_id = {m.model_id: m for m in await reg.list_available_models()}
+    finally:
+        model_registry._MODEL_LIST_CACHE.pop("ollama-local", None)
+    assert set(by_id) == {"llama3.1:8b", "nomic-embed-text:latest"}
     assert by_id["llama3.1:8b"].deprecated is False
     assert by_id["nomic-embed-text:latest"].deprecated is True
 

@@ -648,9 +648,10 @@ def is_extra_model(provider_type: str, model_id: str) -> bool:
 def is_chat_model(provider_type: str, model_id: str) -> bool:
     """False for embedding-only models, which can't hold a chat.
 
-    Signal is the live ``is_embedding`` capability flag when discovery
-    recorded one, with the name heuristic as fallback for ids that carry
-    no live meta. Reads ``_LIVE_META`` directly rather than through
+    Either signal rules a model out: the live ``is_embedding`` capability
+    flag when discovery recorded one, or the name heuristic (which also
+    covers ids with no live meta). Same test the chat picker has always
+    applied. Reads ``_LIVE_META`` directly rather than through
     ``_catalog_entry`` so unknown ids don't trip the pricing warning.
     """
     live = _LIVE_META.get((provider_type, model_id))
@@ -996,8 +997,8 @@ class ModelRegistry:
                     continue
                 seen.add(key)
                 logger.info(
-                    "Pinned model %s/%s is no longer advertised by upstream "
-                    "— keeping in list as deprecated",
+                    "Pinned model %s/%s is not in the provider's chat-model "
+                    "list — keeping in list as deprecated",
                     p.provider_type,
                     pin_model_id,
                 )

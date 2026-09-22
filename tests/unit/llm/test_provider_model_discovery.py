@@ -390,7 +390,7 @@ def test_fetch_provider_models_drops_embedding_by_live_flag():
     result = asyncio.run(model_registry.fetch_provider_models(_FakeRow("ollama")))
 
     assert result == ["llama3.1:8b"]
-    assert model_registry._MODEL_LIST_CACHE["p1"] == ["llama3.1:8b", "vectoriser:latest"]
+    assert cached == ["llama3.1:8b", "vectoriser:latest"]
     assert model_registry._MODEL_LIST_CACHE["p1"] is cached
     _reset_registry_state()
 
