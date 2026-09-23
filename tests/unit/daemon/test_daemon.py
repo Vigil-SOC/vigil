@@ -697,7 +697,9 @@ class TestTriageProviderResolution:
             FindingProcessor, "_resolve_triage_target", return_value=("openai-1", "gpt-4o")
         ):
             content, error = asyncio.run(processor._get_ai_triage("p"))
-        gateway.submit_triage.assert_awaited_once_with("p", provider_id="openai-1", model="gpt-4o")
+        gateway.submit_triage.assert_awaited_once_with(
+            "p", provider_id="openai-1", model="gpt-4o", timeout=60
+        )
         assert content is None and error == "AuthenticationError: bad key"
 
     def test_failed_triage_lands_in_ai_enrichment_without_ai_triage(self):
@@ -726,3 +728,35 @@ class TestTriageProviderResolution:
             finding = asyncio.run(processor._triage_finding(finding))
         assert "ai_triage_error" not in finding
         assert finding["ai_triage"]["result"]["severity"] == "low"
+
+
+class TestTriageTimeout:
+    """DAEMON_TRIAGE_TIMEOUT bounds both the daemon wait and the gateway wait (#1058)."""
+
+    ROUND_TRIP = 0.3  # stands in for a >60s model round trip, scaled down
+
+    @classmethod
+    def _run(cls, triage_timeout):
+        async def slow_submit(prompt, *, provider_id, model, timeout):
+            # Mirrors arq's job.result(timeout=...): the gateway's own clock.
+            await asyncio.wait_for(asyncio.sleep(cls.ROUND_TRIP), timeout)
+            return {"content": "SEVERITY: high\nREASONING: slow but fine"}
+
+        processor = FindingProcessor(ProcessingConfig(triage_timeout=triage_timeout))
+        processor._llm_gateway = Mock(submit_triage=slow_submit)
+        with patch.object(
+            FindingProcessor, "_resolve_triage_target", return_value=("gemini", "m")
+        ):
+            return processor, asyncio.run(processor._triage_finding({"finding_id": "f1"}))
+
+    def test_raised_timeout_triages_on_first_attempt(self):
+        processor, finding = self._run(triage_timeout=1)
+        assert "ai_triage_error" not in finding
+        assert finding["severity"] == "high"
+        assert processor.stats["triaged"] == 1
+
+    def test_short_timeout_times_out_naming_the_knob(self, caplog):
+        processor, finding = self._run(triage_timeout=0.1)
+        assert finding["ai_triage_error"] == "timed out after 0.1s"
+        assert processor.stats["triaged"] == 0
+        assert "timed out after 0.1s for f1 (DAEMON_TRIAGE_TIMEOUT)" in caplog.text

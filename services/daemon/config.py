@@ -104,7 +104,6 @@ class OrchestratorConfig:
 class LLMQueueConfig:
     redis_url: str = "redis://localhost:6379/0"
     max_concurrent_llm_calls: int = 5
-    triage_timeout: int = 90
     investigation_timeout: int = 180
     chat_timeout: int = 120
     session_ttl: int = 14400  # 4 hours
@@ -154,6 +153,7 @@ class DaemonConfig:
         config.processing.auto_triage_enabled = settings.daemon_auto_triage
         config.processing.auto_enrich_enabled = settings.daemon_auto_enrich
         config.processing.batch_size = settings.daemon_batch_size
+        config.processing.triage_timeout = settings.daemon_triage_timeout
         config.processing.enrich_max_inflight = settings.daemon_enrich_max_inflight
         config.processing.enrich_backfill_enabled = settings.daemon_enrich_backfill
         config.processing.enrich_backfill_interval = (

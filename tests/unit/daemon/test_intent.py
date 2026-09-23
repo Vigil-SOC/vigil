@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.config import Settings
+from core.config import Settings, get_settings
 from core.intent import (
     DEFAULT_INTENT_FILE,
     HIGHER_TIGHTER,
@@ -160,6 +160,14 @@ def test_from_env_records_env_and_default_sources(offline_config, monkeypatch):
     assert config.sources["response.confidence_threshold"] == "env"
     assert config.sources["processing.auto_triage_enabled"] == "default"
     assert config.response.confidence_threshold == 0.75
+
+
+def test_from_env_threads_triage_timeout(offline_config, monkeypatch):
+    monkeypatch.delenv("DAEMON_TRIAGE_TIMEOUT", raising=False)
+    assert DaemonConfig.from_env().processing.triage_timeout == 60
+    monkeypatch.setenv("DAEMON_TRIAGE_TIMEOUT", "150")
+    get_settings.cache_clear()
+    assert DaemonConfig.from_env().processing.triage_timeout == 150
 
 
 class _FakeConfigService:

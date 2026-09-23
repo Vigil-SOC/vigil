@@ -478,8 +478,12 @@ class FindingProcessor:
                 finding["ai_triage_error"] = error or "empty LLM response"
 
         except asyncio.TimeoutError:
-            logger.warning(f"AI triage timed out for {finding.get('finding_id')}")
-            finding["ai_triage_error"] = "timed out"
+            seconds = self.config.triage_timeout
+            logger.warning(
+                f"AI triage timed out after {seconds}s for "
+                f"{finding.get('finding_id')} (DAEMON_TRIAGE_TIMEOUT)"
+            )
+            finding["ai_triage_error"] = f"timed out after {seconds}s"
         except Exception as e:
             logger.error(f"AI triage error: {e}")
             finding["ai_triage_error"] = f"{type(e).__name__}: {e}"
@@ -577,8 +581,12 @@ REASONING: [Brief explanation]
             return None, "no LLM provider configured"
         provider_id, model = target
         try:
+            # The gateway's own default (90s) would otherwise cap the wait.
             result = await self._llm_gateway.submit_triage(
-                prompt, provider_id=provider_id, model=model
+                prompt,
+                provider_id=provider_id,
+                model=model,
+                timeout=self.config.triage_timeout,
             )
         except Exception as e:
             logger.error(f"LLM queue triage error: {e}")

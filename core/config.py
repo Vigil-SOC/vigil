@@ -246,6 +246,7 @@ class Settings(BaseSettings):
     daemon_auto_triage: bool = True
     daemon_auto_enrich: bool = True
     daemon_batch_size: int = 10
+    daemon_triage_timeout: int = 60
     daemon_enrich_max_inflight: int = 50
     daemon_enrich_backfill: bool = True
     daemon_enrich_backfill_interval: int = 300
