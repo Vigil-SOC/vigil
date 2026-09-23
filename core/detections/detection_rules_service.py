@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from core.config import _safe_home, vigil_path
+from core.config import vigil_path
 
 logger = logging.getLogger(__name__)
 
