@@ -70,7 +70,9 @@ def vigil_path(*parts: str, write: bool = False) -> Path:
                 fallback_target = Path("/tmp") / _VIGIL_DIRNAME
                 if parts:
                     fallback_target = fallback_target.joinpath(*parts)
-                (fallback_target.parent if parts else fallback_target).mkdir(parents=True, exist_ok=True)
+                (fallback_target.parent if parts else fallback_target).mkdir(
+                    parents=True, exist_ok=True
+                )
                 return fallback_target
             raise
         return target

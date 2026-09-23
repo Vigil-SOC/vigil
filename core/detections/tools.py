@@ -41,7 +41,8 @@ class SecurityDetectionsTools:
             paths.get(
                 "sigma",
                 os.getenv(
-                    "SIGMA_PATHS", str(vigil_path("security-detections", "sigma", "rules"))
+                    "SIGMA_PATHS",
+                    str(vigil_path("security-detections", "sigma", "rules")),
                 ),
             )
         )
@@ -51,7 +52,9 @@ class SecurityDetectionsTools:
                 os.getenv(
                     "SPLUNK_PATHS",
                     str(
-                        vigil_path("security-detections", "security_content", "detections")
+                        vigil_path(
+                            "security-detections", "security_content", "detections"
+                        )
                     ),
                 ),
             )
