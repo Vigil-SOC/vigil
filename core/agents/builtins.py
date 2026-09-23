@@ -59,11 +59,8 @@ class AgentProfile:
     recommended_tools: List[str]
     max_tokens: int = 4096
     enable_thinking: bool = False
-    # GH #84 PR-D — per-agent extended-thinking budget (tokens). Only honored
-    # when ``enable_thinking`` is True. ``None`` means "inherit from the
-    # caller's default" (ClaudeService.thinking_budget or the
-    # CLAUDE_THINKING_BUDGET env var in daemon/agent_runner.py). Tune down
-    # for simple agents, up for deep-reasoning ones.
+    # Per-agent extended-thinking budget (tokens). Used when enable_thinking
+    # is set. None leaves this profile without a budget of its own.
     thinking_budget: Optional[int] = None
     # GH #89 — per-agent model override. None = inherit from
     # ai_model_configs[component_category] → ai_model_configs['chat_default'].

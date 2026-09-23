@@ -542,10 +542,9 @@ export const configApi = {
 
   getAIOperations: () => api.get('/config/ai-operations'),
   setAIOperations: (data: {
-    prompt_cache_enabled: boolean
-    history_window: number
-    tool_response_budget_default: number
-    thinking_budget: number
+    local_ollama_recovery_enabled: boolean
+    local_ollama_recovery_retry_limit: number
+    local_ollama_recovery_restart_gateway: boolean
   }) => api.post('/config/ai-operations', data),
 
   getDarktrace: () => api.get('/config/darktrace'),

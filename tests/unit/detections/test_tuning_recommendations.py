@@ -40,23 +40,13 @@ def rec():
 def _row(
     *,
     agent_id: str | None = "investigator",
-    input_tokens: int = 1000,
-    output_tokens: int = 200,
     thinking_enabled: bool = True,
     thinking_content: str = "",
-    tool_results: list | None = None,
-    request_messages: list | None = None,
 ) -> dict:
     return {
         "agent_id": agent_id,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
         "thinking_enabled": thinking_enabled,
-        "thinking_budget": 10000,
         "thinking_content": thinking_content,
-        "tool_results": tool_results or [],
-        "request_messages": request_messages or [],
-        "cost_usd": 0.01,
     }
 
 
@@ -110,63 +100,21 @@ class TestThinkingBudgetRecs:
         )
 
 
-class TestHistoryWindow:
-    def test_reports_distribution(self, rec):
-        rows = [
-            _row(request_messages=[{"role": "user"}] * n)
-            for n in (5, 10, 15, 40, 80)
-        ]
-        out = rec.recommend_history_window(rows)
-        assert out["samples"] == 5
-        assert out["p50_messages"] == 15
-        assert out["max_messages"] == 80
-
-    def test_no_rows(self, rec):
-        assert rec.recommend_history_window([]) == {"samples": 0}
-
-
-class TestToolResponseBudget:
-    def test_reports_and_rounds_to_nearest_1k(self, rec):
-        # 10 tool results: sizes in tokens 100, 500, 1000, ..., up to a few k.
-        rows = [
-            _row(
-                tool_results=[
-                    {
-                        "content": [
-                            {"type": "text", "text": "x" * (tokens * 4)},
-                        ]
-                    }
-                ],
-            )
-            for tokens in [200, 500, 800, 1000, 1500, 2000, 3000, 4000, 6000, 9000]
-        ]
-        out = rec.recommend_tool_response_budget(rows)
-        assert out["samples"] == 10
-        # Recommendation rounds p95 (9000) to nearest 1k = 9000.
-        assert out["recommended_default"] % 1000 == 0
-
-    def test_no_rows(self, rec):
-        assert rec.recommend_tool_response_budget([]) == {"samples": 0}
-
-
-class TestDaemonThinkingBudget:
-    def test_only_rows_without_agent_id_counted(self, rec):
-        rows = [
-            # Named sub-agent rows — should be skipped by daemon reco.
-            _row(agent_id="investigator", thinking_content="x" * 40000),
-            # Daemon rows (no agent_id).
-            _row(agent_id=None, thinking_content="x" * 2000),
-            _row(agent_id=None, thinking_content="x" * 3000),
-            _row(agent_id=None, thinking_content="x" * 5000),
-        ]
-        out = rec.recommend_daemon_thinking_budget(rows)
-        assert out["samples"] == 3
-        assert out["max"] == 1250  # 5000 chars // 4 = 1250 tokens
-        assert out["recommended"] >= 2000  # floor
-
-    def test_no_daemon_rows(self, rec):
-        rows = [_row(agent_id="investigator", thinking_content="x" * 40000)]
-        assert rec.recommend_daemon_thinking_budget(rows) == {"samples": 0}
+def test_script_does_not_recommend_removed_ai_operations_knobs():
+    """The daemon-wide budget, history window, and tool-result budget are
+    not settings anymore. Recommending them would send operators to knobs
+    that do nothing."""
+    text = SCRIPT.read_text()
+    for name in (
+        "recommend_history_window",
+        "recommend_tool_response_budget",
+        "recommend_daemon_thinking_budget",
+        "CLAUDE_HISTORY_WINDOW",
+        "TOOL_RESPONSE_BUDGET_DEFAULT",
+        "CLAUDE_THINKING_BUDGET",
+        "Settings → AI Config",
+    ):
+        assert name not in text
 
 
 def test_script_does_not_tell_operators_to_set_database_url():

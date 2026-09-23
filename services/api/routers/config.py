@@ -1056,19 +1056,14 @@ async def set_postgresql_config(config: PostgreSQLConfig):
 
 
 class AIOperationsSettingsConfig(BaseModel):
-    """Runtime cost/perf toggles introduced across GH #84 PR-C/PR-D/PR-F.
+    """Local Ollama enrichment recovery toggles.
 
     Persisted in ``system_config`` at key ``ai_operations.settings``.
     Consumed via ``core.platform.runtime_config.get_ai_operations_setting``
-    which layers DB → env var → default. Exposed in the Settings UI
-    (AI Config → AI Operations) so operators can flip values live
-    without restarting the backend / daemon / llm-worker.
+    which layers DB → env var → default. Exposed in Settings → AI Config
+    so operators can flip values live without restarting the backend.
     """
 
-    prompt_cache_enabled: bool = True
-    history_window: int = 20
-    tool_response_budget_default: int = 8000
-    thinking_budget: int = 10000
     local_ollama_recovery_enabled: bool = True
     local_ollama_recovery_retry_limit: int = Field(default=1, ge=0, le=3)
     local_ollama_recovery_restart_gateway: bool = True
@@ -1079,13 +1074,21 @@ AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()
 
 @router.get("/ai-operations")
 async def get_ai_operations_config():
-    """Return the current AI-operations toggles (defaults merged with DB overrides)."""
+    """Return the local-Ollama recovery toggles (defaults merged with DB overrides).
+
+    Keys the schema no longer declares — leftover cost/perf knobs in an
+    existing row — are dropped. They are not migrated and not fatal.
+    """
     try:
         config_service = get_config_service()
         value = config_service.get_system_config("ai_operations.settings")
-        if value:
-            return {**AI_OPERATIONS_DEFAULTS, **value}
-        return AI_OPERATIONS_DEFAULTS
+        allowed = AIOperationsSettingsConfig.model_fields
+        stored = {
+            key: value[key]
+            for key in allowed
+            if isinstance(value, dict) and key in value
+        }
+        return {**AI_OPERATIONS_DEFAULTS, **stored}
     except Exception as e:
         logger.error(f"Error getting AI operations config: {e}")
         return AI_OPERATIONS_DEFAULTS
@@ -1099,7 +1102,7 @@ async def set_ai_operations_config(config: AIOperationsSettingsConfig):
     success = config_service.set_system_config(
         key="ai_operations.settings",
         value=config_data,
-        description="Runtime AI cost/perf toggles (GH #84 PR-F)",
+        description="Local Ollama enrichment recovery toggles",
         config_type="ai_operations",
         change_reason="Updated via Settings UI",
     )

@@ -2533,7 +2533,10 @@ export interface paths {
         };
         /**
          * Get Ai Operations Config
-         * @description Return the current AI-operations toggles (defaults merged with DB overrides).
+         * @description Return the local-Ollama recovery toggles (defaults merged with DB overrides).
+         *
+         *     Keys the schema no longer declares — leftover cost/perf knobs in an
+         *     existing row — are dropped. They are not migrated and not fatal.
          */
         get: operations["get_api_config_ai-operations"];
         put?: never;
@@ -7938,20 +7941,14 @@ export interface components {
         };
         /**
          * AIOperationsSettingsConfig
-         * @description Runtime cost/perf toggles introduced across GH #84 PR-C/PR-D/PR-F.
+         * @description Local Ollama enrichment recovery toggles.
          *
          *     Persisted in ``system_config`` at key ``ai_operations.settings``.
          *     Consumed via ``core.platform.runtime_config.get_ai_operations_setting``
-         *     which layers DB → env var → default. Exposed in the Settings UI
-         *     (AI Config → AI Operations) so operators can flip values live
-         *     without restarting the backend / daemon / llm-worker.
+         *     which layers DB → env var → default. Exposed in Settings → AI Config
+         *     so operators can flip values live without restarting the backend.
          */
         AIOperationsSettingsConfig: {
-            /**
-             * History Window
-             * @default 20
-             */
-            history_window: number;
             /**
              * Local Ollama Recovery Enabled
              * @default true
@@ -7967,21 +7964,6 @@ export interface components {
              * @default 1
              */
             local_ollama_recovery_retry_limit: number;
-            /**
-             * Prompt Cache Enabled
-             * @default true
-             */
-            prompt_cache_enabled: boolean;
-            /**
-             * Thinking Budget
-             * @default 10000
-             */
-            thinking_budget: number;
-            /**
-             * Tool Response Budget Default
-             * @default 8000
-             */
-            tool_response_budget_default: number;
         };
         /**
          * ActivityAdd

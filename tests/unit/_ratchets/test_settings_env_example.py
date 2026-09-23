@@ -75,13 +75,9 @@ NOT_SETTINGS = {
     "VSTRIKE_VERIFY_SSL",
     # core.platform.runtime_config ENV_FALLBACKS: DB-first settings whose env var is
     # only the fallback when the system_config row is absent.
-    "ANTHROPIC_PROMPT_CACHE_ENABLED",
-    "CLAUDE_HISTORY_WINDOW",
-    "CLAUDE_THINKING_BUDGET",
     "LOCAL_OLLAMA_RECOVERY_ENABLED",
     "LOCAL_OLLAMA_RECOVERY_RESTART_GATEWAY",
     "LOCAL_OLLAMA_RECOVERY_RETRY_LIMIT",
-    "TOOL_RESPONSE_BUDGET_DEFAULT",
     # Per-provider names built at runtime, so they cannot be static fields.
     "ANTHROPIC_EXTRA_MODELS",
     "OPENAI_EXTRA_MODELS",
