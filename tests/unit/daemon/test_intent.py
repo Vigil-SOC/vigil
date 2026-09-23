@@ -64,9 +64,11 @@ def test_shipped_manifest_declares_every_field_at_default():
 def test_every_response_knob_has_a_manifest_key():
     # dry_run only suppresses execution; it is not an autonomy knob.
     paths = {f.path for f in INTENT_FIELDS}
-    missing = {
-        f"response.{f.name}" for f in dataclasses.fields(ResponseConfig)
-    } - {"response.dry_run"} - paths
+    missing = (
+        {f"response.{f.name}" for f in dataclasses.fields(ResponseConfig)}
+        - {"response.dry_run"}
+        - paths
+    )
     assert not missing, f"ResponseConfig fields without an INTENT.md key: {missing}"
 
 
