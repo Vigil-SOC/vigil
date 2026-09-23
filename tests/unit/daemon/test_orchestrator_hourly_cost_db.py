@@ -120,6 +120,48 @@ async def test_the_saved_cap_wins_over_startup_config():
     assert orch.get_cost_summary()["hourly_budget_remaining"] == 4.5
 
 
+def test_cumulative_cost_reports_count_once_not_summed():
+    # cost_usd is cumulative per run: $1 then $3 is $3 of spend, not $4.
+    _seed(("inv-hour-cum", 0.0, timedelta(minutes=1)))
+    orch = _orchestrator()
+
+    orch._record_progress("inv-hour-cum", {"iterations": 1, "cost_usd": 1.0})
+    orch._record_progress("inv-hour-cum", {"iterations": 2, "cost_usd": 3.0})
+
+    assert orch._hourly_cost() == 3.0
+
+
+@pytest.mark.asyncio
+async def test_the_pause_survives_enabled_sync_and_lifts_as_spend_ages_out():
+    from core.storage.connection import get_db_manager
+    from core.storage.models import Investigation
+
+    _seed(("inv-hour-a", 6.0, timedelta(minutes=10)), saved_cap=CAP)
+    orch = _orchestrator()
+    orch._enabled = True
+
+    await _run_intake(orch, [])
+    # The settings row says enabled; syncing it must neither clear the pause
+    # nor be what the pause is made of.
+    orch._sync_enabled_from_db()
+    await _run_intake(orch, [])
+
+    assert orch._enabled is True
+    orch._process_intake_row.assert_not_awaited()
+    assert orch.get_cost_summary()["hourly_paused"] is True
+
+    with get_db_manager().session_scope() as session:
+        session.query(Investigation).update(
+            {Investigation.last_activity_at: utcnow() - timedelta(minutes=61)}
+        )
+    orch._sync_enabled_from_db()
+    await _run_intake(orch, [])
+
+    orch._process_intake_row.assert_awaited_once()
+    assert orch._enabled is True
+    assert orch.get_cost_summary()["hourly_paused"] is False
+
+
 @pytest.mark.asyncio
 async def test_an_unreadable_hour_keeps_intake_paused():
     _seed(("inv-hour-a", 6.0, timedelta(minutes=10)))
@@ -131,3 +173,4 @@ async def test_an_unreadable_hour_keeps_intake_paused():
 
     orch._process_intake_row.assert_not_awaited()
     orch._enqueue_investigation.assert_not_awaited()
+    assert orch.get_cost_summary()["hourly_paused"] is True

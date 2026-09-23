@@ -1454,11 +1454,10 @@ class Orchestrator:
         Not a write to _enabled: _sync_enabled_from_db would undo it within 5s.
         """
         spent = self._hourly_cost()
-        if spent is None:
-            # Unknown spend keeps the last decision rather than releasing a pause.
-            return getattr(self, "_hourly_paused", False)
         limit = self._hourly_cost_limit()
-        paused = spent >= limit
+        paused = self._hourly_pause_decision(spent, limit)
+        if spent is None:
+            return paused
         if paused != getattr(self, "_hourly_paused", False):
             self._hourly_paused = paused
             if paused:
@@ -1470,6 +1469,12 @@ class Orchestrator:
                     f"Hourly cost ${spent:.4f} below limit ${limit:.4f}, resuming intake"
                 )
         return paused
+
+    def _hourly_pause_decision(self, spent: Optional[float], limit: float) -> bool:
+        # Unknown spend keeps the last decision rather than releasing a pause.
+        if spent is None:
+            return getattr(self, "_hourly_paused", False)
+        return spent >= limit
 
     # -------------------------------------------------------------------------
     # Review Loop
@@ -2245,12 +2250,17 @@ class Orchestrator:
             for i in all_inv
             if i.get("status") in ("assigned", "executing")
         )
-        hourly = self._hourly_cost() or 0.0
+        spent = self._hourly_cost()
+        limit = self._hourly_cost_limit()
+        hourly = spent or 0.0
         return {
             "total_cost_usd": round(total, 4),
             "active_cost_usd": round(active_cost, 4),
             "hourly_cost_usd": round(hourly, 4),
-            "hourly_budget_remaining": round(self._hourly_cost_limit() - hourly, 4),
+            "hourly_budget_remaining": round(limit - hourly, 4),
+            # /status reports `enabled` from the settings row, which a pause
+            # never touches; this is the only place the pause is visible.
+            "hourly_paused": self._hourly_pause_decision(spent, limit),
             "per_investigation_limit": self.config.max_cost_per_investigation,
         }
 

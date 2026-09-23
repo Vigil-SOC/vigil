@@ -155,7 +155,7 @@ export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }:
       </div>
 
       {/* ---------- hourly budget (only meaningful while enabled) ---------- */}
-      {status.enabled && <BudgetBar used={cost.hourly_cost_usd} remaining={cost.hourly_budget_remaining} />}
+      {status.enabled && <BudgetBar used={cost.hourly_cost_usd} remaining={cost.hourly_budget_remaining} paused={!!cost.hourly_paused} />}
 
       {/* ---------- investigation queue ---------- */}
       <div className="px-[22px] pt-5 pb-6">
@@ -299,14 +299,21 @@ function KpiCell({
   )
 }
 
-function BudgetBar({ used, remaining }: { used: number; remaining: number }) {
+function BudgetBar({ used, remaining, paused }: { used: number; remaining: number; paused: boolean }) {
   const total = used + remaining
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 100
-  const low = remaining < 5
+  const low = paused || remaining < 5
   return (
     <div className="px-[22px] pt-4">
       <div className="flex items-center justify-between mb-1.5 text-xs text-tx-3">
-        <span>Hourly budget · {fmtCost(used)} of ${total.toFixed(2)}</span>
+        <span>
+          Hourly budget · {fmtCost(used)} of ${total.toFixed(2)}
+          {paused && (
+            <span style={{ color: 'var(--crit)', fontWeight: 600 }}>
+              {' '}· Intake paused: hourly limit reached, running investigations continue
+            </span>
+          )}
+        </span>
         <span style={low ? { color: 'var(--crit)', fontWeight: 600 } : undefined}>${remaining.toFixed(2)} remaining</span>
       </div>
       <div style={{ height: 8, borderRadius: 6, background: 'var(--bg-2)', overflow: 'hidden' }}>
