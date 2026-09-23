@@ -134,10 +134,10 @@ export interface ProbeBlock {
 export interface ProbeSummary {
   name: string
   expected: ProbeBlock['expected']
-  /** the newest row has no score yet (under an hour old) */
+  /** the newest row has no score yet; the daemon scores a row an hour after creation */
   awaiting: boolean
-  /** the newest scored row, which may be older than an awaiting one */
-  latest: (NonNullable<ProbeBlock['score']> & { timestamp?: string }) | null
+  /** score of the newest scored row, which may be older than an awaiting one */
+  latest: NonNullable<ProbeBlock['score']> | null
 }
 
 export interface ProbeScores {
@@ -173,7 +173,7 @@ export function summarizeProbes(rows: ApiFinding[], now: number = Date.now()): P
       entry = { name: probe.name, expected, awaiting: !score, latest: null }
       byName.set(probe.name, entry)
     }
-    if (score && !entry.latest) entry.latest = { ...score, timestamp: row.timestamp ?? undefined }
+    if (score && !entry.latest) entry.latest = score
     if (score && ts(row) >= since) tally[score.outcome] += 1
   }
   return { probes: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)), tally }
