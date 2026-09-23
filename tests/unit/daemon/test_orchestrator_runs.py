@@ -55,6 +55,17 @@ def _record(**overrides):
     return {"investigation_id": INV, "workflow_id": "incident-response", **overrides}
 
 
+# The row write is best-effort and talks to Postgres. These tests assert the
+# job, not the database, so a stand-in keeps the no-service job offline.
+@pytest.fixture(autouse=True)
+def _recorded_runs():
+    runs = MagicMock()
+    runs.get_run.return_value = None
+    runs.begin_run.return_value = "wfr-row"
+    with patch("services.daemon.orchestrator.WorkflowRunService", return_value=runs):
+        yield runs
+
+
 # A real workdir, because what is being tested is that the keys survive the gap
 # between an investigation being created and being enqueued -- which is a file on
 # disk and a read of it, not a value held in the process.
@@ -191,6 +202,153 @@ class TestEnqueue:
         assert status == "failed"
         assert "redis down" in reason
 
+    @pytest.mark.asyncio
+    async def test_writes_the_run_row_coverage_reads(self, tmp_path):
+        orch = _opening(tmp_path)
+        hypothesis = "Beaconing from 203.0.113.77\nSame host, second claim"
+        subjects = {
+            "Beaconing from 203.0.113.77": ["ip:203.0.113.77"],
+            "Same host, second claim": ["host:ws-1"],
+        }
+        await orch._create_investigation(
+            "threat-hunt",
+            [],
+            "manual",
+            "medium",
+            case_id="case-9",
+            hypothesis=hypothesis,
+            hypothesis_subjects=subjects,
+        )
+        record = orch._save_investigation.call_args[0][0]
+        runs = MagicMock()
+        runs.get_run.return_value = None
+        runs.begin_run.return_value = record["run_id"]
+        with (
+            patch("services.daemon.orchestrator.enqueue_run", new=AsyncMock()),
+            patch("services.daemon.orchestrator.WorkflowRunService", return_value=runs),
+        ):
+            await orch._enqueue_investigation(record)
+
+        runs.begin_run.assert_called_once()
+        kwargs = runs.begin_run.call_args.kwargs
+        assert (
+            kwargs["run_id"]
+            == record["run_id"]
+            == run_id_for(record["investigation_id"])
+        )
+        assert kwargs["workflow_id"] == "threat-hunt"
+        assert kwargs["workflow_name"] == "threat-hunt"
+        assert kwargs["workflow_source"] == "agent"
+        assert kwargs["triggered_by"] == "orchestrator"
+        assert kwargs["trigger_context"] == {
+            "run_kind": "hunt",
+            "hypothesis_subjects": subjects,
+            "hypothesis": hypothesis,
+            "investigation_id": record["investigation_id"],
+            "case_id": "case-9",
+        }
+
+    @pytest.mark.asyncio
+    async def test_omits_case_id_when_the_investigation_has_none(self):
+        orch = _orchestrator()
+        runs = MagicMock()
+        runs.get_run.return_value = None
+        runs.begin_run.return_value = "wfr-row"
+        with (
+            patch("services.daemon.orchestrator.enqueue_run", new=AsyncMock()),
+            patch("services.daemon.orchestrator.WorkflowRunService", return_value=runs),
+        ):
+            await orch._enqueue_investigation(_record())
+
+        context = runs.begin_run.call_args.kwargs["trigger_context"]
+        assert "case_id" not in context
+        assert context["investigation_id"] == INV
+        assert context["run_kind"] == "investigate"
+        assert context["hypothesis_subjects"] == {}
+
+    @pytest.mark.asyncio
+    async def test_a_run_already_on_record_is_not_written_twice(self):
+        orch = _orchestrator()
+        runs = MagicMock()
+        runs.get_run.return_value = {"run_id": run_id_for(INV)}
+        with (
+            patch(
+                "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
+            ) as enqueued,
+            patch("services.daemon.orchestrator.WorkflowRunService", return_value=runs),
+        ):
+            await orch._enqueue_investigation(_record())
+
+        runs.begin_run.assert_not_called()
+        runs.finalize_run.assert_not_called()
+        assert enqueued.await_args[0][0]["run_id"] == run_id_for(INV)
+        assert orch._update_investigation_status.call_args[0][1] == "executing"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", [None, RuntimeError("no database configured")])
+    async def test_a_row_that_cannot_be_written_still_enqueues(self, failure):
+        orch = _orchestrator()
+        runs = MagicMock()
+        runs.get_run.return_value = None
+        if failure is None:
+            runs.begin_run.return_value = None
+        else:
+            runs.begin_run.side_effect = failure
+        with (
+            patch(
+                "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
+            ) as enqueued,
+            patch("services.daemon.orchestrator.WorkflowRunService", return_value=runs),
+        ):
+            await orch._enqueue_investigation(_record())
+
+        assert enqueued.await_count == 1
+        runs.finalize_run.assert_not_called()
+        assert orch._update_investigation_status.call_args[0][1] == "executing"
+
+    @pytest.mark.asyncio
+    async def test_a_refused_enqueue_finalizes_the_row_it_wrote(self):
+        orch = _orchestrator()
+        runs = MagicMock()
+        runs.get_run.return_value = None
+        runs.begin_run.return_value = run_id_for(INV)
+        with (
+            patch(
+                "services.daemon.orchestrator.enqueue_run",
+                new=AsyncMock(side_effect=RuntimeError("redis down")),
+            ),
+            patch("services.daemon.orchestrator.WorkflowRunService", return_value=runs),
+        ):
+            await orch._enqueue_investigation(_record())
+
+        runs.finalize_run.assert_called_once()
+        assert runs.finalize_run.call_args.args == (run_id_for(INV),)
+        assert runs.finalize_run.call_args.kwargs["status"] == "failed"
+        assert "redis down" in runs.finalize_run.call_args.kwargs["error"]
+        status, reason = orch._update_investigation_status.call_args[0][1:3]
+        assert status == "failed"
+        assert "redis down" in reason
+
+    # A restart re-enters after the row exists. A queue blip on that second
+    # attempt must not mark the hunt coverage already recorded as failed.
+    @pytest.mark.asyncio
+    async def test_a_refused_reenqueue_leaves_the_existing_row(self):
+        orch = _orchestrator()
+        runs = MagicMock()
+        runs.get_run.return_value = {"run_id": run_id_for(INV), "status": "running"}
+        with (
+            patch(
+                "services.daemon.orchestrator.enqueue_run",
+                new=AsyncMock(side_effect=RuntimeError("redis down")),
+            ),
+            patch("services.daemon.orchestrator.WorkflowRunService", return_value=runs),
+        ):
+            await orch._enqueue_investigation(_record())
+
+        runs.begin_run.assert_not_called()
+        runs.finalize_run.assert_not_called()
+        assert orch._update_investigation_status.call_args[0][1] == "failed"
+
 
 C2_FINDING = {
     "finding_id": "f-9",
@@ -236,12 +394,14 @@ class TestShadowAdjudication:
         return orch, record, enqueued, runs.begin_run
 
     @pytest.mark.asyncio
-    async def test_off_by_default_enqueues_one_run_and_no_row(self, tmp_path):
+    async def test_off_by_default_enqueues_one_run_and_no_shadow_row(self, tmp_path):
         orch, record, enqueued, begin_run = await self._admit(
             tmp_path, "finding", shadow=False
         )
         assert enqueued.await_count == 1
-        begin_run.assert_not_called()
+        # The investigation is recorded; shadow mode is what would add a second row.
+        assert begin_run.call_count == 1
+        assert begin_run.call_args.kwargs["workflow_id"] == "incident-response"
         assert not (
             tmp_path / record["investigation_id"] / "shadow_hypothesis.txt"
         ).exists()
@@ -286,10 +446,10 @@ class TestShadowAdjudication:
         assert shadow_req["hypothesis_subjects"] == {line: req["recall_keys"]}
         assert all(key in line for key in req["recall_keys"])
 
-        # One investigations row and one workflow_runs row; the shadow is on the
-        # ledger, not in any table the daemon writes.
+        # One investigations row. The shadow's workflow_runs row is the second
+        # begin_run; the first is the investigation's own.
         assert orch._save_investigation.call_count == 1
-        begin_run.assert_called_once()
+        assert begin_run.call_count == 2
         assert begin_run.call_args.kwargs["run_id"] == shadow["run_id"]
         assert begin_run.call_args.kwargs["workflow_id"] == "shadow-adjudication"
         assert begin_run.call_args.kwargs["trigger_context"] == {
@@ -304,7 +464,9 @@ class TestShadowAdjudication:
     async def test_only_a_detection_finding_gets_a_shadow(self, tmp_path, trigger_type):
         _, _, enqueued, begin_run = await self._admit(tmp_path, trigger_type)
         assert enqueued.await_count == 1
-        begin_run.assert_not_called()
+        assert [c.kwargs["workflow_id"] for c in begin_run.call_args_list] == [
+            "incident-response"
+        ]
 
     @pytest.mark.asyncio
     async def test_a_shadow_that_fails_never_fails_the_real_run(self, tmp_path):

@@ -180,6 +180,33 @@ def test_in_flight_matches_declared_subjects_and_hypothesis_text_only(session):
     assert by_id["wfr-paused"]["matched_techniques"] == ["T1566"]
 
 
+def test_a_daemon_row_matches_in_flight_by_key_and_empty_subjects_do_not(session):
+    # The shape _enqueue_investigation writes: subjects on the claim, hypothesis
+    # as one string, plus the investigation the run was opened for.
+    run(
+        session,
+        "wfr-daemon",
+        hypothesis="Beaconing from 203.0.113.77",
+        hypothesis_subjects={"Beaconing from 203.0.113.77": ["ip:203.0.113.77"]},
+        investigation_id="inv-daemon",
+        case_id="case-9",
+    )
+    # A nightly hunt names techniques and no entities. An entity-key query is
+    # not a hit; the prose mentioning an address is not a declared subject.
+    run(
+        session,
+        "wfr-nightly",
+        hypothesis="Activity consistent with T1071.001 on 203.0.113.77",
+        hypothesis_subjects={},
+    )
+    session.commit()
+
+    result = list_prior_hunts(["ip:203.0.113.77"], runs=WorkflowRunService())
+
+    assert [row["run_id"] for row in result["in_flight"]] == ["wfr-daemon"]
+    assert result["in_flight"][0]["matched_keys"] == ["ip:203.0.113.77"]
+
+
 def test_no_match_and_nothing_asked_are_empty_lists(session):
     verdict(session, ["ip:10.0.0.7"], ["T1071.001"], investigation="hunt-a")
     run(session, "wfr-a", hypothesis_subjects={"s": ["ip:10.0.0.7"]})

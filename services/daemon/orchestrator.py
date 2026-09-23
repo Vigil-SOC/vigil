@@ -1214,6 +1214,7 @@ class Orchestrator:
             ).splitlines()
             if line.strip()
         ]
+        subjects = self._hypothesis_subjects(inv_id, hypotheses)
         request = {
             # The workflow resolves both layers, so no config path travels beside it.
             "playbook": f"workflow:{inv_record['workflow_id']}",
@@ -1221,7 +1222,7 @@ class Orchestrator:
             "arch": "",
             "prompt": self.workdir.read_file(inv_id, "context.md") or "",
             "hypotheses": hypotheses,
-            "hypothesis_subjects": self._hypothesis_subjects(inv_id, hypotheses),
+            "hypothesis_subjects": subjects,
             # What the run opens its episodic read on. A hunt derives its own from
             # the hypotheses being put up; an investigation has none, so its keys
             # are the entities the findings it was opened on carry.
@@ -1237,16 +1238,54 @@ class Orchestrator:
             },
         }
 
+        # Coverage, finalize_run and the listings read this row. A restart
+        # re-enters with the same run id, and a refused write must not stop
+        # the job being queued.
+        runs = WorkflowRunService()
+        row = None
         try:
+            run_kind = self._declared_run_kind(inv_record["workflow_id"])
+            try:
+                if runs.get_run(run_id) is None:
+                    context: Dict[str, Any] = {
+                        "run_kind": run_kind,
+                        "hypothesis_subjects": subjects,
+                        "hypothesis": "\n".join(hypotheses),
+                        "investigation_id": inv_id,
+                    }
+                    case_id = inv_record.get("case_id")
+                    if case_id:
+                        context["case_id"] = case_id
+                    row = runs.begin_run(
+                        run_id=run_id,
+                        workflow_id=inv_record["workflow_id"],
+                        workflow_name=inv_record["workflow_id"],
+                        workflow_source="agent",
+                        trigger_context=context,
+                        triggered_by="orchestrator",
+                    )
+                    if row is None:
+                        logger.warning("no workflow_runs row for %s", run_id)
+                else:
+                    logger.info("run %s already recorded; not rewriting", run_id)
+            except Exception as exc:  # noqa: BLE001 — a refused row still enqueues
+                logger.warning("no workflow_runs row for %s: %s", run_id, exc)
+                row = None
+
             job = build_start_job(
                 run_id,
-                self._declared_run_kind(inv_record["workflow_id"]),
+                run_kind,
                 request,
                 enqueued_by="orchestrator",
             )
             await enqueue_run(job)
         except Exception as exc:  # noqa: BLE001 — a queue that refuses is not a crash
             logger.error("could not enqueue %s: %s", inv_id, exc)
+            # Otherwise coverage stays "running" for a hunt that never started.
+            if row is not None:
+                runs.finalize_run(
+                    run_id, status="failed", error=f"Could not enqueue: {exc}"
+                )
             self._update_investigation_status(
                 inv_id, "failed", f"Could not enqueue: {exc}"
             )
