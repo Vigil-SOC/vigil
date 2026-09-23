@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.llm.providers.discovery import is_embedding_model_id
+from core.llm.router.router import get_default_provider_spec
 
 logger = logging.getLogger(__name__)
 
@@ -836,9 +837,10 @@ class ModelRegistry:
             since we don't know which provider owns a raw model id
           → ai_model_configs[component]
           → ai_model_configs['chat_default']
-          → default Anthropic provider's default_model
+          → the default active provider of any type (get_default_provider_spec)
+            and its default_model
 
-        Returns None only if no DB is reachable and there's no Anthropic default.
+        Returns None when no DB is reachable or no provider is active.
         """
         if agent_override:
             # agent-level overrides carry only a model id. Attach it to the
@@ -856,12 +858,9 @@ class ModelRegistry:
             a = assignments["chat_default"]
             return (a.provider_id, a.model_id)
 
-        default_anthropic = self._default_anthropic_provider()
-        if default_anthropic is not None:
-            return (
-                default_anthropic["provider_id"],
-                default_anthropic["default_model"],
-            )
+        spec = get_default_provider_spec()
+        if spec is not None:
+            return (spec.provider_id, spec.default_model)
         return None
 
     # ---- provider helpers ------------------------------------------------

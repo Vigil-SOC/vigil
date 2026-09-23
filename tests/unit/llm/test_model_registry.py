@@ -16,6 +16,7 @@ import pytest
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
+from core.llm.providers import registry as model_registry  # noqa: E402
 from core.llm.providers.registry import COMPONENTS  # noqa: E402
 from core.llm.providers.registry import (  # noqa: E402
     ComponentAssignment,
@@ -23,6 +24,7 @@ from core.llm.providers.registry import (  # noqa: E402
     _catalog_entry,
     is_valid_component,
 )
+from core.llm.router.router import ProviderSpec  # noqa: E402
 
 pytestmark = pytest.mark.unit
 
@@ -273,7 +275,29 @@ class _StubRegistry(ModelRegistry):
         return self._active
 
 
-def test_resolve_uses_explicit_component_assignment():
+OLLAMA_DEFAULT = ProviderSpec(
+    provider_id="bifrost-ollama",
+    provider_type="ollama",
+    base_url=None,
+    api_key_ref=None,
+    default_model="llama3.1:8b",
+    config={},
+)
+
+
+@pytest.fixture
+def default_provider(monkeypatch):
+    """Set what the terminal rung (get_default_provider_spec) returns."""
+
+    def _set(spec: Optional[ProviderSpec]) -> None:
+        monkeypatch.setattr(model_registry, "get_default_provider_spec", lambda: spec)
+
+    _set(None)
+    return _set
+
+
+def test_resolve_uses_explicit_component_assignment(default_provider):
+    default_provider(OLLAMA_DEFAULT)
     reg = _StubRegistry(
         assignments={
             "triage": ComponentAssignment(
@@ -293,7 +317,9 @@ def test_resolve_uses_explicit_component_assignment():
     assert model == "llama3:latest"
 
 
-def test_resolve_falls_back_to_chat_default():
+def test_resolve_falls_back_to_chat_default(default_provider):
+    # An existing chat_default row (e.g. an upgraded install) outranks the rung.
+    default_provider(OLLAMA_DEFAULT)
     reg = _StubRegistry(
         assignments={
             "chat_default": ComponentAssignment(
@@ -309,21 +335,26 @@ def test_resolve_falls_back_to_chat_default():
     assert model == "claude-sonnet-4-5-20250929"
 
 
-def test_resolve_falls_back_to_default_anthropic_when_db_empty():
+def test_resolve_without_assignments_uses_default_provider_of_any_type(
+    default_provider,
+):
+    # An Anthropic default row must not outrank the provider-agnostic rung (#1005).
+    default_provider(OLLAMA_DEFAULT)
     reg = _StubRegistry(
         assignments={},
         default_anthropic={
-            "provider_id": "anthropic-default",
-            "default_model": "claude-sonnet-4-5-20250929",
+            "provider_id": "bifrost-anthropic",
+            "default_model": "claude-sonnet-4-6",
         },
     )
-    provider, model = reg.resolve_model_for_component("investigation")
-    assert provider == "anthropic-default"
-    assert model == "claude-sonnet-4-5-20250929"
+    assert reg.resolve_model_for_component("investigation") == (
+        "bifrost-ollama",
+        "llama3.1:8b",
+    )
 
 
-def test_resolve_returns_none_when_no_db_and_no_anthropic():
-    reg = _StubRegistry(assignments={}, default_anthropic=None)
+def test_resolve_returns_none_when_no_provider_is_active(default_provider):
+    reg = _StubRegistry(assignments={})
     assert reg.resolve_model_for_component("chat_default") is None
 
 

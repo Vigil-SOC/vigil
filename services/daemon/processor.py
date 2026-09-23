@@ -540,10 +540,10 @@ REASONING: [Brief explanation]
     @staticmethod
     def _resolve_triage_target() -> Optional[Tuple[str, str]]:
         """(provider_id, model) for the ``triage`` component, the same chain chat
-        uses (#965): ai_model_configs → chat_default → Anthropic default, then
-        provider_for() falls back to the configured default provider of any
-        type so an OpenAI-only install routes through Bifrost. None when no
-        provider is configured at all."""
+        uses (#965): ai_model_configs → chat_default → the default active
+        provider of any type, then provider_for() falls back to that same
+        default when the resolved row is inactive. None when no provider is
+        configured at all."""
         from core.llm.providers.registry import get_registry
         from core.llm.target import model_for, provider_for
 
