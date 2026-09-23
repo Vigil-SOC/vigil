@@ -83,6 +83,6 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   decisions: ['AI Decisions', 'Review and provide feedback for AI decisions'],
   workflows: ['Workflows & Skills', 'Pre-built multi-agent workflows for common SOC operations'],
   autoops: ['Auto Ops', 'Autonomous operations — master orchestrator and sub-agent investigations'],
-  health: ['Health', 'Operational health — LLM spend, approvals waiting, recent workflow runs'],
+  health: ['Health', 'Operational health — LLM spend, approvals waiting, recent workflow runs, probe scores'],
   settings: ['Settings', 'Configure Vigil — AI, integrations, users and platform'],
 }

@@ -31,6 +31,9 @@ vi.mock('./useHealth', () => ({
   RUNS_PER_WORKFLOW: 20,
   RUN_STATUSES: ['completed', 'failed'],
   useRunOutcomes: () => ({ phase: 'ready', error: null, rows: [], unread: [], reload: vi.fn() }),
+  PROBE_OUTCOMES: ['hit', 'miss', 'silent'],
+  PROBE_TALLY_DAYS: 7,
+  useProbeScores: () => ({ phase: 'ready', error: null, probes: [], tally: { hit: 0, miss: 0, silent: 0 }, reload: vi.fn() }),
 }))
 
 const modelRow = (model: string) => screen.getByText(model).closest('tr') as HTMLElement

@@ -6,7 +6,10 @@ import { Cost, PROVENANCE_LABEL, fmtCost, type PricingSource } from '../../share
 import type { ConsoleScreenProps } from '../../shared/types'
 import { useCostAnalytics, type CostData, type CostTimeRange } from '../settings/useSettings'
 import { usePendingApprovals } from '../decisions/useDecisions'
-import { RUNS_PER_WORKFLOW, RUN_STATUSES, useRunOutcomes, type RunKindOutcomes, type RunStatus } from './useHealth'
+import {
+  PROBE_OUTCOMES, PROBE_TALLY_DAYS, RUNS_PER_WORKFLOW, RUN_STATUSES, useProbeScores, useRunOutcomes,
+  type ProbeOutcome, type ProbeScores, type ProbeSummary, type RunKindOutcomes, type RunStatus,
+} from './useHealth'
 
 const RANGE_LABEL: Record<CostTimeRange, string> = { '24h': '24h', '7d': '7d', '30d': '30d', all: 'All' }
 const RANGES = Object.keys(RANGE_LABEL) as CostTimeRange[]
@@ -28,17 +31,26 @@ const STATUS_COLOR: Record<RunStatus, string> = {
   other: 'var(--med)',
 }
 
+// a probe that missed or went silent is the problem this card exists to show
+const PROBE_COLOR: Record<ProbeOutcome, string> = {
+  hit: 'var(--ok)',
+  miss: 'var(--crit)',
+  silent: 'var(--high)',
+}
+
+const fmtSeconds = (s: number | null) => (s == null ? '—' : s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${(s / 60).toFixed(1)}m` : `${(s / 3600).toFixed(1)}h`)
 const fmtTokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k` : String(n))
 const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`
 
-/** Spend, approvals waiting, and recent run outcomes — the facts the Grafana
- *  sibling shows, read from the JSON routes the console already uses. Probe
- *  scores and allocation drift are deliberately absent until they are real. */
+/** Spend, approvals waiting, recent run outcomes, and known-answer probe scores —
+ *  the facts the Grafana sibling shows, read from the JSON routes the console
+ *  already uses. Allocation drift is deliberately absent until it is real. */
 export default function HealthScreen({ go }: ConsoleScreenProps) {
   const [range, setRange] = useState<CostTimeRange>('7d')
   const cost = useCostAnalytics(range)
   const approvals = usePendingApprovals()
   const runs = useRunOutcomes()
+  const probes = useProbeScores()
 
   return (
     <>
@@ -54,7 +66,7 @@ export default function HealthScreen({ go }: ConsoleScreenProps) {
           className="btn ghost icon"
           title="Refresh"
           aria-label="Refresh"
-          onClick={() => { cost.reload(); approvals.reload(); runs.reload() }}
+          onClick={() => { cost.reload(); approvals.reload(); runs.reload(); probes.reload() }}
         >
           <Icon name="refresh" />
         </button>
@@ -116,8 +128,80 @@ export default function HealthScreen({ go }: ConsoleScreenProps) {
           )}
         </Card>
       </div>
+
+      <div className="px-[22px] pb-6">
+        <Card title="Known-answer probes" note="synthetic findings the daemon triages daily and grades against a known answer">
+          {probes.phase === 'loading' && <EmptyState loading compact icon="shield" title="Loading probes…" />}
+          {probes.phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load probes" body={probes.error} primary={{ label: 'Retry', onClick: probes.reload, icon: 'refresh' }} />}
+          {probes.phase === 'ready' && (
+            probes.probes.length === 0 ? (
+              <EmptyState compact icon="shield" title="No probes have run yet" body="The daemon’s hourly probe_sweep injects three probes a day and scores each an hour later; results appear here once it has run." />
+            ) : (
+              <ProbesBody data={probes} />
+            )
+          )}
+        </Card>
+      </div>
     </>
   )
+}
+
+function ProbesBody({ data }: { data: ProbeScores }) {
+  return (
+    <>
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        {PROBE_OUTCOMES.map((o) => (
+          <Kpi key={o} label={`${o} · last ${PROBE_TALLY_DAYS}d`} value={String(data.tally[o])} color={data.tally[o] > 0 ? PROBE_COLOR[o] : undefined} />
+        ))}
+      </div>
+      <div className="table-wrap">
+        <table className="tbl">
+          <thead>
+            <tr><th>Probe</th><th>Outcome</th><th>Verdict</th><th>Expected</th><th>Time to verdict</th></tr>
+          </thead>
+          <tbody>
+            {data.probes.map((p) => <ProbeRow key={p.name} probe={p} />)}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
+function ProbeRow({ probe }: { probe: ProbeSummary }) {
+  const { latest, expected } = probe
+  const verdict = latest?.verdict
+  return (
+    <tr>
+      <td className="font-mono text-xs">{probe.name}</td>
+      <td>
+        {probe.awaiting ? (
+          <>
+            <span className="chip" style={{ color: 'var(--tx-faint)' }}>awaiting score</span>
+            {latest && <span className="muted text-xs ml-2">previous: <span style={{ color: PROBE_COLOR[latest.outcome] }}>{latest.outcome}</span></span>}
+          </>
+        ) : latest && (
+          <span className="chip" style={{ color: PROBE_COLOR[latest.outcome] }}>{latest.outcome}</span>
+        )}
+      </td>
+      <td>
+        {!latest ? <span className="muted">—</span> : !verdict ? <span className="muted">no triage</span> : (
+          <>
+            <VerdictPart value={verdict.severity} allowed={expected.severity} /> · <VerdictPart value={verdict.recommended_action} allowed={expected.recommended_action} />
+            {verdict.confidence != null && <span className="muted text-xs ml-2">conf {verdict.confidence}</span>}
+          </>
+        )}
+      </td>
+      <td className="muted">{expected.severity.join(' | ')} · {expected.recommended_action.join(' | ')}</td>
+      <td className="muted">{latest ? fmtSeconds(latest.time_to_verdict_s) : '—'}</td>
+    </tr>
+  )
+}
+
+/** One half of the verdict, red when it falls outside the expected answer. */
+function VerdictPart({ value, allowed }: { value?: string | null; allowed: string[] }) {
+  if (!value) return <span className="muted">—</span>
+  return <span style={{ color: allowed.includes(value) ? 'var(--ok)' : 'var(--crit)' }}>{value}</span>
 }
 
 function SpendBody({ data }: { data: CostData }) {
@@ -206,11 +290,12 @@ function Card({ title, note, children }: { title: string; note: string; children
   )
 }
 
-function Kpi({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Kpi({ label, value, accent, color }: { label: string; value: string; accent?: boolean; color?: string }) {
+  const c = color ?? (accent ? 'var(--accent-2)' : undefined)
   return (
     <div className="card card-sq p-3 flex flex-col gap-1">
       <span className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">{label}</span>
-      <span className="text-[22px] font-semibold tracking-[-0.02em]" style={accent ? { color: 'var(--accent-2)' } : undefined}>{value}</span>
+      <span className="text-[22px] font-semibold tracking-[-0.02em]" style={c ? { color: c } : undefined}>{value}</span>
     </div>
   )
 }
