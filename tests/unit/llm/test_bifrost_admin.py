@@ -1009,6 +1009,25 @@ def test_ollama_floor_prefers_mid_tier_chat_model(monkeypatch):
     assert _ollama_floor(monkeypatch, models) == "mistral-small:latest"
 
 
+def test_gemini_floor_prefers_latest_alias_over_retired_pin(monkeypatch):
+    """Bifrost's catalogue still lists gemini-2.0-flash, which Google 404s (#1122)."""
+    import asyncio
+
+    from core.llm.providers.discovery import ModelMeta
+
+    async def _fake_catalogue(provider_type):
+        return [
+            ModelMeta(id=mid, display_name=mid)
+            for mid in ("gemini-2.0-flash", "gemini-2.5-pro", "gemini-flash-latest")
+        ]
+
+    monkeypatch.setattr(bifrost_admin, "fetch_catalogue_models", _fake_catalogue)
+    assert (
+        asyncio.run(bifrost_admin.default_model_for_provider_type("gemini"))
+        == "gemini-flash-latest"
+    )
+
+
 def test_servable_models_excludes_embedding_ids(monkeypatch):
     """So ``_upsert_row`` corrects a row already floored to an embedding model."""
     import asyncio
