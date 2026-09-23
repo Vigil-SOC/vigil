@@ -22,18 +22,19 @@ DEFAULT_SANDBOX_FILE_TYPES = "exe,dll,doc,docx,xls,xlsx,pdf,js,vbs,ps1,bat,msi"
 
 
 def _safe_home() -> Path:
-    """Return the user's home directory, or a safe writable fallback if home is root (/)."""
+    """Return the user's home directory, or a safe writable fallback if home is root (/) or cannot be created."""
     try:
         home = Path.home()
     except Exception:
         home = Path("/")
     if home == Path("/") or str(home) == "/":
-        # When running in a container where HOME=/ or unset, Path.home() is Path("/").
-        # Root (/) is never a valid user home directory and writing to /.vigil will fail
-        # with PermissionError (Errno 13).
-        if Path("/home/vigil").is_dir():
-            return Path("/home/vigil")
         return Path("/tmp")
+    if not home.exists():
+        ancestor = home
+        while not ancestor.exists() and ancestor != ancestor.parent:
+            ancestor = ancestor.parent
+        if not os.access(ancestor, os.W_OK):
+            return Path("/tmp")
     return home
 
 
@@ -52,10 +53,26 @@ def vigil_path(*parts: str, write: bool = False) -> Path:
     else:
         home = _safe_home()
         target, legacy = home / _VIGIL_DIRNAME, home / _LEGACY_DIRNAME
+    # Guarantee target is never in the root filesystem (e.g. /.vigil)
+    if target == Path("/.vigil") or str(target).startswith("/.vigil"):
+        target = Path("/tmp") / _VIGIL_DIRNAME
+        legacy = Path("/tmp") / _LEGACY_DIRNAME
     if parts:
         target, legacy = target.joinpath(*parts), legacy.joinpath(*parts)
     if write:
-        (target.parent if parts else target).mkdir(parents=True, exist_ok=True)
+        target_dir = target.parent if parts else target
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # If creating target_dir failed because it's unwritable outside /tmp (e.g. rootfs / or /home/vigil),
+            # fall back safely to /tmp/.vigil
+            if not str(target_dir).startswith("/tmp"):
+                fallback_target = Path("/tmp") / _VIGIL_DIRNAME
+                if parts:
+                    fallback_target = fallback_target.joinpath(*parts)
+                (fallback_target.parent if parts else fallback_target).mkdir(parents=True, exist_ok=True)
+                return fallback_target
+            raise
         return target
     # Only ever a per-file shim. Asked for the directory itself it must answer
     # with the State Directory, or the secrets backend adopts the legacy copy as

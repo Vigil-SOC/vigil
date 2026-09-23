@@ -81,7 +81,7 @@ class DetectionRulesService:
 
     def __init__(self):
         self.config_path = vigil_path(_CONFIG_FILENAME)
-        self.base_dir = _safe_home() / "security-detections"
+        self.base_dir = vigil_path("security-detections")
         self.sources: List[Dict[str, Any]] = []
         self._load_config()
 

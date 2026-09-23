@@ -92,7 +92,7 @@ helper. Prefer the Secret when both are set.
 
 {{- define "vigil.env" -}}
 - name: HOME
-  value: "/home/vigil"
+  value: "/tmp"
 - name: POSTGRES_HOST
   value: {{ include "vigil.postgres.host" . | quote }}
 - name: POSTGRES_PORT

@@ -146,3 +146,13 @@ def test_root_home_safe_write(monkeypatch, tmp_path):
             assert target == tmp_path / ".vigil" / "test.json"
             assert (tmp_path / ".vigil").is_dir()
 
+
+@pytest.mark.unit
+def test_unwritable_home_falls_back_to_tmp(monkeypatch):
+    monkeypatch.delenv("VIGIL_DIR", raising=False)
+    unwritable = Path("/nonexistent_root_dir/sub")
+    with patch.object(Path, "home", return_value=unwritable):
+        target = vigil_path("test.json")
+        assert str(target).startswith("/tmp")
+
+

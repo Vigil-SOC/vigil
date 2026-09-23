@@ -49,8 +49,17 @@ class CustomIntegrationService:
 
     def __init__(self):
         """Initialize the custom integration service."""
-        self.custom_integrations_dir = vigil_path("custom_integrations").resolve()
-        self.custom_integrations_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.custom_integrations_dir = vigil_path(
+                "custom_integrations", write=True
+            ).resolve()
+        except Exception as e:
+            logger.warning(
+                f"Could not initialize custom_integrations directory: {e}"
+            )
+            self.custom_integrations_dir = vigil_path(
+                "custom_integrations"
+            ).resolve()
         self.metadata_file = self.custom_integrations_dir / "metadata.json"
 
     def _server_path_for(self, integration_id: str) -> Path:

@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from core.agents.projections import read_projection
-from core.config import _safe_home
+from core.config import vigil_path
 from core.detections.lint import lint_sigma
 from core.detections.reconstruction import (
     coverage_report,
@@ -41,7 +41,7 @@ class SecurityDetectionsTools:
             paths.get(
                 "sigma",
                 os.getenv(
-                    "SIGMA_PATHS", str(_safe_home() / "security-detections/sigma/rules")
+                    "SIGMA_PATHS", str(vigil_path("security-detections", "sigma", "rules"))
                 ),
             )
         )
@@ -51,7 +51,7 @@ class SecurityDetectionsTools:
                 os.getenv(
                     "SPLUNK_PATHS",
                     str(
-                        _safe_home() / "security-detections/security_content/detections"
+                        vigil_path("security-detections", "security_content", "detections")
                     ),
                 ),
             )
@@ -61,7 +61,7 @@ class SecurityDetectionsTools:
                 "elastic",
                 os.getenv(
                     "ELASTIC_PATHS",
-                    str(_safe_home() / "security-detections/detection-rules/rules"),
+                    str(vigil_path("security-detections", "detection-rules", "rules")),
                 ),
             )
         )
@@ -71,8 +71,10 @@ class SecurityDetectionsTools:
                 os.getenv(
                     "KQL_PATHS",
                     str(
-                        _safe_home()
-                        / "security-detections/Hunting-Queries-Detection-Rules"
+                        vigil_path(
+                            "security-detections",
+                            "Hunting-Queries-Detection-Rules",
+                        )
                     ),
                 ),
             )
