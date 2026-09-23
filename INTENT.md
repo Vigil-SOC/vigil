@@ -26,6 +26,15 @@ respond:
   # Route every action through human approval regardless of confidence.
   # (DAEMON_FORCE_APPROVAL, or Settings -> Approvals in the UI)
   force_manual_approval: false
+  # The rest of the confidence band; higher is tighter for each.
+  # Queue a finding for response and let the correlator act. (DAEMON_REVIEW_THRESHOLD)
+  review_threshold: 0.85
+  # Below this, keep monitoring rather than act. (DAEMON_MONITOR_THRESHOLD)
+  monitor_threshold: 0.70
+  # Isolate a critical finding at or above this. (DAEMON_CRITICAL_ACTION_FLOOR)
+  critical_action_floor: 0.70
+  # Investigate a high finding at or above this. (DAEMON_HIGH_ACTION_FLOOR)
+  high_action_floor: 0.80
 
 escalate:
   # Severities that page a human; a shorter list is tighter.

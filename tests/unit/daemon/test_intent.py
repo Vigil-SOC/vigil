@@ -1,5 +1,6 @@
 """INTENT.md observe mode (#915): loader, label rule, diff, sources. No Postgres."""
 
+import dataclasses
 import logging
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ from core.intent import (
     label,
     read_intent,
 )
+from core.response.config import ResponseConfig
 from services.daemon.config import DaemonConfig
 from services.daemon.intent import intent_report, report_intent
 
@@ -62,6 +64,17 @@ def test_shipped_manifest_declares_every_field_at_default():
 def test_every_field_names_a_real_setting():
     # A typo here would silently report the key's source as "default" forever.
     assert {f.setting for f in INTENT_FIELDS} <= set(Settings.model_fields)
+
+
+def test_every_response_knob_has_a_manifest_key():
+    # A ResponseConfig field added without an IntentField is invisible to observe mode.
+    paths = {f.path for f in INTENT_FIELDS}
+    missing = (
+        {f"response.{f.name}" for f in dataclasses.fields(ResponseConfig)}
+        - {"response.dry_run"}
+        - paths
+    )
+    assert not missing
 
 
 def test_fresh_checkout_reports_no_differences(offline_config, caplog, monkeypatch):

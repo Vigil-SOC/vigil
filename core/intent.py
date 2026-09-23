@@ -75,6 +75,30 @@ INTENT_FIELDS: Tuple[IntentField, ...] = (
         HIGHER_TIGHTER,
     ),
     IntentField(
+        "respond.review_threshold",
+        "response.review_threshold",
+        "daemon_review_threshold",
+        HIGHER_TIGHTER,
+    ),
+    IntentField(
+        "respond.monitor_threshold",
+        "response.monitor_threshold",
+        "daemon_monitor_threshold",
+        HIGHER_TIGHTER,
+    ),
+    IntentField(
+        "respond.critical_action_floor",
+        "response.critical_action_floor",
+        "daemon_critical_action_floor",
+        HIGHER_TIGHTER,
+    ),
+    IntentField(
+        "respond.high_action_floor",
+        "response.high_action_floor",
+        "daemon_high_action_floor",
+        HIGHER_TIGHTER,
+    ),
+    IntentField(
         "escalate.severities",
         "escalation.escalate_severities",
         "daemon_escalate_severities",
