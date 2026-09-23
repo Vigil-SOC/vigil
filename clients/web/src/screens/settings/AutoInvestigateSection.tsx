@@ -16,6 +16,7 @@ import {
 } from './useSettings'
 import type { SectionProps } from './types'
 import { fmtCost } from '../../shared/cost'
+import IntentReportCard from './IntentReportCard'
 
 type PresetKey = 'conservative' | 'balanced' | 'aggressive'
 type PresetValues = Pick<
@@ -85,6 +86,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const { config, setConfig, status, phase, save } = useOrchestrator()
   const lastSaved = useRef<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
   const [advanced, setAdvanced] = useState(false)
+  const [intentRevision, setIntentRevision] = useState(0)
 
   useEffect(() => {
     if (phase === 'ready') lastSaved.current = config
@@ -100,6 +102,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       await save(next)
       lastSaved.current = next
       notify('ok', 'Auto Investigate settings saved.')
+      setIntentRevision((n) => n + 1)
     } catch {
       notify('err', 'Failed to save Auto Investigate settings.')
     }
@@ -302,6 +305,8 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           <span className="text-xs text-tx-3">Hidden — click Show to fine-tune limits.</span>
         )}
       </SettingsCard>
+
+      <IntentReportCard reloadKey={intentRevision} />
     </>
   )
 }
