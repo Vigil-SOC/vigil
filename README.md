@@ -179,7 +179,7 @@ Authentication is on by default. No admin user is seeded, so the first visit to 
 - **Node.js 18+** (for frontend)
 - **Docker Desktop** (must be running — used for PostgreSQL, Redis, and Bifrost)
 - **Git**
-- An LLM provider. Vigil supports Anthropic Claude (default), OpenAI, and Ollama (local, no key) — configure providers in Settings → AI Config. See the [Bifrost gateway](https://vigilsoc.org/docs/bifrost/) notes for the multi-provider setup. *(optional for initial testing)*
+- An LLM provider. Vigil supports Anthropic Claude (default), OpenAI, and Ollama (local, no key) — configure providers in Settings → AI Config. See the [Bifrost gateway](https://vigilsoc.org/docs/bifrost/) notes for the multi-provider setup. *(optional for initial testing)*. With the compose stack up and no provider key, `scripts/local_model.sh` serves a small local model where Bifrost can reach it and prints the id to address it by.
 
 ### First Login
 
@@ -340,7 +340,7 @@ source venv/bin/activate
 pytest tests/unit tests/security -m "not external_service"
 ```
 
-"Passes on a local model" is a manual check, not a CI badge: point Settings → AI Config at Ollama, then run incident response on a finding.
+"Passes on a local model" is a manual check, not a CI badge. With Postgres, Redis, and Bifrost up, `scripts/local_model.sh` (override the tag with `VIGIL_LOCAL_MODEL` or the first argument) prints a model id; send that as `model` on an authenticated `POST /api/claude/chat/stream`. The run proves wiring, not model quality.
 
 ### Desktop App (Standalone)
 
