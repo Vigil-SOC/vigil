@@ -542,7 +542,7 @@ REASONING: [Brief explanation]
         """(provider_id, model) for the ``triage`` component, the same chain chat
         uses (#965): ai_model_configs → chat_default → the default active
         provider of any type, then provider_for() falls back to that same
-        default when the resolved row is inactive. None when no provider is
+        default when the resolved row is inactive or missing. None when no provider is
         configured at all."""
         from core.llm.providers.registry import get_registry
         from core.llm.target import model_for, provider_for

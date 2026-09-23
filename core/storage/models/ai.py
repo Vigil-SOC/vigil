@@ -199,7 +199,7 @@ class AIModelConfig(Base):
     summarization, reporting) to a
     (provider, model) pair. Components without a row fall back to the
     `chat_default` row; if that is missing, callers fall back to the
-    default Anthropic provider's default_model.
+    default active provider (of any type) and its default_model.
 
     See infra/database/init/10_ai_model_configs.sql for the table definition.
     """
