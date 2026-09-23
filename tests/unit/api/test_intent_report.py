@@ -45,7 +45,7 @@ async def test_fresh_checkout_lists_every_key_as_same(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_db_overlay_loosens_investigate_enabled(monkeypatch):
+async def test_db_overlay_marks_investigate_enabled_from_the_console(monkeypatch):
     _clear_intent_env(monkeypatch)
     svc = _config_service({"orchestrator.settings": {"enabled": True}})
     with patch(
