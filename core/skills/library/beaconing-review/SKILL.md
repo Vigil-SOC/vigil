@@ -23,10 +23,10 @@ source labels the flow as C2.
 Note the source host's role from `src_ip` (an RFC 1918 address is an internal
 client). Role explains who is phoning out. It does not pick the verdict.
 
-Jitter is absent when `frequency` states one period and does not say jitter,
-roughly, about, or a range. "every 60 seconds" and "every 300 seconds" are
-fixed intervals with no jitter. A span ("40 to 110 seconds") or the word
-jitter means jitter is present.
+Jitter is absent when `frequency` states one period. "every 60 seconds" and
+"every 300 seconds" are fixed intervals with no jitter, including when the
+text itself says "fixed" or "no jitter". A span ("40 to 110 seconds"), or
+"roughly", "about", or an unnegated "jitter", means jitter is present.
 
 ## Reputation
 
@@ -73,14 +73,14 @@ capitalise the token. Do not pick `suspicious` when an earlier rule matched.
    qualifies. This rule wins over a fixed-interval suspicion.
 
 2. **c2** when all four of these hold and rule 1 did not. The interval is
-   fixed with no jitter. The destination is a bare IP. The port is one that
-   destination does not justify (443 or 80 to a bare IP does not). The title
-   or description labels the flow as C2 or "known C2 infrastructure" — those
-   words, not a guess from the port. A fixed interval with no jitter, to a
-   bare IP, on a port the destination does not justify, and already labelled
-   as C2 infrastructure by the source, is `c2`, not `suspicious`. Reputation
-   `not checked` does not downgrade it. Confidence is high. The next step is
-   contain.
+   fixed with no jitter. The destination is a bare IP. The port is not one
+   the destination justifies: 443 or 80 to a bare IP does not justify it.
+   The title or description labels the flow as C2 or "known C2
+   infrastructure" — those words, not a guess from the port. A fixed
+   interval with no jitter, to a bare IP, on a port the destination does
+   not justify, and already labelled as C2 infrastructure by the source, is
+   `c2`, not `suspicious`. Reputation `not checked` does not downgrade it.
+   Confidence is high. The next step is contain.
 
 3. **suspicious** otherwise: a jittered interval, an unremarkable cloud IP,
    or payloads that match no look-alike. Confidence is low or medium. The
