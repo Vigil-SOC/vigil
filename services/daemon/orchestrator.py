@@ -2259,7 +2259,7 @@ class Orchestrator:
             "hourly_cost_usd": round(hourly, 4),
             "hourly_budget_remaining": round(limit - hourly, 4),
             # /status reports `enabled` from the settings row, which a pause
-            # never touches; this is the only place the pause is visible.
+            # never touches, so the pause is reported here.
             "hourly_paused": self._hourly_pause_decision(spent, limit),
             "per_investigation_limit": self.config.max_cost_per_investigation,
         }
