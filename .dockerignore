@@ -39,6 +39,8 @@ tests/
 
 # Documentation
 *.md
+# The API and the daemon both read this file for the Settings intent card.
+!INTENT.md
 docs/
 archive/
 *.txt

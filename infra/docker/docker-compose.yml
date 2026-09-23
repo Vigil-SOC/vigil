@@ -37,6 +37,20 @@ x-agent-env: &agent-env
   - REQUESTS_CA_BUNDLE
   - NODE_EXTRA_CA_CERTS
 
+# Intent knobs (INTENT_FIELDS). The Settings card runs in the API process and
+# the daemon runs in soc-daemon; one list so both see the same values.
+x-intent-env: &intent-env
+  DAEMON_AUTO_TRIAGE: ${DAEMON_AUTO_TRIAGE:-true}
+  DAEMON_AUTO_ENRICH: ${DAEMON_AUTO_ENRICH:-true}
+  DAEMON_AUTO_RESPONSE: ${DAEMON_AUTO_RESPONSE:-true}
+  DAEMON_CONFIDENCE_THRESHOLD: ${DAEMON_CONFIDENCE_THRESHOLD:-0.90}
+  DAEMON_FORCE_APPROVAL: ${DAEMON_FORCE_APPROVAL:-false}
+  DAEMON_ESCALATE_SEVERITIES: "${DAEMON_ESCALATE_SEVERITIES:-critical,high}"
+  ORCHESTRATOR_ENABLED: ${ORCHESTRATOR_ENABLED:-false}
+  ORCHESTRATOR_MAX_COST: ${ORCHESTRATOR_MAX_COST:-5.0}
+  ORCHESTRATOR_MAX_HOURLY_COST: ${ORCHESTRATOR_MAX_HOURLY_COST:-20.0}
+  ORCHESTRATOR_MAX_RUNTIME: ${ORCHESTRATOR_MAX_RUNTIME:-3600}
+
 services:
   postgres:
     # Stock Postgres, matching db-seed and the desktop stack. The schema only
@@ -150,31 +164,32 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
     container_name: deeptempo-backend
     environment:
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=deeptempo_soc
-      - POSTGRES_USER=vigil_app
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
-      - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
-      - REDIS_URL=redis://redis:6379/0
+      <<: *intent-env
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: vigil_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
+      REDIS_URL: redis://redis:6379/0
       # Shared secret the agent worker presents on /internal. Unset means every
       # such call answers 503, so no workflow can run.
-      - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:-}
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
-      - AGENT_URL=http://agent-serve:6989
+      AGENT_URL: http://agent-serve:6989
       # Metrics: GET /metrics on :6987 serves the OTEL registry once the flag is
       # on; the OTLP push needs the collector from --profile observability.
-      - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
-      - PYTHONUNBUFFERED=1
+      VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      PYTHONUNBUFFERED: "1"
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
-      - SSL_CERT_FILE
-      - REQUESTS_CA_BUNDLE
-      - NODE_EXTRA_CA_CERTS
+      SSL_CERT_FILE:
+      REQUESTS_CA_BUNDLE:
+      NODE_EXTRA_CA_CERTS:
     ports:
       - "6987:6987"
     depends_on:
@@ -216,85 +231,80 @@ services:
         PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
     container_name: deeptempo-daemon
     environment:
+      <<: *intent-env
       # Database
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=deeptempo_soc
-      - POSTGRES_USER=vigil_app
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: vigil_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
       # AI
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - OLLAMA_URL=${OLLAMA_URL:-http://host.docker.internal:11434}
-      - BIFROST_URL=${BIFROST_URL:-http://bifrost:8080}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      BIFROST_URL: ${BIFROST_URL:-http://bifrost:8080}
       # Redis (LLM queue)
-      - REDIS_URL=redis://redis:6379/0
+      REDIS_URL: redis://redis:6379/0
       # Same seam as backend. localhost:6989 is the host-run default; without
       # these, _read_fold cannot reach agent-serve and completed runs stay executing.
-      - AGENT_INTERNAL_TOKEN=${AGENT_INTERNAL_TOKEN:-}
-      - AGENT_URL=http://agent-serve:6989
+      AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
+      AGENT_URL: http://agent-serve:6989
       # Polling intervals (seconds)
-      - DAEMON_SPLUNK_POLL_INTERVAL=${DAEMON_SPLUNK_POLL_INTERVAL:-300}
-      - DAEMON_CROWDSTRIKE_POLL_INTERVAL=${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
+      DAEMON_SPLUNK_POLL_INTERVAL: ${DAEMON_SPLUNK_POLL_INTERVAL:-300}
+      DAEMON_CROWDSTRIKE_POLL_INTERVAL: ${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
       # Processing
-      - DAEMON_AUTO_TRIAGE=${DAEMON_AUTO_TRIAGE:-true}
-      - DAEMON_AUTO_ENRICH=${DAEMON_AUTO_ENRICH:-true}
-      - DAEMON_BATCH_SIZE=${DAEMON_BATCH_SIZE:-10}
+      DAEMON_BATCH_SIZE: ${DAEMON_BATCH_SIZE:-10}
       # Response
-      - DAEMON_AUTO_RESPONSE=${DAEMON_AUTO_RESPONSE:-true}
-      - DAEMON_CONFIDENCE_THRESHOLD=${DAEMON_CONFIDENCE_THRESHOLD:-0.90}
-      - DAEMON_FORCE_APPROVAL=${DAEMON_FORCE_APPROVAL:-false}
-      - DAEMON_DRY_RUN=${DAEMON_DRY_RUN:-false}
+      DAEMON_DRY_RUN: ${DAEMON_DRY_RUN:-false}
       # Escalation
-      - DAEMON_ESCALATION_ENABLED=${DAEMON_ESCALATION_ENABLED:-true}
-      - DAEMON_SLACK_ENABLED=${DAEMON_SLACK_ENABLED:-true}
-      - DAEMON_SLACK_CHANNEL=${DAEMON_SLACK_CHANNEL:-#soc-alerts}
-      - DAEMON_PAGERDUTY_ENABLED=${DAEMON_PAGERDUTY_ENABLED:-false}
-      - DAEMON_ESCALATE_SEVERITIES=${DAEMON_ESCALATE_SEVERITIES:-critical,high}
+      DAEMON_ESCALATION_ENABLED: ${DAEMON_ESCALATION_ENABLED:-true}
+      DAEMON_SLACK_ENABLED: ${DAEMON_SLACK_ENABLED:-true}
+      DAEMON_SLACK_CHANNEL: "${DAEMON_SLACK_CHANNEL:-#soc-alerts}"
+      DAEMON_PAGERDUTY_ENABLED: ${DAEMON_PAGERDUTY_ENABLED:-false}
       # Scheduler
-      - DAEMON_THREAT_HUNT_ENABLED=${DAEMON_THREAT_HUNT_ENABLED:-true}
-      - DAEMON_THREAT_HUNT_INTERVAL=${DAEMON_THREAT_HUNT_INTERVAL:-86400}
-      - DAEMON_CLEANUP_RETENTION_DAYS=${DAEMON_CLEANUP_RETENTION_DAYS:-90}
+      DAEMON_THREAT_HUNT_ENABLED: ${DAEMON_THREAT_HUNT_ENABLED:-true}
+      DAEMON_THREAT_HUNT_INTERVAL: ${DAEMON_THREAT_HUNT_INTERVAL:-86400}
+      DAEMON_CLEANUP_RETENTION_DAYS: ${DAEMON_CLEANUP_RETENTION_DAYS:-90}
       # Metrics / Health
-      - DAEMON_METRICS_ENABLED=${DAEMON_METRICS_ENABLED:-true}
-      - DAEMON_HEALTH_PORT=${DAEMON_HEALTH_PORT:-9091}
-      - DAEMON_METRICS_PORT=${DAEMON_METRICS_PORT:-9090}
+      DAEMON_METRICS_ENABLED: ${DAEMON_METRICS_ENABLED:-true}
+      DAEMON_HEALTH_PORT: ${DAEMON_HEALTH_PORT:-9091}
+      DAEMON_METRICS_PORT: ${DAEMON_METRICS_PORT:-9090}
       # Observability (see backend)
-      - VIGIL_OTEL_ENABLED=${VIGIL_OTEL_ENABLED:-false}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
+      VIGIL_OTEL_ENABLED: ${VIGIL_OTEL_ENABLED:-false}
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       # Webhook
-      - DAEMON_WEBHOOK_ENABLED=${DAEMON_WEBHOOK_ENABLED:-true}
-      - DAEMON_WEBHOOK_PORT=${DAEMON_WEBHOOK_PORT:-8081}
+      DAEMON_WEBHOOK_ENABLED: ${DAEMON_WEBHOOK_ENABLED:-true}
+      DAEMON_WEBHOOK_PORT: ${DAEMON_WEBHOOK_PORT:-8081}
       # Logging
-      - DAEMON_LOG_LEVEL=${DAEMON_LOG_LEVEL:-INFO}
-      - PYTHONUNBUFFERED=1
+      DAEMON_LOG_LEVEL: ${DAEMON_LOG_LEVEL:-INFO}
+      PYTHONUNBUFFERED: "1"
       # Inspecting-proxy CA. Pass-through; bind-mount the PEM (see x-agent-env).
-      - SSL_CERT_FILE
-      - REQUESTS_CA_BUNDLE
-      - NODE_EXTRA_CA_CERTS
+      SSL_CERT_FILE:
+      REQUESTS_CA_BUNDLE:
+      NODE_EXTRA_CA_CERTS:
       # Integrations (loaded from core/config)
-      - SPLUNK_URL=${SPLUNK_URL}
-      - SPLUNK_USERNAME=${SPLUNK_USERNAME}
-      - SPLUNK_PASSWORD=${SPLUNK_PASSWORD}
-      - CROWDSTRIKE_CLIENT_ID=${CROWDSTRIKE_CLIENT_ID}
-      - CROWDSTRIKE_CLIENT_SECRET=${CROWDSTRIKE_CLIENT_SECRET}
-      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY}
-      - SHODAN_API_KEY=${SHODAN_API_KEY}
-      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
-      - PAGERDUTY_ROUTING_KEY=${PAGERDUTY_ROUTING_KEY}
+      SPLUNK_URL: ${SPLUNK_URL}
+      SPLUNK_USERNAME: ${SPLUNK_USERNAME}
+      SPLUNK_PASSWORD: ${SPLUNK_PASSWORD}
+      CROWDSTRIKE_CLIENT_ID: ${CROWDSTRIKE_CLIENT_ID}
+      CROWDSTRIKE_CLIENT_SECRET: ${CROWDSTRIKE_CLIENT_SECRET}
+      VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY}
+      SHODAN_API_KEY: ${SHODAN_API_KEY}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      PAGERDUTY_ROUTING_KEY: ${PAGERDUTY_ROUTING_KEY}
       # Kafka ingestion (opt-in; UI toggle at /settings?tab=kafka)
-      - KAFKA_ENABLED=${KAFKA_ENABLED:-false}
-      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
-      - KAFKA_CONSUMER_GROUP=${KAFKA_CONSUMER_GROUP:-vigil-soc}
-      - KAFKA_TOPICS=${KAFKA_TOPICS:-}
-      - KAFKA_AUTO_OFFSET_RESET=${KAFKA_AUTO_OFFSET_RESET:-latest}
-      - KAFKA_SECURITY_PROTOCOL=${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
-      - KAFKA_SASL_MECHANISM=${KAFKA_SASL_MECHANISM:-}
-      - KAFKA_SASL_USERNAME=${KAFKA_SASL_USERNAME:-}
-      - KAFKA_SASL_PASSWORD=${KAFKA_SASL_PASSWORD:-}
-      - KAFKA_SSL_CA_LOCATION=${KAFKA_SSL_CA_LOCATION:-}
-      - KAFKA_MAX_POLL_RECORDS=${KAFKA_MAX_POLL_RECORDS:-500}
-      - KAFKA_SESSION_TIMEOUT_MS=${KAFKA_SESSION_TIMEOUT_MS:-30000}
+      KAFKA_ENABLED: ${KAFKA_ENABLED:-false}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-kafka:9092}
+      KAFKA_CONSUMER_GROUP: ${KAFKA_CONSUMER_GROUP:-vigil-soc}
+      KAFKA_TOPICS: ${KAFKA_TOPICS:-}
+      KAFKA_AUTO_OFFSET_RESET: ${KAFKA_AUTO_OFFSET_RESET:-latest}
+      KAFKA_SECURITY_PROTOCOL: ${KAFKA_SECURITY_PROTOCOL:-PLAINTEXT}
+      KAFKA_SASL_MECHANISM: ${KAFKA_SASL_MECHANISM:-}
+      KAFKA_SASL_USERNAME: ${KAFKA_SASL_USERNAME:-}
+      KAFKA_SASL_PASSWORD: ${KAFKA_SASL_PASSWORD:-}
+      KAFKA_SSL_CA_LOCATION: ${KAFKA_SSL_CA_LOCATION:-}
+      KAFKA_MAX_POLL_RECORDS: ${KAFKA_MAX_POLL_RECORDS:-500}
+      KAFKA_SESSION_TIMEOUT_MS: ${KAFKA_SESSION_TIMEOUT_MS:-30000}
     ports:
       - "8081:8081"  # Webhook ingestion
       - "9090:9090"  # Prometheus /metrics (DAEMON_METRICS_PORT)
