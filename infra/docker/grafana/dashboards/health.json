@@ -887,7 +887,7 @@
     {
       "id": 24,
       "title": "Probe scores by probe / outcome (range)",
-      "description": "A series born inside the range (first score since a daemon start) counts its whole value; increase() alone drops a counter's first sample. Zero-count outcomes are hidden.",
+      "description": "A series seen in the hour before the range counts its increase; one born inside the range (first score since a daemon start) counts its whole value, since increase() alone drops a counter's first sample. Zero-count outcomes are hidden.",
       "type": "stat",
       "gridPos": {
         "x": 0,
@@ -913,7 +913,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": ".* hit"
+              "options": ".* hit$"
             },
             "properties": [
               {
@@ -928,7 +928,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": ".* miss"
+              "options": ".* miss$"
             },
             "properties": [
               {
@@ -943,7 +943,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": ".* silent"
+              "options": ".* silent$"
             },
             "properties": [
               {
@@ -971,7 +971,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (probe, outcome) ((increase(vigil_probe_results_total{job=\"otel-collector\"}[$__range]) and vigil_probe_results_total{job=\"otel-collector\"} offset $__range) or max_over_time(vigil_probe_results_total{job=\"otel-collector\"}[$__range])) > 0",
+          "expr": "sum by (probe, outcome) ((increase(vigil_probe_results_total{job=\"otel-collector\"}[$__range]) and last_over_time(vigil_probe_results_total{job=\"otel-collector\"}[1h] offset $__range)) or (max_over_time(vigil_probe_results_total{job=\"otel-collector\"}[$__range]) unless last_over_time(vigil_probe_results_total{job=\"otel-collector\"}[1h] offset $__range))) > 0",
           "legendFormat": "{{probe}} {{outcome}}",
           "instant": true
         }
@@ -980,7 +980,7 @@
     {
       "id": 25,
       "title": "Probe mean time to verdict by probe (trailing 1d)",
-      "description": "Exact mean from the histogram's _sum/_count, not a p95: at one score per probe per day, histogram_quantile only interpolates inside a default bucket. The 1d window holds each probe's latest daily verdict.",
+      "description": "Exact mean from the histogram's _sum/_count, not a p95: at one score per probe per day, histogram_quantile only interpolates inside a default bucket. Mean of the verdicts in the trailing 24h (usually one per probe); silent scores have no verdict and draw no line.",
       "type": "timeseries",
       "gridPos": {
         "x": 12,
@@ -1003,7 +1003,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "(sum by (probe) ((increase(vigil_probe_time_to_verdict_seconds_sum{job=\"otel-collector\"}[1d]) and vigil_probe_time_to_verdict_seconds_sum{job=\"otel-collector\"} offset 1d) or max_over_time(vigil_probe_time_to_verdict_seconds_sum{job=\"otel-collector\"}[1d])) / sum by (probe) ((increase(vigil_probe_time_to_verdict_seconds_count{job=\"otel-collector\"}[1d]) and vigil_probe_time_to_verdict_seconds_count{job=\"otel-collector\"} offset 1d) or max_over_time(vigil_probe_time_to_verdict_seconds_count{job=\"otel-collector\"}[1d]))) >= 0",
+          "expr": "(sum by (probe) ((increase(vigil_probe_time_to_verdict_seconds_sum{job=\"otel-collector\"}[1d]) and last_over_time(vigil_probe_time_to_verdict_seconds_sum{job=\"otel-collector\"}[1h] offset 1d)) or (max_over_time(vigil_probe_time_to_verdict_seconds_sum{job=\"otel-collector\"}[1d]) unless last_over_time(vigil_probe_time_to_verdict_seconds_sum{job=\"otel-collector\"}[1h] offset 1d))) / sum by (probe) ((increase(vigil_probe_time_to_verdict_seconds_count{job=\"otel-collector\"}[1d]) and last_over_time(vigil_probe_time_to_verdict_seconds_count{job=\"otel-collector\"}[1h] offset 1d)) or (max_over_time(vigil_probe_time_to_verdict_seconds_count{job=\"otel-collector\"}[1d]) unless last_over_time(vigil_probe_time_to_verdict_seconds_count{job=\"otel-collector\"}[1h] offset 1d)))) >= 0",
           "legendFormat": "{{probe}}",
           "instant": false
         }
