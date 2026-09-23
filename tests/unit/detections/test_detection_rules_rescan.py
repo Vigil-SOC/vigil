@@ -14,8 +14,7 @@ from core.detections.detection_rules_service import (
 
 @pytest.fixture
 def home(tmp_path, monkeypatch):
-    """Point the service's home and state directory at a temp dir."""
-    monkeypatch.setattr(drs, "_safe_home", lambda: tmp_path)
+    """Point the service's state directory at a temp dir."""
 
     def fake_vigil_path(*parts, write=False):
         target = tmp_path.joinpath(".vigil", *parts)
