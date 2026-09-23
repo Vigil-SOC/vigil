@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from core.response.approval_service import ApprovalService
 from core.response.autonomous_response_service import AutonomousResponseService
-from core.response.config import decision_rule
+from core.response.config import response_action_decision
 from core.time import utcnow
 from services.daemon.config import EscalationConfig, ResponseConfig
 
@@ -111,21 +111,20 @@ class AutonomousResponder:
 
         logger.debug(f"Evaluating response for finding {finding_id}")
 
-        if not self.response_config.auto_response_enabled:
-            logger.debug("Auto-response disabled, skipping")
-            return
-
-        # Extract relevant data
         severity = finding.get("severity", "medium").lower()
         confidence = finding.get("triage_confidence", 0.5)
         recommended_action = finding.get("recommended_action", "").lower()
         entity_context = finding.get("entity_context", {})
 
-        # Determine if response is needed
-        decided = self._determine_action(severity, confidence, recommended_action)
+        decided = response_action_decision(
+            severity, confidence, recommended_action, self.response_config
+        )
 
         if not decided:
-            logger.debug(f"No response action needed for {finding_id}")
+            if not self.response_config.auto_response_enabled:
+                logger.debug("Auto-response disabled, skipping")
+            else:
+                logger.debug(f"No response action needed for {finding_id}")
             return
         response_action, rule = decided
 
@@ -144,31 +143,10 @@ class AutonomousResponder:
     def _determine_action(
         self, severity: str, confidence: float, recommended: str
     ) -> Optional[Tuple[str, str]]:
-        """Decide the response action; returns ``(action, rule)`` where ``rule``
-        names the ResponseConfig field and value that fired (#917)."""
-        cfg = self.response_config
-        # High confidence + recommended isolation/block
-        if confidence >= cfg.confidence_threshold and recommended in [
-            "isolate",
-            "block",
-        ]:
-            return recommended, decision_rule(
-                "response.confidence_threshold", cfg.confidence_threshold, confidence
-            )
-
-        # Critical severity always warrants action
-        if severity == "critical" and confidence >= cfg.critical_action_floor:
-            return "isolate", decision_rule(
-                "response.critical_action_floor", cfg.critical_action_floor, confidence
-            )
-
-        # High severity with good confidence
-        if severity == "high" and confidence >= cfg.high_action_floor:
-            return "investigate", decision_rule(
-                "response.high_action_floor", cfg.high_action_floor, confidence
-            )
-
-        return None
+        """``(action, rule)`` from :func:`response_action_decision` (#917)."""
+        return response_action_decision(
+            severity, confidence, recommended, self.response_config
+        )
 
     def _should_escalate(self, severity: str, confidence: float) -> bool:
         """Determine if finding should be escalated."""

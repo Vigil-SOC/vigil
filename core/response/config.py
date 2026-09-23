@@ -66,3 +66,59 @@ class ResponseConfig:
             force_manual_approval=s.daemon_force_approval,
             dry_run=s.daemon_dry_run,
         )
+
+
+def response_action_decision(
+    severity: str,
+    confidence: float,
+    recommended: str,
+    config: ResponseConfig,
+) -> Optional[tuple[str, str]]:
+    """The finding-side response, or None when nothing would be acted on.
+
+    Returns ``(action, rule)``. Auto-response off is a decision, not a
+    precondition: a manifest that disables it reports every finding that
+    would have acted as losing its action.
+    """
+    if not config.auto_response_enabled:
+        return None
+    if confidence >= config.confidence_threshold and recommended in (
+        "isolate",
+        "block",
+    ):
+        return recommended, decision_rule(
+            "response.confidence_threshold", config.confidence_threshold, confidence
+        )
+    if severity == "critical" and confidence >= config.critical_action_floor:
+        return "isolate", decision_rule(
+            "response.critical_action_floor", config.critical_action_floor, confidence
+        )
+    if severity == "high" and confidence >= config.high_action_floor:
+        return "investigate", decision_rule(
+            "response.high_action_floor", config.high_action_floor, confidence
+        )
+    return None
+
+
+def approval_requirement(
+    force_manual_approval: bool,
+    reversibility: Any,
+    confidence: float,
+    config: ResponseConfig,
+) -> tuple[bool, str]:
+    """Whether an approval row waits for a human, and the rule that decided it.
+
+    ``reversibility`` is the enum the live path passes. Compared by ``.value``
+    so this module does not import the service that calls it. An unknown
+    value raises, unless force-manual already decided.
+    """
+    if force_manual_approval:
+        return True, decision_rule("approval.force_manual_approval", True)
+    value = getattr(reversibility, "value", None)
+    if value == "irreversible":
+        return True, decision_rule("reversibility", value)
+    if value == "reversible":
+        return confidence < config.confidence_threshold, decision_rule(
+            "response.confidence_threshold", config.confidence_threshold, confidence
+        )
+    raise ValueError(f"Unknown reversibility: {reversibility}")
