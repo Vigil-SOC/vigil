@@ -1,7 +1,7 @@
 {
   "name": "vigil-desktop",
   "productName": "Vigil",
-  "version": "0.3.0",
+  "version": "0.5.0",
   "description": "Vigil SOC desktop shell — native launcher and window over the local stack.",
   "license": "Apache-2.0",
   "main": "dist/main.js",
