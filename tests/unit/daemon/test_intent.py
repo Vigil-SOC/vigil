@@ -164,6 +164,37 @@ def test_diff_source_defaults_when_unrecorded():
     assert rows[0].source == "default" and rows[0].label == "loosen"
 
 
+def test_include_same_emits_equal_keys_without_changing_the_default():
+    config = DaemonConfig()
+    config.response.confidence_threshold = 0.80
+    declared = {"respond.confidence_threshold": 0.90, "triage.auto_triage": True}
+    sources = {"response.confidence_threshold": "env"}
+    effective = effective_values(config)
+    assert [(r.key, r.label) for r in diff_intent(declared, effective, sources)] == [
+        ("respond.confidence_threshold", "tighten")
+    ]
+    assert [
+        (r.key, r.declared, r.effective, r.source, r.label)
+        for r in diff_intent(declared, effective, sources, include_same=True)
+    ] == [
+        ("triage.auto_triage", True, True, "default", "same"),
+        ("respond.confidence_threshold", 0.90, 0.80, "env", "tighten"),
+    ]
+
+
+def test_intent_report_include_same_lists_every_key(offline_config, monkeypatch):
+    for name in list(os.environ):
+        if name.upper().startswith(("DAEMON_", "ORCHESTRATOR_")):
+            monkeypatch.delenv(name)
+    get_settings.cache_clear()
+    rows = intent_report(include_same=True)
+    assert rows is not None
+    assert [r.key for r in rows] == [f.key for f in INTENT_FIELDS]
+    assert {r.label for r in rows} == {"same"}
+    # Log and CLI keep the differing-rows-only report.
+    assert intent_report() == []
+
+
 # --- sources recorded by from_env ---------------------------------------------
 
 

@@ -236,10 +236,14 @@ def diff_intent(
     declared: Mapping[str, Any],
     effective: Mapping[str, Any],
     sources: Mapping[str, str],
+    *,
+    include_same: bool = False,
 ) -> List[IntentDiff]:
     """One row per declared key whose value differs from the effective one.
 
     A declared value of the wrong type for its knob is one warning and no row.
+    ``include_same`` also emits the equal keys, labeled ``same``. The daemon
+    log and CLI leave it off.
     """
     rows: List[IntentDiff] = []
     for f in INTENT_FIELDS:
@@ -255,7 +259,7 @@ def diff_intent(
                 type(have).__name__,
             )
             continue
-        if norm_want == norm_have:
+        if norm_want == norm_have and not include_same:
             continue
         rows.append(
             IntentDiff(

@@ -52,9 +52,15 @@ def _overlay_force_manual_approval(
 
 
 def intent_report(
-    config: Optional[DaemonConfig] = None, path: Optional[Path] = None
+    config: Optional[DaemonConfig] = None,
+    path: Optional[Path] = None,
+    *,
+    include_same: bool = False,
 ) -> Optional[List[IntentDiff]]:
-    """Rows for every declared key that differs, or ``None`` when unreadable."""
+    """Rows for declared keys, or ``None`` when the manifest is unreadable.
+
+    Differing rows only, unless ``include_same`` (the Settings card).
+    """
     declared = read_intent(path)
     if declared is None:
         return None
@@ -62,7 +68,7 @@ def intent_report(
     effective = effective_values(config)
     sources = dict(config.sources)
     _overlay_force_manual_approval(effective, sources)
-    return diff_intent(declared, effective, sources)
+    return diff_intent(declared, effective, sources, include_same=include_same)
 
 
 def report_intent(config: Optional[DaemonConfig] = None) -> None:
