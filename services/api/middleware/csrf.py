@@ -18,7 +18,8 @@ How it works:
 
 Exempt paths:
 - Endpoints that authenticate themselves (webhooks using HMAC, ingestion
-  endpoints using bearer/API-key, the MCP surface using a minted credential)
+  endpoints using bearer/API-key, the MCP surface using a minted credential,
+  the agent layer's /internal endpoints using the shared internal token)
   are always exempt; `VIGIL_CSRF_EXEMPT_PATHS` adds to that set rather than
   replacing it. Any request whose path starts with one of those prefixes
   skips both the cookie check and the cookie seeding.
@@ -48,17 +49,20 @@ CSRF_HEADER_NAME = "X-CSRF-Token"
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 # CSRF defends a browser session driven by a cookie. These are reached with a
-# credential in a header instead, by something that is not a browser, so there
-# is no ambient authority for a forged request to borrow -- and a caller that
-# cannot be handed a csrf_token cookie could not satisfy the check anyway.
+# credential in a header instead, by something that is not a browser -- webhooks,
+# ingestion, the /mcp surface, and the agent layer's /internal endpoints -- so
+# there is no ambient authority for a forged request to borrow, and a caller
+# that cannot be handed a csrf_token cookie could not satisfy the check anyway.
 #
 # Always, rather than by default. An operator's list is added to these, not
 # substituted for them: every shipped config already names a list, so a default
 # that a list replaces is a default nothing runs. The one thing dropping one of
 # these could achieve is refusing every call to it -- there is no protection on
 # the other side of the trade, because the check these skip is one their callers
-# have no way to pass.
-_ALWAYS_EXEMPT = ("/api/webhooks/", "/api/ingest/", "/mcp")
+# have no way to pass. /internal/ still runs through _apply_context_path: the
+# routers are mounted under VIGIL_CONTEXT_PATH, so the prefixed form is the one
+# a sub-path deploy actually serves.
+_ALWAYS_EXEMPT = ("/api/webhooks/", "/api/ingest/", "/mcp", "/internal/")
 
 
 def _apply_context_path(path: str, prefix: str) -> str:

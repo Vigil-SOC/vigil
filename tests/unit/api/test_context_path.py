@@ -92,19 +92,29 @@ def test_auth_cookie_paths_follow_context_path(monkeypatch, prefix, access, refr
 @pytest.mark.parametrize(
     "raw, context_path, expected",
     [
-        (None, "", ("/api/webhooks/", "/api/ingest/", "/mcp")),
+        (None, "", ("/api/webhooks/", "/api/ingest/", "/mcp", "/internal/")),
         (
             None,
             "/vigil",
-            ("/vigil/api/webhooks/", "/vigil/api/ingest/", "/vigil/mcp"),
+            (
+                "/vigil/api/webhooks/",
+                "/vigil/api/ingest/",
+                "/vigil/mcp",
+                "/vigil/internal/",
+            ),
         ),
         # What env.example and the Helm values actually ship. It names two of
-        # the always-exempt paths and not the third, and the third survives:
+        # the always-exempt paths and not the others, and the others survive:
         # a list an operator sets is added to that set, not put in place of it.
         (
             "/api/webhooks/,/api/ingest/",
             "/vigil",
-            ("/vigil/api/webhooks/", "/vigil/api/ingest/", "/vigil/mcp"),
+            (
+                "/vigil/api/webhooks/",
+                "/vigil/api/ingest/",
+                "/vigil/mcp",
+                "/vigil/internal/",
+            ),
         ),
         # Written fully qualified, so it is left alone -- and it is the same
         # path as the one the always-exempt list contributes, once that one has
@@ -112,19 +122,30 @@ def test_auth_cookie_paths_follow_context_path(monkeypatch, prefix, access, refr
         (
             "/vigil/api/webhooks/",
             "/vigil",
-            ("/vigil/api/webhooks/", "/vigil/api/ingest/", "/vigil/mcp"),
+            (
+                "/vigil/api/webhooks/",
+                "/vigil/api/ingest/",
+                "/vigil/mcp",
+                "/vigil/internal/",
+            ),
         ),
         (
             "/api/webhooks/",
             "/api",
-            ("/api/api/webhooks/", "/api/api/ingest/", "/api/mcp"),
+            ("/api/api/webhooks/", "/api/api/ingest/", "/api/mcp", "/api/internal/"),
         ),
         # An operator adding one of their own keeps everything that was exempt
         # before it.
         (
             "/api/partner-callback/",
             "",
-            ("/api/webhooks/", "/api/ingest/", "/mcp", "/api/partner-callback/"),
+            (
+                "/api/webhooks/",
+                "/api/ingest/",
+                "/mcp",
+                "/internal/",
+                "/api/partner-callback/",
+            ),
         ),
     ],
 )
@@ -239,6 +260,62 @@ def test_the_mcp_surface_is_exempt_from_csrf():
     assert not middleware._is_exempt("/mcp")
 
 
+def test_the_agent_layer_internal_surface_is_exempt_from_csrf():
+    """agent-serve and agent-worker call /internal with the shared token and
+    never hold a browser session, so they cannot present a csrf_token cookie.
+    Enforcing the check there refuses every tool call and protects nothing."""
+    from services.api.middleware.csrf import CSRFMiddleware, _parse_exempt_paths
+
+    at_root = CSRFMiddleware(
+        FastAPI(),
+        enabled=True,
+        exempt_paths=_parse_exempt_paths(_AS_SHIPPED, ""),
+    )
+    assert at_root._is_exempt("/internal/tools/invoke")
+    assert not at_root._is_exempt("/api/cases/")
+    assert not at_root._is_exempt("/api/v1/cases")
+
+    under_vigil = CSRFMiddleware(
+        FastAPI(),
+        enabled=True,
+        exempt_paths=_parse_exempt_paths(_AS_SHIPPED, "/vigil"),
+    )
+    assert under_vigil._is_exempt("/vigil/internal/tools/invoke")
+    assert under_vigil._is_exempt("/vigil/internal/runs/abc/terminal")
+    assert not under_vigil._is_exempt("/internal/tools/invoke")
+    assert not under_vigil._is_exempt("/vigil/api/cases/")
+    assert not under_vigil._is_exempt("/api/cases/")
+
+
+def test_enforcing_csrf_lets_cookieless_internal_through_and_rejects_api():
+    from services.api.middleware.csrf import CSRFMiddleware, _parse_exempt_paths
+
+    app = FastAPI()
+    app.add_middleware(
+        CSRFMiddleware,
+        enabled=True,
+        report_only=False,
+        exempt_paths=_parse_exempt_paths(_AS_SHIPPED, ""),
+    )
+
+    @app.post("/internal/tools/invoke")
+    def invoke():
+        return {"ok": True}
+
+    @app.post("/api/cases/")
+    def create_case():
+        return {"ok": True}
+
+    client = TestClient(app)
+    internal = client.post("/internal/tools/invoke")
+    assert internal.status_code == 200
+    assert internal.json() == {"ok": True}
+
+    rejected = client.post("/api/cases/")
+    assert rejected.status_code == 403
+    assert rejected.json()["detail"] == "CSRF token missing or invalid"
+
+
 def test_the_shipped_configs_do_not_take_the_exemption_away():
     """Every install sets this variable, so a default it replaced would be a
     default nothing runs -- which is how /mcp came to be exempt only on a
@@ -258,4 +335,6 @@ def test_the_shipped_configs_do_not_take_the_exemption_away():
 
     for line in shipped:
         raw = line.split("=", 1)[1] if "=" in line else line.split(":", 1)[1]
-        assert "/mcp" in _parse_exempt_paths(raw.strip().strip('"'), "")
+        parsed = _parse_exempt_paths(raw.strip().strip('"'), "")
+        assert "/mcp" in parsed
+        assert "/internal/" in parsed
