@@ -196,6 +196,12 @@ def _set_strict(monkeypatch, value):
     get_settings.cache_clear()
 
 
+def _patch_report(monkeypatch, fn):
+    """Replace schema_report on the class: an instance-level patch leaves the
+    bound original behind on the singleton when undone."""
+    monkeypatch.setattr(DatabaseManager, "schema_report", lambda self: fn())
+
+
 def _columns(engine, table):
     return {c["name"] for c in inspect(engine).get_columns(table)}
 
@@ -390,7 +396,7 @@ def test_inspection_runs_once_and_is_memoised(drifted_manager, monkeypatch):
         calls.append(1)
         return original()
 
-    monkeypatch.setattr(drifted_manager, "schema_report", counting_report)
+    _patch_report(monkeypatch, counting_report)
 
     check_schema_drift(db_manager=drifted_manager)
     check_schema_drift(db_manager=drifted_manager)
@@ -427,7 +433,7 @@ def test_a_failed_inspection_is_not_cached_as_checked(
             raise RuntimeError("database not initialized")
         return original()
 
-    monkeypatch.setattr(drifted_manager, "schema_report", failing_once)
+    _patch_report(monkeypatch, failing_once)
 
     with caplog.at_level(logging.WARNING):
         assert check_schema_drift(db_manager=drifted_manager) is None
@@ -456,7 +462,7 @@ def test_an_uninspectable_schema_is_not_recorded_as_a_verdict(
             return {"state": "unknown", "missing_tables": [], "missing_columns": {}}
         return original()
 
-    monkeypatch.setattr(drifted_manager, "schema_report", unknown_once)
+    _patch_report(monkeypatch, unknown_once)
 
     assert check_schema_drift(db_manager=drifted_manager) is None
     assert get_schema_drift_report() is None, "unknown must not become the verdict"
@@ -501,9 +507,7 @@ def test_a_healthy_verdict_is_never_re_inspected(
     manager = drifted_manager
     calls = []
     original = manager.schema_report
-    monkeypatch.setattr(
-        manager, "schema_report", lambda: (calls.append(1), original())[1]
-    )
+    _patch_report(monkeypatch, lambda: (calls.append(1), original())[1])
 
     for _ in range(3):
         assert check_schema_drift(db_manager=manager)["state"] == "ok"
@@ -525,11 +529,11 @@ def test_an_empty_verdict_does_not_survive_a_create_all(drifted_manager, monkeyp
     empty = {"state": "empty", "missing_tables": [], "missing_columns": {}}
 
     original = manager.schema_report
-    monkeypatch.setattr(manager, "schema_report", lambda: empty)
+    _patch_report(monkeypatch, lambda: empty)
     # A caller that has not provisioned is entitled to an empty database.
     assert check_schema_drift(db_manager=manager, provisioned=False)["state"] == "empty"
 
-    monkeypatch.setattr(manager, "schema_report", original)
+    _patch_report(monkeypatch, original)
     assert (
         check_schema_drift(db_manager=manager, provisioned=True)["state"] == "drifted"
     )
@@ -552,7 +556,7 @@ def test_concurrent_callers_inspect_and_log_once(drifted_manager, caplog, monkey
         time.sleep(0.05)
         return original()
 
-    monkeypatch.setattr(drifted_manager, "schema_report", slow_report)
+    _patch_report(monkeypatch, slow_report)
 
     def worker():
         barrier.wait()
