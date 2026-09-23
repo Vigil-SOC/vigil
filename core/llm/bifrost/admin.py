@@ -827,8 +827,8 @@ _CATALOG_DEFAULT_PREFERENCE: Dict[str, tuple] = {
     # Mid-tier, rather than the opus the bootstrap list leads with or the haiku
     # the marker sweep would otherwise land on.
     "anthropic": ("claude-sonnet-4-6",),
-    # An alias Google keeps pointed at a served model; the catalogue still lists
-    # retired pins like gemini-2.0-flash, which the marker sweep would pick.
+    # An alias Google keeps pointed at a served model; the catalogue lists pins
+    # retired for new keys (gemini-2.0/2.5-flash) that the marker sweep would pick.
     "gemini": ("gemini-flash-latest",),
 }
 

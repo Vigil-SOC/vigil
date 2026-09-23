@@ -1010,7 +1010,7 @@ def test_ollama_floor_prefers_mid_tier_chat_model(monkeypatch):
 
 
 def test_gemini_floor_prefers_latest_alias_over_retired_pin(monkeypatch):
-    """Bifrost's catalogue still lists gemini-2.0-flash, which Google 404s (#1122)."""
+    """Retired flash pins listed ahead of the alias must not win the floor (#1122)."""
     import asyncio
 
     from core.llm.providers.discovery import ModelMeta
