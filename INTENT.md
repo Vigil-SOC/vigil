@@ -77,6 +77,11 @@ without the file. A missing or unreadable file is one warning.
 `python -m services.daemon.intent` prints the same table without starting the
 daemon. Override the path with `VIGIL_INTENT_PATH`.
 
+`python -m services.daemon.intent --replay` re-decides every finding that has
+a triage confidence and every approval action in a window (default 7 days,
+`--since 7d`) under this file and under the effective config, and prints the
+rows whose outcome would differ. It does not write.
+
 ## Editing
 
 Change a value here when the intended autonomy changes, and say why in the
