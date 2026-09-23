@@ -4,8 +4,6 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # python-is-python3: CI's setup-python puts `python` on PATH and the workflows
 # call it bare (`python scripts/check_one_loop.py`, `python -c ...init_database()`).
-# postgresql-client: the ubuntu-latest runner ships psql, and the workflows'
-# schema steps call it bare (`PGPASSWORD=test psql -h localhost ... -f ...`).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -13,7 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gnupg \
     nodejs \
     npm \
-    postgresql-client \
     python3 \
     python3-pip \
     python3-venv \
