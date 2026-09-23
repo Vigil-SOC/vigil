@@ -2819,6 +2819,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/config/intent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Intent Report
+         * @description Declared intent beside effective config.
+         *
+         *     A missing or unreadable manifest is 200 with ``readable`` false and no
+         *     rows, so the Settings card can say so in one line.
+         */
+        get: operations["get_api_config_intent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config/orchestrator": {
         parameters: {
             query?: never;
@@ -9714,6 +9737,34 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * IntentDiffRow
+         * @description One manifest key beside the value the daemon is running with.
+         */
+        IntentDiffRow: {
+            /** Declared */
+            declared: unknown;
+            /** Effective */
+            effective: unknown;
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /** Source */
+            source: string;
+        };
+        /**
+         * IntentReportResponse
+         * @description Declared INTENT.md beside effective daemon config. Read-only.
+         */
+        IntentReportResponse: {
+            /** Path */
+            path: string;
+            /** Readable */
+            readable: boolean;
+            /** Rows */
+            rows?: components["schemas"]["IntentDiffRow"][];
+        };
         /** InvestigationCreateRequest */
         InvestigationCreateRequest: {
             /** Case Id */
@@ -16357,6 +16408,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_config_intent: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntentReportResponse"];
                 };
             };
             /** @description Validation Error */

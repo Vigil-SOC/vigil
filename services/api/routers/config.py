@@ -15,11 +15,13 @@ from core.integrations.integration_secrets import (
     secret_fields_for,
     split_secrets,
 )
+from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
 from core.storage.config_service import get_config_service
+from services.daemon.intent import intent_report
 
 router = APIRouter()
 
@@ -1136,6 +1138,51 @@ class OrchestratorSettingsConfig(BaseModel):
 
 
 ORCHESTRATOR_DEFAULTS = OrchestratorSettingsConfig().model_dump()
+
+
+class IntentDiffRow(BaseModel):
+    """One manifest key beside the value the daemon is running with."""
+
+    key: str
+    declared: Any
+    effective: Any
+    source: str
+    label: str
+
+
+class IntentReportResponse(BaseModel):
+    """Declared INTENT.md beside effective daemon config. Read-only."""
+
+    path: str
+    readable: bool
+    rows: list[IntentDiffRow] = Field(default_factory=list)
+
+
+@router.get("/intent", response_model=IntentReportResponse)
+async def get_intent_report() -> IntentReportResponse:
+    """Declared intent beside effective config.
+
+    A missing or unreadable manifest is 200 with ``readable`` false and no
+    rows, so the Settings card can say so in one line.
+    """
+    rows = intent_report(include_same=True)
+    path = str(intent_file())
+    if rows is None:
+        return IntentReportResponse(path=path, readable=False, rows=[])
+    return IntentReportResponse(
+        path=path,
+        readable=True,
+        rows=[
+            IntentDiffRow(
+                key=row.key,
+                declared=row.declared,
+                effective=row.effective,
+                source=row.source,
+                label=row.label,
+            )
+            for row in rows
+        ],
+    )
 
 
 @router.get("/orchestrator")
