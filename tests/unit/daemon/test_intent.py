@@ -1,5 +1,6 @@
 """INTENT.md observe mode (#915): loader, label rule, diff, sources. No Postgres."""
 
+import dataclasses
 import logging
 import os
 from pathlib import Path
@@ -19,6 +20,7 @@ from core.intent import (
     label,
     read_intent,
 )
+from core.response.config import ResponseConfig
 from services.daemon.config import DaemonConfig
 from services.daemon.intent import intent_report, report_intent
 
@@ -57,6 +59,15 @@ def test_shipped_manifest_declares_every_field_at_default():
     assert declared is not None
     assert set(declared) == {f.key for f in INTENT_FIELDS}
     assert diff_intent(declared, effective_values(DaemonConfig()), {}) == []
+
+
+def test_every_response_knob_has_a_manifest_key():
+    # dry_run only suppresses execution; it is not an autonomy knob.
+    paths = {f.path for f in INTENT_FIELDS}
+    missing = {
+        f"response.{f.name}" for f in dataclasses.fields(ResponseConfig)
+    } - {"response.dry_run"} - paths
+    assert not missing, f"ResponseConfig fields without an INTENT.md key: {missing}"
 
 
 def test_every_field_names_a_real_setting():
