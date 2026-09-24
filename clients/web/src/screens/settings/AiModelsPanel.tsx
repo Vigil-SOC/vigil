@@ -11,7 +11,7 @@ import { Cost } from '../../shared/cost'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Field, SettingsCard, TextInput } from '../../shared/ui'
 import { useBifrostModels, useModelParameters } from './useBifrost'
-import { perMillion, type BifrostModel } from '../../services/bifrostApi'
+import { effectiveRates, perMillion, type BifrostModel } from '../../services/bifrostApi'
 
 const money = (v: number | null): string =>
   v === null ? '—' : v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(3)}`
@@ -100,9 +100,10 @@ export default function AiModelsPanel() {
 
 function ModelDetail({ model, onClose }: { model: BifrostModel; onClose: () => void }) {
   const { params, error } = useModelParameters(model.name, model.provider)
+  const rates = effectiveRates(model)
   // Without both base rates the model cannot be priced; 0 is a real rate (e.g. Ollama).
   const priced =
-    typeof model.input_cost_per_token === 'number' && typeof model.output_cost_per_token === 'number'
+    typeof rates.input_cost_per_token === 'number' && typeof rates.output_cost_per_token === 'number'
   const rate = (perToken: number | undefined) => (priced ? money(perMillion(perToken)) : <Cost usd={null} />)
 
   return (
@@ -121,11 +122,11 @@ function ModelDetail({ model, onClose }: { model: BifrostModel; onClose: () => v
         PER MILLION TOKENS
       </div>
       <div className="flex flex-col gap-1 text-sm mb-3">
-        <Row label="Input" value={rate(model.input_cost_per_token)} />
-        <Row label="Output" value={rate(model.output_cost_per_token)} />
+        <Row label="Input" value={rate(rates.input_cost_per_token)} />
+        <Row label="Output" value={rate(rates.output_cost_per_token)} />
         {/* Most priced models carry no cache rate; absent is "—", not "not priced". */}
-        <Row label="Cache read" value={money(perMillion(model.cache_read_input_token_cost))} />
-        <Row label="Cache write" value={money(perMillion(model.cache_creation_input_token_cost))} />
+        <Row label="Cache read" value={money(perMillion(rates.cache_read_input_token_cost))} />
+        <Row label="Cache write" value={money(perMillion(rates.cache_creation_input_token_cost))} />
       </div>
 
       {error && <div className="text-xs text-tx-3">{error}</div>}

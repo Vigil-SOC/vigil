@@ -8,12 +8,12 @@ import AiModelsPanel from './AiModelsPanel'
 const modelDetails = vi.fn()
 const modelParameters = vi.fn()
 
-vi.mock('../../services/bifrostApi', () => ({
+vi.mock('../../services/bifrostApi', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   bifrostApi: {
     modelDetails: (...a: unknown[]) => modelDetails(...(a as [])),
     modelParameters: (...a: unknown[]) => modelParameters(...(a as [])),
   },
-  perMillion: (v: number | undefined) => (typeof v === 'number' ? v * 1_000_000 : null),
 }))
 
 const MODELS = [
@@ -27,6 +27,13 @@ const MODELS = [
   },
   { name: 'mystery-model', provider: 'custom' },
   { name: 'llama3', provider: 'ollama', input_cost_per_token: 0, output_cost_per_token: 0 },
+  {
+    name: 'gpt-override',
+    provider: 'openai',
+    input_cost_per_token: 0.000005,
+    output_cost_per_token: 0.000025,
+    overridden_pricing: { input_cost_per_token: 0.000007 },
+  },
 ]
 
 const open = async (name: string) => {
@@ -59,5 +66,11 @@ describe('AiModelsPanel price rows', () => {
     const row = await open('llama3')
     expect(row('Input')).toBe('$0.000')
     expect(row('Output')).toBe('$0.000')
+  })
+
+  it('shows a gateway pricing override patched over the catalogue rate', async () => {
+    const row = await open('gpt-override')
+    expect(row('Input')).toBe('$7.00')
+    expect(row('Output')).toBe('$25.00')
   })
 })

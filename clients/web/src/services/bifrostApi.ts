@@ -109,18 +109,32 @@ export interface BifrostKeyWrite {
   ollama_key_config?: { url: string }
 }
 
-/** One `/api/models/details` row. Rates are per token, with gateway pricing
-    overrides already applied; `/models/parameters` no longer carries them. */
-export interface BifrostModel {
-  name: string
-  provider: string
-  max_input_tokens?: number
-  max_output_tokens?: number
+export interface BifrostModelRates {
   input_cost_per_token?: number
   output_cost_per_token?: number
   cache_read_input_token_cost?: number
   cache_creation_input_token_cost?: number
 }
+
+/** One `/api/models/details` row. Rates are per token and are the catalogue's;
+    a matching gateway pricing override arrives as a patch in `overridden_pricing`.
+    `/models/parameters` no longer carries rates. */
+export interface BifrostModel extends BifrostModelRates {
+  name: string
+  provider: string
+  max_input_tokens?: number
+  max_output_tokens?: number
+  overridden_pricing?: BifrostModelRates
+}
+
+/** The rates the gateway bills a details row at: its override patched over the catalogue. */
+export const effectiveRates = (m: BifrostModel): BifrostModelRates => ({
+  input_cost_per_token: m.input_cost_per_token,
+  output_cost_per_token: m.output_cost_per_token,
+  cache_read_input_token_cost: m.cache_read_input_token_cost,
+  cache_creation_input_token_cost: m.cache_creation_input_token_cost,
+  ...m.overridden_pricing,
+})
 
 /** Pricing + capabilities for one model, from Bifrost's synced datasheet.
     Rates are per token, not per million. */
