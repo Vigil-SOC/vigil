@@ -3,7 +3,7 @@
 The orchestrator runs three loops:
   1. Intake loop: picks up new findings/tasks and creates investigations
   2. Supervision loop: monitors running agents, detects stuck/runaway ones
-  3. Review loop: evaluates completed investigations, approves or requests rework
+  3. Review loop: approves investigations the agent concluded as completed
 
 It does NOT maintain a persistent Claude conversation.
 All routine operations are pure Python logic.
@@ -1632,107 +1632,62 @@ class Orchestrator:
             )
 
     async def _review_investigation(self, inv_id: str):
-        """Review a completed investigation's results."""
+        """Approve an investigation that reached review.
+
+        ``_reconcile`` only moves a run here when the terminal outcome is
+        ``completed``. That conclusion is the review; the workdir is not
+        scored again.
+        """
         state = self.workdir.read_state(inv_id)
-
-        completed_steps = state.get("completed_steps", [])
-        total_steps = state.get("total_steps", 0)
-        summary = state.get("summary", "")
         proposed_actions = state.get("proposed_actions", [])
+        rule = decision_rule("review.terminal_outcome", "completed")
 
-        completeness = len(completed_steps) / total_steps if total_steps > 0 else 0
-        # The one threshold the orchestrator decides on; a literal, not a
-        # ResponseConfig field, recorded as such (#917). A missing summary
-        # fails the review on its own, so it is recorded too.
-        rule = decision_rule("review.completeness_floor", 0.8, completeness)
-        if not summary:
-            rule = f"{rule}; {decision_rule('review.summary', 'missing')}"
+        self._update_investigation_status(inv_id, "completed")
+        self.stats["investigations_completed"] += 1
+        if _inv_completed is not None:
+            _inv_completed.add(1)
+        self.stats["reviews_completed"] += 1
+        self.shared_intel.close_investigation(inv_id, state.get("case_id"))
 
-        if completeness >= 0.8 and summary:
-            self._update_investigation_status(inv_id, "completed")
-            self.stats["investigations_completed"] += 1
-            if _inv_completed is not None:
-                _inv_completed.add(1)
-            self.stats["reviews_completed"] += 1
-            self.shared_intel.close_investigation(inv_id, state.get("case_id"))
+        self.workdir.append_log(
+            inv_id,
+            {
+                "event": "review_passed",
+                "proposed_actions_count": len(proposed_actions),
+            },
+        )
 
-            self.workdir.append_log(
-                inv_id,
-                {
-                    "event": "review_passed",
-                    "completeness": completeness,
-                    "proposed_actions_count": len(proposed_actions),
-                },
-            )
+        logger.info(
+            f"Investigation {inv_id} APPROVED ({len(proposed_actions)} actions)"
+        )
 
-            logger.info(
-                f"Investigation {inv_id} APPROVED ({completeness:.0%} complete, {len(proposed_actions)} actions)"
-            )
+        self._log_ai_decision(
+            decision_type="review_approve",
+            inv_id=inv_id,
+            reasoning=(
+                f"Terminal outcome completed. {len(proposed_actions)} proposed actions."
+            ),
+            action="approve",
+            confidence=1.0,
+            rule=rule,
+        )
 
-            self._log_ai_decision(
-                decision_type="review_approve",
-                inv_id=inv_id,
-                reasoning=f"Investigation completed {completeness:.0%} of steps with valid summary. {len(proposed_actions)} proposed actions.",
-                action="approve",
-                confidence=completeness,
-                rule=rule,
-            )
+        self._send_notification(
+            inv_id,
+            "investigation_complete",
+            f"Investigation {inv_id} completed",
+            f"Investigation completed with {len(proposed_actions)} proposed actions.",
+            priority="normal",
+        )
 
-            self._send_notification(
-                inv_id,
-                "investigation_complete",
-                f"Investigation {inv_id} completed",
-                f"Investigation completed at {completeness:.0%} with {len(proposed_actions)} proposed actions.",
-                priority="normal",
-            )
+        if proposed_actions:
+            for action in proposed_actions:
+                if action.get("requires_approval"):
+                    await self._create_approval_action(inv_id, action)
 
-            if proposed_actions:
-                for action in proposed_actions:
-                    if action.get("requires_approval"):
-                        await self._create_approval_action(inv_id, action)
-
-            case_id = state.get("case_id")
-            if case_id and state.get("workflow_id") != "case-review":
-                await self._maybe_trigger_case_review(case_id)
-
-        else:
-            notes = f"Review incomplete: {completeness:.0%} steps done."
-            if not summary:
-                notes += " Missing summary."
-            missing = [i for i in range(1, total_steps + 1) if i not in completed_steps]
-            if missing:
-                notes += f" Missing steps: {missing}"
-
-            self._update_investigation_status(inv_id, "needs_rework", notes)
-            self.stats["reviews_completed"] += 1
-
-            self.workdir.append_log(
-                inv_id,
-                {
-                    "event": "review_needs_rework",
-                    "notes": notes,
-                    "completeness": completeness,
-                },
-            )
-
-            logger.info(f"Investigation {inv_id} NEEDS REWORK: {notes}")
-
-            self._log_ai_decision(
-                decision_type="review_rework",
-                inv_id=inv_id,
-                reasoning=notes,
-                action="needs_rework",
-                confidence=completeness,
-                rule=rule,
-            )
-
-            self._send_notification(
-                inv_id,
-                "investigation_needs_review",
-                f"Investigation {inv_id} needs rework",
-                notes,
-                priority="high",
-            )
+        case_id = state.get("case_id")
+        if case_id and state.get("workflow_id") != "case-review":
+            await self._maybe_trigger_case_review(case_id)
 
     async def _create_approval_action(self, inv_id: str, action: Dict):
         """Create an approval action for proposed response."""

@@ -465,7 +465,6 @@ def generate_initial_state(
             f.get("finding_id") for f in findings if f.get("finding_id")
         ],
         "created_at": utcnow().isoformat(),
-        "completed_steps": [],
         "discovered_iocs": {},
         "discovered_entities": {},
         "proposed_actions": [],
