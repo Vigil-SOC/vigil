@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -491,7 +491,8 @@ async def sync_all_provider_models() -> Dict[str, Any]:
     does everything:
 
     1. Fetches each provider's live upstream catalog via
-       ``core.llm.providers.discovery``.
+       ``core.llm.providers.discovery``, and the gateway datasheet for every
+       active provider type, whose rates price each call.
     2. Applies the configured extras (IDs upstream dropped from
        /v1/models but that still route — e.g. Claude 3.x).
     3. Populates ``_MODEL_LIST_CACHE[provider_id]`` in
@@ -588,6 +589,10 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
     base_url_results: Dict[str, bool] = {}
     per_row_models: Dict[str, List[str]] = {}
 
+    # Rates for every active type, on every run. The same read stands in for a
+    # failed discovery below; otherwise it touches only the rates.
+    datasheets = await record_gateway_rates(rows_by_type)
+
     for provider_type, provider_rows in rows_by_type.items():
         # Extras are per-provider-type; apply to every row of this type.
         extras = get_extra_model_ids(provider_type)
@@ -625,7 +630,7 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             # and the real thing when it has none.
             stood_in = False
             if meta is None and provider_type not in _HOST_OWNED_CATALOGUE:
-                meta = await fetch_catalogue_models(provider_type)
+                meta = datasheets.get(provider_type)
                 stood_in = meta is not None and provider_type in _DISCOVERABLE
 
             if meta is not None:
@@ -848,6 +853,14 @@ def _is_chat_catalogue_entry(entry: Dict[str, Any]) -> bool:
     return bool(entry.get("max_output_tokens"))
 
 
+def _rate(entry: Dict[str, Any], key: str) -> Optional[float]:
+    """A datasheet rate, or None when absent or malformed — never a guessed 0."""
+    value = entry.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return float(value)
+
+
 async def fetch_catalogue_models(provider_type: str) -> Optional[List[Any]]:
     """Return Bifrost's own catalogue for ``provider_type`` as ``ModelMeta``.
 
@@ -880,6 +893,11 @@ async def fetch_catalogue_models(provider_type: str) -> Optional[List[Any]]:
             # for the same reason ``_anthropic_caps`` does. Thinking and vision
             # are left unset rather than guessed, since nothing depends on them.
             capabilities={"supports_tools": True},
+            # The gateway's own rates, operator pricing overrides included.
+            input_cost_per_token=_rate(e, "input_cost_per_token"),
+            output_cost_per_token=_rate(e, "output_cost_per_token"),
+            cache_read_cost_per_token=_rate(e, "cache_read_input_token_cost"),
+            cache_write_cost_per_token=_rate(e, "cache_creation_input_token_cost"),
         )
         for e in entries
         if _is_chat_catalogue_entry(e)
@@ -892,6 +910,62 @@ async def fetch_catalogue_models(provider_type: str) -> Optional[List[Any]]:
         )
         return None
     return meta
+
+
+async def record_gateway_rates(
+    provider_types: Iterable[str],
+) -> Dict[str, Optional[List[Any]]]:
+    """Read the datasheet for each type and record its rates in live meta.
+
+    Rates only: the model list, ``_LIVE_CATALOGUES`` and capabilities are left
+    to the full sync. Returns each type's datasheet (None when unreachable) so
+    the sync can reuse it as a stand-in catalogue instead of reading it twice.
+    """
+    from core.llm.providers.registry import record_live_meta
+
+    types = list(dict.fromkeys(provider_types))
+    sheets = await asyncio.gather(*(fetch_catalogue_models(t) for t in types))
+    for provider_type, meta in zip(types, sheets):
+        if meta:
+            record_live_meta(provider_type, meta, rates_only=True)
+    return dict(zip(types, sheets))
+
+
+async def refresh_gateway_rates() -> None:
+    """Fill this process's rates for every active provider type.
+
+    For processes that price calls but must not run ``sync_all_provider_models``
+    (the LLM worker, the daemon): that sync writes allow-lists and keys to
+    Bifrost, and the API is the only process that may. Never raises.
+    """
+    from core.storage.connection import get_db_manager
+    from core.storage.models import LLMProviderConfig
+
+    try:
+        db_manager = get_db_manager()
+        if db_manager._engine is None:
+            db_manager.initialize()
+        with db_manager.session_scope() as session:
+            types = [
+                t
+                for (t,) in session.query(LLMProviderConfig.provider_type)
+                .filter(LLMProviderConfig.is_active.is_(True))
+                .distinct()
+            ]
+        await record_gateway_rates(types)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Gateway rate refresh failed: %s", exc)
+
+
+async def run_gateway_rates_refresher() -> None:
+    """``refresh_gateway_rates`` now and then every catalog refresh interval,
+    the same cadence the API's full sync keeps."""
+    interval_s = get_settings().model_catalog_refresh_interval_s
+    while True:
+        await refresh_gateway_rates()
+        if interval_s <= 0:
+            return
+        await asyncio.sleep(interval_s)
 
 
 async def _list_ollama_models(

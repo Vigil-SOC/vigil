@@ -713,10 +713,9 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
     )
 
     # #184 Phase 3: surface pricing_source per row so the dashboard can
-    # badge "heuristic" / "unknown" models — those rows record cost from
-    # tier-regex pricing (or none at all for unknown) and need to be visually
-    # distinguishable from "exact" rows. Provider is inferred from the
-    # model id since LLMInteractionLog doesn't carry provider_type.
+    # badge "unknown" models — the gateway prices none of their calls — apart
+    # from "exact" rows. Provider is inferred from the model id since
+    # LLMInteractionLog doesn't carry provider_type.
 
     registry = get_registry()
     return [

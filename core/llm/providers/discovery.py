@@ -59,6 +59,11 @@ class ModelMeta:
     display_name: str
     context_window: int = 0
     capabilities: Dict[str, bool] = field(default_factory=dict)
+    # Per-token USD, filled only from the gateway datasheet; None is "not stated".
+    input_cost_per_token: Optional[float] = None
+    output_cost_per_token: Optional[float] = None
+    cache_read_cost_per_token: Optional[float] = None
+    cache_write_cost_per_token: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -252,10 +257,8 @@ async def fetch_openai_models(
     """Fetch the live OpenAI (or OpenAI-compatible) model catalog.
 
     OpenAI's /v1/models returns only ``id``/``created``/``owned_by``; no
-    display name, context, or capability data. The providers/registry tier
-    heuristic fills in pricing — context/capabilities stay at their
-    (0/False) defaults unless an override is registered in the static
-    catalog.
+    display name, context, or capability data, so context/capabilities stay
+    at their (0/False) defaults. Rates come from the gateway datasheet.
 
     The URL is validated by :func:`core.platform.url_safety.validate_provider_url`
     before any request, and the bearer token is omitted when targeting

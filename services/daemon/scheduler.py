@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from core.config import get_settings
+from core.llm.bifrost.admin import run_gateway_rates_refresher
 from core.storage.connection import get_db_manager
 from core.time import utcnow
 from services.daemon.config import SchedulerConfig
@@ -175,6 +176,9 @@ class TaskScheduler:
         """Run the scheduler loop."""
         logger.info("Task scheduler starting...")
         self._init_services()
+        # The Claude service prices its calls from this process's own copy of
+        # the gateway's rates.
+        rates_refresher = asyncio.create_task(run_gateway_rates_refresher())
 
         # Run startup tasks
         for task in self._tasks:
@@ -216,6 +220,7 @@ class TaskScheduler:
             except asyncio.TimeoutError:
                 pass
 
+        rates_refresher.cancel()
         logger.info("Task scheduler stopped")
 
     async def _run_threat_hunt(self):

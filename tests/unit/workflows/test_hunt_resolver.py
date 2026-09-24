@@ -334,7 +334,7 @@ class TestThePricingPreflight:
 
         reported = pricing()
         assert reported["model"]
-        assert reported["source"] in {"exact", "heuristic", "zero", "unknown"}
+        assert reported["source"] in {"exact", "zero", "unknown"}
 
     def test_calls_a_model_no_rate_table_carries_unknown(self, monkeypatch):
         import core.llm.defaults as defaults
@@ -343,23 +343,38 @@ class TestThePricingPreflight:
         monkeypatch.setattr(defaults, "DEFAULT_MODEL", "groq/some-model-nobody-priced")
         assert catalog.pricing()["source"] == "unknown"
 
-    def test_prices_the_families_a_deployment_actually_runs(self):
+    def test_prices_a_namespaced_id_from_its_providers_datasheet(self):
         from core.llm.cost.pricing_router import priced_as
-        from core.llm.providers.registry import get_registry
+        from core.llm.providers import registry as model_registry
+        from core.llm.providers.discovery import ModelMeta
 
-        registry = get_registry()
-        for model in (
+        models = (
             "anthropic/claude-opus-5",
-            "anthropic/claude-sonnet-5",
-            "openai/gpt-5",
             "openai/o4-mini",
             "vertex/gemini-3.5-flash",
-            "gemini/gemini-2.5-pro",
-            "bedrock/claude-sonnet-4",
-        ):
-            provider, bare = priced_as("bifrost", model)
-            assert registry.get_pricing_source(bare, provider) != "unknown", model
-            assert registry.get_cost_rates(bare, provider)[0] > 0, model
+        )
+        try:
+            for model in models:
+                provider, bare = model.split("/")
+                model_registry.record_live_meta(
+                    provider,
+                    [
+                        ModelMeta(
+                            bare,
+                            bare,
+                            input_cost_per_token=1e-6,
+                            output_cost_per_token=2e-6,
+                        )
+                    ],
+                    rates_only=True,
+                )
+            registry = model_registry.get_registry()
+            for model in models:
+                provider, bare = priced_as("bifrost", model)
+                assert registry.get_pricing_source(bare, provider) == "exact", model
+                assert registry.get_cost_rates(bare, provider)[0] > 0, model
+        finally:
+            model_registry.clear_live_meta()
 
 
 class TestTheCapabilityReport:

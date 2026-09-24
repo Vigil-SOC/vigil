@@ -37,7 +37,7 @@ const wf = (runKind = 'hunt', huntLike = runKind === 'hunt' || runKind === 'root
   agents: [], cmds: [], source: 'file', useCase: '', runKind, huntLike,
 })
 
-const limits = (unbound: string[], source = 'heuristic') => ({
+const limits = (unbound: string[], source = 'exact') => ({
   data: {
     capabilities: { bound: ['findings_search'], unbound },
     budgets: { max_iterations: 8, max_cost_usd: 3.0 },
@@ -65,7 +65,7 @@ describe('a model nothing can price', () => {
   })
 
   it('stays quiet when the model has a rate', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([], 'heuristic'))
+    getWorkflow.mockResolvedValueOnce(limits([], 'exact'))
     open()
     await waitFor(() => expect(getWorkflow).toHaveBeenCalled())
     expect(screen.queryByText(/Nothing here can price/)).toBeNull()

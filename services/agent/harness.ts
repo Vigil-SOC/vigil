@@ -40,11 +40,13 @@ const client = new OpenAI({
 
 const limiter = new Limiter({ rpm: 500, tpm: 400_000 }, 4);
 
-// Memoised across runs, which is what its own comment promised: rates do not
-// change while a process lives, and a per-run memo dies with the run.
+// Memoised across runs, since a per-run memo dies with the run, but only for as long
+// as the backend keeps its own copy: MODEL_CATALOG_REFRESH_INTERVAL_S is the variable
+// core/config.py reads, and its default there.
 const prices = httpPrices({
   url: process.env["VIGIL_PRICING_URL"] ?? "http://localhost:6987/internal/pricing",
   token: internalToken(),
+  ttlMs: Number(process.env["MODEL_CATALOG_REFRESH_INTERVAL_S"] ?? 300) * 1000,
 });
 
 // Which grants a run kind's roles hold. Compose grants per phase agent and chat

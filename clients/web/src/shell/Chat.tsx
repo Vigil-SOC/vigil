@@ -945,7 +945,7 @@ export default function Chat({
               {estimatedTokens.toLocaleString()} / {CONTEXT_WINDOW / 1000}k tokens
             </span>
             {costEstimate && (
-              <Cost className="cm-cost" sourceClassName="cm-src" title={costTitle} approx usd={costEstimate.low_usd} high={costEstimate.high_usd} source={costEstimate.pricing_source} digits={4} />
+              <Cost className="cm-cost" title={costTitle} approx usd={costEstimate.low_usd} high={costEstimate.high_usd} source={costEstimate.pricing_source} digits={4} />
             )}
           </div>
           <div className="cm-bar"><span className={`cm-bar-fill ${ctxState}`} style={{ width: `${ctxPct}%` }} /></div>
@@ -1133,7 +1133,7 @@ export default function Chat({
           {costEstimate && (
             <div className="cs-stat-row" title={costTitle}>
               <span className="cs-name">Est. cost</span>
-              <Cost className="cs-cost-val" sourceClassName="cs-ctx-sub" usd={costEstimate.low_usd} high={costEstimate.high_usd} source={costEstimate.pricing_source} digits={4} />
+              <Cost className="cs-cost-val" usd={costEstimate.low_usd} high={costEstimate.high_usd} source={costEstimate.pricing_source} digits={4} />
             </div>
           )}
         </section>

@@ -785,7 +785,7 @@ export interface CostEstimate {
   output_tokens_max: number
   low_usd: number
   high_usd: number
-  pricing_source: 'exact' | 'heuristic' | 'zero' | 'unknown'
+  pricing_source: 'exact' | 'zero' | 'unknown'
   token_count_method: 'anthropic_count_tokens' | 'tiktoken' | 'char_heuristic'
 }
 

@@ -26,10 +26,6 @@ describe('the one rule for a spend amount', () => {
     expect(fmtCost(0, 'unknown')).toBe('not priced')
   })
 
-  it('carries heuristic provenance with the number', () => {
-    expect(fmtCost(2, 'heuristic')).toBe('$2.00 · heuristic')
-  })
-
   it('renders the hint as text on the label, pointing at the gateway pricing overrides', () => {
     render(<Cost usd={0} source="zero" />)
     const el = screen.getByText('not billed')

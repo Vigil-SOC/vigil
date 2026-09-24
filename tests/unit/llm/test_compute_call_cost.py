@@ -228,22 +228,40 @@ def test_zero_cache_tokens_match_pre_184_behavior():
     assert legacy == pytest.approx(1_000 * in_rate + 500 * out_rate, rel=1e-9)
 
 
-def test_real_anthropic_multipliers_via_registry():
-    """End-to-end: hit the real ModelRegistry (no mock) and verify the
-    Anthropic multipliers (0.1× read / 1.25× creation) are applied."""
+def test_real_registry_prices_from_the_datasheet_cache_rates():
+    """End-to-end: hit the real ModelRegistry (no mock) seeded as the sync
+    records a datasheet read, and verify its per-model cache rates apply."""
     from core.llm.cost.calls import compute_call_cost
+    from core.llm.providers import registry as model_registry
+    from core.llm.providers.discovery import ModelMeta
 
-    # Sonnet 4.5 has exact pricing in _CATALOG: $3/MTok in, $15/MTok out.
-    cost = compute_call_cost(
-        "claude-sonnet-4-5-20250929",
-        "anthropic",
-        1_000,
-        500,
-        cache_read_tokens=10_000,
-        cache_creation_tokens=2_000,
-    )
     in_rate = 3.0 / 1_000_000
     out_rate = 15.0 / 1_000_000
+    model_registry.record_live_meta(
+        "anthropic",
+        [
+            ModelMeta(
+                "claude-sonnet-4-5-20250929",
+                "claude-sonnet-4-5-20250929",
+                input_cost_per_token=in_rate,
+                output_cost_per_token=out_rate,
+                cache_read_cost_per_token=in_rate * 0.10,
+                cache_write_cost_per_token=in_rate * 1.25,
+            )
+        ],
+        rates_only=True,
+    )
+    try:
+        cost = compute_call_cost(
+            "claude-sonnet-4-5-20250929",
+            "anthropic",
+            1_000,
+            500,
+            cache_read_tokens=10_000,
+            cache_creation_tokens=2_000,
+        )
+    finally:
+        model_registry.clear_live_meta()
     expected = (
         1_000 * in_rate
         + 500 * out_rate

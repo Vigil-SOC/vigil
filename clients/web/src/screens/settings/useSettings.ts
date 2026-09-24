@@ -783,7 +783,7 @@ export interface CostTotals {
 export interface CostModelRow {
   model: string
   provider_type: string
-  pricing_source: 'exact' | 'heuristic' | 'zero' | 'unknown'
+  pricing_source: 'exact' | 'zero' | 'unknown'
   calls: number
   unpriced_calls: number
   input_tokens: number

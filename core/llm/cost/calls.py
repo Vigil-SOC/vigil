@@ -14,14 +14,13 @@ def compute_call_cost(
 ) -> Optional[float]:
     """Compute USD cost of a single LLM call, or ``None`` if it cannot be priced.
 
-    Looks up per-token and per-provider cache rates from the model registry
-    in one catalog read. Cache tokens are billed at provider-specific rates
-    (#184 Phase 3): Anthropic ephemeral cache reads at 0.1× input, writes at
-    1.25× input; OpenAI cached input at 0.5×.
+    Looks up all four per-token rates (input, output, cache read, cache
+    write) from the model registry in one catalog read; the registry holds
+    whatever the gateway datasheet states for the model.
 
     Unpriced is stored as absence, never as zero (#984 decision 7): a missing
     model/provider, a failed registry lookup, or a model whose pricing source
-    is ``unknown`` returns ``None``. ``exact`` / ``heuristic`` / ``zero``
+    is ``unknown`` returns ``None``. ``exact`` / ``zero``
     return a number, which may be ``0.0`` for a genuinely unbilled model.
     """
     if not model_id or not provider_type:

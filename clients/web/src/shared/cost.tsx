@@ -4,7 +4,7 @@
    A bare 0 with no provenance is a real zero: the backend stores an unpriced
    call as no cost at all and counts it separately (`unpriced_calls`, #1115). */
 
-export type PricingSource = 'exact' | 'heuristic' | 'zero' | 'unknown'
+export type PricingSource = 'exact' | 'zero' | 'unknown'
 
 export const NOT_PRICED = 'not priced'
 export const NOT_BILLED = 'not billed'
@@ -14,7 +14,6 @@ export const NOT_BILLED_HINT = 'This model is not billed. A rate for a self-host
 /** Provenance vocabulary, identical everywhere it appears. */
 export const PROVENANCE_LABEL: Record<PricingSource, string> = {
   exact: 'exact',
-  heuristic: 'heuristic',
   zero: NOT_BILLED,
   unknown: NOT_PRICED,
 }
@@ -43,11 +42,9 @@ export function describeCost({ usd, high, source, digits = 2 }: CostInput): Cost
   return { kind: 'amount', text, source: source ?? undefined }
 }
 
-/** Plain-text form for template strings and KPI values. A heuristic estimate
- *  carries its provenance inline so the word travels with the number. */
+/** Plain-text form for template strings and KPI values. */
 export function fmtCost(usd: CostInput['usd'], source?: CostInput['source'], digits?: number): string {
-  const v = describeCost({ usd, source, digits })
-  return v.kind === 'amount' && v.source === 'heuristic' ? `${v.text} · ${PROVENANCE_LABEL.heuristic}` : v.text
+  return describeCost({ usd, source, digits }).text
 }
 
 interface CostProps extends CostInput {
@@ -56,20 +53,17 @@ interface CostProps extends CostInput {
   className?: string
   /** Extra tooltip text; a not-priced / not-billed label prepends its own hint. */
   title?: string
-  /** Class for the inline provenance word on a heuristic amount. */
-  sourceClassName?: string
 }
 
 /** Renders the rule as an element. Provenance is conveyed by text (and a title
  *  carrying the route to resolving it), never by colour alone. */
-export function Cost({ approx, className, sourceClassName, title, ...input }: CostProps) {
+export function Cost({ approx, className, title, ...input }: CostProps) {
   const v = describeCost(input)
   switch (v.kind) {
     case 'amount':
       return (
         <span className={className} title={title}>
           {approx ? '~' : ''}{v.text}
-          {v.source === 'heuristic' && <span className={sourceClassName}> · {PROVENANCE_LABEL.heuristic}</span>}
         </span>
       )
     case 'not-priced':

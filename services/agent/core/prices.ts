@@ -7,8 +7,8 @@ export interface Rates {
   output: number;
   cache_read: number;
   cache_write: number;
-  // exact from a catalog entry, heuristic from a model-id prefix, zero for self-hosted,
-  // unknown when nothing matched -- otherwise two very different $0 calls look alike.
+  // exact from the gateway's datasheet, zero for a model that costs nothing, unknown
+  // when the gateway prices nothing -- otherwise two very different $0 calls look alike.
   source: string;
 }
 
@@ -32,20 +32,25 @@ export function costOf(rates: Rates, tokens: TokenCounts): number {
 export interface PricesOptions {
   url: string;
   token: string;
+  // How long a memoised rate is trusted: the backend's own refresh interval, since a
+  // repricing on the gateway reaches the backend no faster than that.
+  ttlMs: number;
   fetch?: typeof globalThis.fetch;
+  now?: () => number;
 }
 
-// Memoised per model and asked once per call; only successes are kept, or one blip
-// would disable pricing for the process. Never throws: an unpriced spend is a spend.
+// Memoised per model for ttlMs; only successes are kept, or one blip would disable
+// pricing for the process. Never throws: an unpriced spend is a spend.
 export function httpPrices(options: PricesOptions): Prices {
   const call = options.fetch ?? globalThis.fetch;
+  const now = options.now ?? Date.now;
   const base = options.url.replace(/\/$/, "");
-  const known = new Map<string, Rates>();
+  const known = new Map<string, { rates: Rates; at: number }>();
 
   return async (modelId, providerType) => {
     const key = `${providerType}/${modelId}`;
     const held = known.get(key);
-    if (held !== undefined) return held;
+    if (held !== undefined && now() - held.at < options.ttlMs) return held.rates;
 
     const query = new URLSearchParams({ model_id: modelId, provider_type: providerType });
     try {
@@ -54,7 +59,7 @@ export function httpPrices(options: PricesOptions): Prices {
       });
       if (!response.ok) return null;
       const rates = ratesOf(await response.json());
-      if (rates !== null) known.set(key, rates);
+      if (rates !== null) known.set(key, { rates, at: now() });
       return rates;
     } catch {
       return null;
@@ -62,7 +67,7 @@ export function httpPrices(options: PricesOptions): Prices {
   };
 }
 
-// What the catalog says when nothing matched. Its rates are zeros, and they are a
+// What the catalog says when the gateway prices nothing. Its rates are zeros, and they are a
 // gap rather than a price -- the one distinction cost_usd null exists to carry.
 const UNKNOWN = "unknown";
 

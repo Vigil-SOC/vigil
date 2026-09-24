@@ -17,6 +17,7 @@ REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
 from core.llm.providers import registry as model_registry  # noqa: E402
+from core.llm.providers.discovery import ModelMeta  # noqa: E402
 from core.llm.providers.registry import COMPONENTS  # noqa: E402
 from core.llm.providers.registry import (  # noqa: E402
     ComponentAssignment,
@@ -50,13 +51,37 @@ def test_is_valid_component():
     assert is_valid_component("nope") is False
 
 
-def test_cost_rates_known_anthropic_model():
+def _seed(provider_type, model_id, inp=3e-6, out=1.5e-5, **caps):
+    """Record one model the way the sync records discovery plus the datasheet."""
+    model_registry.record_live_meta(
+        provider_type,
+        [
+            ModelMeta(
+                id=model_id,
+                display_name=caps.pop("display_name", model_id),
+                context_window=caps.pop("context_window", 0),
+                capabilities=caps,
+                input_cost_per_token=inp,
+                output_cost_per_token=out,
+            )
+        ],
+    )
+
+
+@pytest.fixture(autouse=True)
+def _clean_live_meta():
+    model_registry.clear_live_meta()
+    yield
+    model_registry.clear_live_meta()
+
+
+def test_cost_rates_come_from_live_meta():
+    _seed("anthropic", "claude-sonnet-4-5-20250929")
     input_rate, output_rate = ModelRegistry.get_cost_rates(
         "claude-sonnet-4-5-20250929", "anthropic"
     )
-    # Catalog says $3/$15 per 1M tokens.
-    assert input_rate == pytest.approx(3.0 / 1_000_000)
-    assert output_rate == pytest.approx(15.0 / 1_000_000)
+    assert input_rate == pytest.approx(3e-6)
+    assert output_rate == pytest.approx(1.5e-5)
 
 
 def test_cost_rates_ollama_is_zero():
@@ -74,9 +99,17 @@ def test_cost_rates_unknown_cloud_model_degrades_gracefully():
     )
     assert input_rate == 0.0
     assert output_rate == 0.0
+    assert ModelRegistry.get_pricing_source("does-not-exist-1.0", "openai") == "unknown"
 
 
 def test_get_model_info_populates_capabilities():
+    _seed(
+        "anthropic",
+        "claude-sonnet-4-5-20250929",
+        context_window=200_000,
+        supports_tools=True,
+        supports_thinking=True,
+    )
     info = ModelRegistry.get_model_info(
         provider_id="anthropic-default",
         provider_type="anthropic",
@@ -87,85 +120,39 @@ def test_get_model_info_populates_capabilities():
     assert info.supports_tools is True
     assert info.supports_thinking is True
     assert info.context_window == 200_000
+    assert info.pricing_source == "exact"
 
 
 def test_catalog_entry_ollama_has_no_tools():
     entry = _catalog_entry("ollama", "llama3.1:8b")
     assert entry["supports_tools"] is False
-    assert entry["input_per_m"] == 0.0
+    assert entry["input"] == 0.0
 
 
-# ---------------------------------------------------------------------------
-# Layered catalog — tier heuristic + live meta + pricing_source (GH #139)
-# ---------------------------------------------------------------------------
-
-
-def test_tier_heuristic_anthropic_haiku_future():
-    """A model NOT in the exact catalog should fall to the heuristic
-    layer and get tier pricing, not $0. Uses a hypothetical future
-    Haiku variant so the test survives _CATALOG additions."""
-    entry = _catalog_entry("anthropic", "claude-haiku-9-9-hypothetical")
-    assert entry["input_per_m"] == pytest.approx(0.80)
-    assert entry["output_per_m"] == pytest.approx(4.0)
-    assert entry["pricing_source"] == "heuristic"
-
-
-def test_tier_heuristic_openai_gpt4o_mini():
-    entry = _catalog_entry("openai", "gpt-4o-mini-2024-07-18")
-    assert entry["input_per_m"] == pytest.approx(0.15)
-    assert entry["output_per_m"] == pytest.approx(0.60)
-    assert entry["pricing_source"] == "heuristic"
-
-
-def test_tier_heuristic_openai_o3_mini_orders_before_o1():
-    """Regex order matters: o3-mini should NOT match o3 first."""
-    entry = _catalog_entry("openai", "o3-mini")
-    assert entry["input_per_m"] == pytest.approx(1.10)
-    assert entry["pricing_source"] == "heuristic"
-
-
-def test_exact_catalog_wins_over_heuristic():
-    # claude-sonnet-4-5 is in _CATALOG → "exact", even though it also
-    # matches the sonnet tier.
-    entry = _catalog_entry("anthropic", "claude-sonnet-4-5-20250929")
-    assert entry["pricing_source"] == "exact"
-    assert entry["input_per_m"] == pytest.approx(3.0)
-
-
-def test_pricing_source_unknown_for_unrecognized_model():
-    entry = _catalog_entry("openai", "completely-unknown-xyz")
+def test_a_model_without_gateway_rates_is_unknown_whatever_its_name():
+    # No tier guess from the id: an unpriced opus is unpriced, not $15/$75.
+    entry = _catalog_entry("anthropic", "claude-opus-9-hypothetical")
     assert entry["pricing_source"] == "unknown"
-    assert entry["input_per_m"] == 0.0
+    assert entry["input"] == 0.0
 
 
-def test_live_meta_populates_context_window(monkeypatch):
-    """record_live_meta should feed display_name / context / caps into
-    the catalog lookup for models not in the static _CATALOG."""
-    from core.llm.providers import registry as model_registry
-
+def test_live_meta_without_rates_keeps_caps_and_stays_unknown():
     class _M:
         id = "claude-haiku-3-5-20241022"
         display_name = "Claude Haiku 3.5 (live)"
         context_window = 200_000
-        capabilities = {
-            "supports_tools": True,
-            "supports_thinking": False,
-            "supports_vision": True,
-        }
+        capabilities = {"supports_tools": True, "supports_vision": True}
 
-    try:
-        model_registry.record_live_meta("anthropic", [_M()])
-        entry = _catalog_entry("anthropic", "claude-haiku-3-5-20241022")
-        assert entry["context_window"] == 200_000
-        assert entry["display_name"] == "Claude Haiku 3.5 (live)"
-        assert entry["supports_vision"] is True
-        # Pricing still comes from the tier heuristic for this id.
-        assert entry["pricing_source"] == "heuristic"
-    finally:
-        model_registry.clear_live_meta("anthropic")
+    model_registry.record_live_meta("anthropic", [_M()])
+    entry = _catalog_entry("anthropic", "claude-haiku-3-5-20241022")
+    assert entry["context_window"] == 200_000
+    assert entry["display_name"] == "Claude Haiku 3.5 (live)"
+    assert entry["supports_vision"] is True
+    assert entry["pricing_source"] == "unknown"
 
 
 def test_get_model_info_deprecated_flag():
+    _seed("anthropic", "claude-sonnet-4-5-20250929")
     info = ModelRegistry.get_model_info(
         provider_id="anthropic-default",
         provider_type="anthropic",
@@ -206,19 +193,6 @@ def test_env_empty_string_disables_extras(monkeypatch):
 
     monkeypatch.setenv("ANTHROPIC_EXTRA_MODELS", "")
     assert get_extra_model_ids("anthropic") == ()
-
-
-def test_extras_catalog_entry_has_exact_pricing():
-    """3.x entries were added to _CATALOG so they render with correct
-    context/pricing instead of the tier heuristic fallback."""
-    entry = _catalog_entry("anthropic", "claude-3-5-haiku-20241022")
-    assert entry["pricing_source"] == "exact"
-    assert entry["context_window"] == 200_000
-    assert entry["input_per_m"] == pytest.approx(0.80)
-
-    entry = _catalog_entry("anthropic", "claude-3-haiku-20240307")
-    assert entry["input_per_m"] == pytest.approx(0.25)
-    assert entry["output_per_m"] == pytest.approx(1.25)
 
 
 def test_is_extra_model_flips_after_registration():

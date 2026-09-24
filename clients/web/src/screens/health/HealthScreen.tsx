@@ -17,7 +17,6 @@ const RANGES = Object.keys(RANGE_LABEL) as CostTimeRange[]
 // colour rides on top of the shared label; the word carries the meaning
 const PRICING_COLOR: Record<PricingSource, string> = {
   exact: 'var(--ok)',
-  heuristic: 'var(--high)',
   zero: 'var(--med)',
   unknown: 'var(--crit)',
 }

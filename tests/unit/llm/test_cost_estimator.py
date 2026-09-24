@@ -24,15 +24,39 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_openai_estimator_uses_registry_rates():
+@pytest.fixture
+def seeded_rates():
+    """Seed the registry the way the sync records a gateway datasheet read."""
+    from core.llm.providers import registry as model_registry
+    from core.llm.providers.discovery import ModelMeta
+
+    def seed(provider_type, model_id, inp, out):
+        model_registry.record_live_meta(
+            provider_type,
+            [
+                ModelMeta(
+                    model_id,
+                    model_id,
+                    input_cost_per_token=inp,
+                    output_cost_per_token=out,
+                )
+            ],
+            rates_only=True,
+        )
+
+    yield seed
+    model_registry.clear_live_meta()
+
+
+def test_openai_estimator_uses_registry_rates(seeded_rates):
     from core.llm.cost.estimator import estimate_openai
 
+    seeded_rates("openai", "gpt-4o", 2.50 / 1_000_000, 10.0 / 1_000_000)
     est = estimate_openai(
         model_id="gpt-4o",
         messages=[{"role": "user", "content": "hello"}],
         max_tokens=1000,
     )
-    # gpt-4o has exact pricing: $2.50/MTok in, $10/MTok out.
     in_rate = 2.50 / 1_000_000
     out_rate = 10.0 / 1_000_000
 
@@ -126,7 +150,9 @@ def test_unknown_provider_calls_record_pricing_unknown(monkeypatch):
     assert calls == [("some-future-vendor", "some-model")]
 
 
-def test_anthropic_estimator_uses_count_tokens_when_available(monkeypatch):
+def test_anthropic_estimator_uses_count_tokens_when_available(
+    monkeypatch, seeded_rates
+):
     """Mock the Bifrost-routed Anthropic client so the test doesn't
     depend on a real API key or network.
 
@@ -138,6 +164,9 @@ def test_anthropic_estimator_uses_count_tokens_when_available(monkeypatch):
     from core.llm.cost import estimator as cost_estimator
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    seeded_rates(
+        "anthropic", "claude-sonnet-4-5-20250929", 3.0 / 1_000_000, 15.0 / 1_000_000
+    )
 
     class _FakeMessages:
         async def count_tokens(self, **kwargs):  # noqa: D401

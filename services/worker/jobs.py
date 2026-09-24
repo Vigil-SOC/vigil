@@ -6,6 +6,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from core.config import get_settings
+from core.llm.bifrost.admin import run_gateway_rates_refresher
 from core.llm.gateway.gateway import (
     QUEUE_NAME,
     RedisSessionStore,
@@ -313,6 +314,9 @@ async def on_startup(ctx: Dict[str, Any]):
 
     claude_service = ClaudeService()
     ctx["claude_service"] = claude_service
+    # This process prices every call it makes, from its own copy of the
+    # gateway's rates; without it each one would record as unpriced.
+    ctx["rates_refresher"] = asyncio.create_task(run_gateway_rates_refresher())
     # A cap on calls in flight, not a rate limit: the rate is Bifrost's, and
     # how a client answers its refusals is core.llm.gateway_retry's.
     ctx["in_flight"] = asyncio.Semaphore(MAX_CONCURRENT_LLM_CALLS)
@@ -337,6 +341,9 @@ async def on_startup(ctx: Dict[str, Any]):
 
 async def on_shutdown(ctx: Dict[str, Any]):
     logger.info("LLM worker shutting down")
+    refresher = ctx.get("rates_refresher")
+    if refresher is not None:
+        refresher.cancel()
 
 
 class WorkerSettings:

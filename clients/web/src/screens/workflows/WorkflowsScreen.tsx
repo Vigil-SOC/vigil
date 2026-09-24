@@ -407,7 +407,7 @@ function StartedPreview({ detail }: { detail: WfRunDetail | null }) {
 interface WfLimits {
   capabilities?: { bound: string[]; unbound: string[] }
   budgets?: { max_iterations: number; max_cost_usd: number }
-  /** exact, heuristic, zero or unknown — how confidently the model's rate resolved. */
+  /** exact, zero or unknown — how confidently the model's rate resolved. */
   pricing?: { model: string; source: string }
 }
 

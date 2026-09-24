@@ -2892,10 +2892,6 @@
       font-variant-numeric: tabular-nums;
    }
 
-   .chat-meta .cm-src {
-      color: var(--tx-faint);
-   }
-
    .chat-meta .cm-bar {
       height: 3px;
       border-radius: 3px;
