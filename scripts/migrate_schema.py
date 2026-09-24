@@ -152,6 +152,18 @@ def create_llm_interaction_vk_index(conn):
         ON llm_interaction_logs (virtual_key_id, created_at);
     """))
 
+# Unpriced is stored as NULL, not 0 (#1115). Existing rows are left as they are.
+@migration("Make llm_interaction_logs.cost_usd nullable")
+def make_llm_interaction_cost_nullable(conn):
+    if not _table_exists(conn, 'llm_interaction_logs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs ALTER COLUMN cost_usd DROP NOT NULL;
+    """))
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs ALTER COLUMN cost_usd DROP DEFAULT;
+    """))
+
 
 # create_all is checkfirst=True, so a table that already exists gets no new index
 # from the model. A hunt handing off looks this column up twice per escalation.

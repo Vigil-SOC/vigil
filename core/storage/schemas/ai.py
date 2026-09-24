@@ -56,7 +56,8 @@ class LLMInteractionLogSchema(ORMSchema):
     stop_reason: Optional[str] = None
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
-    cost_usd: ZeroFloat = 0.0
+    # NULL means unpriced (#1115), so it is not floored at zero.
+    cost_usd: Optional[float] = None
     duration_ms: Optional[int] = None
     error: Optional[str] = None
     request_messages: Optional[Any] = None

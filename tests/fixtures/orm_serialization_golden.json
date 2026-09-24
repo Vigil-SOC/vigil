@@ -1297,7 +1297,7 @@
       "agent_id": null,
       "cache_creation_tokens": null,
       "cache_read_tokens": null,
-      "cost_usd": 0.0,
+      "cost_usd": null,
       "created_at": null,
       "duration_ms": null,
       "error": null,
@@ -1322,7 +1322,7 @@
     },
     "empty.to_summary_dict.default": {
       "agent_id": null,
-      "cost_usd": 0.0,
+      "cost_usd": null,
       "created_at": null,
       "duration_ms": null,
       "error": null,

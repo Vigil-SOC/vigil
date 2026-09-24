@@ -131,7 +131,8 @@ class LLMInteractionLog(Base):
     cache_creation_tokens: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    cost_usd: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False, default=0)
+    # NULL = the call could not be priced; 0 = priced and genuinely free (#1115).
+    cost_usd: Mapped[Optional[float]] = mapped_column(Numeric(10, 6), nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Bifrost virtual-key attribution (#186). Stores the VK the call was
