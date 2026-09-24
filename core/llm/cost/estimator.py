@@ -18,8 +18,10 @@ Token counting strategy by provider:
     is good enough for budget gating but not for billing — callers see
     ``token_count_method="char_heuristic"`` and can badge the estimate.
 
-  - **Ollama / unknown**: char heuristic + ``$0`` rates → returns ``$0``.
-    Self-hosted compute cost is out of scope (#184 explicitly defers it).
+  - **Everything else** (Vertex, Gemini, Bedrock, Azure, Ollama, ...): the
+    char heuristic, priced at the registry's rates for that provider. Ollama
+    resolves to ``$0`` (self-hosted compute is out of scope, #184); a pair
+    the registry cannot price is ``$0`` with ``pricing_source="unknown"``.
 
 Cache hits are not modeled in v1 — the estimator is for the cold-path
 "what will this cost if nothing's cached" question. Once the call lands,
@@ -133,134 +135,38 @@ def _count_tokens_openai(model_id: str, text: str) -> tuple[int, str]:
     return (len(enc.encode(text)), "tiktoken")
 
 
-# ---------------------------------------------------------------------------
-# Per-provider estimators
-# ---------------------------------------------------------------------------
-
-
-async def estimate_anthropic(
-    *,
+async def _count_tokens_anthropic(
     model_id: str,
     messages: List[Dict[str, Any]],
-    system_prompt: Optional[str] = None,
-    tools: Optional[List[Dict[str, Any]]] = None,
-    max_tokens: int = 4096,
-) -> CostEstimate:
-    """Estimate USD cost of an Anthropic call by hitting count_tokens.
+    system_prompt: Optional[str],
+    tools: Optional[List[Dict[str, Any]]],
+) -> Optional[int]:
+    """Exact prompt tokens from Anthropic's free ``count_tokens``, or ``None``.
 
     Routes through Bifrost via ``core.llm.providers.clients.create_async_anthropic_client``
     so the count_tokens call obeys the single-routing-path policy.
     """
-
-    registry = get_registry()
-    in_rate, out_rate = registry.get_cost_rates(model_id, "anthropic")
-    pricing_source = registry.get_pricing_source(model_id, "anthropic")
-
     api_key = get_secret("ANTHROPIC_API_KEY") or get_secret("CLAUDE_API_KEY")
-    input_tokens = 0
-    method = "char_heuristic"
+    if not api_key:
+        return None
+    try:
+        from core.llm.providers.clients import create_async_anthropic_client
 
-    if api_key:
-        try:
-            from core.llm.providers.clients import create_async_anthropic_client
-
-            client = create_async_anthropic_client(api_key, timeout=30.0)
-            kwargs: Dict[str, Any] = {"model": model_id, "messages": messages}
-            if system_prompt:
-                kwargs["system"] = system_prompt
-            if tools:
-                kwargs["tools"] = tools
-            resp = await client.messages.count_tokens(**kwargs)
-            input_tokens = int(getattr(resp, "input_tokens", 0) or 0)
-            method = "anthropic_count_tokens"
-        except Exception as exc:  # noqa: BLE001
-            logger.debug(
-                "count_tokens for %s failed (%s) — falling back", model_id, exc
-            )
-
-    if method == "char_heuristic":
-        # No API key or count_tokens unavailable — fall back so the
-        # estimator is still useful in tests / offline contexts.
-        text = _flatten_message_text(messages)
+        client = create_async_anthropic_client(api_key, timeout=30.0)
+        kwargs: Dict[str, Any] = {"model": model_id, "messages": messages}
         if system_prompt:
-            text = system_prompt + "\n" + text
-        input_tokens = _char_heuristic_tokens(text)
-
-    low_usd = input_tokens * in_rate
-    high_usd = low_usd + max_tokens * out_rate
-    return CostEstimate(
-        provider_type="anthropic",
-        model_id=model_id,
-        input_tokens=input_tokens,
-        output_tokens_max=max_tokens,
-        low_usd=low_usd,
-        high_usd=high_usd,
-        pricing_source=pricing_source,
-        token_count_method=method,
-    )
-
-
-def estimate_openai(
-    *,
-    model_id: str,
-    messages: List[Dict[str, Any]],
-    system_prompt: Optional[str] = None,
-    max_tokens: int = 4096,
-) -> CostEstimate:
-    """Estimate USD cost of an OpenAI call using tiktoken (or char fallback).
-
-    Synchronous — no network calls. Cheap to use in a hot path.
-    """
-
-    registry = get_registry()
-    in_rate, out_rate = registry.get_cost_rates(model_id, "openai")
-    pricing_source = registry.get_pricing_source(model_id, "openai")
-
-    text = _flatten_message_text(messages)
-    if system_prompt:
-        text = system_prompt + "\n" + text
-    input_tokens, method = _count_tokens_openai(model_id, text)
-
-    low_usd = input_tokens * in_rate
-    high_usd = low_usd + max_tokens * out_rate
-    return CostEstimate(
-        provider_type="openai",
-        model_id=model_id,
-        input_tokens=input_tokens,
-        output_tokens_max=max_tokens,
-        low_usd=low_usd,
-        high_usd=high_usd,
-        pricing_source=pricing_source,
-        token_count_method=method,
-    )
-
-
-def estimate_ollama(
-    *,
-    model_id: str,
-    messages: List[Dict[str, Any]],
-    system_prompt: Optional[str] = None,
-    max_tokens: int = 4096,
-) -> CostEstimate:
-    """Self-hosted → $0. Tokens estimated via char heuristic for context gating."""
-    text = _flatten_message_text(messages)
-    if system_prompt:
-        text = system_prompt + "\n" + text
-    input_tokens = _char_heuristic_tokens(text)
-    return CostEstimate(
-        provider_type="ollama",
-        model_id=model_id,
-        input_tokens=input_tokens,
-        output_tokens_max=max_tokens,
-        low_usd=0.0,
-        high_usd=0.0,
-        pricing_source="zero",
-        token_count_method="char_heuristic",
-    )
+            kwargs["system"] = system_prompt
+        if tools:
+            kwargs["tools"] = tools
+        resp = await client.messages.count_tokens(**kwargs)
+        return int(getattr(resp, "input_tokens", 0) or 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("count_tokens for %s failed (%s) — falling back", model_id, exc)
+        return None
 
 
 # ---------------------------------------------------------------------------
-# Provider-agnostic facade
+# Estimator
 # ---------------------------------------------------------------------------
 
 
@@ -273,62 +179,41 @@ async def estimate_cost(
     tools: Optional[List[Dict[str, Any]]] = None,
     max_tokens: int = 4096,
 ) -> CostEstimate:
-    """Dispatch to the right provider-specific estimator.
+    """Estimate a call's USD band on ``model_id`` as served by ``provider_type``.
 
-    Unknown ``provider_type`` falls back to the OpenAI estimator's char
-    heuristic with $0 rates — better than raising, since callers want a
-    best-effort number even for novel providers.
+    Rates and ``pricing_source`` come from the model registry for whatever
+    provider is given — ``zero`` for Ollama, ``unknown`` (and $0) when the
+    registry cannot price the pair. Only the token counter is per provider.
     """
-    if provider_type == "anthropic":
-        return await estimate_anthropic(
-            model_id=model_id,
-            messages=messages,
-            system_prompt=system_prompt,
-            tools=tools,
-            max_tokens=max_tokens,
-        )
-    if provider_type == "openai":
-        return estimate_openai(
-            model_id=model_id,
-            messages=messages,
-            system_prompt=system_prompt,
-            max_tokens=max_tokens,
-        )
-    if provider_type == "ollama":
-        return estimate_ollama(
-            model_id=model_id,
-            messages=messages,
-            system_prompt=system_prompt,
-            max_tokens=max_tokens,
-        )
-
-    # Genuinely unknown provider (not anthropic/openai/ollama). Surface the
-    # event so dashboards see it instead of silently recording $0 — same
-    # treatment we give unknown models in core.llm.providers.registry.
-    logger.warning(
-        "estimate_cost: unknown provider_type=%r model_id=%r — returning $0 "
-        "with pricing_source='unknown'",
-        provider_type,
-        model_id,
+    source, (in_rate, out_rate, _, _) = get_registry().get_call_pricing(
+        model_id, provider_type
     )
-    try:
-        from core.llm.providers.registry import _record_pricing_unknown
-
-        _record_pricing_unknown(provider_type or "unknown", model_id or "unknown")
-    except Exception:
-        pass
 
     text = _flatten_message_text(messages)
     if system_prompt:
         text = system_prompt + "\n" + text
-    input_tokens = _char_heuristic_tokens(text)
+
+    input_tokens: Optional[int] = None
+    method = "char_heuristic"
+    if provider_type == "anthropic":
+        input_tokens = await _count_tokens_anthropic(
+            model_id, messages, system_prompt, tools
+        )
+        if input_tokens is not None:
+            method = "anthropic_count_tokens"
+    elif provider_type == "openai":
+        input_tokens, method = _count_tokens_openai(model_id, text)
+    if input_tokens is None:
+        input_tokens = _char_heuristic_tokens(text)
+
+    low_usd = input_tokens * in_rate
     return CostEstimate(
         provider_type=provider_type,
         model_id=model_id,
         input_tokens=input_tokens,
         output_tokens_max=max_tokens,
-        low_usd=0.0,
-        high_usd=0.0,
-        pricing_source="unknown",
-        token_count_method="char_heuristic",
+        low_usd=low_usd,
+        high_usd=low_usd + max_tokens * out_rate,
+        pricing_source=source,
+        token_count_method=method,
     )

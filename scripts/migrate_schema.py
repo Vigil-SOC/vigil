@@ -318,26 +318,6 @@ def seed_default_roles(conn):
     logger.info("  Seeded default roles: admin, analyst, viewer")
 
 
-@migration("Seed default admin user if users table is empty")
-def seed_default_admin(conn):
-    result = conn.execute(text("SELECT COUNT(*) FROM users"))
-    count = result.scalar()
-    if count > 0:
-        logger.info(f"  Users table already has {count} users, skipping seed")
-        return
-
-    from passlib.hash import bcrypt
-    pw_hash = bcrypt.hash("admin")
-    conn.execute(text("""
-        INSERT INTO users (user_id, username, email, password_hash, full_name, role_id,
-                           is_active, is_verified, mfa_enabled, login_count, created_at, updated_at)
-        VALUES ('user-admin', 'admin', 'admin@deeptempo.local', :pw, 'Administrator', 'admin',
-                true, true, false, 0, now(), now())
-        ON CONFLICT (user_id) DO NOTHING
-    """), {"pw": pw_hash})
-    logger.info("  Seeded default admin user (admin / admin)")
-
-
 # ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
