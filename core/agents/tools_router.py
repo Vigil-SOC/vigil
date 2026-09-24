@@ -6,7 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import nullcontext
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ContextManager, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -45,10 +45,8 @@ class InvokeRequest(BaseModel):
     tool: str
     args: Dict[str, Any] = Field(default_factory=dict)
     bounds: Bounds
-    # Whom the call is for: a token the API minted from a signed-in session
-    # (core/auth/tool_principal.py), carried opaquely by the agent layer. Absent
-    # means no person is behind the call -- a hunt -- and tools record "agent".
-    # Mirrors ToolPrincipal in services/agent/contracts/tool.ts.
+    # An API-signed token for the session's user (core/auth/tool_principal.py) and
+    # ToolPrincipal in contracts/tool.ts. Absent means no person: tools record "agent".
     principal: Optional[str] = None
 
 
@@ -200,7 +198,7 @@ async def invoke(
     authorise(authorization, "tool invocation")
     # A token that does not verify is refused, never read as "no person": that
     # would record a person's work as an agent's.
-    bound = nullcontext()
+    bound: ContextManager[None] = nullcontext()
     if body.principal is not None:
         try:
             bound = acting_as(tool_principal.verify(body.principal))

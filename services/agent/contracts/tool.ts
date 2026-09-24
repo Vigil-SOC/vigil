@@ -6,10 +6,8 @@ export interface ToolBounds {
   readonly timeoutMs: number;
 }
 
-// Whom a tool call is for: a token the API signed from a signed-in session, carried
-// opaquely to /internal/tools/invoke as `principal` (InvokeRequest in
-// core/agents/tools_router.py). This layer cannot mint or read one. Absent means
-// no person is behind the run -- a hunt -- and the tool records "agent".
+// Opaque to this layer: the API signs it for a session's user, InvokeRequest.principal
+// verifies it. Absent means no person is behind the run, and tools record "agent".
 export type ToolPrincipal = string;
 
 // timeout and unavailable are genuine visibility gaps; refused and invalid_args
