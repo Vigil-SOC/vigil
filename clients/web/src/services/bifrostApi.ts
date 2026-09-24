@@ -109,11 +109,17 @@ export interface BifrostKeyWrite {
   ollama_key_config?: { url: string }
 }
 
+/** One `/api/models/details` row. Rates are per token, with gateway pricing
+    overrides already applied; `/models/parameters` no longer carries them. */
 export interface BifrostModel {
   name: string
   provider: string
   max_input_tokens?: number
   max_output_tokens?: number
+  input_cost_per_token?: number
+  output_cost_per_token?: number
+  cache_read_input_token_cost?: number
+  cache_creation_input_token_cost?: number
 }
 
 /** Pricing + capabilities for one model, from Bifrost's synced datasheet.

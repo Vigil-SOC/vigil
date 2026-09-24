@@ -158,7 +158,7 @@ export function useBifrostModels(query: string) {
   return { models, total, phase, error }
 }
 
-/** Pricing + capabilities for one model. Null until a model is selected. */
+/** Capabilities + retirement date for one model. Null until a model is selected. */
 export function useModelParameters(model: string | null, provider: string | null) {
   const [params, setParams] = useState<BifrostModelParameters | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -176,7 +176,7 @@ export function useModelParameters(model: string | null, provider: string | null
       .catch((e) => {
         if (cancelled) return
         setParams(null)
-        setError(errText(e, 'No pricing on record for this model'))
+        setError(errText(e, 'No capabilities on record for this model'))
       })
     return () => {
       cancelled = true
