@@ -173,10 +173,14 @@ def installed_uvx(args: List[str]) -> Optional[List[str]]:
 
 def installed_launch(command: str, args: List[str]) -> Tuple[str, List[str]]:
     """The baked copy's argv for an npx/uvx entry, else ``(command, args)``."""
-    if command == "npx":
-        argv = installed_npx(args)
-    elif command == "uvx":
-        argv = installed_uvx(args)
-    else:
+    # A malformed install must cost only this entry, not the whole catalog load.
+    try:
+        if command == "npx":
+            argv = installed_npx(args)
+        elif command == "uvx":
+            argv = installed_uvx(args)
+        else:
+            argv = None
+    except (OSError, ValueError, AttributeError, TypeError):
         argv = None
     return (argv[0], argv[1:]) if argv else (command, args)
