@@ -241,7 +241,7 @@ def update_case(
         updates["assignee"] = assignee
     if add_note:
         notes = list(case.get("notes") or [])
-        notes.append({"timestamp": utcnow().isoformat() + "Z", "note": add_note})
+        notes.append({"timestamp": utcnow().isoformat() + "Z", "content": add_note})
         updates["notes"] = notes
 
     was_closed = (case.get("status") or "").strip() == "closed"
