@@ -6,7 +6,8 @@ from typing import TYPE_CHECKING, Iterator, Optional
 
 from mcp.server.mcpserver import MCPServer
 
-from core.agents.projections import pack_completed_hunts, read_replay
+from core.agents import tool_registry
+from core.cases.agent_closure import service_session
 from core.time import utcnow
 
 if TYPE_CHECKING:
@@ -49,6 +50,22 @@ def jdump(obj, indent=2):
     return json.dumps(obj, cls=_JsonEncoder, indent=indent)
 
 
+def _call(fn, **kwargs) -> str:
+    try:
+        return jdump(fn(**kwargs))
+    except Exception as e:
+        logger.error("%s failed: %s", getattr(fn, "__name__", fn), e)
+        return jdump({"error": str(e)})
+
+
+async def _acall(fn, **kwargs) -> str:
+    try:
+        return jdump(await fn(**kwargs))
+    except Exception as e:
+        logger.error("%s failed: %s", getattr(fn, "__name__", fn), e)
+        return jdump({"error": str(e)})
+
+
 def get_data_service():
     """Return the shared DatabaseDataService (demo mode or PostgreSQL)."""
     global _data_service
@@ -62,62 +79,37 @@ def get_data_service():
     return _data_service
 
 
-def load_findings():
-    """Load findings from DatabaseDataService."""
-    try:
-        return get_data_service().get_findings(limit=10000)
-    except Exception as e:
-        logger.error(f"Error loading findings via DatabaseDataService: {e}")
-        return []
-
-
 @mcp.tool()
 def list_findings(
     severity: Optional[str] = None,
     data_source: Optional[str] = None,
+    status: Optional[str] = None,
     cluster_id: Optional[str] = None,
     min_anomaly_score: Optional[float] = None,
-    limit: int = 50,
+    sort_by: str = "timestamp",
+    sort_order: str = "desc",
+    offset: int = 0,
+    limit: int = 20,
 ) -> str:
-    try:
-        findings = load_findings()
-        if severity:
-            findings = [f for f in findings if f.get("severity") == severity]
-        if data_source:
-            findings = [f for f in findings if f.get("data_source") == data_source]
-        if cluster_id:
-            findings = [f for f in findings if f.get("cluster_id") == cluster_id]
-        if min_anomaly_score is not None:
-            findings = [
-                f for f in findings if f.get("anomaly_score", 0) >= min_anomaly_score
-            ]
-
-        results = findings[:limit]
-        return jdump(
-            {"total": len(findings), "returned": len(results), "findings": results}
-        )
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """List findings, paged and filtered in SQL."""
+    return _call(
+        tool_registry.list_findings,
+        severity=severity,
+        data_source=data_source,
+        status=status,
+        cluster_id=cluster_id,
+        min_anomaly_score=min_anomaly_score,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @mcp.tool()
 def get_finding(finding_id: str) -> str:
-    """
-    Get a specific finding by ID.
-
-    Uses DatabaseDataService for efficient single-record lookup.
-    """
-    try:
-        data_service = get_data_service()
-        finding = data_service.get_finding(finding_id)
-
-        if finding:
-            return jdump(finding)
-
-        return jdump({"error": f"Finding {finding_id} not found"})
-    except Exception as e:
-        logger.error(f"Error getting finding {finding_id}: {e}")
-        return jdump({"error": str(e)})
+    """Get a specific finding by ID."""
+    return _call(tool_registry.get_finding, finding_id=finding_id)
 
 
 @mcp.tool()
@@ -127,247 +119,87 @@ async def list_completed_hunts(
     limit: int = 200,
 ) -> str:
     """Return completed threat-hunt projections for an assessment window."""
-    try:
-        return jdump(await pack_completed_hunts(start=start, end=end, limit=limit))
-    except Exception as e:
-        return jdump({"error": str(e)})
+    return await _acall(
+        tool_registry.list_completed_hunts, start=start, end=end, limit=limit
+    )
 
 
 @mcp.tool()
 async def replay_hunt(run_id: str, decision_id: Optional[str] = None) -> str:
     """Rebuild what each decision of a completed hunt was shown (rebuilt, recorded,
     mismatch, recalled). ``decision_id`` narrows the report to one decision."""
-    try:
-        report = await read_replay(run_id, decision_id)
-        if report is None:
-            return jdump({"error": f"Nothing to replay for run {run_id}"})
-        return jdump(report)
-    except Exception as e:
-        return jdump({"error": str(e)})
+    return await _acall(
+        tool_registry.replay_hunt, run_id=run_id, decision_id=decision_id
+    )
 
 
 @mcp.tool()
-def technique_rollup(min_confidence: float = 0.5) -> str:
-    try:
-        findings = load_findings()
-        stats = {}
-        for f in findings:
-            for tech, conf in f.get("mitre_predictions", {}).items():
-                if conf >= min_confidence:
-                    if tech not in stats:
-                        stats[tech] = {"count": 0, "total": 0}
-                    stats[tech]["count"] += 1
-                    stats[tech]["total"] += conf
-
-        results = [
-            {
-                "technique": t,
-                "count": int(s["count"]),
-                "avg_confidence": round(s["total"] / s["count"], 3),
-            }
-            for t, s in stats.items()
-        ]
-        results.sort(key=lambda x: x["count"], reverse=True)
-        return jdump({"min_confidence": min_confidence, "techniques": results})
-    except Exception as e:
-        return jdump({"error": str(e)})
+def get_technique_rollup(min_confidence: float = 0.0, time_range: str = "all") -> str:
+    """Roll up ATT&CK techniques by finding count and severity."""
+    return _call(
+        tool_registry.get_technique_rollup,
+        min_confidence=min_confidence,
+        time_range=time_range,
+    )
 
 
 @mcp.tool()
 def list_cases(
     status: Optional[str] = None,
+    severity: Optional[str] = None,
     priority: Optional[str] = None,
     limit: int = 50,
 ) -> str:
-    try:
-        cases = get_data_service().get_cases()
-        # Filtered here rather than in the query, which is what GET /api/v1/cases
-        # does; doing it the other way would be a second answer to what "status"
-        # means.
-        if status:
-            cases = [c for c in cases if c.get("status") == status]
-        if priority:
-            cases = [c for c in cases if c.get("priority") == priority]
-
-        results = [
-            {
-                "case_id": c.get("case_id"),
-                "title": c.get("title"),
-                "status": c.get("status"),
-                "priority": c.get("priority"),
-                "assignee": c.get("assignee"),
-                "finding_count": len(c.get("findings") or []),
-                "created_at": c.get("created_at"),
-                "updated_at": c.get("updated_at"),
-            }
-            for c in cases[:limit]
-        ]
-        return jdump({"total": len(results), "cases": results})
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """List cases. Filters apply to the full case list."""
+    return _call(
+        tool_registry.list_cases,
+        status=status,
+        severity=severity,
+        priority=priority,
+        limit=limit,
+    )
 
 
 @mcp.tool()
 def get_case(case_id: str) -> str:
-    try:
-        case = get_data_service().get_case(case_id)
-        if not case:
-            return jdump({"error": f"Case {case_id} not found"})
-
-        result = {
-            key: case.get(key) or default
-            for key, default in (
-                ("case_id", None),
-                ("title", None),
-                ("description", None),
-                ("status", None),
-                ("priority", None),
-                ("assignee", None),
-                ("tags", []),
-                ("notes", []),
-                ("timeline", []),
-                ("activities", []),
-                ("resolution_steps", []),
-                ("mitre_techniques", []),
-                ("created_at", None),
-                ("updated_at", None),
-            )
-        }
-        findings = case.get("findings")
-        if findings is not None:
-            result["findings"] = [
-                {
-                    "finding_id": f.get("finding_id"),
-                    "severity": f.get("severity"),
-                    "data_source": f.get("data_source"),
-                    "anomaly_score": float(f.get("anomaly_score") or 0),
-                    "timestamp": f.get("timestamp"),
-                    "status": f.get("status"),
-                }
-                for f in findings
-            ]
-        return jdump(result)
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """Get one case."""
+    return _call(tool_registry.get_case, case_id=case_id)
 
 
 @mcp.tool()
 def create_case(
     title: str,
-    finding_ids: list,
     description: str = "",
-    priority: str = "medium",
+    severity: Optional[str] = None,
+    priority: Optional[str] = None,
+    finding_ids: Optional[list] = None,
     status: str = "new",
     assignee: Optional[str] = None,
     tags: Optional[list] = None,
 ) -> str:
-    try:
-        service = get_data_service()
-        # The id is the service's to mint, so a Case opened through a tool and a
-        # Case opened through the route are named the same way.
-        case = service.create_case(
-            title=title,
-            finding_ids=finding_ids,
-            priority=priority,
-            description=description,
-            status=status,
-        )
-        if not case:
-            return jdump({"error": "Failed to create case"})
-
-        # create_case carries what a Case is opened with; assignee and tags are
-        # edits to one, and are applied as edits rather than by widening it.
-        edits = {}
-        if assignee is not None:
-            edits["assignee"] = assignee
-        if tags:
-            edits["tags"] = tags
-        if edits:
-            service.update_case(case["case_id"], **edits)
-            case = service.get_case(case["case_id"]) or case
-
-        return jdump(
-            {
-                "success": True,
-                "case_id": case.get("case_id"),
-                "title": case.get("title"),
-                "status": case.get("status"),
-                "finding_count": len(finding_ids),
-            }
-        )
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """Open a case. Assignee and tags are applied as edits after it exists."""
+    return _call(
+        tool_registry.create_case,
+        title=title,
+        description=description,
+        severity=severity,
+        priority=priority,
+        finding_ids=finding_ids,
+        status=status,
+        assignee=assignee,
+        tags=tags,
+    )
 
 
 @contextmanager
 def _service_session() -> Iterator["Session"]:
     """A session of this tool's own, committed if the work returns.
 
-    This tool reaches the database directly rather than through the API, so
-    every call into a service here has to own its transaction. One definition of
-    that, because a second would be a second answer to when the work commits.
+    The commit itself is ``service_session``. This wrapper only keeps the
+    call sites in this file pointed at that one definition.
     """
-    from core.storage.connection import get_db_session
-
-    session = get_db_session()
-    try:
+    with service_session() as session:
         yield session
-        session.commit()
-    finally:
-        session.close()
-
-
-def _close_through_the_service(case_id: str, **kwargs) -> None:
-    """Close a Case the one way a Case is closed.
-
-    Going through the service is what makes an agent's close the same shape as
-    everyone else's -- the SLA resolution clock stops and the Case's IOCs are
-    indexed, neither of which happens when a caller writes the closure row
-    itself.
-    """
-    from core.cases.case_workflow_service import CaseWorkflowService
-
-    with _service_session() as session:
-        CaseWorkflowService().close_case(session, case_id, **kwargs)
-
-
-def _record_agent_close(case_id: str) -> None:
-    """Record that an agent closed this Case, and stated no category.
-
-    `unspecified` is not a determination and does not pretend to be one: the
-    Case closed and no reason was given, which is what happened, and becomes an
-    inconclusive Verdict rather than a claim nobody made. An agent that has a
-    determination calls `close_case` and says which. The service refuses to let
-    this overwrite a determination already on record.
-
-    Trust is `agent` unconditionally here. A credential on this surface is one a
-    program holds, so even over HTTP what closed the Case is a program acting
-    with someone's standing -- `closed_by` says whose, `closed_by_kind` says it
-    was not them at a keyboard. `analyst` is the one record this system will not
-    let an agent claim on its own behalf.
-    """
-    from core.cases.closure import ClosedByKind, ClosureCategory
-
-    _close_through_the_service(
-        case_id,
-        closure_category=ClosureCategory.UNSPECIFIED,
-        closed_by=caller(),
-        closed_by_kind=ClosedByKind.AGENT,
-    )
-
-
-def _record_reopen(case_id: str) -> None:
-    """Retract what closing the Case determined, keeping what it wrote.
-
-    The write-up survives -- root cause and lessons learned are work, not a
-    verdict. The category does not: left standing, the next status edit states
-    no category of its own and would close the Case back into the determination
-    the reopen retracted.
-    """
-    from core.cases.case_workflow_service import CaseWorkflowService
-
-    with _service_session() as session:
-        CaseWorkflowService().reopen_case(session, case_id)
 
 
 @mcp.tool()
@@ -380,69 +212,25 @@ def update_case(
     assignee: Optional[str] = None,
     add_note: Optional[str] = None,
 ) -> str:
-    try:
-        service = get_data_service()
-        case = service.get_case(case_id)
-        if not case:
-            return jdump({"error": f"Case {case_id} not found"})
-
-        updates = {}
-        if title:
-            updates["title"] = title
-        if description:
-            updates["description"] = description
-        if status:
-            updates["status"] = status
-        if priority:
-            updates["priority"] = priority
-        if assignee:
-            updates["assignee"] = assignee
-        if add_note:
-            notes = case.get("notes") or []
-            notes.append({"timestamp": utcnow().isoformat() + "Z", "note": add_note})
-            updates["notes"] = notes
-
-        was_closed = (case.get("status") or "").strip() == "closed"
-        if not service.update_case(case_id, **updates):
-            return jdump({"error": "Failed to update case"})
-
-        # The status edit is a close, so it records one -- the same fact the
-        # console's PATCH records, from the other side. An agent closing this
-        # way used to leave no closure row at all, so episodic memory read the
-        # close off `cases.updated_at`, which moves on every later edit and
-        # re-derives the Verdict for changes that concluded nothing.
-        if updates.get("status") == "closed" and not was_closed:
-            _record_agent_close(case_id)
-        elif was_closed and updates.get("status") not in (None, "closed"):
-            _record_reopen(case_id)
-
-        return jdump({"success": True, "case_id": case_id})
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """Update a case. Closing or reopening records the closure row."""
+    return _call(
+        tool_registry.update_case,
+        case_id=case_id,
+        title=title,
+        description=description,
+        status=status,
+        priority=priority,
+        assignee=assignee,
+        add_note=add_note,
+    )
 
 
 @mcp.tool()
 def add_finding_to_case(case_id: str, finding_id: str) -> str:
-    try:
-        from core.cases import case_journal_service
-
-        linked = case_journal_service.link_finding(
-            get_data_service(), case_id, finding_id
-        )
-        if linked is None:
-            return jdump({"error": f"Failed to add {finding_id} to {case_id}"})
-        return jdump(
-            {
-                "success": True,
-                "message": (
-                    f"Added {finding_id} to {case_id}"
-                    if linked
-                    else f"{finding_id} was already on {case_id}"
-                ),
-            }
-        )
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """Attach a finding to a case."""
+    return _call(
+        tool_registry.add_finding_to_case, case_id=case_id, finding_id=finding_id
+    )
 
 
 @mcp.tool()
@@ -600,41 +388,14 @@ def add_resolution_step(
     action_taken: str,
     result: Optional[str] = None,
 ) -> str:
-    """
-    Add a resolution/remediation step to a case.
-
-    Args:
-        case_id: The case ID
-        description: Description of what was done
-        action_taken: The specific action taken
-        result: Result or outcome of the action
-
-    Example:
-        add_resolution_step("case-123", "Containment",
-                          "Isolated infected hosts from network",
-                          "3 workstations successfully isolated")
-    """
-    try:
-        from core.cases import case_journal_service
-
-        step = case_journal_service.append_resolution_step(
-            get_data_service(),
-            case_id,
-            description=description,
-            action_taken=action_taken,
-            result=result,
-        )
-        if step is None:
-            return jdump({"error": f"Failed to add resolution step to {case_id}"})
-        return jdump(
-            {
-                "success": True,
-                "message": f"Added resolution step to {case_id}",
-                "step": step,
-            }
-        )
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """Add a resolution/remediation step to a case."""
+    return _call(
+        tool_registry.add_resolution_step,
+        case_id=case_id,
+        description=description,
+        action_taken=action_taken,
+        result=result,
+    )
 
 
 @mcp.tool()
@@ -1548,53 +1309,13 @@ def list_approval_actions(
 @mcp.tool()
 def get_approval_action(action_id: str) -> str:
     """Get action details."""
-    try:
-        svc, _ActionType, _ActionStatus = get_approval_svc()
-    except Exception as e:
-        return jdump({"error": f"Service error: {e}"})
-
-    try:
-        action = svc.get_action(action_id)
-        if not action:
-            return jdump({"error": f"Action {action_id} not found"})
-        return jdump(
-            {
-                "success": True,
-                "action": {
-                    "action_id": action.action_id,
-                    "action_type": action.action_type,
-                    "title": action.title,
-                    "description": action.description,
-                    "target": action.target,
-                    "confidence": action.confidence,
-                    "reason": action.reason,
-                    "evidence": action.evidence,
-                    "status": action.status,
-                    "created_at": action.created_at,
-                    "approved_at": action.approved_at,
-                    "approved_by": action.approved_by,
-                },
-            }
-        )
-    except Exception as e:
-        return jdump({"error": str(e)})
+    return _call(tool_registry.get_approval_action, action_id=action_id)
 
 
 @mcp.tool()
 def approve_action(action_id: str) -> str:
-    """Approve pending action."""
-    try:
-        svc, _ActionType, _ActionStatus = get_approval_svc()
-    except Exception as e:
-        return jdump({"error": f"Service error: {e}"})
-
-    try:
-        action = svc.approve_action(action_id, caller())
-        if not action:
-            return jdump({"error": f"Action {action_id} not found"})
-        return jdump({"success": True, "action_id": action_id, "status": action.status})
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """Approve a pending action. The actor is the caller, not an argument."""
+    return _call(tool_registry.approve_action, action_id=action_id)
 
 
 @mcp.tool()
@@ -1602,19 +1323,8 @@ def reject_action(
     action_id: str,
     reason: str,
 ) -> str:
-    """Reject pending action."""
-    try:
-        svc, _ActionType, _ActionStatus = get_approval_svc()
-    except Exception as e:
-        return jdump({"error": f"Service error: {e}"})
-
-    try:
-        action = svc.reject_action(action_id, reason, caller())
-        if not action:
-            return jdump({"error": f"Action {action_id} not found"})
-        return jdump({"success": True, "action_id": action_id, "status": action.status})
-    except Exception as e:
-        return jdump({"error": str(e)})
+    """Reject a pending action. The actor is the caller, not an argument."""
+    return _call(tool_registry.reject_action, action_id=action_id, reason=reason)
 
 
 if __name__ == "__main__":
