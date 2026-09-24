@@ -20,7 +20,7 @@ def sample_alerts():
 @pytest.fixture
 def ingestion():
     with patch(
-        "core.integrations.microsoft_defender.ingestion.get_integration_config",
+        "core.integrations.microsoft_defender.ingestion.resolve",
         return_value={},
     ):
         svc = MicrosoftDefenderIngestion()

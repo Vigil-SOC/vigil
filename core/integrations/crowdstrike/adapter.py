@@ -7,13 +7,15 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-from core.config import get_integration_config, is_integration_enabled
+from core.config import is_integration_enabled
 from core.federation.adapters._base import fresh_cursor, parse_cursor_since
 from core.federation.contract import (
     FederationAdapter,
     FetchResult,
     register_adapter,
 )
+from core.integrations._base.config import resolve
+from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -47,11 +49,12 @@ class CrowdStrikeAdapter:
         try:
             from core.integrations.crowdstrike.client import CrowdStrikeService
 
-            cfg = get_integration_config("crowdstrike")
+            # resolve() reads client_secret from the secrets store; unset fields are None.
+            cfg = resolve(CROWDSTRIKE)
             self._service = CrowdStrikeService(
-                client_id=cfg.get("client_id", ""),
-                client_secret=cfg.get("client_secret", ""),
-                base_url=cfg.get("base_url", "https://api.crowdstrike.com"),
+                client_id=cfg["client_id"] or "",
+                client_secret=cfg["client_secret"] or "",
+                base_url=cfg["base_url"] or "https://api.crowdstrike.com",
             )
         except Exception as e:
             logger.warning("CrowdStrike service init failed: %s", e)

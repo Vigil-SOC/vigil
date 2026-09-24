@@ -159,19 +159,21 @@ class DataPoller:
     def _init_services(self):
         """Initialize data source services."""
         try:
-            from core.config import get_integration_config, is_integration_enabled
+            from core.config import is_integration_enabled
+            from core.integrations._base.config import resolve
 
             # Initialize Splunk service if configured
             if is_integration_enabled("splunk"):
                 try:
                     from core.integrations.splunk.client import SplunkService
+                    from core.integrations.splunk.descriptor import SPLUNK
 
-                    splunk_config = get_integration_config("splunk")
+                    splunk_config = resolve(SPLUNK)
                     self._splunk_service = SplunkService(
-                        server_url=splunk_config.get("server_url", ""),
-                        username=splunk_config.get("username", ""),
-                        password=splunk_config.get("password", ""),
-                        verify_ssl=splunk_config.get("verify_ssl", False),
+                        server_url=splunk_config["server_url"] or "",
+                        username=splunk_config["username"] or "",
+                        password=splunk_config["password"] or "",
+                        verify_ssl=bool(splunk_config["verify_ssl"]),
                     )
                     logger.info("Splunk service initialized")
                 except Exception as e:
@@ -181,14 +183,13 @@ class DataPoller:
             if is_integration_enabled("crowdstrike"):
                 try:
                     from core.integrations.crowdstrike.client import CrowdStrikeService
+                    from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 
-                    cs_config = get_integration_config("crowdstrike")
+                    cs_config = resolve(CROWDSTRIKE)
                     self._crowdstrike_service = CrowdStrikeService(
-                        client_id=cs_config.get("client_id", ""),
-                        client_secret=cs_config.get("client_secret", ""),
-                        base_url=cs_config.get(
-                            "base_url", "https://api.crowdstrike.com"
-                        ),
+                        client_id=cs_config["client_id"] or "",
+                        client_secret=cs_config["client_secret"] or "",
+                        base_url=cs_config["base_url"] or "https://api.crowdstrike.com",
                     )
                     logger.info("CrowdStrike service initialized")
                 except Exception as e:
