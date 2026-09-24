@@ -15,7 +15,7 @@ import json
 import logging
 import math
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -182,7 +182,7 @@ class IngestionService:
         clock is not source time and would break reimport identity.
         """
         if isinstance(timestamp_value, datetime):
-            return timestamp_value
+            return self._to_naive_utc(timestamp_value)
 
         if timestamp_value is None or timestamp_value == "":
             return None
@@ -192,14 +192,23 @@ class IngestionService:
             if isinstance(timestamp_value, float) and math.isnan(timestamp_value):
                 return None
             try:
-                return datetime.fromtimestamp(timestamp_value)
-            except (ValueError, OSError):
+                # Pin to UTC so the result does not follow the host clock
+                return datetime.fromtimestamp(timestamp_value, tz=timezone.utc).replace(
+                    tzinfo=None
+                )
+            except (ValueError, OSError, OverflowError):
                 pass
 
-        # Try various string formats
         timestamp_str = str(timestamp_value).strip()
         if not timestamp_str:
             return None
+
+        # Handles Z and any ±HH:MM offset; offsets are converted, not dropped
+        try:
+            return self._to_naive_utc(datetime.fromisoformat(timestamp_str))
+        except ValueError:
+            pass
+
         formats = [
             "%Y-%m-%dT%H:%M:%S.%fZ",
             "%Y-%m-%dT%H:%M:%S.%f%z",
@@ -219,6 +228,13 @@ class IngestionService:
 
         logger.warning(f"Could not parse timestamp: {timestamp_value}, leaving unset")
         return None
+
+    @staticmethod
+    def _to_naive_utc(value: datetime) -> datetime:
+        """Aware -> converted to UTC then made naive; naive is kept as-is."""
+        if value.tzinfo is None:
+            return value
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
 
     def ingest_finding(self, finding_data: Dict[str, Any]) -> bool:
         """

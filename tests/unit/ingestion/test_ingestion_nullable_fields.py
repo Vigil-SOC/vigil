@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
@@ -101,6 +102,36 @@ def test_parse_timestamp_leaves_missing_and_unparseable_as_none(service):
     assert service.parse_timestamp(None) is None
     assert service.parse_timestamp("") is None
     assert service.parse_timestamp("not-a-time") is None
+    assert service.parse_timestamp(float("nan")) is None
+
+
+def test_parse_timestamp_converts_offsets_to_naive_utc(service):
+    assert service.parse_timestamp("2026-09-22T18:06:15.000-03:00") == datetime(
+        2026, 9, 22, 21, 6, 15
+    )
+    # A late -03:00 time lands on the next UTC date (feeds the finding id date)
+    assert service.parse_timestamp("2026-09-22T22:30:00-03:00") == datetime(
+        2026, 9, 23, 1, 30
+    )
+    # UTC and offset-less strings keep today's naive values
+    expected = datetime(2026, 9, 22, 18, 6, 15)
+    for value in (
+        "2026-09-22T18:06:15Z",
+        "2026-09-22T18:06:15+00:00",
+        "2026-09-22T18:06:15",
+        "2026-09-22 18:06:15",
+    ):
+        assert service.parse_timestamp(value) == expected
+
+
+def test_parse_timestamp_epoch_ignores_local_timezone(service, monkeypatch):
+    monkeypatch.setenv("TZ", "America/Sao_Paulo")
+    time.tzset()
+    try:
+        assert service.parse_timestamp(0) == datetime(1970, 1, 1)
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 def test_missing_event_time_id_is_stable_across_days(service, monkeypatch):
