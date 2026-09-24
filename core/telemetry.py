@@ -387,7 +387,7 @@ def record_llm_call(
     cache_read_tokens: int = 0,
     cache_creation_tokens: int = 0,
     duration_s: float,
-    cost_usd: float,
+    cost_usd: Optional[float],
 ) -> None:
     """
     Record one completed LLM call on the four GenAI instruments.
@@ -395,7 +395,8 @@ def record_llm_call(
     Attributes are limited to ``model`` / ``provider`` (plus ``token_type`` on
     the token counter) — never prompt or response content. Runs on the
     request path, so it swallows every exception; it is a no-op when OTEL is
-    disabled.
+    disabled. An unpriced call (``cost_usd is None``) is still counted, but
+    adds nothing to the cost instrument rather than a guessed $0.
     """
     global _genai_metrics
     try:
@@ -408,7 +409,7 @@ def record_llm_call(
             "cache_creation": int(cache_creation_tokens or 0),
         }
         duration = max(float(duration_s or 0.0), 0.0)
-        cost = max(float(cost_usd or 0.0), 0.0)
+        cost = None if cost_usd is None else max(float(cost_usd), 0.0)
         attrs = {"model": model or "unknown", "provider": provider or "unknown"}
 
         metrics = _genai_metrics
@@ -420,7 +421,8 @@ def record_llm_call(
 
         metrics["llm_calls"].add(1, attrs)
         metrics["llm_duration"].record(duration, attrs)
-        metrics["llm_cost_usd"].add(cost, attrs)
+        if cost is not None:
+            metrics["llm_cost_usd"].add(cost, attrs)
         for token_type, count in tokens.items():
             if count:
                 metrics["llm_tokens"].add(count, {**attrs, "token_type": token_type})

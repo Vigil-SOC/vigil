@@ -538,6 +538,20 @@ class TestRecordLLMCall:
             for attrs, _ in pts:
                 assert set(attrs) <= {"model", "provider", "token_type"}
 
+    def test_unpriced_call_skips_cost_but_real_zero_records(self, reader):
+        from core.telemetry import record_llm_call
+
+        common = dict(provider="p", input_tokens=10, output_tokens=5, duration_s=0.2)
+        record_llm_call(model="unpriced", cost_usd=None, **common)
+        record_llm_call(model="free", cost_usd=0.0, **common)
+        points = _collect_points(reader)
+
+        called = {p[0]["model"] for p in points["vigil.llm.calls.total"]}
+        assert called == {"unpriced", "free"}
+        assert points["vigil.llm.cost.usd.total"] == [
+            ({"model": "free", "provider": "p"}, 0.0)
+        ]
+
     def test_instruments_cached_once_initialized(self, reader):
         import core.telemetry as tel
 

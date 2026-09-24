@@ -55,7 +55,7 @@ def _record_pricing_unknown(provider_type: str, model_id: str) -> None:
                 name="vigil_llm_cost_pricing_unknown_total",
                 description=(
                     "LLM calls priced against an unknown model — recorded as "
-                    "$0 in cost dashboards. Investigate the (provider, model) "
+                    "unpriced (NULL cost). Investigate the (provider, model) "
                     "pair and add a catalog entry."
                 ),
                 unit="1",
@@ -484,8 +484,8 @@ def _catalog_entry(provider_type: str, model_id: str) -> Dict[str, Any]:
         else:
             entry["pricing_source"] = "unknown"
             logger.warning(
-                "No catalog entry for %s/%s — defaulting cost to $0 and "
-                "capabilities to false",
+                "No catalog entry for %s/%s — its calls are recorded as "
+                "unpriced and capabilities default to false",
                 provider_type,
                 model_id,
             )
@@ -512,7 +512,7 @@ class ModelInfo:
     supports_thinking: bool
     supports_vision: bool
     # One of: "exact" (from _CATALOG), "heuristic" (tier regex),
-    # "zero" (ollama self-hosted), "unknown" (no data — treated as $0).
+    # "zero" (ollama self-hosted), "unknown" (no data — calls recorded as unpriced).
     # Logged at discovery time; frontend can use it to badge estimates.
     pricing_source: str = "exact"
     # True when the model was pinned to a component via ai_model_configs
@@ -775,6 +775,25 @@ class ModelRegistry:
         fallback.
         """
         return _catalog_entry(provider_type, model_id).get("pricing_source", "unknown")
+
+    @staticmethod
+    def get_call_pricing(
+        model_id: str, provider_type: str
+    ) -> Tuple[str, Tuple[float, float, float, float]]:
+        """``(pricing_source, (input, output, cache_read, cache_creation))``.
+
+        Per-token USD from a single catalog read, so pricing one call fires
+        the pricing-unknown counter at most once.
+        """
+        entry = _catalog_entry(provider_type, model_id)
+        in_rate = entry["input_per_m"] / 1_000_000
+        read_mult, creation_mult = get_cache_multipliers(provider_type)
+        return entry.get("pricing_source", "unknown"), (
+            in_rate,
+            entry["output_per_m"] / 1_000_000,
+            in_rate * read_mult,
+            in_rate * creation_mult,
+        )
 
     @staticmethod
     def get_model_info(

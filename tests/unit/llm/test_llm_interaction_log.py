@@ -286,3 +286,36 @@ class TestChatRecordsGenAIMetrics:
         assert kw["cost_usd"] == 0.005
         # The log row reuses the same price rather than recomputing it.
         assert persist.call_args.kwargs["cost_usd"] == 0.005
+
+    def test_unpriced_chat_stores_null_and_prices_once(self, monkeypatch):
+        """#1115: an unpriced call is stored as NULL, not re-priced into $0."""
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock, patch
+
+        session = MagicMock()
+
+        @contextmanager
+        def _scope():
+            yield session
+
+        monkeypatch.setattr(
+            "core.storage.connection.get_db_manager",
+            lambda: SimpleNamespace(session_scope=_scope),
+        )
+        response = SimpleNamespace(
+            model="mystery-model",
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=10, output_tokens=5),
+            content=[SimpleNamespace(type="text", text="ok")],
+        )
+        svc = self._svc(response)
+
+        with patch(
+            "core.llm.harness.claude.compute_call_cost", return_value=None
+        ) as cost, patch("core.llm.harness.claude.record_llm_call") as record:
+            svc.chat("hello", model="mystery-model")
+
+        cost.assert_called_once()
+        assert record.call_args.kwargs["cost_usd"] is None
+        assert session.add.call_args.args[0].cost_usd is None

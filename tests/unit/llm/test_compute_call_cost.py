@@ -3,7 +3,8 @@
 PR-E deleted the legacy Sonnet-pricing fallback so multi-provider calls
 don't get silently misattributed. These tests lock in the new behavior:
 resolve rates via ``model_registry`` when model+provider are present,
-return 0.0 (and log) when either is missing or the registry fails.
+return None (unpriced, #1115) when either is missing, the registry fails, or
+the model's pricing source is ``unknown``.
 """
 
 from __future__ import annotations
@@ -25,6 +26,7 @@ def _mock_registry(
     out_rate: float,
     cache_read_rate: float = 0.0,
     cache_creation_rate: float = 0.0,
+    source: str = "exact",
 ):
     """Build a fake get_registry() that returns the given rates.
 
@@ -34,11 +36,8 @@ def _mock_registry(
     """
 
     class _R:
-        def get_cost_rates(self, model_id, provider_type):
-            return (in_rate, out_rate)
-
-        def get_cache_rates(self, model_id, provider_type):
-            return (cache_read_rate, cache_creation_rate)
+        def get_call_pricing(self, model_id, provider_type):
+            return source, (in_rate, out_rate, cache_read_rate, cache_creation_rate)
 
     return _R()
 
@@ -68,24 +67,24 @@ def test_openai_rates_applied_when_provider_is_openai():
     assert cost == pytest.approx((2.5 + 10.0) / 1_000, rel=1e-9)
 
 
-def test_missing_model_returns_zero(caplog):
-    """No fallback to Sonnet — missing metadata means we record $0 (visible
-    on the dashboard) instead of a confidently-wrong number."""
+def test_missing_model_is_unpriced(caplog):
+    """No fallback to Sonnet — missing metadata is recorded as unpriced
+    rather than a confidently-wrong number or a false $0."""
     from core.llm.cost.calls import compute_call_cost
 
     with caplog.at_level("WARNING"):
         cost = compute_call_cost(None, "anthropic", 1_000, 500)
-    assert cost == 0.0
+    assert cost is None
     assert any("missing model_id/provider_type" in r.message for r in caplog.records)
 
 
-def test_missing_provider_returns_zero():
+def test_missing_provider_is_unpriced():
     from core.llm.cost.calls import compute_call_cost
 
-    assert compute_call_cost("claude-sonnet-4-5-20250929", None, 1_000, 500) == 0.0
+    assert compute_call_cost("claude-sonnet-4-5-20250929", None, 1_000, 500) is None
 
 
-def test_registry_exception_returns_zero(caplog):
+def test_registry_exception_is_unpriced(caplog):
     from core.llm.cost.calls import compute_call_cost
 
     def _explode():
@@ -96,13 +95,44 @@ def test_registry_exception_returns_zero(caplog):
     ), caplog.at_level("WARNING"):
         cost = compute_call_cost("claude-sonnet-4-5", "anthropic", 1_000, 500)
 
-    assert cost == 0.0
+    assert cost is None
     # Warning surfaces the provider + model so an operator can diagnose
-    # silently-zero costs from the /analytics/cost dashboard.
+    # unpriced calls on the /analytics/cost dashboard.
     assert any(
         "model_registry lookup failed" in r.message and "anthropic" in r.message
         for r in caplog.records
     )
+
+
+def test_unknown_pricing_source_is_unpriced():
+    from core.llm.cost.calls import compute_call_cost
+
+    with patch(
+        "core.llm.providers.registry.get_registry",
+        return_value=_mock_registry(0.0, 0.0, source="unknown"),
+    ):
+        assert compute_call_cost("mystery-model", "openai", 1_000, 500) is None
+
+
+def test_zero_pricing_source_is_a_real_zero():
+    from core.llm.cost.calls import compute_call_cost
+
+    with patch(
+        "core.llm.providers.registry.get_registry",
+        return_value=_mock_registry(0.0, 0.0, source="zero"),
+    ):
+        assert compute_call_cost("llama3", "ollama", 1_000, 500) == 0.0
+
+
+def test_real_registry_unknown_and_zero_models():
+    """Against the real catalog: an uncatalogued model is unpriced, and one
+    catalog read fires the pricing-unknown counter exactly once."""
+    from core.llm.cost.calls import compute_call_cost
+
+    with patch("core.llm.providers.registry._record_pricing_unknown") as counter:
+        assert compute_call_cost("no-such-model-xyz", "openai", 1_000, 500) is None
+    counter.assert_called_once_with("openai", "no-such-model-xyz")
+    assert compute_call_cost("llama3", "ollama", 1_000, 500) == 0.0
 
 
 def test_sonnet_constants_are_gone():

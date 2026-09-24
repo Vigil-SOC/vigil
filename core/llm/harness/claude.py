@@ -29,6 +29,10 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# ``cost_usd`` default on ``_persist_interaction``: the caller did not price the
+# call. Distinct from ``None``, which means priced and found unpriceable.
+_NOT_PRICED_YET: Any = object()
+
 
 class ClaudeService:
     """One completion at a time. Callers that need a system prompt pass one."""
@@ -273,12 +277,12 @@ class ClaudeService:
         output_tokens: int,
         cache_read_tokens: int = 0,
         cache_creation_tokens: int = 0,
-    ) -> float:
+    ) -> Optional[float]:
         """USD for one Anthropic call via the model registry (GH #89).
 
         #184 Phase 3: cache tokens are priced at their own rates (reads
-        0.1×, writes 1.25×) instead of full-rate input. Returns 0.0 on
-        any lookup failure.
+        0.1×, writes 1.25×) instead of full-rate input. Returns None
+        (unpriced) on any lookup failure.
         """
         try:
             return compute_call_cost(
@@ -290,7 +294,7 @@ class ClaudeService:
                 cache_creation_tokens=int(cache_creation_tokens or 0),
             )
         except Exception:
-            return 0.0
+            return None
 
     def _persist_interaction(
         self,
@@ -312,14 +316,14 @@ class ClaudeService:
         duration_ms: int = 0,
         error: Optional[str] = None,
         interaction_id: Optional[str] = None,
-        cost_usd: Optional[float] = None,
+        cost_usd: Optional[float] = _NOT_PRICED_YET,
     ) -> None:
         """Fire-and-forget insert of an LLMInteractionLog row.
 
         Runs in the calling thread; failures are logged but never re-raised
         so persistence can never break the request path. ``cost_usd`` may be
-        passed by callers that already priced the call; otherwise it is
-        computed here.
+        passed by callers that already priced the call (``None`` = unpriced);
+        otherwise it is computed here.
         """
         try:
             from core.storage.connection import get_db_manager
@@ -335,7 +339,7 @@ class ClaudeService:
             tool_calls = [b for b in blocks if b["type"] == "tool_use"]
             tool_results_in = self._extract_prior_tool_results(request_messages)
 
-            if cost_usd is None:
+            if cost_usd is _NOT_PRICED_YET:
                 cost_usd = self._call_cost(
                     model,
                     input_tokens,
@@ -375,7 +379,7 @@ class ClaudeService:
                 output_tokens=int(output_tokens or 0),
                 cache_read_tokens=int(cache_read_tokens or 0),
                 cache_creation_tokens=int(cache_creation_tokens or 0),
-                cost_usd=float(cost_usd or 0.0),
+                cost_usd=None if cost_usd is None else float(cost_usd),
                 duration_ms=int(duration_ms or 0),
                 error=error,
                 virtual_key_id=_vk,
