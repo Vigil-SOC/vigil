@@ -33,6 +33,15 @@ def check_catalog(root: Path) -> dict:
         raise RuntimeError(
             f"Catalog mismatch: missing={expected - actual}, extra={actual - expected}"
         )
+    # MCPService swaps npx/uvx for the image's baked copy only when that copy
+    # is the pinned version, so a command still npx/uvx is a pin the image lacks.
+    unbaked = sorted(
+        name for name, s in service.servers.items() if s.command in ("npx", "uvx")
+    )
+    if unbaked:
+        raise RuntimeError(
+            f"Catalog entries not installed in the image at their pinned version: {unbaked}"
+        )
     missing = []
     for name, server in service.servers.items():
         command = server.command

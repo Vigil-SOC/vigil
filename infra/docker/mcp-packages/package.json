@@ -1,0 +1,14 @@
+{
+  "name": "vigil-mcp-connectors",
+  "private": true,
+  "description": "npx connectors from mcp-config.json, baked into the backend image at the exact versions it pins. tests/unit/_ratchets/test_mcp_runtime_pins.py keeps the two in step.",
+  "dependencies": {
+    "@burtthecoder/mcp-shodan": "1.0.22",
+    "@burtthecoder/mcp-virustotal": "1.0.25",
+    "@modelcontextprotocol/server-github": "2025.4.8",
+    "@pebbletek/cribl-mcp": "0.1.12",
+    "firecrawl-mcp": "3.24.0",
+    "mcp-remote": "0.1.49",
+    "security-detections-mcp": "3.3.0"
+  }
+}

@@ -34,7 +34,7 @@ echo "Python dependencies installed."
 install_dev_deps
 
 # uv / uvx — several integration MCP servers (crowdstrike, sentinelone,
-# pagerduty, aws-security, gcp-*, cribl-stream) are launched via `uvx`. Without
+# pagerduty, aws-security, gcp-*) are launched via `uvx`. Without
 # it those servers can't spawn, so the integrations silently never connect.
 if ! command -v uvx &>/dev/null && ! [ -x "$HOME/.local/bin/uvx" ]; then
     echo "Installing uv (provides uvx for integration MCP servers)..."

@@ -29,13 +29,18 @@ RUN npm run build
 # Output: /build/web/build
 
 # ---------------------------------------------------------------------------
-# Node runtime for catalog entries launched with npx (copied into the runtime
-# stage). Target arch, not $BUILDPLATFORM: this binary runs in the image.
+# Node runtime and the catalog's npx connectors, installed at their pins so the
+# image never fetches them at start. Only node and the prefix reach the runtime
+# stage; npm stays here. Target arch, not $BUILDPLATFORM: this code runs in the image.
 # ---------------------------------------------------------------------------
 FROM node:22-slim AS mcp-node
-# npx unpacks packages at runtime, so npm's bundled tar is live code here:
+# npm's bundled tar unpacks every package below:
 # 10.9.9 bundles tar 7.5.22, past CVE-2026-59873 (fixed in 7.5.19).
 RUN npm install -g npm@10.9.9 && npm cache clean --force
+WORKDIR /opt/vigil/mcp/npm
+COPY infra/docker/mcp-packages/package.json infra/docker/mcp-packages/package-lock.json \
+     infra/docker/mcp-packages/.npmrc ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
 # ---------------------------------------------------------------------------
 # Stage 2: install Python dependencies
@@ -61,8 +66,8 @@ FROM python:${PYTHON_VERSION}-slim AS runtime
 ARG VIGIL_VERSION=dev
 LABEL org.opencontainers.image.version="${VIGIL_VERSION}"
 
-# Runtime system deps only. git: uvx installs SentinelOne from its git source
-# when it starts.
+# Runtime system deps only. git: detection rule sources are cloned at runtime,
+# and SentinelOne's uv tool installs from its git tag below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libpq5 \
       curl \
@@ -77,11 +82,21 @@ WORKDIR /app
 # Installed Python packages from the deps stage
 COPY --from=python-deps /install/deps /usr/local
 
-# Pinned catalog entries using npx need the Node runtime in the final image.
+# Baked npx connectors run as `node <bin>` (MCPService rewrites the launch);
+# no npm or npx in this image.
 COPY --from=mcp-node /usr/local/bin/node /usr/local/bin/node
-COPY --from=mcp-node /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
-RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
-    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+COPY --from=mcp-node /opt/vigil/mcp/npm /opt/vigil/mcp/npm
+
+# Baked uvx connectors, one uv tool venv each, on the image's own interpreter
+# and the uv that requirements.lock pins. Root-owned, readable by uid 1000.
+# Hardlinked from a cache dropped in the same layer, so the venvs share one
+# copy of their common dependencies.
+COPY infra/docker/mcp-packages/uv-tools.txt /tmp/uv-tools.txt
+RUN grep -v '^#' /tmp/uv-tools.txt | UV_TOOL_DIR=/opt/vigil/mcp/uv-tools \
+      UV_TOOL_BIN_DIR=/opt/vigil/mcp/uv-tools/.bin UV_PYTHON_DOWNLOADS=never \
+      UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=hardlink UV_COMPILE_BYTECODE=1 \
+      xargs -L1 uv tool install --python /usr/local/bin/python \
+    && rm -rf /tmp/uv-tools.txt /tmp/uv-cache
 
 # Application source — copy each top-level package separately so
 # modifying one doesn't bust the cache for all the others.

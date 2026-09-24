@@ -1,0 +1,10 @@
+# uvx connectors from mcp-config.json, baked into the backend image: one
+# `uv tool install` per line, at the exact specs it pins.
+# tests/unit/_ratchets/test_mcp_runtime_pins.py keeps the two in step.
+falcon-mcp==0.19.0
+git+https://github.com/Sentinel-One/purple-mcp.git@v0.7.0
+pagerduty-mcp==1.1.0
+google-secops-mcp==0.7.1 --with mcp==1.29.1
+gti-mcp==0.1.3 --with mcp==1.29.1
+scc-mcp==0.1.1 --with mcp==1.29.1
+awslabs.well-architected-security-mcp-server==0.2.0

@@ -48,6 +48,8 @@ LICENSE
 # requirements.txt is needed by Dockerfile.backend + Dockerfile.daemon;
 # the wildcard above would otherwise exclude it.
 !requirements.txt
+# The backend image's baked uvx connector list.
+!infra/docker/mcp-packages/uv-tools.txt
 
 # Logs
 logs/

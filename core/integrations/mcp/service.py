@@ -15,6 +15,7 @@ from core.config import vigil_path
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.mcp.child_env import ca_bundle_env
+from core.integrations.mcp.packaged import installed_launch
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -432,6 +433,10 @@ class MCPService:
                     required_env_vars = extract_required_env_vars(
                         raw_env_strs, raw_args
                     )
+
+                    # Launch the image's baked copy of a pinned npx/uvx entry
+                    # instead of downloading it; anything not baked is as declared.
+                    command, args = installed_launch(command, args)
 
                     server_configs.append(
                         {
