@@ -121,6 +121,20 @@ def test_discovery_and_datasheet_merge_in_either_order():
     assert info.input_cost_per_1k == pytest.approx(3e-3)
 
 
+def test_a_provider_config_change_keeps_the_gateway_rates():
+    discovered = ModelMeta(id="m", display_name="M", context_window=10)
+    record_live_meta("anthropic", [discovered])
+    record_live_meta("anthropic", [_sheet("m", 1e-6, 2e-6)], rates_only=True)
+    record_live_meta("anthropic", [ModelMeta(id="gone", display_name="Gone")])
+
+    model_registry.invalidate_model_cache()
+
+    info = get_registry().get_model_info("p", "anthropic", "m")
+    assert info.pricing_source == "exact"
+    assert info.context_window == 0
+    assert ("anthropic", "gone") not in model_registry._LIVE_META
+
+
 def test_infer_provider_type():
     assert infer_provider_type("vertex/gemini-flash") == "vertex"
     assert infer_provider_type("claude-sonnet-4-5-20250929") == "anthropic"

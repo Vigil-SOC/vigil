@@ -196,6 +196,17 @@ def clear_live_meta(provider_type: Optional[str] = None) -> None:
             _LIVE_META.pop(key, None)
 
 
+def _clear_discovered_meta() -> None:
+    """Drop what discovery recorded but keep the gateway's rates, which no
+    provider-config change invalidates — dropping them would record every call
+    until the next sync as unpriced."""
+    for key, entry in list(_LIVE_META.items()):
+        if "rates_fetched_at" not in entry:
+            del _LIVE_META[key]
+            continue
+        _LIVE_META[key] = {f: entry.get(f) for f in (*_RATE_FIELDS, "rates_fetched_at")}
+
+
 # ---------------------------------------------------------------------------
 # Lookup
 # ---------------------------------------------------------------------------
@@ -873,12 +884,12 @@ def invalidate_model_cache(provider_id: Optional[str] = None) -> None:
         _LIVE_CATALOGUES.discard(provider_id)
     # Provider-scoped live meta / discovery cache invalidation — best
     # effort. ``provider_id`` is a DB id, not a provider_type, so we can't
-    # surgically drop a single entry; clear all meta + discovery cache
-    # when any provider changes.
+    # surgically drop a single entry; clear all discovered meta + discovery
+    # cache when any provider changes.
     try:
         from core.llm.providers import discovery
 
         discovery.invalidate_cache()
     except Exception:  # noqa: BLE001
         pass
-    clear_live_meta()
+    _clear_discovered_meta()

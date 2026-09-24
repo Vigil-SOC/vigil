@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from core.config import get_settings
-from core.llm.bifrost.admin import run_gateway_rates_refresher
+from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
 from core.storage.connection import get_db_manager
 from core.time import utcnow
 from services.daemon.config import SchedulerConfig
@@ -178,6 +178,7 @@ class TaskScheduler:
         self._init_services()
         # The Claude service prices its calls from this process's own copy of
         # the gateway's rates.
+        await refresh_gateway_rates()
         rates_refresher = asyncio.create_task(run_gateway_rates_refresher())
 
         # Run startup tasks

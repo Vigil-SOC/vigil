@@ -964,14 +964,13 @@ async def refresh_gateway_rates() -> None:
 
 
 async def run_gateway_rates_refresher() -> None:
-    """``refresh_gateway_rates`` now and then every catalog refresh interval,
-    the same cadence the API's full sync keeps."""
+    """``refresh_gateway_rates`` every catalog refresh interval, the cadence the
+    API's full sync keeps. Callers await the first refresh themselves, so no
+    call is priced before this process holds any rates."""
     interval_s = get_settings().model_catalog_refresh_interval_s
-    while True:
-        await refresh_gateway_rates()
-        if interval_s <= 0:
-            return
+    while interval_s > 0:
         await asyncio.sleep(interval_s)
+        await refresh_gateway_rates()
 
 
 async def _list_ollama_models(
