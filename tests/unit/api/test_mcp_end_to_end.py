@@ -14,7 +14,7 @@ is really a connection used from the wrong place.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
@@ -24,8 +24,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from core.auth import mcp_credential_service as credentials
+from core.cases.case_workflow_service import CaseWorkflowService
 from core.storage.models import McpCredential, Role, User
 from core.storage.models.base import Base
+from tools.mcp import vigil
 
 pytestmark = pytest.mark.unit
 
@@ -129,3 +131,66 @@ def test_a_credential_vigil_issued_reaches_the_tools(
         "The surface answered, but not with Vigil's tools. The handshake "
         "completed and tools/list returned nothing recognisable."
     )
+
+
+def test_a_case_closed_through_the_surface_records_the_credentials_owner(
+    client_on_a_domain, issued_credential, monkeypatch
+):
+    """The external door of #1087: the name written is the person's, not "agent"."""
+    recorded = []
+
+    def _close(self, session, case_id, **kwargs):
+        recorded.append(kwargs["closed_by"])
+        closure = MagicMock()
+        closure.to_dict.return_value = {"case_id": case_id}
+        return closure
+
+    @contextmanager
+    def _session():
+        yield object()
+
+    monkeypatch.setattr(CaseWorkflowService, "close_case", _close)
+    monkeypatch.setattr(vigil, "_service_session", _session)
+    monkeypatch.setattr(vigil, "add_case_activity", lambda *a, **k: None)
+
+    headers = {
+        "Authorization": f"Bearer {issued_credential}",
+        "Accept": "application/json, text/event-stream",
+    }
+    with patch("services.api.mcp_surface.is_enabled", return_value=True):
+        opened = client_on_a_domain.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "not-vigil", "version": "1"},
+                },
+            },
+            headers=headers,
+        )
+        headers["mcp-session-id"] = opened.headers["mcp-session-id"]
+        client_on_a_domain.post(
+            "/mcp",
+            json={"jsonrpc": "2.0", "method": "notifications/initialized"},
+            headers=headers,
+        )
+        called = client_on_a_domain.post(
+            "/mcp",
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "close_case",
+                    "arguments": {"case_id": "case-1", "closure_category": "resolved"},
+                },
+            },
+            headers=headers,
+        )
+
+    assert called.status_code == 200, called.text
+    assert recorded == ["nestor"]

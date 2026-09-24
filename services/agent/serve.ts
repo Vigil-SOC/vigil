@@ -6,6 +6,8 @@ import { cachedReady, handleHealth, type Ready } from "./core/health.js";
 import { LedgerRepository } from "./ledger/repository.js";
 import { poolConfig } from "./core/db.js";
 import type { RunKind } from "./contracts/events.js";
+import type { ToolPrincipal } from "./contracts/tool.js";
+import { FRESH } from "./core/budget.js";
 import { nullMemory, recalling } from "./core/memory.js";
 import type { Memory, State } from "./core/seams.js";
 import { assembleSpec, loadArch, parseConfig, parsePlaybook, SpecError, type Playbook, type RunSpec } from "./core/spec.js";
@@ -39,6 +41,9 @@ export interface ChatRequest {
   // conversation may reach. Assembled per request, so it arrives per request.
   config: string;
   parent_run_id?: string;
+  // Signed by the API for the person in this conversation and handed back on
+  // every tool call. Absent means no person, and the tools record "agent".
+  principal?: ToolPrincipal;
 }
 
 export function chatSpec(request: ChatRequest): RunSpec {
@@ -76,7 +81,7 @@ export async function streamChat(state: State, request: ChatRequest, res: Server
   // refuse: the headers are already sent, so a refusal is a frame or it is nothing.
   try {
     const spec = chatSpec(request);
-    const harness = build("chat" as RunKind, spec, state, await memoryFor(state, request.parent_run_id));
+    const harness = build("chat" as RunKind, spec, state, await memoryFor(state, request.parent_run_id), FRESH, request.principal);
     const stream = runChat(harness, { run_id: request.run_id, spec, turns: request.turns });
 
     for (;;) {

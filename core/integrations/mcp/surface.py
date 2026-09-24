@@ -35,9 +35,9 @@ CONFIG_KEY = "mcp.server_enabled"
 # -- say so by naming this rather than the string.
 VIGIL_SERVER = "vigil"
 
-# Who is calling, for the duration of one call. Unset means nothing
-# authenticated a caller -- the stdio path, where the only caller is the
-# process that spawned this one.
+# Who is calling, for the duration of one call. Bound by the /mcp surface and by
+# /internal/tools/invoke when a chat turn carries a verified principal. Unset
+# means no person is behind the call, as in a hunt.
 _caller: ContextVar[Optional[str]] = ContextVar("vigil_mcp_caller", default=None)
 
 

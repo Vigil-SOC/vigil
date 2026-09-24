@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from core.agents.projections import agent_route
+from core.auth import tool_principal
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
 from core.llm.chat_layers import chat_config, run_id_for
@@ -258,6 +259,9 @@ async def chat_stream(
         "config": chat_config(
             request.model, tools, mcp_tools, provider=active_provider.provider_type
         ),
+        # So the tools this turn calls record the person driving it, the same
+        # name the /mcp door binds. Signed here; the agent layer only carries it.
+        "principal": tool_principal.mint(current_user.username),
     }
     if request.parent_run_id:
         payload["parent_run_id"] = request.parent_run_id

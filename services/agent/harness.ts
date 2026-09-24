@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { RunKind } from "./contracts/events.js";
+import type { ToolPrincipal } from "./contracts/tool.js";
 import { budgetOf, FRESH, unmeteredQuota, type Seed } from "./core/budget.js";
 import { httpPrices } from "./core/prices.js";
 import { Limiter } from "./core/limiter.js";
@@ -68,6 +69,7 @@ export function harnessFor<K extends Record<string, unknown>>(
   state: State<K>,
   memory: Memory = nullMemory,
   seed: Seed = FRESH,
+  principal?: ToolPrincipal,
 ): Harness<K> {
   const tools = process.env["VIGIL_TOOLS_URL"] ?? "http://localhost:6987/internal/tools/invoke";
   return {
@@ -79,7 +81,7 @@ export function harnessFor<K extends Record<string, unknown>>(
     // model's name priced a paid "llama" on a commercial host at $0.
     provider: openAiSurface(client, spec.model, limiter, spec.provider ?? "bifrost", wireModel(spec)),
     registry: registryOf(toolsFrom(spec.tools), grantsFor(kind, spec)),
-    dispatch: remoteDispatch({ url: tools, token: internalToken() }),
+    dispatch: remoteDispatch({ url: tools, token: internalToken(), ...(principal === undefined ? {} : { principal }) }),
     budget: budgetOf(spec.budgets, unmeteredQuota, Date.now, seed, prices),
     // Wrapped rather than replaced: whatever the caller passed still answers the
     // cue-shaped recall, and the keyed read is added over the same endpoint the
@@ -97,4 +99,6 @@ export type HarnessFactory = <K extends Record<string, unknown>>(
   state: State<K>,
   memory?: Memory,
   seed?: Seed,
+  // Only chat has a person behind it; the worker and hunts pass none.
+  principal?: ToolPrincipal,
 ) => Harness<K>;

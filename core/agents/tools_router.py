@@ -5,16 +5,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from core.agents.internal_auth import authorise
 from core.agents.mcp_tools import MCPFailure, execute_mcp_tool, split_tool_name
 from core.agents.tool_registry import MANIFEST, execute_backend_tool
+from core.auth import tool_principal
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry
+from core.integrations.mcp.surface import acting_as
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
@@ -42,6 +45,11 @@ class InvokeRequest(BaseModel):
     tool: str
     args: Dict[str, Any] = Field(default_factory=dict)
     bounds: Bounds
+    # Whom the call is for: a token the API minted from a signed-in session
+    # (core/auth/tool_principal.py), carried opaquely by the agent layer. Absent
+    # means no person is behind the call -- a hunt -- and tools record "agent".
+    # Mirrors ToolPrincipal in services/agent/contracts/tool.ts.
+    principal: Optional[str] = None
 
 
 def _failure(kind: str, **detail: Any) -> Dict[str, Any]:
@@ -190,9 +198,19 @@ async def invoke(
     registry: MCPRegistry = Depends(provide_mcp_registry),
 ) -> Dict[str, Any]:
     authorise(authorization, "tool invocation")
+    # A token that does not verify is refused, never read as "no person": that
+    # would record a person's work as an agent's.
+    bound = nullcontext()
+    if body.principal is not None:
+        try:
+            bound = acting_as(tool_principal.verify(body.principal))
+        except tool_principal.InvalidPrincipal:
+            raise HTTPException(status_code=401, detail="bad or expired principal")
 
     try:
-        result, handled, source = await _run(body, registry)
+        # wait_for copies this context into its task, so the tool sees the binding.
+        with bound:
+            result, handled, source = await _run(body, registry)
     except asyncio.TimeoutError:
         return _failure("timeout", timeoutMs=body.bounds.timeout_ms)
     # An MCP server that could not be reached is a gap in visibility, not a defect

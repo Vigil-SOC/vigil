@@ -15,7 +15,7 @@ from core.cases.closure import ClosedByKind, ClosureCategory
 from core.integrations.mcp.surface import current_caller
 from core.storage.connection import get_db_session
 
-# A pipe with no credential is the process that spawned the server.
+# No principal bound: nobody is behind the call, as in a hunt.
 CALLER_UNAUTHENTICATED = "agent"
 
 

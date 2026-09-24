@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import type { ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
@@ -6,7 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
 import type { State } from "../../core/seams.js";
-import { chatServer, chatSpec, memoryFor, type ChatRequest } from "../../serve.js";
+import type { HarnessFactory } from "../../harness.js";
+import { chatServer, chatSpec, memoryFor, streamChat, type ChatRequest } from "../../serve.js";
 import type { ReplayReport } from "../../workflows/hunt/replay.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
@@ -108,6 +110,28 @@ describe("a chat turn over SSE", () => {
     const frames = framesIn(await post(asked({ config: "model: x\ntools: [oops]" })).then((res) => res.text()));
     expect(frames).toHaveLength(1);
     expect(frames[0]).toHaveProperty("error");
+  });
+});
+
+// The API signs the person in the conversation; this layer hands it to the harness
+// that dispatches the turn's tools, and invents nothing when there is none (#1087).
+describe("whom the turn's tools act for", () => {
+  async function principalsSeen(requests: readonly ChatRequest[]): Promise<(string | undefined)[]> {
+    const seen: (string | undefined)[] = [];
+    const scripted = scriptedHarness([{ content: "ok" }, { content: "ok" }]);
+    const build: HarnessFactory = (kind, spec, runState, memory, seed, principal) => {
+      seen.push(principal);
+      return scripted(kind, spec, runState, memory, seed);
+    };
+    for (const request of requests) {
+      const res = { write: () => true, end: () => undefined, writableEnded: false, destroyed: false } as unknown as ServerResponse;
+      await streamChat(new InProcessState(), request, res, build);
+    }
+    return seen;
+  }
+
+  it("passes the principal the request carried, and none when it carried none", async () => {
+    expect(await principalsSeen([asked({ principal: "signed.by.api" }), asked()])).toEqual(["signed.by.api", undefined]);
   });
 });
 

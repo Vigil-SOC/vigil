@@ -1,4 +1,8 @@
 import asyncio
+from contextlib import contextmanager
+from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import FastAPI
@@ -6,7 +10,13 @@ from fastapi.testclient import TestClient
 
 from core.agents import internal_auth, tools_router
 from core.agents.mcp_tools import MCPFailure
+from core.auth import tool_principal
+from core.auth.auth_service import AuthService
+from core.cases.case_workflow_service import CaseWorkflowService
+from core.integrations.mcp import in_process
 from core.integrations.mcp.registry import MCPRegistry
+from core.integrations.mcp.surface import current_caller
+from tools.mcp import vigil
 
 BOUNDS = {"max_rows": 2, "timeout_ms": 500}
 AUTH = {"Authorization": "Bearer shhh"}
@@ -357,3 +367,96 @@ class TestMCPFallthrough:
         body = _invoke(client, tool="splunk_search").json()
         assert body["rowCount"] == BOUNDS["max_rows"]
         assert body["capped"] is True
+
+
+# --- Whom the call is for (#1087) --------------------------------------------
+#
+# Chat reaches Vigil's tools through this door, so a person closing a case in
+# chat is recorded as that person only if the principal the API signed arrives
+# here and is bound around the tool. Driven through the real close_case in
+# Vigil's in-process MCP server, which reads the binding in its own body.
+
+
+@pytest.fixture
+def closes(monkeypatch):
+    """The closed_by each close_case call recorded."""
+    recorded = []
+
+    def _close(self, session, case_id, **kwargs):
+        recorded.append(kwargs["closed_by"])
+        closure = MagicMock()
+        closure.to_dict.return_value = {"case_id": case_id}
+        return closure
+
+    @contextmanager
+    def _session():
+        yield object()
+
+    monkeypatch.setattr(CaseWorkflowService, "close_case", _close)
+    monkeypatch.setattr(vigil, "_service_session", _session)
+    monkeypatch.setattr(vigil, "add_case_activity", lambda *a, **k: None)
+    monkeypatch.setattr(internal_auth, "get_secret", lambda name: "shhh")
+
+    registry = MCPRegistry()
+    in_process.register(registry)
+    app = FastAPI()
+    app.state.mcp_registry = registry
+    app.include_router(tools_router.router, prefix=tools_router.ROUTER_META.prefix)
+    return TestClient(app), recorded
+
+
+def _close_case(client, **extra):
+    body = {
+        "tool": "close_case",
+        "args": {"case_id": "case-1", "closure_category": "resolved"},
+        "bounds": {"max_rows": 5, "timeout_ms": 5000},
+        **extra,
+    }
+    return client.post("/internal/tools/invoke", json=body, headers=AUTH)
+
+
+class TestPrincipal:
+    def test_a_chat_turn_records_the_person_driving_it(self, closes):
+        client, recorded = closes
+        response = _close_case(client, principal=tool_principal.mint("nestor"))
+
+        assert response.status_code == 200, response.text
+        assert response.json()["ok"] is True
+        assert recorded == ["nestor"]
+
+    def test_a_hunt_sends_no_principal_and_records_an_agent(self, closes):
+        client, recorded = closes
+        assert _close_case(client).json()["ok"] is True
+        assert recorded == ["agent"]
+
+    @pytest.mark.parametrize(
+        "principal",
+        ["nestor", "", "not.a.jwt"],
+        ids=["bare-name", "empty", "garbage"],
+    )
+    def test_a_principal_the_api_did_not_sign_is_refused(self, closes, principal):
+        client, recorded = closes
+        assert _close_case(client, principal=principal).status_code == 401
+        assert recorded == []
+
+    def test_an_expired_principal_is_refused_not_downgraded(self, closes):
+        client, recorded = closes
+        stale = tool_principal.mint("nestor", ttl=timedelta(seconds=-1))
+        assert _close_case(client, principal=stale).status_code == 401
+        assert recorded == []
+
+    def test_a_session_jwt_is_not_a_principal(self, closes):
+        client, recorded = closes
+        user = SimpleNamespace(
+            user_id="u-1", username="nestor", email="n@example.com", role_id="r"
+        )
+        session = AuthService.generate_jwt_token(user)
+        assert _close_case(client, principal=session).status_code == 401
+        assert recorded == []
+
+    def test_the_binding_ends_with_the_call(self, closes):
+        client, recorded = closes
+        _close_case(client, principal=tool_principal.mint("nestor"))
+        _close_case(client)
+        assert recorded == ["nestor", "agent"]
+        assert current_caller() is None

@@ -33,9 +33,10 @@ class _JsonEncoder(json.JSONEncoder):
 # what the record will say, and a record of who did something is worth nothing
 # if the doer wrote it.
 #
-# Over HTTP a credential identifies the caller at the edge and the principal is
-# that user. Over stdio there is no caller to identify: the server is spawned
-# over a pipe by the process it serves, and an agent did it.
+# Every door binds the person it authenticated: the /mcp surface from the
+# caller's credential, chat from the signed-in session through the principal
+# token /internal/tools/invoke verifies. A call with no person behind it -- a
+# hunt -- binds nothing, and the record says an agent did it.
 CALLER_UNAUTHENTICATED = "agent"
 
 
