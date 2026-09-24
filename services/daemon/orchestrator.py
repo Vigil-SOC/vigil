@@ -85,7 +85,12 @@ from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
 from core.response.config import decision_rule
-from core.storage.models import IN_FLIGHT_INVESTIGATION_STATUSES
+from core.storage.connection import get_db_manager
+from core.storage.models import (
+    IN_FLIGHT_INVESTIGATION_STATUSES,
+    IntakeTrigger,
+    Investigation,
+)
 from core.threat_intel.mitre_lookup import iter_techniques, resolve_technique
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.workflow_run_service import WorkflowRunService
@@ -107,11 +112,29 @@ logger = logging.getLogger(__name__)
 
 
 def _count_queued_intake_rows() -> int:
-    from core.storage.connection import get_db_manager
-    from core.storage.models import IntakeTrigger
-
     with get_db_manager().session_scope() as session:
         return session.query(IntakeTrigger).filter_by(state="queued").count()
+
+
+# Proactive hunts (nightly, intel) never hold more than this many slots, so a
+# detection arriving on a quiet fleet still finds one free.
+SCHEDULE_RUN_CEILING = 1
+
+
+def _count_schedule_runs_in_flight() -> int:
+    with get_db_manager().session_scope() as session:
+        return (
+            session.query(IntakeTrigger)
+            .join(
+                Investigation,
+                Investigation.investigation_id == IntakeTrigger.investigation_id,
+            )
+            .filter(
+                IntakeTrigger.kind == "schedule",
+                Investigation.status.in_(IN_FLIGHT_INVESTIGATION_STATUSES),
+            )
+            .count()
+        )
 
 
 # related_to: the type the case screen labels and an analyst's link defaults to.
@@ -602,14 +625,29 @@ class Orchestrator:
         # Rows stay queued while the hour is at the cap; they launch once old
         # spend rolls out of the window.
         if not self._hourly_budget_exhausted():
+            schedule_runs = self._schedule_runs_in_flight()
             for row in launchable:
                 if self._in_flight() >= self.config.max_concurrent_agents:
                     break
+                is_schedule = row.get("kind") == "schedule"
+                # Skipped, not a break: rows behind it may be detections.
+                if is_schedule and schedule_runs >= SCHEDULE_RUN_CEILING:
+                    continue
                 await self._process_intake_row(row, shutdown_event)
+                if is_schedule:
+                    schedule_runs += 1
 
         depth = self._queued_intake_depth()
         if depth is not None:
             self._record_intake_depth(depth)
+
+    def _schedule_runs_in_flight(self) -> int:
+        try:
+            return _count_schedule_runs_in_flight()
+        except Exception as e:
+            # Unknown reads as full: hold hunts rather than risk every slot.
+            logger.error(f"Failed to count in-flight schedule runs: {e}")
+            return SCHEDULE_RUN_CEILING
 
     def _queued_intake_depth(self) -> Optional[int]:
         try:

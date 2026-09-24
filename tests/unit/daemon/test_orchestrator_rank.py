@@ -76,6 +76,7 @@ def _orchestrator(**extra) -> Orchestrator:
         return_value=(_Overlap.MERGED, "case-1")
     )
     orch._in_flight = MagicMock(return_value=0)
+    orch._schedule_runs_in_flight = MagicMock(return_value=0)
     orch._queued_intake_depth = MagicMock(return_value=0)
     orch._hourly_budget_exhausted = MagicMock(return_value=False)
     orch._intake_surge_active = False
@@ -331,6 +332,87 @@ async def test_overlap_and_expiry_resolve_when_the_fleet_is_full():
     assert all(
         c.kwargs.get("state") != "shed" for c in orch._decide_trigger.call_args_list
     )
+
+
+def _schedule(trigger_type, *, age_s=60, **extra):
+    row = {
+        "id": extra.pop("id", trigger_type),
+        "kind": "schedule",
+        "priority": "low",
+        "payload": {"workflow_id": "threat-hunt", "trigger_type": trigger_type},
+        "created_at": NOW - timedelta(seconds=age_s),
+    }
+    row.update(extra)
+    return row
+
+
+def _slot_orchestrator(rows, *, inflight=0, schedule_inflight=0):
+    """Three slots; launches count toward in-flight without committing a row."""
+    launched = []
+    count = {"n": inflight}
+
+    async def create(*_args, trigger_id=None, **_kwargs):
+        launched.append(trigger_id)
+        count["n"] += 1
+
+    orch = _orchestrator()
+    orch.config.max_concurrent_agents = 3
+    orch._create_investigation = create
+    orch._create_manual_investigation = create
+    orch._in_flight = lambda: count["n"]
+    orch._schedule_runs_in_flight = MagicMock(return_value=schedule_inflight)
+    orch._hydrate_detection_finding = MagicMock(
+        side_effect=lambda row: {
+            "finding_id": row["finding_id"],
+            "severity": "high",
+            "entity_context": {},
+        }
+    )
+    orch._queued_intake_triggers = lambda: [r for r in rows if r["id"] not in launched]
+    return orch, launched
+
+
+@pytest.mark.asyncio
+async def test_schedule_row_waits_while_a_schedule_run_is_in_flight():
+    # The held schedule row is oldest and would otherwise rank ahead of the ask.
+    rows = [
+        _schedule("intel", age_s=300, id=1),
+        _detection("high", age_s=30, finding_id="f-1", id=2),
+        _human_ask("low", age_s=10, id=3),
+    ]
+    orch, launched = _slot_orchestrator(rows, inflight=1, schedule_inflight=1)
+
+    await orch._drain_intake(None)
+
+    assert sorted(launched) == [2, 3]
+    orch._decide_trigger.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_one_of_two_schedule_rows_launches_and_an_ask_is_not_counted():
+    rows = [
+        _human_ask("high", age_s=10, id=1, payload={"workflow_id": "threat-hunt"}),
+        _schedule("scheduled", age_s=120, id=2),
+        _schedule("intel", age_s=60, id=3),
+    ]
+    orch, launched = _slot_orchestrator(rows)
+
+    await orch._drain_intake(None)
+
+    assert launched == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_held_schedule_row_still_expires_on_ttl():
+    rows = [_schedule("intel", age_s=TTL + 1, id=1)]
+    orch, launched = _slot_orchestrator(rows, inflight=1, schedule_inflight=1)
+
+    await orch._drain_intake(None)
+
+    orch._decide_trigger.assert_called_once_with(
+        1, state="expired", reason="ttl_expired"
+    )
+    assert launched == []
 
 
 @pytest.mark.asyncio
