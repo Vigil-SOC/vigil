@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.secrets_manager import DotEnvBackend
+from core.secrets_manager import DotEnvBackend, SecretsManager
 
 pytestmark = pytest.mark.unit
 
@@ -60,3 +60,58 @@ def test_a_file_the_caller_named_is_read_either_way(tmp_path, monkeypatch):
     monkeypatch.setenv("VIGIL_DISABLE_DOTENV", "1")
 
     assert DotEnvBackend(named).get(SECRET) == "one-the-caller-asked-for"
+
+
+# GH #1173: the repo-root .env is a read-only source for every get_secret key.
+
+
+@pytest.fixture
+def repo_dotenv(tmp_path, monkeypatch):
+    """A tmp repo root holding a credential, and an empty state directory."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env_file = repo / ".env"
+    env_file.write_text(f'{SECRET}="from-the-repo-env"\n')
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr("core.secrets_manager.REPO_ROOT", repo)
+    monkeypatch.setenv("VIGIL_DIR", str(state))
+    monkeypatch.delenv("VIGIL_DISABLE_DOTENV", raising=False)
+    monkeypatch.delenv(SECRET, raising=False)
+    return env_file
+
+
+def _manager():
+    return SecretsManager(write_backend="env")
+
+
+def test_repo_root_env_is_read_when_dotenv_allowed(repo_dotenv):
+    assert _manager().get(SECRET) == "from-the-repo-env"
+
+
+def test_repo_root_env_is_not_read_under_the_suite(repo_dotenv, monkeypatch):
+    monkeypatch.setenv("VIGIL_DISABLE_DOTENV", "1")
+
+    assert _manager().get(SECRET) is None
+
+
+def test_exported_env_var_beats_repo_root_env(repo_dotenv, monkeypatch):
+    monkeypatch.setenv(SECRET, "exported")
+
+    assert _manager().get(SECRET) == "exported"
+
+
+def test_empty_repo_root_value_falls_through(repo_dotenv, monkeypatch):
+    repo_dotenv.write_text(f'{SECRET}=""\n')
+    state_env = repo_dotenv.parent.parent / "state" / ".env"
+    state_env.write_text(f"{SECRET}=from-state-dir\n")
+
+    assert _manager().get(SECRET) == "from-state-dir"
+
+
+def test_delete_leaves_repo_root_env_untouched(repo_dotenv):
+    before = repo_dotenv.read_text()
+
+    _manager().delete(SECRET)
+
+    assert repo_dotenv.read_text() == before

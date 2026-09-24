@@ -4,8 +4,9 @@ Secrets Manager for Vigil SOC
 Provides pluggable secrets storage backends with priority fallback:
 1. Encrypted local file at ``~/.vigil/secrets.enc`` (preferred; at-rest encrypted)
 2. Environment variables
-3. .env file (legacy / interoperability)
-4. Keyring (only when explicitly enabled)
+3. Repo-root .env (read-only)
+4. State-dir .env file (legacy / interoperability)
+5. Keyring (only when explicitly enabled)
 
 Usage:
     from core.secrets_manager import get_secret, set_secret
@@ -21,7 +22,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from core.config import dotenv_allowed, vigil_path
+from core.config import REPO_ROOT, dotenv_allowed, vigil_path
 from core.exceptions import default_on_error
 
 logger = logging.getLogger(__name__)
@@ -474,8 +475,9 @@ class SecretsManager:
     Priority for reading:
     1. Encrypted local file (``~/.vigil/secrets.enc``; preferred)
     2. Environment variables
-    3. .env file (legacy / interoperability)
-    4. Keyring (only when explicitly enabled)
+    3. Repo-root .env (read-only; skipped under VIGIL_DISABLE_DOTENV)
+    4. State-dir .env file (legacy / interoperability)
+    5. Keyring (only when explicitly enabled)
 
     Priority for writing: configurable via ``SECRETS_BACKEND``. Default is
     ``encrypted`` when ``cryptography`` is available, otherwise ``dotenv``.
@@ -492,6 +494,16 @@ class SecretsManager:
         self.encrypted_backend = EncryptedFileBackend()
         self.env_backend = EnvironmentBackend()
         self.dotenv_backend = DotEnvBackend()
+        # Read-only: never a write/delete/migrate target, so the operator's
+        # checked-out .env is never rewritten. A named file skips the
+        # VIGIL_DISABLE_DOTENV guard, so it is only built when dotenv is allowed.
+        repo_env = REPO_ROOT / ".env"
+        self.repo_dotenv_backend: Optional[DotEnvBackend] = None
+        if (
+            dotenv_allowed()
+            and repo_env.resolve() != self.dotenv_backend.env_file.resolve()
+        ):
+            self.repo_dotenv_backend = DotEnvBackend(repo_env)
         # Use lazy init to avoid triggering keychain prompts on startup
         self.keyring_backend = KeyringBackend(lazy_init=True)
         self.enable_keyring = enable_keyring or (write_backend == "keyring")
@@ -504,12 +516,16 @@ class SecretsManager:
             )
             write_backend = "dotenv"
 
-        # Read priority — encrypted first (preferred), then env, then dotenv,
-        # then keyring only when explicitly enabled.
-        self.read_backends = []
+        # Read priority — encrypted first (preferred), then env, then the repo
+        # .env (as start.sh sourcing it would), then the state-dir .env, then
+        # keyring only when explicitly enabled.
+        self.read_backends: list[SecretsBackend] = []
         if self.encrypted_backend.is_available():
             self.read_backends.append(self.encrypted_backend)
-        self.read_backends.extend([self.env_backend, self.dotenv_backend])
+        self.read_backends.append(self.env_backend)
+        if self.repo_dotenv_backend is not None:
+            self.read_backends.append(self.repo_dotenv_backend)
+        self.read_backends.append(self.dotenv_backend)
         if self.enable_keyring:
             self.read_backends.append(self.keyring_backend)
         else:
