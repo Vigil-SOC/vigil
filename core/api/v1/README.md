@@ -2,9 +2,10 @@
 
 This package is the **versioned, frozen HTTP contract**. A route here is a
 promise to external callers — contributors, the platform, other tools — that
-its path and response shape stay stable across all 1.x releases. Everything
+its path and response shape stay stable within a major release. Everything
 else (the console's own wiring) stays on the unversioned routers under
-`services/api/routers/` and `core/<domain>/`.
+`services/api/routers/` and `core/<domain>/`. The rules for how the contract
+changes are in [`VERSIONING.md`](../../../VERSIONING.md).
 
 ## Why a folder, not a decorator
 
@@ -36,8 +37,8 @@ path. One set of handlers, two addresses — no duplicated bodies.
     )
 
 Existing callers (the web console's ~314 calls) keep using `/api/findings`
-untouched; new/external callers use `/api/v1/findings`. The legacy mount is
-dropped in a later release once callers have moved.
+untouched; new/external callers use `/api/v1/findings`. When the legacy mount
+goes is set by [`VERSIONING.md`](../../../VERSIONING.md).
 
 Mechanism lives in `core/routing.py` (`legacy_prefixes`) and
 `services/api/discovery.py` (mounts each router at `prefix` + every legacy

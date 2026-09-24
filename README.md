@@ -483,6 +483,7 @@ Guides live on the site at **[vigilsoc.org/docs](https://vigilsoc.org/docs/)**.
 | [Helm](https://vigilsoc.org/docs/helm/) | Chart values, secrets, and install |
 | [Contributing](https://vigilsoc.org/docs/contributing/) | How to contribute, DCO |
 | [SECURITY.md](SECURITY.md) | Vulnerability reporting, supported versions, disclosure policy |
+| [VERSIONING.md](VERSIONING.md) | What is frozen, what is not, and how the contract changes |
 
 ## Testing with Splunk & Claude
 

@@ -19,7 +19,7 @@ we do not backport to earlier minors.
 | Version | Supported | Notes |
 |---------|-----------|-------|
 | Latest `0.x` minor (currently `0.5.x`) | ✅ | Fixes ship here. Upgrade before reporting a bug you can only reproduce on an older tag. |
-| Older `0.x` minors | ❌ | No backports. While in `0.x`, minor bumps may break agent prompts, workflow schemas, and MCP interfaces — see [contributing](https://vigilsoc.org/docs/contributing/#versioning-and-releases). |
+| Older `0.x` minors | ❌ | No backports. What may change between releases is in [VERSIONING.md](VERSIONING.md). |
 | `main` (unreleased) | ✅ | Reports welcome; note the commit SHA. |
 
 Container images (`ghcr.io/vigil-soc/vigil-backend`, `vigil-daemon`,
