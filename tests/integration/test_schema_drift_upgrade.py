@@ -236,6 +236,22 @@ def test_schema_report_detects_the_missing_column(drifted_manager):
     assert report["missing_columns"].get(DRIFT_TABLE) == [DRIFT_COLUMN]
 
 
+def test_schema_report_detects_a_not_null_the_models_dropped(
+    drifted_db, drifted_manager
+):
+    """A database from before #1115 still forbids NULL cost, so every unpriced
+    call's audit row would fail to insert; that must read as drift."""
+    with drifted_db.begin() as c:
+        c.execute(
+            text("ALTER TABLE llm_interaction_logs ALTER COLUMN cost_usd SET NOT NULL")
+        )
+
+    report = drifted_manager.schema_report()
+
+    assert report["state"] == "drifted"
+    assert report["not_null_columns"] == {"llm_interaction_logs": ["cost_usd"]}
+
+
 def test_orm_read_raises_even_when_the_table_is_empty(drifted_db):
     """The generated SELECT names every mapped column, so rows are irrelevant.
 

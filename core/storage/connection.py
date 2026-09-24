@@ -589,6 +589,9 @@ class DatabaseManager:
         ``empty`` no Vigil tables (safe to provision) / ``ok`` / ``drifted``
         (tables exist, columns missing — needs scripts/migrate_schema.py, since
         create_all is checkfirst=True and won't alter them) / ``unknown``.
+
+        A column the model allows NULL in but the table declares NOT NULL is
+        drift too (``not_null_columns``): every insert of a NULL there fails.
         """
         if self._engine is None:
             raise RuntimeError("Database not initialized. Call initialize() first.")
@@ -597,23 +600,37 @@ class DatabaseManager:
             present = set(inspector.get_table_names())
         except Exception as e:  # noqa: BLE001
             logger.warning("Could not inspect target schema: %s", e)
-            return {"state": "unknown", "missing_tables": [], "missing_columns": {}}
+            return {
+                "state": "unknown",
+                "missing_tables": [],
+                "missing_columns": {},
+                "not_null_columns": {},
+            }
 
         expected = set(Base.metadata.tables)
         missing_tables = sorted(expected - present)
         missing_columns: Dict[str, list] = {}
+        not_null_columns: Dict[str, list] = {}
         for name in sorted(expected & present):
             try:
-                actual = {c["name"] for c in inspector.get_columns(name)}
+                actual = {c["name"]: c["nullable"] for c in inspector.get_columns(name)}
             except Exception:  # noqa: BLE001
                 continue
-            gap = sorted({c.name for c in Base.metadata.tables[name].columns} - actual)
+            model_columns = Base.metadata.tables[name].columns
+            gap = sorted({c.name for c in model_columns} - set(actual))
             if gap:
                 missing_columns[name] = gap
+            tightened = sorted(
+                c.name
+                for c in model_columns
+                if c.nullable and actual.get(c.name) is False
+            )
+            if tightened:
+                not_null_columns[name] = tightened
 
         if not (expected & present):
             state = "empty"
-        elif missing_columns or missing_tables:
+        elif missing_columns or missing_tables or not_null_columns:
             state = "drifted"
         else:
             state = "ok"
@@ -621,6 +638,7 @@ class DatabaseManager:
             "state": state,
             "missing_tables": missing_tables,
             "missing_columns": missing_columns,
+            "not_null_columns": not_null_columns,
         }
 
     def create_tables(self):
@@ -878,6 +896,11 @@ def check_schema_drift(
         ]
         detail = ", ".join(missing) or "none"
         tables = ", ".join(report["missing_tables"])
+        not_null = ", ".join(
+            f"{table}.{column}"
+            for table, columns in sorted(report.get("not_null_columns", {}).items())
+            for column in columns
+        )
 
         if state == "empty":
             summary = (
@@ -894,6 +917,11 @@ def check_schema_drift(
                 "this database, and check it has a step for each column above — "
                 "it only covers columns registered by hand."
             )
+            if not_null:
+                summary += (
+                    f" Also NOT NULL where the models allow NULL, so inserts of "
+                    f"NULL fail: {not_null}."
+                )
 
         if not _schema_drift_logged:
             logger.error("%s", summary)
