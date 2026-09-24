@@ -1,8 +1,8 @@
 /* The one rule for rendering a spend amount and its provenance (#989).
    `zero` and `unknown` mean opposite things — a model that genuinely costs
    nothing versus one nobody could price — and neither is a dollar figure.
-   A bare 0 with no provenance is a real zero: the backend stores unpriced
-   spend as 0 today, and telling the two apart is #985's job, not a guess here. */
+   A bare 0 with no provenance is a real zero: the backend stores an unpriced
+   call as no cost at all and counts it separately (`unpriced_calls`, #1115). */
 
 export type PricingSource = 'exact' | 'heuristic' | 'zero' | 'unknown'
 

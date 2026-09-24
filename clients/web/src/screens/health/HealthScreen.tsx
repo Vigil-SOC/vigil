@@ -204,11 +204,14 @@ function VerdictPart({ value, allowed }: { value?: string | null; allowed: strin
   return <span style={{ color: allowed.includes(value) ? 'var(--ok)' : 'var(--crit)' }}>{value}</span>
 }
 
+// Extra text beside a dollar figure; the figure itself covers priced calls only.
+const unpricedNote = (n: number | undefined) => (n ? `${n.toLocaleString()} unpriced` : undefined)
+
 function SpendBody({ data }: { data: CostData }) {
   return (
     <>
       <div className="grid grid-cols-4 gap-3 mb-4">
-        <Kpi label="Total cost" value={fmtCost(data.totals.cost_usd)} accent />
+        <Kpi label="Total cost" value={fmtCost(data.totals.cost_usd)} note={unpricedNote(data.totals.unpriced_calls)} accent />
         <Kpi label="API calls" value={data.totals.calls.toLocaleString()} />
         <Kpi label="Tokens (in/out)" value={`${fmtTokens(data.totals.input_tokens)} / ${fmtTokens(data.totals.output_tokens)}`} />
         <Kpi label="Cache hit rate" value={fmtPct(data.totals.cache_hit_rate)} />
@@ -224,6 +227,7 @@ function SpendBody({ data }: { data: CostData }) {
           <tbody>
             {data.by_model.map((m) => {
               const source: PricingSource = m.pricing_source in PRICING_COLOR ? m.pricing_source : 'unknown'
+              const unpriced = unpricedNote(m.unpriced_calls)
               return (
                 <tr key={`${m.provider_type}-${m.model}`}>
                   <td className="font-mono text-xs">{m.model}</td>
@@ -233,7 +237,10 @@ function SpendBody({ data }: { data: CostData }) {
                   <td className="muted">{fmtTokens(m.input_tokens)}</td>
                   <td className="muted">{fmtTokens(m.output_tokens)}</td>
                   <td className="muted">{fmtPct(m.cache_hit_rate)}</td>
-                  <td style={{ textAlign: 'right' }}><Cost usd={m.cost_usd} source={source} /></td>
+                  <td style={{ textAlign: 'right' }}>
+                    <Cost usd={m.cost_usd} source={source} />
+                    {unpriced && <span className="text-tx-faint"> · {unpriced}</span>}
+                  </td>
                 </tr>
               )
             })}
@@ -290,12 +297,13 @@ function Card({ title, note, children }: { title: string; note: string; children
   )
 }
 
-function Kpi({ label, value, accent, color }: { label: string; value: string; accent?: boolean; color?: string }) {
+function Kpi({ label, value, note, accent, color }: { label: string; value: string; note?: string; accent?: boolean; color?: string }) {
   const c = color ?? (accent ? 'var(--accent-2)' : undefined)
   return (
     <div className="card card-sq p-3 flex flex-col gap-1">
       <span className="text-[11px] font-semibold tracking-[0.06em] uppercase text-tx-3">{label}</span>
       <span className="text-[22px] font-semibold tracking-[-0.02em]" style={c ? { color: c } : undefined}>{value}</span>
+      {note && <span className="text-xs text-tx-faint">{note}</span>}
     </div>
   )
 }

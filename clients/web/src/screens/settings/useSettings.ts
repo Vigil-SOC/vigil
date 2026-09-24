@@ -770,6 +770,8 @@ export type CostTimeRange = '24h' | '7d' | '30d' | 'all'
 
 export interface CostTotals {
   calls: number
+  /** Calls stored with no cost (unpriced); `cost_usd` sums the rest (#1115). */
+  unpriced_calls: number
   input_tokens: number
   output_tokens: number
   cache_read_tokens: number
@@ -783,6 +785,7 @@ export interface CostModelRow {
   provider_type: string
   pricing_source: 'exact' | 'heuristic' | 'zero' | 'unknown'
   calls: number
+  unpriced_calls: number
   input_tokens: number
   output_tokens: number
   cost_usd: number

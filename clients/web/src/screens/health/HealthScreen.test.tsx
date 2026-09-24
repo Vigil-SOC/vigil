@@ -5,7 +5,7 @@ import { render, screen, within } from '@testing-library/react'
 import HealthScreen from './HealthScreen'
 
 const row = (over: Record<string, unknown>) => ({
-  provider_type: 'bifrost', calls: 10, input_tokens: 1000, output_tokens: 500, cache_hit_rate: 0, ...over,
+  provider_type: 'bifrost', calls: 10, unpriced_calls: 0, input_tokens: 1000, output_tokens: 500, cache_hit_rate: 0, ...over,
 })
 
 vi.mock('../settings/useSettings', () => ({
@@ -14,12 +14,12 @@ vi.mock('../settings/useSettings', () => ({
     error: null,
     reload: vi.fn(),
     data: {
-      totals: { cost_usd: 1.5, calls: 40, input_tokens: 4000, output_tokens: 2000, cache_hit_rate: 0.25 },
+      totals: { cost_usd: 1.5, calls: 40, unpriced_calls: 10, input_tokens: 4000, output_tokens: 2000, cache_hit_rate: 0.25 },
       by_model: [
         row({ model: 'claude-priced', pricing_source: 'exact', cost_usd: 1.5 }),
         row({ model: 'claude-free-tier', pricing_source: 'exact', cost_usd: 0 }),
         row({ model: 'ollama/llama3', pricing_source: 'zero', cost_usd: 0 }),
-        row({ model: 'mystery-model', pricing_source: 'unknown', cost_usd: 0 }),
+        row({ model: 'mystery-model', pricing_source: 'unknown', cost_usd: 0, unpriced_calls: 10 }),
       ],
     },
   }),
@@ -59,5 +59,15 @@ describe('health spend table', () => {
 
     expect(screen.queryByText('free')).not.toBeInTheDocument()
     expect(screen.queryByText('unknown')).not.toBeInTheDocument()
+  })
+
+  it('says how many calls the total and each model could not price (#1115)', () => {
+    render(<HealthScreen openChat={vi.fn()} go={vi.fn()} goSettings={vi.fn()} setViewFull={vi.fn()} />)
+
+    const total = screen.getByText('Total cost').parentElement as HTMLElement
+    expect(within(total).getByText('$1.50')).toBeInTheDocument()
+    expect(within(total).getByText('10 unpriced')).toBeInTheDocument()
+    expect(modelRow('mystery-model').textContent).toMatch(/10 unpriced/)
+    expect(modelRow('claude-priced').textContent).not.toMatch(/unpriced/)
   })
 })
