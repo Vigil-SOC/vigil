@@ -206,7 +206,7 @@ async def invoke(
             raise HTTPException(status_code=401, detail="bad or expired principal")
 
     try:
-        # wait_for copies this context into its task, so the tool sees the binding.
+        # The tool runs in this context (or a copy of it), so it sees the binding.
         with bound:
             result, handled, source = await _run(body, registry)
     except asyncio.TimeoutError:

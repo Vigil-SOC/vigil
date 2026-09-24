@@ -25,7 +25,7 @@ def test_a_minted_principal_verifies_to_the_username():
 
 
 def test_an_expired_principal_is_refused():
-    stale = tool_principal.mint("nestor", ttl=timedelta(seconds=-1))
+    stale = tool_principal.mint("nestor", ttl=timedelta(minutes=-2))
     with pytest.raises(tool_principal.InvalidPrincipal):
         tool_principal.verify(stale)
 

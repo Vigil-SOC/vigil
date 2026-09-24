@@ -38,8 +38,11 @@ _ALGORITHM = "HS256"
 
 # One chat turn: its wall budget (core/llm/chat_layers.py, 300s) plus the agent
 # layer's LLM timeout (VIGIL_LLM_TIMEOUT_MS, 600s), since a last call started
-# inside the budget may run that long before its tool calls go out.
-TTL = timedelta(minutes=15)
+# inside the budget may run that long before its tool calls go out -- with margin
+# for limiter retries and the tool calls themselves.
+TTL = timedelta(minutes=25)
+# Clock skew between the replica that minted and the one that verifies.
+_LEEWAY = timedelta(seconds=30)
 
 
 class InvalidPrincipal(Exception):
@@ -68,6 +71,7 @@ def verify(token: str) -> str:
             _key(),
             algorithms=[_ALGORITHM],
             audience=_PURPOSE,
+            leeway=_LEEWAY,
             options={"require": ["sub", "aud", "exp"]},
         )
     except jwt.InvalidTokenError as exc:
