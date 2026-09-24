@@ -599,6 +599,13 @@ def _cache_hit_rate(input_tokens: int, cache_read_tokens: int) -> float:
     return round(cache_read_tokens / denom, 4)
 
 
+# Rows stored as unpriced (#1115). ``sum`` skips them, so ``cost_usd`` beside
+# this is the total over priced calls only.
+_UNPRICED_CALLS = func.count(LLMInteractionLog.id).filter(
+    LLMInteractionLog.cost_usd.is_(None)
+)
+
+
 def _cost_totals(db: Session, base_filter) -> Dict[str, Any]:
     row = (
         db.query(
@@ -608,14 +615,24 @@ def _cost_totals(db: Session, base_filter) -> Dict[str, Any]:
             func.coalesce(func.sum(LLMInteractionLog.cache_creation_tokens), 0),
             func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0),
             func.count(LLMInteractionLog.id),
+            _UNPRICED_CALLS,
         )
         .filter(base_filter)
         .one()
     )
 
-    input_tokens, output_tokens, cache_read, cache_creation, cost_usd, calls = row
+    (
+        input_tokens,
+        output_tokens,
+        cache_read,
+        cache_creation,
+        cost_usd,
+        calls,
+        unpriced,
+    ) = row
     return {
         "calls": int(calls or 0),
+        "unpriced_calls": int(unpriced or 0),
         "input_tokens": int(input_tokens or 0),
         "output_tokens": int(output_tokens or 0),
         "cache_read_tokens": int(cache_read or 0),
@@ -643,6 +660,7 @@ def _cost_group_by_agent(db: Session, base_filter) -> List[Dict[str, Any]]:
                 "cache_creation"
             ),
             func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
+            _UNPRICED_CALLS.label("unpriced_calls"),
         )
         .filter(base_filter)
         .group_by(LLMInteractionLog.agent_id)
@@ -654,6 +672,7 @@ def _cost_group_by_agent(db: Session, base_filter) -> List[Dict[str, Any]]:
         {
             "agent_id": agent_id or "unknown",
             "calls": int(calls or 0),
+            "unpriced_calls": int(unpriced or 0),
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
             "cache_read_tokens": int(cache_read or 0),
@@ -663,7 +682,7 @@ def _cost_group_by_agent(db: Session, base_filter) -> List[Dict[str, Any]]:
                 int(input_tokens or 0), int(cache_read or 0)
             ),
         }
-        for agent_id, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd in rows
+        for agent_id, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd, unpriced in rows
     ]
 
 
@@ -685,6 +704,7 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
                 "cache_creation"
             ),
             func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
+            _UNPRICED_CALLS.label("unpriced_calls"),
         )
         .filter(base_filter)
         .group_by(LLMInteractionLog.model)
@@ -694,7 +714,7 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
 
     # #184 Phase 3: surface pricing_source per row so the dashboard can
     # badge "heuristic" / "unknown" models — those rows record cost from
-    # tier-regex pricing (or $0 for unknown) and need to be visually
+    # tier-regex pricing (or none at all for unknown) and need to be visually
     # distinguishable from "exact" rows. Provider is inferred from the
     # model id since LLMInteractionLog doesn't carry provider_type.
 
@@ -707,6 +727,7 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
                 model or "", infer_provider_type(model or "")
             ),
             "calls": int(calls or 0),
+            "unpriced_calls": int(unpriced or 0),
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
             "cache_read_tokens": int(cache_read or 0),
@@ -716,7 +737,7 @@ def _cost_group_by_model(db: Session, base_filter) -> List[Dict[str, Any]]:
                 int(input_tokens or 0), int(cache_read or 0)
             ),
         }
-        for model, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd in rows
+        for model, calls, input_tokens, output_tokens, cache_read, cache_creation, cost_usd, unpriced in rows
     ]
 
 
@@ -734,6 +755,7 @@ def _cost_top_investigations(
                 "output_tokens"
             ),
             func.coalesce(func.sum(LLMInteractionLog.cost_usd), 0).label("cost_usd"),
+            _UNPRICED_CALLS.label("unpriced_calls"),
         )
         .filter(and_(base_filter, LLMInteractionLog.investigation_id.isnot(None)))
         .group_by(LLMInteractionLog.investigation_id)
@@ -746,11 +768,12 @@ def _cost_top_investigations(
         {
             "investigation_id": inv_id,
             "calls": int(calls or 0),
+            "unpriced_calls": int(unpriced or 0),
             "input_tokens": int(input_tokens or 0),
             "output_tokens": int(output_tokens or 0),
             "cost_usd": float(cost_usd or 0),
         }
-        for inv_id, calls, input_tokens, output_tokens, cost_usd in rows
+        for inv_id, calls, input_tokens, output_tokens, cost_usd, unpriced in rows
     ]
 
 
