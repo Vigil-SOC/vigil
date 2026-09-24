@@ -92,11 +92,12 @@ COPY --from=mcp-node /opt/vigil/mcp/npm /opt/vigil/mcp/npm
 # Hardlinked from a cache dropped in the same layer, so the venvs share one
 # copy of their common dependencies.
 COPY infra/docker/mcp-packages/uv-tools.txt /tmp/uv-tools.txt
-RUN grep -v '^#' /tmp/uv-tools.txt | UV_TOOL_DIR=/opt/vigil/mcp/uv-tools \
+RUN grep -v '^#' /tmp/uv-tools.txt > /tmp/uv-tools.list \
+    && UV_TOOL_DIR=/opt/vigil/mcp/uv-tools \
       UV_TOOL_BIN_DIR=/opt/vigil/mcp/uv-tools/.bin UV_PYTHON_DOWNLOADS=never \
       UV_CACHE_DIR=/tmp/uv-cache UV_LINK_MODE=hardlink UV_COMPILE_BYTECODE=1 \
-      xargs -L1 uv tool install --python /usr/local/bin/python \
-    && rm -rf /tmp/uv-tools.txt /tmp/uv-cache
+      xargs -a /tmp/uv-tools.list -L1 uv tool install --python /usr/local/bin/python \
+    && rm -rf /tmp/uv-tools.txt /tmp/uv-tools.list /tmp/uv-cache
 
 # Application source — copy each top-level package separately so
 # modifying one doesn't bust the cache for all the others.
