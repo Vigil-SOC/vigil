@@ -449,6 +449,26 @@ class TestConfiguredFloors:
             insert.assert_called_once()
             assert queue.qsize() == 1
 
+    @pytest.mark.asyncio
+    async def test_processor_detection_priority_is_severity_band(self):
+        """#1105: an unrated feed hit stores "unknown"; a rated finding keeps its band."""
+        from services.daemon.config import ResponseConfig
+
+        processor = FindingProcessor(
+            ProcessingConfig(), response_config=ResponseConfig(review_threshold=0.95)
+        )
+        hit = {"threat_indicators": {"src_ip": [{"indicator": "10.0.0.9"}]}}
+
+        with patch("services.daemon.orchestrator.insert_intake_trigger") as insert:
+            await processor._evaluate_for_response(
+                {"finding_id": "f-unrated", "enrichment": hit, "triage_confidence": 0.5}
+            )
+            await processor._evaluate_for_response(
+                {"finding_id": "f-high", "severity": "High", "triage_confidence": 0.5}
+            )
+        priorities = [c.kwargs["priority"] for c in insert.call_args_list]
+        assert priorities == ["unknown", "high"]
+
 
 class TestEscalation:
     """Test escalation logic."""

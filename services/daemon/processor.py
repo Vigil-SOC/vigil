@@ -877,12 +877,16 @@ REASONING: [Brief explanation]
         feed_hit = bool((finding.get("enrichment") or {}).get("threat_indicators"))
 
         if should_respond or feed_hit:
-            from services.daemon.orchestrator import insert_intake_trigger
+            from services.daemon.orchestrator import (
+                insert_intake_trigger,
+                intake_severity_band,
+            )
 
+            # An unrated finding is "unknown" in the queue, never an invented medium.
             trigger_id = insert_intake_trigger(
                 kind="detection",
                 finding_id=finding.get("finding_id"),
-                priority=severity or "medium",
+                priority=intake_severity_band("detection", finding_severity=severity),
             )
             if trigger_id is not None:
                 self.stats["queued_for_investigation"] += 1
