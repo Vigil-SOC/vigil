@@ -16,6 +16,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 mcp = MCPServer("vigil")
 
+# The frozen tools: names and input schemas promised to external callers, held
+# by tools/mcp/frozen_tools.snapshot.json. Rule: a tool is frozen when the HTTP
+# operation it mirrors is frozen in /api/v1. Any tool not listed is served under
+# the 0.x terms and may change; adding one here is additive, removing it is not.
+FROZEN_TOOLS = frozenset(
+    {
+        "list_findings",
+        "get_finding",
+        "list_cases",
+        "get_case",
+        "create_case",
+        "update_case",
+        "close_case",
+        "add_finding_to_case",
+        "remove_finding_from_case",
+        "add_case_evidence",
+        "add_case_ioc",
+        "bulk_add_iocs",
+        "get_case_iocs",
+        "list_approval_actions",
+        "get_approval_action",
+        "approve_action",
+        "reject_action",
+    }
+)
+
 _data_service = None
 
 
