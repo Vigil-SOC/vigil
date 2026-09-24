@@ -8,6 +8,15 @@ from mcp.server.mcpserver import MCPServer
 
 from core.agents import tool_registry
 from core.cases.agent_closure import service_session
+from core.storage.schemas.case_entities import (
+    CaseClosureInfoSchema,
+    CaseCommentSchema,
+    CaseEscalationSchema,
+    CaseEvidenceSchema,
+    CaseIOCSchema,
+    CaseRelationshipSchema,
+    CaseTaskSchema,
+)
 from core.time import utcnow
 
 if TYPE_CHECKING:
@@ -613,7 +622,7 @@ def add_case_comment(
             # The row is added, not yet flushed, so comment_id is unassigned
             # until the database supplies it.
             session.flush()
-            payload = comment.to_dict()
+            payload = CaseCommentSchema.dump(comment)
 
         return jdump(
             {
@@ -637,7 +646,7 @@ def get_case_comments(case_id: str) -> str:
             comments = CaseCollaborationService().get_case_comments(
                 case_id=case_id, session=session
             )
-            payload = [c.to_dict() for c in comments]
+            payload = CaseCommentSchema.dump_many(comments)
 
         return jdump(
             {
@@ -696,7 +705,7 @@ def add_case_evidence(
             if evidence is None:
                 return jdump({"error": f"Could not add evidence to {case_id}"})
             session.flush()
-            payload = evidence.to_dict()
+            payload = CaseEvidenceSchema.dump(evidence)
 
         return jdump(
             {
@@ -760,7 +769,7 @@ def add_case_ioc(
             if ioc is None:
                 return jdump({"error": f"Could not add IOC {ioc_type}:{value}"})
             session.flush()
-            payload = ioc.to_dict()
+            payload = CaseIOCSchema.dump(ioc)
 
         return jdump(
             {
@@ -821,7 +830,7 @@ def bulk_add_iocs(case_id: str, iocs: list) -> str:
                         continue
                     session.flush()
                     added += 1
-                    results.append({"success": True, "ioc": ioc.to_dict()})
+                    results.append({"success": True, "ioc": CaseIOCSchema.dump(ioc)})
                 except Exception as e:
                     failed += 1
                     results.append({"error": str(e), "ioc": ioc_data})
@@ -849,7 +858,7 @@ def get_case_iocs(case_id: str, ioc_type: Optional[str] = None) -> str:
             iocs = CaseIOCService().get_case_iocs(
                 case_id=case_id, ioc_type=ioc_type, session=session
             )
-            payload = [ioc.to_dict() for ioc in iocs]
+            payload = CaseIOCSchema.dump_many(iocs)
 
         return jdump(
             {
@@ -907,7 +916,7 @@ def add_case_task(
                 ),
                 checklist_items=None,
             )
-            payload = task.to_dict()
+            payload = CaseTaskSchema.dump(task)
 
         return jdump(
             {
@@ -952,7 +961,7 @@ def update_case_task(
             task = case_records_service.update_task(session, task_id, updates)
             if task is None:
                 return jdump({"error": f"Task {task_id} not found"})
-            payload = task.to_dict()
+            payload = CaseTaskSchema.dump(task)
             case_id = task.case_id
             title = task.title
 
@@ -988,7 +997,7 @@ def get_case_tasks(case_id: str) -> str:
         from core.cases import case_records_service
 
         tasks = case_records_service.list_tasks(case_id)
-        payload = [t.to_dict() for t in tasks]
+        payload = CaseTaskSchema.dump_many(tasks)
 
         return jdump(
             {
@@ -1035,7 +1044,7 @@ def link_related_cases(
                 created_by=caller(),
                 notes=notes,
             )
-            payload = relationship.to_dict()
+            payload = CaseRelationshipSchema.dump(relationship)
 
         # After the link has committed, so a failure to note it cannot undo it.
         add_case_activity(
@@ -1101,7 +1110,7 @@ def escalate_case(
             # Read back the way POST /{case_id}/escalate does: the service
             # reports whether it escalated, not which row it wrote.
             escalations = case_records_service.list_escalations(session, case_id)
-            payload = escalations[-1].to_dict() if escalations else {}
+            payload = CaseEscalationSchema.dump(escalations[-1]) if escalations else {}
 
         add_case_activity(
             case_id,
@@ -1201,7 +1210,7 @@ def close_case(
             if closure is None:
                 return jdump({"error": f"Case {case_id} not found"})
 
-            payload = closure.to_dict()
+            payload = CaseClosureInfoSchema.dump(closure)
 
         # After the closure has committed, so a failure to note it cannot
         # leave a Case that closed and says nothing about it.
