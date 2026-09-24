@@ -1480,12 +1480,10 @@
               {
                 "$ref": "#/components/schemas/EntityContext"
               },
-              {},
               {
                 "type": "null"
               }
-            ],
-            "title": "Entity Context"
+            ]
           },
           "evidence_links": {
             "anyOf": [

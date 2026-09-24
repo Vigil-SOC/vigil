@@ -15,10 +15,19 @@ the allowed direction).
 """
 
 import logging
-from typing import Any, Dict, List, Literal, Optional, Union
+from collections.abc import Mapping
+from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    ValidatorFunctionWrapHandler,
+    WrapSerializer,
+    WrapValidator,
+)
 
 from core.findings.exclusions import current_active_ips, excluded_ips_of
 from core.findings.source_evidence import (
@@ -86,6 +95,24 @@ class EntityContext(BaseModel):
     source_evidence: Optional[StoredSourceEvidence] = None
 
 
+# A non-object entity_context stored in JSONB passes through untyped rather
+# than failing the response; the published schema stays EntityContext | null.
+def _validate_context(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
+    return handler(value) if value is None or isinstance(value, Mapping) else value
+
+
+# No return annotation: pydantic would publish it as the serialized schema.
+def _serialize_context(value: Any, handler: SerializerFunctionWrapHandler):
+    return handler(value) if value is None or isinstance(value, EntityContext) else value
+
+
+TolerantEntityContext = Annotated[
+    Optional[EntityContext],
+    WrapValidator(_validate_context),
+    WrapSerializer(_serialize_context),
+]
+
+
 class FindingRecord(FindingSchema):
     """A finding as the API returns it.
 
@@ -93,10 +120,7 @@ class FindingRecord(FindingSchema):
     findings domain, so the evidence type is narrowed here.
     """
 
-    # Left-to-right so a non-object entity_context stored in JSONB passes as-is.
-    entity_context: Optional[Union[EntityContext, Any]] = Field(
-        default=None, union_mode="left_to_right"
-    )
+    entity_context: TolerantEntityContext = None
     excluded_ips: List[str] = Field(default_factory=list)
 
 

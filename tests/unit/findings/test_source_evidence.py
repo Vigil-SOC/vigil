@@ -251,8 +251,20 @@ def test_findings_list_omits_payload_while_detail_retains_it(monkeypatch):
             "status": "redacted",
             "provenance": "joined",
         },
+        {
+            "version": 1,
+            "telemetry_kind": "netflow",
+            "status": "not_in_artifact",
+        },
+        {
+            "version": 1,
+            "telemetry_kind": "http_session",
+            "status": "available",
+            "raw_text": "x" * 70_000,
+            "total_records": 9,
+        },
     ],
-    ids=["available", "invalid-fallback", "payload-free"],
+    ids=["available", "invalid-fallback", "redacted", "not-in-artifact", "raw-text"],
 )
 def test_source_evidence_model_describes_normalizer_output(evidence):
     normalized = normalize_source_evidence(evidence)
@@ -263,6 +275,27 @@ def test_source_evidence_model_describes_normalizer_output(evidence):
     for envelope in (normalized, projected):
         model = SourceEvidence.model_validate(envelope)
         assert model.model_dump(exclude_unset=True) == envelope
+
+
+@pytest.mark.parametrize(
+    ("context", "expected"),
+    [
+        (
+            {"host": "h", "source_evidence": {"status": "nope"}},
+            {"host": "h", "source_evidence": normalize_source_evidence({})},
+        ),
+        (["not", "an", "object"], ["not", "an", "object"]),
+        (None, None),
+    ],
+    ids=["malformed-evidence", "non-object", "null"],
+)
+def test_finding_record_tolerates_stored_entity_context(context, expected):
+    record = findings_api.FindingRecord.model_validate(
+        {"finding_id": "f-1", "entity_context": context}
+    )
+
+    dumped = record.model_dump(mode="json", exclude_unset=True)
+    assert dumped["entity_context"] == expected
 
 
 def _client(monkeypatch, finding):

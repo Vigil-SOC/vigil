@@ -9588,8 +9588,7 @@ export interface components {
             data_source?: string | null;
             /** Description */
             description?: string | null;
-            /** Entity Context */
-            entity_context?: components["schemas"]["EntityContext"] | unknown | null;
+            entity_context?: components["schemas"]["EntityContext"] | null;
             /** Evidence Links */
             evidence_links?: unknown | null;
             /** Excluded Ips */
