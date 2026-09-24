@@ -9431,7 +9431,7 @@ export interface components {
             model_id: string;
             /**
              * Provider Type
-             * @description anthropic | openai | ollama. Advisory only — the endpoint resolves the real provider from model_id (registry, then name heuristic) and uses this value only as a last-resort fallback.
+             * @description Advisory only — the endpoint resolves the real provider from model_id (registry, then a namespaced id or the configured default) and treats this value as final only when neither matches.
              */
             provider_type?: string | null;
             /** System Prompt */
