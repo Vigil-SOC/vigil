@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import asdict
-from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts, read_replay
@@ -82,28 +82,176 @@ def _findings_stats(data: Any, args: Args) -> Args:
     return {"total_findings": len(findings), **tally}
 
 
-def _list_cases(data: Any, args: Args) -> Any:
-    limit = args.get("limit", 50)
-    cases = data.get_cases(limit=limit * 2)
-    for field in ("status", "severity"):
-        wanted = args.get(field)
-        if wanted:
-            cases = [case for case in cases if case.get(field) == wanted]
+def _data():
+    from core.storage.database_data_service import DatabaseDataService
+
+    return DatabaseDataService()
+
+
+def _approvals():
+    from core.response.approval_service import ApprovalService
+
+    return ApprovalService()
+
+
+def list_findings(
+    *,
+    severity: Optional[str] = None,
+    data_source: Optional[str] = None,
+    status: Optional[str] = None,
+    cluster_id: Optional[str] = None,
+    min_anomaly_score: Optional[float] = None,
+    sort_by: str = "timestamp",
+    sort_order: str = "desc",
+    offset: int = 0,
+    limit: int = 20,
+) -> Args:
+    filters = {
+        "severity": severity,
+        "data_source": data_source,
+        "status": status,
+        "cluster_id": cluster_id,
+        "min_anomaly_score": min_anomaly_score,
+    }
+    data = _data()
+    total = data.count_findings(**filters)
+    findings = data.get_findings(
+        limit=limit,
+        offset=offset,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        **filters,
+    )
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": (offset + limit) < total,
+        "findings": [_compact(f) for f in findings],
+    }
+
+
+def search_findings(**args: Any) -> Args:
+    return _page(_data(), args, search=True)
+
+
+def get_findings_stats(**_args: Any) -> Args:
+    return _findings_stats(_data(), {})
+
+
+def get_finding(*, finding_id: str) -> Any:
+    return _data().get_finding(finding_id)
+
+
+def list_cases(
+    *,
+    status: Optional[str] = None,
+    severity: Optional[str] = None,
+    priority: Optional[str] = None,
+    limit: int = 50,
+) -> Any:
+    # get_cases takes only a cap, so the filter runs after the full read.
+    # A cap applied first (limit*2) drops matches that sit past it.
+    cases = _data().get_cases()
+    if status:
+        cases = [case for case in cases if case.get("status") == status]
+    if severity:
+        cases = [
+            case
+            for case in cases
+            if case.get("severity") == severity or case.get("priority") == severity
+        ]
+    if priority:
+        cases = [case for case in cases if case.get("priority") == priority]
     return cases[:limit]
 
 
-def _create_case(data: Any, args: Args) -> Any:
-    return data.create_case(
-        title=args["title"],
-        finding_ids=args.get("finding_ids", []),
-        priority=args.get("severity", "medium"),
-        description=args.get("description", ""),
+def get_case(*, case_id: str) -> Any:
+    return _data().get_case(case_id)
+
+
+def create_case(
+    *,
+    title: str,
+    description: str = "",
+    severity: Optional[str] = None,
+    priority: Optional[str] = None,
+    finding_ids: Optional[list] = None,
+    status: str = "new",
+    assignee: Optional[str] = None,
+    tags: Optional[list] = None,
+) -> Args:
+    data = _data()
+    ids = finding_ids or []
+    case = data.create_case(
+        title=title,
+        finding_ids=ids,
+        priority=priority or severity or "medium",
+        description=description,
+        status=status,
     )
+    if not case:
+        return {"error": "Failed to create case"}
+    # assignee and tags are edits, applied after the case exists.
+    edits: Args = {}
+    if assignee is not None:
+        edits["assignee"] = assignee
+    if tags:
+        edits["tags"] = tags
+    if edits:
+        data.update_case(case["case_id"], **edits)
+        case = data.get_case(case["case_id"]) or case
+    return {
+        "success": True,
+        "case_id": case.get("case_id"),
+        "title": case.get("title"),
+        "status": case.get("status"),
+        "finding_count": len(ids),
+    }
 
 
-def _update_case(data: Any, args: Args) -> Args:
-    case_id = args.pop("case_id")
-    return {"success": data.update_case(case_id, **args), "case_id": case_id}
+def update_case(
+    *,
+    case_id: str,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    status: Optional[str] = None,
+    priority: Optional[str] = None,
+    assignee: Optional[str] = None,
+    add_note: Optional[str] = None,
+) -> Args:
+    from core.cases.agent_closure import record_agent_close, record_reopen
+    from core.time import utcnow
+
+    data = _data()
+    case = data.get_case(case_id)
+    if not case:
+        return {"error": f"Case {case_id} not found"}
+
+    updates: Args = {}
+    if title:
+        updates["title"] = title
+    if description:
+        updates["description"] = description
+    if status:
+        updates["status"] = status
+    if priority:
+        updates["priority"] = priority
+    if assignee:
+        updates["assignee"] = assignee
+    if add_note:
+        notes = list(case.get("notes") or [])
+        notes.append({"timestamp": utcnow().isoformat() + "Z", "note": add_note})
+        updates["notes"] = notes
+
+    was_closed = (case.get("status") or "").strip() == "closed"
+    if not data.update_case(case_id, **updates):
+        return {"error": "Failed to update case"}
+    if updates.get("status") == "closed" and not was_closed:
+        record_agent_close(case_id)
+    elif was_closed and updates.get("status") not in (None, "closed"):
+        record_reopen(case_id)
+    return {"success": True, "case_id": case_id}
 
 
 # Missing case or empty records must still be a result: an error here parks the
@@ -132,78 +280,68 @@ def _case_records(args: Args) -> Args:
     return {"tasks": tasks, "escalations": escalations}
 
 
-def _add_resolution_step(data: Any, args: Args) -> Args:
-    case = data.get_case(args["case_id"])
-    if not case:
-        return {"error": f"Case {args['case_id']} not found"}
-    steps = case.get("resolution_steps", [])
-    steps.append(
-        {
-            "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "description": args["description"],
-            "action_taken": args["action_taken"],
-            "result": args.get("result"),
-        }
-    )
-    data.update_case(args["case_id"], resolution_steps=steps)
-    return {"success": True, "case_id": args["case_id"], "total_steps": len(steps)}
+def add_finding_to_case(*, case_id: str, finding_id: str) -> Args:
+    from core.cases import case_journal_service
 
-
-def _technique_rollup(data: Any, args: Args) -> Args:
-    floor = args.get("min_confidence", 0.0)
-    counts: Dict[str, int] = {}
-    severities: Dict[str, Dict[str, int]] = {}
-    for finding in data.get_findings(limit=1000):
-        for technique in finding.get("predicted_techniques", []) or []:
-            tid = technique.get("technique_id")
-            if not tid or technique.get("confidence", 0) < floor:
-                continue
-            counts[tid] = counts.get(tid, 0) + 1
-            bucket = severities.setdefault(
-                tid, {"critical": 0, "high": 0, "medium": 0, "low": 0}
-            )
-            severity = finding.get("severity") or "medium"
-            bucket[severity] = bucket.get(severity, 0) + 1
-    techniques = [
-        {"technique_id": tid, "count": count, "severities": severities[tid]}
-        for tid, count in counts.items()
-    ]
-    techniques.sort(key=lambda entry: entry["count"], reverse=True)
+    linked = case_journal_service.link_finding(_data(), case_id, finding_id)
+    if linked is None:
+        return {"error": f"Failed to add {finding_id} to {case_id}"}
     return {
         "success": True,
-        "total_techniques": len(techniques),
-        "techniques": techniques,
+        "message": (
+            f"Added {finding_id} to {case_id}"
+            if linked
+            else f"{finding_id} was already on {case_id}"
+        ),
     }
 
 
-_DATA_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
-    "list_findings": lambda data, args: _page(data, args, search=False),
-    "search_findings": lambda data, args: _page(data, args, search=True),
-    "get_findings_stats": _findings_stats,
-    "get_finding": lambda data, args: data.get_finding(**args),
-    "list_cases": _list_cases,
-    "get_case": lambda data, args: data.get_case(**args),
-    "create_case": _create_case,
-    "add_finding_to_case": lambda data, args: data.add_finding_to_case(
-        case_id=args["case_id"], finding_id=args["finding_id"]
-    ),
-    "update_case": _update_case,
-    "add_resolution_step": _add_resolution_step,
-    "get_technique_rollup": _technique_rollup,
-}
+def add_resolution_step(
+    *,
+    case_id: str,
+    description: str,
+    action_taken: str,
+    result: Optional[str] = None,
+) -> Args:
+    from core.cases import case_journal_service
+
+    step = case_journal_service.append_resolution_step(
+        _data(),
+        case_id,
+        description=description,
+        action_taken=action_taken,
+        result=result,
+    )
+    if step is None:
+        return {"error": f"Failed to add resolution step to {case_id}"}
+    return {
+        "success": True,
+        "message": f"Added resolution step to {case_id}",
+        "step": step,
+    }
 
 
-async def _list_completed_hunts(args: Args) -> Any:
-    allowed = {key: args[key] for key in ("start", "end", "limit") if key in args}
-    return await pack_completed_hunts(**allowed)
+def get_technique_rollup(
+    *, min_confidence: float = 0.0, time_range: str = "all"
+) -> Args:
+    from core.threat_intel.occurrence_rollup import occurrence_rollup
+
+    return occurrence_rollup(
+        min_confidence=min_confidence,
+        time_range=time_range,
+        service=_data(),
+    )
+
+
+async def list_completed_hunts(*, start: str, end: str, limit: int = 200) -> Any:
+    return await pack_completed_hunts(start=start, end=end, limit=limit)
 
 
 # None from the read is "nothing to replay"; a model needs a body, not null.
-async def _replay_hunt(args: Args) -> Any:
-    run_id = args.get("run_id")
+async def replay_hunt(*, run_id: str, decision_id: Optional[str] = None) -> Any:
     if not run_id:
         raise TypeError("replay_hunt is missing a required argument: run_id")
-    report = await read_replay(str(run_id), args.get("decision_id") or None)
+    report = await read_replay(str(run_id), decision_id or None)
     return (
         report
         if report is not None
@@ -318,22 +456,58 @@ _MEMORY_TOOLS: Dict[str, Callable[[Args], Any]] = {
     "export_learning_episodes": _export_learning_episodes,
 }
 
-_APPROVAL_TOOLS: Dict[str, Callable[[Any, Args], Any]] = {
-    "list_pending_approvals": lambda service, args: [
-        asdict(action)
-        for action in service.list_pending_approvals()[: args.get("limit", 50)]
-    ],
-    "get_approval_action": lambda service, args: _decided(
-        service.get_action(args["action_id"]), "read"
-    ),
-    "approve_action": lambda service, args: _decided(
-        service.approve_action(**args), "approved"
-    ),
-    "reject_action": lambda service, args: _decided(
-        service.reject_action(**args), "rejected"
-    ),
-    "get_approval_stats": lambda service, args: service.get_stats(),
-}
+
+def list_pending_approvals(**args: Any) -> Any:
+    limit = args.get("limit", 50)
+    return [asdict(action) for action in _approvals().list_pending_approvals()[:limit]]
+
+
+def get_approval_action(*, action_id: str) -> Args:
+    return _decided(_approvals().get_action(action_id), "read")
+
+
+# The actor is the caller, not an argument. A model that names one is choosing
+# what the record will say.
+def approve_action(*, action_id: str) -> Args:
+    from core.cases.agent_closure import actor
+
+    return _decided(_approvals().approve_action(action_id, actor()), "approved")
+
+
+def reject_action(*, action_id: str, reason: str) -> Args:
+    from core.cases.agent_closure import actor
+
+    return _decided(_approvals().reject_action(action_id, reason, actor()), "rejected")
+
+
+def get_approval_stats(**_args: Any) -> Any:
+    return _approvals().get_stats()
+
+
+# Names executed by the function of the same name in this module. Looked up
+# when called, so the MCP wrappers and this door share that function.
+_OWNED = frozenset(
+    {
+        "list_findings",
+        "search_findings",
+        "get_findings_stats",
+        "get_finding",
+        "list_cases",
+        "get_case",
+        "create_case",
+        "add_finding_to_case",
+        "update_case",
+        "add_resolution_step",
+        "get_technique_rollup",
+        "list_completed_hunts",
+        "replay_hunt",
+        "list_pending_approvals",
+        "get_approval_action",
+        "approve_action",
+        "reject_action",
+        "get_approval_stats",
+    }
+)
 
 
 # Returns (result, handled). handled is False only when the name is no backend
@@ -347,16 +521,11 @@ async def execute_backend_tool(
     if tool_name == "case_records":
         return _case_records(args), True
 
-    if tool_name in _DATA_TOOLS:
-        from core.storage.database_data_service import DatabaseDataService
-
-        return _DATA_TOOLS[tool_name](DatabaseDataService(), args), True
-
-    if tool_name == "list_completed_hunts":
-        return await _list_completed_hunts(args), True
-
-    if tool_name == "replay_hunt":
-        return await _replay_hunt(args), True
+    if tool_name in _OWNED:
+        result = globals()[tool_name](**args)
+        if inspect.isawaitable(result):
+            result = await result
+        return result, True
 
     if tool_name in _SECURITY_TOOLS:
         from core.detections.tools import get_security_detection_tools
@@ -375,10 +544,5 @@ async def execute_backend_tool(
     # Agent skills (#925): reads from disk only, never a database.
     if tool_name == READ_SKILL_TOOL:
         return read_skill(args.get("name"), args.get("file")), True
-
-    if tool_name in _APPROVAL_TOOLS:
-        from core.response.approval_service import ApprovalService
-
-        return _APPROVAL_TOOLS[tool_name](ApprovalService(), args), True
 
     return None, False

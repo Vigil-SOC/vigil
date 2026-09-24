@@ -155,6 +155,14 @@ DEEPTEMPO_FINDING_TOOLS = [
                     "type": "string",
                     "description": "Filter by status (e.g., 'new', 'investigating', 'resolved')",
                 },
+                "cluster_id": {
+                    "type": "string",
+                    "description": "Filter by cluster id",
+                },
+                "min_anomaly_score": {
+                    "type": "number",
+                    "description": "Minimum anomaly score, inclusive",
+                },
                 "sort_by": {
                     "type": "string",
                     "enum": ["timestamp", "anomaly_score", "severity"],
@@ -249,7 +257,12 @@ DEEPTEMPO_FINDING_TOOLS = [
                 "severity": {
                     "type": "string",
                     "enum": ["low", "medium", "high", "critical"],
-                    "description": "Filter by severity",
+                    "description": "Filter by severity (cases store this as priority)",
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Filter by priority",
                 },
                 "limit": {"type": "integer", "default": 50},
             },
@@ -292,7 +305,23 @@ DEEPTEMPO_FINDING_TOOLS = [
                 "severity": {
                     "type": "string",
                     "enum": ["low", "medium", "high", "critical"],
-                    "description": "Case severity",
+                    "description": "Case severity. Used as priority when priority is omitted.",
+                },
+                "priority": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                    "description": "Case priority. Wins over severity when both are set.",
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Initial status",
+                    "default": "new",
+                },
+                "assignee": {"type": "string", "description": "Assignee"},
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Tags applied after the case is created",
                 },
                 "finding_ids": {
                     "type": "array",
@@ -300,7 +329,7 @@ DEEPTEMPO_FINDING_TOOLS = [
                     "description": "Optional: Initial findings to add to case",
                 },
             },
-            "required": ["title", "severity"],
+            "required": ["title"],
         },
     },
     {
@@ -334,6 +363,11 @@ DEEPTEMPO_FINDING_TOOLS = [
                 "priority": {
                     "type": "string",
                     "enum": ["low", "medium", "high", "critical"],
+                },
+                "assignee": {"type": "string", "description": "Assignee"},
+                "add_note": {
+                    "type": "string",
+                    "description": "Note appended to the case",
                 },
             },
             "required": ["case_id"],
@@ -492,10 +526,17 @@ ATTACK_LAYER_TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "tactic": {
+                "min_confidence": {
+                    "type": "number",
+                    "description": "Minimum technique confidence to count",
+                    "default": 0.0,
+                },
+                "time_range": {
                     "type": "string",
-                    "description": "Optional: Filter by MITRE tactic (e.g., 'initial-access', 'execution')",
-                }
+                    "enum": ["24h", "7d", "30d", "all"],
+                    "description": "Window over finding timestamps",
+                    "default": "all",
+                },
             },
         },
     },
@@ -541,11 +582,6 @@ APPROVAL_TOOLS = [
                     "type": "string",
                     "description": "The action ID to approve",
                 },
-                "approved_by": {
-                    "type": "string",
-                    "description": "Name of approver (e.g., 'analyst_name', 'auto_approved')",
-                    "default": "analyst",
-                },
             },
             "required": ["action_id"],
         },
@@ -561,11 +597,6 @@ APPROVAL_TOOLS = [
                     "description": "The action ID to reject",
                 },
                 "reason": {"type": "string", "description": "Reason for rejection"},
-                "rejected_by": {
-                    "type": "string",
-                    "description": "Name of person rejecting",
-                    "default": "analyst",
-                },
             },
             "required": ["action_id", "reason"],
         },
