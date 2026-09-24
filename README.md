@@ -432,8 +432,7 @@ vigil/
 │                      #   autonomous SOC), worker (ARQ llm-worker)
 ├── clients/web/       # React + Tailwind frontend
 ├── tools/mcp/         # MCP servers for Vigil's own services
-├── infra/             # Docker Compose, Helm chart, DB init SQL
-└── data/schemas/      # JSON validation schemas
+└── infra/             # Docker Compose, Helm chart, DB init SQL
 ```
 
 ## Example Usage

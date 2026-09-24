@@ -8,9 +8,14 @@ import sys
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from core.ingestion.ingestion_service import IngestionService
 from core.findings.source_evidence import (
     SOURCE_EVIDENCE_PREVIEW_LIMIT,
+    SourceEvidence,
     normalize_source_evidence,
     normalize_finding_source_evidence,
     project_finding_source_evidence_for_list,
@@ -233,3 +238,85 @@ def test_findings_list_omits_payload_while_detail_retains_it(monkeypatch):
     assert "raw_text" not in listed
     assert detailed["records"] == [{"message": "raw event"}]
     assert detailed["raw_text"] == "raw event"
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        _finding_with_evidence()["entity_context"]["source_evidence"],
+        {"status": "available", "records": "not-a-list"},
+        {
+            "version": 1,
+            "telemetry_kind": "dns",
+            "status": "redacted",
+            "provenance": "joined",
+        },
+    ],
+    ids=["available", "invalid-fallback", "payload-free"],
+)
+def test_source_evidence_model_describes_normalizer_output(evidence):
+    normalized = normalize_source_evidence(evidence)
+    projected = project_finding_source_evidence_for_list(
+        {"entity_context": {"source_evidence": normalized}}
+    )["entity_context"]["source_evidence"]
+
+    for envelope in (normalized, projected):
+        model = SourceEvidence.model_validate(envelope)
+        assert model.model_dump(exclude_unset=True) == envelope
+
+
+def _client(monkeypatch, finding):
+    monkeypatch.setattr(findings_api, "data_service", _FakeDataService(finding))
+    monkeypatch.setattr(
+        findings_api, "current_active_ips", lambda: frozenset({"203.0.113.9"})
+    )
+    app = FastAPI()
+    app.include_router(findings_api.router, prefix="/api/v1/findings")
+    return TestClient(app)
+
+
+def test_responses_keep_unnormalized_stored_envelope_contract(monkeypatch):
+    # Stored before the contract bounded it: 130 records, no truncation flags.
+    finding = _finding_with_evidence()
+    finding["entity_context"]["src_ip"] = "203.0.113.9"
+    stored = finding["entity_context"]["source_evidence"]
+    del stored["truncated"]
+    stored["total_records"] = 130
+    stored["records"] = [{"message": f"event-{index}"} for index in range(130)]
+    client = _client(monkeypatch, finding)
+
+    listed = client.get("/api/v1/findings").json()["findings"][0]
+    detailed = client.get("/api/v1/findings/f-source-1").json()
+
+    listed_evidence = listed["entity_context"]["source_evidence"]
+    assert listed_evidence["payload_included"] is False
+    assert "records" not in listed_evidence and "raw_text" not in listed_evidence
+    assert None not in listed_evidence.values()
+    assert listed["excluded_ips"] == ["203.0.113.9"]
+
+    detailed_evidence = detailed["entity_context"]["source_evidence"]
+    assert len(detailed_evidence["records"]) == SOURCE_EVIDENCE_PREVIEW_LIMIT
+    assert detailed_evidence["raw_text"] == "raw event"
+    assert detailed_evidence["truncated"] is True
+    assert "payload_included" not in detailed_evidence
+    assert detailed["entity_context"]["hostname"] == "host-1"
+    assert detailed["excluded_ips"] == ["203.0.113.9"]
+
+
+def test_responses_report_malformed_stored_evidence_as_invalid(monkeypatch):
+    finding = _finding_with_evidence()
+    finding["entity_context"]["source_evidence"] = {"status": "whatever"}
+    client = _client(monkeypatch, finding)
+
+    listed = client.get("/api/v1/findings").json()["findings"]
+    detailed = client.get("/api/v1/findings/f-source-1").json()
+
+    assert len(listed) == 1
+    assert listed[0]["entity_context"]["source_evidence"]["status"] == "invalid"
+    assert detailed["entity_context"]["source_evidence"] == {
+        "version": 1,
+        "telemetry_kind": "generic_log",
+        "schema_id": "generic-log.v1",
+        "status": "invalid",
+        "provenance": "embedded",
+    }

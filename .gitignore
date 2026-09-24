@@ -251,7 +251,6 @@ temp/
 # Runtime data (stored in PostgreSQL)
 data/*.json
 data/investigations/
-!data/schemas/
 
 # Test data
 splunk_test_data.json

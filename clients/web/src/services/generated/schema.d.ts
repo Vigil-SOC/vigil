@@ -9382,6 +9382,15 @@ export interface components {
             provider_type: string;
         };
         /**
+         * EntityContext
+         * @description Free-form entity context; ``source_evidence`` is the one named key.
+         */
+        EntityContext: {
+            source_evidence?: components["schemas"]["SourceEvidence"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
          * EscalationAdd
          * @description Escalate case.
          */
@@ -9549,9 +9558,7 @@ export interface components {
         /** FindingListResponse */
         FindingListResponse: {
             /** Findings */
-            findings?: {
-                [key: string]: unknown;
-            }[];
+            findings?: components["schemas"]["FindingRecord"][];
             /** Has More */
             has_more: boolean;
             /** Limit */
@@ -9560,6 +9567,47 @@ export interface components {
             offset: number;
             /** Total */
             total: number;
+        };
+        /**
+         * FindingRecord
+         * @description A finding as the API returns it.
+         *
+         *     ``FindingSchema`` stays in the storage tier, which may not import the
+         *     findings domain, so the evidence type is narrowed here.
+         */
+        FindingRecord: {
+            /** Ai Enrichment */
+            ai_enrichment?: unknown | null;
+            /** Anomaly Score */
+            anomaly_score?: number | null;
+            /** Cluster Id */
+            cluster_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Data Source */
+            data_source?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Entity Context */
+            entity_context?: components["schemas"]["EntityContext"] | unknown | null;
+            /** Evidence Links */
+            evidence_links?: unknown | null;
+            /** Excluded Ips */
+            excluded_ips?: string[];
+            /** External Id */
+            external_id?: string | null;
+            /** Finding Id */
+            finding_id?: string | null;
+            /** Mitre Predictions */
+            mitre_predictions?: unknown | null;
+            /** Severity */
+            severity?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Timestamp */
+            timestamp?: string | null;
+            /** Updated At */
+            updated_at?: string | null;
         };
         /**
          * FindingUpdate
@@ -10794,6 +10842,51 @@ export interface components {
             name: string;
             /** Source Path */
             source_path: string;
+        };
+        /**
+         * SourceEvidence
+         * @description The envelope ``normalize_source_evidence`` returns.
+         *
+         *     Payload fields are present only when ``status`` is ``available``; list
+         *     responses drop ``records``/``raw_text`` and set ``payload_included: false``.
+         */
+        SourceEvidence: {
+            /** Payload Included */
+            payload_included?: boolean | null;
+            /**
+             * Provenance
+             * @enum {string}
+             */
+            provenance: "embedded" | "joined";
+            /** Raw Text */
+            raw_text?: string | null;
+            /** Raw Text Truncated */
+            raw_text_truncated?: boolean | null;
+            /** Records */
+            records?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Schema Id */
+            schema_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "available" | "not_in_artifact" | "redacted" | "invalid";
+            /**
+             * Telemetry Kind
+             * @enum {string}
+             */
+            telemetry_kind: "netflow" | "dns" | "http_session" | "generic_log";
+            /** Total Records */
+            total_records?: number | null;
+            /** Truncated */
+            truncated?: boolean | null;
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
         };
         /** StartRunRequest */
         StartRunRequest: {
@@ -18225,7 +18318,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingRecord"];
                 };
             };
             /** @description Validation Error */
@@ -23869,7 +23962,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["FindingRecord"];
                 };
             };
             /** @description Validation Error */

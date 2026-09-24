@@ -1284,6 +1284,24 @@
         "title": "DirectiveResponse",
         "type": "object"
       },
+      "EntityContext": {
+        "additionalProperties": true,
+        "description": "Free-form entity context; ``source_evidence`` is the one named key.",
+        "properties": {
+          "source_evidence": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SourceEvidence"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "EntityContext",
+        "type": "object"
+      },
       "EvidenceAdd": {
         "description": "Add evidence to case.",
         "properties": {
@@ -1359,8 +1377,7 @@
         "properties": {
           "findings": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/FindingRecord"
             },
             "title": "Findings",
             "type": "array"
@@ -1389,6 +1406,180 @@
           "has_more"
         ],
         "title": "FindingListResponse",
+        "type": "object"
+      },
+      "FindingRecord": {
+        "description": "A finding as the API returns it.\n\n``FindingSchema`` stays in the storage tier, which may not import the\nfindings domain, so the evidence type is narrowed here.",
+        "properties": {
+          "ai_enrichment": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ai Enrichment"
+          },
+          "anomaly_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Anomaly Score"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "data_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Source"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "entity_context": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EntityContext"
+              },
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entity Context"
+          },
+          "evidence_links": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Links"
+          },
+          "excluded_ips": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Excluded Ips",
+            "type": "array"
+          },
+          "external_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "External Id"
+          },
+          "finding_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finding Id"
+          },
+          "mitre_predictions": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitre Predictions"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "timestamp": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timestamp"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "title": "FindingRecord",
         "type": "object"
       },
       "FindingUpdate": {
@@ -2311,6 +2502,127 @@
           }
         },
         "title": "SearchRequest",
+        "type": "object"
+      },
+      "SourceEvidence": {
+        "description": "The envelope ``normalize_source_evidence`` returns.\n\nPayload fields are present only when ``status`` is ``available``; list\nresponses drop ``records``/``raw_text`` and set ``payload_included: false``.",
+        "properties": {
+          "payload_included": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload Included"
+          },
+          "provenance": {
+            "enum": [
+              "embedded",
+              "joined"
+            ],
+            "title": "Provenance",
+            "type": "string"
+          },
+          "raw_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Text"
+          },
+          "raw_text_truncated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Text Truncated"
+          },
+          "records": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Records"
+          },
+          "schema_id": {
+            "title": "Schema Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "available",
+              "not_in_artifact",
+              "redacted",
+              "invalid"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "telemetry_kind": {
+            "enum": [
+              "netflow",
+              "dns",
+              "http_session",
+              "generic_log"
+            ],
+            "title": "Telemetry Kind",
+            "type": "string"
+          },
+          "total_records": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Total Records"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Truncated"
+          },
+          "version": {
+            "const": 1,
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "telemetry_kind",
+          "schema_id",
+          "status",
+          "provenance"
+        ],
+        "title": "SourceEvidence",
         "type": "object"
       },
       "StartRunRequest": {
@@ -4930,7 +5242,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/FindingRecord"
+                }
               }
             },
             "description": "Successful Response"
