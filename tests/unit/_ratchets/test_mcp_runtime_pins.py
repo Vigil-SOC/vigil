@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from core.integrations.mcp.packaged import npm_version, npx_package, uvx_specs
+
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _MCP_CONFIG = _REPO_ROOT / "mcp-config.json"
 
@@ -27,16 +29,6 @@ _SHA256 = re.compile(r"@sha256:[0-9a-f]{64}$")
 _MCP_REMOTE_PATCH = re.compile(r"^0\.1\.(\d+)$")
 _FLOATING_GIT_REFS = {"HEAD", "head", "main", "master", "latest", "dev", "develop"}
 
-# uvx flags whose next token is a package spec that must be pinned.
-_UVX_SPEC_FLAGS = {"--from", "--with"}
-# uvx flags whose next token is not a package (interpreter, path, index).
-_UVX_VALUE_FLAGS = {
-    "--python",
-    "--with-editable",
-    "--with-requirements",
-    "--index",
-    "--extra-index-url",
-}
 _DOCKER_VALUE_FLAGS = {
     "-e",
     "--env",
@@ -58,30 +50,9 @@ def _servers() -> dict[str, dict]:
     return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
 
-def _npm_version(spec: str) -> str | None:
-    """Return the version suffix of an npm package spec, or None if missing."""
-    rest = spec[1:] if spec.startswith("@") else spec
-    if "@" not in rest:
-        return None
-    return rest.rsplit("@", 1)[1]
-
-
 def _npm_pinned(spec: str) -> bool:
-    version = _npm_version(spec)
+    version = npm_version(spec)
     return bool(version) and bool(_EXACT_VERSION.fullmatch(version))
-
-
-def _npx_package(args: list[str]) -> str | None:
-    i = 0
-    while i < len(args):
-        arg = args[i]
-        if arg in ("-p", "--package") and i + 1 < len(args):
-            return args[i + 1]
-        if arg.startswith("-"):
-            i += 1
-            continue
-        return arg
-    return None
 
 
 def _git_pinned(spec: str) -> bool:
@@ -102,30 +73,8 @@ def _pypi_or_git_pinned(spec: str) -> bool:
 
 def _uvx_unpinned(args: list[str]) -> list[str]:
     """Return package specs that are missing an exact pin."""
-    unpinned: list[str] = []
-    has_from = False
-    i = 0
-    while i < len(args):
-        arg = args[i]
-        if arg in _UVX_SPEC_FLAGS and i + 1 < len(args):
-            spec = args[i + 1]
-            if arg == "--from":
-                has_from = True
-            if not _pypi_or_git_pinned(spec):
-                unpinned.append(spec)
-            i += 2
-            continue
-        if arg in _UVX_VALUE_FLAGS:
-            i += 2
-            continue
-        if arg.startswith("-"):
-            i += 1
-            continue
-        # First positional is the package unless --from already named it.
-        if not has_from and not _pypi_or_git_pinned(arg):
-            unpinned.append(arg)
-        break
-    return unpinned
+    spec, with_specs, _, _ = uvx_specs(args)
+    return [s for s in [*with_specs, spec] if s and not _pypi_or_git_pinned(s)]
 
 
 def _docker_image(args: list[str]) -> str | None:
@@ -196,7 +145,7 @@ def test_runtime_fetched_mcp_servers_are_pinned():
         args = [a for a in config.get("args") or [] if isinstance(a, str)]
         if command == "npx":
             inspected += 1
-            package = _npx_package(args)
+            package = npx_package(args)[0]
             if not package or not _npm_pinned(package):
                 unpinned[name] = package or "(missing npx package)"
         elif command == "uvx":
@@ -231,7 +180,7 @@ def test_mcp_remote_stays_inside_the_0_1_cve_window():
             if not isinstance(arg, str) or not arg.startswith("mcp-remote"):
                 continue
             found += 1
-            version = _npm_version(arg) or ""
+            version = npm_version(arg) or ""
             if not _mcp_remote_in_cve_window(version):
                 offenders[name] = arg
     assert found >= 3, (
@@ -259,3 +208,52 @@ def test_mcp_remote_stays_inside_the_0_1_cve_window():
 )
 def test_mcp_remote_cve_window_helper(version: str, ok: bool):
     assert _mcp_remote_in_cve_window(version) is ok
+
+
+_IMAGE_PACKAGES = _REPO_ROOT / "infra" / "docker" / "mcp-packages"
+
+
+def _config_pins() -> tuple[set[str], set[tuple[str, frozenset[str]]]]:
+    """npx package specs and uvx (package, --with specs) pinned in mcp-config.json."""
+    npx: set[str] = set()
+    uvx: set[tuple[str, frozenset[str]]] = set()
+    for config in _servers().values():
+        args = [a for a in config.get("args") or [] if isinstance(a, str)]
+        if config.get("command") == "npx":
+            npx.add(npx_package(args)[0])
+        elif config.get("command") == "uvx":
+            spec, with_specs, _, _ = uvx_specs(args)
+            uvx.add((spec, frozenset(with_specs)))
+    return npx, uvx
+
+
+@pytest.mark.unit
+def test_image_npm_list_matches_npx_pins():
+    """The backend image bakes exactly the npx pins; drift either way fails."""
+    deps = json.loads((_IMAGE_PACKAGES / "package.json").read_text())["dependencies"]
+    image = {f"{name}@{version}" for name, version in deps.items()}
+    lock = json.loads((_IMAGE_PACKAGES / "package-lock.json").read_text())
+    assert lock["packages"][""]["dependencies"] == deps, "package-lock.json is stale"
+    config, _ = _config_pins()
+    assert len(config) >= 5, "npx ratchet is vacuous"
+    assert config == image, (
+        f"only in mcp-config.json: {sorted(config - image)}; "
+        f"only in infra/docker/mcp-packages/package.json: {sorted(image - config)}"
+    )
+
+
+@pytest.mark.unit
+def test_image_uv_tool_list_matches_uvx_pins():
+    image: set[tuple[str, frozenset[str]]] = set()
+    for line in (_IMAGE_PACKAGES / "uv-tools.txt").read_text().splitlines():
+        tokens = line.split()
+        if not tokens or tokens[0].startswith("#"):
+            continue
+        withs = {tokens[i + 1] for i, t in enumerate(tokens[:-1]) if t == "--with"}
+        image.add((tokens[0], frozenset(withs)))
+    _, config = _config_pins()
+    assert len(config) >= 5, "uvx ratchet is vacuous"
+    assert config == image, (
+        f"only in mcp-config.json: {sorted(config - image, key=str)}; "
+        f"only in infra/docker/mcp-packages/uv-tools.txt: {sorted(image - config, key=str)}"
+    )
