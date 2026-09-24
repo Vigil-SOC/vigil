@@ -166,7 +166,7 @@ multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
-numpy==2.5.2
+numpy==2.5.3
     # via -r requirements.txt
 openai==3.3.1
     # via -r requirements.txt
@@ -358,7 +358,7 @@ s3transfer==0.19.2
     # via boto3
 semver==2.13.0
     # via bullmq
-sentry-sdk==2.68.1
+sentry-sdk==2.70.0
     # via -r requirements.txt
 simplejson==4.1.1
     # via stix2
@@ -374,7 +374,7 @@ sniffio==1.3.1
     #   openai
 socksio==1.0.0
     # via -r requirements.txt
-sqlalchemy==2.0.52
+sqlalchemy==2.0.54
     # via -r requirements.txt
 sse-starlette==3.4.8
     # via mcp
@@ -429,7 +429,7 @@ typing-inspection==0.4.4
     #   pydantic-settings
 tzdata==2026.3 ; sys_platform == 'win32'
     # via faker
-urllib3==2.7.0
+urllib3==2.8.0
     # via
     #   -r requirements.txt
     #   botocore
