@@ -854,8 +854,14 @@ def _is_chat_catalogue_entry(entry: Dict[str, Any]) -> bool:
 
 
 def _rate(entry: Dict[str, Any], key: str) -> Optional[float]:
-    """A datasheet rate, or None when absent or malformed — never a guessed 0."""
-    value = entry.get(key)
+    """A datasheet rate, or None when absent or malformed — never a guessed 0.
+
+    An operator pricing override does not replace the base rate on the wire:
+    the gateway reports it beside it, under ``overridden_pricing``, and it wins.
+    """
+    value = (entry.get("overridden_pricing") or {}).get(key)
+    if value is None:
+        value = entry.get(key)
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         return None
     return float(value)
@@ -893,7 +899,7 @@ async def fetch_catalogue_models(provider_type: str) -> Optional[List[Any]]:
             # for the same reason ``_anthropic_caps`` does. Thinking and vision
             # are left unset rather than guessed, since nothing depends on them.
             capabilities={"supports_tools": True},
-            # The gateway's own rates, operator pricing overrides included.
+            # The gateway's own rates, operator pricing overrides applied.
             input_cost_per_token=_rate(e, "input_cost_per_token"),
             output_cost_per_token=_rate(e, "output_cost_per_token"),
             cache_read_cost_per_token=_rate(e, "cache_read_input_token_cost"),

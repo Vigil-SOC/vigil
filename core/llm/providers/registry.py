@@ -18,11 +18,11 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.llm.providers.discovery import is_embedding_model_id
 from core.llm.router.router import get_default_provider_spec
-from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ def record_live_meta(
     and ``rates_only`` (a datasheet read for its prices) leaves display name,
     context and capabilities alone.
     """
-    fetched_at = utcnow().isoformat()
+    fetched_at = datetime.now(timezone.utc).isoformat()
     for m in meta_list:
         entry = _LIVE_META.setdefault((provider_type, m.id), {})
         if not rates_only:
