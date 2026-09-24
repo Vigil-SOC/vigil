@@ -761,12 +761,12 @@ class TestTheOneWriter:
     """Every close goes through CaseWorkflowService.close_case (#733 review)."""
 
     def test_an_agent_status_edit_records_an_unspecified_agent_close(self, session):
-        from tools.mcp.vigil import _record_agent_close
+        from core.cases.agent_closure import record_agent_close
 
         case(session)
         session.commit()
 
-        _record_agent_close("case-733")
+        record_agent_close("case-733")
 
         session.expire_all()
         recorded = session.get(CaseClosureInfo, "case-733")
@@ -780,7 +780,7 @@ class TestTheOneWriter:
         assert row.trust == "agent"
 
     def test_an_unstated_close_never_overwrites_a_stated_one(self, session):
-        from tools.mcp.vigil import _record_agent_close
+        from core.cases.agent_closure import record_agent_close
 
         case(session)
         closure(
@@ -791,7 +791,7 @@ class TestTheOneWriter:
         )
         session.commit()
 
-        _record_agent_close("case-733")
+        record_agent_close("case-733")
 
         session.expire_all()
         recorded = session.get(CaseClosureInfo, "case-733")
@@ -829,7 +829,7 @@ class TestTheOneWriter:
         assert recorded.lessons_learned == "enforce MFA"
 
     def test_closing_by_status_edit_stops_the_sla_clock(self, session, monkeypatch):
-        from tools.mcp.vigil import _record_agent_close
+        from core.cases.agent_closure import record_agent_close
 
         marked = []
         import core.cases.case_sla_service as sla
@@ -843,7 +843,7 @@ class TestTheOneWriter:
         case(session)
         session.commit()
 
-        _record_agent_close("case-733")
+        record_agent_close("case-733")
 
         # The consolidation this PR performed on the MCP close, applied to the
         # status edits too: a Case closed this way used to skip the clock.
