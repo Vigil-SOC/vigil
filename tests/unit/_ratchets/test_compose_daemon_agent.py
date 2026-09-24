@@ -66,6 +66,14 @@ def test_soc_daemon_shares_backend_agent_seam() -> None:
     ), "soc-daemon is missing AGENT_INTERNAL_TOKEN; projection reads will 401"
 
 
+def test_backend_forwards_jwt_secret_and_dev_mode() -> None:
+    # Issue #1096: without these a bare compose up crashloops the backend at
+    # core/auth/auth_service.py. No default secret: unset must still fail closed.
+    backend = _env("backend")
+    assert backend.get("JWT_SECRET_KEY") == "${JWT_SECRET_KEY:-}"
+    assert backend.get("DEV_MODE") == "${DEV_MODE:-false}"
+
+
 def test_backend_and_daemon_share_one_intent_knob_list() -> None:
     text = COMPOSE_PATH.read_text(encoding="utf-8")
     for key in INTENT_KNOBS:

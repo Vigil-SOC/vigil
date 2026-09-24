@@ -314,7 +314,7 @@ docker compose --env-file .env -f infra/docker/docker-compose.yml --profile daem
 
 `--profile daemon` adds `soc-daemon` and `llm-worker`. Other opt-in profiles (`dev`, `observability`, `splunk`, `kafka`, `elastic`, `misp`) work the same way.
 
-> The `backend` container runs with auth on and fails closed without `JWT_SECRET_KEY`, which the compose file does not forward yet. Until it does, supply one through a second compose file (`-f my-override.yml` with `services.backend.environment: [JWT_SECRET_KEY=<random>]`).
+> The `backend` container runs with auth on and refuses to start without `JWT_SECRET_KEY`. Set it in the repo-root `.env` or export it — for example `export JWT_SECRET_KEY="$(cat ~/.vigil/jwt_secret)"` if `start.sh` has run before, or `openssl rand -base64 48` for a fresh one. `DEV_MODE=true` is the opt-in auth bypass.
 
 ### Run SOC Daemon (Headless Mode)
 

@@ -178,6 +178,11 @@ services:
       # Shared secret the agent worker presents on /internal. Unset means every
       # such call answers 503, so no workflow can run.
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
+      # JWT signing secret. Unset means the backend refuses to start (auth is on);
+      # mint one with `openssl rand -base64 48` or reuse ~/.vigil/jwt_secret from
+      # start.sh. DEV_MODE=true is the opt-in auth bypass for a developer machine.
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-}
+      DEV_MODE: ${DEV_MODE:-false}
       # Chat and run projections. core/config.py defaults this to localhost:6989,
       # which was the agent layer's address while it shared the backend process.
       AGENT_URL: http://agent-serve:6989
