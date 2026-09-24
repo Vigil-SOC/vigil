@@ -103,7 +103,9 @@ def _validate_context(value: Any, handler: ValidatorFunctionWrapHandler) -> Any:
 
 # No return annotation: pydantic would publish it as the serialized schema.
 def _serialize_context(value: Any, handler: SerializerFunctionWrapHandler):
-    return handler(value) if value is None or isinstance(value, EntityContext) else value
+    return (
+        handler(value) if value is None or isinstance(value, EntityContext) else value
+    )
 
 
 TolerantEntityContext = Annotated[
