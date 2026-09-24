@@ -1,0 +1,85 @@
+[
+  {
+    "name": "encoded powershell confirms the listed sub-technique",
+    "input": {
+      "id": "finding-001",
+      "title": "Suspicious PowerShell Execution",
+      "description": "PowerShell script executed with encoded command, potentially malicious",
+      "severity": "high",
+      "source": "splunk",
+      "external_id": "splunk-notable-12345",
+      "timestamp": "2026-01-27T10:00:00Z",
+      "raw_data": {
+        "host": "workstation-042",
+        "user": "john.doe",
+        "process": "powershell.exe",
+        "command_line": "powershell.exe -enc JABhAD0AJwBoAHQAdABwADoALwAvAG0AYQBsAHcAYQByAGUALgBjAG8AbQAn",
+        "parent_process": "explorer.exe"
+      },
+      "mitre_techniques": ["T1059.001", "T1027"],
+      "iocs": {
+        "hosts": ["workstation-042"],
+        "users": ["john.doe"],
+        "processes": ["powershell.exe"]
+      }
+    },
+    "expect": [
+      "technique: T1059.001 — confirmed",
+      "tactics:"
+    ]
+  },
+  {
+    "name": "upload to transfer.sh confirms web-service exfiltration",
+    "input": {
+      "id": "finding-005",
+      "title": "Data Exfiltration Attempt",
+      "description": "Large file upload to external cloud storage",
+      "severity": "critical",
+      "source": "splunk",
+      "external_id": "splunk-notable-98765",
+      "timestamp": "2026-01-27T12:30:00Z",
+      "raw_data": {
+        "user": "employee.name",
+        "dst_domain": "transfer.sh",
+        "bytes_uploaded": 524288000,
+        "file_count": 15,
+        "duration": "10 minutes"
+      },
+      "mitre_techniques": ["T1567.002"],
+      "iocs": {
+        "domains": ["transfer.sh"],
+        "users": ["employee.name"]
+      }
+    },
+    "expect": [
+      "technique: T1567.002 — confirmed",
+      "tactics: exfiltration"
+    ]
+  },
+  {
+    "name": "one account many failures adds password guessing",
+    "input": {
+      "id": "finding-002",
+      "title": "Brute Force Authentication Attempt",
+      "description": "Multiple failed login attempts detected from single source",
+      "severity": "medium",
+      "source": "azure_sentinel",
+      "external_id": "sentinel-alert-67890",
+      "timestamp": "2026-01-27T09:30:00Z",
+      "raw_data": {
+        "src_ip": "203.0.113.45",
+        "target_user": "admin",
+        "failed_attempts": 47,
+        "time_window": "5 minutes"
+      },
+      "mitre_techniques": [],
+      "iocs": {
+        "ips": ["203.0.113.45"],
+        "users": ["admin"]
+      }
+    },
+    "expect": [
+      "technique: T1110.001 — added"
+    ]
+  }
+]
