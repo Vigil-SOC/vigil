@@ -1165,11 +1165,9 @@ def test_gemini_floor_prefers_latest_alias_over_retired_pin(monkeypatch):
     )
 
 
-def test_servable_models_excludes_embedding_ids(monkeypatch):
+def test_self_hosted_chat_models_excludes_embedding_ids(monkeypatch):
     """So ``_upsert_row`` corrects a row already floored to an embedding model."""
     import asyncio
-
-    from core.llm.bifrost import mirror
 
     models = _ollama_meta(
         ("nomic-embed-text:latest", True),
@@ -1180,4 +1178,6 @@ def test_servable_models_excludes_embedding_ids(monkeypatch):
         return models
 
     monkeypatch.setattr(bifrost_admin, "_list_ollama_models", _fake_list)
-    assert asyncio.run(mirror._servable_models("ollama")) == {"llama3.1:8b"}
+    assert asyncio.run(bifrost_admin.self_hosted_chat_models("ollama")) == [
+        "llama3.1:8b"
+    ]
