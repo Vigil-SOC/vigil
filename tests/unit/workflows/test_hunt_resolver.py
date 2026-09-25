@@ -243,6 +243,39 @@ class TestRefusals:
             resolve_hunt("no-such-workflow")
 
 
+# Compose grants phase.tools. The prompt already tells a profile that recommends
+# read_skill to call it, so the resolver puts that name on the phase and in the
+# config catalogue. It does not copy the rest of recommended_tools across.
+def test_compose_phases_receive_read_skill_when_the_profile_grants_it():
+    playbook, config_text = resolve("incident-response")
+    report = next(
+        phase for phase in yaml.safe_load(playbook)["phases"] if phase["id"] == "report"
+    )
+    assert report["tools"] == [
+        "get_case",
+        "list_findings",
+        "recall_entity",
+        "read_skill",
+    ]
+    assert 'read_skill("executive-summary")' in report["prompt"]
+    assert "# Executive summary" not in report["prompt"]
+    config_ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
+    assert "read_skill" in config_ids
+    assert config_ids.count("read_skill") == 1
+
+    playbook, config_text = resolve("threat-hunt")
+    intel = next(
+        phase
+        for phase in yaml.safe_load(playbook)["phases"]
+        if phase["id"] == "threat_intel"
+    )
+    assert intel["tools"] == ["lookup_indicators", "read_skill"]
+    assert "# IOC enrichment" not in intel["prompt"]
+    config_ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
+    assert "read_skill" in config_ids
+    assert config_ids.count("read_skill") == 1
+
+
 # The other four definitions are untouched: they still resolve to phases.
 def test_a_compose_definition_still_resolves_to_phases():
     playbook, _ = resolve("incident-response")

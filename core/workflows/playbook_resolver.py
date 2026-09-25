@@ -11,6 +11,7 @@ import yaml
 
 from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
 from core.llm.defaults import DEFAULT_MODEL
+from core.skills.skill_library import READ_SKILL_TOOL
 
 if TYPE_CHECKING:
     from core.integrations.mcp.registry import MCPRegistry
@@ -184,7 +185,7 @@ def _candidate_names(capability: str) -> Tuple[str, ...]:
 
 # An agent's prompt is rendered now rather than read from a file: the memory block
 # depends on the agent's own grant, so a stored copy would describe another agent.
-def _prompt_for(agent_id: str) -> str:
+def _profile_for(agent_id: str) -> Any:
     from core.agents.manager import (
         CUSTOM_AGENT_ID_PREFIX,
         AgentManager,
@@ -199,7 +200,22 @@ def _prompt_for(agent_id: str) -> str:
         profile = AgentManager().agents.get(agent_id)
     if profile is None:
         raise UnknownPlaybook(f"phase names agent {agent_id}, which does not exist")
-    return profile.system_prompt
+    return profile
+
+
+def _prompt_for(agent_id: str) -> str:
+    return _profile_for(agent_id).system_prompt
+
+
+# Compose allows phase.tools. The prompt already tells an agent whose profile
+# recommends read_skill to call it, so that name has to be on the phase or the
+# call the prompt requires is refused. Other recommended tools stay off the
+# phase: the workflow author listed what this step may use.
+def _tools_for(phase: Dict[str, Any], recommended: List[str]) -> List[str]:
+    tools = list(phase.get("tools") or [])
+    if READ_SKILL_TOOL in recommended and READ_SKILL_TOOL not in tools:
+        tools.append(READ_SKILL_TOOL)
+    return tools
 
 
 # A file playbook writes one instructions block. A custom workflow authors the same
@@ -228,6 +244,7 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
         if not agent:
             raise UnknownPlaybook(f"phase {index + 1} names no agent")
 
+        profile = _profile_for(agent)
         resolved.append(
             {
                 "id": phase.get("id") or phase.get("phase_id") or f"phase-{index + 1}",
@@ -235,8 +252,8 @@ def _phases_of(definition: Any) -> List[Dict[str, Any]]:
                 "name": phase.get("name") or f"Phase {index + 1}",
                 "instructions": _instructions_of(phase),
                 "approval_required": bool(phase.get("approval_required")),
-                "tools": list(phase.get("tools") or []),
-                "prompt": _prompt_for(agent),
+                "tools": _tools_for(phase, profile.recommended_tools),
+                "prompt": profile.system_prompt,
             }
         )
     return resolved

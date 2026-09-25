@@ -13,7 +13,9 @@ from core.workflows.workflows_service import WorkflowDefinition
 pytestmark = pytest.mark.unit
 
 
-def _custom_profile(agent_id: str = "custom-foo") -> AgentProfile:
+def _custom_profile(
+    agent_id: str = "custom-foo", tools: list[str] | None = None
+) -> AgentProfile:
     return AgentProfile(
         id=agent_id,
         name="Foo",
@@ -22,7 +24,7 @@ def _custom_profile(agent_id: str = "custom-foo") -> AgentProfile:
         icon="C",
         color="#888888",
         specialization="Custom",
-        recommended_tools=[],
+        recommended_tools=list(tools or []),
     )
 
 
@@ -100,10 +102,45 @@ def test_resolve_builtin_phase_does_not_construct_agent_manager(monkeypatch):
 def test_resolve_carries_the_custom_agent_prompt(monkeypatch):
     monkeypatch.setattr("core.agents.manager.AgentManager", _CustomManager)
 
-    playbook, _ = resolve("wf-test", workflows=_Workflows("custom-foo"))
+    playbook, config = resolve("wf-test", workflows=_Workflows("custom-foo"))
     phase = yaml.safe_load(playbook)["phases"][0]
     assert phase["agent"] == "custom-foo"
     assert phase["prompt"] == "DISTINCTIVE CUSTOM PROMPT"
+    # The profile does not recommend read_skill, so the phase does not gain it.
+    assert phase["tools"] == []
+    assert "read_skill" not in [
+        tool["id"] for tool in yaml.safe_load(config)["tools"]
+    ]
+
+
+def test_custom_phase_gains_read_skill_when_the_profile_recommends_it(monkeypatch):
+    class _Granted:
+        def __init__(self):
+            self.agents = {
+                "custom-foo": _custom_profile(
+                    tools=[
+                        "get_finding",
+                        "recall_entity",
+                        "list_cases",
+                        "cf_lookup_ip_threat",
+                        "read_skill",
+                    ]
+                )
+            }
+
+    monkeypatch.setattr("core.agents.manager.AgentManager", _Granted)
+    definition = _definition("custom-foo")
+    definition.metadata["phases"][0]["tools"] = ["lookup_indicators", "read_skill"]
+
+    class _WorkflowsWithTools:
+        def get_workflow(self, _id):
+            return definition
+
+    playbook, config = resolve("wf-test", workflows=_WorkflowsWithTools())
+    phase = yaml.safe_load(playbook)["phases"][0]
+    assert phase["tools"] == ["lookup_indicators", "read_skill"]
+    assert phase["prompt"] == "DISTINCTIVE CUSTOM PROMPT"
+    assert "read_skill" in [tool["id"] for tool in yaml.safe_load(config)["tools"]]
 
 
 def test_validate_agent_ids_rejects_unknown(monkeypatch):
