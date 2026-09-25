@@ -640,7 +640,9 @@ def _replay_sigma(rule_yaml: str, events: Any) -> Dict[str, Any]:
             False,
             "replay only evaluates one selection of equality and |contains",
         )
-    matched = any(isinstance(event, dict) and _event_matches(event, fields) for event in events)
+    matched = any(
+        isinstance(event, dict) and _event_matches(event, fields) for event in events
+    )
     if matched:
         return _replay(True, True, None)
     return _replay(True, False, "no event matched the selection")
@@ -705,7 +707,10 @@ def _event_matches(event: Dict[str, Any], fields: List[tuple]) -> bool:
         actual = event[name]
         if op == "eq":
             # bool is an int, so True == 1. A scalar match is the value as written.
-            if isinstance(actual, bool) != isinstance(expected, bool) or actual != expected:
+            if (
+                isinstance(actual, bool) != isinstance(expected, bool)
+                or actual != expected
+            ):
                 return False
             continue
         if not isinstance(actual, str) or expected not in actual:
