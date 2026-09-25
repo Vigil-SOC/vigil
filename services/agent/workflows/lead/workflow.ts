@@ -226,7 +226,11 @@ async function open(harness: Harness<LeadKinds>, options: LeadOptions): Promise<
 }
 
 async function end(harness: Harness<LeadKinds>, options: LeadOptions, outcome: RunOutcome, reason: string): Promise<LeadReport> {
-  await harness.state.append(options.run_id, [event(options, "terminal", { outcome, reason })]);
+  // The rationale is what a lead run leaves behind. A failure already lands in the
+  // error column, which the console renders under a red heading, so it leaves the
+  // summary unset rather than repeating itself there.
+  const payload = outcome === "failed" ? { outcome, reason } : { outcome, reason, summary: reason };
+  await harness.state.append(options.run_id, [event(options, "terminal", payload)]);
   return { ...(await report(harness, options)), status: outcome, reason, pending: null };
 }
 

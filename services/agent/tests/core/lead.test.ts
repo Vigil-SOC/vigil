@@ -127,6 +127,19 @@ describe("an arch drives the loop", () => {
     expect(await state.terminal(RUN)).toEqual({
       outcome: "completed",
       reason: "a scheduled task holding a stale password",
+      summary: "a scheduled task holding a stale password",
+    });
+  });
+
+  it("leaves the summary unset when the run fails, so the error column is the only copy", async () => {
+    const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
+    const state = new InProcessState<LeadKinds>();
+    const report = await runLead(harnessOf(spec, [{ fail: "the gateway hung up" }], state), options("investigate", spec));
+
+    expect(report.status).toBe("failed");
+    expect(await state.terminal(RUN)).toEqual({
+      outcome: "failed",
+      reason: "the gateway hung up",
     });
   });
 
