@@ -247,12 +247,18 @@ async def _servable_models(provider: str) -> Optional[set]:
     from core.llm.bifrost.admin import (
         _HOST_OWNED_CATALOGUE,
         _list_ollama_models,
+        bifrost_custom_openai_host,
         chat_capable_ids,
+        list_gateway_models,
     )
 
-    if provider not in _HOST_OWNED_CATALOGUE:
+    if provider in _HOST_OWNED_CATALOGUE:
+        models = await _list_ollama_models(None)
+    elif provider == "openai" and await bifrost_custom_openai_host():
+        models = await list_gateway_models(provider)
+    else:
         return None
-    ids = chat_capable_ids(await _list_ollama_models(None))
+    ids = chat_capable_ids(models)
     return set(ids) if ids else None
 
 
