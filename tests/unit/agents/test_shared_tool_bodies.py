@@ -14,6 +14,7 @@ from core.agents.tool_registry import MANIFEST, execute_backend_tool
 from core.cases.case_workflow_service import CaseWorkflowService
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.integrations.mcp import in_process
+from core.integrations.mcp.surface import acting_as
 from tools.mcp import vigil
 
 pytestmark = pytest.mark.unit
@@ -151,6 +152,43 @@ async def test_the_model_cannot_name_the_approver():
         await execute_backend_tool(
             "approve_action", {"action_id": "act-1", "approved_by": "mallory"}
         )
+
+
+def _approval_spy(monkeypatch):
+    called = []
+
+    class _Approvals:
+        def approve_action(self, action_id, approved_by):
+            called.append((action_id, approved_by))
+
+    monkeypatch.setattr(tool_registry, "_approvals", lambda: _Approvals())
+    return called
+
+
+@pytest.mark.asyncio
+async def test_approve_action_refuses_when_no_principal_is_bound(monkeypatch):
+    called = _approval_spy(monkeypatch)
+
+    result, handled = await execute_backend_tool(
+        "approve_action", {"action_id": "act-1"}
+    )
+
+    assert handled is True
+    assert result == {"error": "Action cannot be approved: no principal is bound"}
+    assert called == []
+
+
+@pytest.mark.asyncio
+async def test_approve_action_names_the_bound_principal(monkeypatch):
+    called = _approval_spy(monkeypatch)
+
+    with acting_as("analyst"):
+        _result, handled = await execute_backend_tool(
+            "approve_action", {"action_id": "act-1"}
+        )
+
+    assert handled is True
+    assert called == [("act-1", "analyst")]
 
 
 @pytest.mark.asyncio
