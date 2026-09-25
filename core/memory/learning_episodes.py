@@ -1,27 +1,32 @@
-"""What Vigil learned in a window, as a fold over Distil (#906).
+"""What Vigil learned in a window (#906, #907).
 
 ``recall_entity`` answers by entity and the Ledger by run; neither answers "what
 did we learn last month". The Distil already materialised every conclusion a hunt
 or Case reached, and stamped each investigation with a marker when it did. One
-marker is one learning episode. This module lists those in a time window and
-writes a chosen subset to a JSONL file under the State Directory. It is a read
-over ``episodic_distil_markers``, ``episodic_verdicts`` and ``episodic_gaps`` and
-nothing else: no table, no route, no daemon job.
+marker is one learning episode. A finished compose run whose projection carries
+an execute trace is one too: it is scored when listed or exported, from Findings
+and that trace, and is not a Distil row. This module lists both in a time window
+and writes a chosen subset to a JSONL file under the State Directory. No table,
+no route, no daemon job.
 
-An episode is an envelope off the marker -- ``kind``, ``investigation_id``,
+A Distil episode is an envelope off the marker -- ``kind``, ``investigation_id``,
 ``origin_run_id`` (null on a Case), ``concluded_at`` -- with the investigation's
 Verdicts and Gaps as ``payload``, in the same shape ``recall_entity`` returns
 them. A marker with neither is still an episode: concluding nothing is a
-conclusion.
+conclusion. An emulation episode uses the same envelope with ``kind``
+``emulation``, both ids the run id, and the coverage report as ``payload``.
 
 Export redacts by default. ``identified=False`` keeps every entity's *type* and
 drops its value (``ip:10.0.0.7`` becomes ``ip:*``), on Verdicts and Gaps alike,
 so the file says what kinds of things were concluded about without naming the
 customer's hosts. Statements, rationale, outcomes and stances are never touched.
+On an emulation episode the same flag drops host, ip, user, and command off
+missed steps and leaves technique ids, verdicts, and citation text.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -31,8 +36,14 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
-from core.agents.projections import parse_window_instant
+from core.agents.projections import parse_window_instant, read_projection
 from core.config import vigil_path
+from core.detections.reconstruction import (
+    _EVIDENCE_KEYS,
+    coverage_report,
+    steps_from_dispatch_results,
+)
+from core.detections.tools import get_security_detection_tools
 from core.memory.recall import _gap, _iso, _verdict
 from core.storage.models.episodic import (
     EpisodicDistilMarker,
@@ -41,6 +52,7 @@ from core.storage.models.episodic import (
     EpisodicVerdictSource,
 )
 from core.storage.unit_of_work import unit_of_work
+from core.workflows.workflow_run_service import LIST_RUNS_MAX, WorkflowRunService
 
 Args = Dict[str, Any]
 Pair = Tuple[str, str]
@@ -48,9 +60,13 @@ Pair = Tuple[str, str]
 LIST_TOOL = "list_learning_episodes"
 EXPORT_TOOL = "export_learning_episodes"
 
-# The only kinds this fold lists. Emulation is #907's sibling; ``analyst``
-# markers are not investigations a customer asked about.
+# Marker query only. Emulation is scored from a compose run at read time, so it
+# is not a Distil kind. ``analyst`` markers are not investigations a customer
+# asked about.
 EPISODE_KINDS: Tuple[str, ...] = ("hunt", "case")
+_EXPORT_KINDS: Tuple[str, ...] = EPISODE_KINDS + ("emulation",)
+# Cancelled compose runs are not episodes. Failed ones are: the trace still ran.
+_COMPOSE_STATUSES: Tuple[str, ...] = ("completed", "failed")
 DEFAULT_LIMIT = 200
 
 _SAFE_NAME = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -136,21 +152,41 @@ def _episodes(
     return list(by_pair.values())
 
 
-def list_episodes(
+def _instant(value: Any) -> datetime:
+    """UTC instant for a marker stamp or a run ``finished_at``.
+
+    ``dump_summary`` emits ``+00:00`` and markers emit ``Z``, and a whole second
+    omits the fraction. Those strings do not sort in time order.
+    """
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str) and value.strip():
+        text = value.strip()
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return datetime.min.replace(tzinfo=timezone.utc)
+    else:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _stamp(value: Any) -> Any:
+    if not isinstance(value, (datetime, str)) or value == "":
+        return None
+    return _iso(_instant(value))
+
+
+def _distil_page(
     start: datetime,
     end: datetime,
-    *,
-    limit: int = DEFAULT_LIMIT,
-    session: Optional[Session] = None,
-) -> Dict[str, Any]:
-    """Hunt and Case episodes whose ``concluded_at`` falls in [start, end].
-
-    Newest first, ties broken on the marker key so a page is the same page on
-    identical data. ``total`` counts every match so a caller shown ``limit``
-    episodes can tell a quiet month from a truncated one.
-    """
-    if start > end:
-        raise _refuse(LIST_TOOL, "start must be at or before end")
+    limit: int,
+    session: Optional[Session],
+) -> Tuple[List[Dict[str, Any]], int]:
     marker = EpisodicDistilMarker
     window = (
         marker.investigation_kind.in_(EPISODE_KINDS),
@@ -169,13 +205,96 @@ def list_episodes(
             )
             .limit(limit)
         ).all()
-        episodes = _episodes(db, markers)
+        return _episodes(db, markers), int(total)
+
+
+def _compose_runs(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    service = WorkflowRunService()
+    runs: List[Dict[str, Any]] = []
+    seen = set()
+    for status in _COMPOSE_STATUSES:
+        for run in service.list_runs(
+            run_kind="compose",
+            status=status,
+            finished_after=start,
+            finished_at=end,
+            limit=LIST_RUNS_MAX,
+        ):
+            run_id = run.get("run_id")
+            if not run_id or run_id in seen:
+                continue
+            seen.add(run_id)
+            runs.append(run)
+    return runs
+
+
+async def _score(run: Mapping[str, Any], projection: Any) -> Optional[Dict[str, Any]]:
+    """One projection read, then the coverage path. An empty trace is absent."""
+    if projection is None:
+        return None
+    trace = steps_from_dispatch_results(projection)
+    if not trace:
+        return None
+    run_id = str(run["run_id"])
+    reconstructed = await get_security_detection_tools().reconstruct_run(steps=trace)
+    return {
+        "kind": "emulation",
+        "investigation_id": run_id,
+        "origin_run_id": run_id,
+        "concluded_at": _stamp(run.get("finished_at")),
+        "payload": coverage_report(trace, reconstructed),
+    }
+
+
+async def _emulation_episodes(start: datetime, end: datetime) -> List[Dict[str, Any]]:
+    runs = _compose_runs(start, end)
+    projections = await asyncio.gather(*(read_projection(r["run_id"]) for r in runs))
+    episodes: List[Dict[str, Any]] = []
+    for run, projection in zip(runs, projections):
+        episode = await _score(run, projection)
+        if episode is not None:
+            episodes.append(episode)
+    return episodes
+
+
+def _newest(episodes: List[Dict[str, Any]], limit: int) -> List[Dict[str, Any]]:
+    # Stable: concluded_at descending, then kind, then id. The marker query
+    # uses that order, and the merge has to agree or a tie flips the page.
+    episodes.sort(key=lambda episode: (episode["kind"], episode["investigation_id"]))
+    episodes.sort(
+        key=lambda episode: _instant(episode.get("concluded_at")), reverse=True
+    )
+    return episodes[:limit]
+
+
+async def list_episodes(
+    start: datetime,
+    end: datetime,
+    *,
+    limit: int = DEFAULT_LIMIT,
+    session: Optional[Session] = None,
+) -> Dict[str, Any]:
+    """Hunt, Case, and emulation episodes that concluded in [start, end].
+
+    Newest first. ``total`` counts every match so a caller shown ``limit``
+    episodes can tell a quiet month from a truncated one. A compose run with
+    no execute trace, or whose projection cannot be read, is not a match.
+    """
+    if start > end:
+        raise _refuse(LIST_TOOL, "start must be at or before end")
+    distil, marker_total = _distil_page(start, end, limit, session)
+    emulations = await _emulation_episodes(start, end)
+    # The newest ``limit`` markers plus every emulation in the window is enough
+    # for the merged page: any marker older than that page is older than
+    # ``limit`` markers, so it cannot enter the top of the union.
+    episodes = _newest(distil + emulations, limit)
+    total = marker_total + len(emulations)
     return {
         "start": _iso(start),
         "end": _iso(end),
         "episodes": episodes,
-        "total": int(total),
-        "dropped": max(int(total) - len(episodes), 0),
+        "total": total,
+        "dropped": max(total - len(episodes), 0),
     }
 
 
@@ -210,10 +329,10 @@ def _selection(tool: str, raw: Any) -> List[Pair]:
         if not isinstance(item, Mapping):
             raise _refuse(tool, "episodes must be a list of {kind, investigation_id}")
         kind, ident = item.get("kind"), item.get("investigation_id")
-        if kind not in EPISODE_KINDS or not ident:
+        if kind not in _EXPORT_KINDS or not ident:
             raise _refuse(
                 tool,
-                f"each episode needs kind in {list(EPISODE_KINDS)} and investigation_id",
+                f"each episode needs kind in {list(_EXPORT_KINDS)} and investigation_id",
             )
         pair = (str(kind), str(ident))
         if pair not in pairs:
@@ -230,7 +349,62 @@ def _export_path(name: Optional[str]) -> Path:
     return vigil_path("exports", f"{stem}.jsonl", write=True)
 
 
-def export_episodes(
+def _marker_episodes(
+    pairs: Sequence[Pair], session: Optional[Session]
+) -> Dict[Pair, Dict[str, Any]]:
+    marker = EpisodicDistilMarker
+    with unit_of_work(session) as db:
+        markers = db.scalars(
+            select(marker).where(
+                tuple_(marker.investigation_kind, marker.investigation_id).in_(pairs)
+            )
+        ).all()
+        by_pair = {(m.investigation_kind, m.investigation_id): m for m in markers}
+        episodes = _episodes(db, [by_pair[p] for p in pairs if p in by_pair])
+    return {(e["kind"], e["investigation_id"]): e for e in episodes}
+
+
+def _compose_terminal(run: Optional[Mapping[str, Any]]) -> bool:
+    if not run or run.get("status") not in _COMPOSE_STATUSES:
+        return False
+    return (run.get("trigger_context") or {}).get("run_kind") == "compose"
+
+
+async def _emulation_by_id(run_id: str) -> Optional[Dict[str, Any]]:
+    run = WorkflowRunService().get_run(run_id)
+    if not isinstance(run, Mapping) or not _compose_terminal(run):
+        return None
+    return await _score(run, await read_projection(run_id))
+
+
+def _strip_emulation(episode: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop host, ip, user, and command from missed steps. Citations stay."""
+    techniques = []
+    for technique in episode["payload"].get("techniques") or []:
+        if not isinstance(technique, dict):
+            techniques.append(technique)
+            continue
+        missed = [
+            (
+                {key: value for key, value in step.items() if key not in _EVIDENCE_KEYS}
+                if isinstance(step, dict)
+                else step
+            )
+            for step in technique.get("missed") or []
+        ]
+        techniques.append({**technique, "missed": missed})
+    return {**episode, "payload": {**episode["payload"], "techniques": techniques}}
+
+
+def _for_export(episode: Dict[str, Any], *, identified: bool) -> Dict[str, Any]:
+    if identified:
+        return episode
+    if episode["kind"] == "emulation":
+        return _strip_emulation(episode)
+    return redact(episode)
+
+
+async def export_episodes(
     selection: Sequence[Pair],
     *,
     identified: bool = False,
@@ -239,26 +413,25 @@ def export_episodes(
 ) -> Dict[str, Any]:
     """Write the selected episodes as JSONL under the State Directory.
 
-    Selection is by marker key, ``(kind, investigation_id)``: a hunt and a Case
-    can share an id. Pairs that name no marker are reported, not invented. An
-    empty result writes nothing and answers ``path: null``.
+    Selection is ``(kind, investigation_id)``: a hunt and a Case can share an
+    id. An emulation id is scored again from that run's projection. Pairs that
+    name nothing are reported, not invented. An empty result writes nothing
+    and answers ``path: null``.
     """
     pairs = list(selection)
-    episodes: List[Dict[str, Any]] = []
-    if pairs:
-        marker = EpisodicDistilMarker
-        with unit_of_work(session) as db:
-            markers = db.scalars(
-                select(marker).where(
-                    tuple_(marker.investigation_kind, marker.investigation_id).in_(
-                        pairs
-                    )
-                )
-            ).all()
-            by_pair = {(m.investigation_kind, m.investigation_id): m for m in markers}
-            # Back in the order the caller asked for.
-            episodes = _episodes(db, [by_pair[p] for p in pairs if p in by_pair])
-    found = {(e["kind"], e["investigation_id"]) for e in episodes}
+    by_pair: Dict[Pair, Dict[str, Any]] = {}
+    marker_pairs = [pair for pair in pairs if pair[0] in EPISODE_KINDS]
+    if marker_pairs:
+        by_pair.update(_marker_episodes(marker_pairs, session))
+    for kind, ident in pairs:
+        if kind != "emulation":
+            continue
+        episode = await _emulation_by_id(ident)
+        if episode is not None:
+            by_pair[(kind, ident)] = episode
+    # Back in the order the caller asked for.
+    episodes = [by_pair[pair] for pair in pairs if pair in by_pair]
+    found = set(by_pair)
     missing = [
         {"kind": k, "investigation_id": i} for k, i in pairs if (k, i) not in found
     ]
@@ -270,8 +443,7 @@ def export_episodes(
             "missing": missing,
         }
 
-    if not identified:
-        episodes = [redact(e) for e in episodes]
+    episodes = [_for_export(episode, identified=identified) for episode in episodes]
     path = _export_path(name)
     with path.open("w", encoding="utf-8") as handle:
         for episode in episodes:
@@ -284,7 +456,7 @@ def export_episodes(
     }
 
 
-def list_learning_episodes(args: Args) -> Dict[str, Any]:
+async def list_learning_episodes(args: Args) -> Dict[str, Any]:
     """The backend tool: ``start``/``end`` window, optional ``limit``."""
     supplied = dict(args or {})
     start = _bound(LIST_TOOL, supplied.get("start"), end=False)
@@ -292,10 +464,10 @@ def list_learning_episodes(args: Args) -> Dict[str, Any]:
     limit = supplied.get("limit", DEFAULT_LIMIT)
     if not isinstance(limit, int) or limit < 1:
         raise _refuse(LIST_TOOL, "limit must be a positive integer")
-    return list_episodes(start, end, limit=limit)
+    return await list_episodes(start, end, limit=limit)
 
 
-def export_learning_episodes(args: Args) -> Dict[str, Any]:
+async def export_learning_episodes(args: Args) -> Dict[str, Any]:
     """The backend tool: ``episodes`` pairs, ``identified`` flag, optional ``name``.
 
     ``limit`` is what tools_router injects into every call and means nothing
@@ -310,4 +482,4 @@ def export_learning_episodes(args: Args) -> Dict[str, Any]:
     name = supplied.get("name")
     if name is not None and not isinstance(name, str):
         raise _refuse(EXPORT_TOOL, "name must be a string")
-    return export_episodes(pairs, identified=identified, name=name)
+    return await export_episodes(pairs, identified=identified, name=name)
