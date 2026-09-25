@@ -5,7 +5,7 @@ import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills } from './useWorkflowsData'
-import { workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
+import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { Cost } from '../../shared/cost'
@@ -1369,10 +1369,14 @@ function HuntActions({ hunt }: { hunt: HuntView }) {
  *  operator, and driving the screen down to it would test the History modal instead. */
 export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => void }) {
   const hunt = d.hunt ?? null
+  // A hunt already answers its wait through OpenCheckpoint. A phase gate is an
+  // approval row, and only a phase-walking run has one.
+  const phaseGated = hunt === null && (d.phases ?? []).some((p) => p.status === 'pending_approval')
   return (
     <div className="run-detail">
       <RunBar d={d} hunt={hunt} onSteered={onSteered} />
       {hunt && <OpenCheckpoint hunt={hunt} />}
+      {phaseGated && <PhaseGate runId={d.run_id} onAnswered={onSteered} />}
       {hunt && <Parked hunt={hunt} />}
       {hunt?.reason && !IN_FLIGHT.includes(d.status) && (
         <div className="muted text-[12px] leading-[1.5] mt-2">Why it ended: {hunt.reason}</div>
@@ -2043,6 +2047,137 @@ function HuntEvidenceTable({ found, total }: { found: HuntEvidence[]; total: num
         </table>
       </div>
     </div>
+  )
+}
+
+/** Title, description, and reason live on the approval, not on the phase row. */
+interface GateApproval {
+  action_id: string
+  title?: string
+  description?: string
+  reason?: string
+}
+
+/** Approve / Reject for a phase the playbook marked approval_required. Same calls
+ *  as the approvals inbox: they resume the run. Reject needs a reason. */
+function PhaseGate({ runId, onAnswered }: { runId: string; onAnswered: () => void }) {
+  const [actions, setActions] = useState<GateApproval[] | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [answered, setAnswered] = useState(false)
+  const [rejectFor, setRejectFor] = useState<GateApproval | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    approvalsApi
+      .list({ status: 'pending', workflow_run_id: runId })
+      .then((res) => {
+        if (cancelled) return
+        const body = res.data as { actions?: GateApproval[] }
+        setActions(body.actions ?? [])
+      })
+      .catch((e) => { if (!cancelled) setFailed(errMsg(e)) })
+    return () => { cancelled = true }
+  }, [runId])
+
+  const settle = (actionId: string, call: Promise<unknown>) => {
+    setBusy(true)
+    setFailed(null)
+    call
+      .then(() => {
+        setAnswered(true)
+        setActions((rows) => (rows ?? []).filter((a) => a.action_id !== actionId))
+        setRejectFor(null)
+        onAnswered()
+      })
+      .catch((e) => setFailed(errMsg(e)))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div className="modal-section run-ask">
+      <div className="flex items-center gap-2" style={{ color: 'var(--high)' }}>
+        <Icon name="alert" size={15} />
+        <h4 style={{ color: 'var(--tx)', margin: 0 }}>Waiting on approval</h4>
+      </div>
+      {actions === null && failed === null && <div className="muted text-[12.5px] mt-2">Loading the approval…</div>}
+      {actions !== null && actions.length === 0 && (
+        <div className="muted text-[12.5px] mt-2">
+          {answered
+            ? 'Answer sent. The run picks it up from here.'
+            : 'This phase is waiting, but no pending approval is on file for this run.'}
+        </div>
+      )}
+      {actions?.map((action) => (
+        <div key={action.action_id} className="mt-2">
+          <div className="text-[12.5px] leading-[1.55]">{action.title || action.action_id}</div>
+          {action.description && action.description !== action.title && (
+            <div className="muted text-[12px] mt-1">{action.description}</div>
+          )}
+          {action.reason && <div className="text-[12.5px] mt-1">{action.reason}</div>}
+          <div className="flex gap-2 items-center flex-wrap mt-2">
+            <button className="btn primary" disabled={busy} onClick={() => settle(action.action_id, approvalsApi.approve(action.action_id))}>
+              <Icon name="check2" /> Approve
+            </button>
+            <button className="btn danger" disabled={busy} onClick={() => setRejectFor(action)}>
+              <Icon name="x2" /> Reject
+            </button>
+          </div>
+        </div>
+      ))}
+      {failed && <div className="text-[11.5px] mt-2" style={{ color: 'var(--crit)' }}>{failed}</div>}
+      <RejectPhaseGate
+        open={rejectFor !== null}
+        title={rejectFor?.title || rejectFor?.action_id || ''}
+        busy={busy}
+        onClose={() => { if (!busy) setRejectFor(null) }}
+        onConfirm={(reason) => {
+          if (!rejectFor) return
+          settle(rejectFor.action_id, approvalsApi.reject(rejectFor.action_id, reason))
+        }}
+      />
+    </div>
+  )
+}
+
+function RejectPhaseGate({
+  open, title, busy, onClose, onConfirm,
+}: {
+  open: boolean
+  title: string
+  busy: boolean
+  onClose: () => void
+  onConfirm: (reason: string) => void
+}) {
+  const [reason, setReason] = useState('')
+  useEffect(() => { if (open) setReason('') }, [open])
+
+  const submit = () => {
+    const text = reason.trim()
+    if (!text || busy) return
+    onConfirm(text)
+  }
+
+  return (
+    <Popup open={open} onClose={onClose} title="Reject action" width={520}>
+      <div className="flex flex-col gap-3.5">
+        <p className="text-[13px] text-tx-2 m-0">{title}</p>
+        <Field
+          label="Rejection reason"
+          hint="Required. Recorded on the workflow run’s audit trail."
+          textarea
+          value={reason}
+          onChange={setReason}
+          placeholder="Why is this action being rejected?"
+        />
+        <div className="flex justify-end gap-2.5">
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn danger" disabled={!reason.trim() || busy} onClick={submit}>
+            {busy ? 'Rejecting…' : 'Reject'}
+          </button>
+        </div>
+      </div>
+    </Popup>
   )
 }
 

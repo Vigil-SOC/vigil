@@ -2,7 +2,7 @@
    carried and the console used to throw away: gaps, checkpoints, escalations
    and the report itself were reachable only as prose, and only after terminal. */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { RunDetail } from './WorkflowsScreen'
 
 vi.mock('../../services/api', () => ({
@@ -10,6 +10,11 @@ vi.mock('../../services/api', () => ({
     steer: vi.fn(() => Promise.resolve({ data: {} })),
     cancelRun: vi.fn(() => Promise.resolve({ data: {} })),
     getReplay: vi.fn(() => Promise.resolve({ data: { hunt_id: 'run-1', decisions: [], reproduced: 0, inexact: 0, recalled: [] } })),
+  },
+  approvalsApi: {
+    list: vi.fn(() => Promise.resolve({ data: { actions: [] } })),
+    approve: vi.fn(() => Promise.resolve({ data: {} })),
+    reject: vi.fn(() => Promise.resolve({ data: {} })),
   },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
   findingsApi: { getAll: vi.fn(() => Promise.resolve({ data: { findings: [] } })) },
@@ -1187,6 +1192,96 @@ describe('the moves table', () => {
     expect(why.textContent).toContain('threat_hunter')
     // On carries the belief reference and nothing that has to wrap.
     expect(cells[cells.length - 1].textContent).toBe('H1')
+  })
+})
+
+// A phase marked approval_required pauses the run. The answer is an approval
+// row, already reachable from the inbox; this is that same answer on the run.
+describe('answering a phase gate from the run', () => {
+  const gate = {
+    action_id: 'act-9',
+    title: 'Contain the host',
+    description: 'Isolate 10.0.0.8 before the next phase',
+    reason: 'Responder asked before blocking',
+  }
+
+  const paused = (over = {}) => ({
+    status: 'paused',
+    phases: [{ phase_id: 'contain', phase_order: 3, agent_id: 'responder', status: 'pending_approval' }],
+    ...over,
+  })
+
+  beforeEach(async () => {
+    const { approvalsApi, workflowApi } = await import('../../services/api')
+    vi.mocked(approvalsApi.list).mockReset()
+    vi.mocked(approvalsApi.approve).mockReset()
+    vi.mocked(approvalsApi.reject).mockReset()
+    vi.mocked(approvalsApi.list).mockResolvedValue({ data: { actions: [gate] } } as never)
+    vi.mocked(approvalsApi.approve).mockResolvedValue({ data: {} } as never)
+    vi.mocked(approvalsApi.reject).mockResolvedValue({ data: {} } as never)
+    vi.mocked(workflowApi.steer).mockClear()
+  })
+
+  it('shows the pending approval and approves it without steering', async () => {
+    const { approvalsApi, workflowApi } = await import('../../services/api')
+    const onSteered = vi.fn()
+    render(<RunDetail d={detail(paused())} onSteered={onSteered} />)
+
+    expect(await screen.findByText('Contain the host')).toBeInTheDocument()
+    expect(screen.getByText('Isolate 10.0.0.8 before the next phase')).toBeInTheDocument()
+    expect(screen.getByText('Responder asked before blocking')).toBeInTheDocument()
+    expect(approvalsApi.list).toHaveBeenCalledWith({ status: 'pending', workflow_run_id: 'run-1' })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
+
+    await waitFor(() => expect(approvalsApi.approve).toHaveBeenCalledWith('act-9'))
+    expect(workflowApi.steer).not.toHaveBeenCalled()
+    await waitFor(() => expect(onSteered).toHaveBeenCalled())
+    expect(screen.getByText(/Answer sent/)).toBeInTheDocument()
+  })
+
+  it('does not reject until a reason is given', async () => {
+    const { approvalsApi } = await import('../../services/api')
+    renderPanel(paused())
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Reject' }))
+    const dialog = screen.getByRole('dialog')
+    const confirm = within(dialog).getByRole('button', { name: 'Reject' })
+    expect(confirm).toBeDisabled()
+    fireEvent.click(confirm)
+    expect(approvalsApi.reject).not.toHaveBeenCalled()
+
+    fireEvent.change(within(dialog).getByPlaceholderText(/Why is this action being rejected/), {
+      target: { value: '   ' },
+    })
+    expect(confirm).toBeDisabled()
+    fireEvent.click(confirm)
+    expect(approvalsApi.reject).not.toHaveBeenCalled()
+
+    fireEvent.change(within(dialog).getByPlaceholderText(/Why is this action being rejected/), {
+      target: { value: 'not this host' },
+    })
+    fireEvent.click(confirm)
+    await waitFor(() => expect(approvalsApi.reject).toHaveBeenCalledWith('act-9', 'not this host'))
+  })
+
+  it('does not offer the gate on a hunt, which already answers its own wait', async () => {
+    const { approvalsApi } = await import('../../services/api')
+    renderPanel({ hunt: hunt(), ...paused() })
+
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByText('Waiting on approval')).toBeNull()
+    expect(approvalsApi.list).not.toHaveBeenCalled()
+  })
+
+  it('leaves a phase-walking run alone when nothing is waiting on approval', async () => {
+    const { approvalsApi } = await import('../../services/api')
+    renderPanel({
+      phases: [{ phase_id: 'assess', phase_order: 1, agent_id: 'triage', status: 'completed' }],
+    })
+
+    expect(screen.queryByText('Waiting on approval')).toBeNull()
+    expect(approvalsApi.list).not.toHaveBeenCalled()
   })
 })
 
