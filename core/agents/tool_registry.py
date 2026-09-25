@@ -9,6 +9,7 @@ from dataclasses import asdict
 from typing import Any, Callable, Dict, Optional, Tuple
 
 from core.agents.projections import pack_completed_hunts, read_replay
+from core.integrations.mcp.surface import current_caller
 from core.memory.recall_contract import RECALL_TOOL
 from core.skills.skill_library import READ_SKILL_TOOL, read_skill
 
@@ -468,10 +469,13 @@ def get_approval_action(*, action_id: str) -> Args:
 
 
 # The actor is the caller, not an argument. A model that names one is choosing
-# what the record will say.
+# what the record will say. A hunt reaches this with nobody bound; approving
+# would stamp "agent" and release a row the requirement already held.
 def approve_action(*, action_id: str) -> Args:
     from core.cases.agent_closure import actor
 
+    if current_caller() is None:
+        return {"error": "Action cannot be approved: no principal is bound"}
     return _decided(_approvals().approve_action(action_id, actor()), "approved")
 
 
