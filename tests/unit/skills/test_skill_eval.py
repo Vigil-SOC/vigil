@@ -59,7 +59,16 @@ def test_a_perfect_run_passes_every_case_and_exits_zero(monkeypatch, capsys):
     seen = _stub_dispatch(monkeypatch, answer)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test")
     code = skill_eval.asyncio.run(
-        skill_eval.main(["--root", str(FIXTURE_LIBRARY), "--skill", "evals-skill"])
+        skill_eval.main(
+            [
+                "--root",
+                str(FIXTURE_LIBRARY),
+                "--provider",
+                "anthropic",
+                "--skill",
+                "evals-skill",
+            ]
+        )
     )
 
     out = capsys.readouterr().out
@@ -96,21 +105,41 @@ def test_one_miss_is_named_and_the_run_exits_nonzero(monkeypatch, capsys):
     assert "'SEVERITY: high'" in out
 
 
-def test_without_a_key_the_run_is_skipped_with_exit_zero(monkeypatch, capsys):
+def test_without_a_key_the_run_exits_nonzero_and_does_not_dispatch(
+    monkeypatch, capsys
+):
     def boom(self, **kwargs):
         raise AssertionError("dispatch must not be called without a key")
 
     monkeypatch.setattr(LLMRouter, "dispatch", boom)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    code = skill_eval.asyncio.run(skill_eval.main(["--root", str(FIXTURE_LIBRARY)]))
-    assert code == 0
-    assert "ANTHROPIC_API_KEY not set; skipping" in capsys.readouterr().out
+    code = skill_eval.asyncio.run(
+        skill_eval.main(
+            ["--root", str(FIXTURE_LIBRARY), "--provider", "anthropic"]
+        )
+    )
+    assert code == 3
+    assert "ANTHROPIC_API_KEY" in capsys.readouterr().err
+
+
+def test_parse_args_requires_a_provider():
+    with pytest.raises(SystemExit):
+        skill_eval.parse_args(["--skill", "evals-skill"])
 
 
 def test_an_unknown_skill_name_is_an_error_even_without_a_key(monkeypatch, capsys):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     code = skill_eval.asyncio.run(
-        skill_eval.main(["--root", str(FIXTURE_LIBRARY), "--skill", "nope"])
+        skill_eval.main(
+            [
+                "--root",
+                str(FIXTURE_LIBRARY),
+                "--provider",
+                "anthropic",
+                "--skill",
+                "nope",
+            ]
+        )
     )
     assert code == 2
     assert "no skill named 'nope'" in capsys.readouterr().err

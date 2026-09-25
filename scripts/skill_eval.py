@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Run every bundled skill's eval cases against a live model (epic #882, #926).
+"""Live-model check a skill's author runs on the PR that adds or changes it.
 
-Nightly harness, not a PR gate: the deterministic gate is
-``tests/unit/skills/test_library_gate.py``. For each skill the system prompt is
-``render_base_prompt`` for a role, a note that no tool is callable, and the
-SKILL.md body inlined; each case's ``input`` is sent as one user turn through
-``LLMRouter.dispatch`` (Bifrost, any provider) and graded by substring
-containment against ``expect``. Exit is nonzero below
-100 percent. Without a provider key in the environment the run is skipped with
-exit 0 so a nightly without secrets stays green; a key with Bifrost unreachable
-is a real failure.
+Paste the printed summary into that PR. There is no scheduled run; the
+deterministic gate is ``tests/unit/skills/test_library_gate.py``. For each
+skill the system prompt is ``render_base_prompt`` for a role, a note that no
+tool is callable, and the SKILL.md body inlined; each case's ``input`` is sent
+as one user turn through ``LLMRouter.dispatch`` (Bifrost, any provider) and
+graded by substring containment against ``expect``. Exit is 1 below 100
+percent, 2 for an unknown ``--skill``, and 3 when the provider names a key
+env var that is unset. A keyless provider (ollama) needs no key. A key set
+with Bifrost unreachable is a real failure. ``--provider`` is required.
 
 Usage::
 
-    python scripts/skill_eval.py                       # every bundled skill
-    python scripts/skill_eval.py --skill evals-skill   # one skill
+    python scripts/skill_eval.py --provider anthropic
+    python scripts/skill_eval.py --provider anthropic --skill evals-skill
     python scripts/skill_eval.py --provider gemini --model gemini-flash-latest
 """
 
@@ -120,7 +120,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--skill", help="run only this skill (default: every skill under --root)"
     )
-    parser.add_argument("--provider", default="anthropic", help="Bifrost provider type")
+    parser.add_argument("--provider", required=True, help="Bifrost provider type")
     parser.add_argument("--model", help="model id (default: Settings.default_model)")
     parser.add_argument(
         "--role", default="analyst", help="role rendered into the base prompt"
@@ -148,8 +148,8 @@ async def main(argv: Sequence[str]) -> int:
             return 2
     key_name = key_env_name(args.provider)
     if key_name and not os.environ.get(key_name):
-        print(f"skill_eval: {key_name} not set; skipping the model run")
-        return 0
+        print(f"skill_eval: {key_name} not set", file=sys.stderr)
+        return 3
     if not skills:
         print(f"skill_eval: no skills under {args.root}; nothing to run")
         return 0
