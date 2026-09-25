@@ -103,6 +103,23 @@ def test_hide_only_and_include_partition_the_queue():
     ) == service.count_findings(exclusions="include")
 
 
+def test_zero_active_exclusions_match_include_and_hide_nothing():
+    """The common case: no active row, so hide is include, only is empty, and
+    the exclusion list does not scan findings for a total."""
+    _standard_findings()
+    assert _ids("hide") == _ids("include")
+    service = DatabaseService()
+    assert service.count_findings(exclusions="hide") == service.count_findings(
+        exclusions="include"
+    )
+    assert _ids("only") == []
+    assert service.count_findings(exclusions="only") == 0
+    with unit_of_work() as session:
+        rows, total = ex.list_exclusions_with_total(session)
+    assert rows == []
+    assert total == 0
+
+
 def test_the_default_view_is_unchanged_for_existing_callers():
     _standard_findings()
     _exclude()

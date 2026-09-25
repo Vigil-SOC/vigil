@@ -13,12 +13,14 @@ from typing import Dict, List, Optional, Tuple
 from sqlalchemy import (
     ColumnElement,
     Text,
+    case,
     cast,
     distinct,
     false,
     func,
     or_,
     select,
+    true,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, array
 from sqlalchemy.orm import Session
@@ -91,14 +93,27 @@ def exclusion_view_filter(view: str) -> Optional[ColumnElement[bool]]:
         raise ValueError(f"exclusions must be one of {EXCLUSION_VIEWS}; got {view!r}")
     if view == "include":
         return None
+    # CASE, not OR: Postgres may evaluate both arms of OR, and the ``?|`` test
+    # is what makes an empty exclusion list expensive. The skipped arm is not run.
+    none_active = func.cardinality(active_ips_subquery()) == 0
     matches = finding_names_any(active_ips_subquery())
-    return matches if view == "only" else ~matches
+    if view == "only":
+        return case((none_active, false()), else_=matches)
+    return case((none_active, true()), else_=~matches)
 
 
 def count_findings_per_active_ip(session: Session) -> Tuple[Dict[str, int], int]:
     """``({address: findings naming it}, findings naming any)`` in one scan:
     the per-address join only sees findings that already name an exclusion.
-    ROLLUP adds the total as the row whose address is NULL."""
+    ROLLUP adds the total as the row whose address is NULL. Nothing active means
+    nothing is hidden, and the findings scan is skipped."""
+    if (
+        session.execute(
+            select(IpExclusion.ip).where(IpExclusion.removed_at.is_(None)).limit(1)
+        ).first()
+        is None
+    ):
+        return {}, 0
     hidden = (
         select(Finding.finding_id, Finding.entity_context)
         .where(finding_names_any(active_ips_subquery()))
