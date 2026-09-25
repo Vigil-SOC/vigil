@@ -6,8 +6,7 @@
       "title": "Suspicious PowerShell Execution",
       "description": "PowerShell script executed with encoded command, potentially malicious",
       "severity": "high",
-      "source": "splunk",
-      "mitre_techniques": ["T1059.001", "T1027"]
+      "source": "splunk"
     },
     "expect": ["SEVERITY: high", "T1059.001", "T1027", "VERDICT: ESCALATE"]
   },
@@ -18,8 +17,7 @@
       "title": "Brute Force Authentication Attempt",
       "description": "Multiple failed login attempts detected from single source",
       "severity": "medium",
-      "source": "azure_sentinel",
-      "mitre_techniques": ["T1110.001"]
+      "source": "azure_sentinel"
     },
     "expect": ["SEVERITY: medium", "T1110.001", "VERDICT: MONITOR"]
   },

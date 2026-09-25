@@ -12,6 +12,7 @@ directory cannot take the library down with it.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -102,6 +103,13 @@ def parse_skill(skill_dir: Path) -> Skill:
     description = _require_str(frontmatter, "description", _DESCRIPTION_MAX)
     _check_optional(frontmatter)
     return Skill(name=name, description=description, path=skill_dir)
+
+
+def as_user_turn(user_input: Any) -> str:
+    """The user turn an eval sends: a string as itself, otherwise indented JSON."""
+    return (
+        user_input if isinstance(user_input, str) else json.dumps(user_input, indent=2)
+    )
 
 
 def load_skills(roots: Iterable[Path]) -> List[Skill]:

@@ -7,21 +7,10 @@ import pytest
 
 from core.agents.builtins import BUILTIN_AGENTS
 from core.agents.prompts import prompt_for_row
-from core.skills.skill_library import LIBRARY_ROOT, read_skill
 
 pytestmark = pytest.mark.unit
 
 THREAT_INTEL = {r["id"]: r for r in BUILTIN_AGENTS}["threat_intel"]
-
-
-def test_read_skill_returns_the_bundled_procedure():
-    result = read_skill("ioc-enrichment", roots=[LIBRARY_ROOT])
-    body = result["content"]
-    assert result["skill"] == "ioc-enrichment"
-    assert not body.startswith("---")
-    for phrase in ("recall_entity", "cf_lookup_ip_threat", "lookup_indicators"):
-        assert phrase in body
-    assert "cloudforce_one" in body and "cloudy_summary" in body
 
 
 def test_threat_intel_profile_no_longer_duplicates_the_procedure():

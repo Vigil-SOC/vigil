@@ -36,6 +36,7 @@ from core.llm.router.router import LLMRouter, ProviderSpec  # noqa: E402
 from core.skills.skill_library import (  # noqa: E402
     LIBRARY_ROOT,
     Skill,
+    as_user_turn,
     load_skills,
     read_skill,
 )
@@ -52,12 +53,6 @@ def key_env_name(provider: str) -> Optional[str]:
 def grade(content: str, expect: Sequence[str]) -> List[str]:
     """The expected strings missing from the answer; empty means the case passed."""
     return [s for s in expect if s not in content]
-
-
-def as_user_turn(user_input: Any) -> str:
-    return (
-        user_input if isinstance(user_input, str) else json.dumps(user_input, indent=2)
-    )
 
 
 def load_cases(skill: Skill) -> List[Dict[str, Any]]:

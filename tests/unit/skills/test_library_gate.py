@@ -1,8 +1,9 @@
 """Every bundled skill ships with an evaluation slice (epic #882 decision 6, #926).
 
 The gate is this test, not a convention: a skill under ``core/skills/library/``
-with no ``evals/cases.json``, fewer than three cases, or a case with nothing to
-send or nothing to expect fails ``pytest tests/unit/``. ``load_skills`` is not
+with no ``evals/cases.json``, fewer than three cases, a case with nothing to
+send or nothing to expect, or an ``expect`` string already present in the
+input the eval would send, fails ``pytest tests/unit/``. ``load_skills`` is not
 used here on purpose — it logs and skips an invalid skill, and the gate has to
 fail on one.
 """
@@ -16,7 +17,12 @@ from typing import Any, List
 
 import pytest
 
-from core.skills.skill_library import LIBRARY_ROOT, SkillError, parse_skill
+from core.skills.skill_library import (
+    LIBRARY_ROOT,
+    SkillError,
+    as_user_turn,
+    parse_skill,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -36,20 +42,38 @@ def _case_problems(index: int, case: Any) -> List[str]:
         f"case {name!r}" if isinstance(name, str) and name.strip() else f"case {index}"
     )
     user_input = case.get("input")
+    input_ok = True
     if isinstance(user_input, str):
         if not user_input.strip():
             problems.append(f"{label} has an empty `input`")
+            input_ok = False
     elif not (isinstance(user_input, dict) and user_input):
         problems.append(f"{label} `input` must be a non-empty string or object")
+        input_ok = False
     expect = case.get("expect")
-    if (
-        not isinstance(expect, list)
-        or not expect
-        or not all(isinstance(s, str) and s.strip() for s in expect)
-    ):
+    expect_ok = (
+        isinstance(expect, list)
+        and bool(expect)
+        and all(isinstance(s, str) and s.strip() for s in expect)
+    )
+    if not expect_ok:
         problems.append(
             f"{label} `expect` must be a non-empty list of non-empty strings"
         )
+    # A malformed case reports its shape problem only; echoing a bad value
+    # would crash or bury that message.
+    if not input_ok or not expect_ok:
+        return problems
+    rendered = [as_user_turn(user_input)]
+    if isinstance(user_input, dict):
+        compact = json.dumps(user_input)
+        if compact not in rendered:
+            rendered.append(compact)
+    for needle in expect:
+        if any(needle in form for form in rendered):
+            problems.append(
+                f"{label} `expect` {needle!r} could be satisfied by echoing the input"
+            )
     return problems
 
 
@@ -155,6 +179,37 @@ def _valid_cases(count: int = MIN_CASES) -> List[dict]:
         (
             lambda d: _write_cases(d, _valid_cases()[:2] + ["not an object"]),
             "is not an object",
+        ),
+        (
+            lambda d: _write_cases(
+                d,
+                _valid_cases()[:2]
+                + [
+                    {
+                        "name": "echo",
+                        "input": "please echo-me back",
+                        "expect": ["echo-me"],
+                    }
+                ],
+            ),
+            "case 'echo' `expect` 'echo-me' could be satisfied by echoing the input",
+        ),
+        (
+            # `"severity": "high"` stays on one line under indent=2; the compact
+            # object is the string only json.dumps without indent contains.
+            lambda d: _write_cases(
+                d,
+                _valid_cases()[:2]
+                + [
+                    {
+                        "name": "echo-obj",
+                        "input": {"severity": "high"},
+                        "expect": ['{"severity": "high"}'],
+                    }
+                ],
+            ),
+            "case 'echo-obj' `expect` '{\"severity\": \"high\"}' could be "
+            "satisfied by echoing the input",
         ),
         (lambda d: (d / CASES_FILE).write_text("[not json"), "not valid JSON"),
         (lambda d: (d / "SKILL.md").write_text("no frontmatter\n"), "invalid SKILL.md"),
