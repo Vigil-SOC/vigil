@@ -10,11 +10,27 @@ export interface Rates {
   // exact from the gateway's datasheet, zero for a model that costs nothing, unknown
   // when the gateway prices nothing -- otherwise two very different $0 calls look alike.
   source: string;
+  // When the catalog read these rates off the gateway. The dollars multiply this
+  // object, so the journal stamps this and not the time the memo was stored.
+  fetched_at: string | null;
 }
+
+// The catalog's answer when it prices nothing. Rates are null, not the zeros the
+// gateway sends for a gap: those must not be stored as a price.
+export interface Unpriced {
+  input: null;
+  output: null;
+  cache_read: null;
+  cache_write: null;
+  source: "unknown";
+  fetched_at: null;
+}
+
+export type RateCard = Rates | Unpriced;
 
 // Where a price comes from. A port because the catalog is the backend's: a second
 // copy here would disagree with the dashboard after one repricing.
-export type Prices = (modelId: string, providerType: string) => Promise<Rates | null>;
+export type Prices = (modelId: string, providerType: string) => Promise<RateCard | null>;
 
 // Nobody to ask, so nothing is priced and cost_usd stays null. The run still runs
 // and its tokens are still journaled, which is what the ledger is for.
@@ -59,7 +75,10 @@ export function httpPrices(options: PricesOptions): Prices {
       });
       if (!response.ok) return null;
       const rates = ratesOf(await response.json());
-      if (rates !== null) known.set(key, { rates, at: now() });
+      // Unknown is an answer with nothing to multiply, and it is not memoised: the
+      // catalog may learn the model inside this interval. A priced card is, and the
+      // card carries the fetched_at the dollars were multiplied from.
+      if (rates !== null && rates.input !== null) known.set(key, { rates, at: now() });
       return rates;
     } catch {
       return null;
@@ -73,13 +92,15 @@ const UNKNOWN = "unknown";
 
 // A malformed answer prices nothing rather than pricing wrongly: a missing rate read
 // as zero would silently under-bill every call for that model.
-export function ratesOf(body: unknown): Rates | null {
+export function ratesOf(body: unknown): RateCard | null {
   const raw = body as Record<string, unknown> | null;
   if (raw === null || typeof raw !== "object") return null;
   // Before the rates, because they parse: four valid zeros under this source are
   // exactly the free-looking call the ledger must never record as free. `zero` is
   // the other thing entirely -- a self-hosted model that genuinely costs nothing.
-  if (raw["source"] === UNKNOWN) return null;
+  if (raw["source"] === UNKNOWN) {
+    return { input: null, output: null, cache_read: null, cache_write: null, source: UNKNOWN, fetched_at: null };
+  }
 
   const rate = (field: string): number | null => {
     const value = raw[field];
@@ -92,11 +113,13 @@ export function ratesOf(body: unknown): Rates | null {
   const cache_write = rate("cache_write");
   if (input === null || output === null || cache_read === null || cache_write === null) return null;
 
+  const fetched = raw["fetched_at"];
   return {
     input,
     output,
     cache_read,
     cache_write,
     source: typeof raw["source"] === "string" ? raw["source"] : "unknown",
+    fetched_at: typeof fetched === "string" ? fetched : null,
   };
 }

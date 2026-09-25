@@ -409,6 +409,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
       tokens,
       cost_usd: priced.cost_usd,
       pricing_source: priced.source,
+      rates: priced.rates,
+      fetched_at: priced.fetched_at,
     };
     this.harness.budget.record(payload);
     this.spent += payload.cost_usd ?? 0;

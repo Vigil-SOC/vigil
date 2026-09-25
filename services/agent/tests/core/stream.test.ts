@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { approvalId, commitTurn, TOOL_APPROVAL, type Harness, type Outcome, type TurnConfig } from "../../core/loop.js";
 import { drain, streamTurn, type StreamEvent } from "../../core/stream.js";
 import type { Message } from "../../core/provider.js";
-import { budgetOf, unmeteredQuota } from "../../core/budget.js";
+import { budgetOf, FRESH, unmeteredQuota } from "../../core/budget.js";
+import { noPrices, type Prices } from "../../core/prices.js";
 import { registryOf } from "../../core/registry.js";
 import { InProcessState } from "../../core/state.js";
 import { GatewayExhausted } from "../../core/limiter.js";
@@ -33,6 +34,7 @@ interface Options {
   dispatch?: ToolDispatch;
   memory?: Memory;
   state?: InProcessState;
+  prices?: Prices;
 }
 
 function harnessOf(script: readonly ScriptedTurn[], options: Options = {}): Harness {
@@ -43,6 +45,9 @@ function harnessOf(script: readonly ScriptedTurn[], options: Options = {}): Harn
     budget: budgetOf(
       { max_calls: options.max_calls ?? 10, max_cost_usd: options.max_cost_usd ?? 100, max_wall_ms: 600_000, max_park_ms: 604_800_000 },
       unmeteredQuota,
+      Date.now,
+      FRESH,
+      options.prices ?? noPrices,
     ),
     memory: options.memory ?? nullMemory,
     state: options.state ?? new InProcessState(),
@@ -221,6 +226,23 @@ describe("the budget gate", () => {
     expect((spends[0]!.payload as SpendPayload).tokens.input).toBe(1_000);
     expect((spends[0]!.payload as SpendPayload).role).toBe("counter");
     expect(harness.budget.spent.tokens.input).toBe(3_000);
+  });
+
+  it("journals the rates the dollars were multiplied from", async () => {
+    const fetched_at = "2026-09-01T00:00:00+00:00";
+    const card = { input: 3e-6, output: 15e-6, cache_read: 3e-7, cache_write: 3.75e-6, source: "exact", fetched_at };
+    const harness = harnessOf(
+      [{ calls: [], tokens: { input: 1_000, output: 100, cache_read: 10_000, cache_write: 200 } }, HALT],
+      { prices: async () => card },
+    );
+    await outcomeOf(config(), harness);
+
+    const spends = (await harness.state.read(RUN)).filter((event) => event.kind === "spend");
+    const payload = spends[0]!.payload as SpendPayload;
+    expect(payload.fetched_at).toBe(fetched_at);
+    expect(payload.rates).toEqual({ input: card.input, output: card.output, cache_read: card.cache_read, cache_write: card.cache_write });
+    expect(payload.cost_usd).toBeCloseTo(0.003 + 0.0015 + 0.003 + 0.00075, 10);
+    expect(payload.pricing_source).toBe("exact");
   });
 
   // Tokens burned before a call failed were still spent, so releasing the

@@ -211,7 +211,15 @@ class Pool implements Budget {
   // when nothing answered: an unpriced call must not read as a free one.
   async priceOf(modelId: string, providerType: string, tokens: TokenCounts): Promise<Priced> {
     const rates = await this.prices(modelId, providerType);
-    return rates === null ? { cost_usd: null, source: null } : { cost_usd: costOf(rates, tokens), source: rates.source };
+    if (rates === null) return { cost_usd: null, source: null, rates: null, fetched_at: null };
+    // `unknown` keeps its name. The zeros the catalog sends for it are not rates.
+    if (rates.input === null) return { cost_usd: null, source: rates.source, rates: null, fetched_at: null };
+    return {
+      cost_usd: costOf(rates, tokens),
+      source: rates.source,
+      rates: { input: rates.input, output: rates.output, cache_read: rates.cache_read, cache_write: rates.cache_write },
+      fetched_at: rates.fetched_at,
+    };
   }
 
   // An unreadable quota is not a refusal, nor a licence: the local total is held

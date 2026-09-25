@@ -208,6 +208,6 @@ function broke(): Budget {
     record: () => {},
     raise: () => {},
     release: () => {},
-    priceOf: async () => ({ cost_usd: null, source: null }),
+    priceOf: async () => ({ cost_usd: null, source: null, rates: null, fetched_at: null }),
   };
 }

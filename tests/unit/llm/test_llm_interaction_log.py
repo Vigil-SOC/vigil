@@ -259,8 +259,13 @@ class TestChatRecordsGenAIMetrics:
         )
         svc = self._svc(response)
 
+        from core.llm.cost.calls import CallQuote
+
+        quote = CallQuote(
+            0.005, 3e-6, 1.5e-5, 3e-7, 3.75e-6, "2026-01-01T00:00:00+00:00"
+        )
         with patch(
-            "core.llm.harness.claude.compute_call_cost", return_value=0.005
+            "core.llm.harness.claude.quote_call", return_value=quote
         ) as cost, patch(
             "core.llm.harness.claude.record_llm_call"
         ) as record, patch.object(
@@ -284,8 +289,8 @@ class TestChatRecordsGenAIMetrics:
         assert (kw["input_tokens"], kw["output_tokens"]) == (120, 30)
         assert (kw["cache_read_tokens"], kw["cache_creation_tokens"]) == (50, 10)
         assert kw["cost_usd"] == 0.005
-        # The log row reuses the same price rather than recomputing it.
-        assert persist.call_args.kwargs["cost_usd"] == 0.005
+        # The log row reuses that same read rather than pricing again.
+        assert persist.call_args.kwargs["quote"] is quote
 
     def test_unpriced_chat_stores_null_and_prices_once(self, monkeypatch):
         """#1115: an unpriced call is stored as NULL, not re-priced into $0."""
@@ -311,11 +316,177 @@ class TestChatRecordsGenAIMetrics:
         )
         svc = self._svc(response)
 
+        from core.llm.cost.calls import CallQuote
+
         with patch(
-            "core.llm.harness.claude.compute_call_cost", return_value=None
+            "core.llm.harness.claude.quote_call", return_value=CallQuote.unpriced()
         ) as cost, patch("core.llm.harness.claude.record_llm_call") as record:
             svc.chat("hello", model="mystery-model")
 
         cost.assert_called_once()
         assert record.call_args.kwargs["cost_usd"] is None
-        assert session.add.call_args.args[0].cost_usd is None
+        row = session.add.call_args.args[0]
+        assert row.cost_usd is None
+        assert row.input_cost_per_token is None
+        assert row.output_cost_per_token is None
+        assert row.cache_read_cost_per_token is None
+        assert row.cache_write_cost_per_token is None
+        assert row.rates_fetched_at is None
+
+
+class TestSpendFigureFreezesItsRates:
+    """#1190: the dollar, the rates, and the fetch time are one write."""
+
+    def _chat(self, model, usage):
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from core.llm.harness.claude import ClaudeService
+
+        response = SimpleNamespace(
+            model=model,
+            stop_reason="end_turn",
+            usage=usage,
+            content=[SimpleNamespace(type="text", text="ok")],
+        )
+        svc = ClaudeService.__new__(ClaudeService)
+        svc.api_key = "k"
+        svc.client = MagicMock()
+        svc.client.messages.create.return_value = response
+        return svc.chat("hello", model=model)
+
+    def test_priced_call_keeps_its_rates_and_unpriced_stores_nulls(self, monkeypatch):
+        from contextlib import contextmanager
+        from decimal import Decimal
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from sqlalchemy import Float
+
+        from core.llm.providers.discovery import ModelMeta
+        from core.llm.providers.registry import (
+            ModelRegistry,
+            clear_live_meta,
+            get_registry,
+            record_live_meta,
+        )
+        from core.storage.models import LLMInteractionLog
+
+        # A cache rate below 1e-6 must survive the column. Numeric(10, 6) would not.
+        rate_column = LLMInteractionLog.__table__.c.cache_read_cost_per_token
+        assert isinstance(rate_column.type, Float)
+
+        added = []
+        session = SimpleNamespace(add=lambda row: added.append(row))
+
+        @contextmanager
+        def _scope():
+            yield session
+
+        monkeypatch.setattr(
+            "core.storage.connection.get_db_manager",
+            lambda: SimpleNamespace(session_scope=_scope),
+        )
+        unknown = []
+        monkeypatch.setattr(
+            "core.llm.providers.registry._record_pricing_unknown",
+            lambda provider, model: unknown.append((provider, model)),
+        )
+
+        model = "claude-freeze-1190"
+        rates = (3e-6, 15e-6, 1.25e-7, 3.75e-6)
+        clear_live_meta()
+        try:
+            record_live_meta(
+                "anthropic",
+                [
+                    ModelMeta(
+                        id=model,
+                        display_name=model,
+                        input_cost_per_token=rates[0],
+                        output_cost_per_token=rates[1],
+                        cache_read_cost_per_token=rates[2],
+                        cache_write_cost_per_token=rates[3],
+                    )
+                ],
+                rates_only=True,
+            )
+            stamped = get_registry().get_rates(model, "anthropic")["rates_fetched_at"]
+            usage = SimpleNamespace(
+                input_tokens=1_000,
+                output_tokens=200,
+                cache_read_input_tokens=8_000,
+                cache_creation_input_tokens=400,
+            )
+            reads = []
+            real_rates = ModelRegistry.get_rates
+
+            def _counting(model_id, provider_type):
+                reads.append((provider_type, model_id))
+                return real_rates(model_id, provider_type)
+
+            monkeypatch.setattr(ModelRegistry, "get_rates", staticmethod(_counting))
+            with patch("core.llm.harness.claude.record_llm_call") as recorded:
+                self._chat(model, usage)
+            assert reads == [("anthropic", model)]
+
+            row = added[0]
+            product = (
+                row.input_tokens * row.input_cost_per_token
+                + row.output_tokens * row.output_cost_per_token
+                + row.cache_read_tokens * row.cache_read_cost_per_token
+                + row.cache_creation_tokens * row.cache_write_cost_per_token
+            )
+            # cost_usd is Numeric(10, 6). The product of the stored rates and
+            # the stored tokens matches that column's rounding.
+            assert Decimal(str(product)).quantize(Decimal("0.000001")) == Decimal(
+                str(row.cost_usd)
+            ).quantize(Decimal("0.000001"))
+            assert (
+                row.input_cost_per_token,
+                row.output_cost_per_token,
+                row.cache_read_cost_per_token,
+                row.cache_write_cost_per_token,
+            ) == rates
+            assert row.rates_fetched_at == stamped
+            assert recorded.call_args.kwargs["cost_usd"] == row.cost_usd
+            assert unknown == []
+
+            record_live_meta(
+                "anthropic",
+                [
+                    ModelMeta(
+                        id=model,
+                        display_name=model,
+                        input_cost_per_token=9e-6,
+                        output_cost_per_token=9e-6,
+                        cache_read_cost_per_token=9e-6,
+                        cache_write_cost_per_token=9e-6,
+                    )
+                ],
+                rates_only=True,
+            )
+            live = get_registry().get_rates(model, "anthropic")
+            assert live["input"] == 9e-6
+            assert live["rates_fetched_at"] != stamped
+            assert row.input_cost_per_token == rates[0]
+            assert row.rates_fetched_at == stamped
+
+            with patch("core.llm.harness.claude.record_llm_call") as recorded:
+                self._chat(
+                    "mystery-freeze-1190",
+                    SimpleNamespace(input_tokens=10, output_tokens=5),
+                )
+
+            blank = added[1]
+            assert blank.cost_usd is None
+            assert blank.input_cost_per_token is None
+            assert blank.output_cost_per_token is None
+            assert blank.cache_read_cost_per_token is None
+            assert blank.cache_write_cost_per_token is None
+            assert blank.rates_fetched_at is None
+            assert recorded.call_args.kwargs["cost_usd"] is None
+            # One catalog read: a second would count the miss twice.
+            assert unknown == [("anthropic", "mystery-freeze-1190")]
+        finally:
+            clear_live_meta()

@@ -165,6 +165,23 @@ def make_llm_interaction_cost_nullable(conn):
     """))
 
 
+# Rates behind cost_usd, frozen when the row is written (#1190). DOUBLE PRECISION
+# because Numeric(10, 6) — the call total's scale — rounds a per-token cache
+# rate below 1e-6 away to zero.
+@migration("Add rate columns to llm_interaction_logs")
+def add_llm_interaction_rate_columns(conn):
+    if not _table_exists(conn, 'llm_interaction_logs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs
+            ADD COLUMN IF NOT EXISTS input_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS output_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS cache_read_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS cache_write_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS rates_fetched_at VARCHAR(64);
+    """))
+
+
 # create_all is checkfirst=True, so a table that already exists gets no new index
 # from the model. A hunt handing off looks this column up twice per escalation.
 @migration("Create idx_workflow_runs_triggered_by index")

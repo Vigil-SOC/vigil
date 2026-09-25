@@ -19,7 +19,7 @@ const opened = (): New =>
 const decided = (action: string, rationale = "because"): New => event("decision", { action, rationale, worker: null });
 const found = (answer: unknown): New => event("finding", { agent_id: "lead", answer });
 const spent = (cost_usd: number | null): New =>
-  event("spend", { model_id: "m", provider_type: "bifrost", role: "lead", tokens: { input: 1, output: 1, cache_read: 0, cache_write: 0 }, cost_usd, pricing_source: null });
+  event("spend", { model_id: "m", provider_type: "bifrost", role: "lead", tokens: { input: 1, output: 1, cache_read: 0, cache_write: 0 }, cost_usd, pricing_source: null, rates: null, fetched_at: null });
 const parked = (checkpoint_id = CHECKPOINT): New =>
   event("checkpoint", { checkpoint_id, checkpoint_class: TOOL_APPROVAL, question: "isolate the host?", raised_at: "2026-08-12T00:00:00Z" });
 const answered = (answer: "approve" | "reject", checkpoint_id = CHECKPOINT): New =>

@@ -54,6 +54,8 @@ async function spend(state: InProcessState<ComposeKinds>, runId: string, cost_us
     tokens: ZERO_TOKENS,
     cost_usd,
     pricing_source: "scripted",
+    rates: null,
+    fetched_at: null,
   };
   await state.append(runId, [{ run_id: runId, run_kind: "compose", kind: "spend", payload }]);
 }

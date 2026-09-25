@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
-from core.llm.cost.calls import compute_call_cost
+from core.llm.cost.calls import CallQuote, quote_call
 from core.llm.defaults import DEFAULT_MODEL
 from core.secrets import get_secret
 from core.telemetry import record_llm_call
@@ -28,10 +28,6 @@ except ImportError:
     ANTHROPIC_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
-
-# ``cost_usd`` default on ``_persist_interaction``: the caller did not price the
-# call. Distinct from ``None``, which means priced and found unpriceable.
-_NOT_PRICED_YET: Any = object()
 
 
 class ClaudeService:
@@ -277,15 +273,14 @@ class ClaudeService:
         output_tokens: int,
         cache_read_tokens: int = 0,
         cache_creation_tokens: int = 0,
-    ) -> Optional[float]:
-        """USD for one Anthropic call via the model registry (GH #89).
+    ) -> CallQuote:
+        """USD and the rates behind it, from one catalog read (GH #89, #1190).
 
-        #184 Phase 3: cache tokens are priced at their own rates (reads
-        0.1×, writes 1.25×) instead of full-rate input. Returns None
-        (unpriced) on any lookup failure.
+        Cache tokens are priced at their own rates. Any lookup failure is
+        unpriced: null cost, null rates, null fetch time.
         """
         try:
-            return compute_call_cost(
+            return quote_call(
                 model,
                 "anthropic",
                 int(input_tokens or 0),
@@ -294,7 +289,7 @@ class ClaudeService:
                 cache_creation_tokens=int(cache_creation_tokens or 0),
             )
         except Exception:
-            return None
+            return CallQuote.unpriced()
 
     def _persist_interaction(
         self,
@@ -316,14 +311,14 @@ class ClaudeService:
         duration_ms: int = 0,
         error: Optional[str] = None,
         interaction_id: Optional[str] = None,
-        cost_usd: Optional[float] = _NOT_PRICED_YET,
+        quote: Optional[CallQuote] = None,
     ) -> None:
         """Fire-and-forget insert of an LLMInteractionLog row.
 
         Runs in the calling thread; failures are logged but never re-raised
-        so persistence can never break the request path. ``cost_usd`` may be
-        passed by callers that already priced the call (``None`` = unpriced);
-        otherwise it is computed here.
+        so persistence can never break the request path. ``quote`` is the
+        single catalog read that priced the call. When the caller has not
+        priced it yet, this reads the catalog once and stores that result.
         """
         try:
             from core.storage.connection import get_db_manager
@@ -339,8 +334,8 @@ class ClaudeService:
             tool_calls = [b for b in blocks if b["type"] == "tool_use"]
             tool_results_in = self._extract_prior_tool_results(request_messages)
 
-            if cost_usd is _NOT_PRICED_YET:
-                cost_usd = self._call_cost(
+            if quote is None:
+                quote = self._call_cost(
                     model,
                     input_tokens,
                     output_tokens,
@@ -379,7 +374,12 @@ class ClaudeService:
                 output_tokens=int(output_tokens or 0),
                 cache_read_tokens=int(cache_read_tokens or 0),
                 cache_creation_tokens=int(cache_creation_tokens or 0),
-                cost_usd=None if cost_usd is None else float(cost_usd),
+                cost_usd=None if quote.cost_usd is None else float(quote.cost_usd),
+                input_cost_per_token=quote.input_cost_per_token,
+                output_cost_per_token=quote.output_cost_per_token,
+                cache_read_cost_per_token=quote.cache_read_cost_per_token,
+                cache_write_cost_per_token=quote.cache_write_cost_per_token,
+                rates_fetched_at=quote.rates_fetched_at,
                 duration_ms=int(duration_ms or 0),
                 error=error,
                 virtual_key_id=_vk,
@@ -437,9 +437,9 @@ class ClaudeService:
             (getattr(usage, "cache_creation_input_tokens", 0) or 0) if usage else 0
         )
         # Priced once and shared by the log row and the GenAI instruments
-        # (#894); a second compute_call_cost would re-fire the
-        # pricing-unknown counter for uncatalogued models.
-        cost_usd = self._call_cost(
+        # (#894, #1190). A second catalog read would re-fire the
+        # pricing-unknown counter and could stamp a different fetch.
+        quote = self._call_cost(
             response_model, input_tokens, output_tokens, cache_read, cache_creation
         )
         self._persist_interaction(
@@ -459,7 +459,7 @@ class ClaudeService:
             cache_creation_tokens=cache_creation,
             duration_ms=int(duration_s * 1000),
             interaction_id=interaction_id,
-            cost_usd=cost_usd,
+            quote=quote,
         )
         # Direct-SDK path: never enters LLMRouter.dispatch, so this is the
         # only record for the call.
@@ -471,7 +471,7 @@ class ClaudeService:
             cache_read_tokens=cache_read,
             cache_creation_tokens=cache_creation,
             duration_s=duration_s,
-            cost_usd=cost_usd,
+            cost_usd=quote.cost_usd,
         )
 
         extracted = self._extract_content_blocks(response.content)

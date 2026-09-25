@@ -58,6 +58,12 @@ class LLMInteractionLogSchema(ORMSchema):
     output_tokens: Optional[int] = None
     # NULL means unpriced (#1115), so it is not floored at zero.
     cost_usd: Optional[float] = None
+    # The rates and fetch time behind cost_usd (#1190). NULL when unpriced.
+    input_cost_per_token: Optional[float] = None
+    output_cost_per_token: Optional[float] = None
+    cache_read_cost_per_token: Optional[float] = None
+    cache_write_cost_per_token: Optional[float] = None
+    rates_fetched_at: Optional[str] = None
     duration_ms: Optional[int] = None
     error: Optional[str] = None
     request_messages: Optional[Any] = None

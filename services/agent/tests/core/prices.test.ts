@@ -13,14 +13,23 @@ function answering(body: unknown, seen: string[] = []): typeof globalThis.fetch 
 // The catalog answers four zeros for a model nothing matched, which parse as
 // perfectly good rates. Reading them as a price is how a run spends unmetered.
 describe("what the catalog could not price", () => {
-  it("prices nothing when the source is unknown", () => {
-    expect(ratesOf({ input: 0, output: 0, cache_read: 0, cache_write: 0, source: "unknown" })).toBeNull();
+  it("keeps unknown, with null rates rather than the zeros", () => {
+    expect(ratesOf({ input: 0, output: 0, cache_read: 0, cache_write: 0, source: "unknown", fetched_at: "2026-01-01T00:00:00+00:00" })).toEqual({
+      input: null,
+      output: null,
+      cache_read: null,
+      cache_write: null,
+      source: "unknown",
+      fetched_at: null,
+    });
   });
 
   it("still prices a model that genuinely costs nothing", () => {
-    const rates = ratesOf({ input: 0, output: 0, cache_read: 0, cache_write: 0, source: "zero" });
+    const rates = ratesOf({ input: 0, output: 0, cache_read: 0, cache_write: 0, source: "zero", fetched_at: "2026-01-01T00:00:00+00:00" });
     expect(rates?.source).toBe("zero");
-    expect(costOf(rates!, { input: 1000, output: 1000, cache_read: 0, cache_write: 0 })).toBe(0);
+    expect(rates?.fetched_at).toBe("2026-01-01T00:00:00+00:00");
+    if (rates === null || rates.input === null) throw new Error("a zero-priced model is a price");
+    expect(costOf(rates, { input: 1000, output: 1000, cache_read: 0, cache_write: 0 })).toBe(0);
   });
 
   it("prices nothing when a rate is missing rather than reading it as free", () => {
@@ -31,9 +40,11 @@ describe("what the catalog could not price", () => {
 describe("asking the catalog", () => {
   it("keeps a price it was given and asks once", async () => {
     const seen: string[] = [];
-    const prices = httpPrices({ url: "http://backend/internal/pricing", token: "t", ttlMs: 300_000, fetch: answering({ ...RATES, source: "exact" }, seen) });
-    expect(await prices("claude-sonnet-4-6", "bifrost")).not.toBeNull();
-    expect(await prices("claude-sonnet-4-6", "bifrost")).not.toBeNull();
+    const fetched_at = "2026-01-02T03:04:05+00:00";
+    const prices = httpPrices({ url: "http://backend/internal/pricing", token: "t", ttlMs: 300_000, fetch: answering({ ...RATES, source: "exact", fetched_at }, seen) });
+    const first = await prices("claude-sonnet-4-6", "bifrost");
+    expect(first?.fetched_at).toBe(fetched_at);
+    expect(await prices("claude-sonnet-4-6", "bifrost")).toEqual(first);
     expect(seen).toHaveLength(1);
   });
 
@@ -47,7 +58,7 @@ describe("asking the catalog", () => {
       token: "t",
       ttlMs: 300_000,
       now: () => clock,
-      fetch: answering({ ...RATES, source: "exact" }, seen),
+      fetch: answering({ ...RATES, source: "exact", fetched_at: "2026-01-02T03:04:05+00:00" }, seen),
     });
     await prices("claude-sonnet-4-6", "bifrost");
     clock = 299_999;
@@ -63,8 +74,9 @@ describe("asking the catalog", () => {
   it("asks again after an answer that priced nothing", async () => {
     const seen: string[] = [];
     const prices = httpPrices({ url: "http://backend/internal/pricing", token: "t", ttlMs: 300_000, fetch: answering({ ...RATES, input: 0, output: 0, cache_read: 0, cache_write: 0, source: "unknown" }, seen) });
-    expect(await prices("nobody-knows", "bifrost")).toBeNull();
-    expect(await prices("nobody-knows", "bifrost")).toBeNull();
+    const unpriced = { input: null, output: null, cache_read: null, cache_write: null, source: "unknown", fetched_at: null };
+    expect(await prices("nobody-knows", "bifrost")).toEqual(unpriced);
+    expect(await prices("nobody-knows", "bifrost")).toEqual(unpriced);
     expect(seen).toHaveLength(2);
   });
 });
