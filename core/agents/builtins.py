@@ -279,6 +279,7 @@ For any report request (technical report, executive summary, board brief) call r
             "analyze_coverage",
             "list_findings",
             "reconstruct_run",
+            "check_detection_candidate",
         ],
         "max_tokens": 16384,
         "enable_thinking": True,
@@ -286,6 +287,7 @@ For any report request (technical report, executive summary, board brief) call r
         "extra_principles": "- Use specific technique IDs (T1566.001)\n- Explain attacker objectives\n- Execute only via the gated Atomic Red Team tool; a call parks until a human approves\n- Memory: recall_entity on technique-linked entities; read-only, and it orients your search rather than deciding its outcome",
         "methodology": """<methodology>
 Given an environment_id and a goal, assess coverage, execute only via the gated tool, reconstruct, and report. Coverage, gaps, findings, reconstruction, and execute are available together — pick what the goal needs; there is no prescribed order.
+check_detection_candidate lints and replays a candidate Sigma rule against events already in hand.
 </methodology>""",
     },
     {

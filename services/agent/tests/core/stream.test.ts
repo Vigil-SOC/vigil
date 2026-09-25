@@ -13,7 +13,7 @@ import { emptyRecall } from "../../contracts/memory.js";
 import { localDispatch } from "../../core/dispatch.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import type { Memory, State, ToolDispatch } from "../../core/seams.js";
-import type { CheckpointPayload, NewEvent, TerminalPayload } from "../../contracts/events.js";
+import type { CheckpointPayload, DispatchPayload, NewEvent, TerminalPayload } from "../../contracts/events.js";
 import type { SpendPayload } from "../../contracts/budget.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
@@ -411,6 +411,35 @@ describe("the ART execute approval gate", () => {
     expect(outcome.status).toBe("completed");
     expect(dispatched).toBe(1);
     expect(outcome.calls[0]?.wrapped.failure).toBeNull();
+  });
+});
+
+describe("the candidate check", () => {
+  const CHECK = "check_detection_candidate";
+  const ARGS = "{}";
+  const RESULT: ToolResult = {
+    ok: true,
+    rows: [{ lint: { passed: true }, replay: { evaluated: true, matched: true }, candidate: { technique_id: "T1059.003" } }],
+    rowCount: 1,
+    capped: false,
+    sourceSystem: "test",
+  };
+
+  it("journals the result on an empty approval set and does not park", async () => {
+    const harness = harnessOf([{ calls: [{ tool: CHECK, args: ARGS }] }, { calls: [] }, HALT], {
+      tools: [toolReturning(CHECK, RESULT)],
+      grants: { counter: [CHECK] },
+    });
+    const outcome = await outcomeOf(config({ approvals: new Set() }), harness);
+
+    expect(outcome.status).not.toBe("waiting_approval");
+    expect(outcome.status).toBe("completed");
+    const ledger = await harness.state.read(RUN);
+    const dispatch = ledger.find((event) => event.kind === "dispatch");
+    const payload = dispatch?.payload as DispatchPayload;
+    expect(payload.result).toEqual(RESULT);
+    expect(payload.dispatch_id).not.toBe(approvalId(RUN, CHECK, ARGS));
+    expect(ledger.some((event) => event.kind === "checkpoint")).toBe(false);
   });
 });
 

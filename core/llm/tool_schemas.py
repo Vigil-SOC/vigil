@@ -118,6 +118,48 @@ SECURITY_DETECTION_TOOLS = [
         },
     },
     {
+        "name": "check_detection_candidate",
+        "description": "Lint a candidate Sigma rule and replay it against events the caller already has. Replay is one selection of field equality and |contains, AND-ed. Returns lint, replay, and candidate; candidate is set only when lint passed and an event matched. Does not query Findings or a SIEM and does not write a rule.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "rule_yaml": {
+                    "type": "string",
+                    "description": "Sigma rule YAML to lint and replay.",
+                },
+                "events": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Events already in hand. Field names are matched to event keys as written.",
+                },
+                "technique_id": {
+                    "type": "string",
+                    "description": "Technique id of the missed step this candidate answers.",
+                },
+                "hostname": {
+                    "type": "string",
+                    "description": "Hostname of the missed step.",
+                },
+                "started_at": {
+                    "type": "string",
+                    "description": "Window start of the missed step.",
+                },
+                "ended_at": {
+                    "type": "string",
+                    "description": "Window end of the missed step.",
+                },
+            },
+            "required": [
+                "rule_yaml",
+                "events",
+                "technique_id",
+                "hostname",
+                "started_at",
+                "ended_at",
+            ],
+        },
+    },
+    {
         "name": "reconstruct_run",
         "description": "Reconstruct a red-run action trace into per-step detection verdicts. Correlates each step to ingested Findings by host, entity, and time. Verdict is rule, loglm, both, or missed. Cite matching Finding ids. Unknown keys on a step are ignored.",
         "input_schema": {

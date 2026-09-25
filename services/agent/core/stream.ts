@@ -22,6 +22,10 @@ import { assemble, prefixOf, type FoldPolicy, type Prefix } from "./context.js";
 import { scannerFor, wrap } from "./security.js";
 import type { State } from "./seams.js";
 
+// Journaled from record without a checkpoint. An approvals entry would park
+// the run before the check runs; the dispatch id is the call's, not an approval id.
+const CANDIDATE_CHECK = "check_detection_candidate";
+
 // What a run reports as it happens. The first three are the provider's, relayed;
 // the rest are the harness's, and a run ends on exactly one of the last three.
 export type StreamEvent<T = unknown> =
@@ -251,6 +255,7 @@ class Run<T, Kinds extends Record<string, unknown>> {
     this.calls.push(attempt);
     this.transcript.push({ role: "tool", call_id: call.id, content: wrapped.text });
     if (gated !== undefined) await this.journalExecuted(gated, call.tool, result);
+    else if (call.tool === CANDIDATE_CHECK) await this.journalExecuted(`dsp-${call.id}`, call.tool, result);
     yield { type: "tool_result", call, attempt };
   }
 
