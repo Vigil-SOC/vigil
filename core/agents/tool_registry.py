@@ -539,7 +539,10 @@ async def execute_backend_tool(
         return _INTEL_TOOLS[tool_name](args), True
 
     if tool_name in _MEMORY_TOOLS:
-        return _MEMORY_TOOLS[tool_name](args), True
+        result = _MEMORY_TOOLS[tool_name](args)
+        if inspect.isawaitable(result):
+            result = await result
+        return result, True
 
     # Agent skills (#925): reads from disk only, never a database.
     if tool_name == READ_SKILL_TOOL:

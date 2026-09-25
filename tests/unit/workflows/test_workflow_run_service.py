@@ -250,3 +250,25 @@ class TestListRuns:
         )
         ids = {row["run_id"] for row in in_window}
         assert ids == {overlap, mid}
+
+    def test_list_filters_run_kind_on_trigger_context(self, service, clean_runs):
+        compose = service.begin_run(
+            workflow_id="test-wf-kind-filter",
+            workflow_name="K",
+            trigger_context={"run_kind": "compose"},
+        )
+        hunt = service.begin_run(
+            workflow_id="test-wf-kind-filter",
+            workflow_name="K",
+            trigger_context={"run_kind": "hunt"},
+        )
+        plain = service.begin_run(
+            workflow_id="test-wf-kind-filter",
+            workflow_name="K",
+            trigger_context={},
+        )
+        for run_id in (compose, hunt, plain):
+            service.finalize_run(run_id, status="completed")
+
+        rows = service.list_runs(workflow_id="test-wf-kind-filter", run_kind="compose")
+        assert {row["run_id"] for row in rows} == {compose}

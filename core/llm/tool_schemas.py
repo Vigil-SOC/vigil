@@ -429,7 +429,8 @@ DEEPTEMPO_FINDING_TOOLS = [
         "name": "list_learning_episodes",
         "description": (
             "What Vigil learned in a window: one episode per concluded hunt or "
-            "case, read from distilled memory. Each carries kind, "
+            "case, read from distilled memory, and a finished compose run whose "
+            "projection has an execute trace. Each carries kind, "
             "investigation_id, origin_run_id (null for a case), concluded_at, "
             "and a payload of the verdicts (with source stances) and gaps that "
             "investigation recorded. An investigation that concluded nothing is "
@@ -460,9 +461,12 @@ DEEPTEMPO_FINDING_TOOLS = [
         "description": (
             "Write a chosen set of learning episodes to a JSONL file in the "
             "exports directory, one episode per line, selected by "
-            "{kind, investigation_id} pairs from list_learning_episodes. By "
-            "default entity values are redacted to their type (ip:*); pass "
-            "identified=true to keep them. An empty selection writes no file."
+            "{kind, investigation_id} pairs from list_learning_episodes. A "
+            "finished compose run with an execute trace is included as kind "
+            "emulation. By default entity values are redacted to their type "
+            "(ip:*), and host, ip, user, and command are dropped from missed "
+            "emulation steps; pass identified=true to keep them. An empty "
+            "selection writes no file."
         ),
         "input_schema": {
             "type": "object",
@@ -473,7 +477,10 @@ DEEPTEMPO_FINDING_TOOLS = [
                     "items": {
                         "type": "object",
                         "properties": {
-                            "kind": {"type": "string", "enum": ["hunt", "case"]},
+                            "kind": {
+                                "type": "string",
+                                "enum": ["hunt", "case", "emulation"],
+                            },
                             "investigation_id": {"type": "string"},
                         },
                         "required": ["kind", "investigation_id"],
