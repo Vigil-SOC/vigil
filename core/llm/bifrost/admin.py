@@ -607,8 +607,21 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
         provider_rows.sort(key=lambda r: not r["is_default"])
         type_key: Optional[str] = None
 
+        # Host before listing and allow-list: namespaced models are meaningless
+        # if the gateway still talks to the stock OpenAI cloud, and a mirror row
+        # lists through whatever host this leaves. One document per type.
+        # Only a row Vigil owns may set it: a mirror row carries no base_url,
+        # and pushing its blank erased a host configured in Bifrost itself.
+        owned = [r for r in provider_rows if not _is_mirror_row(r)]
+        if provider_type == "openai" and owned:
+            # The first row that states a host, not simply the first row.
+            hosted = next((r for r in owned if r.get("base_url")), owned[0])
+            base_url_results[provider_type] = sync_provider_base_url(
+                provider_type, hosted.get("base_url")
+            )
+
         gateway_host = None
-        if provider_type == "openai" and any(map(_is_mirror_row, provider_rows)):
+        if provider_type == "openai" and len(owned) < len(provider_rows):
             gateway_host = await bifrost_custom_openai_host()
 
         for row_dict in provider_rows:
@@ -616,16 +629,15 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             row_seen: set = set()
             upstream_ok = False
             row_key = _resolve_row_key(row_dict)
-            if type_key is None:
+            # Bifrost owns a mirror row's secret. What the env fallback resolves
+            # is some other credential, and pushing it would put that key in the
+            # rotation for whatever host the gateway points at.
+            if type_key is None and not _is_mirror_row(row_dict):
                 type_key = row_key
 
+            # A server behind a host set in Bifrost alone. OpenAI's names are not
+            # models it can run, so nothing may stand in for its catalogue.
             via_gateway = bool(gateway_host) and _is_mirror_row(row_dict)
-            # OpenAI's names are not models a self-hosted server can run, so
-            # neither the datasheet nor the bootstrap list may stand in for one.
-            self_hosted = via_gateway or (
-                provider_type == "openai"
-                and _custom_openai_base_url(row_dict.get("base_url")) is not None
-            )
 
             try:
                 if via_gateway:
@@ -647,7 +659,7 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             if (
                 meta is None
                 and provider_type not in _HOST_OWNED_CATALOGUE
-                and not self_hosted
+                and not via_gateway
             ):
                 meta = datasheets.get(provider_type)
                 stood_in = meta is not None and provider_type in _DISCOVERABLE
@@ -663,7 +675,7 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
 
             # Upstream failed: union the bootstrap list so the dropdown
             # isn't empty while still carrying the extras below.
-            if (not upstream_ok or stood_in) and not self_hosted:
+            if (not upstream_ok or stood_in) and not via_gateway:
                 for mid in _FALLBACK_MODELS_BY_PROVIDER.get(provider_type, ()):
                     if mid not in row_seen:
                         row_seen.add(mid)
@@ -672,7 +684,7 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
             # Extras are unioned into the row list so the dropdown shows
             # them and the Bifrost allow-list contains them — same list,
             # same source.
-            for mid in () if self_hosted else extras:
+            for mid in extras:
                 if mid not in row_seen:
                     row_seen.add(mid)
                     row_ids.append(mid)
@@ -695,18 +707,6 @@ async def _do_sync_all_provider_models() -> Dict[str, Any]:
                     continue
                 type_seen.add(mid)
                 type_union.append(mid)
-
-        # Host before allow-list: namespaced models are meaningless if the
-        # gateway still talks to the stock OpenAI cloud. One document per type.
-        # Only a row Vigil owns may set it: a mirror row carries no base_url,
-        # and pushing its blank erased a host configured in Bifrost itself.
-        owned = [r for r in provider_rows if not _is_mirror_row(r)]
-        if provider_type == "openai" and owned:
-            # The first row that states a host, not simply the first row.
-            hosted = next((r for r in owned if r.get("base_url")), owned[0])
-            base_url_results[provider_type] = sync_provider_base_url(
-                provider_type, hosted.get("base_url")
-            )
 
         if not type_union:
             # Preserve bootstrap: don't overwrite Bifrost's allow-list
@@ -945,17 +945,13 @@ async def bifrost_custom_openai_host() -> Optional[str]:
     Set in the gateway by an operator fronting MLX, vLLM or LM Studio. A mirror
     row carries no ``base_url``, so this is the only place that host is recorded.
     """
-    try:
-        async with httpx.AsyncClient(timeout=_DEFAULT_TIMEOUT) as client:
-            resp = await client.get(_provider_url("openai"))
-            if resp.status_code == 404:
-                return None
-            resp.raise_for_status()
-            doc = resp.json()
-    except (httpx.HTTPError, ValueError) as exc:
-        logger.warning("Bifrost: could not read the openai provider: %s", exc)
-        return None
-    network = (doc.get("network_config") or {}) if isinstance(doc, dict) else {}
+
+    def read() -> Optional[Dict[str, Any]]:
+        with httpx.Client() as client:
+            return _get_provider_document("openai", client)
+
+    doc = await asyncio.to_thread(read)
+    network = (doc or {}).get("network_config") or {}
     return _custom_openai_base_url(network.get("base_url"))
 
 
@@ -979,7 +975,11 @@ async def list_gateway_models(provider_type: str) -> Optional[List[Any]]:
         return None
 
     prefix = f"{provider_type}/"
-    ids = [e["id"].removeprefix(prefix) for e in entries if e.get("id")]
+    ids = [
+        e["id"].removeprefix(prefix)
+        for e in entries
+        if isinstance(e, dict) and isinstance(e.get("id"), str)
+    ]
     return [ModelMeta(id=i, display_name=i) for i in ids]
 
 
@@ -1091,43 +1091,46 @@ def chat_capable_ids(models: Optional[List[Any]]) -> List[str]:
     return ids
 
 
-async def _first_pulled_ollama_model() -> Optional[str]:
-    """A chat model this host has actually pulled, or None if it has none.
+async def self_hosted_chat_models(provider_type: str) -> Optional[List[str]]:
+    """Chat models the self-hosted server behind ``provider_type`` serves, in order.
 
-    Taking index 0 floored a host whose list led with ``nomic-embed-text`` to
-    a model Bifrost refuses to chat with (#1003); an absent row self-heals on
-    the next sync where a wrong default cannot.
+    None when the type fronts no self-hosted server; empty when it does and the
+    server could not be listed or serves no chat model. Taking a listing's index
+    0 floored a host that led with ``nomic-embed-text`` to a model Bifrost
+    refuses to chat with (#1003), hence the chat filter.
     """
-    ids = chat_capable_ids(await _list_ollama_models(None))
-    return _preferred_floor("ollama", ids) if ids else None
+    if provider_type in _HOST_OWNED_CATALOGUE:
+        models = await _list_ollama_models(None)
+    elif provider_type == "openai" and await bifrost_custom_openai_host():
+        models = await list_gateway_models(provider_type)
+    else:
+        return None
+    return chat_capable_ids(models)
 
 
-async def default_model_for_provider_type(provider_type: str) -> Optional[str]:
+_NOT_LISTED: Any = object()
+
+
+async def default_model_for_provider_type(
+    provider_type: str, served: Optional[List[str]] = _NOT_LISTED
+) -> Optional[str]:
     """Pick the ``default_model`` a mirrored provider row should floor to.
 
     None when no model can be named, and the caller then skips the row: a
     default is what a bad model falls back *to*, so nothing downstream can
     correct one. A missing row self-heals on the next sync; a wrong one does
-    not.
+    not. ``served`` is ``self_hosted_chat_models``' answer, when the caller
+    already holds it.
     """
     from core.llm.providers.registry import _FALLBACK_MODELS_BY_PROVIDER
 
-    if provider_type in _HOST_OWNED_CATALOGUE:
-        pulled = await _first_pulled_ollama_model()
-        if not pulled:
+    if served is _NOT_LISTED:
+        served = await self_hosted_chat_models(provider_type)
+    if served is not None:
+        if not served:
             logger.warning(
                 "No pulled model to floor a mirrored %s row to — leaving it "
                 "unmirrored until the server can be listed",
-                provider_type,
-            )
-        return pulled
-
-    if provider_type == "openai" and await bifrost_custom_openai_host():
-        served = chat_capable_ids(await list_gateway_models(provider_type))
-        if not served:
-            logger.warning(
-                "No model listed by the self-hosted %s server to floor a "
-                "mirrored row to — leaving it unmirrored until it can be listed",
                 provider_type,
             )
             return None

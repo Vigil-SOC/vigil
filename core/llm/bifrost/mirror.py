@@ -220,46 +220,23 @@ async def _apply(provider: str, *, routable: bool) -> None:
     if not routable:
         await asyncio.to_thread(_deactivate_row, provider)
         return
-    from core.llm.bifrost.admin import default_model_for_provider_type
+    from core.llm.bifrost.admin import (
+        default_model_for_provider_type,
+        self_hosted_chat_models,
+    )
 
-    default_model = await default_model_for_provider_type(provider)
+    served = await self_hosted_chat_models(provider)
+    default_model = await default_model_for_provider_type(provider, served)
     if not default_model:
         logger.warning(
             "Not mirroring provider %s — no servable default_model to floor it to",
             provider,
         )
         return
-    servable = await _servable_models(provider)
+    # Only a self-hosted server's set changes under the operator's hands, so
+    # only its stored default can go stale and need re-healing.
+    servable = set(served) if served else None
     await asyncio.to_thread(_upsert_row, provider, default_model, servable)
-
-
-async def _servable_models(provider: str) -> Optional[set]:
-    """What ``provider`` serves right now, or None when that cannot be known.
-
-    Only asked of a self-hosted server, whose set changes under the operator's
-    hands. A cloud provider's catalogue does not shrink out from under a stored
-    default, so there is nothing to re-heal and no request worth making.
-
-    "Servable" means servable as a ``default_model``, which is a chat floor:
-    an embedding-only id is excluded so a row already floored to one (#1003)
-    is corrected by ``_upsert_row`` on the next sync.
-    """
-    from core.llm.bifrost.admin import (
-        _HOST_OWNED_CATALOGUE,
-        _list_ollama_models,
-        bifrost_custom_openai_host,
-        chat_capable_ids,
-        list_gateway_models,
-    )
-
-    if provider in _HOST_OWNED_CATALOGUE:
-        models = await _list_ollama_models(None)
-    elif provider == "openai" and await bifrost_custom_openai_host():
-        models = await list_gateway_models(provider)
-    else:
-        return None
-    ids = chat_capable_ids(models)
-    return set(ids) if ids else None
 
 
 async def sync_provider(provider: str) -> None:
