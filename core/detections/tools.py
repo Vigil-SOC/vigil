@@ -574,6 +574,34 @@ class SecurityDetectionsTools:
         """
         return lint_sigma(rule_yaml=rule_yaml, source_path=source_path)
 
+    async def check_detection_candidate(
+        self,
+        rule_yaml: Optional[str] = None,
+        events: Optional[List[Dict]] = None,
+        technique_id: Optional[str] = None,
+        hostname: Optional[str] = None,
+        started_at: Optional[str] = None,
+        ended_at: Optional[str] = None,
+        **_kwargs: object,
+    ) -> Dict:
+        """Lint a candidate Sigma rule and replay it against events already in hand.
+
+        ``candidate`` is set only when lint passed and one event matched. The
+        missed step stays inside ``candidate`` so the return is not an attack step.
+        """
+        lint = lint_sigma(rule_yaml=rule_yaml)
+        replay = _replay_sigma(rule_yaml or "", events)
+        candidate = None
+        if lint.get("passed") and replay.get("matched"):
+            candidate = {
+                "technique_id": technique_id,
+                "hostname": hostname,
+                "started_at": started_at,
+                "ended_at": ended_at,
+                "rule_yaml": rule_yaml,
+            }
+        return {"lint": lint, "replay": replay, "candidate": candidate}
+
     async def reconstruct_run(self, steps: List[Dict], **_kwargs: object) -> Dict:
         """Correlate an action trace to ingested Findings; return per-step verdicts.
 
@@ -599,3 +627,87 @@ def get_security_detection_tools() -> SecurityDetectionsTools:
     if _security_detection_tools is None:
         _security_detection_tools = SecurityDetectionsTools()
     return _security_detection_tools
+
+
+def _replay_sigma(rule_yaml: str, events: Any) -> Dict[str, Any]:
+    """One selection of scalar equality and ``|contains``, AND-ed across fields."""
+    if not isinstance(events, list):
+        return _replay(False, False, "events must be a list")
+    fields = _selection_fields(rule_yaml)
+    if fields is None:
+        return _replay(
+            False,
+            False,
+            "replay only evaluates one selection of equality and |contains",
+        )
+    matched = any(isinstance(event, dict) and _event_matches(event, fields) for event in events)
+    if matched:
+        return _replay(True, True, None)
+    return _replay(True, False, "no event matched the selection")
+
+
+def _replay(evaluated: bool, matched: bool, reason: Optional[str]) -> Dict[str, Any]:
+    return {"evaluated": evaluated, "matched": matched, "reason": reason}
+
+
+def _selection_fields(rule_yaml: str) -> Optional[List[tuple]]:
+    try:
+        parsed = yaml.safe_load(rule_yaml)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    detection = parsed.get("detection")
+    if not isinstance(detection, dict):
+        return None
+    selections = {key: value for key, value in detection.items() if key != "condition"}
+    if len(selections) != 1:
+        return None
+    name, body = next(iter(selections.items()))
+    condition = detection.get("condition")
+    if not isinstance(condition, str) or condition.strip() != name:
+        return None
+    if not isinstance(body, dict) or not body:
+        return None
+    fields: List[tuple] = []
+    for key, value in body.items():
+        field = _field_clause(str(key), value)
+        if field is None:
+            return None
+        fields.append(field)
+    return fields
+
+
+def _field_clause(key: str, value: Any) -> Optional[tuple]:
+    parts = key.split("|")
+    if len(parts) == 1:
+        op = "eq"
+    elif len(parts) == 2 and parts[1] == "contains":
+        op = "contains"
+    else:
+        return None
+    name = parts[0]
+    if not name:
+        return None
+    if op == "contains":
+        if not isinstance(value, str):
+            return None
+        return name, op, value
+    if isinstance(value, bool) or isinstance(value, (str, int, float)):
+        return name, op, value
+    return None
+
+
+def _event_matches(event: Dict[str, Any], fields: List[tuple]) -> bool:
+    for name, op, expected in fields:
+        if name not in event:
+            return False
+        actual = event[name]
+        if op == "eq":
+            # bool is an int, so True == 1. A scalar match is the value as written.
+            if isinstance(actual, bool) != isinstance(expected, bool) or actual != expected:
+                return False
+            continue
+        if not isinstance(actual, str) or expected not in actual:
+            return False
+    return True
