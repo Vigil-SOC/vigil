@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import Chat from './Chat'
+import { reasoningApi } from '../services/api'
 
 vi.mock('./useConversations', () => ({
   useConversations: () => ({ items: [], phase: 'ready', error: null, reload: vi.fn() }),
@@ -101,5 +102,37 @@ describe('Vigil Assistant resize controls', () => {
 
     expect(onWidthChange).toHaveBeenCalledWith(470)
     expect(onWidthCommit).toHaveBeenCalledWith(470)
+  })
+})
+
+describe('reasoning trace cost', () => {
+  it('shows an all-unpriced session as not priced', async () => {
+    vi.mocked(reasoningApi.getSessionSummary).mockResolvedValue({
+      total_interactions: 1,
+      total_cost_usd: null,
+      unpriced_calls: 1,
+      total_input_tokens: 10,
+      total_output_tokens: 4,
+    })
+    vi.mocked(reasoningApi.listInteractions).mockResolvedValue({ interactions: [] })
+
+    render(
+      <Chat
+        open
+        onClose={vi.fn()}
+        width={420}
+        minWidth={360}
+        maxWidth={600}
+        onWidthChange={vi.fn()}
+        onWidthCommit={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByTitle('Reasoning trace'))
+
+    expect(await screen.findByText('not priced')).toBeInTheDocument()
+    const header = document.querySelector('.trace-sum')
+    expect(header?.textContent).toContain('1 unpriced')
+    expect(header?.textContent).not.toContain('$0.0000')
   })
 })

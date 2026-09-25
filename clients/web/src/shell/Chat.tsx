@@ -44,9 +44,20 @@ interface ChatMsg {
 
 interface SessionSummary {
   total_interactions: number
-  total_cost_usd: number
+  total_cost_usd: number | null
+  unpriced_calls: number
   total_input_tokens: number
   total_output_tokens: number
+}
+
+function sessionSummaryFrom(s: Partial<SessionSummary>): SessionSummary {
+  return {
+    total_interactions: s.total_interactions ?? 0,
+    total_cost_usd: s.total_cost_usd ?? null,
+    unpriced_calls: s.unpriced_calls ?? 0,
+    total_input_tokens: s.total_input_tokens ?? 0,
+    total_output_tokens: s.total_output_tokens ?? 0,
+  }
 }
 interface TraceItem {
   interaction_id: string
@@ -586,16 +597,7 @@ export default function Chat({
       reasoningApi
         .getSessionSummary(sessionRef.current)
         .then((s: Partial<SessionSummary> | null) =>
-          setSessionSummary(
-            s
-              ? {
-                  total_interactions: s.total_interactions ?? 0,
-                  total_cost_usd: s.total_cost_usd ?? 0,
-                  total_input_tokens: s.total_input_tokens ?? 0,
-                  total_output_tokens: s.total_output_tokens ?? 0,
-                }
-              : null,
-          ),
+          setSessionSummary(s ? sessionSummaryFrom(s) : null),
         )
         .catch(() => {})
     } catch (e) {
@@ -704,16 +706,7 @@ export default function Chat({
     reasoningApi
       .getSessionSummary(sid)
       .then((s: Partial<SessionSummary> | null) =>
-        setSessionSummary(
-          s
-            ? {
-                total_interactions: s.total_interactions ?? 0,
-                total_cost_usd: s.total_cost_usd ?? 0,
-                total_input_tokens: s.total_input_tokens ?? 0,
-                total_output_tokens: s.total_output_tokens ?? 0,
-              }
-            : null,
-        ),
+        setSessionSummary(s ? sessionSummaryFrom(s) : null),
       )
       .catch(() => {})
   }
@@ -1207,6 +1200,9 @@ export default function Chat({
         <div className="trace-sum">
           {sessionSummary.total_interactions} call{sessionSummary.total_interactions === 1 ? '' : 's'}
           {' · '}<Cost usd={sessionSummary.total_cost_usd} digits={4} />
+          {sessionSummary.unpriced_calls > 0 && (
+            <>{' · '}{sessionSummary.unpriced_calls.toLocaleString()} unpriced</>
+          )}
           {' · '}{(sessionSummary.total_input_tokens + sessionSummary.total_output_tokens).toLocaleString()} tokens
         </div>
       )}

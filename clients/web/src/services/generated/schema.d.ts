@@ -5555,8 +5555,10 @@ export interface paths {
          * Get Session Summary
          * @description Summary rollup for a chat session or agent session.
          *
-         *     Returns total interactions, cumulative cost, token totals, time range,
-         *     and per-agent breakdown so UIs can render a session-level header.
+         *     Returns total interactions, cumulative cost of priced calls, how many
+         *     calls had no price, token totals, time range, and a per-agent breakdown.
+         *     A session with no rows stays at zero; a session whose rows are all
+         *     unpriced reports a null cost.
          */
         get: operations["get_api_reasoning_session_id"];
         put?: never;
