@@ -170,6 +170,8 @@ export const findingsApi = {
     min_anomaly_score?: number
     limit?: number
     exclusions?: ExclusionView
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
   }) => api.get('/findings', { params }),
   
   getById: (id: string) => api.get(`/findings/${id}`),

@@ -223,7 +223,7 @@ class DatabaseService:
             search_query: Text search across finding_id, description, entity_context
             limit: Maximum number of results
             offset: Offset for pagination
-            sort_by: Column to sort by (timestamp, anomaly_score, severity)
+            sort_by: Column to sort by (timestamp, anomaly_score, severity, created_at)
             sort_order: Sort direction (asc, desc)
             exclusions: ``include`` (default), ``hide`` or ``only`` findings
                 naming an analyst-excluded IP (core.findings.exclusions)
@@ -273,6 +273,7 @@ class DatabaseService:
 
             sort_column_map = {
                 "timestamp": Finding.timestamp,
+                "created_at": Finding.created_at,
                 "anomaly_score": Finding.anomaly_score,
                 "severity": Finding.severity,
                 "data_source": Finding.data_source,
