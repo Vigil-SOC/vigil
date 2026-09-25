@@ -14,28 +14,20 @@ from pathlib import Path
 import pytest
 import yaml
 
+from core.intent import INTENT_FIELDS
+
 pytestmark = pytest.mark.unit
 
 REPO = Path(__file__).resolve().parents[3]
 COMPOSE_PATH = REPO / "infra" / "docker" / "docker-compose.yml"
+HELM_VALUES_PATH = REPO / "infra" / "helm" / "vigil" / "values.yaml"
 
 AGENT_URL = "http://agent-serve:6989"
 AGENT_TOKEN = "${AGENT_INTERNAL_TOKEN:-}"
 
-# INTENT_FIELDS settings. Listed once, on the x-intent-env anchor, and merged
-# into both processes so the Settings card and the daemon agree.
-INTENT_KNOBS = (
-    "DAEMON_AUTO_TRIAGE",
-    "DAEMON_AUTO_ENRICH",
-    "DAEMON_AUTO_RESPONSE",
-    "DAEMON_CONFIDENCE_THRESHOLD",
-    "DAEMON_FORCE_APPROVAL",
-    "DAEMON_ESCALATE_SEVERITIES",
-    "ORCHESTRATOR_ENABLED",
-    "ORCHESTRATOR_MAX_COST",
-    "ORCHESTRATOR_MAX_HOURLY_COST",
-    "ORCHESTRATOR_MAX_RUNTIME",
-)
+# Env names of INTENT_FIELDS. Listed once, on the x-intent-env anchor, and
+# merged into both processes so the Settings card and the daemon agree.
+INTENT_KNOBS = tuple(f.setting.upper() for f in INTENT_FIELDS)
 
 
 def _env(service: str) -> dict[str, str | None]:
@@ -84,3 +76,10 @@ def test_backend_and_daemon_share_one_intent_knob_list() -> None:
     for key in INTENT_KNOBS:
         assert key in backend and key in daemon
         assert backend[key] == daemon[key]
+
+
+def test_helm_config_lists_every_intent_setting() -> None:
+    values = yaml.safe_load(HELM_VALUES_PATH.read_text(encoding="utf-8"))
+    config = (values or {}).get("config") or {}
+    missing = [key for key in INTENT_KNOBS if key not in config]
+    assert missing == []
