@@ -1226,16 +1226,15 @@ class Orchestrator:
     def _recall_keys(self, inv_id: str) -> List[str]:
         return normalise_keys(self._read_sidecar_json(inv_id, "recall_keys.json"))
 
-    # The kind the definition *declares*, not WorkflowDefinition.run_kind: that
-    # property defaults to compose, and a daemon-opened investigation on a
-    # definition that says nothing is the lead loop, as it has always been. A
-    # kind outside RUN_KINDS is refused, not coerced: the caller's except marks
-    # the investigation failed rather than queueing a run no worker has a loop for.
+    # WorkflowDefinition.run_kind, including its absent-field default of compose.
+    # A missing workflow and a kind outside RUN_KINDS are refused, not coerced:
+    # the caller's except marks the investigation failed rather than queueing a
+    # run no worker has a loop for.
     def _declared_run_kind(self, workflow_id: str) -> str:
         workflow = self._workflows.get_workflow(workflow_id)
-        declared = workflow.metadata.get("run_kind") if workflow else None
-        if not declared:
-            return "investigate"
+        if workflow is None:
+            raise ValueError(f"no such workflow: {workflow_id}")
+        declared = workflow.run_kind
         if declared not in RUN_KINDS:
             raise ValueError(f"{workflow_id} declares unknown run_kind {declared!r}")
         return str(declared)

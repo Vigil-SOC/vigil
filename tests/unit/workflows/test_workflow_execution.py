@@ -68,6 +68,25 @@ async def test_execute_workflow_enqueues_a_compose_run(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_execute_workflow_enqueues_an_investigate_run_for_a_lead_definition():
+    captured = {}
+
+    async def _enqueue(job, job_id=None):
+        captured["job"] = job
+        return "job-1"
+
+    with patch(
+        "core.workflows.workflow_run_service.WorkflowRunService.begin_run",
+        return_value="run-1",
+    ), patch("core.agents.queue.enqueue_run", new=AsyncMock(side_effect=_enqueue)):
+        result = await WorkflowsService().execute_workflow("incident-response", {})
+
+    assert result["success"] is True
+    assert captured["job"]["run_kind"] == "investigate"
+    assert captured["job"]["request"]["playbook"] == "workflow:incident-response"
+
+
+@pytest.mark.asyncio
 async def test_the_job_names_the_workflow_rather_than_a_path(monkeypatch):
     """A reference, so an edited definition reaches the next run."""
     monkeypatch.setattr(

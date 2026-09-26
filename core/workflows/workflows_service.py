@@ -153,6 +153,10 @@ def _nothing_to_run(
         if not asked:
             return "hypotheses"
         return "claims" if all(_not_a_claim(one) for one in asked) else ""
+    # The lead's job is the objectives and the body, so an empty phase list is
+    # not an empty run. Compose still walks phases, and one with none has nothing.
+    if workflow.run_kind == "investigate":
+        return ""
     return "" if workflow.phases else "phases"
 
 
@@ -521,8 +525,7 @@ class WorkflowsService:
         asked = _asked_hypotheses(parameters)
         job = build_start_job(
             run_id=run_id,
-            # The definition's, not a constant: threat-hunt drives the hypothesis
-            # loop and the other four walk their phases, from one entry point.
+            # The definition's run_kind, so both entry points queue the same loop.
             run_kind=workflow.run_kind,
             request=_omit_unset(
                 {
