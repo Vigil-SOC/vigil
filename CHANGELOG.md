@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.7.0](https://github.com/Vigil-SOC/vigil/compare/v0.6.0...v0.7.0) (2026-09-26)
+
+
+### Features
+
+* **bifrost:** seed a gemini provider from GEMINI_API_KEY ([#1209](https://github.com/Vigil-SOC/vigil/issues/1209)) ([c17f297](https://github.com/Vigil-SOC/vigil/commit/c17f2976208a20261d10772137d7cf1079c2f956))
+* **cost:** record the rates and fetch time behind every spend figure ([#1201](https://github.com/Vigil-SOC/vigil/issues/1201)) ([26ed7b8](https://github.com/Vigil-SOC/vigil/commit/26ed7b81c1898a964a8873cccc8ec38dbb757fac))
+* **detections:** lint and replay a candidate Sigma rule ([#1206](https://github.com/Vigil-SOC/vigil/issues/1206)) ([991617d](https://github.com/Vigil-SOC/vigil/commit/991617dd7d0b65aa972915d7d1bdbe25746575c6))
+* **memory:** lift compose traces as emulation learning episodes ([#1205](https://github.com/Vigil-SOC/vigil/issues/1205)) ([fadbb4e](https://github.com/Vigil-SOC/vigil/commit/fadbb4e453f8082a2bc984f346323dbc8118201b))
+
+
+### Bug Fixes
+
+* **agents:** refuse approve_action when no principal is bound ([#1210](https://github.com/Vigil-SOC/vigil/issues/1210)) ([086a135](https://github.com/Vigil-SOC/vigil/commit/086a135230688ccda2ad98efcd4cd4e3c0fdfbcd))
+* **alerts:** stop IP exclusions from paging analysts about old findings ([#1197](https://github.com/Vigil-SOC/vigil/issues/1197)) ([6d89c1a](https://github.com/Vigil-SOC/vigil/commit/6d89c1a4dbd241c74b765237c3774bee63ca118c))
+* **bifrost:** keep a self-hosted OpenAI-compatible host set in Bifrost ([#1207](https://github.com/Vigil-SOC/vigil/issues/1207)) ([1cfbf3a](https://github.com/Vigil-SOC/vigil/commit/1cfbf3aa2c1cac5837e37ccac8b46a350ab45797))
+* **console:** answer a phase gate from the run view ([#1193](https://github.com/Vigil-SOC/vigil/issues/1193)) ([01a0e2a](https://github.com/Vigil-SOC/vigil/commit/01a0e2aa355895086e64df454c30c280225751f3))
+* **console:** model catalog panel reads rates from /models/details ([#1180](https://github.com/Vigil-SOC/vigil/issues/1180)) ([2ab7c6a](https://github.com/Vigil-SOC/vigil/commit/2ab7c6a23c852004ff7230b290030fbed40d7e94))
+* **cost:** count unpriced calls on the reasoning-trace session summary ([#1204](https://github.com/Vigil-SOC/vigil/issues/1204)) ([c9bec99](https://github.com/Vigil-SOC/vigil/commit/c9bec99c2718ae2b7507bd15d48df4e5eaa82c9b))
+* **cost:** price chat estimates from the configured provider, for every provider ([#1186](https://github.com/Vigil-SOC/vigil/issues/1186)) ([5380896](https://github.com/Vigil-SOC/vigil/commit/53808963f8491d9feb570adcf88ff3486e5a06bd))
+* **cost:** store an unpriced call as NULL and count it on the cost dashboard ([#1181](https://github.com/Vigil-SOC/vigil/issues/1181)) ([9123dbc](https://github.com/Vigil-SOC/vigil/commit/9123dbcab692e7bcbc5bec20a254365eff960b2c))
+* **deploy:** pass the four response-band env vars through compose and Helm ([#1195](https://github.com/Vigil-SOC/vigil/issues/1195)) ([9483b47](https://github.com/Vigil-SOC/vigil/commit/9483b4722fe3851210998256f215d9f4f2b0092a))
+* **findings:** skip the IP exclusion filter when nothing is excluded ([#1196](https://github.com/Vigil-SOC/vigil/issues/1196)) ([9cb91db](https://github.com/Vigil-SOC/vigil/commit/9cb91dbec51995a2b4850a055f143f83b1ec0ed2))
+* **lead:** carry a completed run's rationale on the terminal summary ([#1191](https://github.com/Vigil-SOC/vigil/issues/1191)) ([ec692e8](https://github.com/Vigil-SOC/vigil/commit/ec692e8a036f14a7939a3e0d4418661aba244c64))
+* **workflows:** grant read_skill when the phase agent recommends it ([#1192](https://github.com/Vigil-SOC/vigil/issues/1192)) ([925c2e2](https://github.com/Vigil-SOC/vigil/commit/925c2e256adc470bc6a1722bc65e1b32e72c899e))
+* **workflows:** run the four lead definitions as investigate ([#1212](https://github.com/Vigil-SOC/vigil/issues/1212)) ([2f39139](https://github.com/Vigil-SOC/vigil/commit/2f391391e8ced0123fe7a07962c3ddb14e2c4362))
+
+
+### Code Refactoring
+
+* **cost:** delete Vigil's rate table and price every call from the gateway's own catalog ([#1187](https://github.com/Vigil-SOC/vigil/issues/1187)) ([071727f](https://github.com/Vigil-SOC/vigil/commit/071727f19d1741cf536dea7ab3e6b614461430bc))
+
+
+### Documentation
+
+* VERSIONING.md states the 1.0 rules; SECURITY.md and the v1 README point at it ([#1095](https://github.com/Vigil-SOC/vigil/issues/1095)) ([#1171](https://github.com/Vigil-SOC/vigil/issues/1171)) ([500873b](https://github.com/Vigil-SOC/vigil/commit/500873bc2fdb28d8cb57538ce11e650c8594975a))
+
 ## [0.6.0](https://github.com/Vigil-SOC/vigil/compare/v0.5.0...v0.6.0) (2026-09-24)
 
 
