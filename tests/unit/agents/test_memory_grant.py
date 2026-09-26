@@ -9,8 +9,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-REPO = Path(__file__).resolve().parent.parent.parent.parent
-sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from core.agents.builtins import BUILTIN_AGENTS, AgentId
 from core.agents.prompts import (
@@ -18,6 +17,8 @@ from core.agents.prompts import (
     _memory_section,
     render_base_prompt,
 )
+from core.workflows.playbook_resolver import resolve
+from core.workflows.workflows_service import WorkflowDefinition
 
 pytestmark = pytest.mark.unit
 
@@ -123,28 +124,33 @@ def test_builtin_principles_memory_lines_are_read_only():
         ), f"Agent {agent['id']} does not carry the ADR 0015 constraint"
 
 
-@pytest.mark.parametrize(
-    "workflow_name",
-    ["incident-response", "full-investigation", "forensic-analysis", "cloud-incident"],
-)
-def test_compose_workflows_grant_recall_entity_in_all_phases(workflow_name: str):
-    """All phases in compose workflows must include recall_entity in tools list (#735)."""
-    workflow_path = (
-        REPO / "core" / "workflows" / "definitions" / workflow_name / "WORKFLOW.md"
+def test_a_compose_phase_keeps_recall_entity_when_the_phase_grants_it():
+    """A compose phase that lists recall_entity still resolves with that grant (#735)."""
+    definition = WorkflowDefinition(
+        workflow_id="phase-fixture",
+        file_path=None,
+        metadata={
+            "name": "fixture",
+            "phases": [
+                {
+                    "id": "look",
+                    "agent": "investigator",
+                    "name": "Look",
+                    "tools": ["get_finding", "recall_entity"],
+                    "instructions": "Look.",
+                }
+            ],
+        },
+        body="",
     )
-    content = workflow_path.read_text()
-    # Frontmatter is between the first two --- delimiters
-    parts = content.split("---", 2)
-    assert len(parts) >= 3, f"Invalid frontmatter in {workflow_name}"
-    data = yaml.safe_load(parts[1])
 
-    phases = data.get("phases", [])
-    assert len(phases) > 0, f"No phases found in {workflow_name}"
-    for phase in phases:
-        tools = phase.get("tools", [])
-        assert (
-            "recall_entity" in tools
-        ), f"Workflow '{workflow_name}' phase '{phase['id']}' missing recall_entity in tools: {tools}"
+    class _Workflows:
+        def get_workflow(self, _id):
+            return definition
+
+    playbook, _ = resolve("phase-fixture", workflows=_Workflows())
+    phase = yaml.safe_load(playbook)["phases"][0]
+    assert "recall_entity" in phase["tools"]
 
 
 # Asks the real registry rather than a patched one, and fails loudly if this work

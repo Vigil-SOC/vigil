@@ -14,6 +14,7 @@ from core.workflows.playbook_resolver import (
     resolve,
     resolve_hunt,
 )
+from core.workflows.workflows_service import WorkflowDefinition
 
 pytestmark = pytest.mark.unit
 
@@ -243,11 +244,37 @@ class TestRefusals:
             resolve_hunt("no-such-workflow")
 
 
+def _compose_phases(*phases):
+    definition = WorkflowDefinition(
+        workflow_id="phase-fixture",
+        file_path="",
+        metadata={"name": "phase fixture", "description": "", "phases": list(phases)},
+        body="",
+    )
+
+    class _Workflows:
+        def get_workflow(self, _id):
+            return definition
+
+    return _Workflows()
+
+
 # Compose grants phase.tools. The prompt already tells a profile that recommends
 # read_skill to call it, so the resolver puts that name on the phase and in the
 # config catalogue. It does not copy the rest of recommended_tools across.
 def test_compose_phases_receive_read_skill_when_the_profile_grants_it():
-    playbook, config_text = resolve("incident-response")
+    playbook, config_text = resolve(
+        "phase-fixture",
+        workflows=_compose_phases(
+            {
+                "id": "report",
+                "agent": "reporter",
+                "name": "Document & Report",
+                "tools": ["get_case", "list_findings", "recall_entity"],
+                "instructions": "Write the report.",
+            }
+        ),
+    )
     report = next(
         phase for phase in yaml.safe_load(playbook)["phases"] if phase["id"] == "report"
     )
@@ -276,10 +303,40 @@ def test_compose_phases_receive_read_skill_when_the_profile_grants_it():
     assert config_ids.count("read_skill") == 1
 
 
-# The other four definitions are untouched: they still resolve to phases.
 def test_a_compose_definition_still_resolves_to_phases():
-    playbook, _ = resolve("incident-response")
+    playbook, _ = resolve(
+        "phase-fixture",
+        workflows=_compose_phases(
+            {
+                "id": "triage",
+                "agent": "triage",
+                "name": "Triage",
+                "instructions": "Look at it.",
+            }
+        ),
+    )
     assert yaml.safe_load(playbook)["phases"]
+
+
+def test_compose_with_no_phases_is_refused():
+    with pytest.raises(UnknownPlaybook, match="no phases"):
+        resolve("phase-fixture", workflows=_compose_phases())
+
+
+# A lead definition has no phases. The playbook is the objectives and the body,
+# and the tools are the ones the investigate arch already names.
+def test_an_investigate_definition_resolves_with_no_phases():
+    playbook, config_text = resolve("incident-response")
+    loaded = yaml.safe_load(playbook)
+    assert loaded["phases"] == []
+    assert loaded["objectives"]
+    assert "blast radius" in loaded["narrative"].lower()
+    config = yaml.safe_load(config_text)
+    assert [tool["id"] for tool in config["tools"]] == ["case_records", "get_finding"]
+    assert config["budgets"]["max_cost_usd"] == 5.0
+    assert config["budgets"]["max_wall_ms"] == 1_800_000
+    assert config["budgets"]["max_calls"] >= 1
+    assert config["approvals"] == []
 
 
 # Investigate lead tools the arch names, whether or not a WORKFLOW.md phase did.

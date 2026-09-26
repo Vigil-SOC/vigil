@@ -330,9 +330,10 @@ def resolve(
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
 
     phases = _phases_of(definition)
-    # Refused rather than run: a playbook with no steps completes instantly having
-    # done nothing, which reads exactly like a run that worked.
-    if not phases:
+    # A lead has no steps; its playbook is the objectives and the body. Compose
+    # with none completes instantly having done nothing, which reads exactly
+    # like a run that worked.
+    if not phases and definition.run_kind != "investigate":
         raise UnknownPlaybook(
             f"{workflow_id} declares no phases; there is nothing to run"
         )

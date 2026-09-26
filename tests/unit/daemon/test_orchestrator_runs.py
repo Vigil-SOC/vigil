@@ -35,8 +35,11 @@ DEFINITIONS = REPO / "core" / "workflows" / "definitions"
 # The bundled definitions, read rather than listed: what each declares is the
 # fact under test, and a copy of it here would be one edit from disagreeing.
 WORKFLOWS = WorkflowsService(workflows_dir=DEFINITIONS)
-UNDECLARED = sorted(
-    wf.id for wf in WORKFLOWS._cache.values() if not wf.metadata.get("run_kind")
+INVESTIGATE = (
+    "cloud-incident",
+    "forensic-analysis",
+    "full-investigation",
+    "incident-response",
 )
 
 
@@ -568,20 +571,37 @@ class TestEnqueueRunKind:
         assert WORKFLOWS.get_workflow(workflow_id).metadata["run_kind"] == kind
         assert await self._enqueued_kind(_orchestrator(), workflow_id) == kind
 
-    # Not WorkflowDefinition.run_kind, which reads compose for these: a daemon
-    # investigation on a definition that declares nothing stays the lead loop.
+    # The four lead definitions declare investigate. The daemon reads that
+    # property, the same value Run workflow enqueues.
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("workflow_id", UNDECLARED)
-    async def test_a_definition_that_declares_nothing_stays_investigate(
-        self, workflow_id
-    ):
+    @pytest.mark.parametrize("workflow_id", INVESTIGATE)
+    async def test_a_lead_definition_enqueues_investigate(self, workflow_id):
+        assert WORKFLOWS.get_workflow(workflow_id).run_kind == "investigate"
         assert await self._enqueued_kind(_orchestrator(), workflow_id) == "investigate"
 
+    # Absent stays compose: a builder workflow that never sets the field keeps
+    # walking phases. The private "missing means investigate" default is gone.
     @pytest.mark.asyncio
-    async def test_a_definition_that_is_not_found_stays_investigate(self):
-        assert await self._enqueued_kind(_orchestrator(), "no-such-workflow") == (
-            "investigate"
+    async def test_a_definition_that_declares_nothing_enqueues_compose(self):
+        orch = _orchestrator()
+        orch._workflows = MagicMock()
+        orch._workflows.get_workflow.return_value = WorkflowDefinition(
+            "plain", None, {"name": "Plain"}, ""
         )
+        assert await self._enqueued_kind(orch, "plain") == "compose"
+
+    @pytest.mark.asyncio
+    async def test_a_definition_that_is_not_found_fails_the_enqueue(self):
+        orch = _orchestrator()
+        with patch(
+            "services.daemon.orchestrator.enqueue_run", new=AsyncMock()
+        ) as enqueued:
+            await orch._enqueue_investigation(_record(workflow_id="no-such-workflow"))
+
+        enqueued.assert_not_awaited()
+        status, reason = orch._update_investigation_status.call_args[0][1:3]
+        assert status == "failed"
+        assert "no-such-workflow" in reason
 
     # RUN_KINDS is the allow-list: a kind the worker has no loop for fails the
     # enqueue rather than being coerced into one it did not ask for.
