@@ -11,12 +11,28 @@ from sqlalchemy.exc import SQLAlchemyError
 from core.storage.connection import get_db_manager
 from core.storage.models import WorkflowRun, WorkflowRunPhase
 from core.storage.schemas import WorkflowRunPhaseSchema, WorkflowRunSchema
+from core.telemetry import get_meter
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
 # Same ceiling as GET /workflows/{workflow_id}/runs.
 LIST_RUNS_MAX = 200
+
+_runs_finished: Any = None
+
+
+def _runs_finished_counter() -> Any:
+    """Created on first use: ``get_meter`` before ``init_telemetry`` is a
+    permanent no-op, and this module is imported at API boot."""
+    global _runs_finished
+    if _runs_finished is None:
+        _runs_finished = get_meter("vigil.workflows.runs").create_counter(
+            "vigil.runs.finished",
+            description="Workflow runs reaching a terminal status, by run_kind",
+            unit="1",
+        )
+    return _runs_finished
 
 
 def generate_run_id() -> str:
@@ -43,7 +59,6 @@ class WorkflowRunService:
         workflow_version: Optional[int] = None,
         trigger_context: Optional[Dict[str, Any]] = None,
         triggered_by: Optional[str] = None,
-        skill_tools_available: Optional[List[str]] = None,
         run_id: Optional[str] = None,
     ) -> Optional[str]:
         """Create a ``workflow_runs`` row with ``status='running'``.
@@ -69,7 +84,6 @@ class WorkflowRunService:
                     triggered_by=triggered_by,
                     trigger_context=trigger_context or {},
                     started_at=utcnow(),
-                    skill_tools_available=list(skill_tools_available or []),
                 )
                 session.add(row)
                 session.flush()
@@ -119,6 +133,9 @@ class WorkflowRunService:
                 if row is None:
                     logger.warning("finalize_run: unknown run %s", run_id)
                     return False
+                # Only runs begun via the agent-runs or workflows start routes
+                # carry it; anything else is labelled rather than dropped.
+                run_kind = (row.trigger_context or {}).get("run_kind") or "unknown"
                 now = utcnow()
                 row.status = status
                 row.finished_at = now
@@ -134,17 +151,21 @@ class WorkflowRunService:
                 if row.started_at is not None:
                     delta = now - row.started_at
                     row.duration_ms = int(delta.total_seconds() * 1000)
-            logger.info("Workflow run finalised: %s -> %s", run_id, status)
-            return True
         except SQLAlchemyError as e:
             logger.warning("Could not finalise workflow run %s: %s", run_id, e)
             return False
+        # After the commit, so a write that fails is not counted as an outcome.
+        _runs_finished_counter().add(1, {"run_kind": str(run_kind), "status": status})
+        logger.info("Workflow run finalised: %s -> %s", run_id, status)
+        return True
 
     def list_runs(
         self,
         *,
         workflow_id: Optional[str] = None,
+        workflow_source: Optional[str] = None,
         status: Optional[str] = None,
+        run_kind: Optional[str] = None,
         started_at: Optional[datetime] = None,
         finished_at: Optional[datetime] = None,
         finished_after: Optional[datetime] = None,
@@ -154,9 +175,11 @@ class WorkflowRunService:
         """List runs, newest first. Does not include the (potentially
         large) ``result_summary`` field — use ``get_run`` for detail.
 
-        ``started_at`` is an inclusive lower bound on when the run
-        started. ``finished_after`` / ``finished_at`` bound when it
-        finished (inclusive).
+        ``workflow_source`` filters by how the run was started (e.g. "agent"
+        for runs enqueued through the agent-runs API). ``run_kind`` matches
+        the ``run_kind`` key of ``trigger_context``. ``started_at`` is an
+        inclusive lower bound on when the run started. ``finished_after`` /
+        ``finished_at`` bound when it finished (inclusive).
         """
         try:
             db = get_db_manager()
@@ -166,8 +189,14 @@ class WorkflowRunService:
                 stmt = select(WorkflowRun).where(WorkflowRun.deleted_at.is_(None))
                 if workflow_id:
                     stmt = stmt.where(WorkflowRun.workflow_id == workflow_id)
+                if workflow_source:
+                    stmt = stmt.where(WorkflowRun.workflow_source == workflow_source)
                 if status:
                     stmt = stmt.where(WorkflowRun.status == status)
+                if run_kind:
+                    stmt = stmt.where(
+                        WorkflowRun.trigger_context["run_kind"].astext == run_kind
+                    )
                 if started_at is not None:
                     stmt = stmt.where(
                         WorkflowRun.started_at >= _as_naive_utc(started_at)

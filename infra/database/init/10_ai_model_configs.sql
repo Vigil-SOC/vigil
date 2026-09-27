@@ -35,12 +35,4 @@ COMMENT ON COLUMN ai_model_configs.component IS
 COMMENT ON COLUMN ai_model_configs.settings IS
     'Component-specific overrides (max_tokens, thinking_budget, temperature)';
 
--- Seed chat_default from the existing default Anthropic provider so upgrades
--- behave identically to the previous hardcoded default.
-INSERT INTO ai_model_configs (component, provider_id, model_id, settings)
-SELECT 'chat_default', provider_id, default_model, '{}'::jsonb
-FROM llm_provider_configs
-WHERE provider_type = 'anthropic' AND is_default = TRUE
-ON CONFLICT (component) DO NOTHING;
-
 GRANT SELECT, INSERT, UPDATE, DELETE ON ai_model_configs TO deeptempo;

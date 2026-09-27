@@ -14,11 +14,15 @@ source "$(dirname "$0")/lib.sh"
 
 ensure_uv || exit 1
 
+# uv copies its arguments into the lock header, so relative paths keep the
+# committer's home directory out of the file.
+cd "$REPO_ROOT" || exit 1
+
 echo "Resolving dependencies for Python $(python_pin) across all platforms..."
-"$UV" pip compile "$REPO_ROOT/requirements.txt" \
+"$UV" pip compile requirements.txt \
     --universal \
     --python-version "$(python_pin)" \
-    -o "$REPO_ROOT/requirements.lock" || {
+    -o requirements.lock || {
     echo "Resolution failed. requirements.lock is unchanged." >&2
     exit 1
 }

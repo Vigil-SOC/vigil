@@ -24,6 +24,7 @@ from core.llm.providers import provider_service
 # was provided at /discover-models time).
 from core.llm.providers.registry import (
     _FALLBACK_MODELS_BY_PROVIDER,
+    VALID_PROVIDER_TYPES,
     fetch_provider_models,
     invalidate_model_cache,
 )
@@ -44,7 +45,6 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 
-VALID_PROVIDER_TYPES = {"anthropic", "openai", "ollama", "vertex"}
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 
 ANTHROPIC_FALLBACK_MODELS = list(_FALLBACK_MODELS_BY_PROVIDER["anthropic"])

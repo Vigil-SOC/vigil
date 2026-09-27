@@ -9,7 +9,6 @@ so no DB / Redis is required.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -23,8 +22,6 @@ ROOT = Path(__file__).resolve().parents[2]
 for _p in (ROOT,):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
-
-os.environ.setdefault("DEV_MODE", "true")
 
 
 class _FakeDataService:
@@ -230,13 +227,25 @@ def test_mitre_fields_propagate_on_update(fake_service):
     assert stored["predicted_techniques"][0]["technique_id"] == "T1021.002"
 
 
-def test_auth_bypass_in_dev_mode():
+def test_auth_bypass_in_dev_mode(monkeypatch):
     """verify_inbound_key returns without error when DEV_MODE=true."""
     from services.api.routers.vstrike import verify_inbound_key
 
-    os.environ["DEV_MODE"] = "true"
+    monkeypatch.setenv("DEV_MODE", "true")
     # No Authorization header → should still pass (no exception)
     verify_inbound_key(authorization=None)
+
+
+def test_auth_refuses_to_run_open_without_a_key(monkeypatch):
+    """With the bypass off and no key configured, the gate fails closed (503)."""
+    from fastapi import HTTPException
+
+    from services.api.routers import vstrike as vstrike_module
+
+    monkeypatch.setattr(vstrike_module, "_expected_inbound_key", lambda: None)
+    with pytest.raises(HTTPException) as excinfo:
+        vstrike_module.verify_inbound_key(authorization=None)
+    assert excinfo.value.status_code == 503
 
 
 def test_auth_requires_token_when_dev_mode_off(monkeypatch):

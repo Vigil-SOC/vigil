@@ -19,7 +19,7 @@ we do not backport to earlier minors.
 | Version | Supported | Notes |
 |---------|-----------|-------|
 | Latest `0.x` minor (currently `0.5.x`) | ✅ | Fixes ship here. Upgrade before reporting a bug you can only reproduce on an older tag. |
-| Older `0.x` minors | ❌ | No backports. While in `0.x`, minor bumps may break agent prompts, workflow schemas, and MCP interfaces — see [contributing](https://vigilsoc.org/docs/contributing/#versioning-and-releases). |
+| Older `0.x` minors | ❌ | No backports. What may change between releases is in [VERSIONING.md](VERSIONING.md). |
 | `main` (unreleased) | ✅ | Reports welcome; note the commit SHA. |
 
 Container images (`ghcr.io/vigil-soc/vigil-backend`, `vigil-daemon`,
@@ -208,13 +208,15 @@ Anything in this repository that a deployment actually runs:
 Not vulnerabilities. Reports on these will be closed with a pointer back here:
 
 - **`DEV_MODE=true` bypassing authentication.** That is its documented purpose.
-  It defaults to `false` in `core/config.py`, and `env.example` ships `true`
-  only for local development. See [DEV_MODE](https://vigilsoc.org/docs/dev-mode/).
-- **Default credentials in development material** — the `admin` / `admin123`
-  dev login and the default PostgreSQL password in
-  `infra/docker/docker-compose.yml`. Both are documented as
+  It defaults to `false` in `core/config.py` and in `env.example`; a developer
+  opts into it for a local instance, and the backend announces the bypass on
+  every startup. See [DEV_MODE](https://vigilsoc.org/docs/dev-mode/).
+- **Default credentials in development material** — the default PostgreSQL
+  password in `infra/docker/docker-compose.yml`, documented as
   must-change-before-production in
-  [production security](https://vigilsoc.org/docs/production-security/).
+  [production security](https://vigilsoc.org/docs/production-security/). No
+  default admin login ships; the first account is created through
+  `/api/auth/bootstrap`.
 - **Placeholder values in `env.example`.** They are a template, not a
   configuration.
 - **Findings that require a misconfiguration we already document as unsafe** —

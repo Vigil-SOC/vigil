@@ -8,13 +8,15 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from core.config import get_integration_config, is_integration_enabled
+from core.config import is_integration_enabled
 from core.federation.adapters._base import fresh_cursor, parse_cursor_since
 from core.federation.contract import (
     FederationAdapter,
     FetchResult,
     register_adapter,
 )
+from core.integrations._base.config import resolve
+from core.integrations.splunk.descriptor import SPLUNK
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -58,12 +60,13 @@ class SplunkAdapter:
         try:
             from core.integrations.splunk.client import SplunkService
 
-            cfg = get_integration_config("splunk")
+            # resolve() reads the password from the secrets store; unset fields are None.
+            cfg = resolve(SPLUNK)
             self._service = SplunkService(
-                server_url=cfg.get("server_url", ""),
-                username=cfg.get("username", ""),
-                password=cfg.get("password", ""),
-                verify_ssl=cfg.get("verify_ssl", False),
+                server_url=cfg["server_url"] or "",
+                username=cfg["username"] or "",
+                password=cfg["password"] or "",
+                verify_ssl=bool(cfg["verify_ssl"]),
             )
         except Exception as e:
             logger.warning("Splunk service init failed: %s", e)

@@ -465,8 +465,8 @@
     },
     "populated.to_dict.default": {
       "attachment_ids": [
-        "attachment_ids-a",
-        "attachment_ids-b"
+        52,
+        504
       ],
       "author": "author-value",
       "case_id": "case_id-value",
@@ -1296,19 +1296,24 @@
     "empty.to_dict.default": {
       "agent_id": null,
       "cache_creation_tokens": null,
+      "cache_read_cost_per_token": null,
       "cache_read_tokens": null,
-      "cost_usd": 0.0,
+      "cache_write_cost_per_token": null,
+      "cost_usd": null,
       "created_at": null,
       "duration_ms": null,
       "error": null,
       "has_thinking": false,
       "has_tools": false,
       "id": null,
+      "input_cost_per_token": null,
       "input_tokens": null,
       "interaction_id": null,
       "investigation_id": null,
       "model": null,
+      "output_cost_per_token": null,
       "output_tokens": null,
+      "rates_fetched_at": null,
       "request_messages": null,
       "response_content": null,
       "session_id": null,
@@ -1322,18 +1327,23 @@
     },
     "empty.to_summary_dict.default": {
       "agent_id": null,
-      "cost_usd": 0.0,
+      "cache_read_cost_per_token": null,
+      "cache_write_cost_per_token": null,
+      "cost_usd": null,
       "created_at": null,
       "duration_ms": null,
       "error": null,
       "has_thinking": false,
       "has_tools": false,
       "id": null,
+      "input_cost_per_token": null,
       "input_tokens": null,
       "interaction_id": null,
       "investigation_id": null,
       "model": null,
+      "output_cost_per_token": null,
       "output_tokens": null,
+      "rates_fetched_at": null,
       "session_id": null,
       "stop_reason": null,
       "thinking_enabled": null
@@ -1341,7 +1351,9 @@
     "populated.to_dict.default": {
       "agent_id": "agent_id-value",
       "cache_creation_tokens": 712,
+      "cache_read_cost_per_token": 9.43,
       "cache_read_tokens": 653,
+      "cache_write_cost_per_token": 1.71,
       "cost_usd": 6.56,
       "created_at": "2024-03-14T15:09:26.535000+00:00",
       "duration_ms": 577,
@@ -1349,11 +1361,14 @@
       "has_thinking": true,
       "has_tools": true,
       "id": 365,
+      "input_cost_per_token": 1.79,
       "input_tokens": 777,
       "interaction_id": "interaction_id-value",
       "investigation_id": "investigation_id-value",
       "model": "model-value",
+      "output_cost_per_token": 1.99,
       "output_tokens": 56,
+      "rates_fetched_at": "rates_fetched_at-value",
       "request_messages": {
         "sample": "request_messages-value"
       },
@@ -1373,6 +1388,8 @@
     },
     "populated.to_summary_dict.default": {
       "agent_id": "agent_id-value",
+      "cache_read_cost_per_token": 9.43,
+      "cache_write_cost_per_token": 1.71,
       "cost_usd": 6.56,
       "created_at": "2024-03-14T15:09:26.535000+00:00",
       "duration_ms": 577,
@@ -1380,11 +1397,14 @@
       "has_thinking": true,
       "has_tools": true,
       "id": 365,
+      "input_cost_per_token": 1.79,
       "input_tokens": 777,
       "interaction_id": "interaction_id-value",
       "investigation_id": "investigation_id-value",
       "model": "model-value",
+      "output_cost_per_token": 1.99,
       "output_tokens": 56,
+      "rates_fetched_at": "rates_fetched_at-value",
       "session_id": "session_id-value",
       "stop_reason": "stop_reason-value",
       "thinking_enabled": true
@@ -1513,8 +1533,8 @@
       "is_default": true,
       "name": "name-value",
       "notification_thresholds": [
-        "notification_thresholds-a",
-        "notification_thresholds-b"
+        283,
+        960
       ],
       "policy_id": "policy_id-value",
       "priority_level": "priority_level-value",
@@ -1557,52 +1577,6 @@
       "sketch_id": 407,
       "sketch_name": "sketch_name-value",
       "sketch_url": "sketch_url-value"
-    }
-  },
-  "Skill": {
-    "empty.to_dict.default": {
-      "category": null,
-      "created_at": null,
-      "created_by": null,
-      "description": null,
-      "execution_steps": [],
-      "input_schema": {},
-      "is_active": null,
-      "name": null,
-      "output_schema": {},
-      "prompt_template": null,
-      "required_tools": [],
-      "skill_id": null,
-      "updated_at": null,
-      "version": null
-    },
-    "populated.to_dict.default": {
-      "category": "category-value",
-      "created_at": "2024-03-14T15:09:26.535000+00:00",
-      "created_by": "created_by-value",
-      "description": "description-value",
-      "execution_steps": [
-        {
-          "item": "execution_steps-0"
-        }
-      ],
-      "input_schema": {
-        "sample": "input_schema-value"
-      },
-      "is_active": true,
-      "name": "name-value",
-      "output_schema": {
-        "sample": "output_schema-value"
-      },
-      "prompt_template": "prompt_template-value",
-      "required_tools": [
-        {
-          "item": "required_tools-0"
-        }
-      ],
-      "skill_id": "skill_id-value",
-      "updated_at": "2024-03-14T15:09:26.535000+00:00",
-      "version": 585
     }
   },
   "SystemConfig": {
@@ -1719,7 +1693,6 @@
       "finished_at": null,
       "result_summary": null,
       "run_id": null,
-      "skill_tools_available": [],
       "started_at": null,
       "status": null,
       "total_cost_usd": 0.0,
@@ -1735,7 +1708,6 @@
       "error": null,
       "finished_at": null,
       "run_id": null,
-      "skill_tools_available": [],
       "started_at": null,
       "status": null,
       "total_cost_usd": 0.0,
@@ -1752,11 +1724,6 @@
       "finished_at": "2024-03-14T15:09:26.535000+00:00",
       "result_summary": "result_summary-value",
       "run_id": "run_id-value",
-      "skill_tools_available": [
-        {
-          "item": "skill_tools_available-0"
-        }
-      ],
       "started_at": "2024-03-14T15:09:26.535000+00:00",
       "status": "status-value",
       "total_cost_usd": 7.53,
@@ -1774,11 +1741,6 @@
       "error": "error-value",
       "finished_at": "2024-03-14T15:09:26.535000+00:00",
       "run_id": "run_id-value",
-      "skill_tools_available": [
-        {
-          "item": "skill_tools_available-0"
-        }
-      ],
       "started_at": "2024-03-14T15:09:26.535000+00:00",
       "status": "status-value",
       "total_cost_usd": 7.53,

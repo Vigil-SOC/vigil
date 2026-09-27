@@ -71,18 +71,23 @@ _READONLY_LEADS = frozenset(
 def _is_destructive_mcp(name: str) -> bool:
     """True for a server-prefixed MCP tool that performs an irreversible action.
 
-    MCP names arrive as ``{server}_{tool}``; the action is the tool part. A
-    read-only lead verb wins outright; otherwise any destructive verb token marks
-    it. Deliberately conservative — a spurious drop just means chat recommends the
-    action instead of calling it, whereas a missed one is an ungated detonation.
+    Every token of the id is read, the server prefix included. Vendor tools
+    arrive as ``{server}_{tool}`` and Vigil's own arrive bare, so there is no
+    one prefix to strip — and stripping the first token off a bare name takes
+    the verb, which is the whole of what this decides on: ``isolate_host``
+    would be read as ``host``.
+
+    A read-only lead verb wins outright; otherwise any destructive verb token
+    marks it. Reading the prefix too can only over-drop, and that is the side to
+    err on — a spurious drop means chat recommends the action instead of calling
+    it, whereas a missed one is an ungated detonation.
 
     ART execute is named, not verb-matched: adding ``execute`` to the verb set
     would also drop ``splunk_execute``.
     """
     if name in EXECUTE_IDS:
         return True
-    action = name.split("_", 1)[1] if "_" in name else name
-    tokens = action.split("_")
+    tokens = name.split("_")
     if not tokens:
         return False
     if tokens[0] in _READONLY_LEADS:
@@ -126,10 +131,24 @@ def _declare(
     # Chat has no approval-resume path. Isolate/contain drop via the verb set;
     # ART execute is an explicit id (native and flattened) so ``execute`` stays
     # off that set and splunk_execute remains callable.
+    #
+    # ``approve_action`` is not dropped, and that is the decision rather than an
+    # oversight: what it approves is an action a person already queued and can
+    # already release from the approvals screen, so chat releasing it is the same
+    # authority reached by a different door -- whereas ``isolate_host`` in chat
+    # would be a detonation nobody queued. If that reading is ever revisited, the
+    # thing to change is this list, not the verb set, which decides a different
+    # question.
     static_names = [n for n in static_names if n not in EXECUTE_IDS]
     mcp_names = [n for n in mcp if n not in static_names and not _is_destructive_mcp(n)]
     names = static_names + mcp_names
-    catalogue = {**static, **mcp}
+    # Static last, so a name both sides carry is described by the side that will
+    # answer it: tools_router tries the backend first and only reaches an MCP
+    # server for a name the backend does not claim. Spreading mcp last instead
+    # declared the MCP tool's schema against the backend's implementation -- and
+    # dropped six tools outright below, because those MCP tools carry no
+    # docstring and a tool with no description is not offered at all.
+    catalogue = {**mcp, **static}
     declared = []
     for name in names:
         entry = catalogue[name]

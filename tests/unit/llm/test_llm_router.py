@@ -242,6 +242,82 @@ async def test_dispatch_bifrost_openai_extracts_cache_read_tokens():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_bifrost_records_genai_metrics_once():
+    """#894: one successful dispatch records exactly once, with the returned
+    usage and the priced cost (attribute shape is covered in test_telemetry)."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))
+        ],
+        model="openai/gpt-4o-mini",
+        usage=SimpleNamespace(
+            prompt_tokens=1000,
+            completion_tokens=200,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=750),
+        ),
+    )
+    mock_client = MagicMock()
+    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
+        "core.llm.router.router.record_llm_call"
+    ) as record, patch(
+        "core.llm.router.router.compute_call_cost", return_value=0.0123
+    ) as cost:
+        await router.dispatch(
+            provider=_openai_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+    cost.assert_called_once_with(
+        "gpt-4o-mini",
+        "openai",
+        1000,
+        200,
+        cache_read_tokens=750,
+        cache_creation_tokens=0,
+    )
+    record.assert_called_once()
+    kw = record.call_args.kwargs
+    assert kw["model"] == "gpt-4o-mini"  # requested id, not Bifrost's echo
+    assert kw["provider"] == "openai"
+    assert (kw["input_tokens"], kw["output_tokens"], kw["cache_read_tokens"]) == (
+        1000,
+        200,
+        750,
+    )
+    assert kw["cost_usd"] == 0.0123
+    assert kw["duration_s"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_dispatch_bifrost_survives_metrics_failure():
+    """#894: telemetry must never raise on the dispatch path."""
+    router = LLMRouter(bifrost_url="http://test-bifrost:8080")
+    fake_resp = SimpleNamespace(
+        choices=[
+            SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))
+        ],
+        model="ollama/llama3.1:8b",
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+    mock_client = MagicMock()
+    mock_client.close = AsyncMock()
+    mock_client.chat.completions.create = AsyncMock(return_value=fake_resp)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client), patch(
+        "core.llm.router.router.compute_call_cost", side_effect=RuntimeError("boom")
+    ):
+        out = await router.dispatch(
+            provider=_ollama_spec(),
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    assert out["content"] == "ok"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_bifrost_openai_no_cache_details_safe():
     """When prompt_tokens_details is missing (older OpenAI responses or models
     without cache support), cache_read_tokens defaults to 0 — must not raise.

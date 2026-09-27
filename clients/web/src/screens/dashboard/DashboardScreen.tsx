@@ -10,6 +10,8 @@ import { EmptyState, FilterButton, FilterGroup } from '../../shared/ui'
 import { DataTable, useTableSort, searchRows, sortRows, ColumnPicker } from '../../shared/DataTable'
 import { baseFindingColumns, extraFindingColumns } from './findingsColumns'
 import FindingPopup from './FindingPopup'
+import ExclusionsSection from './ExclusionsSection'
+import type { ExclusionView } from '../../services/api'
 import AttackTechniqueFindings from './AttackTechniqueFindings'
 import { SEV_COLOR, TL_MONTHS, type TimelineEvent } from './attackData'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -64,9 +66,22 @@ function findingPrompt(f: Finding): string {
   return `Investigate finding ${f.id} — ${parts.join(', ')}. What happened and what should I do next?`
 }
 
+const EXCLUSION_VIEWS: { value: ExclusionView; label: string }[] = [
+  { value: 'hide', label: 'Hidden' },
+  { value: 'include', label: 'Shown' },
+  { value: 'only', label: 'Only excluded' },
+]
+
+function isExclusionView(value: string): value is ExclusionView {
+  return EXCLUSION_VIEWS.some((v) => v.value === value)
+}
+
 function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openChat' | 'goSettings'>) {
   const { notify } = useToast()
-  const { rows, phase, error, reload } = useFindings()
+  // analyst-excluded IPs stay out of the queue unless asked for
+  const [exView, setExView] = useState<ExclusionView>('hide')
+  const [exclusionsKey, setExclusionsKey] = useState(0)
+  const { rows, phase, error, reload } = useFindings(exView)
   const { kpis, reload: reloadKpis } = useDashboardKpis()
   const [initialPreferences] = useState(loadFindingsViewPreferences)
   const [query, setQuery] = useState('')
@@ -147,7 +162,7 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
   }
 
   // re-sorting keeps the same rows, so it doesn't reset the page
-  useEffect(() => { setPage(1) }, [query, sev, src, pageSize])
+  useEffect(() => { setPage(1) }, [query, sev, src, pageSize, exView])
 
   const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize))
   const safePage = Math.min(page, pageCount)
@@ -195,8 +210,8 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
           <input aria-label="Search findings" placeholder="Search findings, hosts, techniques…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
         <FilterButton
-          activeCount={(sev !== 'any' ? 1 : 0) + (src !== 'any' ? 1 : 0)}
-          onClearAll={() => { setSev('any'); setSrc('any'); setHiddenCols(null) }}
+          activeCount={(sev !== 'any' ? 1 : 0) + (src !== 'any' ? 1 : 0) + (exView !== 'hide' ? 1 : 0)}
+          onClearAll={() => { setSev('any'); setSrc('any'); setExView('hide'); setHiddenCols(null) }}
         >
           <FilterGroup
             label="Severity"
@@ -213,6 +228,14 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
             ]}
           />
           <FilterGroup label="Source" value={src} onSelect={setSrc} options={srcOptions} />
+          <FilterGroup
+            label="Excluded IPs"
+            value={exView}
+            onSelect={(value) => {
+              if (isExclusionView(value)) setExView(value)
+            }}
+            options={EXCLUSION_VIEWS}
+          />
           <ColumnPicker
             columns={allColumns}
             hidden={effectiveHidden}
@@ -234,6 +257,15 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
         ><Icon name="download" /> Export</button>
       </div>
 
+      {exView !== 'hide' && (
+        <div className="exclusions-banner" role="status">
+          <Icon name="eye" size={14} />
+          {exView === 'only'
+            ? 'Showing only findings that name an excluded IP. They stay out of the queue and KPIs.'
+            : 'Showing excluded findings alongside the queue. Rows marked “excluded” name an excluded IP.'}
+          <button className="btn ghost" onClick={() => setExView('hide')}>Hide them</button>
+        </div>
+      )}
       <div className="table-wrap list-scroll list-scroll-kpi">
         <DataTable
           columns={columns}
@@ -248,6 +280,15 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
           className="tbl findings-tbl"
           loadingMessage={<EmptyState loading table compact icon="search" title="Loading findings…" />}
           emptyMessage={
+            exView === 'only' && rows.length === 0 ? (
+              <EmptyState
+                table
+                icon="filter"
+                title="No findings name an excluded IP"
+                body="Nothing is being hidden from the queue right now."
+                primary={{ label: 'Back to the queue', onClick: () => setExView('hide'), icon: 'close' }}
+              />
+            ) : (
             <EmptyState
               table
               icon={rows.length === 0 ? 'shield' : 'filter'}
@@ -255,6 +296,7 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
               body={rows.length === 0 ? 'Ingest alerts or run a workflow to populate the findings queue.' : 'Clear search and filters to return to the full findings queue.'}
               primary={rows.length === 0 ? { label: 'Configure integrations', onClick: () => goSettings('integrations'), icon: 'link' } : { label: 'Clear filters', onClick: () => { setQuery(''); setSev('any'); setSrc('any') }, icon: 'close' }}
             />
+            )
           }
         />
       </div>
@@ -286,7 +328,17 @@ function FindingsTab({ openChat, goSettings }: Pick<ConsoleScreenProps, 'openCha
           ><Icon name="chevR" size={14} /></button>
         </span>
       </div>
-      <FindingPopup id={detailId} onClose={() => setDetailId(null)} onChanged={() => { reload(); reloadKpis() }} onConfigureAi={() => goSettings('ai-config')} />
+      <ExclusionsSection
+        refreshKey={exclusionsKey}
+        onChanged={refresh}
+        onShowExcluded={() => setExView('only')}
+      />
+      <FindingPopup
+        id={detailId}
+        onClose={() => setDetailId(null)}
+        onChanged={() => { reload(); reloadKpis(); setExclusionsKey((k) => k + 1) }}
+        onConfigureAi={() => goSettings('ai-config')}
+      />
     </>
   )
 }

@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from 'react'
 import { format } from 'date-fns'
+import { Link } from 'react-router-dom'
 import { casesApi } from '../../services/api'
 import type { Schema } from '../../services/apiTypes'
 import { Icon } from '../../shared/icons'
@@ -205,11 +206,11 @@ export function ResolutionStepsCard({ steps }: { steps: ResolutionStep[] }) {
   )
 }
 
-const PRIO_ORDER = { critical: 0, high: 1, medium: 2, low: 3 } as const
+const PRIO_ORDER = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 } as const
 type TaskPriority = keyof typeof PRIO_ORDER
 const isTaskPriority = (v: string | undefined): v is TaskPriority =>
   v !== undefined && Object.prototype.hasOwnProperty.call(PRIO_ORDER, v)
-/** Sort rank for a task's priority; anything the API sends that we don't know sorts as medium. */
+/** Sort rank for a task's priority; the unknown band sorts last. Any other name sorts as medium. */
 const prioOrder = (v: string | undefined) => PRIO_ORDER[isTaskPriority(v) ? v : 'medium']
 type CaseTask = Schema<'CaseTaskSchema'>
 export function TasksCard({ caseId }: { caseId: string }) {
@@ -766,18 +767,26 @@ export interface Activity {
   description?: string
   activity_type?: string
   timestamp?: string
+  details?: Record<string, unknown>
 }
 export function ActivityCard({ activities }: { activities: Activity[] }) {
   return (
     <SectionCard title="Recent activity" count={`${activities.length}`}>
       <div className="p-[18px] flex flex-col gap-3">
         {activities.length === 0 && <MiniEmpty icon="clock" title="No recent activity" body="Case updates, comments, workflow events, and finding changes will appear here." />}
-        {activities.slice(0, 12).map((a, i) => (
-          <div key={i} className="text-[13px]">
-            <div className="text-tx-2">{a.description || '—'}</div>
-            <div className="text-xs text-tx-faint mt-[2px]">{a.activity_type || 'event'} · {fmtDT(a.timestamp)}</div>
-          </div>
-        ))}
+        {activities.slice(0, 12).map((a, i) => {
+          // The run bridge writes run_id onto report/handoff activities; that id is the whole link.
+          const runId = typeof a.details?.run_id === 'string' ? a.details.run_id : null
+          return (
+            <div key={i} className="text-[13px]">
+              <div className="text-tx-2">{a.description || '—'}</div>
+              <div className="text-xs text-tx-faint mt-[2px]">
+                {a.activity_type || 'event'} · {fmtDT(a.timestamp)}
+                {runId && <> · <Link className="text-accent-2 hover:underline" aria-label={`Open run ${runId}`} to={`/workflows?run=${encodeURIComponent(runId)}`}>Open run</Link></>}
+              </div>
+            </div>
+          )
+        })}
       </div>
     </SectionCard>
   )

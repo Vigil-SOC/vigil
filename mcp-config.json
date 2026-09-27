@@ -15,26 +15,6 @@
       }
     },
 
-    "_comment_internal": "--- DeepTempo Internal Servers ---",
-
-    "deeptempo-findings": {
-      "command": "python3",
-      "args": ["tools/mcp/deeptempo_findings.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
-    "tempo-flow": {
-      "command": "python3",
-      "args": ["tools/mcp/tempo_flow.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
-    "approval": {
-      "command": "python3",
-      "args": ["tools/mcp/approval.py"],
-      "cwd": "${workspaceFolder}"
-    },
-
     "security-detections": {
       "command": "npx",
       "args": ["-y", "security-detections-mcp@3.3.0"],
@@ -220,11 +200,12 @@
     },
 
     "cribl-stream": {
-      "command": "uvx",
-      "args": ["--from", "git+https://github.com/pebbletek/cribl-mcp.git@v0.1.12", "cribl-mcp"],
+      "command": "npx",
+      "args": ["-y", "@pebbletek/cribl-mcp@0.1.12"],
       "env": {
         "_setup_note": "Cribl Stream MCP (community, MIT). See: https://docs.cribl.io/copilot/cribl-mcp-server/",
         "CRIBL_BASE_URL": "${CRIBL_BASE_URL}",
+        "CRIBL_AUTH_TYPE": "${CRIBL_AUTH_TYPE:-cloud}",
         "CRIBL_CLIENT_ID": "${CRIBL_CLIENT_ID}",
         "CRIBL_CLIENT_SECRET": "${CRIBL_CLIENT_SECRET}"
       }

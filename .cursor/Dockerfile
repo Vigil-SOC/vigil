@@ -2,6 +2,8 @@ FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# python-is-python3: CI's setup-python puts `python` on PATH and the workflows
+# call it bare (`python scripts/check_one_loop.py`, `python -c ...init_database()`).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
@@ -12,6 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
+    python-is-python3 \
     sudo \
     && rm -rf /var/lib/apt/lists/*
 
@@ -62,6 +65,28 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && helm version --short
 
 ########################################################
+# ACTIONLINT + HADOLINT (CI lint gates)
+########################################################
+
+# ci-cd.yml gates workflow edits with `docker://rhysd/actionlint:1.7.12` and
+# Dockerfiles with `hadolint/hadolint-action@v3.5.0` (hadolint v2.15.1). Both
+# are static binaries pinned to the same versions so a local run reports what
+# CI will. actionlint reads .github/actionlint.yaml from the repo root, which
+# keeps shellcheck findings out of the gate, so shellcheck is not needed here.
+RUN ARCH="$(dpkg --print-architecture)" \
+    && ACTIONLINT_VERSION=1.7.12 \
+    && curl --retry 3 --retry-delay 5 -fsSL \
+       "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${ARCH}.tar.gz" \
+       | tar -xz -C /usr/local/bin actionlint \
+    && actionlint -version \
+    && case "$ARCH" in amd64) HL_ARCH=x86_64 ;; arm64) HL_ARCH=arm64 ;; *) echo "unsupported arch $ARCH" && exit 1 ;; esac \
+    && HADOLINT_VERSION=v2.15.1 \
+    && curl --retry 3 --retry-delay 5 -fsSL -o /usr/local/bin/hadolint \
+       "https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-${HL_ARCH}" \
+    && chmod +x /usr/local/bin/hadolint \
+    && hadolint --version
+
+########################################################
 # AGENT-BROWSER (live tests)
 ########################################################
 
@@ -82,6 +107,20 @@ RUN ARCH="$(dpkg --print-architecture)" \
     && apt-get update \
     && agent-browser install --with-deps \
     && rm -rf /root/.agent-browser /var/lib/apt/lists/*
+
+# The CLI serves its own usage guide via `agent-browser skills get core`, which
+# its discovery stub tells agents to read first. The binary finds that content
+# in the npm package's `skill-data/` next to it; the release asset ships none,
+# so `skills` fails with "Skills directory not found". Fetch `skill-data/` from
+# the same tag and point the CLI at it.
+RUN AB_VERSION=v0.36.0 \
+    && mkdir -p /usr/local/share/agent-browser \
+    && curl --retry 3 --retry-delay 5 -fsSL \
+       "https://github.com/vercel-labs/agent-browser/archive/refs/tags/${AB_VERSION}.tar.gz" \
+       | tar -xz -C /usr/local/share/agent-browser --strip-components=1 \
+             "agent-browser-${AB_VERSION#v}/skill-data" \
+    && AGENT_BROWSER_SKILLS_DIR=/usr/local/share/agent-browser/skill-data agent-browser skills get core >/dev/null
+ENV AGENT_BROWSER_SKILLS_DIR=/usr/local/share/agent-browser/skill-data
 
 # Chrome's user-namespace sandbox is unavailable under Ubuntu 24.04's AppArmor
 # defaults and inside VMs; without this every launch dies before DevTools starts.

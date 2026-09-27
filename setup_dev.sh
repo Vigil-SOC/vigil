@@ -16,11 +16,16 @@ elif ! node -e "process.exit(parseInt(process.version.slice(1))>=18?0:1)" 2>/dev
 fi
 [ "$WARNINGS" -gt 0 ] && echo ""
 
-# Environment
+# Environment. Create-only: an existing .env is never rewritten, so an install
+# already configured for the DEV_MODE bypass keeps it.
 if [ ! -f "$REPO_ROOT/.env" ]; then
     cp "$REPO_ROOT/env.example" "$REPO_ROOT/.env"
-    echo "Created .env from env.example (DEV_MODE=true)"
+    echo "Created .env from env.example (authentication on; first run creates the admin)"
 fi
+# A fresh setup boots with auth on, which needs a JWT signing secret. Minted
+# here so the first ./start.sh finds it; a JWT_SECRET_KEY set in .env still
+# wins at start time (start.sh loads .env before calling this).
+ensure_jwt_secret
 
 # Python
 ensure_venv
@@ -29,7 +34,7 @@ echo "Python dependencies installed."
 install_dev_deps
 
 # uv / uvx — several integration MCP servers (crowdstrike, sentinelone,
-# pagerduty, aws-security, gcp-*, cribl-stream) are launched via `uvx`. Without
+# pagerduty, aws-security, gcp-*) are launched via `uvx`. Without
 # it those servers can't spawn, so the integrations silently never connect.
 if ! command -v uvx &>/dev/null && ! [ -x "$HOME/.local/bin/uvx" ]; then
     echo "Installing uv (provides uvx for integration MCP servers)..."

@@ -4,16 +4,25 @@ import logging
 from typing import Dict, List, Optional
 
 from core.agents.builtins import BUILTIN_AGENTS, AgentProfile
-from core.agents.prompts import prompt_for_row
+from core.agents.prompts import prompt_for_row, render_confidence_bands
+from core.response.config import ResponseConfig
 
 logger = logging.getLogger(__name__)
 
 
 class SOCAgentLibrary:
     @staticmethod
-    def get_all_agents() -> Dict[str, AgentProfile]:
-        # Built-ins travel through the same builder as customs (#482).
-        return {r["id"]: SOCAgentLibrary.build_profile(r) for r in BUILTIN_AGENTS}
+    def get_all_agents(
+        response_config: Optional[ResponseConfig] = None,
+    ) -> Dict[str, AgentProfile]:
+        # Built-ins travel through the same builder as customs (#482), after
+        # their confidence-band lines are filled from the configured values
+        # (#916) so the prompt states the thresholds the gate enforces.
+        config = response_config or ResponseConfig.from_settings()
+        return {
+            r["id"]: SOCAgentLibrary.build_profile(render_confidence_bands(r, config))
+            for r in BUILTIN_AGENTS
+        }
 
     @staticmethod
     def build_profile(row: dict) -> AgentProfile:

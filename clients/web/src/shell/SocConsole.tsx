@@ -10,6 +10,7 @@ import ExtensionHost from '../extensions/ExtensionHost'
 import { accentVars } from '../shared/accent'
 import { bgVars, isDarkBase } from './bg'
 import Chat from './Chat'
+import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
 import ErrorBoundary from './ErrorBoundary'
 import { ToastProvider } from './toast'
@@ -24,6 +25,7 @@ import AnalyticsScreen from '../screens/analytics/AnalyticsScreen'
 import DecisionsScreen from '../screens/decisions/DecisionsScreen'
 import WorkflowsScreen from '../screens/workflows/WorkflowsScreen'
 import AutoOpsScreen from '../screens/autoops/AutoOpsScreen'
+import HealthScreen from '../screens/health/HealthScreen'
 import SettingsScreen from '../screens/settings/SettingsScreen'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import { VigilMark, VigilLogo } from '../shared/VigilLogo'
@@ -36,6 +38,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
   decisions: DecisionsScreen,
   workflows: WorkflowsScreen,
   autoops: AutoOpsScreen,
+  health: HealthScreen,
   settings: SettingsScreen,
 }
 
@@ -300,6 +303,7 @@ function SocConsoleInner() {
             )
           })}
           <div className="nav-spacer" />
+          <DevModeWarning />
           <UserMenu />
         </nav>
 

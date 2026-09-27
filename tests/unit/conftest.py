@@ -31,12 +31,12 @@ from sqlalchemy import text
 # service unit job, which runs `-m "not external_service"` with no Postgres.
 _DB_MARKERS = ("external_service",)
 
-# Mirrors what CI's "Enable Postgres extensions" step installs. Individually
-# tolerant, matching DatabaseManager.create_tables(): an image without pgvector
-# should fail on the CREATE TABLE that needs it, naming the real problem,
+# Mirrors what CI's "Enable Postgres extensions" step installs. Both ship with
+# stock Postgres; pg_trgm is what the findings GIN index (gin_trgm_ops) needs.
+# Individually tolerant, matching DatabaseManager.create_tables(): a missing
+# extension should fail on the CREATE that needs it, naming the real problem,
 # rather than here.
 _EXTENSIONS = (
-    "CREATE EXTENSION IF NOT EXISTS vector",
     "CREATE EXTENSION IF NOT EXISTS pg_trgm",
     'CREATE EXTENSION IF NOT EXISTS "uuid-ossp"',
 )
@@ -144,6 +144,7 @@ def _isolate_database(request):
 def episodic_session():
     from core.storage.connection import get_db_session
     from core.storage.models import (
+        EpisodicDistilMarker,
         EpisodicGap,
         EpisodicReadLog,
         EpisodicSighting,
@@ -158,6 +159,7 @@ def episodic_session():
             EpisodicVerdict,
             EpisodicSighting,
             EpisodicGap,
+            EpisodicDistilMarker,
             EpisodicReadLog,
         ):
             db.query(model).delete()

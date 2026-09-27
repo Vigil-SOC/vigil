@@ -4,9 +4,12 @@
 records so the record data stays free of prompt-template text.
 """
 
-from typing import Any, Iterable, Mapping, Optional
+from string import Template
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 from core.memory.recall_contract import RECALL_TOOL
+from core.response.config import ResponseConfig
+from core.skills.skill_library import READ_SKILL_TOOL, Skill, load_skills, skill_roots
 
 # Read-only, and the wording carries ADR 0015 rather than gesturing at it. A
 # prior Verdict is not a disposition: the ADR's first named failure is a benign
@@ -52,6 +55,39 @@ def _memory_section(tools: Optional[Iterable[str]]) -> str:
     return _MEMORY_BLOCK if RECALL_TOOL in set(tools or ()) else ""
 
 
+# Names and descriptions only, as the spec has it: the body is read on demand
+# through read_skill so the prompt stays the size of an index, not a library.
+_SKILLS_HEADER = """<available_skills>
+Skills are procedures written for you. When a task matches a description below,
+call read_skill with the skill's name and follow the SKILL.md body it returns;
+a body may name supporting files you read with read_skill(name, file).
+"""
+
+
+def _skills_section(
+    tools: Optional[Iterable[str]], skills: Optional[Iterable[Skill]]
+) -> str:
+    """The skills index for an agent granted read_skill, else ''.
+
+    Gated on the grant as ``_memory_section`` is, and never on the library being
+    non-empty: an agent without the grant must not be told about a tool its turn
+    does not carry, whatever is on disk. ``skills`` is None when the caller
+    wants the configured roots read; a granted agent with nothing loaded gets
+    an empty index rather than no block, which tells it the tool exists.
+    """
+    if READ_SKILL_TOOL not in set(tools or ()):
+        return ""
+    if skills is None:
+        skills = load_skills(skill_roots())
+    # One line per skill even when the description was a YAML block scalar.
+    lines = [f"- {s.name}: {' '.join(s.description.split())}" for s in skills]
+    return (
+        _SKILLS_HEADER
+        + "\n".join(lines or ["(no skills loaded)"])
+        + "\n</available_skills>\n"
+    )
+
+
 BASE_PROMPT = """You are a SOC {role} in the Vigil SOC platform.
 
 <security_boundaries>
@@ -85,7 +121,7 @@ Use MCP tools (server_tool format):
 - Threat Intel: virustotal, shodan, alienvault tools
 </available_tools>
 
-{memory_operations}
+{memory_operations}{available_skills}
 <principles>
 - Always fetch data via tools before analyzing
 - Be evidence-based and document reasoning
@@ -101,19 +137,54 @@ def render_base_prompt(
     extra_principles: str = "",
     methodology: str = "",
     tools: Optional[Iterable[str]] = None,
+    skills: Optional[Iterable[Skill]] = None,
 ) -> str:
     """Render BASE_PROMPT with the given fragments. Shared by built-in + custom.
 
     ``tools`` is the agent's ``recommended_tools``, which is what decides
-    whether the memory block appears: the prompt describes what this agent can
-    do, and an agent without the grant must not be told to recall (#735).
+    whether the memory and skills blocks appear: the prompt describes what this
+    agent can do, and an agent without the grant must not be told to recall
+    (#735) or to read a skill (#925). ``skills`` overrides the configured
+    roots; tests pass fixtures, production leaves it None.
     """
+    tools = list(tools or ())
     return BASE_PROMPT.format(
         role=role,
         extra_principles=extra_principles or "",
         methodology=methodology or "",
         memory_operations=_memory_section(tools),
+        available_skills=_skills_section(tools, skills),
     )
+
+
+# The record fields that may carry band placeholders (see core.agents.builtins).
+_BAND_FIELDS = ("extra_principles", "methodology")
+
+
+def confidence_band_values(config: ResponseConfig) -> Dict[str, str]:
+    """Placeholder values for the band lines. Bands are written half-open
+    (``0.85-<0.90``) so no upper edge has to be derived from the next line."""
+    return {
+        "auto_approve": f"{config.confidence_threshold:.2f}",
+        "review": f"{config.review_threshold:.2f}",
+        "monitor": f"{config.monitor_threshold:.2f}",
+    }
+
+
+def render_confidence_bands(
+    row: Mapping[str, Any], config: ResponseConfig
+) -> Dict[str, Any]:
+    """Return ``row`` with its band placeholders filled from ``config``.
+
+    ``safe_substitute`` so a record with no placeholders, or a stray ``$``,
+    passes through unchanged; only built-in records are rendered this way.
+    """
+    values = confidence_band_values(config)
+    rendered = dict(row)
+    for key in _BAND_FIELDS:
+        if row.get(key):
+            rendered[key] = Template(str(row[key])).safe_substitute(values)
+    return rendered
 
 
 # Both callers hold an agent record and were making the same four-field call, so

@@ -37,7 +37,18 @@ export interface SpendPayload {
   cost_usd: number | null;
   // How the rates resolved, or null when nothing priced it: a $0.00 from a catalog
   // entry and a $0.00 nobody could price are the same number and nothing alike.
+  // "unknown" is that second case, kept as the string with null rates.
   pricing_source: string | null;
+  // Per-token USD that produced cost_usd, and when the catalog fetched them.
+  // Null together when the call is unpriced. A row written before these fields
+  // existed still folds: seedFrom reads cost_usd only.
+  rates: {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+  } | null;
+  fetched_at: string | null;
 }
 
 // A value, never a throw: the exhaustiveness argument applies here or nowhere.
@@ -86,6 +97,13 @@ export interface Budget {
 export interface Priced {
   cost_usd: number | null;
   source: string | null;
+  rates: {
+    input: number;
+    output: number;
+    cache_read: number;
+    cache_write: number;
+  } | null;
+  fetched_at: string | null;
 }
 
 export const ZERO_TOKENS: TokenCounts = { input: 0, output: 0, cache_read: 0, cache_write: 0 };

@@ -216,13 +216,18 @@ jobs:
       # process.argv[1], which --eval leaves undefined. That is the whole point --
       # it proves every import resolves inside the image (the failure mode that
       # typecheck cannot see, since tsc reads .ts and node runs the emitted .js)
-      # without needing a Postgres or a Redis to connect to.
-      - name: Smoke test — both entry points load
+      # without needing a Postgres or a Redis to connect to. It also checks every
+      # registered arch file shipped, since tsc emits none of the YAML.
+      - name: Smoke test — entry points load and arch files ship
         run: |
           docker run --rm vigil-agent:ci \
             node --input-type=module -e "
               await import('/app/dist/worker.js');
               await import('/app/dist/serve.js');
+              const { existsSync } = await import('node:fs');
+              const { archFor, registeredKinds } = await import('/app/dist/arch/registry.js');
+              const missing = registeredKinds().map((k) => archFor(k).arch).filter((p) => !existsSync(p));
+              if (missing.length) throw new Error('arch files missing from image: ' + missing.join(', '));
               console.log('agent ok');
             "
 
@@ -386,7 +391,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: agent_test
           POSTGRES_USER: test
@@ -449,7 +454,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: deeptempo_test
           POSTGRES_USER: test
@@ -474,7 +479,8 @@ jobs:
           - 6379:6379
     env:
       TESTING: "true"
-      DEV_MODE: "true"
+      # Auth on, as a fresh install runs; tests/conftest.py supplies the JWT secret.
+      DEV_MODE: "false"
       SECRET_KEY: "test-secret-key"
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
@@ -512,7 +518,7 @@ jobs:
       - name: Enable Postgres extensions
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+            -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
       - name: Initialize schema
         # Strict here, and only here: CI provisions from empty, so a schema that
@@ -559,7 +565,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: deeptempo_test
           POSTGRES_USER: test
@@ -595,7 +601,7 @@ jobs:
       - name: Enable Postgres extensions
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+            -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
       - name: Initialize schema
         # Strict here, and only here: CI provisions from empty, so a schema that

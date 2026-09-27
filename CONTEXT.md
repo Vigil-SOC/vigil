@@ -6,7 +6,12 @@ files and cross-cutting infrastructure has a deliberate home. `core/` has two
 tiers: **capability domains** (what the SOC does) and a **shared-infrastructure
 tier** (`storage`, `platform`) that capability domains depend on. One section
 reaches outside `core/`: the **agent layer**'s vocabulary is here because its
-terms collide with the domains' rather than sitting apart from them.
+terms collide with the domains' rather than sitting apart from them. A third
+grouping, the **versioned API surface** (`core/api/v1/`), sits above the
+capability domains: it composes them into the frozen HTTP contract and imports
+domains freely. Nothing under `core/` imports it back (`.importlinter`): where
+a console router and a v1 router answer the same read, the read lives in the
+domain and both call down into it.
 
 ## Language
 
@@ -249,9 +254,12 @@ _Avoid_: corroboration (that is the effect of several sources agreeing, not one
 source's direction), confidence, polarity, sentiment
 
 **Trust**:
-Who concluded — `analyst` when a person closed it, `agent` when the daemon did.
-The other axis on a **Verdict**'s sources, alongside **Source Tier**. Unrelated
-to **Connector Trust**, which is about admitting a third-party origin.
+Who concluded — `analyst` when a person closed it at a keyboard, `agent` when a
+program did. A program holding a credential minted by a person is still a
+program: it acts with that person's standing, `closed_by` records whose, and
+`analyst` is the one record this system will not let an agent claim on its own
+behalf. The other axis on a **Verdict**'s sources, alongside **Source Tier**.
+Unrelated to **Connector Trust**, which is about admitting a third-party origin.
 _Avoid_: connector trust, source tier, confidence
 
 **Verdict**:
@@ -293,6 +301,23 @@ reads "database first" and writes the file only "for backward compatibility"
 so losing the file loses the data: the secrets store, `mcp_server_enabled.json`,
 `detection_sources.json`, `custom_integrations/`. Only Originals constrain where
 the State Directory can live.
+
+### Versioned API surface
+
+**`core/api/v1/`**:
+The frozen HTTP contract — the subset of routes an external caller (the platform,
+contributors, other tools) may rely on, versioned under `/api/v1`. A route lives
+here because it is a durable record or an act on one; console-only wiring stays
+on the unversioned routers under `services/api/routers/` and `core/<domain>/`.
+Membership is by file: a route in this package is a promise, guarded by the
+`contract.snapshot.json` pin. Each router dual-mounts (its `/api/v1/<res>` path
+plus the pre-version `/api/<res>` via `RouterMeta.legacy_prefixes`) so existing
+callers keep working during the port. This package composes the capability
+domains (and may import them); the shared-infrastructure tier must not import it
+(`.importlinter` tiers contract). See `core/api/v1/README.md` for the recipe and
+the internal/external test.
+_Avoid_: "the API" (ambiguous with the unversioned console routes), calling a
+console route "v1".
 
 ### Agent layer
 
@@ -396,7 +421,9 @@ _Avoid_: page, tab, view
   terminates, and from a **Case** when it closes; it never writes during a run,
   and a run reads it once at start (ADR 0015)
 - Closing a **Case** writes one **Verdict**, whose Trust is `analyst` when a
-  person closed it and `agent` otherwise; reopening the Case withdraws it
+  person closed it and `agent` otherwise — including when a program closed it
+  with a person's credential, which `closed_by` names; reopening the Case
+  withdraws the Verdict
 - A **Verdict**'s sources each carry a **Source Tier** and the Verdict carries
   one **Trust**. The two are independent axes: **Trust** is who concluded, and
   a `feed`-tier source can be cited by an `analyst`

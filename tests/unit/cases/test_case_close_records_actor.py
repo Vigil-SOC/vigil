@@ -48,7 +48,7 @@ def service(monkeypatch):
 
 
 def _routes(monkeypatch, *, case, updated=True):
-    from services.api.routers import cases
+    from core.api.v1 import cases_router as cases
 
     captured = {}
 
@@ -63,7 +63,7 @@ def _routes(monkeypatch, *, case, updated=True):
 
 @pytest.mark.asyncio
 async def test_a_status_edit_to_closed_records_the_principal(monkeypatch, service):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, _ = _routes(monkeypatch, case={"case_id": "c1", "status": "investigating"})
 
@@ -79,7 +79,7 @@ async def test_a_status_edit_to_closed_records_the_principal(monkeypatch, servic
 
 @pytest.mark.asyncio
 async def test_it_does_not_invent_a_determination(monkeypatch, service):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, _ = _routes(monkeypatch, case={"case_id": "c1", "status": "open"})
 
@@ -93,7 +93,7 @@ async def test_it_does_not_invent_a_determination(monkeypatch, service):
 
 @pytest.mark.asyncio
 async def test_it_closes_through_the_service_and_not_around_it(monkeypatch, service):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, _ = _routes(monkeypatch, case={"case_id": "c1", "status": "open"})
     session = MagicMock()
@@ -108,7 +108,7 @@ async def test_it_closes_through_the_service_and_not_around_it(monkeypatch, serv
 
 @pytest.mark.asyncio
 async def test_a_status_edit_to_something_else_records_nothing(monkeypatch, service):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, _ = _routes(monkeypatch, case={"case_id": "c1", "status": "open"})
 
@@ -123,7 +123,7 @@ async def test_a_status_edit_to_something_else_records_nothing(monkeypatch, serv
 async def test_re_saving_an_already_closed_case_is_an_edit_and_not_a_close(
     monkeypatch, service
 ):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, _ = _routes(monkeypatch, case={"case_id": "c1", "status": "closed"})
 
@@ -140,7 +140,7 @@ async def test_re_saving_an_already_closed_case_is_an_edit_and_not_a_close(
 async def test_a_failed_update_records_no_close(monkeypatch, service):
     from fastapi import HTTPException
 
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, _ = _routes(
         monkeypatch, case={"case_id": "c1", "status": "open"}, updated=False
@@ -154,7 +154,7 @@ async def test_a_failed_update_records_no_close(monkeypatch, service):
 
 @pytest.mark.asyncio
 async def test_reopening_retracts_the_determination(monkeypatch, service):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, _ = _routes(monkeypatch, case={"case_id": "c1", "status": "closed"})
 
@@ -169,7 +169,7 @@ async def test_reopening_retracts_the_determination(monkeypatch, service):
 async def test_an_edit_that_does_not_touch_status_retracts_nothing(
     monkeypatch, service
 ):
-    from services.api.routers.cases import CaseUpdate
+    from core.api.v1.cases_router import CaseUpdate
 
     cases, _ = _routes(monkeypatch, case={"case_id": "c1", "status": "closed"})
 
@@ -182,8 +182,8 @@ async def test_an_edit_that_does_not_touch_status_retracts_nothing(
 async def test_the_close_endpoint_takes_the_principal_and_not_the_body(
     monkeypatch, service
 ):
-    from services.api.routers import cases
-    from services.api.routers.cases import ClosureInfo
+    from core.api.v1 import cases_router as cases
+    from core.api.v1.cases_router import ClosureInfo
 
     monkeypatch.setattr(cases.CaseClosureInfoSchema, "dump", staticmethod(lambda r: {}))
 
@@ -207,7 +207,7 @@ async def test_the_close_endpoint_takes_the_principal_and_not_the_body(
 
 
 def test_the_close_request_has_no_closed_by_field():
-    from services.api.routers.cases import ClosureInfo
+    from core.api.v1.cases_router import ClosureInfo
 
     assert "closed_by" not in ClosureInfo.model_fields
 
@@ -215,7 +215,7 @@ def test_the_close_request_has_no_closed_by_field():
 def test_the_close_request_states_its_category_vocabulary():
     from pydantic import ValidationError
 
-    from services.api.routers.cases import ClosureInfo
+    from core.api.v1.cases_router import ClosureInfo
 
     # A typo used to close the Case and then reach memory as nothing: the
     # Distil has no outcome for an unknown category, so it wrote a marker and

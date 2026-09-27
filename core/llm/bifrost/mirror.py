@@ -68,16 +68,33 @@ def _cred_from_env(key: Dict[str, Any]) -> bool:
 
     A first-boot seed's keys reference ``env.ANTHROPIC_API_KEY`` and friends,
     which on a fresh install are unset. Mirroring those would offer providers
-    that cannot route and would green the setup step for a install nobody has
+    that cannot route and would green the setup step for an install nobody has
     configured — exactly what #761 exists to prevent.
+
+    Bifrost >= 1.6 serialises a credential as ``{"value", "ref", "type"}``
+    (``type`` is ``env`` or ``vault``); older gateways sent
+    ``{"env_var", "from_env"}``. Both shapes are honoured. A reference alone is
+    not enough: a *resolved* env credential comes back with a masked, non-empty
+    ``value`` (Ollama's ``http***1434`` URL), and that emptiness is the only
+    thing separating a placeholder from a working env-backed key.
     """
     for candidate in (
         key.get("value"),
         (key.get("vertex_key_config") or {}).get("auth_credentials"),
     ):
-        if isinstance(candidate, dict) and candidate.get("from_env"):
+        if isinstance(candidate, dict) and _is_unresolved_ref(candidate):
             return True
     return False
+
+
+def _is_unresolved_ref(cred: Dict[str, Any]) -> bool:
+    ref = cred.get("ref")
+    referenced = (
+        cred.get("type") in ("env", "vault")
+        or (isinstance(ref, str) and ref.startswith(("env.", "vault.")))
+        or bool(cred.get("from_env"))
+    )
+    return referenced and not cred.get("value")
 
 
 def key_is_routable(key: Dict[str, Any], provider: Optional[str] = None) -> bool:
@@ -203,32 +220,23 @@ async def _apply(provider: str, *, routable: bool) -> None:
     if not routable:
         await asyncio.to_thread(_deactivate_row, provider)
         return
-    from core.llm.bifrost.admin import default_model_for_provider_type
+    from core.llm.bifrost.admin import (
+        default_model_for_provider_type,
+        self_hosted_chat_models,
+    )
 
-    default_model = await default_model_for_provider_type(provider)
+    served = await self_hosted_chat_models(provider)
+    default_model = await default_model_for_provider_type(provider, served)
     if not default_model:
         logger.warning(
             "Not mirroring provider %s — no servable default_model to floor it to",
             provider,
         )
         return
-    servable = await _servable_models(provider)
+    # Only a self-hosted server's set changes under the operator's hands, so
+    # only its stored default can go stale and need re-healing.
+    servable = set(served) if served else None
     await asyncio.to_thread(_upsert_row, provider, default_model, servable)
-
-
-async def _servable_models(provider: str) -> Optional[set]:
-    """What ``provider`` serves right now, or None when that cannot be known.
-
-    Only asked of a self-hosted server, whose set changes under the operator's
-    hands. A cloud provider's catalogue does not shrink out from under a stored
-    default, so there is nothing to re-heal and no request worth making.
-    """
-    from core.llm.bifrost.admin import _HOST_OWNED_CATALOGUE, _list_ollama_models
-
-    if provider not in _HOST_OWNED_CATALOGUE:
-        return None
-    models = await _list_ollama_models(None)
-    return {m.id for m in models} if models else None
 
 
 async def sync_provider(provider: str) -> None:

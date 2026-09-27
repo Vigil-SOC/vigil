@@ -20,25 +20,15 @@ if [ -z "${BIFROST_URL+x}" ] || [ "${BIFROST_URL}" = "http://bifrost:8080" ]; th
     export BIFROST_URL="http://localhost:8080"
 fi
 # The desktop app is a real-auth surface: its login and first-run bootstrap are
-# the whole point. Force auth on regardless of the repo's .env (which defaults
-# DEV_MODE=true for terminal dev) — for the backend, and baked into the SPA
+# the whole point. Force auth on regardless of the repo's .env (a developer may
+# have opted into DEV_MODE=true there) — for the backend, and baked into the SPA
 # build below via VITE_DEV_MODE. Terminal start.sh keeps the .env value.
 export DEV_MODE=false
 export VITE_DEV_MODE=false
 
-# DEV_MODE=false makes the backend fail closed without a JWT secret. Mint one
-# once and persist it beside the encrypted secret store (regenerating would
-# invalidate live sessions); respect one the caller — the desktop app — already
-# set. umask keeps the file private.
-if [ -z "${JWT_SECRET_KEY:-}" ]; then
-    JWT_FILE="$HOME/.vigil/jwt_secret"
-    if [ ! -s "$JWT_FILE" ]; then
-        mkdir -p "$HOME/.vigil" && chmod 700 "$HOME/.vigil" 2>/dev/null || true
-        (umask 177; { openssl rand -base64 48 2>/dev/null || head -c 48 /dev/urandom | base64; } \
-            | tr -d '\n' > "$JWT_FILE")
-    fi
-    export JWT_SECRET_KEY="$(cat "$JWT_FILE")"
-fi
+# Shared with start.sh / setup_dev.sh; respects a JWT_SECRET_KEY the desktop app
+# already set.
+ensure_jwt_secret >&2 || { step env fail; exit 1; }
 step env ok
 
 step docker start

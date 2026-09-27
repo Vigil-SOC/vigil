@@ -15,11 +15,13 @@ from core.integrations.integration_secrets import (
     secret_fields_for,
     split_secrets,
 )
+from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
 from core.storage.config_service import get_config_service
+from services.daemon.intent import intent_report
 
 router = APIRouter()
 
@@ -1054,19 +1056,14 @@ async def set_postgresql_config(config: PostgreSQLConfig):
 
 
 class AIOperationsSettingsConfig(BaseModel):
-    """Runtime cost/perf toggles introduced across GH #84 PR-C/PR-D/PR-F.
+    """Local Ollama enrichment recovery toggles.
 
     Persisted in ``system_config`` at key ``ai_operations.settings``.
     Consumed via ``core.platform.runtime_config.get_ai_operations_setting``
-    which layers DB → env var → default. Exposed in the Settings UI
-    (AI Config → AI Operations) so operators can flip values live
-    without restarting the backend / daemon / llm-worker.
+    which layers DB → env var → default. Exposed in Settings → AI Config
+    so operators can flip values live without restarting the backend.
     """
 
-    prompt_cache_enabled: bool = True
-    history_window: int = 20
-    tool_response_budget_default: int = 8000
-    thinking_budget: int = 10000
     local_ollama_recovery_enabled: bool = True
     local_ollama_recovery_retry_limit: int = Field(default=1, ge=0, le=3)
     local_ollama_recovery_restart_gateway: bool = True
@@ -1077,13 +1074,21 @@ AI_OPERATIONS_DEFAULTS = AIOperationsSettingsConfig().model_dump()
 
 @router.get("/ai-operations")
 async def get_ai_operations_config():
-    """Return the current AI-operations toggles (defaults merged with DB overrides)."""
+    """Return the local-Ollama recovery toggles (defaults merged with DB overrides).
+
+    Keys the schema no longer declares — leftover cost/perf knobs in an
+    existing row — are dropped. They are not migrated and not fatal.
+    """
     try:
         config_service = get_config_service()
         value = config_service.get_system_config("ai_operations.settings")
-        if value:
-            return {**AI_OPERATIONS_DEFAULTS, **value}
-        return AI_OPERATIONS_DEFAULTS
+        allowed = AIOperationsSettingsConfig.model_fields
+        stored = {
+            key: value[key]
+            for key in allowed
+            if isinstance(value, dict) and key in value
+        }
+        return {**AI_OPERATIONS_DEFAULTS, **stored}
     except Exception as e:
         logger.error(f"Error getting AI operations config: {e}")
         return AI_OPERATIONS_DEFAULTS
@@ -1097,7 +1102,7 @@ async def set_ai_operations_config(config: AIOperationsSettingsConfig):
     success = config_service.set_system_config(
         key="ai_operations.settings",
         value=config_data,
-        description="Runtime AI cost/perf toggles (GH #84 PR-F)",
+        description="Local Ollama enrichment recovery toggles",
         config_type="ai_operations",
         change_reason="Updated via Settings UI",
     )
@@ -1125,7 +1130,6 @@ class OrchestratorSettingsConfig(BaseModel):
     # which already defaults False.
     enabled: bool = False
     dry_run: bool = False
-    auto_assign_severities: List[str] = ["critical", "high"]
     max_concurrent_agents: int = 3
     max_iterations_per_agent: int = 50
     max_runtime_per_investigation: int = 3600
@@ -1139,6 +1143,51 @@ class OrchestratorSettingsConfig(BaseModel):
 ORCHESTRATOR_DEFAULTS = OrchestratorSettingsConfig().model_dump()
 
 
+class IntentDiffRow(BaseModel):
+    """One manifest key beside the value the daemon is running with."""
+
+    key: str
+    declared: Any
+    effective: Any
+    source: str
+    label: str
+
+
+class IntentReportResponse(BaseModel):
+    """Declared INTENT.md beside effective daemon config. Read-only."""
+
+    path: str
+    readable: bool
+    rows: list[IntentDiffRow] = Field(default_factory=list)
+
+
+@router.get("/intent", response_model=IntentReportResponse)
+async def get_intent_report() -> IntentReportResponse:
+    """Declared intent beside effective config.
+
+    A missing or unreadable manifest is 200 with ``readable`` false and no
+    rows, so the Settings card can say so in one line.
+    """
+    rows = intent_report(include_same=True)
+    path = str(intent_file())
+    if rows is None:
+        return IntentReportResponse(path=path, readable=False, rows=[])
+    return IntentReportResponse(
+        path=path,
+        readable=True,
+        rows=[
+            IntentDiffRow(
+                key=row.key,
+                declared=row.declared,
+                effective=row.effective,
+                source=row.source,
+                label=row.label,
+            )
+            for row in rows
+        ],
+    )
+
+
 @router.get("/orchestrator")
 async def get_orchestrator_config():
     """Get orchestrator configuration."""
@@ -1148,7 +1197,7 @@ async def get_orchestrator_config():
 
         if config_value:
             merged = {**ORCHESTRATOR_DEFAULTS, **config_value}
-            return merged
+            return {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
 
         return ORCHESTRATOR_DEFAULTS
     except Exception as e:

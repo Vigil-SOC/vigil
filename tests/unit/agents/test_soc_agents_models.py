@@ -82,6 +82,29 @@ def test_reporter_agent_is_categorized_as_reporting():
     assert agents["reporter"].component_category == "reporting"
 
 
+def test_builtin_band_text_is_rendered_from_response_config():
+    # #916: the prompt states the configured lines, never a typed literal.
+    from core.response.config import ResponseConfig
+
+    agents = SOCAgentLibrary.get_all_agents(
+        ResponseConfig(
+            confidence_threshold=0.95, review_threshold=0.88, monitor_threshold=0.60
+        )
+    )
+    assert (
+        ">=0.95 auto-approve, 0.88-<0.95 quick review, 0.60-<0.88 human review, "
+        "<0.60 escalate"
+    ) in agents["auto_responder"].system_prompt
+    assert "confidence >= 0.95 auto-approves" in agents["responder"].system_prompt
+    for agent in agents.values():
+        assert "$" not in agent.system_prompt, agent.id
+
+    defaults = SOCAgentLibrary.get_all_agents(ResponseConfig())
+    assert ">=0.90 auto-approve, 0.85-<0.90 quick review" in (
+        defaults["auto_responder"].system_prompt
+    )
+
+
 def test_custom_agent_builder_reads_model_and_category():
     row = {
         "id": "custom-test",

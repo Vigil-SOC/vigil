@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { approvalId, commitTurn, TOOL_APPROVAL, type Harness, type Outcome, type TurnConfig } from "../../core/loop.js";
 import { drain, streamTurn, type StreamEvent } from "../../core/stream.js";
 import type { Message } from "../../core/provider.js";
-import { budgetOf, unmeteredQuota } from "../../core/budget.js";
+import { budgetOf, FRESH, unmeteredQuota } from "../../core/budget.js";
+import { noPrices, type Prices } from "../../core/prices.js";
 import { registryOf } from "../../core/registry.js";
 import { InProcessState } from "../../core/state.js";
 import { GatewayExhausted } from "../../core/limiter.js";
@@ -12,7 +13,7 @@ import { emptyRecall } from "../../contracts/memory.js";
 import { localDispatch } from "../../core/dispatch.js";
 import { defineTool, type RegisteredTool, type ToolResult } from "../../contracts/tool.js";
 import type { Memory, State, ToolDispatch } from "../../core/seams.js";
-import type { CheckpointPayload, NewEvent, TerminalPayload } from "../../contracts/events.js";
+import type { CheckpointPayload, DispatchPayload, NewEvent, TerminalPayload } from "../../contracts/events.js";
 import type { SpendPayload } from "../../contracts/budget.js";
 import { scriptedProvider, type ScriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
@@ -33,6 +34,7 @@ interface Options {
   dispatch?: ToolDispatch;
   memory?: Memory;
   state?: InProcessState;
+  prices?: Prices;
 }
 
 function harnessOf(script: readonly ScriptedTurn[], options: Options = {}): Harness {
@@ -43,6 +45,9 @@ function harnessOf(script: readonly ScriptedTurn[], options: Options = {}): Harn
     budget: budgetOf(
       { max_calls: options.max_calls ?? 10, max_cost_usd: options.max_cost_usd ?? 100, max_wall_ms: 600_000, max_park_ms: 604_800_000 },
       unmeteredQuota,
+      Date.now,
+      FRESH,
+      options.prices ?? noPrices,
     ),
     memory: options.memory ?? nullMemory,
     state: options.state ?? new InProcessState(),
@@ -223,6 +228,23 @@ describe("the budget gate", () => {
     expect(harness.budget.spent.tokens.input).toBe(3_000);
   });
 
+  it("journals the rates the dollars were multiplied from", async () => {
+    const fetched_at = "2026-09-01T00:00:00+00:00";
+    const card = { input: 3e-6, output: 15e-6, cache_read: 3e-7, cache_write: 3.75e-6, source: "exact", fetched_at };
+    const harness = harnessOf(
+      [{ calls: [], tokens: { input: 1_000, output: 100, cache_read: 10_000, cache_write: 200 } }, HALT],
+      { prices: async () => card },
+    );
+    await outcomeOf(config(), harness);
+
+    const spends = (await harness.state.read(RUN)).filter((event) => event.kind === "spend");
+    const payload = spends[0]!.payload as SpendPayload;
+    expect(payload.fetched_at).toBe(fetched_at);
+    expect(payload.rates).toEqual({ input: card.input, output: card.output, cache_read: card.cache_read, cache_write: card.cache_write });
+    expect(payload.cost_usd).toBeCloseTo(0.003 + 0.0015 + 0.003 + 0.00075, 10);
+    expect(payload.pricing_source).toBe("exact");
+  });
+
   // Tokens burned before a call failed were still spent, so releasing the
   // reservation would hand the pool back money that is gone.
   it("charges a failed call for what it burned before failing", async () => {
@@ -340,7 +362,7 @@ describe("the approval gate", () => {
 
 describe("the ART execute approval gate", () => {
   const ART_ID = "atomic_red_team_execute";
-  const ARGS = '{"technique":"T1059.001","environment_id":"range-1"}';
+  const ARGS = '{"technique":"T1059.001","environment_id":"range-1","hostname":"ws01.corp.local"}';
   const ART = toolReturning(ART_ID, {
     ok: true,
     rows: [{ exit: 0 }],
@@ -389,6 +411,35 @@ describe("the ART execute approval gate", () => {
     expect(outcome.status).toBe("completed");
     expect(dispatched).toBe(1);
     expect(outcome.calls[0]?.wrapped.failure).toBeNull();
+  });
+});
+
+describe("the candidate check", () => {
+  const CHECK = "check_detection_candidate";
+  const ARGS = "{}";
+  const RESULT: ToolResult = {
+    ok: true,
+    rows: [{ lint: { passed: true }, replay: { evaluated: true, matched: true }, candidate: { technique_id: "T1059.003" } }],
+    rowCount: 1,
+    capped: false,
+    sourceSystem: "test",
+  };
+
+  it("journals the result on an empty approval set and does not park", async () => {
+    const harness = harnessOf([{ calls: [{ tool: CHECK, args: ARGS }] }, { calls: [] }, HALT], {
+      tools: [toolReturning(CHECK, RESULT)],
+      grants: { counter: [CHECK] },
+    });
+    const outcome = await outcomeOf(config({ approvals: new Set() }), harness);
+
+    expect(outcome.status).not.toBe("waiting_approval");
+    expect(outcome.status).toBe("completed");
+    const ledger = await harness.state.read(RUN);
+    const dispatch = ledger.find((event) => event.kind === "dispatch");
+    const payload = dispatch?.payload as DispatchPayload;
+    expect(payload.result).toEqual(RESULT);
+    expect(payload.dispatch_id).not.toBe(approvalId(RUN, CHECK, ARGS));
+    expect(ledger.some((event) => event.kind === "checkpoint")).toBe(false);
   });
 });
 

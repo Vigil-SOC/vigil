@@ -131,7 +131,21 @@ class LLMInteractionLog(Base):
     cache_creation_tokens: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )
-    cost_usd: Mapped[float] = mapped_column(Numeric(10, 6), nullable=False, default=0)
+    # NULL = the call could not be priced; 0 = priced and genuinely free (#1115).
+    cost_usd: Mapped[Optional[float]] = mapped_column(Numeric(10, 6), nullable=True)
+    # Per-token USD that produced cost_usd, frozen at write (#1190). Float, not
+    # Numeric(10, 6): that scale fits a call total, and a cache rate below 1e-6
+    # would round to zero. NULL alongside cost_usd when the call is unpriced —
+    # the 0.0 defaults for pricing_source "unknown" are not a price.
+    input_cost_per_token: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    output_cost_per_token: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    cache_read_cost_per_token: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
+    cache_write_cost_per_token: Mapped[Optional[float]] = mapped_column(
+        Float, nullable=True
+    )
+    rates_fetched_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Bifrost virtual-key attribution (#186). Stores the VK the call was
@@ -199,7 +213,7 @@ class AIModelConfig(Base):
     summarization, reporting) to a
     (provider, model) pair. Components without a row fall back to the
     `chat_default` row; if that is missing, callers fall back to the
-    default Anthropic provider's default_model.
+    default active provider (of any type) and its default_model.
 
     See infra/database/init/10_ai_model_configs.sql for the table definition.
     """

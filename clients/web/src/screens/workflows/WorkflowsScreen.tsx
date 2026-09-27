@@ -1,17 +1,23 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate } from '../../data/appData'
 import { useWorkflows, useAgents, useAgentMeta, useSkills } from './useWorkflowsData'
-import { workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft } from '../../services/api'
+import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
 import type { ConsoleScreenProps } from '../../shared/types'
+import { Cost } from '../../shared/cost'
 
 type WfTab = 'workflows' | 'agents' | 'skills'
 
 export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
   const [tab, setTab] = useState<WfTab>('workflows')
+  // ?run=<id> opens one run in place of the catalog, so a case activity can deep-link to it.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const runId = searchParams.get('run')
+  const backToCatalog = useCallback(() => setSearchParams({}), [setSearchParams])
   const tabs: [WfTab, string][] = [
     ['workflows', 'Workflows'],
     ['agents', 'Agents'],
@@ -34,9 +40,35 @@ export default function WorkflowsScreen({ goSettings }: ConsoleScreenProps) {
           ))}
         </div>
       </div>
-      {tab === 'workflows' && <WorkflowCatalog goSettings={goSettings} />}
+      {tab === 'workflows' && (runId ? <RunView key={runId} runId={runId} onBack={backToCatalog} /> : <WorkflowCatalog goSettings={goSettings} />)}
       {tab === 'agents' && <AgentsTab />}
       {tab === 'skills' && <SkillsTab />}
+    </>
+  )
+}
+
+/** One run reached by URL rather than through History. Same hook and panel as
+ *  RunRow, so the run polls while in flight and stops at terminal. Keyed on the
+ *  id by the caller, so a new ?run= starts clean rather than over the old detail.
+ *  No seed: the hook will not poll until getRun says the run is in flight, so a
+ *  missing run is asked for once. */
+function RunView({ runId, onBack }: { runId: string; onBack: () => void }) {
+  const { detail, dphase, setDphase, load } = useRunDetail(runId, true)
+  useEffect(() => {
+    setDphase('loading')
+    void load()
+  }, [load, setDphase])
+  return (
+    <>
+      <div className="flex items-center gap-3 flex-wrap px-[22px] py-[13px] border-b border-line">
+        <button className="btn ghost" onClick={onBack}><Icon name="chevL" size={13} /> All workflows</button>
+        <span className="mono text-[11.5px] text-tx-3">{runId}</span>
+      </div>
+      <div className="px-[22px] py-5">
+        {dphase === 'loading' && <div className="muted">Loading run detail…</div>}
+        {dphase === 'error' && <div className="muted">Couldn’t load run {runId}. It may have been removed, or the id may be wrong.</div>}
+        {dphase === 'ready' && detail && <RunDetail d={detail} onSteered={load} />}
+      </div>
     </>
   )
 }
@@ -375,7 +407,7 @@ function StartedPreview({ detail }: { detail: WfRunDetail | null }) {
 interface WfLimits {
   capabilities?: { bound: string[]; unbound: string[] }
   budgets?: { max_iterations: number; max_cost_usd: number }
-  /** exact, heuristic, zero or unknown — how confidently the model's rate resolved. */
+  /** exact, zero or unknown — how confidently the model's rate resolved. */
   pricing?: { model: string; source: string }
 }
 
@@ -522,6 +554,205 @@ function Unpriced({ pricing }: { pricing?: { model: string; source: string } }) 
   )
 }
 
+/** What `/workflows/threat-hunt/coverage` answers. `in_flight` rows arrive on
+ *  `running`, `concluded` rows plus a `proposal` on `concluded`, only the
+ *  `proposal` on `uncovered`. The proposal is an execute body as-is. */
+interface HuntProposal {
+  hypothesis: string
+  hypothesis_subjects: Record<string, string[]>
+  approve_hypotheses?: boolean
+}
+interface InFlightRow {
+  run_id: string
+  status: string
+  matched_keys: string[]
+  matched_techniques: string[]
+}
+interface ConcludedRow {
+  statement: string
+  outcome: string
+  concluded_at: string | null
+  origin_run_id: string | null
+  matched_keys: string[]
+  matched_techniques: string[]
+}
+interface HuntCoverage {
+  status: 'running' | 'concluded' | 'uncovered'
+  keys: string[]
+  techniques: string[]
+  matched_keys: string[]
+  unmatched_keys: string[]
+  matched_techniques: string[]
+  unmatched_techniques: string[]
+  in_flight?: InFlightRow[]
+  concluded?: ConcludedRow[]
+  proposal?: HuntProposal
+}
+
+/** Matched and unmatched keys/T-IDs side by side, so a report only half
+ *  covered reads as half covered rather than as covered. */
+function CoverageSplit({ answer }: { answer: HuntCoverage }) {
+  const rows: [string, string[]][] = [
+    ['Matched', [...answer.matched_keys, ...answer.matched_techniques]],
+    ['Unmatched', [...answer.unmatched_keys, ...answer.unmatched_techniques]],
+  ]
+  return (
+    <div className="flex flex-col gap-1 text-[12px] leading-[1.5]">
+      {rows.map(([label, list]) => (
+        <div key={label}>
+          <span className="text-tx-3">{label}: </span>
+          <span className="font-mono">{list.length > 0 ? list.join(', ') : '—'}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** The `?run=` deep link WorkflowsScreen already honours; following it swaps the
+ *  catalog, and this modal with it, for the run. */
+function RunLink({ runId }: { runId: string }) {
+  return (
+    <Link to={{ search: `?run=${encodeURIComponent(runId)}` }} className="font-mono underline">
+      {runId.slice(0, 8)}
+    </Link>
+  )
+}
+
+/** Report in, one of three answers out. Owns only the report text and the answer:
+ *  the hypothesis, subjects and approve state stay in RunModal, which is why the
+ *  two prefill actions hand a proposal back up rather than posting anything. Errors
+ *  land in the modal's one error slot, and only the existing Run button executes. */
+function CoveragePanel({ entityKeys, onError, onProposal }: {
+  entityKeys: string[]
+  onError: (msg: string | null) => void
+  onProposal: (p: HuntProposal) => void
+}) {
+  const [report, setReport] = useState('')
+  const [answer, setAnswer] = useState<HuntCoverage | null>(null)
+  const [checking, setChecking] = useState(false)
+  const [extended, setExtended] = useState<Record<string, 'sending' | 'sent'>>({})
+
+  const canCheck = !checking && (report.trim() !== '' || entityKeys.length > 0)
+  // A check can run on typed subjects alone, but an extend with nothing to say is no directive.
+  const canExtend = report.trim() !== ''
+
+  const check = async () => {
+    setChecking(true)
+    onError(null)
+    try {
+      const res = await workflowApi.checkCoverage({
+        ...(report.trim() && { report: report.trim() }),
+        ...(entityKeys.length > 0 && { entity_keys: entityKeys }),
+      })
+      setAnswer(res.data as HuntCoverage)
+      setExtended({})
+    } catch (e) {
+      onError(errMsg(e))
+      setAnswer(null) // the old answer was about a different report
+    }
+    setChecking(false)
+  }
+
+  // One directive of kind extend, carrying the report text, against the run that already covers it.
+  const extend = (runId: string) => {
+    setExtended((held) => ({ ...held, [runId]: 'sending' }))
+    workflowApi.steer(runId, 'extend', report.trim())
+      .then(() => setExtended((held) => ({ ...held, [runId]: 'sent' })))
+      .catch((e) => {
+        onError(errMsg(e))
+        setExtended((held) => { const next = { ...held }; delete next[runId]; return next })
+      })
+  }
+
+  const verdict = (a: HuntCoverage) => {
+    switch (a.status) {
+      case 'running':
+        return (
+          <>
+            <div className="text-[12.5px] leading-[1.5]">Already being hunted. Extend a run with this report rather than starting another.</div>
+            <ul className="flex flex-col gap-1.5 text-[12px] leading-[1.5]" aria-label="In-flight hunts">
+              {(a.in_flight ?? []).map((row) => {
+                const state = extended[row.run_id]
+                return (
+                  <li key={row.run_id} className="flex items-center gap-2 flex-wrap">
+                    <RunLink runId={row.run_id} />
+                    <span className="text-tx-3">{row.status}</span>
+                    <span className="font-mono text-tx-3">{[...row.matched_keys, ...row.matched_techniques].join(', ')}</span>
+                    <button
+                      className="btn ghost"
+                      disabled={!canExtend || state !== undefined}
+                      title={canExtend ? undefined : 'Paste the report to extend with'}
+                      aria-label={`Extend ${row.run_id.slice(0, 8)}`}
+                      onClick={() => extend(row.run_id)}
+                    >
+                      {state === 'sent' ? 'Extended' : state === 'sending' ? 'Extending…' : 'Extend'}
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          </>
+        )
+      case 'concluded':
+        return (
+          <>
+            <div className="text-[12.5px] leading-[1.5]">Hunted before. Reopen puts the proposal in the form below; Run starts it.</div>
+            <ul className="flex flex-col gap-1.5 text-[12px] leading-[1.5]" aria-label="Concluded verdicts">
+              {(a.concluded ?? []).map((row, at) => (
+                <li key={at} className="flex items-center gap-2 flex-wrap">
+                  {row.origin_run_id ? <RunLink runId={row.origin_run_id} /> : null}
+                  <span>{row.statement}</span>
+                  <span className="text-tx-3">{row.outcome} · {fmtStarted(row.concluded_at)}</span>
+                </li>
+              ))}
+            </ul>
+            {a.proposal && (
+              <div><button className="btn ghost" onClick={() => onProposal(a.proposal as HuntProposal)}>Reopen</button></div>
+            )}
+          </>
+        )
+      case 'uncovered':
+        return (
+          <>
+            <div className="text-[12.5px] leading-[1.5]">Nobody has hunted this. Use proposal fills the form below; Run starts it.</div>
+            {a.proposal && (
+              <div><button className="btn ghost" onClick={() => onProposal(a.proposal as HuntProposal)}>Use proposal</button></div>
+            )}
+          </>
+        )
+      default: {
+        const never: never = a.status
+        return never
+      }
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2.5 p-3 rounded border border-line">
+      <Field
+        label="Report"
+        value={report}
+        onChange={setReport}
+        placeholder="Paste a threat report — STIX JSON or text with indicators and T-IDs…"
+        textarea
+        hint="Checks whether its indicators are already being hunted, were hunted, or are untouched. Read-only: nothing starts until you press Run."
+      />
+      <div className="flex justify-end">
+        <button className="btn ghost" disabled={!canCheck} style={{ opacity: canCheck ? 1 : 0.5 }} onClick={check}>
+          {checking ? 'Checking…' : 'Check coverage'}
+        </button>
+      </div>
+      {answer && (
+        <div className="flex flex-col gap-2" data-testid="coverage-answer" data-status={answer.status}>
+          <div className="text-[11px] uppercase tracking-[0.06em] text-tx-3">Coverage · {answer.status}</div>
+          <CoverageSplit answer={answer} />
+          {verdict(answer)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Run a workflow — collects a target, starts it on the agent layer, then hands
     off to History, which reports phases, beliefs and anything the run waits on. */
 export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: () => void; onClose: () => void }) {
@@ -591,6 +822,14 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   const needsHypothesis = isHuntLike && hypothesis.trim() === ''
   const canRun = Object.keys(params).length > 0 && !turnsBad && !costBad && !starting
 
+  // The proposal is an execute body already; it lands in the same three fields the
+  // operator would have typed, so Run sends it through the same withTurns build.
+  const takeProposal = (p: HuntProposal) => {
+    setHypothesis(p.hypothesis)
+    setSubjects(Object.fromEntries(Object.entries(p.hypothesis_subjects).map(([line, keys]) => [line, keys.join(', ')])))
+    setApprove(p.approve_hypotheses === true)
+  }
+
   const run = async () => {
     if (needsHypothesis) {
       setError('This run tests a claim you state. Put at least one in Hypothesis — the benign account is added for you.')
@@ -634,6 +873,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         <ComboField label="Finding ID" value={findingId} onChange={setFindingId} placeholder="f-20260614-3b5c585e" options={findingOpts} hint={findingOpts.length ? `${findingOpts.length} recent findings — start typing to filter.` : undefined} />
         <ComboField label="Case ID" value={caseId} onChange={setCaseId} placeholder="case-2026-0142" options={caseOpts} />
         <Field label="Context" value={context} onChange={setContext} placeholder="Active ransomware on HOST-42…" textarea />
+        {isHuntLike && (
+          <CoveragePanel entityKeys={Object.values(asked).flat()} onError={setError} onProposal={takeProposal} />
+        )}
         <Field
           label="Hypothesis"
           value={hypothesis}
@@ -715,7 +957,7 @@ function fmtStarted(iso?: string | null): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
 
-function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
+export function HistoryModal({ wf, onClose }: { wf: Workflow; onClose: () => void }) {
   const [runs, setRuns] = useState<WfRun[]>([])
   const [phase, setPhase] = useState<'loading' | 'ready' | 'error'>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -986,8 +1228,11 @@ export function useRunDetail(runId: string, watching: boolean, seed?: string) {
     [runId],
   )
 
-  // Stops itself at a terminal status rather than polling for the session.
-  const live = watching && IN_FLIGHT.includes(detail?.status ?? seed ?? 'running')
+  // Polls only while we know the run is in flight. A missing status is not
+  // treated as running: a deep-link with no seed would otherwise poll a 404
+  // until a later effect stopped it.
+  const status = detail?.status ?? seed
+  const live = Boolean(watching && status && IN_FLIGHT.includes(status))
   useEffect(() => {
     if (!live) return
     const timer = setInterval(() => { void load() }, RUN_POLL_MS)
@@ -1056,7 +1301,7 @@ function RunRow({ run, onRemoved }: { run: WfRun; onRemoved: () => void }) {
         <td className="muted">{fmtStarted(run.started_at)}</td>
         <td className="muted">{fmtDuration(run.duration_ms)}</td>
         <td className="muted">{run.triggered_by || '—'}</td>
-        <td className="muted">{run.total_cost_usd ? `$${run.total_cost_usd.toFixed(3)}` : '—'}</td>
+        <td className="muted"><Cost usd={run.total_cost_usd} digits={3} /></td>
         <td className="tight" onClick={(e) => e.stopPropagation()}><RemoveRun run={run} onRemoved={onRemoved} /></td>
       </tr>
       {open && (
@@ -1124,10 +1369,14 @@ function HuntActions({ hunt }: { hunt: HuntView }) {
  *  operator, and driving the screen down to it would test the History modal instead. */
 export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => void }) {
   const hunt = d.hunt ?? null
+  // A hunt already answers its wait through OpenCheckpoint. A phase gate is an
+  // approval row, and only a phase-walking run has one.
+  const phaseGated = hunt === null && (d.phases ?? []).some((p) => p.status === 'pending_approval')
   return (
     <div className="run-detail">
       <RunBar d={d} hunt={hunt} onSteered={onSteered} />
       {hunt && <OpenCheckpoint hunt={hunt} />}
+      {phaseGated && <PhaseGate runId={d.run_id} onAnswered={onSteered} />}
       {hunt && <Parked hunt={hunt} />}
       {hunt?.reason && !IN_FLIGHT.includes(d.status) && (
         <div className="muted text-[12px] leading-[1.5] mt-2">Why it ended: {hunt.reason}</div>
@@ -1163,7 +1412,7 @@ function RunBar({ d, hunt, onSteered }: { d: WfRunDetail; hunt: HuntView | null;
       <span className="flex-1" />
       <div className="meta">
         {hunt && <span>Iteration <b>{hunt.iteration}</b>{budgets && ` of ${budgets.max_iterations}`}</span>}
-        {typeof cost === 'number' && <span>$<b>{cost.toFixed(2)}</b>{ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>}
+        <span><b><Cost usd={cost} /></b>{typeof cost === 'number' && ceiling !== undefined && ` of $${ceiling.toFixed(2)}`}</span>
         {spent !== null && (
           <div className="budget-track" title={`${spent.toFixed(0)}% of the cost ceiling`}>
             <div className="budget-fill" style={{ width: `${spent}%` }} />
@@ -1262,7 +1511,7 @@ function HuntTabs({ d, hunt, onReload }: { d: WfRunDetail; hunt: HuntView; onRel
       {shown === 'memory' && memory !== null && <HuntMemory recall={memory} />}
       {shown === 'hyp' && <HuntStandings hunt={hunt} />}
       {shown === 'evidence' && <HuntEvidenceTable found={found} total={hunt.evidence_count} />}
-      {shown === 'moves' && <HuntMoves moves={moves} />}
+      {shown === 'moves' && <HuntMoves runId={d.run_id} moves={moves} />}
       {shown === 'frontier' && <HuntFrontier runId={d.run_id} frontier={frontier} inFlight={IN_FLIGHT.includes(d.status)} />}
       {shown === 'gaps' && <HuntGaps gaps={gaps} />}
       {shown === 'esc' && (
@@ -1518,43 +1767,180 @@ export function refusalReason(rejection: string): string {
   return complaint.length > 160 ? `${complaint.slice(0, 160)}…` : complaint
 }
 
+/** One move opened for its digest. Replay folds the whole ledger, so it is asked for
+ *  on the click and held here; the poll that refreshes `moves` never touches it. */
+interface OpenedMove { id: string; report: ReplayReport | null; failed: string | null }
+
 /** Every move the lead made and why — the only account of what a turn decided, and
- *  of a turn that stalled. */
-function HuntMoves({ moves }: { moves: HuntMove[] }) {
+ *  of a turn that stalled. Choosing one shows what the lead was looking at when it
+ *  decided. */
+function HuntMoves({ runId, moves }: { runId: string; moves: HuntMove[] }) {
+  const [opened, setOpened] = useState<OpenedMove | null>(null)
+  const pick = (decisionId: string) => {
+    if (opened?.id === decisionId) { setOpened(null); return }
+    setOpened({ id: decisionId, report: null, failed: null })
+    workflowApi
+      .getReplay(runId, decisionId)
+      .then((r) => setOpened((held) => (held?.id === decisionId ? { ...held, report: r.data } : held)))
+      .catch((e) => setOpened((held) => (held?.id === decisionId ? { ...held, failed: errMsg(e) } : held)))
+  }
   return (
     <div style={{ marginTop: 12 }}>
-      <div className="muted text-[11.5px] mb-2">Newest first. One decision per turn; a turn may re-ask after a refused emission.</div>
+      <div className="muted text-[11.5px] mb-2">Newest first. One decision per turn; a turn may re-ask after a refused emission. Choose a move to see what the lead was shown.</div>
       <div className="table-wrap">
         <table className="tbl">
           <thead><tr><th className="tight">Turn</th><th className="tight">Move</th><th>Why</th><th className="tight">On</th></tr></thead>
           <tbody>
             {moves.map((m) => (
-              <tr key={m.decision_id}>
-                <td className="muted tight">{m.iteration}</td>
-                <td className="tight mono text-[11px]">{m.action}</td>
-                <td>
-                  {m.rationale}
-                  {m.query_intent && <div className="muted text-[11px] mt-0.5">asked: {m.query_intent}</div>}
-                  {/* The entity and the worker live here rather than in On: an ip or a
-                      role name in a tight column wrapped a character to a line. */}
-                  {(m.target_entity || m.worker_agent_id) && (
-                    <div className="flex gap-1.5 flex-wrap mt-1">
-                      {m.target_entity && <span className="chip mono" style={{ fontSize: 10 }}>{m.target_entity}</span>}
-                      {m.worker_agent_id && <span className="chip" style={{ fontSize: 10 }}>{m.worker_agent_id}</span>}
-                    </div>
-                  )}
-                  {!!m.rejected_attempts?.length && (
-                    <div className="text-[11px] mt-1" style={{ color: 'var(--high)' }}>
-                      {m.rejected_attempts.length} emission(s) refused first — {refusalReason(m.rejected_attempts[0]!)}
-                    </div>
-                  )}
-                </td>
-                <td className="tight"><Hyp id={m.target_hypothesis_id} /></td>
-              </tr>
+              <Fragment key={m.decision_id}>
+                {/* The row takes the click; the action is the control a keyboard reaches,
+                    so the table keeps its own semantics rather than posing as a button. */}
+                <tr className={`clickable${opened?.id === m.decision_id ? ' sel' : ''}`} onClick={() => pick(m.decision_id)}>
+                  <td className="muted tight">{m.iteration}</td>
+                  <td className="tight">
+                    <button
+                      className="btn ghost mono text-[11px]"
+                      aria-expanded={opened?.id === m.decision_id}
+                      title="Show what the lead was looking at when it decided this."
+                      onClick={(e) => { e.stopPropagation(); pick(m.decision_id) }}
+                    >
+                      {m.action}
+                    </button>
+                  </td>
+                  <td>
+                    {m.rationale}
+                    {m.query_intent && <div className="muted text-[11px] mt-0.5">asked: {m.query_intent}</div>}
+                    {/* The entity and the worker live here rather than in On: an ip or a
+                        role name in a tight column wrapped a character to a line. */}
+                    {(m.target_entity || m.worker_agent_id) && (
+                      <div className="flex gap-1.5 flex-wrap mt-1">
+                        {m.target_entity && <span className="chip mono" style={{ fontSize: 10 }}>{m.target_entity}</span>}
+                        {m.worker_agent_id && <span className="chip" style={{ fontSize: 10 }}>{m.worker_agent_id}</span>}
+                      </div>
+                    )}
+                    {!!m.rejected_attempts?.length && (
+                      <div className="text-[11px] mt-1" style={{ color: 'var(--high)' }}>
+                        {m.rejected_attempts.length} emission(s) refused first — {refusalReason(m.rejected_attempts[0]!)}
+                      </div>
+                    )}
+                  </td>
+                  <td className="tight"><Hyp id={m.target_hypothesis_id} /></td>
+                </tr>
+                {opened?.id === m.decision_id && (
+                  <tr>
+                    <td colSpan={4} style={{ background: 'var(--bg-2)' }}><MoveDigest opened={opened} /></td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+/** The digest one decision was shown, as the record has it, and whether folding the
+ *  ledger again reproduces it. The recorded half is rendered — that is what the lead
+ *  read — and the rebuilt half is what the mismatch line speaks for. */
+function MoveDigest({ opened }: { opened: OpenedMove }) {
+  if (opened.failed !== null) {
+    return <div className="text-[12px] py-1" style={{ color: 'var(--high)' }}>Could not read what this move was shown — {opened.failed}</div>
+  }
+  const decision = opened.report?.decisions[0]
+  if (opened.report === null) return <div className="muted text-[12px] py-1">Rebuilding the digest from the ledger…</div>
+  if (decision === undefined) return <div className="muted text-[12px] py-1">Replay returned nothing for this decision.</div>
+
+  const seen = decision.recorded
+  const recalled = opened.report.recalled
+  return (
+    <div className="py-1" style={{ whiteSpace: 'normal' }}>
+      <div className="flex gap-1.5 items-center flex-wrap mb-2">
+        <h4 style={{ margin: 0 }}>What the lead was shown at turn {decision.iteration}</h4>
+        {decision.mismatch === null
+          ? <span className="chip sel" style={{ fontSize: 10 }}>rebuild matches the record</span>
+          : <span className="chip" style={{ fontSize: 10, color: 'var(--high)' }}>{decision.mismatch}</span>}
+        {!decision.exact && (
+          <span className="muted text-[11px]">prefix inferred — the ledger predates digest_seq, so a difference may be the boundary rather than drift</span>
+        )}
+      </div>
+
+      <div className="text-[12.5px]">{seen.narrative || <span className="muted">No narrative was in the digest.</span>}</div>
+      <div className="muted text-[11px] mt-1">
+        focus {seen.focus.entity ? <span className="mono">{seen.focus.entity}</span> : 'no entity'} · <Hyp id={seen.focus.hypothesis} />
+        {' '}· {seen.budget_remaining.iterations} turn(s) and ${seen.budget_remaining.cost_usd.toFixed(2)} left
+      </div>
+
+      {seen.hypotheses.length > 0 && (
+        <div style={{ marginTop: 10 }}>
+          <h4>Beliefs as they stood ({seen.hypotheses.length})</h4>
+          <div className="table-wrap">
+            <table className="tbl">
+              <tbody>
+                {seen.hypotheses.map((h) => (
+                  <tr key={h.hypothesis_id}>
+                    <td className="tight"><Hyp id={h.hypothesis_id} /></td>
+                    <td>{h.statement}</td>
+                    <td className="tight" style={{ color: hypothesisColor(h.status) }}>{h.status}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {(seen.recent_evidence.length > 0 || seen.omitted.count > 0) && (
+        <div style={{ marginTop: 10 }}>
+          <h4>Recent evidence ({seen.recent_evidence.length}{seen.omitted.count > 0 && `, ${seen.omitted.count} routine omitted`})</h4>
+          {seen.recent_evidence.length === 0
+            ? <div className="muted text-[12px]">Every record in the window was routine; the lead saw only the count.</div>
+            : (
+              <div className="table-wrap">
+                <table className="tbl">
+                  <tbody>
+                    {seen.recent_evidence.map((one) => (
+                      <tr key={one.evidence_id}>
+                        <td className="muted tight">{one.source_system || '—'}</td>
+                        <td>
+                          {one.summary}
+                          {one.why_notable && <div className="muted text-[11px]">{one.why_notable}</div>}
+                          <div className="text-[11px] mt-0.5 flex gap-2 flex-wrap">
+                            <span className="muted">{one.salience}</span>
+                            {one.instruction_like && <span style={{ color: 'var(--crit)' }}>reads as instruction</span>}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+        </div>
+      )}
+
+      {seen.open_questions.length > 0 && <DigestList title="Open questions" rows={seen.open_questions} />}
+      {seen.directives.length > 0 && <DigestList title="Operator directives" rows={seen.directives} />}
+      {seen.notes.length > 0 && <DigestList title="Notes" rows={seen.notes} />}
+
+      <div style={{ marginTop: 10 }}>
+        <h4>Recalled from earlier investigations ({recalled.length})</h4>
+        <div className="muted text-[11.5px] mb-1">
+          Read off the run's own recall event — the record it opened on, not a live re-read of memory.
+        </div>
+        {recalled.length === 0
+          ? <div className="muted text-[12px]">Nothing recalled: the run never read memory, or the read could not be served.</div>
+          : <ul className="text-[12px]" style={{ paddingLeft: 18, margin: 0 }}>{recalled.map((row, at) => <li key={at}>{row}</li>)}</ul>}
+      </div>
+    </div>
+  )
+}
+
+function DigestList({ title, rows }: { title: string; rows: string[] }) {
+  return (
+    <div style={{ marginTop: 10 }}>
+      <h4>{title} ({rows.length})</h4>
+      <ul className="text-[12px]" style={{ paddingLeft: 18, margin: 0 }}>{rows.map((row, at) => <li key={at}>{row}</li>)}</ul>
     </div>
   )
 }
@@ -1664,6 +2050,137 @@ function HuntEvidenceTable({ found, total }: { found: HuntEvidence[]; total: num
   )
 }
 
+/** Title, description, and reason live on the approval, not on the phase row. */
+interface GateApproval {
+  action_id: string
+  title?: string
+  description?: string
+  reason?: string
+}
+
+/** Approve / Reject for a phase the playbook marked approval_required. Same calls
+ *  as the approvals inbox: they resume the run. Reject needs a reason. */
+function PhaseGate({ runId, onAnswered }: { runId: string; onAnswered: () => void }) {
+  const [actions, setActions] = useState<GateApproval[] | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [answered, setAnswered] = useState(false)
+  const [rejectFor, setRejectFor] = useState<GateApproval | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    approvalsApi
+      .list({ status: 'pending', workflow_run_id: runId })
+      .then((res) => {
+        if (cancelled) return
+        const body = res.data as { actions?: GateApproval[] }
+        setActions(body.actions ?? [])
+      })
+      .catch((e) => { if (!cancelled) setFailed(errMsg(e)) })
+    return () => { cancelled = true }
+  }, [runId])
+
+  const settle = (actionId: string, call: Promise<unknown>) => {
+    setBusy(true)
+    setFailed(null)
+    call
+      .then(() => {
+        setAnswered(true)
+        setActions((rows) => (rows ?? []).filter((a) => a.action_id !== actionId))
+        setRejectFor(null)
+        onAnswered()
+      })
+      .catch((e) => setFailed(errMsg(e)))
+      .finally(() => setBusy(false))
+  }
+
+  return (
+    <div className="modal-section run-ask">
+      <div className="flex items-center gap-2" style={{ color: 'var(--high)' }}>
+        <Icon name="alert" size={15} />
+        <h4 style={{ color: 'var(--tx)', margin: 0 }}>Waiting on approval</h4>
+      </div>
+      {actions === null && failed === null && <div className="muted text-[12.5px] mt-2">Loading the approval…</div>}
+      {actions !== null && actions.length === 0 && (
+        <div className="muted text-[12.5px] mt-2">
+          {answered
+            ? 'Answer sent. The run picks it up from here.'
+            : 'This phase is waiting, but no pending approval is on file for this run.'}
+        </div>
+      )}
+      {actions?.map((action) => (
+        <div key={action.action_id} className="mt-2">
+          <div className="text-[12.5px] leading-[1.55]">{action.title || action.action_id}</div>
+          {action.description && action.description !== action.title && (
+            <div className="muted text-[12px] mt-1">{action.description}</div>
+          )}
+          {action.reason && <div className="text-[12.5px] mt-1">{action.reason}</div>}
+          <div className="flex gap-2 items-center flex-wrap mt-2">
+            <button className="btn primary" disabled={busy} onClick={() => settle(action.action_id, approvalsApi.approve(action.action_id))}>
+              <Icon name="check2" /> Approve
+            </button>
+            <button className="btn danger" disabled={busy} onClick={() => setRejectFor(action)}>
+              <Icon name="x2" /> Reject
+            </button>
+          </div>
+        </div>
+      ))}
+      {failed && <div className="text-[11.5px] mt-2" style={{ color: 'var(--crit)' }}>{failed}</div>}
+      <RejectPhaseGate
+        open={rejectFor !== null}
+        title={rejectFor?.title || rejectFor?.action_id || ''}
+        busy={busy}
+        onClose={() => { if (!busy) setRejectFor(null) }}
+        onConfirm={(reason) => {
+          if (!rejectFor) return
+          settle(rejectFor.action_id, approvalsApi.reject(rejectFor.action_id, reason))
+        }}
+      />
+    </div>
+  )
+}
+
+function RejectPhaseGate({
+  open, title, busy, onClose, onConfirm,
+}: {
+  open: boolean
+  title: string
+  busy: boolean
+  onClose: () => void
+  onConfirm: (reason: string) => void
+}) {
+  const [reason, setReason] = useState('')
+  useEffect(() => { if (open) setReason('') }, [open])
+
+  const submit = () => {
+    const text = reason.trim()
+    if (!text || busy) return
+    onConfirm(text)
+  }
+
+  return (
+    <Popup open={open} onClose={onClose} title="Reject action" width={520}>
+      <div className="flex flex-col gap-3.5">
+        <p className="text-[13px] text-tx-2 m-0">{title}</p>
+        <Field
+          label="Rejection reason"
+          hint="Required. Recorded on the workflow run’s audit trail."
+          textarea
+          value={reason}
+          onChange={setReason}
+          placeholder="Why is this action being rejected?"
+        />
+        <div className="flex justify-end gap-2.5">
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn danger" disabled={!reason.trim() || busy} onClick={submit}>
+            {busy ? 'Rejecting…' : 'Reject'}
+          </button>
+        </div>
+      </div>
+    </Popup>
+  )
+}
+
 /** A run that walks phases has steps and a summary; there is nothing to tab between. */
 function ComposeDetail({ d }: { d: WfRunDetail }) {
   const agentMeta = useAgentMeta()
@@ -1691,7 +2208,7 @@ function ComposeDetail({ d }: { d: WfRunDetail }) {
                     <td>{agentMeta(p.agent_id).label}{p.error && <span className="ml-2" style={{ color: 'var(--crit)' }} title={p.error}>⚠</span>}</td>
                     <td className="tight"><span style={{ color: runStatusColor(p.status) }}>{p.status}</span></td>
                     <td className="muted tight">{fmtDuration(p.duration_ms)}</td>
-                    <td className="muted tight">{p.cost_usd ? `$${p.cost_usd.toFixed(3)}` : '—'}</td>
+                    <td className="muted tight"><Cost usd={p.cost_usd} digits={3} /></td>
                   </tr>
                 ))}
               </tbody>

@@ -75,7 +75,9 @@ def test_get_findings_by_technique_queries_child_table(monkeypatch):
 
     result = attack_router.get_findings_by_technique("T1071.001")
 
-    service.get_findings_by_technique.assert_called_once_with("T1071.001")
+    service.get_findings_by_technique.assert_called_once_with(
+        "T1071.001", exclusions="hide"
+    )
     service.get_findings.assert_not_called()
     assert result["total"] == 1
     assert result["findings"][0]["finding_id"] == "f-1"
@@ -119,6 +121,10 @@ def test_rollup_queries_child_table(monkeypatch):
     rollup = attack_router.occurrence_rollup()
 
     service.get_findings.assert_not_called()
+    # The dashboard counts the queue, which analyst-excluded IPs are not in.
+    assert (
+        service.get_technique_severity_counts.call_args.kwargs["exclusions"] == "hide"
+    )
     assert rollup["total_techniques"] == 1
     assert rollup["techniques"][0]["count"] == 2
 

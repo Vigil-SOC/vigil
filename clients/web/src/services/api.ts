@@ -159,6 +159,9 @@ export const approvalsApi = {
     api.post(`/approvals/${actionId}/reject`, { reason, rejected_by }),
 }
 
+/** how a findings read treats findings naming an analyst-excluded IP */
+export type ExclusionView = 'include' | 'hide' | 'only'
+
 export const findingsApi = {
   getAll: (params?: {
     severity?: string
@@ -166,11 +169,15 @@ export const findingsApi = {
     cluster_id?: number
     min_anomaly_score?: number
     limit?: number
-  }) => api.get('/findings/', { params }),
+    exclusions?: ExclusionView
+    sort_by?: string
+    sort_order?: 'asc' | 'desc'
+  }) => api.get('/findings', { params }),
   
   getById: (id: string) => api.get(`/findings/${id}`),
   
-  getSummary: () => api.get('/findings/stats/summary'),
+  getSummary: (params?: { exclusions?: ExclusionView }) =>
+    api.get('/findings/stats/summary', { params }),
   
   export: (format: 'json' | 'jsonl' = 'json') =>
     api.post('/findings/export', null, { params: { output_format: format } }),
@@ -189,16 +196,47 @@ export const findingsApi = {
   deleteAll: () => api.delete('/findings/all'),
 }
 
+export interface IpExclusion {
+  exclusion_id: string
+  ip: string
+  reason: string
+  origin: 'ad_hoc' | 'finding' | 'case' | 'run'
+  origin_ref?: string | null
+  created_by: string
+  created_at?: string | null
+  removed_at?: string | null
+  removed_by?: string | null
+  removal_reason?: string | null
+  active: boolean
+  /** stored findings naming this address; active rows only */
+  hidden_findings?: number | null
+}
+
+export const exclusionsApi = {
+  list: (includeRemoved = false) =>
+    api.get<{ exclusions: IpExclusion[]; total: number; hidden_findings_total: number }>('/exclusions', {
+      params: { include_removed: includeRemoved },
+    }),
+  create: (body: {
+    ip: string
+    reason: string
+    origin?: IpExclusion['origin']
+    origin_ref?: string
+  }) => api.post<IpExclusion>('/exclusions', body),
+  remove: (id: string, reason?: string) =>
+    api.post<IpExclusion>(`/exclusions/${encodeURIComponent(id)}/remove`, { reason: reason || null }),
+}
+
 export const casesApi = {
   getAll: (params?: {
     status?: string
     priority?: string
-  }) => api.get<Schema<'CaseListResponse'>>('/cases/', { params }),
+  }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
 
   getById: (id: string) => api.get<Schema<'CaseSchema'>>(`/cases/${id}`),
 
   create: (data: Schema<'CaseCreate'>) =>
-    api.post<Schema<'CaseSchema'>>('/cases/', data),
+    api.post<Schema<'CaseSchema'>>('/cases', data),
 
   update: (id: string, data: Schema<'CaseUpdate'>) =>
     api.patch<Schema<'CaseSuccessResponse'>>(`/cases/${id}`, data),
@@ -345,8 +383,7 @@ export const slaPoliciesApi = {
     is_default?: boolean
   }) => api.put(`/sla-policies/${policyId}`, data),
   
-  delete: (policyId: string, force?: boolean) =>
-    api.delete(`/sla-policies/${policyId}`, { params: { force } }),
+  delete: (policyId: string) => api.delete(`/sla-policies/${policyId}`),
   
   setDefault: (policyId: string) =>
     api.post(`/sla-policies/${policyId}/set-default`),
@@ -401,6 +438,21 @@ export const mcpApi = {
 
   setServerEnabled: (name: string, enabled: boolean) =>
     api.put(`/mcp/servers/${name}/enabled`, { enabled }),
+
+  // Vigil's own MCP surface: whether it listens, and what may open it.
+  getSurface: () => api.get('/mcp/surface'),
+
+  setSurfaceEnabled: (enabled: boolean) => api.put('/mcp/surface', { enabled }),
+
+  // The token is in this response and nowhere else.
+  mintCredential: (label: string, expiresInDays?: number) =>
+    api.post('/mcp/surface/credentials', {
+      label,
+      expires_in_days: expiresInDays ?? null,
+    }),
+
+  revokeCredential: (credentialId: string) =>
+    api.delete(`/mcp/surface/credentials/${credentialId}`),
 }
 
 export const claudeApi = {
@@ -528,10 +580,9 @@ export const configApi = {
 
   getAIOperations: () => api.get('/config/ai-operations'),
   setAIOperations: (data: {
-    prompt_cache_enabled: boolean
-    history_window: number
-    tool_response_budget_default: number
-    thinking_budget: number
+    local_ollama_recovery_enabled: boolean
+    local_ollama_recovery_retry_limit: number
+    local_ollama_recovery_restart_gateway: boolean
   }) => api.post('/config/ai-operations', data),
 
   getDarktrace: () => api.get('/config/darktrace'),
@@ -543,10 +594,10 @@ export const configApi = {
   }) => api.post('/config/darktrace', data),
 
   getOrchestrator: () => api.get('/config/orchestrator'),
+  getIntent: () => api.get('/config/intent'),
   setOrchestrator: (data: {
     enabled: boolean
     dry_run: boolean
-    auto_assign_severities: string[]
     max_concurrent_agents: number
     max_iterations_per_agent: number
     max_runtime_per_investigation: number
@@ -736,7 +787,7 @@ export interface CostEstimate {
   output_tokens_max: number
   low_usd: number
   high_usd: number
-  pricing_source: 'exact' | 'heuristic' | 'zero' | 'unknown'
+  pricing_source: 'exact' | 'zero' | 'unknown'
   token_count_method: 'anthropic_count_tokens' | 'tiktoken' | 'char_heuristic'
 }
 
@@ -946,6 +997,41 @@ export interface WorkflowPhase {
   parallel_group?: string | null
 }
 
+/** What a hunt lead was shown before one decision. Mirrors `Digest` in
+ *  services/agent/workflows/hunt/types.ts; only what the console renders is typed. */
+export interface ReplayDigest {
+  iteration: number
+  narrative: string
+  hypotheses: { hypothesis_id: string; statement: string; status: string }[]
+  recent_evidence: { evidence_id: string; source_system: string; summary: string; salience: string; why_notable: string; instruction_like: boolean }[]
+  focus: { entity: string | null; hypothesis: string | null }
+  omitted: { count: number; evidence_ids: string[] }
+  open_questions: string[]
+  budget_remaining: { iterations: number; cost_usd: number }
+  directives: string[]
+  notes: string[]
+}
+export interface ReplayedDecision {
+  decision_id: string
+  iteration: number
+  action: string
+  target: string | null
+  cost_usd: number
+  /** False when the ledger predates digest_seq and the prefix had to be inferred. */
+  exact: boolean
+  rebuilt: ReplayDigest
+  recorded: ReplayDigest
+  mismatch: string | null
+}
+export interface ReplayReport {
+  hunt_id: string
+  decisions: ReplayedDecision[]
+  reproduced: number
+  inexact: number
+  /** Read off the run's own recall event, not a live memory read. */
+  recalled: string[]
+}
+
 export const workflowApi = {
   listAll: () => api.get('/workflows'),
   get: (id: string) => api.get(`/workflows/${id}`),
@@ -957,6 +1043,10 @@ export const workflowApi = {
     iterations?: number
     approve_hypotheses?: boolean
   }) => api.post(`/workflows/${id}/execute`, params, { timeout: LLM_TIMEOUT }),
+  // Read-only: is this report already hunted? Answers running | concluded | uncovered,
+  // the last two with a `proposal` body execute() accepts as-is. Never starts anything.
+  checkCoverage: (body: { report?: string; entity_keys?: string[]; techniques?: string[] }) =>
+    api.post('/workflows/threat-hunt/coverage', body),
   reloadFiles: () => api.post('/workflows/reload'),
 
   // persisted to workflow_runs, so History lists past runs without retrieving
@@ -964,6 +1054,10 @@ export const workflowApi = {
   listRuns: (id: string, params: { limit?: number; offset?: number; status?: string } = {}) =>
     api.get(`/workflows/${id}/runs`, { params }),
   getRun: (runId: string) => api.get(`/workflows/runs/${runId}`),
+  // What one decision was shown, rebuilt against the record. Folds the whole ledger on
+  // the agent side, so it is asked for on a click and never on the getRun poll.
+  getReplay: (runId: string, decisionId: string) =>
+    api.get<ReplayReport>(`/workflows/runs/${runId}/replay`, { params: { decision_id: decisionId } }),
   // Hides a finished run from History. The row and its ledger stay: what the
   // agents did is still auditable by run_id after an operator tidies the list.
   deleteRun: (runId: string) => api.delete(`/workflows/runs/${runId}`),

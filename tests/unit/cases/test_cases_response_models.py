@@ -4,6 +4,7 @@ import pytest
 from fastapi.routing import APIRoute
 
 from core.storage.schemas import CaseSchema, CaseWithFindingsSchema
+from core.api.v1 import cases_router as v1_cases
 from services.api.routers import cases
 
 pytestmark = pytest.mark.unit
@@ -12,7 +13,7 @@ pytestmark = pytest.mark.unit
 def test_every_cases_route_declares_response_model():
     missing = [
         f"{sorted(route.methods)} {route.path}"
-        for route in cases.router.routes
+        for route in [*cases.router.routes, *v1_cases.router.routes]
         if isinstance(route, APIRoute) and route.response_model is None
     ]
     assert not missing, "cases routes without response_model:\n  " + "\n  ".join(
@@ -27,7 +28,7 @@ def test_get_case_documents_ids_not_inlined_findings():
     """
     get_case = [
         route
-        for route in cases.router.routes
+        for route in [*cases.router.routes, *v1_cases.router.routes]
         if isinstance(route, APIRoute)
         and route.path == "/{case_id}"
         and "GET" in route.methods

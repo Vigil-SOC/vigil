@@ -10,6 +10,7 @@ cleanly if not.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -57,7 +58,9 @@ def clean_runs():
 
     def _clear():
         with get_db_manager().session_scope() as s:
-            s.execute(text("DELETE FROM workflow_runs WHERE workflow_id LIKE 'test-wf-%'"))
+            s.execute(
+                text("DELETE FROM workflow_runs WHERE workflow_id LIKE 'test-wf-%'")
+            )
 
     _clear()
     yield
@@ -80,7 +83,6 @@ class TestBeginAndFinalize:
             workflow_source="file",
             trigger_context={"finding_id": "f-test-123"},
             triggered_by="pytest",
-            skill_tools_available=["skill_x"],
         )
         assert run_id is not None
         row = service.get_run(run_id)
@@ -90,7 +92,6 @@ class TestBeginAndFinalize:
         assert row["workflow_name"] == "Test WF"
         assert row["triggered_by"] == "pytest"
         assert row["trigger_context"] == {"finding_id": "f-test-123"}
-        assert row["skill_tools_available"] == ["skill_x"]
         assert row["finished_at"] is None
         assert row["duration_ms"] is None
 
@@ -126,6 +127,23 @@ class TestBeginAndFinalize:
         row = service.get_run(run_id)
         assert row["status"] == "failed"
         assert "RuntimeError" in (row["error"] or "")
+
+    def test_finalize_counts_outcome_by_run_kind_from_trigger_context(
+        self, service, clean_runs, monkeypatch
+    ):
+        counter = MagicMock()
+        monkeypatch.setattr(
+            "core.workflows.workflow_run_service._runs_finished", counter
+        )
+        run_id = service.begin_run(
+            workflow_id="test-wf-kind",
+            workflow_name="Test WF",
+            trigger_context={"run_kind": "investigate"},
+        )
+        assert service.finalize_run(run_id, status="cancelled") is True
+        counter.add.assert_called_once_with(
+            1, {"run_kind": "investigate", "status": "cancelled"}
+        )
 
     def test_finalize_rejects_bad_status(self, service, clean_runs):
         run_id = service.begin_run(
@@ -232,3 +250,25 @@ class TestListRuns:
         )
         ids = {row["run_id"] for row in in_window}
         assert ids == {overlap, mid}
+
+    def test_list_filters_run_kind_on_trigger_context(self, service, clean_runs):
+        compose = service.begin_run(
+            workflow_id="test-wf-kind-filter",
+            workflow_name="K",
+            trigger_context={"run_kind": "compose"},
+        )
+        hunt = service.begin_run(
+            workflow_id="test-wf-kind-filter",
+            workflow_name="K",
+            trigger_context={"run_kind": "hunt"},
+        )
+        plain = service.begin_run(
+            workflow_id="test-wf-kind-filter",
+            workflow_name="K",
+            trigger_context={},
+        )
+        for run_id in (compose, hunt, plain):
+            service.finalize_run(run_id, status="completed")
+
+        rows = service.list_runs(workflow_id="test-wf-kind-filter", run_kind="compose")
+        assert {row["run_id"] for row in rows} == {compose}

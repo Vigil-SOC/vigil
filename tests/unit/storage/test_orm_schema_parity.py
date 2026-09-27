@@ -61,7 +61,6 @@ from core.storage.schemas.workflow import (
     CustomWorkflowSchema,
     InvestigationLogSchema,
     InvestigationSchema,
-    SkillSchema,
     WorkflowRunPhaseSchema,
     WorkflowRunSchema,
 )
@@ -130,10 +129,9 @@ SCHEMA_REGISTRY: dict[str, dict] = {
     # Users and roles.
     "User": _standard(models.User, UserSchema),
     "Role": _standard(models.Role, RoleSchema),
-    # Workflows, skills and agents.
+    # Workflows and agents.
     "CustomWorkflow": _standard(models.CustomWorkflow, CustomWorkflowSchema),
     "WorkflowRunPhase": _standard(models.WorkflowRunPhase, WorkflowRunPhaseSchema),
-    "Skill": _standard(models.Skill, SkillSchema),
     "CustomAgent": _standard(models.CustomAgent, CustomAgentSchema),
     "ApprovalAction": _standard(models.ApprovalAction, ApprovalActionSchema),
     "Investigation": _standard(models.Investigation, InvestigationSchema),

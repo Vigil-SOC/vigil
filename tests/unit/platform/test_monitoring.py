@@ -1,15 +1,15 @@
 """
-Unit tests for core/platform/monitoring.py changes.
+Unit tests for core/platform/monitoring.py.
 
-Stubs sentry_sdk and prometheus_client so the tests run without
-those packages installed (same pattern as conftest.py for deeptempo_core).
+Stubs sentry_sdk so the tests run without a DSN or network (same pattern as
+conftest.py for deeptempo_core).
 """
 
 import os
 import sys
 import types
 import unittest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 
 # ---------------------------------------------------------------------------
@@ -39,43 +39,13 @@ def _make_sentry_stub():
     return sentry
 
 
-# ---------------------------------------------------------------------------
-# Stub prometheus_client before monitoring is imported
-# ---------------------------------------------------------------------------
-def _make_prometheus_stub():
-    prom = types.ModuleType("prometheus_client")
-    prom.Counter = MagicMock(return_value=MagicMock())
-    prom.Histogram = MagicMock(return_value=MagicMock())
-    prom.Gauge = MagicMock(return_value=MagicMock())
-    prom.generate_latest = MagicMock(return_value=b"# metrics\n")
-    prom.CONTENT_TYPE_LATEST = "text/plain; version=0.0.4"
-    sys.modules["prometheus_client"] = prom
-    return prom
-
-
-# Stub starlette so PrometheusMiddleware can be defined
-def _make_starlette_stub():
-    for name in ["starlette", "starlette.middleware", "starlette.middleware.base", "starlette.requests"]:
-        if name not in sys.modules:
-            sys.modules[name] = types.ModuleType(name)
-
-    class _BaseHTTPMiddleware:
-        def __init__(self, app):
-            self.app = app
-
-    sys.modules["starlette.middleware.base"].BaseHTTPMiddleware = _BaseHTTPMiddleware
-    sys.modules["starlette.requests"].Request = object
-
-
 _sentry_stub = _make_sentry_stub()
-_prometheus_stub = _make_prometheus_stub()
-_make_starlette_stub()
 
-# Now import monitoring with stubs in place. It is a submodule, so a plain
+# Now import monitoring with the stub in place. It is a submodule, so a plain
 # ``from core.platform import monitoring`` would hand back the attribute already
 # cached on the parent package by whichever earlier test imported the app —
-# with the real sentry/prometheus bound. Drop it from sys.modules and go
-# through importlib so module-level code re-runs against the stubs above.
+# with the real sentry bound. Drop it from sys.modules and go through
+# importlib so module-level code re-runs against the stub above.
 import importlib
 
 sys.modules.pop("core.platform.monitoring", None)
@@ -147,74 +117,37 @@ class TestBeforeSendFilter(unittest.TestCase):
         self.assertIsNone(result)
 
 
-class TestPrometheusAvailable(unittest.TestCase):
-    def test_prometheus_available_flag_is_true(self):
-        """prometheus_client is stubbed in, so PROMETHEUS_AVAILABLE should be True."""
-        self.assertTrue(monitoring.PROMETHEUS_AVAILABLE)
-
-    def test_module_level_metrics_exist(self):
-        """All four metrics should be defined at module level."""
-        self.assertTrue(hasattr(monitoring, "http_requests_total"))
-        self.assertTrue(hasattr(monitoring, "http_request_duration_seconds"))
-        self.assertTrue(hasattr(monitoring, "active_cases_total"))
-        self.assertTrue(hasattr(monitoring, "findings_processed_total"))
-
-    def test_prometheus_middleware_class_exists(self):
-        """PrometheusMiddleware class should be importable from monitoring."""
-        self.assertTrue(hasattr(monitoring, "PrometheusMiddleware"))
-
-
 class TestGetMetricsResponse(unittest.TestCase):
-    def test_returns_prometheus_output(self):
-        """get_metrics_response() should return a Response with Prometheus content."""
-        _prometheus_stub.generate_latest.return_value = b"# HELP http_requests_total\n"
+    def test_duplicate_http_instruments_are_gone(self):
+        """The prometheus_client HTTP stack was deleted; OTEL FastAPI
+        instrumentation is the only HTTP signal."""
+        for name in (
+            "PrometheusMiddleware",
+            "PROMETHEUS_AVAILABLE",
+            "http_requests_total",
+            "http_request_duration_seconds",
+            "active_cases_total",
+            "findings_processed_total",
+        ):
+            self.assertFalse(hasattr(monitoring, name), name)
 
-        class _FakeResponse:
-            def __init__(self, content, media_type=None):
-                self.content = content
-                self.media_type = media_type
+    def test_serves_default_registry(self):
+        """get_metrics_response() renders prometheus_client's default REGISTRY —
+        the one PrometheusMetricReader registers on — as Prometheus text."""
+        from opentelemetry.exporter.prometheus import PrometheusMetricReader
+        from opentelemetry.sdk.metrics import MeterProvider
 
-        fastapi_mod = types.ModuleType("fastapi")
-        fastapi_responses_mod = types.ModuleType("fastapi.responses")
-        fastapi_responses_mod.Response = _FakeResponse
-        fastapi_mod.responses = fastapi_responses_mod
-
-        with patch.dict(sys.modules, {"fastapi": fastapi_mod, "fastapi.responses": fastapi_responses_mod}):
+        provider = MeterProvider(metric_readers=[PrometheusMetricReader()])
+        try:
+            provider.get_meter("t").create_counter("vigil_test_scrape").add(3)
             resp = monitoring.get_metrics_response()
+        finally:
+            provider.shutdown()  # unregisters the reader's collector
 
-        self.assertEqual(resp.content, b"# HELP http_requests_total\n")
+        self.assertEqual(resp.status_code, 200)
         self.assertIn("text/plain", resp.media_type)
-
-
-class TestPrometheusMiddlewareSkipsMetricsEndpoint(unittest.TestCase):
-    """PrometheusMiddleware should not record a metric for /metrics itself."""
-
-    def test_metrics_path_bypasses_recording(self):
-        """Requests to /metrics should call call_next without recording."""
-        import asyncio
-
-        middleware = monitoring.PrometheusMiddleware(app=MagicMock())
-
-        fake_response = MagicMock()
-        fake_response.status_code = 200
-
-        async def fake_call_next(req):
-            return fake_response
-
-        class FakeURL:
-            path = "/metrics"
-
-        class FakeRequest:
-            url = FakeURL()
-            method = "GET"
-
-        result = asyncio.run(
-            middleware.dispatch(FakeRequest(), fake_call_next)
-        )
-        # Should return the response unchanged without touching metrics
-        self.assertEqual(result, fake_response)
-        # No labels() call means no metric was recorded
-        monitoring.http_requests_total.labels.assert_not_called()
+        self.assertIn(b"# TYPE vigil_test_scrape_total counter", resp.body)
+        self.assertRegex(resp.body, rb"vigil_test_scrape_total(\{[^}]*\})? 3\.0")
 
 
 if __name__ == "__main__":

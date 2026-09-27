@@ -247,8 +247,8 @@ agentServe:
 postgresql:
   enabled: true
   image:
-    repository: pgvector/pgvector
-    tag: "pg16"
+    repository: postgres
+    tag: "16-alpine"
     pullPolicy: IfNotPresent
   auth:
     database: deeptempo_soc
@@ -383,8 +383,8 @@ dbInit:
   enabled: true
   image:
     # Uses the same image as Postgres so psql is available.
-    repository: pgvector/pgvector
-    tag: "pg16"
+    repository: postgres
+    tag: "16-alpine"
     pullPolicy: IfNotPresent
   # Explicit ordering — files added under infra/database/init/ will NOT auto-run.
   # Update this list when new init SQL lands.
@@ -421,6 +421,8 @@ dbInit:
     - 30_vigil_app_role.sql
     - 31_agent_ledger_hash_chain.sql
     - 32_drop_attack_layers.sql
+    - 33_episodic_verdict_techniques.sql
+    - 35_ip_exclusions.sql
   resources:
     requests:
       cpu: 50m
@@ -658,6 +660,8 @@ config:
   # CSRF
   VIGIL_CSRF_ENABLED: "true"
   VIGIL_CSRF_REPORT_ONLY: "true"
+  # Added to the always-exempt set (webhooks, ingestion, the /mcp surface,
+  # the agent layer's /internal endpoints) rather than replacing it.
   # App-root relative; the API prefixes each entry with VIGIL_CONTEXT_PATH.
   VIGIL_CSRF_EXEMPT_PATHS: "/api/webhooks/,/api/ingest/"
 
@@ -714,6 +718,10 @@ config:
   DAEMON_BATCH_SIZE: "10"
   DAEMON_AUTO_RESPONSE: "true"
   DAEMON_CONFIDENCE_THRESHOLD: "0.90"
+  DAEMON_REVIEW_THRESHOLD: "0.85"
+  DAEMON_MONITOR_THRESHOLD: "0.70"
+  DAEMON_CRITICAL_ACTION_FLOOR: "0.70"
+  DAEMON_HIGH_ACTION_FLOOR: "0.80"
   DAEMON_FORCE_APPROVAL: "false"
   DAEMON_DRY_RUN: "false"
   DAEMON_ESCALATION_ENABLED: "true"
@@ -739,7 +747,6 @@ config:
   ORCHESTRATOR_MAX_HOURLY_COST: "20.0"
   ORCHESTRATOR_STALE_THRESHOLD: "300"
   ORCHESTRATOR_WORKDIR: "/app/data/investigations"
-  ORCHESTRATOR_AUTO_SEVERITIES: "critical,high"
   ORCHESTRATOR_DRY_RUN: "false"
 
   # OTEL — disabled by default; turn on when an OTEL collector is reachable.

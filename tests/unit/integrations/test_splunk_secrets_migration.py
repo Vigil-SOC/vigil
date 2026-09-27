@@ -25,9 +25,9 @@ SPLUNK_TOOL = REPO / "core" / "integrations" / "splunk" / "tool.py"
 def splunk_mod(monkeypatch):
     """Import the Splunk MCP tool in isolation, with SPLUNK_* env cleared.
 
-    Note: the module calls ``load_dotenv()`` at import time, so env vars
-    have to be cleared *after* exec_module runs — dotenv would otherwise
-    repopulate them from the project ``.env`` file.
+    The module's import-time ``load_dotenv()`` is skipped under the suite's
+    ``VIGIL_DISABLE_DOTENV`` (tests/conftest.py), so a developer's ``.env``
+    cannot repopulate these keys; see test_tool_dotenv_disabled.py.
     """
     spec = importlib.util.spec_from_file_location("splunk_tool_under_test", SPLUNK_TOOL)
     module = importlib.util.module_from_spec(spec)

@@ -25,8 +25,10 @@ ROUTER_META = RouterMeta(
 async def get_session_summary(session_id: str):
     """Summary rollup for a chat session or agent session.
 
-    Returns total interactions, cumulative cost, token totals, time range,
-    and per-agent breakdown so UIs can render a session-level header.
+    Returns total interactions, cumulative cost of priced calls, how many
+    calls had no price, token totals, time range, and a per-agent breakdown.
+    A session with no rows stays at zero; a session whose rows are all
+    unpriced reports a null cost.
     """
     db_manager = get_db_manager()
     with db_manager.session_scope() as session:
@@ -53,11 +55,13 @@ async def get_session_summary(session_id: str):
             }
 
         agents: dict = {}
-        total_cost = 0.0
+        # None until a priced row arrives. NULL cost_usd is unpriced (#1115),
+        # so a slice with no priced row stays null rather than reading as free.
+        total_cost = None
+        unpriced = 0
         total_in = 0
         total_out = 0
         for r in rows:
-            total_cost += float(r.cost_usd or 0)
             total_in += int(r.input_tokens or 0)
             total_out += int(r.output_tokens or 0)
             key = r.agent_id or "unknown"
@@ -66,20 +70,28 @@ async def get_session_summary(session_id: str):
                 {
                     "agent_id": r.agent_id,
                     "interactions": 0,
-                    "cost_usd": 0.0,
+                    "cost_usd": None,
+                    "unpriced_calls": 0,
                     "input_tokens": 0,
                     "output_tokens": 0,
                 },
             )
             entry["interactions"] += 1
-            entry["cost_usd"] += float(r.cost_usd or 0)
             entry["input_tokens"] += int(r.input_tokens or 0)
             entry["output_tokens"] += int(r.output_tokens or 0)
+            if r.cost_usd is None:
+                unpriced += 1
+                entry["unpriced_calls"] += 1
+            else:
+                amount = float(r.cost_usd)
+                total_cost = (total_cost or 0) + amount
+                entry["cost_usd"] = (entry["cost_usd"] or 0) + amount
 
         return {
             "session_id": session_id,
             "total_interactions": len(rows),
             "total_cost_usd": total_cost,
+            "unpriced_calls": unpriced,
             "total_input_tokens": total_in,
             "total_output_tokens": total_out,
             "first_at": (

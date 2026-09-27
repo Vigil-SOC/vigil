@@ -6,8 +6,10 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
+from core.llm.cost.calls import CallQuote, quote_call
 from core.llm.defaults import DEFAULT_MODEL
 from core.secrets import get_secret
+from core.telemetry import record_llm_call
 
 try:
     # Anthropic imports are retained for type references and the Bifrost-routed
@@ -264,6 +266,31 @@ class ClaudeService:
             return []
         return []
 
+    @staticmethod
+    def _call_cost(
+        model: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_creation_tokens: int = 0,
+    ) -> CallQuote:
+        """USD and the rates behind it, from one catalog read (GH #89, #1190).
+
+        Cache tokens are priced at their own rates. Any lookup failure is
+        unpriced: null cost, null rates, null fetch time.
+        """
+        try:
+            return quote_call(
+                model,
+                "anthropic",
+                int(input_tokens or 0),
+                int(output_tokens or 0),
+                cache_read_tokens=int(cache_read_tokens or 0),
+                cache_creation_tokens=int(cache_creation_tokens or 0),
+            )
+        except Exception:
+            return CallQuote.unpriced()
+
     def _persist_interaction(
         self,
         *,
@@ -284,11 +311,14 @@ class ClaudeService:
         duration_ms: int = 0,
         error: Optional[str] = None,
         interaction_id: Optional[str] = None,
+        quote: Optional[CallQuote] = None,
     ) -> None:
         """Fire-and-forget insert of an LLMInteractionLog row.
 
         Runs in the calling thread; failures are logged but never re-raised
-        so persistence can never break the request path.
+        so persistence can never break the request path. ``quote`` is the
+        single catalog read that priced the call. When the caller has not
+        priced it yet, this reads the catalog once and stores that result.
         """
         try:
             from core.storage.connection import get_db_manager
@@ -304,23 +334,14 @@ class ClaudeService:
             tool_calls = [b for b in blocks if b["type"] == "tool_use"]
             tool_results_in = self._extract_prior_tool_results(request_messages)
 
-            try:
-                # GH #89: use the model registry for per-provider pricing.
-                # #184 Phase 3: include cache tokens so reads (0.1×) and
-                # writes (1.25×) are priced correctly instead of being
-                # treated as full-rate input.
-                from core.llm.cost.calls import compute_call_cost
-
-                cost_usd = compute_call_cost(
+            if quote is None:
+                quote = self._call_cost(
                     model,
-                    "anthropic",
-                    int(input_tokens or 0),
-                    int(output_tokens or 0),
-                    cache_read_tokens=int(cache_read_tokens or 0),
-                    cache_creation_tokens=int(cache_creation_tokens or 0),
+                    input_tokens,
+                    output_tokens,
+                    cache_read_tokens,
+                    cache_creation_tokens,
                 )
-            except Exception:
-                cost_usd = 0.0
 
             # #186: capture which Bifrost VK serviced this call so we can
             # group spend per-VK in analytics. Empty in dev / bypass mode.
@@ -353,7 +374,12 @@ class ClaudeService:
                 output_tokens=int(output_tokens or 0),
                 cache_read_tokens=int(cache_read_tokens or 0),
                 cache_creation_tokens=int(cache_creation_tokens or 0),
-                cost_usd=float(cost_usd or 0.0),
+                cost_usd=None if quote.cost_usd is None else float(quote.cost_usd),
+                input_cost_per_token=quote.input_cost_per_token,
+                output_cost_per_token=quote.output_cost_per_token,
+                cache_read_cost_per_token=quote.cache_read_cost_per_token,
+                cache_write_cost_per_token=quote.cache_write_cost_per_token,
+                rates_fetched_at=quote.rates_fetched_at,
                 duration_ms=int(duration_ms or 0),
                 error=error,
                 virtual_key_id=_vk,
@@ -381,12 +407,15 @@ class ClaudeService:
             return None
 
         messages = list(context or []) + [{"role": "user", "content": message}]
+        # Minted once: sent as the x-bf-lh-* header (Bifrost records it as the
+        # log entry's custom metadata) and written to the row below, so the
+        # two stores can be joined (#185).
+        interaction_id = str(uuid.uuid4())
         api_kwargs: Dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "messages": messages,
-            # Correlates the Bifrost LogEntry with the row persisted below.
-            "extra_headers": {"x-bf-lh-vigil-interaction-id": str(uuid.uuid4())},
+            "extra_headers": {"x-bf-lh-vigil-interaction-id": interaction_id},
         }
         if system_prompt:
             api_kwargs["system"] = system_prompt
@@ -398,21 +427,51 @@ class ClaudeService:
             logger.error(f"Error in Claude chat: {exc}")
             raise
 
+        duration_s = time.monotonic() - started
         usage = getattr(response, "usage", None)
+        response_model = getattr(response, "model", model)
+        input_tokens = (getattr(usage, "input_tokens", 0) or 0) if usage else 0
+        output_tokens = (getattr(usage, "output_tokens", 0) or 0) if usage else 0
+        cache_read = (getattr(usage, "cache_read_input_tokens", 0) or 0) if usage else 0
+        cache_creation = (
+            (getattr(usage, "cache_creation_input_tokens", 0) or 0) if usage else 0
+        )
+        # Priced once and shared by the log row and the GenAI instruments
+        # (#894, #1190). A second catalog read would re-fire the
+        # pricing-unknown counter and could stamp a different fetch.
+        quote = self._call_cost(
+            response_model, input_tokens, output_tokens, cache_read, cache_creation
+        )
         self._persist_interaction(
             session_id=session_id,
             agent_id=agent_id,
             investigation_id=investigation_id,
-            model=getattr(response, "model", model),
+            model=response_model,
             system_prompt=system_prompt,
             request_messages=messages,
             response_content=list(response.content) if response.content else [],
             thinking_enabled=False,
             thinking_budget=None,
             stop_reason=getattr(response, "stop_reason", None),
-            input_tokens=getattr(usage, "input_tokens", 0) if usage else 0,
-            output_tokens=getattr(usage, "output_tokens", 0) if usage else 0,
-            duration_ms=int((time.monotonic() - started) * 1000),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            duration_ms=int(duration_s * 1000),
+            interaction_id=interaction_id,
+            quote=quote,
+        )
+        # Direct-SDK path: never enters LLMRouter.dispatch, so this is the
+        # only record for the call.
+        record_llm_call(
+            model=response_model,
+            provider="anthropic",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read,
+            cache_creation_tokens=cache_creation,
+            duration_s=duration_s,
+            cost_usd=quote.cost_usd,
         )
 
         extracted = self._extract_content_blocks(response.content)

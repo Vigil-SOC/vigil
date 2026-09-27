@@ -9,8 +9,9 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from core.config import get_integration_config
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
+from core.integrations._base.config import resolve
+from core.integrations.aws_security_hub.descriptor import AWS_SECURITY_HUB
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
         """Initialize AWS Security Hub ingestion."""
         super().__init__()
         self.siem_name = "AWS Security Hub"
-        self.config = get_integration_config("aws-security-hub")
+        self.config = resolve(AWS_SECURITY_HUB)
 
     async def fetch_alerts(
         self,
@@ -47,7 +48,7 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
             from botocore.exceptions import ClientError
 
             # Get config
-            region = self.config.get("region", "us-east-1")
+            region = self.config.get("region") or "us-east-1"
             access_key = self.config.get("access_key_id")
             secret_key = self.config.get("secret_access_key")
 

@@ -4,7 +4,13 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-from core.storage.schemas.base import JsonList, OptDateTime, ORMSchema, StrList
+from core.storage.schemas.base import (
+    IntList,
+    JsonList,
+    OptDateTime,
+    ORMSchema,
+    StrList,
+)
 
 
 class SLAPolicySchema(ORMSchema):
@@ -18,7 +24,7 @@ class SLAPolicySchema(ORMSchema):
     resolution_time_hours: Optional[float] = None
     business_hours_only: Optional[bool] = None
     escalation_rules: Optional[Any] = None
-    notification_thresholds: Optional[list[str]] = None
+    notification_thresholds: Optional[list[int]] = None
     is_active: Optional[bool] = None
     is_default: Optional[bool] = None
     created_at: OptDateTime = None
@@ -83,7 +89,7 @@ class CaseCommentSchema(ORMSchema):
     author: Optional[str] = None
     content: Optional[str] = None
     mentions: StrList = Field(default_factory=list)
-    attachment_ids: StrList = Field(default_factory=list)
+    attachment_ids: IntList = Field(default_factory=list)
     is_edited: Optional[bool] = None
     is_deleted: Optional[bool] = None
     created_at: OptDateTime = None

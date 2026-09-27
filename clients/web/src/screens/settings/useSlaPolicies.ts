@@ -71,7 +71,7 @@ export function useSlaPolicies() {
     [reload],
   )
   const remove = useCallback(
-    async (id: string, force?: boolean) => { await slaPoliciesApi.delete(id, force); reload() },
+    async (id: string) => { await slaPoliciesApi.delete(id); reload() },
     [reload],
   )
   const setDefault = useCallback(

@@ -34,6 +34,54 @@ class IngestionError(RuntimeError):
     """An ingestion service reported success=False for a poll."""
 
 
+def normalize_mitre_predictions(raw: Any, finding_id: str) -> Dict[str, float]:
+    """Coerce a webhook ``mitre_predictions`` value to the canonical
+    ``{technique_id: confidence}`` dict every consumer assumes.
+
+    Accepted: dict (passed through as-is, values unvalidated), list/tuple of
+    technique ids, list of ``{"technique"|"id": ..., "confidence"|"score": ...}``
+    dicts, a single id string, or None. 1.0 is the "present, no score"
+    precedent used by the internal producers. Any other type, or a list entry
+    with no technique id, raises ValueError so the request fails with a 400
+    rather than the field being silently emptied downstream.
+    """
+    if raw is None:
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        items: list = [raw]
+    elif isinstance(raw, (list, tuple)):
+        items = list(raw)
+    else:
+        raise ValueError(
+            f"finding {finding_id}: mitre_predictions must be a dict, list or "
+            f"string, got {type(raw).__name__}"
+        )
+
+    out: Dict[str, float] = {}
+    for item in items:
+        score: Any = 1.0
+        if isinstance(item, dict):
+            # `or` rather than .get(default): a present-but-null key falls through.
+            technique = item.get("technique") or item.get("id")
+            score = item.get("confidence")
+            if score is None:
+                score = item.get("score")
+            # bool is an int subclass; True/False are not confidences.
+            if isinstance(score, bool) or not isinstance(score, (int, float)):
+                score = 1.0
+        else:
+            technique = item
+        if not isinstance(technique, str) or not technique.strip():
+            raise ValueError(
+                f"finding {finding_id}: mitre_predictions entry {item!r} has no "
+                "technique id"
+            )
+        out[technique.strip()] = float(score)
+    return out
+
+
 @dataclass
 class PollState:
     """Per-source polling cursor.
@@ -111,19 +159,21 @@ class DataPoller:
     def _init_services(self):
         """Initialize data source services."""
         try:
-            from core.config import get_integration_config, is_integration_enabled
+            from core.config import is_integration_enabled
+            from core.integrations._base.config import resolve
 
             # Initialize Splunk service if configured
             if is_integration_enabled("splunk"):
                 try:
                     from core.integrations.splunk.client import SplunkService
+                    from core.integrations.splunk.descriptor import SPLUNK
 
-                    splunk_config = get_integration_config("splunk")
+                    splunk_config = resolve(SPLUNK)
                     self._splunk_service = SplunkService(
-                        server_url=splunk_config.get("server_url", ""),
-                        username=splunk_config.get("username", ""),
-                        password=splunk_config.get("password", ""),
-                        verify_ssl=splunk_config.get("verify_ssl", False),
+                        server_url=splunk_config["server_url"] or "",
+                        username=splunk_config["username"] or "",
+                        password=splunk_config["password"] or "",
+                        verify_ssl=bool(splunk_config["verify_ssl"]),
                     )
                     logger.info("Splunk service initialized")
                 except Exception as e:
@@ -133,14 +183,13 @@ class DataPoller:
             if is_integration_enabled("crowdstrike"):
                 try:
                     from core.integrations.crowdstrike.client import CrowdStrikeService
+                    from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 
-                    cs_config = get_integration_config("crowdstrike")
+                    cs_config = resolve(CROWDSTRIKE)
                     self._crowdstrike_service = CrowdStrikeService(
-                        client_id=cs_config.get("client_id", ""),
-                        client_secret=cs_config.get("client_secret", ""),
-                        base_url=cs_config.get(
-                            "base_url", "https://api.crowdstrike.com"
-                        ),
+                        client_id=cs_config["client_id"] or "",
+                        client_secret=cs_config["client_secret"] or "",
+                        base_url=cs_config["base_url"] or "https://api.crowdstrike.com",
                     )
                     logger.info("CrowdStrike service initialized")
                 except Exception as e:
@@ -563,7 +612,6 @@ class DataPoller:
                         status=503,
                     )
 
-                count = 0
                 for finding_data in findings:
                     finding_id = finding_data.get("finding_id")
                     if not finding_id:
@@ -572,6 +620,19 @@ class DataPoller:
                         finding_id = f"webhook-{uuid.uuid4().hex[:16]}"
                         finding_data["finding_id"] = finding_id
 
+                # Untrusted payload: coerce to the canonical {technique: score}
+                # dict once here, before anything is enqueued, so a bad entry
+                # 400s the whole batch (via the except below) instead of
+                # breaking triage and dropping technique rows downstream.
+                for finding_data in findings:
+                    finding_data["mitre_predictions"] = normalize_mitre_predictions(
+                        finding_data.get("mitre_predictions"),
+                        finding_data["finding_id"],
+                    )
+
+                count = 0
+                for finding_data in findings:
+                    finding_id = finding_data["finding_id"]
                     if not await self._webhook_dedup.is_processed(finding_id):
                         finding_data["data_source"] = finding_data.get(
                             "data_source", "webhook"

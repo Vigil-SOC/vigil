@@ -40,7 +40,15 @@ function casePrompt(c: CaseRow): string {
 }
 
 type SortKey = 'id' | 'title' | 'status' | 'prio' | 'ownerName' | 'findings' | 'tactic' | 'age' | 'sla' | 'updated'
-const PRIO_RANK = { critical: 0, high: 1, medium: 2, low: 3 } satisfies Record<CaseRow['prio'], number>
+const PRIO_RANK = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 } satisfies Record<CaseRow['prio'], number>
+const CASE_PRIO_OPTIONS: { value: CaseRow['prio']; label: string }[] = [
+  { value: 'critical', label: 'Critical' },
+  { value: 'high', label: 'High' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'low', label: 'Low' },
+  { value: 'unknown', label: 'Unknown' },
+]
+const RATED_PRIO_OPTIONS = CASE_PRIO_OPTIONS.filter((o) => o.value !== 'unknown')
 
 function sortValue(c: CaseRow, key: SortKey): string | number {
   switch (key) {
@@ -347,10 +355,7 @@ function CasesTable({
             onSelect={setPrioF}
             options={[
               { value: 'any', label: 'Any' },
-              { value: 'critical', label: 'Critical' },
-              { value: 'high', label: 'High' },
-              { value: 'medium', label: 'Medium' },
-              { value: 'low', label: 'Low' },
+              ...CASE_PRIO_OPTIONS,
             ]}
           />
           <FilterGroup label="Assignee" value={assigneeF} onSelect={setAssigneeF} options={assigneeOptions} />
@@ -654,10 +659,7 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
           placeholder="Any"
           options={[
             { value: '', label: 'Any' },
-            { value: 'critical', label: 'Critical' },
-            { value: 'high', label: 'High' },
-            { value: 'medium', label: 'Medium' },
-            { value: 'low', label: 'Low' },
+            ...CASE_PRIO_OPTIONS,
           ]}
         />
       </label>
@@ -742,12 +744,7 @@ function NewCaseDialog({ open, onClose, onCreated }: { open: boolean; onClose: (
             <Select
               value={priority}
               onSelect={setPriority}
-              options={[
-                { value: 'critical', label: 'Critical' },
-                { value: 'high', label: 'High' },
-                { value: 'medium', label: 'Medium' },
-                { value: 'low', label: 'Low' },
-              ]}
+              options={RATED_PRIO_OPTIONS}
             />
           </label>
           <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
@@ -869,9 +866,7 @@ function EditCaseDialog({ open, c, onClose, onSaved }: { open: boolean; c: CaseR
         <div className="grid grid-cols-2 gap-3">
           <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
             <span>Priority</span>
-            <Select value={priority} onSelect={setPriority} options={[
-              { value: 'critical', label: 'Critical' }, { value: 'high', label: 'High' }, { value: 'medium', label: 'Medium' }, { value: 'low', label: 'Low' },
-            ]} />
+            <Select value={priority} onSelect={setPriority} options={CASE_PRIO_OPTIONS} />
           </label>
           <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
             <span>Status</span>

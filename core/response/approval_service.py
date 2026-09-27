@@ -17,17 +17,48 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
+from opentelemetry.metrics import Observation
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
+from core.response.config import ResponseConfig, approval_requirement
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
+from core.telemetry import get_meter
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+_pending_gauge: Any = None
+
+
+def register_pending_gauge(service: "ApprovalService") -> None:
+    """Export the approval queue depth as an observable gauge, once per process.
+
+    Not in ``__init__``: the service is constructed in many places and each
+    registration would stack another callback onto the same instrument. The
+    caller that owns the process-wide instance (API boot) calls this.
+    """
+    global _pending_gauge
+    if _pending_gauge is not None:
+        return
+
+    def _observe(_options: Any) -> Iterable[Observation]:
+        try:
+            return [Observation(len(service.list_pending_approvals()))]
+        except Exception as e:  # a DB outage drops the sample, not the process
+            logger.debug("approvals.pending observation failed: %s", e)
+            return []
+
+    _pending_gauge = get_meter("vigil.response.approvals").create_observable_gauge(
+        "vigil.approvals.pending",
+        callbacks=[_observe],
+        description="Actions awaiting approval",
+        unit="1",
+    )
 
 
 class ActionType(Enum):
@@ -136,7 +167,15 @@ def _nonfailed_by_key(session, key: str) -> Optional[ApprovalActionRow]:
 class ApprovalService:
     """Service for managing approval workflow for autonomous actions."""
 
-    def __init__(self):
+    def __init__(self, config: Optional[ResponseConfig] = None):
+        """
+        Initialize approval service.
+
+        Args:
+            config: the confidence band; read from Settings when omitted so
+                the no-arg form callers use still honours env (#916).
+        """
+        self.config = config or ResponseConfig.from_settings()
         self._load_config()
 
     # ------------------------------------------------------------------
@@ -253,14 +292,12 @@ class ApprovalService:
         """
         key = idempotency_key or None
 
-        if self.force_manual_approval:
-            requires_approval = True
-        elif reversibility is Reversibility.IRREVERSIBLE:
-            requires_approval = True
-        elif reversibility is Reversibility.REVERSIBLE:
-            requires_approval = confidence < 0.90
-        else:
-            raise ValueError(f"Unknown reversibility: {reversibility}")
+        # The branch that set requires_approval is appended to the caller's
+        # narrative so the row records the rule it was decided by (#917).
+        requires_approval, rule = approval_requirement(
+            self.force_manual_approval, reversibility, confidence, self.config
+        )
+        reason = f"{reason}; {rule}" if reason else rule
 
         action_id = f"action-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
         status = (

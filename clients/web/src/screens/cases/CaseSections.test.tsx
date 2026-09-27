@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { WatchersCard, SLACard, TasksCard } from './CaseSections'
+import { MemoryRouter } from 'react-router-dom'
+import { ActivityCard, WatchersCard, SLACard, TasksCard } from './CaseSections'
 import { casesApi } from '../../services/api'
 
 /**
@@ -141,7 +142,47 @@ describe('SLACard', () => {
   })
 })
 
+describe('ActivityCard', () => {
+  // The run bridge writes `details.run_id` onto agent_run_report / handoff
+  // activities; that is the only key the case holds to the run (#951).
+  it('links an activity carrying details.run_id to /workflows?run=<id>', () => {
+    render(
+      <MemoryRouter>
+        <ActivityCard activities={[
+          { description: 'Hunt reported', activity_type: 'agent_run_report', timestamp: '2026-06-15T09:14:00Z', details: { run_id: 'run-abc' } },
+          { description: 'Status changed', activity_type: 'status_change', timestamp: '2026-06-15T09:15:00Z' },
+        ]} />
+      </MemoryRouter>,
+    )
+
+    const links = screen.getAllByRole('link', { name: /Open run/ })
+    expect(links).toHaveLength(1)
+    expect(links[0]).toHaveAttribute('href', '/workflows?run=run-abc')
+    expect(screen.getByText('Status changed')).toBeInTheDocument()
+  })
+})
+
 describe('TasksCard', () => {
+  it('sorts an unknown-priority task after a rated one', async () => {
+    vi.mocked(casesApi.getTasks).mockResolvedValue({
+      data: {
+        tasks: [
+          { ...TASK_ROW, task_id: 1, title: 'Unrated follow-up', priority: 'unknown' },
+          { ...TASK_ROW, task_id: 2, title: 'Collect packet capture', priority: 'high' },
+        ],
+      },
+    } as never)
+
+    render(<TasksCard caseId="case-2026-0142" />)
+
+    await waitFor(() =>
+      expect(screen.getByText('Collect packet capture')).toBeInTheDocument(),
+    )
+    const high = screen.getByText('Collect packet capture')
+    const unrated = screen.getByText('Unrated follow-up')
+    expect(high.compareDocumentPosition(unrated) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('toggles a task by task_id via PUT, not a hand-written id', async () => {
     render(<TasksCard caseId="case-2026-0142" />)
 

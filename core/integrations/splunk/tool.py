@@ -23,7 +23,12 @@ from mcp.server.models import InitializationOptions
 try:
     from dotenv import load_dotenv
 
-    load_dotenv()
+    # Spawned as a server, .env is the config source. Imported into a process
+    # that already decided where its config comes from (the test suite sets
+    # VIGIL_DISABLE_DOTENV), loading it would write .env into os.environ, which
+    # pydantic reads regardless of env_file.
+    if not os.environ.get("VIGIL_DISABLE_DOTENV"):
+        load_dotenv()
 except ImportError:
     pass
 

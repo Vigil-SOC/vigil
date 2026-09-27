@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 
+from core.workflows import catalog
 from core.workflows import workflows_router as router
 from core.workflows.workflows_service import WorkflowsService
 
@@ -39,8 +40,8 @@ async def test_a_hunt_run_carries_the_standing_of_its_hypotheses(monkeypatch):
     assert detail["hunt"] == STANDING
 
 
-# The four compose definitions are untouched, and asking the agent layer about one
-# is a round trip whose answer nothing would read.
+# Investigate is not the hunt loop, and asking the agent layer about one is a
+# round trip whose answer nothing would read.
 @pytest.mark.asyncio
 async def test_a_compose_run_is_not_asked_about(monkeypatch):
     asked = []
@@ -61,6 +62,6 @@ async def test_a_compose_run_is_not_asked_about(monkeypatch):
 
 def test_the_threat_hunt_definition_is_the_one_that_reads_as_a_hunt():
     workflows = WorkflowsService()
-    assert router._is_hunt(workflows, "threat-hunt")
-    assert not router._is_hunt(workflows, "incident-response")
-    assert not router._is_hunt(workflows, None)
+    assert catalog.is_hunt(workflows, "threat-hunt")
+    assert not catalog.is_hunt(workflows, "incident-response")
+    assert not catalog.is_hunt(workflows, None)

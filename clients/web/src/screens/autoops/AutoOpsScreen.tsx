@@ -2,8 +2,9 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Toggle, NumberInput } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
+import { Cost, fmtCost } from '../../shared/cost'
 import { useAutoOps, type Investigation, type OrchestratorStatus } from './useAutoOps'
-import { StatusBadge } from './statusBadge'
+import { StatusBadge, PrioBadge } from './statusBadge'
 import InvestigationDetail from './InvestigationDetail'
 
 interface KpiDef {
@@ -17,7 +18,7 @@ interface KpiDef {
 
 const KPIS: KpiDef[] = [
   { key: 'active', label: 'Active Agents', statuses: ['assigned', 'executing'], value: (s) => s.active_agents, color: 'var(--med)', note: 'running now' },
-  { key: 'queued', label: 'Queued', statuses: ['queued'], value: (s) => s.queued, note: 'waiting for a slot' },
+  { key: 'queued', label: 'Queued', statuses: [], value: (s) => s.queued, note: 'waiting for a slot' },
   { key: 'review', label: 'Pending Review', statuses: ['review_submitted'], value: (s) => s.pending_review, color: 'var(--high)', note: 'awaiting a human' },
   { key: 'done', label: 'Completed', statuses: ['completed'], value: (s) => s.completed, color: 'var(--ok)', note: 'this session' },
   { key: 'failed', label: 'Failed', statuses: ['failed'], value: (s) => s.failed, color: 'var(--crit)', note: 'errored out' },
@@ -146,15 +147,15 @@ export default function AutoOpsScreen({ openChat, go, goSettings, setViewFull }:
             value={k.value(status)}
             note={k.note}
             color={k.color}
-            active={filterActive(k.statuses)}
-            onClick={() => toggleFilter(k.statuses)}
+            active={k.statuses.length ? filterActive(k.statuses) : undefined}
+            onClick={k.statuses.length ? () => toggleFilter(k.statuses) : undefined}
           />
         ))}
-        <KpiCell label="Total Cost" value={`$${cost.total_cost_usd?.toFixed(2) ?? '0.00'}`} note="cumulative spend" />
+        <KpiCell label="Total Cost" value={fmtCost(cost.total_cost_usd)} note="cumulative spend" />
       </div>
 
       {/* ---------- hourly budget (only meaningful while enabled) ---------- */}
-      {status.enabled && <BudgetBar used={cost.hourly_cost_usd} remaining={cost.hourly_budget_remaining} />}
+      {status.enabled && <BudgetBar used={cost.hourly_cost_usd} remaining={cost.hourly_budget_remaining} paused={!!cost.hourly_paused} />}
 
       {/* ---------- investigation queue ---------- */}
       <div className="px-[22px] pt-5 pb-6">
@@ -237,7 +238,7 @@ function InvestigationRow({
     <tr className="clickable" onClick={() => onSelect(inv.investigation_id)}>
       <td><span className="id-cell">{inv.investigation_id}</span></td>
       <td><span className="tag">{inv.skill_id}</span></td>
-      <td><span className={`prio ${inv.priority}`}>{inv.priority}</span></td>
+      <td><PrioBadge prio={inv.priority} /></td>
       <td><StatusBadge status={inv.status} /></td>
       <td>
         <span
@@ -248,7 +249,7 @@ function InvestigationRow({
         </span>
       </td>
       <td>{inv.iteration_count}</td>
-      <td className="muted">${inv.cost_usd?.toFixed(3)}</td>
+      <td className="muted"><Cost usd={inv.cost_usd} digits={3} /></td>
       <td className="muted">{inv.created_at ? new Date(inv.created_at).toLocaleString() : '—'}</td>
       <td>
         <span className="row-act">
@@ -298,15 +299,22 @@ function KpiCell({
   )
 }
 
-function BudgetBar({ used, remaining }: { used: number; remaining: number }) {
+function BudgetBar({ used, remaining, paused }: { used: number; remaining: number; paused: boolean }) {
   const total = used + remaining
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 100
-  const low = remaining < 5
+  const low = paused || remaining < 5
   return (
     <div className="px-[22px] pt-4">
       <div className="flex items-center justify-between mb-1.5 text-xs text-tx-3">
-        <span>Hourly budget · ${used?.toFixed(2)} of ${total?.toFixed(2)}</span>
-        <span style={low ? { color: 'var(--crit)', fontWeight: 600 } : undefined}>${remaining?.toFixed(2)} remaining</span>
+        <span>
+          Hourly budget · {fmtCost(used)} of ${total.toFixed(2)}
+          {paused && (
+            <span style={{ color: 'var(--crit)', fontWeight: 600 }}>
+              {' '}· Intake paused: hourly limit reached, running investigations continue
+            </span>
+          )}
+        </span>
+        <span style={low ? { color: 'var(--crit)', fontWeight: 600 } : undefined}>${remaining.toFixed(2)} remaining</span>
       </div>
       <div style={{ height: 8, borderRadius: 6, background: 'var(--bg-2)', overflow: 'hidden' }}>
         <div style={{ width: `${pct}%`, height: '100%', background: low ? 'var(--crit)' : 'var(--accent)', borderRadius: 6, transition: 'width .3s' }} />

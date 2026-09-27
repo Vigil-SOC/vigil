@@ -64,6 +64,19 @@ describe("a tool that runs in the other process", () => {
     });
   });
 
+  // A chat turn's person rides every call; a hunt has none and sends no field,
+  // which the far side reads as "agent" (#1087).
+  it("sends the principal only when the run was given one", async () => {
+    const { fetch, sent } = answering({ ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: "vigil" });
+    const url = "http://127.0.0.1:6987/internal/tools/invoke";
+    await remoteDispatch({ url, token: "shhh", fetch, principal: "signed.by.api" }).invoke(TOOL, {});
+    await remoteDispatch({ url, token: "shhh", fetch }).invoke(TOOL, {});
+
+    const [chat, hunt] = await Promise.all(sent.map((request) => request.json() as Promise<Record<string, unknown>>));
+    expect(chat!["principal"]).toBe("signed.by.api");
+    expect(hunt).not.toHaveProperty("principal");
+  });
+
   it("carries the shared secret and nothing else identifying", async () => {
     const { fetch, sent } = answering({ ok: true, rows: [], rowCount: 0, capped: false, sourceSystem: "vigil" });
     await dispatchTo(fetch).invoke(TOOL, {});

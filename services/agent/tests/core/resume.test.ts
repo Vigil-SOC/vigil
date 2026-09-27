@@ -240,7 +240,7 @@ describe("a run that keeps being picked up and going nowhere", () => {
     for (let n = 0; n < resumes; n += 1) {
       await fresh.append(RUN, [
         { run_id: RUN, run_kind: "hunt", kind: "resumed", payload: { worker: "w", enqueued_by: "watchdog" } },
-        { run_id: RUN, run_kind: "hunt", kind: "spend", payload: { role: "lead", tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0, model_id: "m", provider_type: "bifrost", pricing_source: "exact" } },
+        { run_id: RUN, run_kind: "hunt", kind: "spend", payload: { role: "lead", tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0, model_id: "m", provider_type: "bifrost", pricing_source: "exact", rates: null, fetched_at: null } },
       ]);
     }
     return fresh;

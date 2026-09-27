@@ -9,10 +9,11 @@ both systems remain useful without creating duplicate transaction records.
 """
 
 import logging
-import time
 from typing import Any, Optional
 
 import sentry_sdk
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
@@ -174,71 +175,12 @@ def add_breadcrumb(
     )
 
 
-# --- Prometheus metrics ---
-# Defined at module level so they persist for the lifetime of the process.
-# init_prometheus_metrics() previously defined these as locals (immediately GC'd).
+def get_metrics_response() -> Response:
+    """Prometheus text for the process.
 
-PROMETHEUS_AVAILABLE = False
-
-try:
-    from prometheus_client import (
-        CONTENT_TYPE_LATEST,
-        Counter,
-        Gauge,
-        Histogram,
-        generate_latest,
-    )
-    from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.requests import Request as StarletteRequest
-
-    http_requests_total = Counter(
-        "http_requests_total", "Total HTTP requests", ["method", "endpoint", "status"]
-    )
-    http_request_duration_seconds = Histogram(
-        "http_request_duration_seconds",
-        "HTTP request duration in seconds",
-        ["method", "endpoint"],
-    )
-    active_cases_total = Gauge("active_cases_total", "Number of active cases")
-    findings_processed_total = Counter(
-        "findings_processed_total", "Total findings processed", ["source", "severity"]
-    )
-
-    PROMETHEUS_AVAILABLE = True
-
-    class PrometheusMiddleware(BaseHTTPMiddleware):
-        """Record request count and duration for every HTTP request."""
-
-        async def dispatch(self, request: StarletteRequest, call_next):
-            # Skip the /metrics endpoint itself to avoid noise
-            if request.url.path == "/metrics":
-                return await call_next(request)
-            start = time.perf_counter()
-            status_code = 500
-            try:
-                response = await call_next(request)
-                status_code = response.status_code
-                return response
-            finally:
-                duration = time.perf_counter() - start
-                http_requests_total.labels(
-                    method=request.method,
-                    endpoint=request.url.path,
-                    status=status_code,
-                ).inc()
-                http_request_duration_seconds.labels(
-                    method=request.method,
-                    endpoint=request.url.path,
-                ).observe(duration)
-
-except ImportError:
-    logger.warning("prometheus_client not installed, metrics disabled")
-
-
-def get_metrics_response():
-    """Return current Prometheus metrics as a FastAPI Response."""
-    from fastapi.responses import Response
-
-    if not PROMETHEUS_AVAILABLE:
-        return Response("Prometheus not available", status_code=503)
+    The OTEL PrometheusMetricReader (core/telemetry.py) registers its collector
+    on prometheus_client's default REGISTRY, so this is the OTEL MeterProvider
+    rendered as Prometheus text. HTTP request metrics come from
+    FastAPIInstrumentation, not from anything declared here.
+    """
     return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

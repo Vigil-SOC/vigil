@@ -6,11 +6,12 @@
    model Bifrost can price is a model this page can describe — including ones
    released after this build.
    ============================================================ */
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { Cost } from '../../shared/cost'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Field, SettingsCard, TextInput } from '../../shared/ui'
 import { useBifrostModels, useModelParameters } from './useBifrost'
-import { perMillion, type BifrostModel } from '../../services/bifrostApi'
+import { effectiveRates, perMillion, type BifrostModel } from '../../services/bifrostApi'
 
 const money = (v: number | null): string =>
   v === null ? '—' : v >= 1 ? `$${v.toFixed(2)}` : `$${v.toFixed(3)}`
@@ -99,6 +100,11 @@ export default function AiModelsPanel() {
 
 function ModelDetail({ model, onClose }: { model: BifrostModel; onClose: () => void }) {
   const { params, error } = useModelParameters(model.name, model.provider)
+  const rates = effectiveRates(model)
+  // Without both base rates the model cannot be priced; 0 is a real rate (e.g. Ollama).
+  const priced =
+    typeof rates.input_cost_per_token === 'number' && typeof rates.output_cost_per_token === 'number'
+  const rate = (perToken: number | undefined) => (priced ? money(perMillion(perToken)) : <Cost usd={null} />)
 
   return (
     <div style={{ width: 300, flexShrink: 0, border: '1px solid var(--line)', borderRadius: 6, padding: 14 }}>
@@ -112,21 +118,22 @@ function ModelDetail({ model, onClose }: { model: BifrostModel; onClose: () => v
         </button>
       </div>
 
+      <div className="text-xs" style={{ letterSpacing: '0.04em', marginBottom: 6 }}>
+        PER MILLION TOKENS
+      </div>
+      <div className="flex flex-col gap-1 text-sm mb-3">
+        <Row label="Input" value={rate(rates.input_cost_per_token)} />
+        <Row label="Output" value={rate(rates.output_cost_per_token)} />
+        {/* Most priced models carry no cache rate; absent is "—", not "not priced". */}
+        <Row label="Cache read" value={money(perMillion(rates.cache_read_input_token_cost))} />
+        <Row label="Cache write" value={money(perMillion(rates.cache_creation_input_token_cost))} />
+      </div>
+
       {error && <div className="text-xs text-tx-3">{error}</div>}
       {!params && !error && <div className="text-xs text-tx-3">Loading…</div>}
 
       {params && (
         <>
-          <div className="text-xs" style={{ letterSpacing: '0.04em', marginBottom: 6 }}>
-            PER MILLION TOKENS
-          </div>
-          <div className="flex flex-col gap-1 text-sm mb-3">
-            <Row label="Input" value={money(perMillion(params.input_cost_per_token))} />
-            <Row label="Output" value={money(perMillion(params.output_cost_per_token))} />
-            <Row label="Cache read" value={money(perMillion(params.cache_read_input_token_cost))} />
-            <Row label="Cache write" value={money(perMillion(params.cache_creation_input_token_cost))} />
-          </div>
-
           <div className="flex flex-col gap-1 text-sm mb-3">
             <Row
               label="Context"
@@ -155,7 +162,7 @@ function ModelDetail({ model, onClose }: { model: BifrostModel; onClose: () => v
   )
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex justify-between gap-3">
       <span className="text-tx-3">{label}</span>

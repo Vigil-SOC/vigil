@@ -26,6 +26,7 @@ MCP_CONFIG = ROOT / "mcp-config.json"
 HUNT_LIKE = [
     ("threathunt.yaml", "threat-hunt"),
     ("rootcause.yaml", "root-cause-analysis"),
+    ("adjudicate.yaml", "shadow-adjudication"),
 ]
 ARCHES = [ROOT / "services" / "agent" / "arch" / name for name, _ in HUNT_LIKE]
 ARCH = ARCHES[0]

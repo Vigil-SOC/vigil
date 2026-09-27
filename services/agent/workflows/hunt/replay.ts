@@ -1,4 +1,5 @@
 import { recalledNotesOf } from "../../contracts/memory.js";
+import { canonical } from "../../core/context.js";
 import { digestOf } from "./config.js";
 import { buildDigest } from "./digest.js";
 import { fold, type HuntEvent as LedgerEvent } from "./ledger.js";
@@ -33,13 +34,15 @@ export interface ReplayReport {
   recalled: readonly string[];
 }
 
+// Key order is not drift: the ledger's JSONB column hands the recorded digest
+// back with its keys reordered, and comparing raw bytes read every decision in
+// the store as a mismatch.
+const same = (a: unknown, b: unknown): boolean => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+
 // The two transforms the controller applies to a built digest before presenting
 // it — a rejection note and an EXPAND — only ever append to these.
 function isPrefix(rebuilt: readonly unknown[], recorded: readonly unknown[]): boolean {
-  return (
-    rebuilt.length <= recorded.length &&
-    rebuilt.every((item, index) => JSON.stringify(item) === JSON.stringify(recorded[index]))
-  );
+  return rebuilt.length <= recorded.length && rebuilt.every((item, index) => same(item, recorded[index]));
 }
 
 // Where the digest for this iteration was built, on a ledger written before
@@ -54,8 +57,8 @@ function differs(rebuilt: Digest, recorded: Digest): string | null {
   if (!isPrefix(rebuilt.notes, recorded.notes)) return "notes are not an extension of the rebuilt digest";
   if (!isPrefix(rebuilt.expansions, recorded.expansions)) return "expansions are not an extension of the rebuilt digest";
 
-  const body = ({ notes, expansions, ...rest }: Digest): string => JSON.stringify(rest);
-  return body(rebuilt) === body(recorded) ? null : "rebuilt digest differs from the one presented";
+  const body = ({ notes, expansions, ...rest }: Digest): unknown => rest;
+  return same(body(rebuilt), body(recorded)) ? null : "rebuilt digest differs from the one presented";
 }
 
 // Folds the ledger up to each decision, rebuilds the digest that decision was

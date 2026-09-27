@@ -43,6 +43,24 @@ def normalize_timestamp(timestamp_str: str) -> datetime:
     return dt
 
 
+def _dated(findings: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The findings that have a timestamp, and so a place on a timeline.
+
+    ``findings.timestamp`` is nullable: LogLM rows can arrive with no event time.
+    An undated finding is left off rather than failing the whole response.
+    """
+    return [f for f in findings if f.get("timestamp")]
+
+
+def _column_time(dt: datetime) -> datetime:
+    """``dt`` as the naive UTC ``findings.timestamp`` holds, for a query bound.
+
+    An aware bound is sent as ``timestamptz``, and comparing that to the naive
+    column reads the column in the session's time zone rather than in UTC.
+    """
+    return dt.astimezone(timezone.utc).replace(tzinfo=None)
+
+
 class TimelineEvent(BaseModel):
     """Timeline event model."""
 
@@ -146,7 +164,7 @@ async def get_case_timeline(case_id: str):
 
     # Add findings as events
     findings = data_service.get_findings_by_case(case_id)
-    for finding in findings:
+    for finding in _dated(findings):
         events.append(
             TimelineEvent(
                 id=f"finding-{finding['finding_id']}",
@@ -197,16 +215,33 @@ async def get_finding_context_timeline(
     if not finding:
         raise HTTPException(status_code=404, detail="Finding not found")
 
+    # The window is centred on the finding's own time. An undated finding has
+    # none, and centring it anywhere else would invent one.
+    if not finding.get("timestamp"):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Finding {finding_id} has no timestamp, "
+                "so there is no time window around it"
+            ),
+        )
+
     finding_time = normalize_timestamp(finding["timestamp"])
     start_time = finding_time - timedelta(minutes=time_window_minutes)
     end_time = finding_time + timedelta(minutes=time_window_minutes)
 
-    # Get findings in time window
-    all_findings = data_service.get_findings(limit=1000)
+    # Get findings in time window. The query takes the bounds too, not just the
+    # loop below: ``timestamp DESC`` returns undated findings first, and a page
+    # of them would leave no room for the neighbours.
+    all_findings = data_service.get_findings(
+        limit=1000,
+        timestamp_start=_column_time(start_time),
+        timestamp_end=_column_time(end_time),
+    )
 
     events: List[TimelineEvent] = []
 
-    for f in all_findings:
+    for f in _dated(all_findings):
         f_time = normalize_timestamp(f["timestamp"])
         if start_time <= f_time <= end_time:
             is_target = f["finding_id"] == finding_id
@@ -262,12 +297,22 @@ async def get_timeline_range(
     start_time = normalize_timestamp(start) if start else None
     end_time = normalize_timestamp(end) if end else None
 
-    # Get findings
-    all_findings = data_service.get_findings(limit=limit)
+    # Undated findings are left out in the query rather than skipped after it:
+    # timestamp DESC puts NULLs first in Postgres, so a page of them would
+    # otherwise fill the limit and leave the dashboard's timeline empty. Findings
+    # naming an analyst-excluded IP are left out too: this is the dashboard's
+    # timeline, and it describes the queue.
+    all_findings = data_service.get_findings(
+        limit=limit, dated_only=True, exclusions="hide"
+    )
 
     events: List[TimelineEvent] = []
 
     for finding in all_findings:
+        # The demo data service ignores dated_only; a finding with no time cannot
+        # be placed on a timeline either way.
+        if not finding.get("timestamp"):
+            continue
         f_time = normalize_timestamp(finding["timestamp"])
 
         # Filter by time range if specified
@@ -287,7 +332,7 @@ async def get_timeline_range(
         events.append(
             TimelineEvent(
                 id=f"finding-{finding['finding_id']}",
-                content=f"Finding: {finding['finding_id']} - {finding.get('severity', 'unknown')}",
+                content=f"Finding: {finding['finding_id']} - {finding.get('severity') or 'unknown'}",
                 start=f_time,
                 type="finding",
                 severity=finding.get("severity"),
@@ -328,20 +373,27 @@ async def get_cluster_timeline(cluster_id: str):
     """
     data_service = DatabaseDataService()
 
-    # Get findings in cluster
-    all_findings = data_service.get_findings(limit=1000)
+    def in_cluster(page: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        # Demo data ignores the query's filters.
+        return [f for f in page if f.get("cluster_id") == cluster_id]
 
-    # Filter by cluster_id
-    findings = [f for f in all_findings if f.get("cluster_id") == cluster_id]
+    # ``timestamp DESC`` returns undated findings first, so without dated_only a
+    # cluster's own undated findings could fill the page ahead of its dated ones.
+    findings = in_cluster(
+        data_service.get_findings(limit=1000, cluster_id=cluster_id, dated_only=True)
+    )
 
-    if not findings:
+    # An all-undated cluster still exists, so it is checked apart from the page.
+    if not findings and not in_cluster(
+        data_service.get_findings(limit=1, cluster_id=cluster_id)
+    ):
         raise HTTPException(
             status_code=404, detail="Cluster not found or has no findings"
         )
 
     events: List[TimelineEvent] = []
 
-    for finding in findings:
+    for finding in _dated(findings):
         events.append(
             TimelineEvent(
                 id=f"finding-{finding['finding_id']}",

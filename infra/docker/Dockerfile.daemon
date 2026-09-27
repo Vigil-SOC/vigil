@@ -59,6 +59,8 @@ COPY --chown=vigil:vigil infra/database/init/ ./database/init/
 COPY --chown=vigil:vigil data/        ./data/
 COPY --chown=vigil:vigil VERSION      ./VERSION
 COPY --chown=vigil:vigil setup.cfg    ./setup.cfg
+# Declared intent. .dockerignore excludes *.md except this file.
+COPY --chown=vigil:vigil INTENT.md    ./INTENT.md
 
 # Persistent investigation artifacts (mount a PVC here in K8s) and user home state
 RUN mkdir -p /app/data/investigations /home/vigil/.vigil \

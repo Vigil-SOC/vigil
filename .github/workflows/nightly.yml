@@ -25,7 +25,7 @@ jobs:
     # walking-skeleton test, which shells out to npx tsx and reads it itself.
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        image: postgres:16-alpine
         env:
           POSTGRES_DB: deeptempo_test
           POSTGRES_USER: test
@@ -50,7 +50,8 @@ jobs:
           - 6379:6379
     env:
       TESTING: "true"
-      DEV_MODE: "true"
+      # Auth on, as a fresh install runs; tests/conftest.py supplies the JWT secret.
+      DEV_MODE: "false"
       SECRET_KEY: "test-secret-key"
       POSTGRES_HOST: localhost
       POSTGRES_PORT: "5432"
@@ -88,7 +89,7 @@ jobs:
       - name: Enable Postgres extensions
         run: |
           PGPASSWORD=test psql -h localhost -p 5432 -U test -d deeptempo_test \
-            -c "CREATE EXTENSION IF NOT EXISTS vector; CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+            -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
 
       - name: Initialize schema
         # Strict here, and only here: CI provisions from empty, so a schema that

@@ -1,9 +1,11 @@
 """Atomic Red Team MCP server (stdio).
 
-Thin invoke of one Atomic technique against a named ``environment_id``.
-The operator installs the runner; this slice does not vendor the atomics
-repo. The execute tool's JSON is the interface — an action trace, not
-fabricated sensor events and not a ledger write.
+Thin invoke of one Atomic technique on a named ``hostname`` inside a named
+``environment_id``. The operator installs the runner, which must accept
+``--technique`` and ``--hostname``; this slice does not vendor the atomics
+repo. The execute tool's JSON is the interface — an action-trace step in the
+spelling ``core.detections.reconstruction`` joins on, not fabricated sensor
+events and not a ledger write.
 
 Config comes from the descriptor: ``runner_path`` and ``atomics_path``
 from the stored integration config under the ``atomic-red-team`` id.
@@ -38,9 +40,10 @@ logger = logging.getLogger(__name__)
 
 RUNNER_TIMEOUT = 180
 
-# argv the operator-installed runner must accept. Technique is required;
-# ``--atomics-path`` is omitted when the field is empty (runner default).
+# argv the operator-installed runner must accept. Technique and hostname are
+# required; ``--atomics-path`` is omitted when the field is empty (runner default).
 _TECHNIQUE_FLAG = "--technique"
+_HOSTNAME_FLAG = "--hostname"
 _ATOMICS_FLAG = "--atomics-path"
 
 
@@ -62,8 +65,10 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _runner_argv(runner_path: str, technique: str, atomics_path: str) -> List[str]:
-    argv = [runner_path, _TECHNIQUE_FLAG, technique]
+def _runner_argv(
+    runner_path: str, technique: str, hostname: str, atomics_path: str
+) -> List[str]:
+    argv = [runner_path, _TECHNIQUE_FLAG, technique, _HOSTNAME_FLAG, hostname]
     if atomics_path:
         argv.extend([_ATOMICS_FLAG, atomics_path])
     return argv
@@ -75,11 +80,21 @@ def execute_atomic(
     *,
     run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
 ) -> Dict[str, Any]:
-    """Invoke one Atomic technique. Missing ``environment_id`` refuses first."""
+    """Invoke one Atomic technique. Missing ``environment_id`` / ``hostname``
+    refuse before the runner.
+
+    The returned trace uses the reconstruction spelling (``technique_id``,
+    ``started_at`` / ``ended_at``, ``hostname``) so a journaled result joins to
+    Findings in ``core.detections.reconstruction`` without translation.
+    """
     args = arguments or {}
     environment_id = str(args.get("environment_id") or "").strip()
     if not environment_id:
         return {"error": "environment_id required"}
+
+    hostname = str(args.get("hostname") or "").strip()
+    if not hostname:
+        return {"error": "hostname required"}
 
     technique = str(args.get("technique") or "").strip()
     if not technique:
@@ -89,7 +104,9 @@ def execute_atomic(
     if not runner_path:
         return {"error": "Atomic Red Team not configured (missing runner_path)"}
 
-    argv = _runner_argv(runner_path, technique, config.get("atomics_path") or "")
+    argv = _runner_argv(
+        runner_path, technique, hostname, config.get("atomics_path") or ""
+    )
     started_at = _now()
     try:
         completed = run(
@@ -103,26 +120,28 @@ def execute_atomic(
         return {"error": f"runner not found: {runner_path}"}
     except subprocess.TimeoutExpired as exc:
         return {
-            "technique": technique,
+            "technique_id": technique,
             "environment_id": environment_id,
+            "hostname": hostname,
             "command": argv,
             "exit": None,
             "stdout": exc.stdout or "",
             "stderr": exc.stderr or "",
             "started_at": started_at,
-            "finished_at": _now(),
+            "ended_at": _now(),
             "error": "runner timed out",
         }
 
     return {
-        "technique": technique,
+        "technique_id": technique,
         "environment_id": environment_id,
+        "hostname": hostname,
         "command": argv,
         "exit": completed.returncode,
         "stdout": completed.stdout or "",
         "stderr": completed.stderr or "",
         "started_at": started_at,
-        "finished_at": _now(),
+        "ended_at": _now(),
     }
 
 
@@ -131,11 +150,13 @@ async def handle_list_tools() -> List[types.Tool]:
         types.Tool(
             name="atomic_red_team_execute",
             description=(
-                "Execute one Atomic Red Team technique against a named "
-                "environment_id (customer-provided range or staging replica). "
-                "Returns an action trace (technique, command, exit, stdout/"
-                "stderr, timestamps). Refuses if environment_id is missing. "
-                "Does not capture or invent sensor telemetry."
+                "Execute one Atomic Red Team technique on a named hostname "
+                "inside a named environment_id (customer-provided range or "
+                "staging replica). Returns an action trace step (technique_id, "
+                "hostname, command, exit, stdout/stderr, started_at/ended_at) "
+                "that reconstruct_run and analyze_coverage join to Findings. "
+                "Refuses if environment_id or hostname is missing. Does not "
+                "capture or invent sensor telemetry."
             ),
             inputSchema={
                 "type": "object",
@@ -151,8 +172,16 @@ async def handle_list_tools() -> List[types.Tool]:
                             "Required; the runner is not called without it."
                         ),
                     },
+                    "hostname": {
+                        "type": "string",
+                        "description": (
+                            "Host inside the environment the technique runs on, "
+                            "as sensors report it. Required; echoed on the trace "
+                            "so Findings on that host can be correlated."
+                        ),
+                    },
                 },
-                "required": ["technique", "environment_id"],
+                "required": ["technique", "environment_id", "hostname"],
             },
         ),
     ]

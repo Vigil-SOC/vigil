@@ -14,6 +14,7 @@ from core.workflows.playbook_resolver import (
     resolve,
     resolve_hunt,
 )
+from core.workflows.workflows_service import WorkflowDefinition
 
 pytestmark = pytest.mark.unit
 
@@ -243,10 +244,99 @@ class TestRefusals:
             resolve_hunt("no-such-workflow")
 
 
-# The other four definitions are untouched: they still resolve to phases.
+def _compose_phases(*phases):
+    definition = WorkflowDefinition(
+        workflow_id="phase-fixture",
+        file_path="",
+        metadata={"name": "phase fixture", "description": "", "phases": list(phases)},
+        body="",
+    )
+
+    class _Workflows:
+        def get_workflow(self, _id):
+            return definition
+
+    return _Workflows()
+
+
+# Compose grants phase.tools. The prompt already tells a profile that recommends
+# read_skill to call it, so the resolver puts that name on the phase and in the
+# config catalogue. It does not copy the rest of recommended_tools across.
+def test_compose_phases_receive_read_skill_when_the_profile_grants_it():
+    playbook, config_text = resolve(
+        "phase-fixture",
+        workflows=_compose_phases(
+            {
+                "id": "report",
+                "agent": "reporter",
+                "name": "Document & Report",
+                "tools": ["get_case", "list_findings", "recall_entity"],
+                "instructions": "Write the report.",
+            }
+        ),
+    )
+    report = next(
+        phase for phase in yaml.safe_load(playbook)["phases"] if phase["id"] == "report"
+    )
+    assert report["tools"] == [
+        "get_case",
+        "list_findings",
+        "recall_entity",
+        "read_skill",
+    ]
+    assert 'read_skill("executive-summary")' in report["prompt"]
+    assert "# Executive summary" not in report["prompt"]
+    config_ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
+    assert "read_skill" in config_ids
+    assert config_ids.count("read_skill") == 1
+
+    playbook, config_text = resolve("threat-hunt")
+    intel = next(
+        phase
+        for phase in yaml.safe_load(playbook)["phases"]
+        if phase["id"] == "threat_intel"
+    )
+    assert intel["tools"] == ["lookup_indicators", "read_skill"]
+    assert "# IOC enrichment" not in intel["prompt"]
+    config_ids = [tool["id"] for tool in yaml.safe_load(config_text)["tools"]]
+    assert "read_skill" in config_ids
+    assert config_ids.count("read_skill") == 1
+
+
 def test_a_compose_definition_still_resolves_to_phases():
-    playbook, _ = resolve("incident-response")
+    playbook, _ = resolve(
+        "phase-fixture",
+        workflows=_compose_phases(
+            {
+                "id": "triage",
+                "agent": "triage",
+                "name": "Triage",
+                "instructions": "Look at it.",
+            }
+        ),
+    )
     assert yaml.safe_load(playbook)["phases"]
+
+
+def test_compose_with_no_phases_is_refused():
+    with pytest.raises(UnknownPlaybook, match="no phases"):
+        resolve("phase-fixture", workflows=_compose_phases())
+
+
+# A lead definition has no phases. The playbook is the objectives and the body,
+# and the tools are the ones the investigate arch already names.
+def test_an_investigate_definition_resolves_with_no_phases():
+    playbook, config_text = resolve("incident-response")
+    loaded = yaml.safe_load(playbook)
+    assert loaded["phases"] == []
+    assert loaded["objectives"]
+    assert "blast radius" in loaded["narrative"].lower()
+    config = yaml.safe_load(config_text)
+    assert [tool["id"] for tool in config["tools"]] == ["case_records", "get_finding"]
+    assert config["budgets"]["max_cost_usd"] == 5.0
+    assert config["budgets"]["max_wall_ms"] == 1_800_000
+    assert config["budgets"]["max_calls"] >= 1
+    assert config["approvals"] == []
 
 
 # Investigate lead tools the arch names, whether or not a WORKFLOW.md phase did.
@@ -330,36 +420,51 @@ class TestTheTurnBudget:
 # call, which is correct and arrives too late to be useful.
 class TestThePricingPreflight:
     def test_answers_how_confidently_the_model_resolved(self):
-        from core.workflows.workflows_router import _pricing
+        from core.workflows.catalog import pricing
 
-        reported = _pricing()
+        reported = pricing()
         assert reported["model"]
-        assert reported["source"] in {"exact", "heuristic", "zero", "unknown"}
+        assert reported["source"] in {"exact", "zero", "unknown"}
 
     def test_calls_a_model_no_rate_table_carries_unknown(self, monkeypatch):
         import core.llm.defaults as defaults
-        from core.workflows import workflows_router
+        from core.workflows import catalog
 
         monkeypatch.setattr(defaults, "DEFAULT_MODEL", "groq/some-model-nobody-priced")
-        assert workflows_router._pricing()["source"] == "unknown"
+        assert catalog.pricing()["source"] == "unknown"
 
-    def test_prices_the_families_a_deployment_actually_runs(self):
+    def test_prices_a_namespaced_id_from_its_providers_datasheet(self):
         from core.llm.cost.pricing_router import priced_as
-        from core.llm.providers.registry import get_registry
+        from core.llm.providers import registry as model_registry
+        from core.llm.providers.discovery import ModelMeta
 
-        registry = get_registry()
-        for model in (
-            "claude-opus-5",
-            "claude-sonnet-5",
-            "openai/gpt-5",
+        models = (
+            "anthropic/claude-opus-5",
             "openai/o4-mini",
             "vertex/gemini-3.5-flash",
-            "gemini-2.5-pro",
-            "bedrock/claude-sonnet-4",
-        ):
-            provider, bare = priced_as("bifrost", model)
-            assert registry.get_pricing_source(bare, provider) != "unknown", model
-            assert registry.get_cost_rates(bare, provider)[0] > 0, model
+        )
+        try:
+            for model in models:
+                provider, bare = model.split("/")
+                model_registry.record_live_meta(
+                    provider,
+                    [
+                        ModelMeta(
+                            bare,
+                            bare,
+                            input_cost_per_token=1e-6,
+                            output_cost_per_token=2e-6,
+                        )
+                    ],
+                    rates_only=True,
+                )
+            registry = model_registry.get_registry()
+            for model in models:
+                provider, bare = priced_as("bifrost", model)
+                assert registry.get_pricing_source(bare, provider) == "exact", model
+                assert registry.get_cost_rates(bare, provider)[0] > 0, model
+        finally:
+            model_registry.clear_live_meta()
 
 
 class TestTheCapabilityReport:

@@ -204,6 +204,26 @@ load_env() {
     fi
 }
 
+# --- JWT signing secret ---
+# Auth is on by default, and core/auth/auth_service.py fails closed at import
+# without a JWT secret. Mint one once and persist it beside the encrypted secret
+# store (regenerating would invalidate live sessions); a JWT_SECRET_KEY the
+# caller or .env already set wins. ~/.vigil/jwt_secret is the one location —
+# nothing is ever written into .env. Call after load_env.
+ensure_jwt_secret() {
+    [ -n "${JWT_SECRET_KEY:-}" ] && { export JWT_SECRET_KEY; return 0; }
+    local dir="${VIGIL_DIR:-$HOME/.vigil}" file
+    file="$dir/jwt_secret"
+    if [ ! -s "$file" ]; then
+        mkdir -p "$dir" && chmod 700 "$dir" 2>/dev/null || true
+        (umask 177; { openssl rand -base64 48 2>/dev/null || head -c 48 /dev/urandom | base64; } \
+            | tr -d '\n' > "$file") || { echo "Could not write $file" >&2; return 1; }
+        echo "Generated JWT signing secret at $file"
+    fi
+    JWT_SECRET_KEY="$(cat "$file")"
+    export JWT_SECRET_KEY
+}
+
 # Is this venv the one .python-version asks for, on this machine's architecture?
 # Guards against a venv left behind by an earlier setup — a different pin, or an
 # interpreter that has since been upgraded or uninstalled out from under it.

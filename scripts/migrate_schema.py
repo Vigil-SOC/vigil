@@ -152,6 +152,35 @@ def create_llm_interaction_vk_index(conn):
         ON llm_interaction_logs (virtual_key_id, created_at);
     """))
 
+# Unpriced is stored as NULL, not 0 (#1115). Existing rows are left as they are.
+@migration("Make llm_interaction_logs.cost_usd nullable")
+def make_llm_interaction_cost_nullable(conn):
+    if not _table_exists(conn, 'llm_interaction_logs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs ALTER COLUMN cost_usd DROP NOT NULL;
+    """))
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs ALTER COLUMN cost_usd DROP DEFAULT;
+    """))
+
+
+# Rates behind cost_usd, frozen when the row is written (#1190). DOUBLE PRECISION
+# because Numeric(10, 6) — the call total's scale — rounds a per-token cache
+# rate below 1e-6 away to zero.
+@migration("Add rate columns to llm_interaction_logs")
+def add_llm_interaction_rate_columns(conn):
+    if not _table_exists(conn, 'llm_interaction_logs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE llm_interaction_logs
+            ADD COLUMN IF NOT EXISTS input_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS output_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS cache_read_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS cache_write_cost_per_token DOUBLE PRECISION,
+            ADD COLUMN IF NOT EXISTS rates_fetched_at VARCHAR(64);
+    """))
+
 
 # create_all is checkfirst=True, so a table that already exists gets no new index
 # from the model. A hunt handing off looks this column up twice per escalation.
@@ -254,6 +283,25 @@ def widen_episodic_distil_markers(conn):
 
 
 # ---------------------------------------------------------------------------
+# intake_triggers table
+# ---------------------------------------------------------------------------
+
+# The Case the row was claimed under (#1000). #918 created this table before the
+# column existed, so every database that drained an intake queue between the two
+# has the table without it -- and create_all never alters one it finds. The whole
+# row is selected on every drain, so the missing column fails the queue read
+# rather than one launch: the daemon reports an empty queue and launches nothing.
+@migration("Add case_id column to intake_triggers")
+def add_intake_trigger_case_id(conn):
+    if not _table_exists(conn, 'intake_triggers'):
+        return
+    conn.execute(text("""
+        ALTER TABLE intake_triggers
+        ADD COLUMN IF NOT EXISTS case_id VARCHAR(50);
+    """))
+
+
+# ---------------------------------------------------------------------------
 # Seed data
 # ---------------------------------------------------------------------------
 
@@ -285,26 +333,6 @@ def seed_default_roles(conn):
         """), {"role_id": role_id, "name": name, "desc": description,
                "perms": permissions, "is_sys": is_system})
     logger.info("  Seeded default roles: admin, analyst, viewer")
-
-
-@migration("Seed default admin user if users table is empty")
-def seed_default_admin(conn):
-    result = conn.execute(text("SELECT COUNT(*) FROM users"))
-    count = result.scalar()
-    if count > 0:
-        logger.info(f"  Users table already has {count} users, skipping seed")
-        return
-
-    from passlib.hash import bcrypt
-    pw_hash = bcrypt.hash("admin")
-    conn.execute(text("""
-        INSERT INTO users (user_id, username, email, password_hash, full_name, role_id,
-                           is_active, is_verified, mfa_enabled, login_count, created_at, updated_at)
-        VALUES ('user-admin', 'admin', 'admin@deeptempo.local', :pw, 'Administrator', 'admin',
-                true, true, false, 0, now(), now())
-        ON CONFLICT (user_id) DO NOTHING
-    """), {"pw": pw_hash})
-    logger.info("  Seeded default admin user (admin / admin)")
 
 
 # ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ function asActivities(raw: unknown[]): Activity[] {
       description: strField(o.description),
       activity_type: strField(o.activity_type),
       timestamp: strField(o.timestamp),
+      details: o.details && typeof o.details === 'object' ? (o.details as Record<string, unknown>) : undefined,
     }
   })
 }

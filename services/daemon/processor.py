@@ -3,10 +3,11 @@
 import asyncio
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.time import utcnow
-from services.daemon.config import ProcessingConfig
+from services.daemon.config import ProcessingConfig, ResponseConfig
+from services.daemon.probes import PROBE_DATA_SOURCE
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ _ENRICH_BREAKER_COOLDOWN = 120  # seconds
 # ai_enrichment JSONB column (these dict keys don't map to columns 1:1).
 _AI_ANALYSIS_KEYS = (
     "ai_triage",
+    "ai_triage_error",
     "enrichment",
     "enriched_at",
     "triage_confidence",
@@ -31,11 +33,17 @@ _AI_ANALYSIS_KEYS = (
 class FindingProcessor:
     """Processes findings through AI triage and enrichment."""
 
-    def __init__(self, config: ProcessingConfig):
+    def __init__(
+        self,
+        config: ProcessingConfig,
+        response_config: Optional[ResponseConfig] = None,
+    ):
         self.config = config
+        # The queue-for-response line is the band's review threshold, so the
+        # processor reads the same ResponseConfig the responder does (#916).
+        self.response_config = response_config or ResponseConfig.from_settings()
         self.input_queue: asyncio.Queue = asyncio.Queue()
         self._response_queue: Optional[asyncio.Queue] = None
-        self._investigation_queue: Optional[asyncio.Queue] = None
 
         # Services (lazy loaded)
         self._data_service = None
@@ -112,10 +120,6 @@ class FindingProcessor:
     def set_response_queue(self, queue: asyncio.Queue):
         """Set the queue for findings requiring response."""
         self._response_queue = queue
-
-    def set_investigation_queue(self, queue: asyncio.Queue):
-        """Set the queue for findings requiring autonomous investigation."""
-        self._investigation_queue = queue
 
     def _init_services(self):
         """Initialize required services."""
@@ -339,6 +343,12 @@ class FindingProcessor:
                     logger.error(f"Background enrichment failed for {finding_id}: {e}")
                     self.stats["errors"] += 1
 
+        # A known-answer probe stops here (#923): it exists to exercise the
+        # triage path and must never reach the responder or the orchestrator,
+        # whatever triage did or failed to do above.
+        if finding.get("data_source") == PROBE_DATA_SOURCE:
+            return
+
         # Response evaluation always runs — even when enrichment is off or paused.
         try:
             await self._evaluate_for_response(finding)
@@ -363,8 +373,9 @@ class FindingProcessor:
     async def _backfill_loop(self, shutdown_event: asyncio.Event):
         """Periodically triage findings that were stored but never enriched
         (ai_enrichment IS NULL) — e.g. arrived while the gateway was down, the
-        breaker was paused, or the daemon restarted mid-flight. Gentle: small
-        batches, skips while the breaker is open, paced by the in-flight cap."""
+        breaker was paused, or the daemon restarted mid-flight — or whose triage
+        recorded an error and never succeeded (#965). Gentle: small batches,
+        skips while the breaker is open, paced by the in-flight cap."""
         if not self.config.enrich_backfill_enabled:
             return
         if not (self.config.auto_triage_enabled or self.config.auto_enrich_enabled):
@@ -455,7 +466,7 @@ class FindingProcessor:
             prompt = self._build_triage_prompt(finding)
 
             # Get AI assessment with timeout
-            response = await asyncio.wait_for(
+            response, error = await asyncio.wait_for(
                 self._get_ai_triage(prompt), timeout=self.config.triage_timeout
             )
 
@@ -463,11 +474,19 @@ class FindingProcessor:
                 # Parse and apply AI assessment
                 finding = self._apply_triage_result(finding, response)
                 self.stats["triaged"] += 1
+            else:
+                finding["ai_triage_error"] = error or "empty LLM response"
 
         except asyncio.TimeoutError:
-            logger.warning(f"AI triage timed out for {finding.get('finding_id')}")
+            seconds = self.config.triage_timeout
+            logger.warning(
+                f"AI triage timed out after {seconds}s for "
+                f"{finding.get('finding_id')} (DAEMON_TRIAGE_TIMEOUT)"
+            )
+            finding["ai_triage_error"] = f"timed out after {seconds}s"
         except Exception as e:
             logger.error(f"AI triage error: {e}")
+            finding["ai_triage_error"] = f"{type(e).__name__}: {e}"
 
         return finding
 
@@ -522,22 +541,64 @@ REASONING: [Brief explanation]
                 logger.warning(f"Failed to connect LLM gateway: {e}")
                 self._llm_gateway = None
 
-    async def _get_ai_triage(self, prompt: str) -> Optional[str]:
-        """Get AI triage response via the LLM queue."""
+    @staticmethod
+    def _resolve_triage_target() -> Optional[Tuple[str, str]]:
+        """(provider_id, model) for the ``triage`` component, the same chain chat
+        uses (#965): ai_model_configs → chat_default → the default active
+        provider of any type, then provider_for() falls back to that same
+        default when the resolved row is inactive or missing. None when no provider is
+        configured at all."""
+        from core.llm.providers.registry import get_registry
+        from core.llm.target import model_for, provider_for
+
+        provider_id, model = None, None
+        try:
+            resolved = get_registry().resolve_model_for_component("triage")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"triage model assignment lookup failed: {e}")
+            resolved = None
+        if resolved:
+            provider_id, model = resolved
+        provider = provider_for(provider_id)
+        if provider is None:
+            return None
+        return provider.provider_id, model_for(provider, model)
+
+    async def _get_ai_triage(self, prompt: str) -> Tuple[Optional[str], Optional[str]]:
+        """Get AI triage response via the LLM queue.
+
+        Returns ``(content, error)``: exactly one is set. Errors are returned
+        rather than swallowed so the caller can persist them on the finding —
+        previously a worker failure came back as empty content and the finding
+        was stored indistinguishable from a triaged, unremarkable one."""
         await self._ensure_gateway()
         if self._llm_gateway is None:
             logger.warning("LLM gateway unavailable, skipping AI triage")
-            return None
+            return None, "LLM gateway unavailable"
+        target = self._resolve_triage_target()
+        if target is None:
+            logger.warning("No LLM provider configured, skipping AI triage")
+            return None, "no LLM provider configured"
+        provider_id, model = target
         try:
-            result = await self._llm_gateway.submit_triage(prompt)
-            if result is None:
-                return None
-            if isinstance(result, dict):
-                return result.get("content", "")
-            return str(result)
+            # The gateway's own default (90s) would otherwise cap the wait.
+            result = await self._llm_gateway.submit_triage(
+                prompt,
+                provider_id=provider_id,
+                model=model,
+                timeout=self.config.triage_timeout,
+            )
         except Exception as e:
             logger.error(f"LLM queue triage error: {e}")
-            return None
+            return None, f"{type(e).__name__}: {e}"
+        if result is None:
+            return None, "LLM returned no result"
+        if isinstance(result, dict):
+            # Worker shape on failure: {"content": "", "type": "error", "error": ...}
+            if result.get("type") == "error" or result.get("error"):
+                return None, str(result.get("error") or "LLM call failed")
+            return result.get("content", ""), None
+        return str(result), None
 
     def _apply_triage_result(
         self, finding: Dict[str, Any], response: str
@@ -579,7 +640,8 @@ REASONING: [Brief explanation]
                     triage_result["reasoning"] = value
                     finding["triage_reasoning"] = value
 
-        # Add triage metadata
+        # Add triage metadata; a success supersedes any earlier recorded failure.
+        finding.pop("ai_triage_error", None)
         finding["ai_triage"] = {
             "timestamp": utcnow().isoformat(),
             "result": triage_result,
@@ -793,7 +855,7 @@ REASONING: [Brief explanation]
         should_respond = (
             severity in ["critical", "high"]
             or recommended_action in ["isolate", "block"]
-            or confidence >= 0.85
+            or confidence >= self.response_config.review_threshold
         )
 
         if should_respond and self._response_queue:
@@ -809,15 +871,25 @@ REASONING: [Brief explanation]
                 f"Finding {finding.get('finding_id')} queued for response evaluation"
             )
 
-        if should_respond and self._investigation_queue:
-            await self._investigation_queue.put(
-                {
-                    "type": "finding",
-                    "data": finding,
-                    "timestamp": utcnow().isoformat(),
-                }
+        # A threat-intel feed hit (stamped by _enrich_finding) offers the same
+        # Finding to intake as a detection, but never widens the response queue
+        # above: containment stays on Gate 1 alone.
+        feed_hit = bool((finding.get("enrichment") or {}).get("threat_indicators"))
+
+        if should_respond or feed_hit:
+            from services.daemon.orchestrator import (
+                insert_intake_trigger,
+                intake_severity_band,
             )
-            self.stats["queued_for_investigation"] += 1
-            logger.info(
-                f"Finding {finding.get('finding_id')} queued for autonomous investigation"
+
+            # An unrated finding is "unknown" in the queue, never an invented medium.
+            trigger_id = insert_intake_trigger(
+                kind="detection",
+                finding_id=finding.get("finding_id"),
+                priority=intake_severity_band("detection", finding_severity=severity),
             )
+            if trigger_id is not None:
+                self.stats["queued_for_investigation"] += 1
+                logger.info(
+                    f"Finding {finding.get('finding_id')} queued for autonomous investigation"
+                )

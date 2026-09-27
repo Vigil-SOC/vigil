@@ -13,10 +13,12 @@ just the wrong ones.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from typing import Iterable, List, Tuple
 
 from core.memory.recall_contract import ENTITY_KEY_TYPES, KEY_CASE_SENSITIVE_TYPES
+from core.memory.tlds import TLDS
 
 # Threat intel writes addresses defanged, and threat_intel is a worker whose
 # output feeds this, so normalising first is cheaper than carrying defanged
@@ -93,6 +95,79 @@ def normalise_keys(keys: object) -> List[str]:
         normalise_key(str(key))
         for key in (keys if isinstance(keys, (list, tuple)) else [])
     )
+
+
+# Free-text extraction, ported from `fromText` in
+# services/agent/workflows/hunt/entities.ts. Same patterns, same well-formed
+# checks, so a pasted report and a hunt's evidence agree on what is an entity.
+# re.ASCII because JS `\b`, `\d` and `[a-z]` are ASCII-only; Python's default
+# Unicode classes would match wider and the two would drift. JS `\s` is the
+# exception — it is Unicode even without the `u` flag — so it is spelled out.
+_FLAGS = re.IGNORECASE | re.ASCII
+_JS_WS = "\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+_TEXT_PATTERNS: Tuple[Tuple[str, re.Pattern[str]], ...] = (
+    ("arn", re.compile(rf"\barn:aws:[a-z0-9-]*:[^\"',{_JS_WS}]*", _FLAGS)),
+    ("aws_key", re.compile(r"\b(?:AKIA|ASIA|AIDA|AROA)[0-9A-Z]{16}\b", re.ASCII)),
+    ("url", re.compile(rf"\bhttps?://[^\"'<>{_JS_WS}]+", _FLAGS)),
+    ("email", re.compile(r"\b[a-z0-9._%+-]+@(?:[a-z0-9-]+\.)+[a-z]{2,24}\b", _FLAGS)),
+    ("hash", re.compile(r"\b(?:[0-9a-f]{64}|[0-9a-f]{40}|[0-9a-f]{32})\b", _FLAGS)),
+    ("ip", re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", re.ASCII)),
+    ("ip", re.compile(r"\b(?:[0-9a-f]{0,4}:){2,7}[0-9a-f]{0,4}\b", _FLAGS)),
+    (
+        "domain",
+        re.compile(r"\b(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}\b", _FLAGS),
+    ),
+)
+_VERSION_WORD = re.compile(rf"\b(?:v|ver|version|release|build)[.:={_JS_WS}]*$", _FLAGS)
+_TRAILING_PUNCT = re.compile(r"[.,;)]+$")
+_HASH = re.compile(r"^[0-9a-f]{32}$|^[0-9a-f]{40}$|^[0-9a-f]{64}$")
+
+
+def _is_ip(value: str) -> bool:
+    try:
+        ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _has_known_tld(value: str) -> bool:
+    return value.lower().rpartition(".")[2] in TLDS
+
+
+def well_formed(entity_type: str, value: str) -> bool:
+    """Matched loosely then validated, as the hunt extractor does.
+
+    A pattern tight enough to accept only real values is unreadable and still
+    wrong on IPv6 and on TLDs, so the regexes over-match and this decides.
+    """
+    if value in ("", "-", "null"):
+        return False
+    if entity_type == "ip":
+        return _is_ip(value)
+    if entity_type in ("domain", "email"):
+        return "." in value and _has_known_tld(value)
+    if entity_type == "hash":
+        return _HASH.match(value) is not None
+    return True
+
+
+def text_entity_keys(raw: str) -> List[str]:
+    """Entity Keys for the well-formed candidates in free text, deduped in order."""
+    text = defang(raw or "")
+    minted: List[str] = []
+    for kind, pattern in _TEXT_PATTERNS:
+        for match in pattern.finditer(text):
+            value = _TRAILING_PUNCT.sub("", match.group(0))
+            if kind not in KEY_CASE_SENSITIVE_TYPES:
+                value = value.lower()
+            # A dotted quad after a version word is a release, not a host.
+            before = text[max(0, match.start() - 12) : match.start()]
+            if kind == "ip" and _VERSION_WORD.search(before):
+                continue
+            if well_formed(kind, value):
+                minted.append(entity_key(kind, value))
+    return _deduped(minted)
 
 
 # How a finding's entity context is spelled, in memory's vocabulary. One map, so

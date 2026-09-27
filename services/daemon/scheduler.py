@@ -7,9 +7,11 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from core.config import get_settings
+from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
 from core.storage.connection import get_db_manager
 from core.time import utcnow
 from services.daemon.config import SchedulerConfig
+from services.daemon.probes import inject_probes, score_probes
 
 logger = logging.getLogger(__name__)
 
@@ -40,18 +42,19 @@ class TaskScheduler:
     def __init__(self, config: SchedulerConfig):
         self.config = config
         self._tasks: List[ScheduledTask] = []
+        # The processor's input queue; probes go on it like polled findings.
+        self._processor_queue: Optional[asyncio.Queue] = None
 
         # Services (lazy loaded)
         self._data_service = None
         self._claude_service = None
-        # The orchestrator's intake, handed over by the daemon: a scheduled hunt is
-        # one more item on the queue that already owns the run and its budget.
-        self._investigation_queue: Optional[asyncio.Queue] = None
 
         # Stats
         self.stats = {
             "tasks_run": 0,
             "threat_hunts": 0,
+            "probes_injected": 0,
+            "probes_scored": 0,
             "reports_generated": 0,
             "cleanups_run": 0,
             "errors": 0,
@@ -59,10 +62,6 @@ class TaskScheduler:
 
         # Register default tasks
         self._register_default_tasks()
-
-    def set_investigation_queue(self, queue: asyncio.Queue):
-        """Give the scheduler the orchestrator's intake, as the processor has."""
-        self._investigation_queue = queue
 
     def _register_default_tasks(self):
         """Register default scheduled tasks."""
@@ -94,6 +93,18 @@ class TaskScheduler:
                     name="cleanup",
                     func=self._run_cleanup,
                     interval=self.config.cleanup_interval,
+                    enabled=True,
+                    run_on_start=False,
+                )
+            )
+
+        # Hourly tick; the day-scoped finding_id makes the injection once a day.
+        if self.config.probes_enabled:
+            self._tasks.append(
+                ScheduledTask(
+                    name="probe_sweep",
+                    func=self._run_probe_sweep,
+                    interval=self.config.probe_interval,
                     enabled=True,
                     run_on_start=False,
                 )
@@ -139,6 +150,10 @@ class TaskScheduler:
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Threat feed poller unavailable: {e}")
 
+    def set_processor_queue(self, queue: asyncio.Queue):
+        """Set the processor's input queue that probe sweeps inject onto."""
+        self._processor_queue = queue
+
     def _init_services(self):
         """Initialize required services."""
         try:
@@ -161,6 +176,10 @@ class TaskScheduler:
         """Run the scheduler loop."""
         logger.info("Task scheduler starting...")
         self._init_services()
+        # The Claude service prices its calls from this process's own copy of
+        # the gateway's rates.
+        await refresh_gateway_rates()
+        rates_refresher = asyncio.create_task(run_gateway_rates_refresher())
 
         # Run startup tasks
         for task in self._tasks:
@@ -202,6 +221,7 @@ class TaskScheduler:
             except asyncio.TimeoutError:
                 pass
 
+        rates_refresher.cancel()
         logger.info("Task scheduler stopped")
 
     async def _run_threat_hunt(self):
@@ -214,22 +234,18 @@ class TaskScheduler:
         logger.info("Starting scheduled threat hunt...")
         self.stats["threat_hunts"] += 1
 
-        if self._investigation_queue is None:
-            logger.warning(
-                "No investigation queue; the scheduled hunt cannot be opened"
-            )
-            return
-
         hypothesis = self._hunt_hypothesis()
-        await self._investigation_queue.put(
-            {
-                "type": "manual",
+        from services.daemon.orchestrator import insert_intake_trigger
+
+        insert_intake_trigger(
+            kind="schedule",
+            priority="low",
+            payload={
                 "workflow_id": "threat-hunt",
                 "trigger_type": "scheduled",
-                "priority": "low",
                 "finding_ids": [],
                 "hypothesis": hypothesis,
-            }
+            },
         )
         logger.info(
             "Queued a scheduled threat hunt: %s",
@@ -376,6 +392,19 @@ class TaskScheduler:
             "approvals_expired": expired,
             "read_log_removed": reads,
         }
+
+    async def _run_probe_sweep(self):
+        """Score the probes past their hour (#924), then queue today's (#923)."""
+        if self._processor_queue is None or not self._data_service:
+            logger.warning(
+                "Probe sweep skipped: processor queue or database unavailable"
+            )
+            return 0
+        scored = await asyncio.to_thread(score_probes, self._data_service)
+        self.stats["probes_scored"] += scored
+        injected = await inject_probes(self._processor_queue, self._data_service)
+        self.stats["probes_injected"] += injected
+        return injected
 
     async def _run_sandbox_poll(self):
         """Advance pending sandbox submissions to completed reports."""

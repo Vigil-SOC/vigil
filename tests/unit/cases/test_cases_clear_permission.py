@@ -7,14 +7,12 @@ the case database by calling the API directly.
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-
-os.environ.setdefault("DEV_MODE", "true")
+from fastapi import BackgroundTasks
 
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 for p in (str(REPO),):
@@ -43,7 +41,9 @@ async def test_clear_all_cases_denied_without_permission(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         # The permission check must reject before the session is touched.
         await cases.clear_all_cases(
-            session=MagicMock(), current_user=_User("analyst-1")
+            session=MagicMock(),
+            background_tasks=BackgroundTasks(),
+            current_user=_User("analyst-1"),
         )
 
     assert exc.value.status_code == 403
@@ -64,7 +64,9 @@ async def test_clear_all_cases_checks_cases_delete(monkeypatch):
 
     with pytest.raises(Exception):
         await cases.clear_all_cases(
-            session=MagicMock(), current_user=_User("analyst-1")
+            session=MagicMock(),
+            background_tasks=BackgroundTasks(),
+            current_user=_User("analyst-1"),
         )
 
     assert seen["permission"] == "cases.delete"

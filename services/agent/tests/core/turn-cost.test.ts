@@ -14,7 +14,7 @@ const ANSWER: ScriptedTurn = { emit: { verb: "TALLY" }, tokens: { input: 1_000, 
 
 // Rates are per token, so a millionth either way makes one call cost $0.002.
 const RATE = 1e-6;
-const prices = async () => ({ input: RATE, output: RATE, cache_read: 0, cache_write: 0, source: "exact" });
+const prices = async () => ({ input: RATE, output: RATE, cache_read: 0, cache_write: 0, source: "exact", fetched_at: null });
 
 const pool = () =>
   budgetOf(

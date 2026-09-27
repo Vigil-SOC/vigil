@@ -8,6 +8,7 @@ export type ConsoleScreenKey =
   | 'decisions'
   | 'workflows'
   | 'autoops'
+  | 'health'
   | 'settings'
 
 /** A rail item carrying a gate only renders when the gate is satisfied. */
@@ -27,6 +28,7 @@ export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
   ['brain', 'AI Decisions', 'decisions'],
   ['flow', 'Workflows & Skills', 'workflows'],
   ['bot', 'Auto Ops', 'autoops'],
+  ['chart', 'Health', 'health'],
   ['gear', 'Settings', 'settings'],
 ]
 
@@ -48,6 +50,9 @@ export interface Finding {
    *  these (CrowdStrike sends device_id and no dest_ips, Splunk the reverse), so
    *  they are carried through and rendered as columns derived from the rows. */
   extra?: Record<string, string>
+  /** addresses on this finding an analyst has excluded; non-empty means the
+   *  queue hides it by default */
+  excludedIps?: string[]
 }
 
 export const MISSING_FINDING_SCORE = 'Not provided' as const
@@ -59,7 +64,7 @@ export interface CaseRow {
   title: string
   desc?: string
   status: 'open' | 'investigating' | 'closed'
-  prio: 'critical' | 'high' | 'medium' | 'low'
+  prio: 'critical' | 'high' | 'medium' | 'low' | 'unknown'
   owner: string
   ownerName: string
   findings: number
@@ -81,5 +86,6 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   decisions: ['AI Decisions', 'Review and provide feedback for AI decisions'],
   workflows: ['Workflows & Skills', 'Pre-built multi-agent workflows for common SOC operations'],
   autoops: ['Auto Ops', 'Autonomous operations — master orchestrator and sub-agent investigations'],
+  health: ['Health', 'Operational health — LLM spend, approvals waiting, recent workflow runs, probe scores'],
   settings: ['Settings', 'Configure Vigil — AI, integrations, users and platform'],
 }

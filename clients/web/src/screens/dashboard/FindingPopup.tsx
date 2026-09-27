@@ -1,7 +1,9 @@
 /* The embedded VStrike NetworkContextPanel is deliberately not ported: it needs
    the VStrike provider, which isn't mounted under the console shell. */
 import { useEffect, useState } from 'react'
-import { findingsApi } from '../../services/api'
+import { exclusionsApi, findingsApi } from '../../services/api'
+import { findingIps } from '../../data/findingIps'
+import { useToast } from '../../shell/toast'
 import { mapApiFinding, formatFindingScore, type ApiFinding } from '../../data/mappers'
 import { techniqueName } from '../../data/mitre'
 import { ConfirmDialog, EmptyState, Popup, Select } from '../../shared/ui'
@@ -182,6 +184,14 @@ export default function FindingPopup({
   const [acting, setActing] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
 
+  // excluding an address from here, while looking at the finding that names it
+  const { notify } = useToast()
+  const [excludeIp, setExcludeIp] = useState<string | null>(null)
+  const [excludeReason, setExcludeReason] = useState('')
+  const [excluding, setExcluding] = useState(false)
+  const [excludeError, setExcludeError] = useState<string | null>(null)
+  const [justExcluded, setJustExcluded] = useState<Set<string>>(new Set())
+
   useEffect(() => {
     if (!id) return
     let cancelled = false
@@ -191,6 +201,10 @@ export default function FindingPopup({
     setEnrichment(null)
     setEnrichPhase('idle')
     setEnrichError(null)
+    setExcludeIp(null)
+    setExcludeReason('')
+    setExcludeError(null)
+    setJustExcluded(new Set())
     findingsApi
       .getById(id)
       .then((res) => {
@@ -249,6 +263,26 @@ export default function FindingPopup({
       })
   }
 
+  const submitExclusion = () => {
+    if (!id || !excludeIp || !excludeReason.trim()) return
+    setExcluding(true)
+    setExcludeError(null)
+    exclusionsApi
+      .create({ ip: excludeIp, reason: excludeReason.trim(), origin: 'finding', origin_ref: id })
+      .then((res) => {
+        setJustExcluded((prev) => new Set(prev).add(excludeIp.toLowerCase()).add(res.data.ip))
+        notify('ok', `Excluded ${res.data.ip}. Findings naming it are hidden from the queue.`)
+        setExcludeIp(null)
+        setExcludeReason('')
+        onChanged?.()
+      })
+      .catch((e) => {
+        const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+        setExcludeError(typeof detail === 'string' ? detail : (e as { message?: string })?.message || 'Could not exclude this address')
+      })
+      .finally(() => setExcluding(false))
+  }
+
   const changeStatus = (next: string) => {
     if (!id || next === status) return
     setStatus(next)
@@ -277,6 +311,8 @@ export default function FindingPopup({
   const preds = Object.entries(raw?.mitre_predictions || {}).sort((a, b) => b[1] - a[1])
   const ec = raw?.entity_context || {}
   const sourceEvidence = parseSourceEvidence(ec.source_evidence)
+  const ips = findingIps(ec)
+  const excludedSet = new Set((raw?.excluded_ips ?? []).map((ip) => ip.toLowerCase()))
 
   const title =
     phase === 'ready' && f ? (
@@ -352,7 +388,7 @@ export default function FindingPopup({
             </div>
           )}
 
-          {(ec.hostnames?.length || ec.usernames?.length || ec.dest_ips?.length) && (
+          {!!(ec.hostnames?.length || ec.usernames?.length) && (
             <div className="modal-section">
               <h4>Entities</h4>
               <div className="fp-entities">
@@ -362,10 +398,63 @@ export default function FindingPopup({
                 {ec.usernames?.length ? (
                   <div className="fp-ent-row"><span className="fp-ent-lab">Users</span><div className="fp-chips">{ec.usernames.map((u) => <span className="chip mono" key={u}>{u}</span>)}</div></div>
                 ) : null}
-                {ec.dest_ips?.length ? (
-                  <div className="fp-ent-row"><span className="fp-ent-lab">Dest IPs</span><div className="fp-chips">{ec.dest_ips.map((ip) => <span className="chip mono" key={ip}>{ip}</span>)}</div></div>
-                ) : null}
               </div>
+            </div>
+          )}
+
+          {ips.length > 0 && (
+            <div className="modal-section">
+              <h4>IP addresses</h4>
+              <ul className="fp-ips">
+                {ips.map((ip) => {
+                  const excluded = excludedSet.has(ip.toLowerCase()) || justExcluded.has(ip.toLowerCase())
+                  return (
+                    <li key={ip} className="fp-ip">
+                      <span className="chip mono">{ip}</span>
+                      {excluded ? (
+                        <span className="tag excluded-tag" title="Findings naming this address are hidden from the queue">excluded</span>
+                      ) : (
+                        excludeIp !== ip && (
+                          <button
+                            className="btn ghost fp-ip-exclude"
+                            onClick={() => { setExcludeIp(ip); setExcludeReason(''); setExcludeError(null) }}
+                            title="Hide findings naming this address from every analyst's queue"
+                          >
+                            Exclude
+                          </button>
+                        )
+                      )}
+                      {excludeIp === ip && (
+                        <form
+                          className="fp-ip-form"
+                          onSubmit={(e) => { e.preventDefault(); submitExclusion() }}
+                        >
+                          <input
+                            className="field-input"
+                            aria-label={`Reason for excluding ${ip}`}
+                            placeholder="Why exclude it? (required)"
+                            value={excludeReason}
+                            maxLength={2000}
+                            autoFocus
+                            onChange={(e) => setExcludeReason(e.target.value)}
+                          />
+                          <button className="btn primary" type="submit" disabled={excluding || !excludeReason.trim()}>
+                            {excluding ? 'Excluding…' : 'Exclude'}
+                          </button>
+                          <button className="btn ghost" type="button" onClick={() => setExcludeIp(null)} disabled={excluding}>
+                            Cancel
+                          </button>
+                        </form>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+              {excludeError && <div className="field-hint err" role="alert">{excludeError}</div>}
+              <p className="fp-ip-note muted">
+                Excluding hides this address’s findings from every analyst’s queue. LogLM keeps scoring them,
+                and removing the exclusion (Dashboard → Excluded IPs) brings them back unchanged.
+              </p>
             </div>
           )}
 

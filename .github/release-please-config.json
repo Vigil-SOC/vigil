@@ -44,6 +44,21 @@
           "jsonpath": "$.packages[''].version"
         },
         {
+          "type": "json",
+          "path": "clients/desktop/package.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "clients/desktop/package-lock.json",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "json",
+          "path": "clients/desktop/package-lock.json",
+          "jsonpath": "$.packages[''].version"
+        },
+        {
           "type": "yaml",
           "path": "infra/helm/vigil/Chart.yaml",
           "jsonpath": "$.appVersion"

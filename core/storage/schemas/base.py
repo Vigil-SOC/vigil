@@ -51,6 +51,9 @@ OptDateTime = Optional[IsoDateTime]
 JsonList = Annotated[list, BeforeValidator(_none_to_list)]
 JsonDict = Annotated[dict, BeforeValidator(_none_to_dict)]
 StrList = Annotated[list[str], BeforeValidator(_none_to_list)]
+# For ARRAY(Integer) columns. Pydantic v2 does not coerce, so a list of ints
+# described as StrList raises on every non-empty row.
+IntList = Annotated[list[int], BeforeValidator(_none_to_list)]
 
 # Numeric/Float columns whose contract floors NULL at zero.
 ZeroFloat = Annotated[float, BeforeValidator(_none_to_zero)]

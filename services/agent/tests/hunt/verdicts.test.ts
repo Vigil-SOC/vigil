@@ -23,8 +23,8 @@ import {
 const CONCLUDE = { action: "CONCLUDE" as const, rationale: "done" };
 
 async function oneHypothesis() {
-  const { ledger, hypothesisIds } = await newLedger();
-  return { ledger, hypothesisId: hypothesisIds[0]! };
+  const { ledger, hypothesisIds, spend } = await newLedger();
+  return { ledger, hypothesisId: hypothesisIds[0]!, spend };
 }
 
 describe("argue the null", () => {
@@ -360,12 +360,13 @@ describe("the verdict is the only writer", () => {
 
 describe("what a verdict costs", () => {
   it("charges the critic call to the hunt", async () => {
-    const { ledger, hypothesisId } = await oneHypothesis();
+    const { ledger, hypothesisId, spend } = await oneHypothesis();
     const citations = [evidenceOn(ledger, hypothesisId, { source: "cloudtrail" })];
 
     const result = await controllerFor(ledger, [validateOn(hypothesisId, citations)], {
       critic: new ScriptedDisconfirmationCritic(true, 0.02),
       costPerDecision: 0.05,
+      spend,
     }).advanceIteration();
 
     expect(ledger.projection.hunt.cost_usd).toBeCloseTo(0.07, 10);

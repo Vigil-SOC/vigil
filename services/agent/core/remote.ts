@@ -1,9 +1,11 @@
-import type { RegisteredTool, ToolResult } from "../contracts/tool.js";
+import type { RegisteredTool, ToolPrincipal, ToolResult } from "../contracts/tool.js";
 import type { ToolDispatch } from "./seams.js";
 
 export interface RemoteOptions {
   url: string;
   token: string;
+  // Sent with every call when present; left off the body entirely when not.
+  principal?: ToolPrincipal;
   fetch?: typeof globalThis.fetch;
 }
 
@@ -86,6 +88,7 @@ export function remoteDispatch(options: RemoteOptions): ToolDispatch {
               tool: tool.id,
               args,
               bounds: { max_rows: tool.bounds.maxRows, timeout_ms: tool.bounds.timeoutMs },
+              ...(options.principal === undefined ? {} : { principal: options.principal }),
             }),
             signal: held.signal,
           });

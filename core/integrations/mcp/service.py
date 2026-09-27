@@ -6,6 +6,7 @@ import os
 import platform
 import re
 import subprocess
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
@@ -14,6 +15,7 @@ from core.config import vigil_path
 from core.detections.detection_rules_service import DetectionRulesService
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.mcp.child_env import ca_bundle_env
+from core.integrations.mcp.packaged import installed_launch
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -122,7 +124,7 @@ class MCPServer:
         # If no process object, check if the process is running externally
         # by checking for the process by command line arguments
         try:
-            # Extract module name from args (e.g., "tools.deeptempo_findings" -> "deeptempo_findings")
+            # Extract module name from args (e.g., "tools.vigil" -> "vigil")
             module_name = None
             for arg in self.args:
                 if arg.startswith("tools."):
@@ -181,7 +183,7 @@ class MCPServer:
 
     def get_log_path(self) -> Path:
         """Get the log file path for this server."""
-        # Keep hyphens as servers log to files with hyphens (e.g., deeptempo-findings.log)
+        # Keep hyphens as servers log to files with hyphens (e.g., security-detections.log)
         return Path(f"/tmp/{self.name}.log")
 
 
@@ -220,6 +222,8 @@ class MCPService:
             self.python_exe = self.venv_path / "Scripts" / "python.exe"
         else:
             self.python_exe = self.venv_path / "bin" / "python"
+        if not self.python_exe.is_file():
+            self.python_exe = Path(sys.executable)
 
         # Load enabled state (servers default to disabled)
         self._enabled_servers: Dict[str, bool] = self._load_enabled_state()
@@ -251,12 +255,13 @@ class MCPService:
         except Exception as e:
             logger.error(f"Could not save MCP enabled state: {e}")
 
-    # Internal/platform servers that should be on by default
+    # Internal/platform servers that should be on by default.
+    #
+    # Vigil's own server is not here: it is not a server Vigil connects to but
+    # functions in this process, registered by core.integrations.mcp.in_process
+    # and reachable whether or not anything is enabled.
     _DEFAULT_ENABLED = {
-        "deeptempo-findings",
-        "tempo-flow",
         "security-detections",
-        "approval",
         # The self-hosted SIEM a hunt reads through telemetry_search -- the
         # customer's own Splunk, the expected telemetry path, not an optional
         # add-on. Safe to default-on: unset ${SPLUNK_*} placeholders leave it
@@ -325,13 +330,13 @@ class MCPService:
         """
         Detect if a server is FastMCP or stdio-based by checking the module path.
 
-        FastMCP servers: deeptempo_findings
+        FastMCP servers: none in-repo; Vigil's own tools run in this process.
         Stdio servers: All others (designed for advanced MCP integration)
         """
         for arg in args:
             # Every in-repo server lives under tools/mcp/.
             if "." in arg and arg.startswith("tools"):
-                fastmcp_tools = ["deeptempo_findings"]
+                fastmcp_tools = []
                 for fastmcp in fastmcp_tools:
                     if fastmcp in arg:
                         return "fastmcp"
@@ -398,7 +403,7 @@ class MCPService:
                     # Inherit the backend's environment so servers that need
                     # runtime config not declared in mcp-config.json can connect
                     # — notably the POSTGRES_* vars DatabaseService reads for
-                    # case/DB tools (deeptempo-findings). Declared config env
+                    # case/DB tools (vigil). Declared config env
                     # entries still take precedence. Required-credential
                     # detection scans the raw config above, not this spawn env,
                     # so dormancy behavior is unchanged.
@@ -428,6 +433,10 @@ class MCPService:
                     required_env_vars = extract_required_env_vars(
                         raw_env_strs, raw_args
                     )
+
+                    # Launch the image's baked copy of a pinned npx/uvx entry
+                    # instead of downloading it; anything not baked is as declared.
+                    command, args = installed_launch(command, args)
 
                     server_configs.append(
                         {
@@ -491,14 +500,9 @@ class MCPService:
     ) -> List[Dict]:
         """Get default server configurations if mcp-config.json is not available."""
         return [
-            {
-                "name": "deeptempo-findings",
-                "command": python_exe_str,
-                "args": ["-m", "tools.deeptempo_findings"],
-                "cwd": project_path_str,
-                "env": {"PYTHONPATH": project_path_str},
-                "server_type": "fastmcp",
-            }
+            # Vigil's own tools are in this process, so there is no in-repo
+            # server to fall back to: an absent config file means no vendor
+            # servers, not a Vigil without tools.
         ]
 
     # NOTE: the former `start_server` / `start_all` / `stop_all` methods were

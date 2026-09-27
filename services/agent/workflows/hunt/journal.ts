@@ -89,6 +89,17 @@ export class Journal {
     this.view = null;
   }
 
+  // Picks up what other writers put on the ledger since the last read -- the stream
+  // journals each call's spend straight to State, never through append -- without
+  // making the buffered iteration durable. The pending tail keeps its place after
+  // the stored events, as it will when flush lands it.
+  async refresh(): Promise<void> {
+    const stored = await this.state.read(this.runId);
+    const tail = this.events.slice(this.events.length - this.pending.length);
+    this.events = [...stored, ...tail.map((event, at) => ({ ...event, seq: stored.length + at }))];
+    this.view = null;
+  }
+
   get projection(): Projection {
     if (this.view === null) this.view = fold(this.events);
     return this.view;

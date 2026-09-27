@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from core.agents.builtins import AgentId
 from core.response.approval_service import ActionStatus, ActionType, ApprovalService
+from core.response.config import ResponseConfig
 
 logger = logging.getLogger(__name__)
 
@@ -13,9 +14,18 @@ logger = logging.getLogger(__name__)
 class AutonomousResponseService:
     """Service for managing autonomous threat response with approval workflow."""
 
-    def __init__(self, approvals: Optional[ApprovalService] = None):
-        """Initialize autonomous response service."""
-        self.approval_service = approvals or ApprovalService()
+    def __init__(
+        self,
+        approvals: Optional[ApprovalService] = None,
+        config: Optional[ResponseConfig] = None,
+    ):
+        """Initialize autonomous response service.
+
+        ``config`` defaults to the approval service's band so the two never
+        compare against different lines; the no-arg form reads Settings.
+        """
+        self.approval_service = approvals or ApprovalService(config=config)
+        self.config = config or self.approval_service.config
 
     def correlate_alerts(
         self,
@@ -121,11 +131,11 @@ class AutonomousResponseService:
 
     def _get_recommendation(self, confidence: float, indicators: List[str]) -> str:
         """Get recommendation based on confidence and indicators."""
-        if confidence >= 0.90:
+        if confidence >= self.config.confidence_threshold:
             return "AUTO-ISOLATE: Confidence threshold met for automatic isolation"
-        elif confidence >= 0.85:
+        elif confidence >= self.config.review_threshold:
             return "ISOLATE WITH APPROVAL: High confidence, recommend isolation with quick approval"
-        elif confidence >= 0.70:
+        elif confidence >= self.config.monitor_threshold:
             return "MANUAL REVIEW: Moderate confidence, requires analyst review"
         else:
             return "MONITOR: Low confidence, continue monitoring"
@@ -140,7 +150,8 @@ class AutonomousResponseService:
         correlation_data: Dict,
     ) -> Optional[Dict]:
         """
-        Create an isolation action (auto-execute if confidence >= 0.90).
+        Create an isolation action (auto-executes when the approval gate
+        approves it, i.e. at or above ``config.confidence_threshold``).
 
         Args:
             ip_address: Target IP address
@@ -187,7 +198,6 @@ class AutonomousResponseService:
                     "result": action.execution_result,
                 }
 
-            # Check if auto-approved (confidence >= 0.90)
             if action.status == ActionStatus.APPROVED.value:
                 logger.info(
                     f"Action {action.action_id} auto-approved (confidence: {confidence:.2%})"

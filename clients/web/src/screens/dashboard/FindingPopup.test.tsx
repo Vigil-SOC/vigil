@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import FindingPopup from './FindingPopup'
-import { findingsApi } from '../../services/api'
+import { exclusionsApi, findingsApi } from '../../services/api'
 
 vi.mock('../../services/api', () => ({
+  exclusionsApi: { create: vi.fn() },
   findingsApi: {
     getById: vi.fn(),
     getEnrichment: vi.fn(),
@@ -165,5 +166,63 @@ describe('FindingPopup source evidence', () => {
     expect(await screen.findByText('Log events')).toBeInTheDocument()
     expect(screen.getByText('2026-07-21T12:00:00Z · process_start')).toBeInTheDocument()
     expect(screen.getByText('process_start pid=42')).toBeInTheDocument()
+  })
+})
+
+describe('FindingPopup IP exclusions', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('marks excluded addresses and excludes another in place with a reason', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({
+      data: {
+        ...baseFinding,
+        entity_context: { src_ip: '203.0.113.9', dest_ips: ['10.0.0.5', 'not-an-ip'] },
+        excluded_ips: ['203.0.113.9'],
+      },
+    } as never)
+    vi.mocked(exclusionsApi.create).mockResolvedValueOnce({ data: { ip: '10.0.0.5' } } as never)
+    const onChanged = vi.fn()
+    render(<FindingPopup id="f-source-1" onClose={vi.fn()} onChanged={onChanged} />)
+
+    const scanner = (await screen.findByText('203.0.113.9')).closest('li') as HTMLElement
+    expect(within(scanner).getByText('excluded')).toBeInTheDocument()
+    expect(within(scanner).queryByRole('button', { name: 'Exclude' })).not.toBeInTheDocument()
+    expect(screen.queryByText('not-an-ip')).not.toBeInTheDocument()
+
+    const host = screen.getByText('10.0.0.5').closest('li') as HTMLElement
+    fireEvent.click(within(host).getByRole('button', { name: 'Exclude' }))
+    const submit = within(host).getByRole('button', { name: 'Exclude' })
+    expect(submit).toBeDisabled()
+
+    fireEvent.change(within(host).getByLabelText('Reason for excluding 10.0.0.5'), {
+      target: { value: 'internal scanner' },
+    })
+    fireEvent.click(submit)
+
+    expect(exclusionsApi.create).toHaveBeenCalledWith({
+      ip: '10.0.0.5',
+      reason: 'internal scanner',
+      origin: 'finding',
+      origin_ref: 'f-source-1',
+    })
+    expect(await within(host).findByText('excluded')).toBeInTheDocument()
+    expect(onChanged).toHaveBeenCalled()
+  })
+
+  it('shows the server refusal instead of marking the address', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({
+      data: { ...baseFinding, entity_context: { src_ip: '198.51.100.1' } },
+    } as never)
+    vi.mocked(exclusionsApi.create).mockRejectedValueOnce({
+      response: { data: { detail: '198.51.100.1 is already excluded' } },
+    })
+    render(<FindingPopup id="f-source-1" onClose={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Exclude' }))
+    fireEvent.change(screen.getByLabelText('Reason for excluding 198.51.100.1'), { target: { value: 'dup' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Exclude' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('198.51.100.1 is already excluded')
+    expect(screen.queryByText('excluded')).not.toBeInTheDocument()
   })
 })

@@ -15,8 +15,8 @@ import {
   type OrchestratorConfig,
 } from './useSettings'
 import type { SectionProps } from './types'
-
-const ALL_SEVERITIES = ['critical', 'high', 'medium', 'low']
+import { fmtCost } from '../../shared/cost'
+import IntentReportCard from './IntentReportCard'
 
 type PresetKey = 'conservative' | 'balanced' | 'aggressive'
 type PresetValues = Pick<
@@ -86,6 +86,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   const { config, setConfig, status, phase, save } = useOrchestrator()
   const lastSaved = useRef<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
   const [advanced, setAdvanced] = useState(false)
+  const [intentRevision, setIntentRevision] = useState(0)
 
   useEffect(() => {
     if (phase === 'ready') lastSaved.current = config
@@ -101,6 +102,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
       await save(next)
       lastSaved.current = next
       notify('ok', 'Auto Investigate settings saved.')
+      setIntentRevision((n) => n + 1)
     } catch {
       notify('err', 'Failed to save Auto Investigate settings.')
     }
@@ -117,13 +119,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
   }
 
   const activePreset = detectActivePreset(config)
-
-  const toggleSeverity = (sev: string) => {
-    const cur = config.auto_assign_severities
-    applyAndSave({
-      auto_assign_severities: cur.includes(sev) ? cur.filter((s) => s !== sev) : [...cur, sev],
-    })
-  }
 
   const numField = (label: string, field: keyof OrchestratorConfig, opts: NumOpts = {}) => {
     const unlimited = Boolean(opts.allowUnlimited) && (config[field] as number) === 0
@@ -173,7 +168,7 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
               {status.total_investigations !== undefined &&
                 ` · ${status.total_investigations} investigation(s)`}
               {status.cost?.total_cost_usd !== undefined &&
-                ` · Total cost: $${status.cost.total_cost_usd.toFixed(2)}`}
+                ` · Total cost: ${fmtCost(status.cost.total_cost_usd)}`}
             </span>
           </div>
         )}
@@ -192,24 +187,6 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           checked={config.dry_run}
           onChange={(v) => applyAndSave({ dry_run: v })}
         />
-
-        <div className="mt-4">
-          <span className="text-[13px] text-tx-2">Auto-investigate severities</span>
-          <div className="flex gap-2 flex-wrap mt-2">
-            {ALL_SEVERITIES.map((sev) => {
-              const on = config.auto_assign_severities.includes(sev)
-              return (
-                <button
-                  key={sev}
-                  className={`chip${on ? ' sel' : ''}`}
-                  onClick={() => toggleSeverity(sev)}
-                >
-                  {sev.charAt(0).toUpperCase() + sev.slice(1)}
-                </button>
-              )
-            })}
-          </div>
-        </div>
       </SettingsCard>
 
       <SettingsCard
@@ -328,6 +305,8 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
           <span className="text-xs text-tx-3">Hidden — click Show to fine-tune limits.</span>
         )}
       </SettingsCard>
+
+      <IntentReportCard reloadKey={intentRevision} />
     </>
   )
 }

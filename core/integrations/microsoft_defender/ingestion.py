@@ -12,8 +12,9 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
-from core.config import get_integration_config
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
+from core.integrations._base.config import resolve
+from core.integrations.microsoft_defender.descriptor import MICROSOFT_DEFENDER
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
         """Initialize Microsoft Defender ingestion."""
         super().__init__()
         self.siem_name = "Microsoft Defender"
-        self.config = get_integration_config("microsoft-defender")
+        self.config = resolve(MICROSOFT_DEFENDER)
         self.access_token = None
 
     def _get_access_token(self) -> Optional[str]:

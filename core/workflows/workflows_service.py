@@ -1,14 +1,12 @@
 """Workflows service for discovering, parsing, and executing WORKFLOW.md workflow definitions."""
 
 import logging
-import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-import yaml
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.agents.queue import new_run_id
+from core.frontmatter import FrontmatterError, split_frontmatter
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.hypothesis_subjects import kept_subjects
 from core.workflows.workflow_run_service import WorkflowRunService
@@ -20,16 +18,20 @@ logger = logging.getLogger(__name__)
 COMPOSE_RUN_KIND = "compose"
 HUNT_RUN_KIND = "hunt"
 ROOT_CAUSE_RUN_KIND = "root_cause"
-# Both drive the same hypothesis loop and read the same projection: a hunt asks
+ADJUDICATE_RUN_KIND = "adjudicate"
+# All three drive the same hypothesis loop and read the same projection: a hunt asks
 # whether a threat is real, a root-cause run works backward from a confirmed one to
-# how it began. Everything that gates on "is this the hunt loop?" tests this set, so
-# the two stay in lockstep and root-cause never silently loses telemetry_search.
-HUNT_LIKE_RUN_KINDS = frozenset({HUNT_RUN_KIND, ROOT_CAUSE_RUN_KIND})
+# how it began, an adjudication is a shadow second opinion on a finding intake has
+# already admitted. Everything that gates on "is this the hunt loop?" tests this
+# set, so the kinds stay in lockstep and none silently loses telemetry_search.
+HUNT_LIKE_RUN_KINDS = frozenset(
+    {HUNT_RUN_KIND, ROOT_CAUSE_RUN_KIND, ADJUDICATE_RUN_KIND}
+)
 WORKFLOW_SCHEME = "workflow:"
 
 
 def is_hunt_like(run_kind: Optional[str]) -> bool:
-    """True when a run_kind drives the hunt hypothesis loop (hunt or root-cause)."""
+    """True when a run_kind drives the hunt hypothesis loop (hunt, root-cause, adjudicate)."""
     return run_kind in HUNT_LIKE_RUN_KINDS
 
 
@@ -151,31 +153,22 @@ def _nothing_to_run(
         if not asked:
             return "hypotheses"
         return "claims" if all(_not_a_claim(one) for one in asked) else ""
+    # The lead's job is the objectives and the body, so an empty phase list is
+    # not an empty run. Compose still walks phases, and one with none has nothing.
+    if workflow.run_kind == "investigate":
+        return ""
     return "" if workflow.phases else "phases"
 
 
-# Real YAML rather than the regex reader this replaced. That reader could not carry
-# a phase list, and PyYAML has been a declared dependency the whole time it avoided it.
-def _parse_yaml_frontmatter(content: str) -> Dict[str, Any]:
-    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
-    if not match:
-        return {}
-
+# A workflow with no or unreadable front matter is one with empty metadata; the
+# body is still loaded so the file shows up and the operator can see what is wrong.
+def _read_workflow_file(content: str) -> Tuple[Dict[str, Any], str]:
     try:
-        parsed = yaml.safe_load(match.group(1))
-    except yaml.YAMLError as exc:
+        metadata, body_start = split_frontmatter(content)
+    except FrontmatterError as exc:
         logger.warning("unreadable workflow front matter: %s", exc)
-        return {}
-
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _get_frontmatter_end(content: str) -> int:
-    """Get the character index where frontmatter ends and body begins."""
-    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", content, re.DOTALL)
-    if match:
-        return match.end()
-    return 0
+        return {}, content[exc.body_offset :].strip()
+    return metadata or {}, content[body_start:].strip()
 
 
 class WorkflowDefinition:
@@ -389,9 +382,7 @@ class WorkflowsService:
 
             try:
                 content = workflow_file.read_text(encoding="utf-8")
-                metadata = _parse_yaml_frontmatter(content)
-                body_start = _get_frontmatter_end(content)
-                body = content[body_start:].strip()
+                metadata, body = _read_workflow_file(content)
 
                 workflow_id = workflow_dir.name
                 workflow = WorkflowDefinition(
@@ -522,7 +513,9 @@ class WorkflowsService:
             workflow_name=workflow.name,
             workflow_source=workflow_dict.get("source", "file"),
             workflow_version=workflow_dict.get("version"),
-            trigger_context=dict(parameters or {}),
+            # run_kind rides along so finalize_run can label the outcome without a
+            # column: the same value the start job below carries.
+            trigger_context={**dict(parameters or {}), "run_kind": workflow.run_kind},
             triggered_by=triggered_by,
             run_id=new_run_id(),
         )
@@ -532,8 +525,7 @@ class WorkflowsService:
         asked = _asked_hypotheses(parameters)
         job = build_start_job(
             run_id=run_id,
-            # The definition's, not a constant: threat-hunt drives the hypothesis
-            # loop and the other four walk their phases, from one entry point.
+            # The definition's run_kind, so both entry points queue the same loop.
             run_kind=workflow.run_kind,
             request=_omit_unset(
                 {

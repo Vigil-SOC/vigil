@@ -167,13 +167,27 @@ def req(url, method="GET", body=None):
 def env_ref(field):
     """Re-declare a credential that lives in the environment, or None.
 
-    Returns the same {value, env_var, from_env} shape Bifrost hands back, with
-    the masked value dropped — echoing a mask back would store the mask as the
-    credential and every call would then 401.
+    Bifrost emits an env-backed field as {"value": <masked>, "ref": "env.X",
+    "type": "env"}; older builds used {"value", "env_var", "from_env"}. Either
+    is re-declared as the current shape with the masked value emptied — the
+    gateway re-resolves it from the environment, whereas echoing the mask back
+    would store the mask as the credential and every call would then 401.
+    A plain literal or a missing field is not an env reference: None.
     """
-    if isinstance(field, dict) and field.get("from_env") and field.get("env_var"):
-        return {"value": "", "env_var": field["env_var"], "from_env": True}
-    return None
+    if not isinstance(field, dict):
+        return None
+    ref = field.get("ref") or ""
+    if field.get("type") == "env" or ref.startswith("env."):
+        ref = ref or field.get("env_var") or ""
+    elif field.get("from_env") and field.get("env_var"):
+        ref = field["env_var"]
+    else:
+        return None
+    if not ref:
+        return None
+    if not ref.startswith("env."):
+        ref = f"env.{ref}"
+    return {"value": "", "ref": ref, "type": "env"}
 
 
 _verdicts = None
@@ -230,14 +244,32 @@ def disable(provider, key):
     # Ollama's credential is a URL the operator typed, not a secret the proxy
     # masks or stores, so the block has to come along or Bifrost loses the
     # endpoint. Vertex's project/region travel the same way; its
-    # service-account JSON is left out so the proxy substitutes the stored one.
+    # service-account JSON is left out so the proxy substitutes the stored one
+    # — unless it is an env reference, which the proxy holds no copy of and the
+    # gateway would blank if omitted. An env reference is re-declared; anything
+    # else is carried as returned and, if it is a mask, only the proxy may
+    # substitute it (see the fallback below).
+    cfg_refs = cfg_masks = 0
+
+    def carry(field):
+        nonlocal cfg_refs, cfg_masks
+        ref = env_ref(field)
+        if ref is not None:
+            cfg_refs += 1
+            return ref
+        if isinstance(field, dict) and field.get("value"):
+            cfg_masks += 1
+        return field
+
     ollama = key.get("ollama_key_config")
     if isinstance(ollama, dict):
-        body["ollama_key_config"] = {"url": env_ref(ollama.get("url")) or ollama.get("url")}
+        body["ollama_key_config"] = {"url": carry(ollama.get("url"))}
     vertex = key.get("vertex_key_config")
     if isinstance(vertex, dict):
         body["vertex_key_config"] = {
-            f: v for f, v in vertex.items() if f != "auth_credentials"
+            f: carry(v)
+            for f, v in vertex.items()
+            if f != "auth_credentials" or env_ref(v) is not None
         }
 
     # The proxy first: it substitutes the plaintext it holds for any key a human
@@ -249,10 +281,19 @@ def disable(provider, key):
     except urllib.error.HTTPError as exc:
         if exc.code != 400:
             raise
-    ref = env_ref(key.get("value"))
-    if ref is None:
+    # The credential may live in `value` or in the config block (Ollama's URL,
+    # Vertex's service account); either as an env reference qualifies. A masked
+    # literal anywhere in the body cannot be carried without the proxy, so that
+    # key stays put rather than have the mask written over it.
+    val = key.get("value")
+    ref = env_ref(val)
+    token = val.get("value") if isinstance(val, dict) else val
+    if ref is not None:
+        body["value"] = ref
+    elif token:
         return False
-    body["value"] = ref
+    if (ref is None and not cfg_refs) or cfg_masks:
+        return False
     req(f"{BF}/providers/{provider}/keys/{key['id']}", "PUT", body)
     return True
 

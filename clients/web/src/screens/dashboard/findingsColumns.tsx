@@ -27,7 +27,14 @@ export function baseFindingColumns(
   return [
     {
       key: 'id', label: 'Finding ID',
-      render: (f) => <span className="id-cell">{f.id}</span>,
+      render: (f) => (
+        <span className="id-cell">
+          {f.id}
+          {!!f.excludedIps?.length && (
+            <span className="tag excluded-tag" title={`Names excluded IP ${f.excludedIps.join(', ')}`}>excluded</span>
+          )}
+        </span>
+      ),
       searchVal: (f) => f.id,
     },
     {

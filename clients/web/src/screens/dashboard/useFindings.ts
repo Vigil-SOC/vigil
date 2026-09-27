@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
-import { casesApi, findingsApi } from '../../services/api'
+import { casesApi, findingsApi, type ExclusionView } from '../../services/api'
 import { mapApiFinding, type ApiFinding } from '../../data/mappers'
 import type { Finding } from '../../data/data'
 import type { Phase } from '../cases/useCases'
 
 export type { Phase } from '../cases/useCases'
 
-/** polls in the background, so new findings appear live */
-export function useFindings() {
+/** polls in the background, so new findings appear live. Findings naming an
+ *  analyst-excluded IP are hidden unless the view asks for them. */
+export function useFindings(exclusions: ExclusionView = 'hide') {
   const [rows, setRows] = useState<Finding[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
@@ -24,7 +25,7 @@ export function useFindings() {
         setError(null)
       }
       findingsApi
-        .getAll({ limit: 1000 })
+        .getAll({ limit: 1000, exclusions })
         .then((res) => {
           if (cancelled) return
           const list = (res.data?.findings || []) as ApiFinding[]
@@ -45,7 +46,7 @@ export function useFindings() {
       cancelled = true
       clearInterval(id)
     }
-  }, [reloadKey])
+  }, [reloadKey, exclusions])
 
   return { rows, phase, error, reload }
 }
@@ -76,7 +77,8 @@ export function useDashboardKpis() {
 
     const fetchKpis = (silent: boolean) => {
       if (!silent) setPhase('loading')
-      Promise.all([findingsApi.getSummary(), casesApi.getSummary()])
+      // excluded findings are not counted: the KPIs describe the queue
+      Promise.all([findingsApi.getSummary({ exclusions: 'hide' }), casesApi.getSummary()])
         .then(([fRes, cRes]) => {
           if (cancelled) return
           const f = (fRes.data || {}) as FindingsSummary

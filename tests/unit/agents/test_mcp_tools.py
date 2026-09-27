@@ -152,3 +152,115 @@ class TestReachingTheClient:
             )
 
         assert raised.value.kind == UNAVAILABLE
+
+
+# --- Vigil's own tools carry no prefix --------------------------------------
+#
+# They are the same tools an external caller reaches at /mcp. A tool that
+# answers to two names is two tools to anyone writing against it.
+
+
+class TestVigilsOwnToolsAreUnprefixed:
+    def test_a_bare_name_routes_to_vigil(self):
+        from core.agents.mcp_tools import split_tool_name
+
+        assert split_tool_name("list_findings", ["vigil", "crowdstrike"]) == (
+            "vigil",
+            "list_findings",
+        )
+
+    def test_a_vendor_prefix_still_wins_over_the_bare_fallback(self):
+        from core.agents.mcp_tools import split_tool_name
+
+        assert split_tool_name(
+            "crowdstrike_isolate_host", ["vigil", "crowdstrike"]
+        ) == (
+            "crowdstrike",
+            "isolate_host",
+        )
+
+    def test_a_bare_name_routes_nowhere_when_vigil_is_not_connected(self):
+        from core.agents.mcp_tools import split_tool_name
+
+        assert split_tool_name("list_findings", ["crowdstrike"]) is None
+
+
+class TestTheDestructiveGateReadsBareNames:
+    """It decides on the verb, and a bare name's verb is its first token."""
+
+    def test_a_bare_destructive_tool_is_dropped(self):
+        from core.llm.chat_layers import _is_destructive_mcp
+
+        assert _is_destructive_mcp("isolate_host") is True
+        assert _is_destructive_mcp("block_ip") is True
+
+    def test_a_prefixed_destructive_tool_is_still_dropped(self):
+        from core.llm.chat_layers import _is_destructive_mcp
+
+        assert _is_destructive_mcp("crowdstrike_isolate_host") is True
+
+    def test_vigils_own_read_tools_are_not_dropped(self):
+        from core.llm.chat_layers import _is_destructive_mcp
+
+        for name in ("list_findings", "get_finding", "list_cases", "close_case"):
+            assert _is_destructive_mcp(name) is False, name
+
+    def test_the_named_execute_id_is_still_dropped(self):
+        from core.llm.chat_layers import EXECUTE_IDS, _is_destructive_mcp
+
+        for name in EXECUTE_IDS:
+            assert _is_destructive_mcp(name) is True, name
+
+
+
+# --- A tool both sides carry is described by the side that answers it --------
+#
+# Vigil's own tools are registered unprefixed, so thirteen of their names are
+# also backend tool names. tools_router tries the backend first and only reaches
+# an MCP server for a name the backend does not claim, so the backend is what
+# answers all thirteen -- and the declaration a model reads has to be that one's.
+#
+# Building the catalogue the other way around declared the MCP tool's schema
+# against the backend's implementation, and silently dropped six tools: those
+# MCP tools carry no docstring, so their description was empty, and a tool with
+# no description is not offered at all.
+
+
+def _offered(mcp_tools):
+    from core.llm.chat_layers import _declare
+
+    return {tool["id"] for tool in _declare(None, mcp_tools)}
+
+
+def test_registering_vigils_own_tools_takes_none_of_the_backend_tools_away():
+    from core.integrations.mcp import in_process
+
+    alone = _offered(None)
+    together = _offered(in_process.list_tools())
+
+    missing = sorted(alone - together)
+    assert not missing, (
+        f"chat stopped offering {missing} once Vigil's own MCP tools were "
+        "registered. They share a name with a backend tool, and the MCP one "
+        "has no docstring, so an empty description won the catalogue and the "
+        "tool was dropped."
+    )
+
+
+def test_a_shared_name_is_declared_with_the_schema_that_will_run():
+    """The backend answers every name it claims, so its schema is the honest one."""
+    from core.agents.tool_registry import MANIFEST
+    from core.integrations.mcp import in_process
+    from core.llm.chat_layers import _declare
+
+    mcp_tools = in_process.list_tools()
+    shared = {t["name"] for t in mcp_tools} & set(MANIFEST)
+    assert shared, "nothing shares a name; this test has stopped testing anything"
+
+    declared = {t["id"]: t for t in _declare(None, mcp_tools)}
+    for name in shared:
+        if name not in declared:
+            continue
+        assert declared[name]["parameters"] == (
+            MANIFEST[name].get("input_schema") or {"type": "object"}
+        ), f"{name} is declared with a schema the backend implementation will not honour"

@@ -1,3 +1,4 @@
+import type { SpendPayload } from "../../contracts/budget.js";
 import type { CheckpointPayload, DispatchPayload, NewEvent, ResolutionPayload, RunOutcome } from "../../contracts/events.js";
 import { commitTurn, type Harness, type Outcome, type TurnConfig } from "../../core/loop.js";
 import { drain, streamTurn } from "../../core/stream.js";
@@ -131,6 +132,9 @@ interface Ledger {
   answers: PhasePayload[];
   resolutions: Map<string, ResolutionPayload>;
   raised: Set<string>;
+  // Summed here rather than read again at the end: this is the one read of the
+  // run, and the terminal has to carry the figure to the console.
+  spent: number;
 }
 
 // One read per step, folded into everything the step needs to know: which steps
@@ -140,6 +144,7 @@ async function readLedger(state: State<ComposeKinds>, runId: string): Promise<Le
   const answers = events.filter((event) => event.kind === "phase").map((event) => event.payload as PhasePayload);
   const resolutions = new Map<string, ResolutionPayload>();
   const raised = new Set<string>();
+  let spent = 0;
 
   for (const event of events) {
     if (event.kind === "checkpoint") raised.add((event.payload as CheckpointPayload).checkpoint_id);
@@ -147,8 +152,11 @@ async function readLedger(state: State<ComposeKinds>, runId: string): Promise<Le
       const payload = event.payload as ResolutionPayload;
       resolutions.set(payload.checkpoint_id, payload);
     }
+    // A call nobody could price contributes nothing rather than a fabricated
+    // zero, which is how spentOn has it for every other kind.
+    if (event.kind === "spend") spent += (event.payload as SpendPayload).cost_usd ?? 0;
   }
-  return { done: new Set(answers.map((answer) => answer.phase_id)), answers, resolutions, raised };
+  return { done: new Set(answers.map((answer) => answer.phase_id)), answers, resolutions, raised, spent };
 }
 
 // Parks the run when a step needs a human and nobody has answered. A rejection ends
@@ -274,7 +282,7 @@ async function end(
   const ledger = await readLedger(harness.state, options.run_id);
   const event: Event = { run_id: options.run_id, run_kind: "compose", kind: "terminal", payload: { outcome, reason } };
   await append(harness.state, options.run_id, [event]);
-  await mirror.terminal(options.run_id, { outcome, reason, summary: summarise(ledger.answers) });
+  await mirror.terminal(options.run_id, { outcome, reason, summary: summarise(ledger.answers), cost_usd: ledger.spent });
   return { ...progress(options.spec, ledger.done.size), status: outcome, reason, pending: null };
 }
 

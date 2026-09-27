@@ -43,6 +43,8 @@ export interface ApiFinding {
     source_evidence?: unknown
     [key: string]: unknown
   }
+  /** set by the findings API: the finding's addresses that are excluded */
+  excluded_ips?: string[]
 }
 
 export function initials(name?: string): string {
@@ -76,7 +78,7 @@ function caseStatus(s?: string): CaseRow['status'] {
 
 function casePrio(p?: string): CaseRow['prio'] {
   const v = (p || '').toLowerCase()
-  if (v === 'critical' || v === 'high' || v === 'medium' || v === 'low') return v
+  if (v === 'critical' || v === 'high' || v === 'medium' || v === 'low' || v === 'unknown') return v
   return 'medium'
 }
 
@@ -141,6 +143,8 @@ function extraEntities(ec: ApiFinding['entity_context']): Record<string, string>
   const out: Record<string, string> = {}
   for (const [k, v] of Object.entries(ec)) {
     if (MAPPED_ENTITY_KEYS.has(k) || v == null) continue
+    // Nested objects (a probe's known answer, source_evidence) are not cell text.
+    if (typeof v === 'object' && !Array.isArray(v)) continue
     const text = Array.isArray(v) ? v.filter(Boolean).join(', ') : String(v)
     if (text) out[k] = text
   }
@@ -164,6 +168,7 @@ export function mapApiFinding(f: ApiFinding): Finding {
     score: typeof f.anomaly_score === 'number' ? f.anomaly_score : null,
     status: findingStatus(f.status),
     extra: extraEntities(ec),
+    excludedIps: f.excluded_ips ?? [],
   }
 }
 
@@ -326,9 +331,9 @@ export function mapApiAgent(a: ApiAgent): AgentTemplate {
 
 export function mapApiSkill(s: ApiSkill): Skill {
   return {
-    id: s.skill_id ?? s.name,
+    id: s.name,
     name: s.name,
-    desc: s.description || '',
-    source: s.source_path ?? s.path ?? undefined,
+    desc: s.description,
+    source: s.source_path,
   }
 }

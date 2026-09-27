@@ -58,6 +58,8 @@ _CALLER_BIND_HOST="${BIND_HOST:-}"
 load_env
 [ -n "$_CALLER_BIND_HOST" ] && BIND_HOST="$_CALLER_BIND_HOST"
 export BIND_HOST="${BIND_HOST:-127.0.0.1}"
+# Auth is on unless .env opts into DEV_MODE; the backend needs a signing secret.
+ensure_jwt_secret || exit 1
 
 # `bifrost` only resolves inside the compose network. Rewrite before starting
 # services: bringing Ollama up syncs its catalog into Bifrost, and that runs
@@ -96,7 +98,7 @@ print_ready() {
     echo "Docs:     http://localhost:6987/docs"
     echo ""
     if [ "${DEV_MODE:-}" = "true" ]; then
-        echo "DEV_MODE active - auth bypassed"
+        echo "DEV_MODE active - auth bypassed (session auth, vstrike inbound)"
     else
         echo "First run: create your admin account at http://localhost:6988"
     fi

@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 sys.path.insert(0, str(REPO))
 
-from core.agents import agent_runs_router  # noqa: E402
+from core.api.v1 import agent_runs_router  # noqa: E402
 from core.agents.directives import (  # noqa: E402
     InvalidDirective,
     RunAlreadyEnded,

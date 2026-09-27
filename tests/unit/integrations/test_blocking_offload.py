@@ -94,7 +94,7 @@ async def test_defender_fetch_alerts_does_not_block_the_loop():
     from core.integrations.microsoft_defender.ingestion import MicrosoftDefenderIngestion
 
     with patch(
-        "core.integrations.microsoft_defender.ingestion.get_integration_config",
+        "core.integrations.microsoft_defender.ingestion.resolve",
         return_value={},
     ):
         svc = MicrosoftDefenderIngestion()

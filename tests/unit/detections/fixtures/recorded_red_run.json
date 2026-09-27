@@ -1,39 +1,80 @@
 {
   "steps": [
     {
-      "id": "step-1",
-      "started_at": "2026-09-10T12:00:00Z",
-      "ended_at": "2026-09-10T12:05:00Z",
-      "hostname": "ws01.corp.local",
-      "src_ip": "10.0.1.50",
-      "user": "jsmith",
       "technique_id": "T1059.001",
-      "atomic_guid": "f7c1e3d2-aaaa-4bbb-8ccc-0123456789ab",
-      "command": "powershell -EncodedCommand ..."
-    },
-    {
-      "id": "step-2",
-      "started_at": "2026-09-10T12:06:00Z",
-      "ended_at": "2026-09-10T12:08:00Z",
-      "hostname": "dc01.corp.local",
-      "src_ip": "10.0.1.10",
-      "technique_id": "T1003.001",
-      "atomic_guid": "0a3b4c5d-eeee-4fff-aaaa-abcdef012345"
-    },
-    {
-      "id": "step-3",
-      "started_at": "2026-09-10T12:10:00Z",
-      "ended_at": "2026-09-10T12:12:00Z",
+      "environment_id": "range-1",
       "hostname": "ws01.corp.local",
-      "src_ip": "10.0.1.50",
-      "technique_id": "T1021.002"
+      "command": [
+        "/opt/art-runner",
+        "--technique",
+        "T1059.001",
+        "--hostname",
+        "ws01.corp.local",
+        "--atomics-path",
+        "/opt/atomics"
+      ],
+      "exit": 0,
+      "stdout": "[+] T1059.001 executed\n",
+      "stderr": "",
+      "started_at": "2026-09-10T12:00:00+00:00",
+      "ended_at": "2026-09-10T12:05:00+00:00"
     },
     {
-      "id": "step-4",
-      "started_at": "2026-09-10T12:20:00Z",
-      "ended_at": "2026-09-10T12:22:00Z",
-      "src_ip": "10.0.2.80",
-      "technique_id": "T1047"
+      "technique_id": "T1003.001",
+      "environment_id": "range-1",
+      "hostname": "dc01.corp.local",
+      "command": [
+        "/opt/art-runner",
+        "--technique",
+        "T1003.001",
+        "--hostname",
+        "dc01.corp.local",
+        "--atomics-path",
+        "/opt/atomics"
+      ],
+      "exit": 0,
+      "stdout": "[+] T1003.001 executed\n",
+      "stderr": "",
+      "started_at": "2026-09-10T12:06:00+00:00",
+      "ended_at": "2026-09-10T12:08:00+00:00"
+    },
+    {
+      "technique_id": "T1021.002",
+      "environment_id": "range-1",
+      "hostname": "ws01.corp.local",
+      "command": [
+        "/opt/art-runner",
+        "--technique",
+        "T1021.002",
+        "--hostname",
+        "ws01.corp.local",
+        "--atomics-path",
+        "/opt/atomics"
+      ],
+      "exit": 0,
+      "stdout": "[+] T1021.002 executed\n",
+      "stderr": "",
+      "started_at": "2026-09-10T12:10:00+00:00",
+      "ended_at": "2026-09-10T12:12:00+00:00"
+    },
+    {
+      "technique_id": "T1047",
+      "environment_id": "range-1",
+      "hostname": "ws02.corp.local",
+      "command": [
+        "/opt/art-runner",
+        "--technique",
+        "T1047",
+        "--hostname",
+        "ws02.corp.local",
+        "--atomics-path",
+        "/opt/atomics"
+      ],
+      "exit": 0,
+      "stdout": "[+] T1047 executed\n",
+      "stderr": "",
+      "started_at": "2026-09-10T12:20:00+00:00",
+      "ended_at": "2026-09-10T12:22:00+00:00"
     }
   ],
   "findings": [
@@ -43,19 +84,29 @@
       "timestamp": "2026-09-10T12:01:30Z",
       "description": "Encoded PowerShell command line",
       "entity_context": {
-        "hostnames": ["WS01.CORP.LOCAL"],
-        "src_ips": ["10.0.1.50"],
-        "usernames": ["jsmith"],
+        "hostnames": [
+          "WS01.CORP.LOCAL"
+        ],
+        "src_ips": [
+          "10.0.1.50"
+        ],
+        "usernames": [
+          "jsmith"
+        ],
         "rule_name": "Encoded PowerShell"
       },
-      "mitre_predictions": { "T1059.001": 0.95 }
+      "mitre_predictions": {
+        "T1059.001": 0.95
+      }
     },
     {
       "finding_id": "loglm-seq-1",
       "data_source": "loglm",
       "timestamp": "2026-09-10T12:02:00Z",
       "description": "Anomalous process sequence",
-      "entity_context": { "src_ip": "10.0.1.50" }
+      "entity_context": {
+        "hostname": "ws01.corp.local"
+      }
     },
     {
       "finding_id": "elastic-lsass-other-host",
@@ -63,26 +114,42 @@
       "timestamp": "2026-09-10T12:07:00Z",
       "description": "LSASS memory access",
       "entity_context": {
-        "hostnames": ["other-host"],
-        "src_ips": ["10.9.9.9"],
+        "hostnames": [
+          "other-host"
+        ],
+        "src_ips": [
+          "10.9.9.9"
+        ],
         "rule_name": "LSASS Access"
       },
-      "mitre_predictions": { "T1003.001": 0.99 }
+      "mitre_predictions": {
+        "T1003.001": 0.99
+      }
     },
     {
       "finding_id": "elastic-no-host",
       "data_source": "elastic",
       "timestamp": "2026-09-10T12:07:15Z",
       "description": "Credential dump with no hostname",
-      "entity_context": { "usernames": ["administrator"] },
-      "mitre_predictions": { "T1003.001": 0.9 }
+      "entity_context": {
+        "usernames": [
+          "administrator"
+        ]
+      },
+      "mitre_predictions": {
+        "T1003.001": 0.9
+      }
     },
     {
       "finding_id": "loglm-wmi-seq",
       "data_source": "loglm",
       "timestamp": "2026-09-10T12:21:00Z",
       "description": "Anomalous WMI sequence",
-      "entity_context": { "src_ip": "10.0.2.80" }
+      "entity_context": {
+        "hostnames": [
+          "WS02.corp.local"
+        ]
+      }
     }
   ]
 }

@@ -15,7 +15,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from core.llm.providers.registry import get_registry, infer_provider_type
+from core.llm.cost.pricing_router import GATEWAY, priced_as
+from core.llm.providers.registry import get_registry
 from core.reporting.ai_insights_service import AIInsightsService
 from core.reporting.analytics_service import (
     calculate_metrics,
@@ -222,9 +223,9 @@ class EstimateCostRequest(BaseModel):
     provider_type: Optional[str] = Field(
         default=None,
         description=(
-            "anthropic | openai | ollama. Advisory only — the endpoint "
-            "resolves the real provider from model_id (registry, then name "
-            "heuristic) and uses this value only as a last-resort fallback."
+            "Advisory only — the endpoint resolves the real provider from "
+            "model_id (registry, then a namespaced id or the configured "
+            "default) and treats this value as final only when neither matches."
         ),
     )
     model_id: str
@@ -247,36 +248,25 @@ async def estimate_cost_endpoint(payload: EstimateCostRequest) -> Dict[str, Any]
     """
     from core.llm.cost.estimator import estimate_cost
 
-    # The chat composer can't reliably know which provider serves a given
-    # model (the bare model id it picked routes to the active default on the
-    # send path), so it sends a placeholder provider_type. Resolve the real
-    # provider here so the estimate matches what the send path will actually
-    # do — otherwise an Ollama model gets priced as Anthropic and logs a
-    # spurious "No catalog entry for anthropic/<model>" warning.
-    provider_type = payload.provider_type
-    resolved: Optional[str] = None
+    # The composer always sends a placeholder provider_type (the bare model id
+    # it picked routes to the active default on the send path), so resolve the
+    # real provider from configuration: the model registry first, then
+    # priced_as, which reads a namespaced id or the configured default.
+    provider_type: Optional[str] = None
+    model_id = payload.model_id
     try:
         for m in await get_registry().list_available_models():
-            if m.model_id == payload.model_id:
-                resolved = m.provider_type
+            if m.model_id == model_id:
+                provider_type = m.provider_type
                 break
     except Exception as exc:  # noqa: BLE001
         logger.debug("estimate-cost: registry lookup failed: %s", exc)
-    if resolved is None:
-        inferred = infer_provider_type(payload.model_id)
-        if inferred != "unknown":
-            resolved = inferred
-    if resolved is not None:
-        provider_type = resolved
-    if not provider_type:
-        # No registry match, heuristic said "unknown", and no caller hint.
-        # Hand estimate_cost an explicit unknown so it returns $0 with
-        # pricing_source="unknown" instead of tripping the required-field.
-        provider_type = "unknown"
+    if provider_type is None:
+        provider_type, model_id = priced_as(payload.provider_type or GATEWAY, model_id)
 
     estimate = await estimate_cost(
         provider_type=provider_type,
-        model_id=payload.model_id,
+        model_id=model_id,
         messages=payload.messages,
         system_prompt=payload.system_prompt,
         tools=payload.tools,
