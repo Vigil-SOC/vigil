@@ -204,12 +204,18 @@ def test_verify_ssl_is_parsed_not_truth_tested(
     assert splunk_mod.get_splunk_service().verify_ssl is expected
 
 
-def test_verify_ssl_false_from_the_environment(splunk_mod, monkeypatch):
-    """SPLUNK_VERIFY_SSL=false, the spelling env.example has always suggested for
-    a self-signed 8089 certificate, disables verification."""
-    _seed(monkeypatch, stored={}, secrets={**_ENV_ONLY, "SPLUNK_VERIFY_SSL": "false"})
+@pytest.mark.parametrize(
+    ("env_value", "expected"),
+    [("true", True), ("false", False)],
+    ids=["env-true", "env-false"],
+)
+def test_verify_ssl_from_the_environment(splunk_mod, monkeypatch, env_value, expected):
+    """SPLUNK_VERIFY_SSL reaches the client through the same coercion. The
+    "true" case is the discriminating one: False is also the unset default, so
+    "false" alone would pass with the env channel ignored."""
+    _seed(monkeypatch, stored={}, secrets={**_ENV_ONLY, "SPLUNK_VERIFY_SSL": env_value})
 
-    assert splunk_mod.get_splunk_service().verify_ssl is False
+    assert splunk_mod.get_splunk_service().verify_ssl is expected
 
 
 def test_unset_verify_ssl_means_no_verification(splunk_mod, monkeypatch):
@@ -247,27 +253,57 @@ def test_partial_config_is_not_configured(splunk_mod, monkeypatch, stored, secre
     assert splunk_mod.get_splunk_service() is None
 
 
-def test_resolver_failure_is_logged_not_swallowed(splunk_mod, monkeypatch, caplog):
+def test_partial_config_names_the_missing_fields_at_debug(
+    splunk_mod, monkeypatch, caplog
+):
+    """URL and username saved, password never entered: the trace says which
+    fields are missing, at DEBUG because an unconfigured install hits this on
+    every call, and never what the present fields hold."""
+    _seed(monkeypatch, stored=_STORED, secrets={})
+
+    with caplog.at_level(logging.DEBUG, logger=splunk_mod.logger.name):
+        assert splunk_mod.get_splunk_service() is None
+
+    record = next(r for r in caplog.records if "not configured" in r.getMessage())
+    assert record.levelno == logging.DEBUG
+    assert "password" in record.getMessage()
+    assert "server_url" not in record.getMessage()
+    assert "stored.example" not in caplog.text
+    assert "stored-admin" not in caplog.text
+
+
+def test_resolver_failure_is_logged_without_its_message(
+    splunk_mod, monkeypatch, caplog
+):
     """A DB or decrypt error reads as "not configured" to the caller, but it
-    must leave a trace: silent None is how #1113 stayed invisible."""
+    must leave a trace: silent None is how #1113 stayed invisible. The trace is
+    the exception class, never its message, which a secret-backend error can
+    fill with the value it failed on."""
+    sentinel = "hunter2-sentinel-secret"
+
+    class DecryptFailure(RuntimeError):
+        pass
 
     def _boom(_id):
-        raise RuntimeError("integration store unavailable")
+        raise DecryptFailure(f"could not decrypt SPLUNK_PASSWORD={sentinel}")
 
     monkeypatch.setattr(resolver, "get_integration_config", _boom)
 
-    with caplog.at_level(logging.WARNING, logger=splunk_mod.logger.name):
+    with caplog.at_level(logging.DEBUG, logger=splunk_mod.logger.name):
         assert splunk_mod.get_splunk_service() is None
 
-    assert "integration store unavailable" in caplog.text
+    assert "DecryptFailure" in caplog.text
+    assert sentinel not in caplog.text
+    assert any(r.levelno == logging.WARNING for r in caplog.records)
 
 
 def test_unconfigured_server_lists_tools_and_answers_not_configured(
     splunk_mod, monkeypatch
 ):
     """splunk-selfhosted is default-enabled and, with no placeholder to hold it
-    dormant, starts on a fresh install. Every handler must then reply with a
-    structured "Splunk not configured" rather than raise, and list_tools must
+    dormant, starts on a fresh install. Every handler that reaches Splunk must
+    then reply with a structured "Splunk not configured" rather than raise;
+    splunk_generate_spl needs no server and keeps working; and list_tools must
     still succeed with no telemetry summary to add."""
     _seed(monkeypatch, stored={}, secrets={})
 
@@ -279,6 +315,15 @@ def test_unconfigured_server_lists_tools_and_answers_not_configured(
         "splunk_search_host",
         "splunk_nl_search",
     ]
+
+    generated = _tool_reply(
+        asyncio.run(
+            splunk_mod.handle_call_tool("splunk_generate_spl", {"query": "brute force"})
+        )
+    )
+    assert generated["pattern"] == "brute force"
+    assert generated["spl_query"].startswith("index=*")
+    assert "error" not in generated
 
     calls = {
         "splunk_execute": {"spl_query": "index=* | head 1"},

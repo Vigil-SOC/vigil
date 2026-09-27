@@ -65,7 +65,11 @@ def get_splunk_service():
         # reads as "search failed" rather than "not configured". The old
         # ${SPLUNK_*} placeholders held the server dormant until all three were
         # set; this keeps that line now that Settings can supply them.
-        if missing(config, "server_url", "username", "password"):
+        absent = missing(config, "server_url", "username", "password")
+        if absent:
+            # DEBUG, not INFO: an unconfigured install reaches here on every
+            # call. Field names only, never what was found.
+            logger.debug("Splunk not configured: missing %s", ", ".join(absent))
             return None
         # resolve() returns every declared field, present-but-None when unset,
         # and the descriptor's bool coercion has already turned "false" into
@@ -79,9 +83,10 @@ def get_splunk_service():
         )
     except Exception as exc:  # noqa: BLE001
         # A DB, decrypt or descriptor failure must not read as "not configured":
-        # that silence is how #1113 went undiagnosed. Operational detail only,
-        # never the values.
-        logger.warning("Splunk config could not be resolved: %s", exc)
+        # that silence is how #1113 went undiagnosed. The class name only: a
+        # secret-backend or decrypt error can carry the value it choked on in
+        # its message, and a traceback would carry the same text.
+        logger.warning("Splunk config could not be resolved (%s)", type(exc).__name__)
         return None
 
 
