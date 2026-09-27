@@ -233,6 +233,27 @@ async def test_runner_do_one_tick_records_failure(monkeypatch):
     assert runner.stats["errors"] == 1
 
 
+@pytest.mark.asyncio
+async def test_siem_adapter_propagates_a_failed_fetch(monkeypatch):
+    """Swallowing it would return an empty success and advance the cursor."""
+    from core.federation.adapters._siem_base import SIEMIngestionAdapter
+
+    class _DownService:
+        async def fetch_alerts(self, **kwargs):
+            raise ConnectionError("indexer unreachable")
+
+    adapter = SIEMIngestionAdapter(
+        name="down",
+        integration_id="down",
+        default_interval=300,
+        service_factory=_DownService,
+        external_id_prefix="down",
+    )
+    monkeypatch.setattr(adapter, "is_configured", lambda: True)
+    with pytest.raises(ConnectionError):
+        await adapter.fetch(since=None, cursor={}, max_items=10)
+
+
 # ---------------------------------------------------------------------------
 # is_active_for: depends on global toggle AND per-source row enabled
 # ---------------------------------------------------------------------------
