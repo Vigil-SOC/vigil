@@ -95,15 +95,17 @@ class ElasticIngestion(SIEMIngestionService):
             }
 
             result = await svc.fetch_detection_alerts(query=time_filter, size=limit)
-            if not result:
-                return []
+            if result is None:
+                # The client returns None on any request failure.
+                raise RuntimeError("Elastic detection alert search failed")
 
             hits = result.get("hits", {}).get("hits", [])
             logger.info(f"Fetched {len(hits)} detection alerts from Elastic Security")
             return hits
         except Exception as e:
             logger.error(f"Error fetching Elastic alerts: {e}")
-            return []
+            # Raise, not []: federation must record the failure and keep its cursor.
+            raise
 
     def transform_alert_to_finding(
         self, alert: Dict[str, Any]

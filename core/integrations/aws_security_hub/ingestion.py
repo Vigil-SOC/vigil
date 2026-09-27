@@ -101,10 +101,11 @@ class AWSSecurityHubIngestion(SIEMIngestionService):
             return []
         except ClientError as e:
             logger.error(f"AWS Security Hub API error: {e}")
-            return []
+            # Raise, not []: federation must record the failure and keep its cursor.
+            raise
         except Exception as e:
             logger.error(f"Error fetching AWS Security Hub findings: {e}")
-            return []
+            raise
 
     def transform_alert_to_finding(
         self, alert: Dict[str, Any]

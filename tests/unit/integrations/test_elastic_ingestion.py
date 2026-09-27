@@ -145,13 +145,24 @@ class TestFetchAlerts:
             assert alerts == []
 
     @pytest.mark.asyncio
-    async def test_fetch_returns_empty_on_error(self, ingestion):
+    async def test_fetch_raises_on_error(self, ingestion):
+        """An empty result would let the federation cursor skip the outage."""
         mock_svc = MagicMock()
         mock_svc.fetch_detection_alerts = AsyncMock(side_effect=Exception("fail"))
         ingestion._elastic_service = mock_svc
 
-        alerts = await ingestion.fetch_alerts()
-        assert alerts == []
+        with pytest.raises(Exception, match="fail"):
+            await ingestion.fetch_alerts()
+
+    @pytest.mark.asyncio
+    async def test_fetch_raises_when_the_search_fails(self, ingestion):
+        # ElasticService returns None on any request failure.
+        mock_svc = MagicMock()
+        mock_svc.fetch_detection_alerts = AsyncMock(return_value=None)
+        ingestion._elastic_service = mock_svc
+
+        with pytest.raises(RuntimeError):
+            await ingestion.fetch_alerts()
 
 
 class TestUpdateUpstreamAlertStatus:

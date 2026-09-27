@@ -146,7 +146,8 @@ class AzureSentinelIngestion(SIEMIngestionService):
             return []
         except Exception as e:
             logger.error(f"Error fetching Azure Sentinel incidents: {e}")
-            return []
+            # Raise, not []: federation must record the failure and keep its cursor.
+            raise
 
     def transform_alert_to_finding(
         self, alert: Dict[str, Any]
