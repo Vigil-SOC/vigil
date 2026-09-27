@@ -60,18 +60,28 @@ def get_splunk_service():
         from core.integrations.splunk.client import SplunkService
 
         config = resolve(SPLUNK)
-        if missing(config, "server_url"):
+        # All three, not just the URL: the REST login posts username and password,
+        # so a URL alone builds a client whose every search fails at auth, which
+        # reads as "search failed" rather than "not configured". The old
+        # ${SPLUNK_*} placeholders held the server dormant until all three were
+        # set; this keeps that line now that Settings can supply them.
+        if missing(config, "server_url", "username", "password"):
             return None
-        # resolve() returns every declared field, present-but-None when unset.
-        # Unset has always meant no verification here (the old "false" default),
-        # so None stays False: not Elastic's None -> True.
+        # resolve() returns every declared field, present-but-None when unset,
+        # and the descriptor's bool coercion has already turned "false" into
+        # False. Unset has always meant no verification here (the old "false"
+        # default), so None stays False: not Elastic's None -> True.
         return SplunkService(
             server_url=config["server_url"],
-            username=config.get("username"),
-            password=config.get("password"),
+            username=config["username"],
+            password=config["password"],
             verify_ssl=bool(config.get("verify_ssl")),
         )
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        # A DB, decrypt or descriptor failure must not read as "not configured":
+        # that silence is how #1113 went undiagnosed. Operational detail only,
+        # never the values.
+        logger.warning("Splunk config could not be resolved: %s", exc)
         return None
 
 

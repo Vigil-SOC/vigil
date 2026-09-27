@@ -28,7 +28,7 @@ on the vendor's descriptor; the map below derives itself from the descriptors,
 and only a Catalog Entry with no code behind it is listed literally in
 ``_CATALOG_ONLY_SECRET_FIELDS``. The default ``<INTEGRATION_ID>_<FIELD>``
 convention is built automatically; add an ``_ENV_VAR_OVERRIDES`` entry
-only when the consumer reads the secret under a non-canonical name
+only when the consumer reads the value under a non-canonical name
 (e.g. CrowdStrike's official MCP server reads ``FALCON_*``).
 """
 

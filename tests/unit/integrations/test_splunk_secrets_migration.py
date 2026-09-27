@@ -7,18 +7,27 @@ where that read never looked, so every hunt reported "Splunk not configured" no
 matter what the operator saved (#1113). These tests lock the two paths that must
 both construct the client: a Settings save with no SPLUNK_* in the environment,
 and an env-only deployment with nothing saved.
+
+The fake ``get_secret`` answers only from the dict a test hands it. It has no
+environment fallback on purpose: the env-only case then proves the resolver asks
+for the exact keys the real chain reads out of the environment (SPLUNK_URL, not
+the canonical SPLUNK_SERVER_URL), and the Settings case proves nothing leaked in
+from the process environment.
 """
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
-import os
+import json
+import logging
 from pathlib import Path
 
 import pytest
 
 import core.integrations._base.config as resolver
 import core.integrations.splunk.client as splunk_client
+from core.integrations.mcp.service import MCPService
 
 pytestmark = pytest.mark.unit
 
@@ -26,6 +35,12 @@ REPO = Path(__file__).resolve().parent.parent.parent.parent
 SPLUNK_TOOL = REPO / "core" / "integrations" / "splunk" / "tool.py"
 
 _SPLUNK_ENV = ("SPLUNK_URL", "SPLUNK_USERNAME", "SPLUNK_PASSWORD", "SPLUNK_VERIFY_SSL")
+_STORED = {"server_url": "https://stored.example:8089", "username": "stored-admin"}
+_ENV_ONLY = {
+    "SPLUNK_URL": "https://env-only.example:8089",
+    "SPLUNK_USERNAME": "env-admin",
+    "SPLUNK_PASSWORD": "env-password",
+}
 
 
 class _Constructed:
@@ -59,14 +74,18 @@ def splunk_mod(monkeypatch):
 
 def _seed(monkeypatch, stored, secrets):
     """Seed the resolver the way production writes: non-secrets on the
-    integration row, secrets in the store, env consulted only through
-    get_secret. Follows tests/unit/integrations/test_config_resolver.py."""
+    integration row, secrets in the store. ``secrets`` also stands in for the
+    environment, which the real get_secret reads by the same key names.
+    Follows tests/unit/integrations/test_config_resolver.py."""
     monkeypatch.setattr(resolver, "get_integration_config", lambda _id: dict(stored))
     monkeypatch.setattr(
-        resolver,
-        "get_secret",
-        lambda key, default=None: secrets.get(key, os.environ.get(key, default)),
+        resolver, "get_secret", lambda key, default=None: secrets.get(key, default)
     )
+
+
+def _tool_reply(content):
+    assert len(content) == 1
+    return json.loads(content[0].text)
 
 
 def test_settings_saved_config_reaches_the_client(splunk_mod, monkeypatch):
@@ -75,11 +94,7 @@ def test_settings_saved_config_reaches_the_client(splunk_mod, monkeypatch):
     SPLUNK_* in the environment."""
     _seed(
         monkeypatch,
-        stored={
-            "server_url": "https://stored.example:8089",
-            "username": "stored-admin",
-            "verify_ssl": "true",
-        },
+        stored={**_STORED, "verify_ssl": "true"},
         secrets={"SPLUNK_PASSWORD": "from-secrets-store"},
     )
 
@@ -94,12 +109,9 @@ def test_settings_saved_config_reaches_the_client(splunk_mod, monkeypatch):
 
 def test_env_only_deployment_still_constructs_the_client(splunk_mod, monkeypatch):
     """Nothing saved in Settings: SPLUNK_URL, SPLUNK_USERNAME and SPLUNK_PASSWORD
-    from the environment still build the client. SPLUNK_URL, not the canonical
-    SPLUNK_SERVER_URL, because that is the name every deployment already sets."""
-    monkeypatch.setenv("SPLUNK_URL", "https://env-only.example:8089")
-    monkeypatch.setenv("SPLUNK_USERNAME", "env-admin")
-    monkeypatch.setenv("SPLUNK_PASSWORD", "env-password")
-    _seed(monkeypatch, stored={}, secrets={})
+    still build the client. SPLUNK_URL, not the canonical SPLUNK_SERVER_URL,
+    because that is the name env.example and every deployment already set."""
+    _seed(monkeypatch, stored={}, secrets=dict(_ENV_ONLY))
 
     service = splunk_mod.get_splunk_service()
 
@@ -109,15 +121,102 @@ def test_env_only_deployment_still_constructs_the_client(splunk_mod, monkeypatch
     assert service.password == "env-password"
 
 
+def test_canonical_server_url_name_is_not_read(splunk_mod, monkeypatch):
+    """The override is exclusive: SPLUNK_SERVER_URL was never documented and
+    must not quietly become a second spelling."""
+    _seed(
+        monkeypatch,
+        stored={},
+        secrets={**_ENV_ONLY, "SPLUNK_URL": "", "SPLUNK_SERVER_URL": "https://x:8089"},
+    )
+
+    assert splunk_mod.get_splunk_service() is None
+
+
+def test_process_env_reaches_the_child_without_placeholders(monkeypatch):
+    """Dropping the ${SPLUNK_*} placeholders must not cut the child off from the
+    backend's environment. stdio_client narrows the child env to six names plus
+    the server's env block, and that block is built from a copy of os.environ
+    (core/integrations/mcp/service.py), so an env-only deployment with no .env
+    file still hands the tool SPLUNK_URL."""
+    for key, value in _ENV_ONLY.items():
+        monkeypatch.setenv(key, value)
+
+    service = MCPService(project_root=REPO)
+    service.reload_server_configs()
+    server = service.servers["splunk-selfhosted"]
+
+    assert server.required_env_vars == [], "a placeholder crept back in"
+    for key, value in _ENV_ONLY.items():
+        assert server.env.get(key) == value, f"{key} did not reach the child env"
+
+
+def test_settings_url_beats_the_environment(splunk_mod, monkeypatch):
+    """Both set: the row wins for non-secrets. An operator who saved a URL in
+    Settings gets that URL even while a stale SPLUNK_URL lingers in .env. The
+    password is store-first too (SecretsManager reads the encrypted backend
+    before the environment), so both halves point at the Settings save."""
+    _seed(monkeypatch, stored=_STORED, secrets={**_ENV_ONLY, "SPLUNK_PASSWORD": "s"})
+
+    service = splunk_mod.get_splunk_service()
+
+    assert service.server_url == "https://stored.example:8089"
+    assert service.username == "stored-admin"
+
+
+def test_empty_stored_url_falls_back_to_the_environment(splunk_mod, monkeypatch):
+    """An empty string on the row is unset, not a URL of ""."""
+    _seed(
+        monkeypatch,
+        stored={"server_url": "", "username": ""},
+        secrets=dict(_ENV_ONLY),
+    )
+
+    service = splunk_mod.get_splunk_service()
+
+    assert service.server_url == "https://env-only.example:8089"
+    assert service.username == "env-admin"
+
+
+@pytest.mark.parametrize(
+    ("stored_value", "expected"),
+    [
+        ("true", True),
+        ("false", False),
+        ("0", False),
+        (True, True),
+        (False, False),
+    ],
+    ids=["str-true", "str-false", "str-0", "bool-true", "bool-false"],
+)
+def test_verify_ssl_is_parsed_not_truth_tested(
+    splunk_mod, monkeypatch, stored_value, expected
+):
+    """The descriptor declares verify_ssl as a bool, so the resolver coerces the
+    strings the env channel and older rows hold: "false" must reach the client as
+    False, never as a truthy non-empty string."""
+    _seed(
+        monkeypatch,
+        stored={**_STORED, "verify_ssl": stored_value},
+        secrets={"SPLUNK_PASSWORD": "secret"},
+    )
+
+    assert splunk_mod.get_splunk_service().verify_ssl is expected
+
+
+def test_verify_ssl_false_from_the_environment(splunk_mod, monkeypatch):
+    """SPLUNK_VERIFY_SSL=false, the spelling env.example has always suggested for
+    a self-signed 8089 certificate, disables verification."""
+    _seed(monkeypatch, stored={}, secrets={**_ENV_ONLY, "SPLUNK_VERIFY_SSL": "false"})
+
+    assert splunk_mod.get_splunk_service().verify_ssl is False
+
+
 def test_unset_verify_ssl_means_no_verification(splunk_mod, monkeypatch):
     """resolve() hands back None for an unset verify_ssl. Unset has always meant
     no verification for the self-hosted server (port 8089 ships a self-signed
     certificate), so None must stay False rather than default to True."""
-    _seed(
-        monkeypatch,
-        stored={"server_url": "https://stored.example:8089", "username": "admin"},
-        secrets={"SPLUNK_PASSWORD": "secret"},
-    )
+    _seed(monkeypatch, stored=_STORED, secrets={"SPLUNK_PASSWORD": "secret"})
 
     service = splunk_mod.get_splunk_service()
 
@@ -129,6 +228,68 @@ def test_no_server_url_anywhere_is_not_configured(splunk_mod, monkeypatch):
     _seed(monkeypatch, stored={"username": "admin"}, secrets={"SPLUNK_PASSWORD": "x"})
 
     assert splunk_mod.get_splunk_service() is None
+
+
+@pytest.mark.parametrize(
+    ("stored", "secrets"),
+    [
+        ({"server_url": "https://stored.example:8089"}, {"SPLUNK_PASSWORD": "x"}),
+        (_STORED, {}),
+        (_STORED, {"SPLUNK_PASSWORD": ""}),
+    ],
+    ids=["no-username", "no-password", "empty-password"],
+)
+def test_partial_config_is_not_configured(splunk_mod, monkeypatch, stored, secrets):
+    """A URL with no credentials is not a configured Splunk: the REST login needs
+    all three, and a client built without them fails every search at auth."""
+    _seed(monkeypatch, stored=stored, secrets=secrets)
+
+    assert splunk_mod.get_splunk_service() is None
+
+
+def test_resolver_failure_is_logged_not_swallowed(splunk_mod, monkeypatch, caplog):
+    """A DB or decrypt error reads as "not configured" to the caller, but it
+    must leave a trace: silent None is how #1113 stayed invisible."""
+
+    def _boom(_id):
+        raise RuntimeError("integration store unavailable")
+
+    monkeypatch.setattr(resolver, "get_integration_config", _boom)
+
+    with caplog.at_level(logging.WARNING, logger=splunk_mod.logger.name):
+        assert splunk_mod.get_splunk_service() is None
+
+    assert "integration store unavailable" in caplog.text
+
+
+def test_unconfigured_server_lists_tools_and_answers_not_configured(
+    splunk_mod, monkeypatch
+):
+    """splunk-selfhosted is default-enabled and, with no placeholder to hold it
+    dormant, starts on a fresh install. Every handler must then reply with a
+    structured "Splunk not configured" rather than raise, and list_tools must
+    still succeed with no telemetry summary to add."""
+    _seed(monkeypatch, stored={}, secrets={})
+
+    tools = asyncio.run(splunk_mod.handle_list_tools())
+    assert [t.name for t in tools] == [
+        "splunk_generate_spl",
+        "splunk_execute",
+        "splunk_search_ip",
+        "splunk_search_host",
+        "splunk_nl_search",
+    ]
+
+    calls = {
+        "splunk_execute": {"spl_query": "index=* | head 1"},
+        "splunk_search_ip": {"ip_address": "10.0.0.1"},
+        "splunk_search_host": {"hostname": "host-1"},
+        "splunk_nl_search": {"query": "failed login"},
+    }
+    for name, args in calls.items():
+        reply = _tool_reply(asyncio.run(splunk_mod.handle_call_tool(name, args)))
+        assert reply["error"] == "Splunk not configured", name
+        assert "success" not in reply, name
 
 
 def test_no_direct_environ_reads_for_splunk_creds():
