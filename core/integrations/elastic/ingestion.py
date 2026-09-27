@@ -71,6 +71,11 @@ class ElasticIngestion(SIEMIngestionService):
             svc = self._get_elastic_service()
             if not svc:
                 return []
+            # Detection alerts come from Kibana; without it there is nothing to
+            # ingest, which is missing configuration rather than an outage.
+            if not svc.kibana_url:
+                logger.error("Elastic configuration incomplete: missing kibana_url")
+                return []
 
             if not start_time:
                 start_time = utcnow() - timedelta(hours=24)

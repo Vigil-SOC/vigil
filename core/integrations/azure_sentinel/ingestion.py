@@ -6,7 +6,7 @@ Fetches security incidents from Microsoft Sentinel (Azure Sentinel) and converts
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from core.config import get_integration_config
@@ -88,12 +88,13 @@ class AzureSentinelIngestion(SIEMIngestionService):
             )
 
             for incident in incident_list:
-                # Filter by time
-                if incident.created_time_utc:
-                    if (
-                        incident.created_time_utc < start_time
-                        or incident.created_time_utc > end_time
-                    ):
+                # Filter by time. The SDK returns aware datetimes and the window
+                # is naive UTC; comparing the two raises TypeError.
+                created = incident.created_time_utc
+                if created:
+                    if created.tzinfo is not None:
+                        created = created.astimezone(timezone.utc).replace(tzinfo=None)
+                    if created < start_time or created > end_time:
                         continue
 
                 incidents.append(

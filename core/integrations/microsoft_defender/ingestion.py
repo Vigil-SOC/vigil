@@ -48,7 +48,10 @@ class MicrosoftDefenderIngestion(SIEMIngestionService):
         Get OAuth2 access token for Microsoft Defender API.
 
         Returns:
-            Access token or None
+            Access token, or None when credentials are not configured.
+
+        Raises:
+            Exception: when the token exchange itself fails.
         """
         try:
             tenant_id = self.config.get("tenant_id")

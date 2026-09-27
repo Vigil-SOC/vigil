@@ -19,7 +19,6 @@ from core.federation import registry as fed_registry
 from core.federation.adapters._base import fresh_cursor, parse_cursor_since
 from core.federation.runner import FederationRunner, _severity_passes
 
-
 # ---------------------------------------------------------------------------
 # Adapter contract / registry
 # ---------------------------------------------------------------------------
@@ -43,10 +42,14 @@ class _FakeAdapter:
         return self._default_interval
 
     async def fetch(self, *, since, cursor, max_items):
-        self.fetch_calls.append({"since": since, "cursor": cursor, "max_items": max_items})
+        self.fetch_calls.append(
+            {"since": since, "cursor": cursor, "max_items": max_items}
+        )
         from core.federation.registry import FetchResult
 
-        return FetchResult(findings=list(self.next_findings), cursor={"tick": len(self.fetch_calls)})
+        return FetchResult(
+            findings=list(self.next_findings), cursor={"tick": len(self.fetch_calls)}
+        )
 
 
 def test_register_and_lookup_adapter():
@@ -184,8 +187,18 @@ async def test_runner_do_one_tick_dedups(monkeypatch):
     runner = FederationRunner(output_queue=queue)
     fake = _FakeAdapter()
     fake.next_findings = [
-        {"finding_id": "f-1", "external_id": "ext-1", "severity": "high", "data_source": "fake"},
-        {"finding_id": "f-1", "external_id": "ext-1", "severity": "high", "data_source": "fake"},
+        {
+            "finding_id": "f-1",
+            "external_id": "ext-1",
+            "severity": "high",
+            "data_source": "fake",
+        },
+        {
+            "finding_id": "f-1",
+            "external_id": "ext-1",
+            "severity": "high",
+            "data_source": "fake",
+        },
     ]
     runner._adapters[fake.name] = fake
     runner._dedup[fake.name] = _FakeDedup()  # type: ignore[assignment]
@@ -197,7 +210,9 @@ async def test_runner_do_one_tick_dedups(monkeypatch):
         "core.federation.runner.store.record_failure", lambda *a, **k: None
     )
 
-    await runner._do_one_tick(fake, {"max_items": 100, "cursor": {}, "min_severity": None})
+    await runner._do_one_tick(
+        fake, {"max_items": 100, "cursor": {}, "min_severity": None}
+    )
     enqueued = []
     while not queue.empty():
         enqueued.append(queue.get_nowait())
@@ -226,7 +241,9 @@ async def test_runner_do_one_tick_records_failure(monkeypatch):
         lambda *a, **k: pytest.fail("record_success should not be called"),
     )
 
-    await runner._do_one_tick(bad, {"max_items": 100, "cursor": {}, "min_severity": None})
+    await runner._do_one_tick(
+        bad, {"max_items": 100, "cursor": {}, "min_severity": None}
+    )
     assert len(failures) == 1
     assert failures[0][0] == "fake"
     assert "boom" in failures[0][1]
@@ -316,9 +333,31 @@ def test_seed_only_inserts_configured_adapters(monkeypatch):
     upserts: List[str] = []
     monkeypatch.setattr(
         "core.federation.seed.upsert_source",
-        lambda source_id, defaults: (upserts.append(source_id) or {"source_id": source_id}),
+        lambda source_id, defaults: (
+            upserts.append(source_id) or {"source_id": source_id}
+        ),
     )
 
     out = fed_seed.seed_federation_sources()
     assert out == ["configured-src"]
     assert upserts == ["configured-src"]
+
+
+@pytest.mark.asyncio
+async def test_siem_adapter_propagates_a_service_that_cannot_be_built(monkeypatch):
+    """A configured source that cannot build its service is failing, not empty."""
+    from core.federation.adapters._siem_base import SIEMIngestionAdapter
+
+    def broken_factory():
+        raise RuntimeError("secret store unavailable")
+
+    adapter = SIEMIngestionAdapter(
+        name="broken",
+        integration_id="broken",
+        default_interval=300,
+        service_factory=broken_factory,
+        external_id_prefix="broken",
+    )
+    monkeypatch.setattr(adapter, "is_configured", lambda: True)
+    with pytest.raises(RuntimeError, match="secret store"):
+        await adapter.fetch(since=None, cursor={}, max_items=10)
