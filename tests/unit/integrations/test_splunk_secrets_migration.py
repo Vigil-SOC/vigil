@@ -1,10 +1,12 @@
-"""Regression tests for the Splunk MCP secrets migration (GH #84 PR-F follow-up).
+"""The self-hosted Splunk MCP tool reads its config through the descriptor resolver.
 
-``core/integrations/splunk/tool.py`` previously read SPLUNK_* credentials straight
-from ``os.environ``. It now routes through ``core/secrets_manager`` so
-operators can keep Splunk creds in the keyring / dotenv without surfacing
-them in ``.env``. These tests lock in the fallback behavior so a refactor
-can't silently revert to plain env reads.
+``core/integrations/splunk/tool.py`` used to read SPLUNK_URL, SPLUNK_USERNAME and
+SPLUNK_PASSWORD through the secrets store and then the environment. ``server_url``
+and ``username`` are not secrets: Settings writes them onto the integration row,
+where that read never looked, so every hunt reported "Splunk not configured" no
+matter what the operator saved (#1113). These tests lock the two paths that must
+both construct the client: a Settings save with no SPLUNK_* in the environment,
+and an env-only deployment with nothing saved.
 """
 
 from __future__ import annotations
@@ -15,10 +17,25 @@ from pathlib import Path
 
 import pytest
 
+import core.integrations._base.config as resolver
+import core.integrations.splunk.client as splunk_client
+
 pytestmark = pytest.mark.unit
 
 REPO = Path(__file__).resolve().parent.parent.parent.parent
 SPLUNK_TOOL = REPO / "core" / "integrations" / "splunk" / "tool.py"
+
+_SPLUNK_ENV = ("SPLUNK_URL", "SPLUNK_USERNAME", "SPLUNK_PASSWORD", "SPLUNK_VERIFY_SSL")
+
+
+class _Constructed:
+    """Stand-in for SplunkService that records what it was built with."""
+
+    def __init__(self, server_url, username, password, verify_ssl=False):
+        self.server_url = server_url
+        self.username = username
+        self.password = password
+        self.verify_ssl = verify_ssl
 
 
 @pytest.fixture
@@ -32,70 +49,96 @@ def splunk_mod(monkeypatch):
     spec = importlib.util.spec_from_file_location("splunk_tool_under_test", SPLUNK_TOOL)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    for key in (
-        "SPLUNK_URL",
-        "SPLUNK_USERNAME",
-        "SPLUNK_PASSWORD",
-        "SPLUNK_VERIFY_SSL",
-    ):
+    for key in _SPLUNK_ENV:
         monkeypatch.delenv(key, raising=False)
-    # Clearing the env is not clearing the credential: _read_credential asks the
-    # encrypted store first, so on a machine with Splunk configured these tests
-    # read the operator's real value. Each test that wants a store sets its own.
-    monkeypatch.setattr(module, "_get_secret", lambda key: None)
+    # The tool imports SplunkService lazily from the client module, so patching
+    # it there is what get_splunk_service() sees.
+    monkeypatch.setattr(splunk_client, "SplunkService", _Constructed)
     return module
 
 
-def test_env_read_via_secrets_manager(splunk_mod, monkeypatch):
-    """Plain env vars still resolve — ``secrets_manager`` checks env first."""
-    monkeypatch.setenv("SPLUNK_URL", "https://from-env.example:8089")
-    monkeypatch.setenv("SPLUNK_USERNAME", "env-admin")
-    assert splunk_mod._read_credential("SPLUNK_URL") == "https://from-env.example:8089"
-    assert splunk_mod._read_credential("SPLUNK_USERNAME") == "env-admin"
-
-
-def test_returns_default_when_unset(splunk_mod):
-    assert splunk_mod._read_credential("SPLUNK_URL") is None
-    assert (
-        splunk_mod._read_credential("SPLUNK_URL", "http://fallback")
-        == "http://fallback"
+def _seed(monkeypatch, stored, secrets):
+    """Seed the resolver the way production writes: non-secrets on the
+    integration row, secrets in the store, env consulted only through
+    get_secret. Follows tests/unit/integrations/test_config_resolver.py."""
+    monkeypatch.setattr(resolver, "get_integration_config", lambda _id: dict(stored))
+    monkeypatch.setattr(
+        resolver,
+        "get_secret",
+        lambda key, default=None: secrets.get(key, os.environ.get(key, default)),
     )
 
 
-def test_secrets_manager_wins_over_env(splunk_mod, monkeypatch):
-    """When secrets_manager returns a value it takes precedence over the env
-    fallback — the env read only fires if the secrets-manager chain is
-    empty or the import failed."""
-    monkeypatch.setenv("SPLUNK_PASSWORD", "from-env")
+def test_settings_saved_config_reaches_the_client(splunk_mod, monkeypatch):
+    """A URL and username saved in Settings, plus the password the save routed
+    to the secrets store, are what the client is constructed with -- with no
+    SPLUNK_* in the environment."""
+    _seed(
+        monkeypatch,
+        stored={
+            "server_url": "https://stored.example:8089",
+            "username": "stored-admin",
+            "verify_ssl": "true",
+        },
+        secrets={"SPLUNK_PASSWORD": "from-secrets-store"},
+    )
 
-    def fake_get_secret(key):
-        if key == "SPLUNK_PASSWORD":
-            return "from-keyring"
-        return None
+    service = splunk_mod.get_splunk_service()
 
-    monkeypatch.setattr(splunk_mod, "_get_secret", fake_get_secret)
-    assert splunk_mod._read_credential("SPLUNK_PASSWORD") == "from-keyring"
+    assert service is not None, "Settings-saved Splunk read as not configured"
+    assert service.server_url == "https://stored.example:8089"
+    assert service.username == "stored-admin"
+    assert service.password == "from-secrets-store"
+    assert service.verify_ssl is True
 
 
-def test_graceful_fallback_when_secrets_manager_unavailable(splunk_mod, monkeypatch):
-    """Subprocess startup outside the repo may not be able to import
-    secrets_manager. The tool should still read env vars in that case."""
+def test_env_only_deployment_still_constructs_the_client(splunk_mod, monkeypatch):
+    """Nothing saved in Settings: SPLUNK_URL, SPLUNK_USERNAME and SPLUNK_PASSWORD
+    from the environment still build the client. SPLUNK_URL, not the canonical
+    SPLUNK_SERVER_URL, because that is the name every deployment already sets."""
     monkeypatch.setenv("SPLUNK_URL", "https://env-only.example:8089")
-    monkeypatch.setattr(splunk_mod, "_get_secret", None)
-    assert splunk_mod._read_credential("SPLUNK_URL") == "https://env-only.example:8089"
+    monkeypatch.setenv("SPLUNK_USERNAME", "env-admin")
+    monkeypatch.setenv("SPLUNK_PASSWORD", "env-password")
+    _seed(monkeypatch, stored={}, secrets={})
+
+    service = splunk_mod.get_splunk_service()
+
+    assert service is not None, "env-only Splunk read as not configured"
+    assert service.server_url == "https://env-only.example:8089"
+    assert service.username == "env-admin"
+    assert service.password == "env-password"
+
+
+def test_unset_verify_ssl_means_no_verification(splunk_mod, monkeypatch):
+    """resolve() hands back None for an unset verify_ssl. Unset has always meant
+    no verification for the self-hosted server (port 8089 ships a self-signed
+    certificate), so None must stay False rather than default to True."""
+    _seed(
+        monkeypatch,
+        stored={"server_url": "https://stored.example:8089", "username": "admin"},
+        secrets={"SPLUNK_PASSWORD": "secret"},
+    )
+
+    service = splunk_mod.get_splunk_service()
+
+    assert service is not None
+    assert service.verify_ssl is False
+
+
+def test_no_server_url_anywhere_is_not_configured(splunk_mod, monkeypatch):
+    _seed(monkeypatch, stored={"username": "admin"}, secrets={"SPLUNK_PASSWORD": "x"})
+
+    assert splunk_mod.get_splunk_service() is None
 
 
 def test_no_direct_environ_reads_for_splunk_creds():
-    """Guardrail: the migrated file must not regress to ``os.environ.get``
-    for SPLUNK_* credentials. Only ``_read_credential`` should touch them.
-    """
+    """Guardrail: the tool must not regress to reading SPLUNK_* itself, from
+    the environment or the secrets store. ``resolve`` is the one path."""
     text = SPLUNK_TOOL.read_text()
-    # These patterns indicate legacy direct env reads for credentials.
     forbidden = [
-        'os.environ.get("SPLUNK_URL"',
-        'os.environ.get("SPLUNK_USERNAME"',
-        'os.environ.get("SPLUNK_PASSWORD"',
-        'os.environ.get("SPLUNK_VERIFY_SSL"',
+        'os.environ.get("SPLUNK_',
+        'get_secret("SPLUNK_',
+        "_read_credential(",
     ]
     for pattern in forbidden:
-        assert pattern not in text, f"Legacy env read resurfaced: {pattern}"
+        assert pattern not in text, f"Direct SPLUNK_* read resurfaced: {pattern}"

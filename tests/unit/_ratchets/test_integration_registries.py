@@ -94,7 +94,9 @@ def _ts_string_map(path: Path, marker: str) -> dict[str, str]:
 
 def _hidden_mcp_servers() -> set[str]:
     source = _SETTINGS_DATA.read_text()
-    found = re.search(r"HIDDEN_MCP_SERVERS = new Set\(\[([^\]]+)\]\)", source)
+    found = re.search(
+        r"HIDDEN_MCP_SERVERS = new Set(?:<[^>]+>)?\(\[([^\]]*)\]\)", source
+    )
     assert found, "HIDDEN_MCP_SERVERS not found in integrationsData.ts"
     return set(re.findall(r"'([A-Za-z0-9_-]+)'", found.group(1)))
 
@@ -194,8 +196,9 @@ def test_frontend_server_catalog_maps_are_inverses():
 def test_aliased_mcp_server_names_are_in_the_frontend_maps():
     """A descriptor whose MCP key differs from its catalog id must be mapped.
 
-    Hidden servers (``splunk-selfhosted``) are not Settings cards, so they
-    are not required in the 1:1 alias maps.
+    A hidden server (``HIDDEN_MCP_SERVERS``) is not a Settings card, so it is
+    not required in the 1:1 alias maps. ``splunk-selfhosted`` used to be the one
+    hidden server, and Setup enabled the official ``splunk`` server instead.
     """
     server_to = _ts_string_map(_SETTINGS_DATA, "SERVER_TO_INTEGRATION")
     catalog_to = _ts_string_map(_DATA_SOURCE_DIALOG, "CATALOG_TO_SERVER")
@@ -236,6 +239,22 @@ def test_elastic_mcp_config_declares_no_required_env_placeholders():
         if not k.startswith("_")
     }
     assert extract_required_env_vars(env, list(elastic.get("args") or [])) == []
+
+
+@pytest.mark.unit
+def test_splunk_selfhosted_mcp_config_declares_no_required_env_placeholders():
+    """Settings writes server_url and username onto the integration row, never
+    into the secrets store. ${SPLUNK_URL} / ${SPLUNK_USERNAME} placeholders were
+    resolved through get_secret only, so the server stayed dormant after a UI
+    save and Setup's connect failed (#1113)."""
+    servers = json.loads(_MCP_CONFIG.read_text())["mcpServers"]
+    splunk = servers["splunk-selfhosted"]
+    env = {
+        k: str(v)
+        for k, v in (splunk.get("env") or {}).items()
+        if not k.startswith("_")
+    }
+    assert extract_required_env_vars(env, list(splunk.get("args") or [])) == []
 
 
 @pytest.mark.unit

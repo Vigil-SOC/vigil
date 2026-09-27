@@ -81,10 +81,7 @@
       "args": ["core/integrations/splunk/tool.py"],
       "cwd": "${workspaceFolder}",
       "env": {
-        "_setup_note": "Self-hosted Splunk via REST API. Set SPLUNK_URL (e.g., https://splunk.example.com:8089), SPLUNK_USERNAME, and SPLUNK_PASSWORD in .env. Port 8089 uses HTTPS by default.",
-        "SPLUNK_URL": "${SPLUNK_URL}",
-        "SPLUNK_USERNAME": "${SPLUNK_USERNAME}",
-        "SPLUNK_PASSWORD": "${SPLUNK_PASSWORD}"
+        "_setup_note": "Self-hosted Splunk via REST API. Configure in Settings (server URL such as https://splunk.example.com:8089, username, password). The tool reads via resolve(), which also accepts SPLUNK_URL, SPLUNK_USERNAME and SPLUNK_PASSWORD from the environment; there is no required env placeholder, so the server is not treated as dormant until those values exist. Port 8089 uses HTTPS by default."
       }
     },
 

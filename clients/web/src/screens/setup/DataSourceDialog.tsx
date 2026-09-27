@@ -12,10 +12,13 @@ interface Props {
 
 // for the few ids whose mcp-config.json server key differs from the catalog id.
 // Shared by the picker filter and connect-on-save, so the two can't diverge.
+// Splunk maps to the self-hosted REST server: that is the one the form's URL and
+// credentials configure. The official server takes SPLUNK_MCP_URL instead.
 const CATALOG_TO_SERVER: Record<string, string> = {
   'aws-security-hub': 'aws-security',
   'gcp-security': 'gcp-scc',
   'elastic-siem': 'elastic',
+  'splunk': 'splunk-selfhosted',
 }
 const serverFor = (catalogId: string) => CATALOG_TO_SERVER[catalogId] ?? catalogId
 

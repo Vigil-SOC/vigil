@@ -1,15 +1,26 @@
 import { getAllIntegrations } from '../../config/integrations'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 
-export const HIDDEN_MCP_SERVERS = new Set(['splunk-selfhosted'])
+/** Servers in mcp-config.json that get no Settings card. Empty since the
+ *  self-hosted Splunk server became the card the Splunk REST form configures;
+ *  kept so the filter in IntegrationsSection stays one place to hide a server. */
+export const HIDDEN_MCP_SERVERS = new Set<string>([])
 
 export const SERVER_TO_INTEGRATION = new Map(Object.entries({
   'aws-security': 'aws-security-hub',
   'gcp-scc': 'gcp-security',
   'elastic': 'elastic-siem',
+  'splunk-selfhosted': 'splunk',
 }))
 
+/** Servers whose card opens no catalog form. Both Splunk servers share the
+ *  descriptor id `splunk`, and the name fallback below would otherwise hand the
+ *  official `splunk` card the REST form that configures `splunk-selfhosted`.
+ *  The official server is configured by SPLUNK_MCP_URL in the environment. */
+const SERVERS_WITHOUT_CATALOG_FORM = new Set(['splunk'])
+
 export function getIntegrationForServer(serverName: string): IntegrationMetadata | undefined {
+  if (SERVERS_WITHOUT_CATALOG_FORM.has(serverName)) return undefined
   const id = SERVER_TO_INTEGRATION.get(serverName) ?? serverName
   return getAllIntegrations().find((i) => i.id === id)
 }
@@ -26,6 +37,7 @@ export const WIP_SERVERS = new Set([
  *  registration, persisted enabled-state store). */
 export const SERVER_DISPLAY_NAMES = new Map(Object.entries({
   loglm: 'LogLM',
+  'splunk-selfhosted': 'Splunk (Self-Hosted)',
 }))
 
 export interface McpCategory {
@@ -40,7 +52,7 @@ export const MCP_CATEGORIES: McpCategory[] = [
   { label: 'DeepTempo', servers: ['loglm'] },
   { label: 'Reference Servers', servers: ['github'] },
   { label: 'EDR / XDR', servers: ['crowdstrike', 'sentinelone', 'carbon-black', 'microsoft-defender'] },
-  { label: 'SIEM / Data Lake', servers: ['splunk', 'elastic', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
+  { label: 'SIEM / Data Lake', servers: ['splunk', 'splunk-selfhosted', 'elastic', 'azure-sentinel', 'gcp-secops', 'cribl-stream'] },
   { label: 'Threat Intelligence', servers: ['virustotal', 'gcp-threat-intel', 'shodan', 'alienvault-otx', 'misp', 'firecrawl'] },
   { label: 'Cloud Security', servers: ['aws-security', 'gcp-scc', 'palo-alto'] },
   { label: 'Identity & Access', servers: ['okta', 'azure-ad'] },
@@ -58,7 +70,8 @@ export const SERVER_DESCRIPTIONS = new Map(Object.entries({
   sentinelone: 'Query SentinelOne for endpoint threats, agent status, and threat remediation via the Purple AI MCP.',
   'carbon-black': 'Query VMware Carbon Black for endpoint events, process trees, and binary analysis.',
   'microsoft-defender': 'Query Microsoft Defender for Endpoint alerts, device info, and advanced hunting. May overlap with Sentinel.',
-  splunk: 'Run SPL searches against Splunk for log analysis, correlation searches, and alert triage.',
+  splunk: 'The official Splunk MCP server, deployed separately from Splunk Enterprise. Configured by SPLUNK_MCP_URL in the environment, not from Settings.',
+  'splunk-selfhosted': 'Run SPL searches against a self-hosted Splunk over its REST API (port 8089) for log analysis, correlation searches, and alert triage. Server URL and credentials are configured in Settings.',
   elastic: 'Query Elasticsearch and Elastic Security for logs, IOC hits, and detection alerts. Requires an Elasticsearch URL and API key or username/password.',
   'azure-sentinel': 'Query Microsoft Sentinel via KQL for security logs, incidents, and custom detection rules.',
   'gcp-secops': 'Query Google SecOps (Chronicle) for UDM security events, detection rules, and threat investigation.',

@@ -141,6 +141,11 @@ _ENV_VAR_OVERRIDES: Mapping[str, Mapping[str, str]] = {
     # mcp-config.json's PagerDuty server reads ${PAGERDUTY_API_KEY},
     # not PAGERDUTY_API_TOKEN.
     "pagerduty": {"api_token": "PAGERDUTY_API_KEY"},
+    # env.example and every existing deployment spell the self-hosted REST
+    # endpoint SPLUNK_URL, not the canonical SPLUNK_SERVER_URL. The resolver's
+    # env fallback for server_url keeps that name so an env-only deployment with
+    # nothing saved in Settings still constructs the client.
+    "splunk": {"server_url": "SPLUNK_URL"},
 }
 
 
