@@ -7,7 +7,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { RunModal } from './WorkflowsScreen'
 
 const execute = vi.fn(() => Promise.resolve({ data: { run_id: 'run-abc12345' } }))
-const getWorkflow = vi.fn()
+const preflight = vi.fn()
 const getRun = vi.fn(() => Promise.resolve({ data: { run_id: 'run-abc12345', status: 'running' } }))
 const steer = vi.fn(() => Promise.resolve({ data: {} }))
 const checkCoverage = vi.fn()
@@ -15,7 +15,7 @@ const checkCoverage = vi.fn()
 vi.mock('../../services/api', () => ({
   workflowApi: {
     execute: (...a: unknown[]) => execute(...(a as [])),
-    get: (...a: unknown[]) => getWorkflow(...(a as [])),
+    preflight: (...a: unknown[]) => preflight(...(a as [])),
     getRun: (...a: unknown[]) => getRun(...(a as [])),
     steer: (...a: unknown[]) => steer(...(a as [])),
     checkCoverage: (...a: unknown[]) => checkCoverage(...(a as [])),
@@ -58,23 +58,23 @@ const open = (runKind = 'hunt') =>
    model nor the remedy, is not. */
 describe('a model nothing can price', () => {
   it('says so before the run rather than three calls in', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([], 'unknown'))
+    preflight.mockResolvedValueOnce(limits([], 'unknown'))
     open()
     expect(await screen.findByText(/Nothing here can price/)).toBeInTheDocument()
     expect(screen.getByText(/vertex\/gemini-3.5-flash/)).toBeInTheDocument()
   })
 
   it('stays quiet when the model has a rate', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([], 'exact'))
+    preflight.mockResolvedValueOnce(limits([], 'exact'))
     open()
-    await waitFor(() => expect(getWorkflow).toHaveBeenCalled())
+    await waitFor(() => expect(preflight).toHaveBeenCalled())
     expect(screen.queryByText(/Nothing here can price/)).toBeNull()
   })
 })
 
 describe('what the hunt will not be able to see', () => {
   it('names an unbound capability before anything is spent', async () => {
-    getWorkflow.mockResolvedValueOnce(limits(['telemetry_search']))
+    preflight.mockResolvedValueOnce(limits(['telemetry_search']))
     open()
 
     expect(await screen.findByText(/No tool here answers telemetry_search/)).toBeInTheDocument()
@@ -83,31 +83,31 @@ describe('what the hunt will not be able to see', () => {
   // The distinction ADR 0015 exists for: without a SIEM the hunt proves nothing
   // whatever the estate looks like, and that reads identically to a clean estate.
   it('says a hunt without telemetry cannot corroborate anything', async () => {
-    getWorkflow.mockResolvedValueOnce(limits(['telemetry_search']))
+    preflight.mockResolvedValueOnce(limits(['telemetry_search']))
     open()
 
     expect(await screen.findByText(/a fact about this deployment, not about your estate/)).toBeInTheDocument()
   })
 
   it('says nothing at all when every capability bound', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
 
-    await waitFor(() => expect(getWorkflow).toHaveBeenCalled())
+    await waitFor(() => expect(preflight).toHaveBeenCalled())
     expect(screen.queryByText(/No tool here answers/)).toBeNull()
   })
 })
 
 describe('what the run will cost', () => {
   it('states the ceiling rather than estimating a total', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
 
     expect(await screen.findByText(/It stops at \$3\.00 whatever happens/)).toBeInTheDocument()
   })
 
   it('counts the turns the operator actually asked for', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
 
@@ -117,7 +117,7 @@ describe('what the run will cost', () => {
   })
 
   it('sends the ceiling the operator typed, not the shipped one', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
 
@@ -134,7 +134,7 @@ describe('what the run will cost', () => {
   })
 
   it('refuses to start on a ceiling that is not money', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
 
@@ -147,10 +147,10 @@ describe('what the run will cost', () => {
   })
 
   it('offers no iterations field for a workflow that walks phases', async () => {
-    getWorkflow.mockResolvedValueOnce({ data: {} })
+    preflight.mockResolvedValueOnce({ data: {} })
     open('compose')
 
-    await waitFor(() => expect(getWorkflow).toHaveBeenCalled())
+    await waitFor(() => expect(preflight).toHaveBeenCalled())
     expect(screen.queryByLabelText(/Iterations/)).toBeNull()
   })
 
@@ -158,7 +158,7 @@ describe('what the run will cost', () => {
      phase-walking dialog: the ceilings the operator typed were dropped on the way to
      the server, and nothing named an unbound tool before the spend. */
   it('gives a root-cause workflow the same ceilings and warnings a hunt gets', async () => {
-    getWorkflow.mockResolvedValueOnce(limits(['telemetry_search']))
+    preflight.mockResolvedValueOnce(limits(['telemetry_search']))
     open('root_cause')
 
     expect(await screen.findByLabelText(/Iterations/)).toBeInTheDocument()
@@ -169,7 +169,7 @@ describe('what the run will cost', () => {
 
 describe('after the run starts', () => {
   it('stays open on the run it started rather than closing on it', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
 
@@ -206,7 +206,7 @@ describe('the checkpoint the hunt raises before it can start', () => {
   }
 
   const start = async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     getRun.mockImplementation(() => Promise.resolve(parked))
     open()
     await screen.findByText(/It stops at/)
@@ -242,7 +242,7 @@ describe('a hunt tests what the operator states', () => {
   // disabled button beside a hint reading "required" argues with the form instead
   // of answering about the run.
   it('says what is missing on Run rather than while the field is being typed', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
 
@@ -257,7 +257,7 @@ describe('a hunt tests what the operator states', () => {
   })
 
   it('starts once a belief is stated', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
 
@@ -269,9 +269,9 @@ describe('a hunt tests what the operator states', () => {
 
   // A phase-walking workflow states its own phases and needs no belief.
   it('asks a phase workflow for no hypothesis', async () => {
-    getWorkflow.mockResolvedValueOnce({ data: {} })
+    preflight.mockResolvedValueOnce({ data: {} })
     open('compose')
-    await waitFor(() => expect(getWorkflow).toHaveBeenCalled())
+    await waitFor(() => expect(preflight).toHaveBeenCalled())
 
     fireEvent.change(screen.getByLabelText('Context'), { target: { value: 'ransomware on HOST-42' } })
 
@@ -285,7 +285,7 @@ describe('a hunt tests what the operator states', () => {
 // the only place it is cheap to catch is before the run starts.
 describe('what the hypothesis field will actually put on the board', () => {
   it('counts the beliefs the splitter will make', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     fireEvent.change(screen.getByPlaceholderText(/Credentials taken from HOST-42/), {
       target: { value: 'a host is beaconing out\nanother host is doing the same' },
@@ -297,7 +297,7 @@ describe('what the hypothesis field will actually put on the board', () => {
   })
 
   it('marks a line that reads as a fragment rather than a claim', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     fireEvent.change(screen.getByPlaceholderText(/Credentials taken from HOST-42/), {
       target: { value: 'A host is beaconing to 45.77.53.176 over HTTPS\nat a regular interval, and another host is too.' },
@@ -307,7 +307,7 @@ describe('what the hypothesis field will actually put on the board', () => {
   })
 
   it('says nothing when every line reads as a claim', async () => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     fireEvent.change(screen.getByPlaceholderText(/Credentials taken from HOST-42/), {
       target: { value: 'A host is beaconing out.\nData left over DNS.' },
@@ -333,7 +333,7 @@ describe('checking a report against what is already hunted', () => {
   }
 
   const check = async (report = 'Beaconing to 45[.]77[.]53[.]176 via T1071') => {
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
     fireEvent.change(screen.getByLabelText(/^Report/), { target: { value: report } })
@@ -366,7 +366,7 @@ describe('checking a report against what is already hunted', () => {
       ...split, status: 'running',
       in_flight: [{ run_id: 'run-11111111', status: 'running', matched_keys: ['ip:45.77.53.176'], matched_techniques: [] }],
     } })
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
     fireEvent.change(screen.getByLabelText(/Hypothesis/), { target: { value: 'a host beacons' } })
@@ -415,7 +415,7 @@ describe('checking a report against what is already hunted', () => {
 
   it('sends the subjects already typed as entity_keys', async () => {
     checkCoverage.mockResolvedValueOnce({ data: { ...split, status: 'uncovered', proposal } })
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
     fireEvent.change(screen.getByLabelText(/Hypothesis/), { target: { value: 'a host beacons' } })
@@ -427,7 +427,7 @@ describe('checking a report against what is already hunted', () => {
 
   it('shows a 400 as the modal error and leaves the form alone', async () => {
     checkCoverage.mockRejectedValueOnce({ response: { data: { detail: 'nothing to check: no entity keys or techniques were found' } } })
-    getWorkflow.mockResolvedValueOnce(limits([]))
+    preflight.mockResolvedValueOnce(limits([]))
     open()
     await screen.findByText(/It stops at/)
     fireEvent.change(screen.getByLabelText(/Hypothesis/), { target: { value: 'a host beacons' } })
@@ -441,9 +441,9 @@ describe('checking a report against what is already hunted', () => {
   })
 
   it('offers no report field to a workflow that walks phases', async () => {
-    getWorkflow.mockResolvedValueOnce({ data: {} })
+    preflight.mockResolvedValueOnce({ data: {} })
     open('compose')
-    await waitFor(() => expect(getWorkflow).toHaveBeenCalled())
+    await waitFor(() => expect(preflight).toHaveBeenCalled())
     expect(screen.queryByLabelText(/^Report/)).toBeNull()
   })
 })

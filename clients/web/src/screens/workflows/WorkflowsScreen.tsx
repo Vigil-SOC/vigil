@@ -786,7 +786,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
           .map((c) => ({ id: c.case_id, label: c.title || '' })),
       )
     }).catch(() => {})
-    workflowApi.get(wf.id).then((r) => {
+    workflowApi.preflight(wf.id).then((r) => {
       if (!cancelled) setLimits(r.data as WfLimits)
     }).catch(() => {})
     return () => { cancelled = true }
