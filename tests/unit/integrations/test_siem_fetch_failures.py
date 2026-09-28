@@ -41,7 +41,7 @@ def _sentinel(config):
     from core.integrations.azure_sentinel.ingestion import AzureSentinelIngestion
 
     with patch(
-        "core.integrations.azure_sentinel.ingestion.get_integration_config",
+        "core.integrations.azure_sentinel.ingestion.resolve",
         return_value=config,
     ):
         return AzureSentinelIngestion()
@@ -158,15 +158,21 @@ async def test_sentinel_compares_aware_incident_times(fake_azure_sdk):
     from datetime import datetime, timedelta, timezone
 
     def incident(name, created):
-        i = MagicMock()
-        i.name = name
-        i.created_time_utc = created
-        i.last_updated_time_utc = None
-        i.owner = None
-        i.labels = []
-        i.additional_data = None
-        i.additional_properties = {}
-        return i
+        # A real object, not a MagicMock: the SDK names below must be the
+        # ones fetch_alerts reads. A mock would invent the old names.
+        data = types.SimpleNamespace(alerts_count=2, tactics=["InitialAccess"])
+        return types.SimpleNamespace(
+            name=name,
+            title="Incident",
+            description="",
+            severity="Medium",
+            status="New",
+            created_time_utc=created,
+            last_modified_time_utc=None,
+            owner=None,
+            labels=[],
+            additional_data=data,
+        )
 
     now = datetime.now(timezone.utc)
     fake_azure_sdk.SecurityInsights.return_value.incidents.list.return_value = [
@@ -175,6 +181,14 @@ async def test_sentinel_compares_aware_incident_times(fake_azure_sdk):
     ]
     incidents = await _sentinel(_SENTINEL_CONFIG).fetch_alerts()
     assert [i["id"] for i in incidents] == ["recent"]
+    assert incidents[0]["alert_count"] == 2
+    assert incidents[0]["last_updated_time"] is None
+    fake_azure_sdk.SecurityInsights.return_value.incidents.list.assert_called_once_with(
+        resource_group_name="rg", workspace_name="ws"
+    )
+    sys.modules["azure.identity"].ClientSecretCredential.assert_called_once_with(
+        tenant_id="t", client_id="c", client_secret="s"
+    )
 
 
 @pytest.mark.asyncio

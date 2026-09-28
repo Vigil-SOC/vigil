@@ -16,6 +16,7 @@ import pytest
 
 import core.integrations._base.config as resolver
 from core.integrations.aws_security_hub.ingestion import AWSSecurityHubIngestion
+from core.integrations.azure_sentinel.ingestion import AzureSentinelIngestion
 from core.integrations.crowdstrike.adapter import CrowdStrikeAdapter
 from core.integrations.microsoft_defender.ingestion import MicrosoftDefenderIngestion
 from core.integrations.splunk.adapter import SplunkAdapter
@@ -27,12 +28,20 @@ _STORED = {
     "crowdstrike": {"client_id": "cs-id"},
     "aws-security-hub": {"access_key_id": "AKIA-test"},
     "microsoft-defender": {"tenant_id": "tenant", "client_id": "md-id"},
+    "azure-sentinel": {
+        "tenant_id": "tenant",
+        "client_id": "client",
+        "subscription_id": "sub",
+        "resource_group": "rg",
+        "workspace_name": "ws",
+    },
 }
 _SECRETS = {
     "SPLUNK_PASSWORD": "splunk-pw",
     "FALCON_CLIENT_SECRET": "cs-secret",
     "AWS_SECURITY_HUB_SECRET_ACCESS_KEY": "aws-secret",
     "MICROSOFT_DEFENDER_CLIENT_SECRET": "md-secret",
+    "AZURE_SENTINEL_CLIENT_SECRET": "sentinel-secret",
 }
 
 
@@ -120,6 +129,18 @@ def test_crowdstrike_secret_reaches_service_from_adapter():
 
 def test_defender_ingestion_config_has_client_secret():
     assert MicrosoftDefenderIngestion().config["client_secret"] == "md-secret"
+
+
+def test_sentinel_ingestion_resolves_secret_and_workspace_fields():
+    cfg = AzureSentinelIngestion().config
+    assert cfg == {
+        "tenant_id": "tenant",
+        "client_id": "client",
+        "client_secret": "sentinel-secret",
+        "subscription_id": "sub",
+        "resource_group": "rg",
+        "workspace_name": "ws",
+    }
 
 
 def test_security_hub_ingestion_config_has_secret_access_key():

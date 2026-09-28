@@ -921,12 +921,6 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     functionality_type: 'Log Analysis & SIEM',
     fields: [
       {
-        name: 'workspace_id',
-        label: 'Workspace ID',
-        type: 'text',
-        required: true,
-      },
-      {
         name: 'tenant_id',
         label: 'Tenant ID',
         type: 'text',
@@ -943,6 +937,25 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
         label: 'Client Secret',
         type: 'password',
         required: true,
+      },
+      {
+        name: 'subscription_id',
+        label: 'Subscription ID',
+        type: 'text',
+        required: true,
+      },
+      {
+        name: 'resource_group',
+        label: 'Resource Group',
+        type: 'text',
+        required: true,
+      },
+      {
+        name: 'workspace_name',
+        label: 'Workspace Name',
+        type: 'text',
+        required: true,
+        helpText: 'Sentinel workspace resource name. The Log Analytics workspace GUID is a different value.',
       },
     ],
     docs_url: 'https://docs.microsoft.com/en-us/azure/sentinel/',

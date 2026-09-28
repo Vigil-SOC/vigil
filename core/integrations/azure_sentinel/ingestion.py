@@ -9,8 +9,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from core.config import get_integration_config
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
+from core.integrations._base.config import resolve
+from core.integrations.azure_sentinel.descriptor import AZURE_SENTINEL
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ class AzureSentinelIngestion(SIEMIngestionService):
         """Initialize Azure Sentinel ingestion."""
         super().__init__()
         self.siem_name = "Azure Sentinel"
-        self.config = get_integration_config("azure-sentinel")
+        self.config = resolve(AZURE_SENTINEL)
 
     async def fetch_alerts(
         self,
@@ -110,8 +111,8 @@ class AzureSentinelIngestion(SIEMIngestionService):
                             else None
                         ),
                         "last_updated_time": (
-                            incident.last_updated_time_utc.isoformat()
-                            if incident.last_updated_time_utc
+                            incident.last_modified_time_utc.isoformat()
+                            if incident.last_modified_time_utc
                             else None
                         ),
                         "owner": incident.owner.email if incident.owner else None,
@@ -126,11 +127,10 @@ class AzureSentinelIngestion(SIEMIngestionService):
                             else []
                         ),
                         "alert_count": (
-                            incident.additional_data.alert_count
+                            incident.additional_data.alerts_count
                             if incident.additional_data
                             else 0
                         ),
-                        "properties": incident.additional_properties or {},
                     }
                 )
 

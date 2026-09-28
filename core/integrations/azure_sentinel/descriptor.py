@@ -12,10 +12,12 @@ AZURE_SENTINEL = register_descriptor(
         category="SIEM",
         mcp_server_names=("azure-sentinel",),
         fields=(
-            IntegrationField("workspace_id"),
             IntegrationField("tenant_id"),
             IntegrationField("client_id"),
             IntegrationField("client_secret", secret=True),
+            IntegrationField("subscription_id"),
+            IntegrationField("resource_group"),
+            IntegrationField("workspace_name"),
         ),
     )
 )
