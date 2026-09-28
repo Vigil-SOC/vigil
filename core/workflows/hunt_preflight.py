@@ -10,8 +10,7 @@ catalog read.
 import logging
 from typing import Any, Dict, Optional, Tuple
 
-from core.workflows.catalog import is_hunt
-from core.workflows.workflows_service import WorkflowsService
+from core.workflows.workflows_service import WorkflowsService, is_hunt_like
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +63,10 @@ def preflight(
     non-hunt answers empty rather than 404: the workflow exists, there is just
     nothing to warn about before it runs.
     """
-    if service.get_workflow(workflow_id) is None:
+    definition = service.get_workflow(workflow_id)
+    if definition is None:
         return None
-    if not is_hunt(service, workflow_id):
+    if not is_hunt_like(definition.run_kind):
         return {}
     max_iterations, max_cost_usd = hunt_defaults()
     return {
