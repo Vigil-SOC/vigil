@@ -390,6 +390,43 @@ class TestConfiguredFloors:
         dry._response_service.create_isolation_action.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_reused_isolation_is_not_counted_as_auto_executed(self):
+        """#1217: a reused isolation (collapsed by the idempotency key) must not
+        be logged or counted the same as a fresh auto-execution."""
+        finding = {
+            "finding_id": "f-1217",
+            "severity": "critical",
+            "triage_confidence": 0.75,
+            "entity_context": {"hostnames": ["host-b"]},
+        }
+        responder = self._responder()
+        responder._response_service.create_isolation_action.return_value = {
+            "status": "executed",
+            "reused": True,
+            "action_id": "action-existing",
+        }
+        await responder._evaluate_response(finding)
+        assert responder.stats["auto_executed"] == 0
+        assert responder.stats["reused"] == 1
+
+    @pytest.mark.asyncio
+    async def test_fresh_isolation_is_counted_as_auto_executed(self):
+        finding = {
+            "finding_id": "f-1217b",
+            "severity": "critical",
+            "triage_confidence": 0.75,
+            "entity_context": {"hostnames": ["host-a"]},
+        }
+        responder = self._responder()
+        responder._response_service.create_isolation_action.return_value = {
+            "status": "executed",
+            "action_id": "action-new",
+        }
+        await responder._evaluate_response(finding)
+        assert responder.stats["auto_executed"] == 1
+        assert responder.stats["reused"] == 0
+
+    @pytest.mark.asyncio
     async def test_processor_queues_at_review_threshold(self):
         from services.daemon.config import ResponseConfig
 

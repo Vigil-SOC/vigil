@@ -188,3 +188,76 @@ class TestIsolationIdempotency:
         assert second["action_id"] == first["action_id"]
         assert second["status"] == ActionStatus.REJECTED.value
         assert executions == []
+
+
+class TestIpLessIsolationKey:
+    """#1217: an IP-less finding must not collide on the literal "unknown" key."""
+
+    def test_different_hostnames_with_no_ip_get_distinct_rows(self):
+        response = AutonomousResponseService()
+        response.approval_service.force_manual_approval = False
+        executions: list[str] = []
+
+        def _fake_execute(ip_address, hostname, reason, confidence):
+            executions.append(hostname)
+            return {"success": True, "hostname": hostname}
+
+        response._execute_isolation = _fake_execute  # type: ignore[method-assign]
+
+        first = response.create_isolation_action(
+            ip_address="unknown",
+            hostname="host-a",
+            confidence=0.95,
+            reason="hids",
+            evidence=["ev-1"],
+            correlation_data={"indicators": [], "reasoning": []},
+        )
+        second = response.create_isolation_action(
+            ip_address="unknown",
+            hostname="host-b",
+            confidence=0.95,
+            reason="hids",
+            evidence=["ev-1"],
+            correlation_data={"indicators": [], "reasoning": []},
+        )
+
+        assert first["status"] == "executed" and not first.get("reused")
+        assert second["status"] == "executed" and not second.get("reused")
+        assert first["action_id"] != second["action_id"]
+        assert executions == ["host-a", "host-b"]
+
+    def test_same_hostname_with_no_ip_reuses_one_row(self):
+        response = AutonomousResponseService()
+        response.approval_service.force_manual_approval = False
+        executions: list[str] = []
+
+        def _fake_execute(ip_address, hostname, reason, confidence):
+            executions.append(hostname)
+            return {"success": True, "hostname": hostname}
+
+        response._execute_isolation = _fake_execute  # type: ignore[method-assign]
+
+        first = response.create_isolation_action(
+            ip_address="unknown",
+            hostname="host-c",
+            confidence=0.95,
+            reason="hids",
+            evidence=["ev-1"],
+            correlation_data={"indicators": [], "reasoning": []},
+        )
+        second = response.create_isolation_action(
+            ip_address="unknown",
+            hostname="host-c",
+            confidence=0.95,
+            reason="hids",
+            evidence=["ev-1"],
+            correlation_data={"indicators": [], "reasoning": []},
+        )
+
+        assert first["action_id"] == second["action_id"]
+        assert not first.get("reused")
+        assert second["status"] == "executed" and second.get("reused") is True
+        assert executions == ["host-c"]
+        action = response.approval_service.get_action(first["action_id"])
+        assert action is not None
+        assert action.idempotency_key == "isolate_host:host:host-c"

@@ -36,6 +36,7 @@ class AutonomousResponder:
         self.stats = {
             "evaluated": 0,
             "auto_executed": 0,
+            "reused": 0,
             "pending_approval": 0,
             "escalated": 0,
             "errors": 0,
@@ -346,7 +347,12 @@ class AutonomousResponder:
         )
 
         if result:
-            if result.get("status") == "executed":
+            if result.get("status") == "executed" and result.get("reused"):
+                self.stats["reused"] += 1
+                logger.info(
+                    f"Skipped {action_type} action for {finding_id}: target already isolated"
+                )
+            elif result.get("status") == "executed":
                 self.stats["auto_executed"] += 1
                 logger.info(f"Auto-executed {action_type} action for {finding_id}")
             elif result.get("status") == "pending_approval":

@@ -164,6 +164,13 @@ class AutonomousResponseService:
         Returns:
             Action result
         """
+        # Key on the IP when known; an IP-less finding (ip_address == "unknown")
+        # keys on hostname instead, so distinct IP-less hosts get distinct rows
+        # rather than colliding on the literal string "unknown".
+        target_key = (
+            ip_address if ip_address and ip_address != "unknown" else f"host:{hostname}"
+        )
+
         try:
             action, inserted = self.approval_service._put_action(
                 action_type=ActionType.ISOLATE_HOST,
@@ -177,13 +184,14 @@ class AutonomousResponseService:
                 evidence=evidence,
                 created_by=AgentId.AUTO_RESPONDER.value,
                 parameters={"hostname": hostname, "correlation": correlation_data},
-                idempotency_key=f"{ActionType.ISOLATE_HOST.value}:{ip_address}",
+                idempotency_key=f"{ActionType.ISOLATE_HOST.value}:{target_key}",
             )
 
             if not inserted:
                 if action.status == ActionStatus.EXECUTED.value:
                     return {
                         "status": "executed",
+                        "reused": True,
                         "action_id": action.action_id,
                         "message": f"Host {hostname or ip_address} already isolated",
                         "confidence": action.confidence,
@@ -191,6 +199,7 @@ class AutonomousResponseService:
                     }
                 return {
                     "status": action.status,
+                    "reused": True,
                     "action_id": action.action_id,
                     "message": f"Isolation already recorded for {hostname or ip_address}",
                     "confidence": action.confidence,
