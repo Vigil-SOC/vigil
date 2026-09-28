@@ -185,6 +185,10 @@ class ElasticService:
                                     "user.name",
                                     "user.id",
                                     "winlog.event_data.TargetUserName",
+                                    # Wazuh indexer (wazuh-alerts-4.x-*)
+                                    "data.srcuser",
+                                    "data.dstuser",
+                                    "data.win.eventdata.targetUserName",
                                 ],
                             }
                         }
@@ -209,6 +213,9 @@ class ElasticService:
                                     "host.name",
                                     "host.hostname",
                                     "agent.hostname",
+                                    # Wazuh indexer: its pipeline drops `host`
+                                    "agent.name",
+                                    "data.win.system.computer",
                                 ],
                             }
                         }

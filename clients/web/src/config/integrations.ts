@@ -855,7 +855,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
     id: 'elastic-siem',
     name: 'Elastic Security (SIEM)',
     category: 'SIEM',
-    description: 'Elastic Security SIEM with advanced analytics, threat hunting, and incident response capabilities.',
+    description: 'Elastic Security SIEM with advanced analytics, threat hunting, and incident response capabilities. Also hunts over an OpenSearch-based Wazuh indexer.',
     functionality_type: 'Log Analysis & SIEM',
     proxy_supported: true,
     fields: [
@@ -865,6 +865,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
         type: 'url',
         required: true,
         placeholder: 'https://elasticsearch.example.com:9200',
+        helpText: 'For a Wazuh indexer use https://<indexer>:9200 with basic auth for a user holding a read role on wazuh-alerts-*.',
       },
       {
         name: 'api_key',
@@ -901,7 +902,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
         type: 'text',
         required: false,
         default: '.alerts-security.alerts-default',
-        helpText: 'Elasticsearch index pattern for security alerts.',
+        helpText: 'Elasticsearch index pattern for security alerts. For a Wazuh indexer use wazuh-alerts-4.x-* and leave Kibana URL blank.',
       },
       {
         name: 'verify_ssl',
