@@ -93,40 +93,11 @@ def add_findings_description(conn):
         ALTER TABLE findings ADD COLUMN IF NOT EXISTS description TEXT;
     """))
 
-@migration("Fix findings.created_at server default to now()")
-def fix_findings_created_at(conn):
-    conn.execute(text("""
-        ALTER TABLE findings ALTER COLUMN created_at SET DEFAULT now();
-    """))
-
-@migration("Fix findings.updated_at server default to now()")
-def fix_findings_updated_at(conn):
-    conn.execute(text("""
-        ALTER TABLE findings ALTER COLUMN updated_at SET DEFAULT now();
-    """))
-
 @migration("Create GIN trigram index on findings.description")
 def create_findings_description_gin_index(conn):
     conn.execute(text("""
         CREATE INDEX IF NOT EXISTS idx_finding_description
         ON findings USING gin (description gin_trgm_ops);
-    """))
-
-
-# ---------------------------------------------------------------------------
-# cases table
-# ---------------------------------------------------------------------------
-
-@migration("Fix cases.created_at server default to now()")
-def fix_cases_created_at(conn):
-    conn.execute(text("""
-        ALTER TABLE cases ALTER COLUMN created_at SET DEFAULT now();
-    """))
-
-@migration("Fix cases.updated_at server default to now()")
-def fix_cases_updated_at(conn):
-    conn.execute(text("""
-        ALTER TABLE cases ALTER COLUMN updated_at SET DEFAULT now();
     """))
 
 
@@ -211,6 +182,47 @@ def create_missing_tables(conn):
         ])
     else:
         logger.info("  All tables already exist")
+
+
+# ---------------------------------------------------------------------------
+# Frozen now() defaults
+# ---------------------------------------------------------------------------
+
+# The models once declared server_default="now()", a plain string, which
+# create_all renders as the literal DEFAULT 'now()'. Postgres folds that to a
+# timestamp at CREATE TABLE, so every table the ORM built holds its own creation
+# time as the default, and a raw-SQL INSERT that omits the column is stamped with
+# it. The models now say text("now()"), but create_all never alters a table it
+# finds. Only a column the models default to now() is touched, and only while
+# its default is a literal or missing, so a second run alters nothing.
+@migration("Replace frozen now() server defaults with now()")
+def fix_frozen_now_defaults(conn):
+    from sqlalchemy.schema import DefaultClause
+    from core.storage.models import Base
+    declared = {
+        (table.name, column.name)
+        for table in Base.metadata.tables.values()
+        for column in table.columns
+        if isinstance(column.server_default, DefaultClause)
+        and str(column.server_default.arg) == 'now()'
+    }
+    live = conn.execute(text("""
+        SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND (column_default IS NULL OR column_default LIKE '''%')
+    """)).all()
+    stale = sorted(declared & {tuple(row) for row in live})
+    quote = conn.dialect.identifier_preparer.quote
+    for table, column in stale:
+        conn.execute(text(
+            f"ALTER TABLE {quote(table)} ALTER COLUMN {quote(column)} SET DEFAULT now();"
+        ))
+    if stale:
+        logger.info(f"  Reset {len(stale)} column default(s) to now(): "
+                    + ", ".join(f"{t}.{c}" for t, c in stale))
+    else:
+        logger.info("  No frozen now() defaults")
+    return stale
 
 
 # ---------------------------------------------------------------------------

@@ -27,7 +27,7 @@ class IpExclusion(Base):
     origin_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_by: Mapped[str] = mapped_column(String(100), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     removed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     removed_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)

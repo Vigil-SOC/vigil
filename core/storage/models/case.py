@@ -9,6 +9,7 @@ from sqlalchemy import (
     Index,
     String,
     Text,
+    text,
 )
 from sqlalchemy.orm import (
     Mapped,
@@ -74,14 +75,14 @@ class Case(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
-        server_default="now()",
+        server_default=text("now()"),
     )
 
     # Relationships

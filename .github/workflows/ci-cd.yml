@@ -620,6 +620,123 @@ jobs:
           pytest tests/unit/ -m external_service -v --no-cov
 
   # ============================================================================
+  # Helm Install Schema — does a fresh chart install end with every ORM table?
+  # ============================================================================
+  # The jobs above run init_database() as the database owner before any init
+  # SQL, so they cannot see what a Helm install does. There the db-init Job
+  # applies dbInit.sqlFiles as the chart user first, and the backend then runs
+  # create_all as vigil_app, which holds no REFERENCES on the chart user's
+  # tables. A new ORM table with a foreign key to one of them must therefore be
+  # created by a listed SQL file; if it is not, create_all fails, and since it is
+  # one transaction every table it was creating goes with it. 0.6.0 shipped that
+  # way: mcp_credentials was left out, and 29 of 52 tables with it. This job
+  # provisions in that order, as those roles, from the chart's own Job.
+  test-helm-install-schema:
+    name: Helm Install Schema
+    if: github.repository == 'Vigil-SOC/vigil'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # As the chart's own Postgres runs: its image, database and user, which
+        # the image makes the superuser, as it does in the StatefulSet.
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: deeptempo_soc
+          POSTGRES_USER: deeptempo
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_PASSWORD: test
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version-file: .python-version
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.lock
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: v3.15.2
+
+      - name: Render the db-init Job
+        run: |
+          # The Job uses none of the subcharts, and all are off by default, so a
+          # copy of the chart without them renders without fetching them.
+          cp -R infra/helm/vigil "$RUNNER_TEMP/chart"
+          yq -i 'del(.dependencies)' "$RUNNER_TEMP/chart/Chart.yaml"
+          helm template ci "$RUNNER_TEMP/chart" \
+            --show-only templates/db-init-job.yaml > "$RUNNER_TEMP/db-init-job.yaml"
+
+      - name: Run the db-init Job as the chart user
+        env:
+          # The service answers to its id on the job network, as the chart's
+          # Postgres Service answers to its name in the cluster.
+          NETWORK: ${{ job.services.postgres.network }}
+        run: |
+          # The Job's image and command, run as its pod runs them: uid 70, a
+          # read-only root filesystem, and the chart's SQL bundle at /sql.
+          job="$RUNNER_TEMP/db-init-job.yaml"
+          container='.spec.template.spec.containers[] | select(.name == "db-init")'
+          readarray -d '' command < <(yq -0 "$container | .command[]" "$job")
+          docker run --rm --network "$NETWORK" --user 70:70 --read-only \
+            -v "$PWD/infra/helm/vigil/files/database-init:/sql:ro" \
+            -e PGHOST=postgres -e PGPORT=5432 -e PGDATABASE="$POSTGRES_DB" \
+            -e PGUSER=deeptempo -e PGPASSWORD="$POSTGRES_PASSWORD" \
+            "$(yq "$container | .image" "$job")" "${command[@]}"
+
+      - name: Initialize schema as vigil_app
+        id: init-schema
+        # As the backend starts under the chart: _env.tpl logs it in as
+        # vigil_app, and services/api/main.py calls init_database() at startup.
+        # Strict for the reason the jobs above are (#562), and it covers what
+        # theirs cannot: here about half the ORM tables come from init SQL, as on
+        # a real install, so a table whose SQL disagrees with its model is drift.
+        env:
+          POSTGRES_USER: vigil_app
+          DB_STRICT_SCHEMA: "true"
+        run: |
+          python -c "from core.storage.connection import init_database; init_database()"
+
+      - name: Every ORM table exists
+        # Also after a failed create_all, to name the tables it left out.
+        if: ${{ !cancelled() && steps.init-schema.outcome != 'skipped' }}
+        env:
+          POSTGRES_USER: vigil_app
+        run: |
+          python - <<'PY'
+          from sqlalchemy import inspect
+
+          from core.storage.connection import get_db_manager
+          from core.storage.models import Base
+
+          manager = get_db_manager()
+          manager.initialize()
+          expected = set(Base.metadata.tables)
+          missing = sorted(expected - set(inspect(manager.engine).get_table_names()))
+          print(f"{len(expected) - len(missing)} of {len(expected)} ORM tables exist")
+          if missing:
+              print(f"::error::Missing after a Helm install: {', '.join(missing)}")
+              raise SystemExit(1)
+          PY
+
+  # ============================================================================
   # Security Scanning
   # ============================================================================
   security-scan-python:

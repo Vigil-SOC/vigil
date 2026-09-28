@@ -97,6 +97,13 @@ def throwaway_database():
 
     pinned = pytest.MonkeyPatch()
     pinned.setattr(connection_module, "db_config_generation", lambda: 0.0)
+    # Keep it the bare ORM schema. init_database() seeds the default SLA
+    # policies and case templates into empty tables, which the first
+    # DatabaseDataService a test builds would trigger; a test that makes its
+    # own default policy would then find two. Seed tests call it themselves.
+    pinned.setattr(
+        connection_module, "seed_empty_tables", lambda conn, sql=None: ({}, {})
+    )
 
     try:
         for statement in _EXTENSIONS:

@@ -79,7 +79,7 @@ class Investigation(Base):
 
     priority: Mapped[str] = mapped_column(String(20), nullable=False, default="medium")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -131,7 +131,7 @@ class IntakeTrigger(Base):
     # column is still wide enough for one.
     merged_into: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     decided_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
@@ -162,7 +162,7 @@ class InvestigationLog(Base):
         nullable=False,
     )
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     event_type: Mapped[str] = mapped_column(String(30), nullable=False)
     details: Mapped[dict] = mapped_column(JSONB, nullable=False, default={})
@@ -209,14 +209,14 @@ class CustomWorkflow(Base):
         DateTime,
         nullable=False,
         default=utcnow,
-        server_default="now()",
+        server_default=text("now()"),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
-        server_default="now()",
+        server_default=text("now()"),
     )
 
     __table_args__ = (
@@ -251,7 +251,7 @@ class WorkflowRun(Base):
     )
 
     started_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -338,7 +338,7 @@ class ApprovalAction(Base):
         JSONB, nullable=False, default=list, server_default="[]"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     created_by: Mapped[str] = mapped_column(String(100), nullable=False)
     requires_approval: Mapped[bool] = mapped_column(
@@ -422,14 +422,14 @@ class CustomAgent(Base):
 
     created_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
-        server_default="now()",
+        server_default=text("now()"),
     )
 
     __table_args__ = (Index("idx_custom_agents_updated_at", "updated_at"),)

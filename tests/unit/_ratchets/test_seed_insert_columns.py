@@ -1,51 +1,38 @@
 """A seed INSERT must name every NOT NULL column that Postgres cannot fill.
 
 compose's db-seed and ``scripts/seed_reference_data.py`` apply
-``infra/database/init/*.sql`` with raw SQL after ``create_all``. A column the
-models give only a Python-side ``default=`` has no DEFAULT in the DDL
-``create_all`` emits, so an INSERT that leaves it out writes NULL and fails.
-Every template in ``05_case_management_extended.sql`` did that with
-``case_templates.usage_count``. Both appliers tolerate failures, so the default
-templates were never seeded and nothing said so.
+``infra/database/init/*.sql`` with raw SQL after ``create_all``, and the backend
+applies the INSERTs of ``05_case_management_extended.sql`` the same way
+(``core/storage/reference_seed.py``). A column the models give only a
+Python-side ``default=`` has no DEFAULT in the DDL ``create_all`` emits, so an
+INSERT that leaves it out writes NULL and fails. Every template in 05 did that
+with ``case_templates.usage_count``. The appliers tolerated the failures, so the
+default templates were never seeded and nothing said so.
 """
 
-import functools
-import importlib.util
-import re
 from pathlib import Path
-from unittest import mock
 
 import pytest
 from sqlalchemy import Column, Integer, MetaData, String, Table
 
 from core.storage.models import Base
+from core.storage.reference_seed import INSERT_TARGET, split_statements, target_table
 
 pytestmark = pytest.mark.unit
 
 REPO = Path(__file__).resolve().parents[3]
 INIT_SQL = REPO / "infra" / "database" / "init"
-SEEDER = REPO / "scripts" / "seed_reference_data.py"
-
-# The target table, then the column list when there is one.
-INSERT = re.compile(r"INSERT\s+INTO\s+([\w.\"]+)\s*(?:\(([^)]*)\))?", re.IGNORECASE)
-
-
-@functools.cache
-def _split():
-    """The seeder's own statement splitter, so the check sees what it runs."""
-    spec = importlib.util.spec_from_file_location("seed_reference_data_split", SEEDER)
-    module = importlib.util.module_from_spec(spec)
-    # Its module-level basicConfig would reconfigure logging for later tests.
-    with mock.patch("logging.basicConfig"):
-        spec.loader.exec_module(module)
-    return module._statements
 
 
 def _inserts(sql: str):
-    """(table, named columns or None) for every INSERT the seeder would run."""
-    for statement in _split()(sql):
-        for match in INSERT.finditer(statement):
-            table = match.group(1).replace('"', "").split(".")[-1]
+    """(table, named columns or None) for every INSERT the seeders would run.
+
+    Split the way the seeder script and the backend split, so the check sees
+    the statements they execute.
+    """
+    for statement in split_statements(sql):
+        for match in INSERT_TARGET.finditer(statement):
+            table = target_table(match)
             columns = match.group(2)
             if columns is not None:
                 columns = {c.strip().strip('"') for c in columns.split(",")}

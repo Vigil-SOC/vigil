@@ -19,12 +19,12 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.exc import DBAPIError
 
 from core.storage.connection import get_db_manager
+from core.storage.reference_seed import split_statements
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
 REPO = Path(__file__).resolve().parents[3]
 SEED = REPO / "infra" / "database" / "init" / "05_case_management_extended.sql"
-SEEDER = REPO / "scripts" / "seed_reference_data.py"
 MIGRATE_SCHEMA = REPO / "scripts" / "migrate_schema.py"
 SEED_SQL = SEED.read_text(encoding="utf-8")
 POLICY_IDS = sorted(set(re.findall(r"'(sla-[a-z]+-default)'", SEED_SQL)))
@@ -57,9 +57,8 @@ def _load(name: str, path: Path):
 
 def _apply(conn, sql: str) -> list:
     """Run each statement as the seeder does; return the ones Postgres refused."""
-    seeder = _load("seed_reference_data_apply", SEEDER)
     refused = []
-    for statement in seeder._statements(sql):
+    for statement in split_statements(sql):
         savepoint = conn.begin_nested()
         try:
             conn.execute(text(statement))

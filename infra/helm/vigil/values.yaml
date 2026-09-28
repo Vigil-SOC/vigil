@@ -387,7 +387,9 @@ dbInit:
     tag: "16-alpine"
     pullPolicy: IfNotPresent
   # Explicit ordering — files added under infra/database/init/ will NOT auto-run.
-  # Update this list when new init SQL lands.
+  # Update this list when new init SQL lands, in filename order (the order
+  # compose applies them); tests/unit/_ratchets/test_helm_db_init_sql_files.py
+  # fails until you do.
   sqlFiles:
     - 01_init_schema.sql
     - 04_config_tables.sql
@@ -422,6 +424,8 @@ dbInit:
     - 31_agent_ledger_hash_chain.sql
     - 32_drop_attack_layers.sql
     - 33_episodic_verdict_techniques.sql
+    - 34_drop_skills.sql
+    - 34_mcp_credentials.sql
     - 35_ip_exclusions.sql
   resources:
     requests:

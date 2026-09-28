@@ -64,6 +64,7 @@ from core.storage.models import (  # noqa: F401
     User,
     UserPreference,
 )
+from core.storage.reference_seed import seed_empty_tables
 
 logger = logging.getLogger(__name__)
 
@@ -938,13 +939,73 @@ def check_schema_drift(
     return report
 
 
+_reference_seed_done: set[str] = set()
+_reference_seed_failed_at: Dict[str, float] = {}
+# Serializes seeding within the process; across processes the seed file's
+# ON CONFLICT DO NOTHING keeps a second writer from duplicating rows.
+_reference_seed_lock = threading.Lock()
+
+
+def reset_reference_seed_check() -> None:
+    """Forget which databases have been seeded. For tests."""
+    with _reference_seed_lock:
+        _reference_seed_done.clear()
+        _reference_seed_failed_at.clear()
+
+
+def seed_reference_tables(db_manager: Optional["DatabaseManager"] = None) -> None:
+    """Give the default-data tables create_all built their rows, if still empty.
+
+    Once per database per process, because init_database() runs on every
+    DatabaseDataService construction. Never raises: the rows are defaults a
+    user can create by hand, not something to refuse to serve over. A failure
+    is logged and retried after ``_SCHEMA_RECHECK_SECONDS``, like the drift check.
+    """
+    manager = db_manager if db_manager is not None else get_db_manager()
+    if manager.engine is None:
+        return
+    key = manager.engine.url.render_as_string(hide_password=True)
+    with _reference_seed_lock:
+        if key in _reference_seed_done:
+            return
+        failed_at = _reference_seed_failed_at.get(key)
+        if failed_at is not None and (
+            time.monotonic() - failed_at < _SCHEMA_RECHECK_SECONDS
+        ):
+            return
+        try:
+            with manager.engine.begin() as conn:
+                inserted, failed = seed_empty_tables(conn)
+        except FileNotFoundError as e:
+            # Nothing a retry can change: this install ships no seed file.
+            _reference_seed_done.add(key)
+            logger.warning("Default SLA policies and case templates not seeded: %s", e)
+            return
+        except Exception as e:  # noqa: BLE001
+            _reference_seed_failed_at[key] = time.monotonic()
+            logger.error(
+                "Could not seed default SLA policies and case templates: %s", e
+            )
+            return
+        if failed:
+            _reference_seed_failed_at[key] = time.monotonic()
+        else:
+            _reference_seed_done.add(key)
+            _reference_seed_failed_at.pop(key, None)
+    for table, rows in inserted.items():
+        logger.info("Seeded %d default row(s) into the empty table %s", rows, table)
+    for table, error in failed.items():
+        logger.error("Could not seed the default rows of %s: %s", table, error)
+
+
 def init_database(echo: bool = False, create_tables: bool = True):
     """
     Initialize the database.
 
     Args:
         echo: If True, log all SQL statements
-        create_tables: If True, create all tables
+        create_tables: If True, create all tables, and seed the default rows
+            of those create_all alone builds (see ``seed_reference_tables``)
 
     Raises:
         SchemaDriftError: if the schema cannot serve the models and
@@ -958,3 +1019,8 @@ def init_database(echo: bool = False, create_tables: bool = True):
 
     # After create_all, so we report what the schema actually ended up as.
     check_schema_drift(db_manager, provisioned=create_tables)
+
+    # Here rather than in a SQL file: the Helm db-init Job applies SQL before
+    # the backend can create these tables, and marks it applied for good.
+    if create_tables:
+        seed_reference_tables(db_manager)

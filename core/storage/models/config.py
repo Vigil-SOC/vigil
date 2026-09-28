@@ -45,7 +45,7 @@ class SketchMapping(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
 
     # Indexes
@@ -83,14 +83,14 @@ class SystemConfig(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
-        server_default="now()",
+        server_default=text("now()"),
     )
 
     # Indexes
@@ -121,14 +121,14 @@ class UserPreference(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
-        server_default="now()",
+        server_default=text("now()"),
     )
 
     # Last login tracking
@@ -169,14 +169,14 @@ class IntegrationConfig(Base):
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
-        server_default="now()",
+        server_default=text("now()"),
     )
 
     # Indexes
@@ -275,7 +275,7 @@ class ConfigAuditLog(Base):
 
     # When
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
 
     # Indexes
@@ -301,7 +301,7 @@ class SharedIOC(Base):
     ioc_type: Mapped[str] = mapped_column(String(30), nullable=False)
     value: Mapped[str] = mapped_column(String(500), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
 
     __table_args__ = (
@@ -333,10 +333,10 @@ class ThreatIndicator(Base):
     valid_until: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     raw_stix: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     first_seen: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     last_seen: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
 
     __table_args__ = (

@@ -78,7 +78,7 @@ class AIDecisionLog(Base):
 
     # Timestamps
     timestamp: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     feedback_timestamp: Mapped[Optional[datetime]] = mapped_column(
         DateTime, nullable=True
@@ -111,7 +111,7 @@ class LLMInteractionLog(Base):
     agent_id: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     investigation_id: Mapped[Optional[str]] = mapped_column(String(60), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     model: Mapped[str] = mapped_column(String(80), nullable=False)
     request_messages: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
@@ -185,10 +185,10 @@ class LLMProviderConfig(Base):
     last_test_success: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
 
     __table_args__ = (
@@ -230,10 +230,10 @@ class AIModelConfig(Base):
     settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     updated_by: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
 
     __table_args__ = (Index("idx_ai_model_configs_provider", "provider_id"),)
@@ -270,14 +270,14 @@ class Conversation(Base):
         Integer, nullable=False, default=0, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
         default=utcnow,
         onupdate=utcnow,
-        server_default="now()",
+        server_default=text("now()"),
     )
     # Sort key for the history list; null until the first message lands.
     last_message_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
@@ -333,7 +333,7 @@ class ChatMessage(Base):
         Numeric(10, 6), nullable=False, default=0, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=utcnow, server_default="now()"
+        DateTime, nullable=False, default=utcnow, server_default=text("now()")
     )
 
     conversation: Mapped["Conversation"] = relationship(
