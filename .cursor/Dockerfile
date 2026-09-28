@@ -38,9 +38,14 @@ RUN install -m 0755 -d /etc/apt/keyrings && \
     && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update && apt-get install -y fuse-overlayfs && rm -rf /var/lib/apt/lists/*
+# `start` pulls postgres, redis and bifrost from Docker Hub on every boot, and
+# unauthenticated pulls from shared cloud egress hit Hub's rate limit
+# (`toomanyrequests`), failing the whole boot. mirror.gcr.io serves the same
+# digests; the daemon falls back to Hub for anything the mirror lacks.
 RUN mkdir -p /etc/docker && \
     printf '%s\n' '{' \
-    '  "storage-driver": "fuse-overlayfs"' \
+    '  "storage-driver": "fuse-overlayfs",' \
+    '  "registry-mirrors": ["https://mirror.gcr.io"]' \
     '}' > /etc/docker/daemon.json
 RUN apt-get update && apt-get install -y iptables && rm -rf /var/lib/apt/lists/*
 RUN update-alternatives --set iptables /usr/sbin/iptables-legacy && \
