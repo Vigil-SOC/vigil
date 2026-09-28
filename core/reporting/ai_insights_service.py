@@ -232,7 +232,7 @@ Provide ONLY the JSON array, no other text."""
             from core.llm.gateway.gateway import get_llm_gateway
 
             gateway = await get_llm_gateway()
-            result = await gateway.submit_insights(
+            result = await gateway.submit(
                 prompt=context,
                 model=self.model,
                 max_tokens=2000,

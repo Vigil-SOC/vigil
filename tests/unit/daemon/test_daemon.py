@@ -704,12 +704,12 @@ class TestTriageProviderResolution:
         with patch.object(FindingProcessor, "_resolve_triage_target", return_value=None):
             content, error = asyncio.run(processor._get_ai_triage("p"))
         assert content is None and "no LLM provider" in error
-        processor._llm_gateway.submit_triage.assert_not_called()
+        processor._llm_gateway.submit.assert_not_called()
 
     def test_gateway_gets_resolved_provider_and_worker_error_is_surfaced(self):
         processor = FindingProcessor(ProcessingConfig())
         gateway = Mock()
-        gateway.submit_triage = AsyncMock(
+        gateway.submit = AsyncMock(
             return_value={"content": "", "type": "error", "error": "AuthenticationError: bad key"}
         )
         processor._llm_gateway = gateway
@@ -717,7 +717,7 @@ class TestTriageProviderResolution:
             FindingProcessor, "_resolve_triage_target", return_value=("openai-1", "gpt-4o")
         ):
             content, error = asyncio.run(processor._get_ai_triage("p"))
-        gateway.submit_triage.assert_awaited_once_with(
+        gateway.submit.assert_awaited_once_with(
             "p", provider_id="openai-1", model="gpt-4o", timeout=60
         )
         assert content is None and error == "AuthenticationError: bad key"
@@ -763,7 +763,7 @@ class TestTriageTimeout:
             return {"content": "SEVERITY: high\nREASONING: slow but fine"}
 
         processor = FindingProcessor(ProcessingConfig(triage_timeout=triage_timeout))
-        processor._llm_gateway = Mock(submit_triage=slow_submit)
+        processor._llm_gateway = Mock(submit=slow_submit)
         with patch.object(
             FindingProcessor, "_resolve_triage_target", return_value=("gemini", "m")
         ):

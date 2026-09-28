@@ -3,14 +3,11 @@
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from core.config import get_settings
 from core.llm.bifrost.admin import refresh_gateway_rates, run_gateway_rates_refresher
-from core.llm.gateway.gateway import (
-    QUEUE_NAME,
-    RedisSessionStore,
-)
+from core.llm.gateway.gateway import QUEUE_NAME
 from core.llm.gateway.gateway import redis_settings as gateway_redis_settings
 
 logger = logging.getLogger(__name__)
@@ -20,25 +17,17 @@ MAX_CONCURRENT_LLM_CALLS = get_settings().llm_max_concurrent
 
 async def llm_call(
     ctx: Dict[str, Any],
-    messages: List[Dict],
+    prompt: str,
     model: str,
     max_tokens: int,
-    session_id: Optional[str],
-    system_prompt: Optional[str],
-    enable_thinking: bool,
-    thinking_budget: int,
-    tools: Optional[List[Dict]],
     temperature: Optional[float],
     traceparent: str = "",
-    agent_id: Optional[str] = None,
-    investigation_id: Optional[str] = None,
     provider_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    # The primary job: session load, dispatch, session save. provider_id=None
-    # keeps the pre-#88 ClaudeService.chat() path exactly.
+    # One stateless completion. provider_id=None keeps the pre-#88
+    # ClaudeService.chat() path exactly.
     in_flight: asyncio.Semaphore = ctx["in_flight"]
     claude_service = ctx["claude_service"]
-    session_store: RedisSessionStore = ctx["session_store"]
 
     # Restore parent span context propagated across the ARQ/Redis boundary
     try:
@@ -59,63 +48,40 @@ async def llm_call(
         worker_span = None
 
     try:
-        # Load session history if applicable
-        if session_id:
-            history = await session_store.load(session_id)
-            if history:
-                messages = history + messages
-
         # Multi-provider routing (GH #88): if a non-default provider_id is set
         # and the router wants the Bifrost path, dispatch there instead of
         # hitting ClaudeService directly. provider_id=None preserves the
         # pre-#88 Anthropic-SDK path exactly.
-        router_result = await _maybe_dispatch_via_router(
+        result = await _maybe_dispatch_via_router(
             ctx,
             provider_id=provider_id,
-            messages=messages,
-            system_prompt=system_prompt,
+            prompt=prompt,
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
-            tools=tools,
-            enable_thinking=enable_thinking,
-            thinking_budget=thinking_budget,
         )
-        if router_result is not None:
-            result = router_result
-        else:
+        if result is None:
             await in_flight.acquire()
             try:
                 response = await asyncio.to_thread(
-                    _sync_claude_call,
-                    claude_service,
-                    messages=messages,
+                    claude_service.chat,
+                    message=prompt,
                     model=model,
                     max_tokens=max_tokens,
-                    system_prompt=system_prompt,
-                    session_id=session_id,
-                    agent_id=agent_id,
-                    investigation_id=investigation_id,
                 )
             finally:
                 in_flight.release()
-            result = _extract_result(response)
+            result = (
+                {"content": response, "type": "text"}
+                if response is not None
+                else {"content": "", "type": "error", "error": "Empty response"}
+            )
 
         if worker_span is not None:
             try:
                 worker_span.end()
             except Exception:
                 pass
-
-        # Persist session
-        if session_id:
-            # Bifrost results are always dicts; the legacy ClaudeService path
-            # can be a bare string, so guard against it.
-            assistant_content = (
-                result.get("content", "") if isinstance(result, dict) else result
-            )
-            updated = messages + [{"role": "assistant", "content": assistant_content}]
-            await session_store.save(session_id, updated)
 
         return result
 
@@ -134,14 +100,10 @@ async def _maybe_dispatch_via_router(
     ctx: Dict[str, Any],
     *,
     provider_id: Optional[str],
-    messages: List[Dict],
-    system_prompt: Optional[str],
+    prompt: str,
     model: str,
     max_tokens: int,
     temperature: Optional[float],
-    tools: Optional[List[Dict]],
-    enable_thinking: bool,
-    thinking_budget: int,
 ) -> Optional[Dict[str, Any]]:
     # Returns None when the caller should fall back to ClaudeService. Everything
     # reaches Bifrost either way; the fallback just keeps ClaudeService's tool loop.
@@ -175,110 +137,13 @@ async def _maybe_dispatch_via_router(
     try:
         return await router.dispatch(
             provider=spec,
-            messages=messages,
-            system_prompt=system_prompt,
+            messages=[{"role": "user", "content": prompt}],
             model=model,
             max_tokens=max_tokens,
             temperature=temperature,
-            tools=tools,
-            enable_thinking=enable_thinking,
-            thinking_budget=thinking_budget,
         )
     finally:
         in_flight.release()
-
-
-# The two _sync_* helpers below run inside asyncio.to_thread.
-
-
-def _sync_claude_call(
-    claude_service,
-    *,
-    messages: List[Dict],
-    model: str,
-    max_tokens: int,
-    system_prompt: Optional[str],
-    session_id: Optional[str] = None,
-    agent_id: Optional[str] = None,
-    investigation_id: Optional[str] = None,
-) -> Any:
-    current_message = messages[-1]["content"] if messages else ""
-    context = messages[:-1] if len(messages) > 1 else None
-
-    return claude_service.chat(
-        message=current_message,
-        context=context,
-        system_prompt=system_prompt,
-        model=model,
-        max_tokens=max_tokens,
-        session_id=session_id,
-        agent_id=agent_id,
-        investigation_id=investigation_id,
-    )
-
-
-def _extract_result(response: Any) -> Dict[str, Any]:
-    # Normalise ClaudeService.chat() output to a serialisable dict.
-    if response is None:
-        return {"content": "", "type": "error", "error": "Empty response"}
-    if isinstance(response, str):
-        return {"content": response, "type": "text"}
-    if isinstance(response, list):
-        return {"content": response, "type": "blocks"}
-    if isinstance(response, dict):
-        return response
-    return {"content": str(response), "type": "text"}
-
-
-def _serialize_raw_response(response: Any) -> Dict[str, Any]:
-    # Convert an Anthropic Message object into a JSON-safe dict.
-    try:
-        content_blocks = []
-        for block in response.content:
-            if block.type == "text":
-                content_blocks.append({"type": "text", "text": block.text})
-            elif block.type == "tool_use":
-                content_blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input,
-                    }
-                )
-            elif block.type == "thinking":
-                thinking_block = {"type": "thinking", "thinking": block.thinking}
-                if hasattr(block, "signature") and block.signature:
-                    thinking_block["signature"] = block.signature
-                content_blocks.append(thinking_block)
-
-        return {
-            "content": content_blocks,
-            "stop_reason": response.stop_reason,
-            "input_tokens": response.usage.input_tokens,
-            "output_tokens": response.usage.output_tokens,
-            # #184 Phase 3: surface cache tokens so the daemon can price
-            # them at provider-specific rates instead of full input rate.
-            "cache_read_tokens": getattr(response.usage, "cache_read_input_tokens", 0),
-            "cache_creation_tokens": getattr(
-                response.usage, "cache_creation_input_tokens", 0
-            ),
-            # This path is only taken for the shared (default Anthropic)
-            # ClaudeService; make the provider explicit so cost accounting
-            # doesn't rely on a downstream ``or "anthropic"`` fallback.
-            "provider": "anthropic",
-        }
-    except Exception as e:
-        logger.error(f"Failed to serialise raw response: {e}")
-        return {
-            "content": [],
-            "stop_reason": "error",
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_read_tokens": 0,
-            "cache_creation_tokens": 0,
-            "error": str(e),
-        }
 
 
 async def on_startup(ctx: Dict[str, Any]):
@@ -321,7 +186,6 @@ async def on_startup(ctx: Dict[str, Any]):
     # A cap on calls in flight, not a rate limit: the rate is Bifrost's, and
     # how a client answers its refusals is core.llm.gateway_retry's.
     ctx["in_flight"] = asyncio.Semaphore(MAX_CONCURRENT_LLM_CALLS)
-    ctx["session_store"] = RedisSessionStore(ctx["redis"])
 
     # Multi-provider routing (GH #88). Router is optional: if construction
     # fails (e.g. openai not installed), worker continues in Anthropic-only
@@ -348,8 +212,6 @@ async def on_shutdown(ctx: Dict[str, Any]):
 
 
 class WorkerSettings:
-    # ARQ polls queues left-to-right, so triage is always consumed before
-    # investigation, and investigation before chat.
     functions = [llm_call]
     # ARQ reads this attribute by name; alias the import so the class
     # attribute does not shadow the function producing it.

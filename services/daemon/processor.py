@@ -582,7 +582,7 @@ REASONING: [Brief explanation]
         provider_id, model = target
         try:
             # The gateway's own default (90s) would otherwise cap the wait.
-            result = await self._llm_gateway.submit_triage(
+            result = await self._llm_gateway.submit(
                 prompt,
                 provider_id=provider_id,
                 model=model,

@@ -224,7 +224,7 @@ services:
   # producer that matters (#902).
   #
   # Known default-set side effect: services/api/routers/analytics.py ->
-  # AIInsightsService.submit_insights also enqueues to ARQ. Without
+  # AIInsightsService also enqueues to ARQ. Without
   # `--profile daemon` the Analytics AI-insights panel stays empty/stale — the
   # background refresh times out and logs, the endpoint still returns.
   # `compose up -d soc-daemon` by name still works (Compose enables a named
