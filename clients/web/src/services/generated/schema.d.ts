@@ -7735,6 +7735,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/{workflow_id}/preflight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Workflow Preflight
+         * @description What a hunt will cost at most and what it cannot look at, before it runs.
+         *
+         *     ``{capabilities, pricing, budgets}`` for a hunt-kind workflow, ``{}`` for
+         *     any other kind, 404 for an unknown id.
+         */
+        get: operations["get_api_workflows_workflow_id_preflight"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/{workflow_id}/runs": {
         parameters: {
             query?: never;
@@ -11587,6 +11610,38 @@ export interface components {
             secret?: string | null;
             /** Url */
             url?: string | null;
+        };
+        /** WorkflowDetailResponse */
+        WorkflowDetailResponse: {
+            /** Agents */
+            agents?: string[];
+            /** Body */
+            body: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Hunt Like */
+            hunt_like: boolean;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Phases */
+            phases?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Run Kind */
+            run_kind: string;
+            /** Source */
+            source: string;
+            /** Tools Used */
+            tools_used?: string[];
+            /** Trigger Examples */
+            trigger_examples?: string[];
+            /** Use Case */
+            use_case?: string | null;
         };
         /**
          * WorkflowExecuteRequest
@@ -24066,7 +24121,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["WorkflowDetailResponse"];
                 };
             };
             /** @description Validation Error */
@@ -24877,6 +24932,39 @@ export interface operations {
                 "application/json": components["schemas"]["WorkflowExecuteRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_workflows_workflow_id_preflight: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

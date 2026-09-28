@@ -20,12 +20,12 @@ the same functions.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.deps import provide_mcp_registry, provide_workflows
+from core.deps import provide_workflows
 from core.routing import Auth, RouterMeta
 from core.workflows import catalog
 from core.workflows.workflows_service import WorkflowsService
@@ -34,6 +34,24 @@ from core.workflows.workflows_service import WorkflowsService
 class WorkflowListResponse(BaseModel):
     workflows: List[Dict[str, Any]] = Field(default_factory=list)
     count: int
+
+
+# ``WorkflowDefinition.to_dict(include_body=True)``: the same keys for every kind.
+class WorkflowDetailResponse(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    agents: List[str] = Field(default_factory=list)
+    tools_used: List[str] = Field(default_factory=list)
+    # Nullable on a custom workflow row.
+    use_case: Optional[str] = None
+    trigger_examples: List[str] = Field(default_factory=list)
+    source: str
+    run_kind: str
+    hunt_like: bool
+    body: str
+    # Structured phases, carried by custom workflows for the builder UI.
+    phases: Optional[List[Dict[str, Any]]] = None
 
 
 router = APIRouter()
@@ -67,19 +85,20 @@ async def list_workflows(service: WorkflowsService = Depends(provide_workflows))
     return catalog.listing(service)
 
 
-# No response_model: returns the workflow definition verbatim, plus the
-# conditional hunt-preflight fields. A strict model would strip them and vary by
-# kind; the snapshot pins the op.
-@router.get("/{workflow_id}")
+# exclude_unset keeps ``phases`` absent, not null, for a definition without them.
+@router.get(
+    "/{workflow_id}",
+    response_model=WorkflowDetailResponse,
+    response_model_exclude_unset=True,
+)
 async def get_workflow(
     workflow_id: str,
     service: WorkflowsService = Depends(provide_workflows),
-    registry=Depends(provide_mcp_registry),
 ):
     """
     Get full details for a specific workflow (custom or file-based).
     """
-    workflow = catalog.detail(service, registry, workflow_id)
+    workflow = catalog.detail(service, workflow_id)
     if workflow is None:
         raise HTTPException(
             status_code=404,

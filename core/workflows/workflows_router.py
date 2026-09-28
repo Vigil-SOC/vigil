@@ -17,7 +17,7 @@ from core.deps import (
 )
 from core.response.approval_service import ApprovalService
 from core.routing import Auth, RouterMeta
-from core.workflows import catalog
+from core.workflows import catalog, hunt_preflight
 from core.workflows.custom_workflow_service import CustomWorkflowService
 from core.workflows.workflow_ai_generator import WorkflowAIGenerator
 from core.workflows.workflow_run_service import WorkflowRunService
@@ -323,20 +323,41 @@ async def propose_feed_hunts(limit: int = 200):
 async def get_workflow(
     workflow_id: str,
     service: WorkflowsService = Depends(provide_workflows),
-    registry=Depends(provide_mcp_registry),
 ):
     """Get one workflow.
 
     Defined after /workflows/custom so decorator order resolves the {workflow_id}
     vs /custom ambiguity within this router.
     """
-    workflow = catalog.detail(service, registry, workflow_id)
+    workflow = catalog.detail(service, workflow_id)
     if workflow is None:
         raise HTTPException(
             status_code=404,
             detail=f"Workflow not found: {workflow_id}",
         )
     return workflow
+
+
+# Console wiring for the start-a-hunt modal, deliberately unversioned: it is a
+# modal-only shape, and the frozen run surface is /api/v1/agent-runs.
+@router.get("/workflows/{workflow_id}/preflight")
+async def get_workflow_preflight(
+    workflow_id: str,
+    service: WorkflowsService = Depends(provide_workflows),
+    registry=Depends(provide_mcp_registry),
+):
+    """What a hunt will cost at most and what it cannot look at, before it runs.
+
+    ``{capabilities, pricing, budgets}`` for a hunt-kind workflow, ``{}`` for
+    any other kind, 404 for an unknown id.
+    """
+    result = hunt_preflight.preflight(service, registry, workflow_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Workflow not found: {workflow_id}",
+        )
+    return result
 
 
 @router.post("/workflows/{workflow_id}/execute")

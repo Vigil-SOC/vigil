@@ -420,7 +420,7 @@ class TestTheTurnBudget:
 # call, which is correct and arrives too late to be useful.
 class TestThePricingPreflight:
     def test_answers_how_confidently_the_model_resolved(self):
-        from core.workflows.catalog import pricing
+        from core.workflows.hunt_preflight import pricing
 
         reported = pricing()
         assert reported["model"]
@@ -428,10 +428,10 @@ class TestThePricingPreflight:
 
     def test_calls_a_model_no_rate_table_carries_unknown(self, monkeypatch):
         import core.llm.defaults as defaults
-        from core.workflows import catalog
+        from core.workflows import hunt_preflight
 
         monkeypatch.setattr(defaults, "DEFAULT_MODEL", "groq/some-model-nobody-priced")
-        assert catalog.pricing()["source"] == "unknown"
+        assert hunt_preflight.pricing()["source"] == "unknown"
 
     def test_prices_a_namespaced_id_from_its_providers_datasheet(self):
         from core.llm.cost.pricing_router import priced_as

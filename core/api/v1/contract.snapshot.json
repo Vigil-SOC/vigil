@@ -2742,6 +2742,96 @@
         "title": "ValidationError",
         "type": "object"
       },
+      "WorkflowDetailResponse": {
+        "properties": {
+          "agents": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Agents",
+            "type": "array"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "hunt_like": {
+            "title": "Hunt Like",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "phases": {
+            "anyOf": [
+              {
+                "items": {
+                  "additionalProperties": true,
+                  "type": "object"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phases"
+          },
+          "run_kind": {
+            "title": "Run Kind",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "tools_used": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools Used",
+            "type": "array"
+          },
+          "trigger_examples": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Trigger Examples",
+            "type": "array"
+          },
+          "use_case": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Use Case"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "source",
+          "run_kind",
+          "hunt_like",
+          "body"
+        ],
+        "title": "WorkflowDetailResponse",
+        "type": "object"
+      },
       "WorkflowListResponse": {
         "properties": {
           "count": {
@@ -5413,7 +5503,9 @@
           "200": {
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowDetailResponse"
+                }
               }
             },
             "description": "Successful Response"
