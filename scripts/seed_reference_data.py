@@ -37,12 +37,31 @@ _DOLLAR_TAG = re.compile(r"\$[A-Za-z_0-9]*\$")
 
 def _statements(sql: str):
     """Split on top-level ';', treating one inside a single-quoted string or a
-    dollar-quoted ($tag$) body as literal so PL/pgSQL bodies stay whole."""
+    dollar-quoted ($tag$) body as literal so PL/pgSQL bodies stay whole.
+    Comments are dropped: an apostrophe in one ("don't") would otherwise open
+    a string and merge the statements after it."""
     buf: list[str] = []
     i, n = 0, len(sql)
     in_squote = False
     dollar_tag = None
     while i < n:
+        if dollar_tag is None and not in_squote:
+            if sql.startswith("--", i):
+                end = sql.find("\n", i)
+                i = n if end == -1 else end
+                continue
+            if sql.startswith("/*", i):
+                # Postgres block comments nest.
+                depth, i = 1, i + 2
+                while i < n and depth:
+                    if sql.startswith("/*", i):
+                        depth, i = depth + 1, i + 2
+                    elif sql.startswith("*/", i):
+                        depth, i = depth - 1, i + 2
+                    else:
+                        i += 1
+                buf.append(" ")
+                continue
         if dollar_tag is not None:
             if sql.startswith(dollar_tag, i):
                 buf.append(dollar_tag)
