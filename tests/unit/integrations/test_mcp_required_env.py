@@ -219,9 +219,7 @@ class TestSubstituteEnvVars:
         from core.integrations.mcp.service import MCPService
 
         service = MCPService()
-        with patch(
-            "core.integrations.mcp.service.get_secret", return_value="vt-saved"
-        ):
+        with patch("core.integrations.mcp.service.get_secret", return_value="vt-saved"):
             assert (
                 service._substitute_env_vars(
                     "${VIRUSTOTAL_API_KEY}", {"VIRUSTOTAL_API_KEY": ""}
@@ -240,9 +238,7 @@ class TestSubstituteEnvVars:
         from core.integrations.mcp.service import MCPService
 
         service = MCPService()
-        with patch(
-            "core.integrations.mcp.service.get_secret", return_value="vt-saved"
-        ):
+        with patch("core.integrations.mcp.service.get_secret", return_value="vt-saved"):
             assert (
                 service._substitute_env_vars(
                     "${VIRUSTOTAL_API_KEY}", {"VIRUSTOTAL_API_KEY": "vt-export"}
