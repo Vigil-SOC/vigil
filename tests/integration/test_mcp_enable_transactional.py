@@ -57,13 +57,8 @@ def fake_server_known():
     """Patch mcp_service so ``splunk-selfhosted`` is a known, settable server."""
     from services.api.routers import mcp as mcp_api
 
-    # Make set_server_enabled succeed (server exists); status is the stdio
     with patch.object(
         mcp_api.mcp_service, "set_server_enabled", return_value=True
-    ), patch.object(
-        mcp_api.mcp_service,
-        "get_server_status",
-        return_value="stdio (MCP integration)",
     ), patch.object(
         mcp_api.mcp_service,
         "list_servers",

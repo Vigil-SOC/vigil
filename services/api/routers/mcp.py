@@ -196,11 +196,7 @@ async def set_server_enabled(
                         exc,
                     )
     else:
-        # Disable → stop any running monitor process + tear down the
-        # persistent MCP session so tools disappear from the pool.
-        status = mcp_service.get_server_status(server_name)
-        if status == "running":
-            mcp_service.stop_server(server_name)
+        # Disable → tear down the persistent MCP session so tools leave the pool.
         if mcp_client is not None:
             try:
                 await mcp_client.disconnect_from_server(server_name)
@@ -271,89 +267,6 @@ async def get_connections_status(mcp_client=Depends(provide_mcp_client)):
     }
 
 
-@router.get("/servers/{server_name}/status")
-async def get_server_status(server_name: str):
-    """
-    Get status of a specific server.
-
-    Args:
-        server_name: Name of the server
-
-    Returns:
-        Server status
-    """
-    status = mcp_service.get_server_status(server_name)
-    if status is None:
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    return {"server": server_name, "status": status}
-
-
-# NOTE: the former POST /servers/{name}/start + /stop endpoints were
-# removed when PUT /enabled became transactional. Every server in
-# mcp-config.json is stdio-based, which the old `start_server` path
-# explicitly refused (core/integrations/mcp/service.py), so those endpoints never
-# worked for users. The enable toggle is now the single lever.
-
-
-# NOTE: the former /servers/start-all + /servers/stop-all endpoints were
-# removed alongside /start + /stop. They called the same stdio-hostile
-# service methods and nothing in the UI invoked them.
-
-
-@router.get("/servers/{server_name}/logs")
-async def get_server_logs(server_name: str, lines: int = 100):
-    """
-    Get logs for a specific server.
-
-    Args:
-        server_name: Name of the server
-        lines: Number of log lines to retrieve
-
-    Returns:
-        Server logs
-    """
-    logs = mcp_service.get_server_log(server_name, lines=lines)
-
-    if logs == "":
-        raise HTTPException(status_code=404, detail="Server not found")
-
-    # Prepend the last connect-failure reason, if any — this is what
-    # actually tells the user why a server isn't reachable. The log file
-    # itself only exists for servers started via the monitor path.
-    try:
-        from core.integrations.mcp.client import process_mcp_client
-
-        last_err = process_mcp_client().get_last_error(server_name)
-        if last_err:
-            logs = f"[last connect error] {last_err}\n\n{logs}"
-    except Exception:
-        pass
-
-    return {"server": server_name, "logs": logs}
-
-
-@router.get("/servers/{server_name}/test")
-async def test_server(
-    server_name: str,
-    current_user: User = Depends(get_current_active_user),
-):
-    """Test if a server is responding.
-
-    Admin-gated because the underlying ``test_server`` call can spawn
-    a subprocess to probe a stdio MCP server.
-    """
-    require_integrations_admin(current_user)
-    _validate_known_server(server_name)
-    is_running = mcp_service.test_server(server_name)
-
-    return {
-        "server": server_name,
-        "is_running": is_running,
-        "status": "healthy" if is_running else "not responding",
-    }
-
-
 @router.post("/servers/reload")
 async def reload_servers(
     current_user: User = Depends(get_current_active_user),
@@ -364,10 +277,7 @@ async def reload_servers(
 
     Reinitialises the process-wide ``MCPService`` in place so both the
     API and the ``MCPClient`` see the new catalog. Previously-enabled
-    servers are reconnected automatically; the old Popen-monitor path
-    is gone (#125), so there's nothing here analogous to "restart
-    running servers" — just enumerate new servers and let the enable
-    toggle drive connects.
+    servers are reconnected automatically.
     """
     require_integrations_admin(current_user)
     logger.info("User %s requested MCP server reload", current_user.user_id)

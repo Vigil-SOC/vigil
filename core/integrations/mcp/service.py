@@ -5,9 +5,7 @@ import logging
 import os
 import platform
 import re
-import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional
 
@@ -69,7 +67,6 @@ class MCPServer:
         args: List[str],
         cwd: str,
         env: Dict[str, str],
-        server_type: str = "unknown",
         required_env_vars: Optional[List[str]] = None,
     ):
         self.name = name
@@ -77,114 +74,13 @@ class MCPServer:
         self.args = args
         self.cwd = cwd
         self.env = env
-        self.process: Optional[subprocess.Popen] = None
-        self.status = "stopped"
-        self.start_time: Optional[datetime] = None
-        self.server_type = server_type  # "fastmcp" or "stdio"
         # Credential placeholders declared in mcp-config.json for this
         # server. Read by mcp_client.connect_to_server at connect time.
         self.required_env_vars: List[str] = list(required_env_vars or [])
 
-    def stop(self) -> bool:
-        """Stop the MCP server."""
-        if self.process is None:
-            return True
-
-        try:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-
-            self.process = None
-            self.status = "stopped"
-            self.start_time = None
-            logger.info(f"Stopped MCP server: {self.name}")
-            return True
-
-        except Exception as e:
-            logger.error(f"Failed to stop MCP server {self.name}: {e}")
-            return False
-
-    def is_running(self) -> bool:
-        """Check if the server is running."""
-        # First check if we have a process object and it's still alive
-        if self.process is not None:
-            if self.process.poll() is None:
-                # Process is still running
-                return True
-            else:
-                # Process has terminated
-                self.status = "stopped"
-                self.process = None
-                return False
-
-        # If no process object, check if the process is running externally
-        # by checking for the process by command line arguments
-        try:
-            # Extract module name from args (e.g., "tools.vigil" -> "vigil")
-            module_name = None
-            for arg in self.args:
-                if arg.startswith("tools."):
-                    parts = arg.split(".")
-                    if len(parts) >= 2:
-                        module_name = parts[1]
-                    break
-
-            if module_name:
-                # On Unix systems (macOS, Linux), use pgrep
-                if platform.system() != "Windows":
-                    try:
-                        result = subprocess.run(
-                            ["pgrep", "-f", f"tools.*{module_name}"],
-                            capture_output=True,
-                            text=True,
-                            timeout=2,
-                        )
-                        if result.returncode == 0 and result.stdout.strip():
-                            self.status = "running"
-                            return True
-                    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-                        pass
-                else:
-                    # On Windows, use tasklist with findstr
-                    try:
-                        result = subprocess.run(
-                            [
-                                "tasklist",
-                                "/FI",
-                                "IMAGENAME eq python.exe",
-                                "/FO",
-                                "CSV",
-                            ],
-                            capture_output=True,
-                            text=True,
-                            timeout=2,
-                        )
-                        if result.returncode == 0 and module_name in result.stdout:
-                            self.status = "running"
-                            return True
-                    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-                        pass
-        except Exception as e:
-            logger.debug(f"Error checking external process status: {e}")
-
-        return False
-
     def get_status(self) -> str:
-        """Get server status."""
-        if self.server_type == "stdio":
-            return "stdio (MCP integration)"
-        if self.is_running():
-            return "running"
-        return self.status
-
-    def get_log_path(self) -> Path:
-        """Get the log file path for this server."""
-        # Keep hyphens as servers log to files with hyphens (e.g., security-detections.log)
-        return Path(f"/tmp/{self.name}.log")
+        """Catalog row only. Whether the session is up is the MCP client's."""
+        return "stopped"
 
 
 class MCPService:
@@ -326,23 +222,6 @@ class MCPService:
 
         return value
 
-    def _detect_server_type(self, args: List[str]) -> str:
-        """
-        Detect if a server is FastMCP or stdio-based by checking the module path.
-
-        FastMCP servers: none in-repo; Vigil's own tools run in this process.
-        Stdio servers: All others (designed for advanced MCP integration)
-        """
-        for arg in args:
-            # Every in-repo server lives under tools/mcp/.
-            if "." in arg and arg.startswith("tools"):
-                fastmcp_tools = []
-                for fastmcp in fastmcp_tools:
-                    if fastmcp in arg:
-                        return "fastmcp"
-                return "stdio"
-        return "unknown"
-
     def reload_server_configs(self) -> None:
         """Rebuild server configs so a connectorUrl saved after startup is
         re-substituted into the init-time-cached spawn args."""
@@ -445,7 +324,6 @@ class MCPService:
                             "args": args,
                             "cwd": cwd,
                             "env": env,
-                            "server_type": self._detect_server_type(args),
                             "required_env_vars": required_env_vars,
                         }
                     )
@@ -455,13 +333,10 @@ class MCPService:
                 )
             except Exception as e:
                 logger.error(f"Error loading mcp-config.json: {e}")
-                # Fall back to default servers if config loading fails
-                server_configs = self._get_default_servers(
-                    python_exe_str, project_path_str
-                )
+                server_configs = []
         else:
-            logger.warning("mcp-config.json not found, using default servers")
-            server_configs = self._get_default_servers(python_exe_str, project_path_str)
+            logger.warning("mcp-config.json not found")
+            server_configs = []
 
         # Dynamically update security-detections server env vars from DetectionRulesService
         for config in server_configs:
@@ -495,52 +370,6 @@ class MCPService:
 
         return config
 
-    def _get_default_servers(
-        self, python_exe_str: str, project_path_str: str
-    ) -> List[Dict]:
-        """Get default server configurations if mcp-config.json is not available."""
-        return [
-            # Vigil's own tools are in this process, so there is no in-repo
-            # server to fall back to: an absent config file means no vendor
-            # servers, not a Vigil without tools.
-        ]
-
-    # NOTE: the former `start_server` / `start_all` / `stop_all` methods were
-    # removed when the MCP enable toggle became the single runtime lever.
-    # They were Popen-subprocess monitors that explicitly refused stdio
-    # servers (every server in mcp-config.json is stdio), so they never
-    # worked for users anyway. Runtime connect/disconnect is now owned by
-    # core.integrations.mcp.client.connect_to_server / disconnect_from_server.
-
-    def stop_server(self, server_name: str) -> bool:
-        """Stop a Popen-managed server if one was spawned.
-
-        Kept for completeness: a stdio server never gets a Popen child via
-        this class (it's driven by the MCP SDK's ``stdio_client`` through
-        ``mcp_client``), so for the current config this is effectively a
-        no-op. Still called defensively from ``PUT /enabled`` when a
-        non-stdio ``running`` status is observed.
-        """
-        if server_name not in self.servers:
-            logger.error(f"Unknown server: {server_name}")
-            return False
-        return self.servers[server_name].stop()
-
-    def get_server_status(self, server_name: str) -> Optional[str]:
-        """
-        Get the status of an MCP server.
-
-        Args:
-            server_name: Name of the server.
-
-        Returns:
-            Status string or None if server not found.
-        """
-        if server_name not in self.servers:
-            return None
-
-        return self.servers[server_name].get_status()
-
     def get_all_statuses(self) -> Dict[str, str]:
         """
         Get status of all servers.
@@ -552,50 +381,6 @@ class MCPService:
         for name, server in self.servers.items():
             statuses[name] = server.get_status()
         return statuses
-
-    def get_server_log(self, server_name: str, lines: int = 100) -> str:
-        """
-        Get log content for a server.
-
-        Args:
-            server_name: Name of the server.
-            lines: Number of lines to retrieve (from end).
-
-        Returns:
-            Log content as string.
-        """
-        if server_name not in self.servers:
-            return ""
-
-        log_path = self.servers[server_name].get_log_path()
-
-        if not log_path.exists():
-            return f"Log file not yet created. Start the server to generate logs.\n\nExpected log path: {log_path}"
-
-        try:
-            with open(log_path, "r") as f:
-                all_lines = f.readlines()
-                if not all_lines:
-                    return f"Log file is empty. Server may not have started yet.\n\nLog path: {log_path}"
-                return "".join(all_lines[-lines:])
-        except Exception as e:
-            return f"Error reading log: {e}"
-
-    def test_server(self, server_name: str) -> bool:
-        """
-        Test if a server is responding.
-
-        Args:
-            server_name: Name of the server to test.
-
-        Returns:
-            True if server appears to be running, False otherwise.
-        """
-        if server_name not in self.servers:
-            return False
-
-        server = self.servers[server_name]
-        return server.is_running()
 
     def list_servers(self) -> List[str]:
         """

@@ -123,9 +123,6 @@ async def test_failed_detections_restart_keeps_registered_tools():
     class _Service:
         servers = {"security-detections": _Server()}
 
-        def stop_server(self, name):
-            return None
-
     class _Client:
         mcp_service = _Service()
 

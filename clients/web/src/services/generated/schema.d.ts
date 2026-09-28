@@ -4981,10 +4981,7 @@ export interface paths {
          *
          *     Reinitialises the process-wide ``MCPService`` in place so both the
          *     API and the ``MCPClient`` see the new catalog. Previously-enabled
-         *     servers are reconnected automatically; the old Popen-monitor path
-         *     is gone (#125), so there's nothing here analogous to "restart
-         *     running servers" — just enumerate new servers and let the enable
-         *     toggle drive connects.
+         *     servers are reconnected automatically.
          */
         post: operations["post_api_mcp_servers_reload"];
         delete?: never;
@@ -5039,82 +5036,6 @@ export interface paths {
          *     bad binary) when the connect attempt fails.
          */
         put: operations["put_api_mcp_servers_server_name_enabled"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/servers/{server_name}/logs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Server Logs
-         * @description Get logs for a specific server.
-         *
-         *     Args:
-         *         server_name: Name of the server
-         *         lines: Number of log lines to retrieve
-         *
-         *     Returns:
-         *         Server logs
-         */
-        get: operations["get_api_mcp_servers_server_name_logs"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/servers/{server_name}/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Server Status
-         * @description Get status of a specific server.
-         *
-         *     Args:
-         *         server_name: Name of the server
-         *
-         *     Returns:
-         *         Server status
-         */
-        get: operations["get_api_mcp_servers_server_name_status"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/mcp/servers/{server_name}/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Test Server
-         * @description Test if a server is responding.
-         *
-         *     Admin-gated because the underlying ``test_server`` call can spawn
-         *     a subprocess to probe a stdio MCP server.
-         */
-        get: operations["get_api_mcp_servers_server_name_test"];
-        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -20447,107 +20368,6 @@ export interface operations {
                 "application/json": components["schemas"]["ServerEnabledRequest"];
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_mcp_servers_server_name_logs: {
-        parameters: {
-            query?: {
-                lines?: number;
-            };
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                server_name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_mcp_servers_server_name_status: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                server_name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_api_mcp_servers_server_name_test: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path: {
-                server_name: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

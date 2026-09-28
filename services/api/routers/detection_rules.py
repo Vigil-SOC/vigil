@@ -241,9 +241,6 @@ async def _restart_security_detections_mcp(
                 server = mcp_service.servers[server_name]
                 server.env.update(env_vars)
 
-                # Stop and restart
-                mcp_service.stop_server(server_name)
-
                 # Restart, not disable: a failed reconnect must not hide tools.
                 await mcp_client.disconnect_from_server(server_name)
                 reconnected = await mcp_client.connect_to_server(

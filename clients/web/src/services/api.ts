@@ -424,16 +424,6 @@ export const mcpApi = {
 
   getStatuses: () => api.get('/mcp/servers/status'),
 
-  getServerStatus: (name: string) => api.get(`/mcp/servers/${name}/status`),
-
-  // start/stop were removed: every server in mcp-config.json is stdio-based and
-  // those endpoints refused stdio. setServerEnabled below triggers the connect.
-
-  getLogs: (name: string, lines: number = 100) =>
-    api.get(`/mcp/servers/${name}/logs`, { params: { lines } }),
-
-  testServer: (name: string) => api.get(`/mcp/servers/${name}/test`),
-
   getEnabledStates: () => api.get('/mcp/servers/enabled'),
 
   setServerEnabled: (name: string, enabled: boolean) =>
