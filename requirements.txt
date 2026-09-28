@@ -28,7 +28,7 @@ PyYAML>=6.0.3
 # 0.129.0 is the first release with Depends(scope=...), which the per-request
 # unit-of-work boundary needs — see core/routing.py.
 fastapi>=0.141.1
-uvicorn[standard]>=0.27.0
+uvicorn[standard]>=0.53.0
 python-multipart>=0.0.32
 email-validator>=2.0.0
 
