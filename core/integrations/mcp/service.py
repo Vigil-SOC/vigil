@@ -310,10 +310,10 @@ class MCPService:
         def replace_var(match):
             var_name = match.group(1)
             default = match.group(2)
-            env_val = source.get(var_name)  # operator export wins
-            if env_val is None:
-                env_val = get_secret(var_name)  # UI-set credential, no restart needed
-            if env_val is not None:
+            # A non-empty export wins; empty counts as unset, as in bash ${VAR:-d}
+            # and everywhere else credentials resolve.
+            env_val = source.get(var_name) or get_secret(var_name)
+            if env_val:
                 return env_val
             if default is not None:
                 return self._substitute_env_vars(default, env)

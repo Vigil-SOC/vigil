@@ -215,6 +215,41 @@ class TestSubstituteEnvVars:
         monkeypatch.setenv("VIGIL_DIR", "/custom/vigil")
         assert service._substitute_env_vars(line) == "/custom/vigil/workspace"
 
+    def test_empty_export_falls_through_to_stored_secret(self):
+        from core.integrations.mcp.service import MCPService
+
+        service = MCPService()
+        with patch(
+            "core.integrations.mcp.service.get_secret", return_value="vt-saved"
+        ):
+            assert (
+                service._substitute_env_vars(
+                    "${VIRUSTOTAL_API_KEY}", {"VIRUSTOTAL_API_KEY": ""}
+                )
+                == "vt-saved"
+            )
+
+    def test_empty_export_and_no_secret_uses_default(self):
+        from core.integrations.mcp.service import MCPService
+
+        service = MCPService()
+        with patch("core.integrations.mcp.service.get_secret", return_value=None):
+            assert service._substitute_env_vars("${X:-d}", {"X": ""}) == "d"
+
+    def test_non_empty_export_beats_stored_secret(self):
+        from core.integrations.mcp.service import MCPService
+
+        service = MCPService()
+        with patch(
+            "core.integrations.mcp.service.get_secret", return_value="vt-saved"
+        ):
+            assert (
+                service._substitute_env_vars(
+                    "${VIRUSTOTAL_API_KEY}", {"VIRUSTOTAL_API_KEY": "vt-export"}
+                )
+                == "vt-export"
+            )
+
 
 class TestRetryDormantIfReady:
     """`retry_dormant_if_ready` should only retry servers whose creds now resolve."""
