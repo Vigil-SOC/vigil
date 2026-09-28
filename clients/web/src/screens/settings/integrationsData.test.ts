@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   getIntegrationForServer,
-  HIDDEN_MCP_SERVERS,
   MCP_CATEGORIES,
   SERVER_TO_INTEGRATION,
 } from './integrationsData'
@@ -29,8 +28,8 @@ describe('getIntegrationForServer', () => {
   })
 
   it('shows the self-hosted server as a Settings card', () => {
-    expect(HIDDEN_MCP_SERVERS.has('splunk-selfhosted')).toBe(false)
     const siem = MCP_CATEGORIES.find((c) => c.servers.includes('splunk-selfhosted'))
     expect(siem?.servers).toContain('splunk')
+    expect(siem?.servers).toContain('splunk-selfhosted')
   })
 })

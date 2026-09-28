@@ -1,11 +1,6 @@
 import { getAllIntegrations } from '../../config/integrations'
 import type { IntegrationMetadata } from '../../config/integrationSchema'
 
-/** Servers in mcp-config.json that get no Settings card. Empty since the
- *  self-hosted Splunk server became the card the Splunk REST form configures;
- *  kept so the filter in IntegrationsSection stays one place to hide a server. */
-export const HIDDEN_MCP_SERVERS = new Set<string>([])
-
 export const SERVER_TO_INTEGRATION = new Map(Object.entries({
   'aws-security': 'aws-security-hub',
   'gcp-scc': 'gcp-security',
@@ -13,14 +8,10 @@ export const SERVER_TO_INTEGRATION = new Map(Object.entries({
   'splunk-selfhosted': 'splunk',
 }))
 
-/** Servers whose card opens no catalog form. Both Splunk servers share the
- *  descriptor id `splunk`, and the name fallback below would otherwise hand the
- *  official `splunk` card the REST form that configures `splunk-selfhosted`.
- *  The official server is configured by SPLUNK_MCP_URL in the environment. */
-const SERVERS_WITHOUT_CATALOG_FORM = new Set(['splunk'])
-
 export function getIntegrationForServer(serverName: string): IntegrationMetadata | undefined {
-  if (SERVERS_WITHOUT_CATALOG_FORM.has(serverName)) return undefined
+  // Both servers share descriptor id `splunk`. The official card is configured
+  // by SPLUNK_MCP_URL; the name fallback would hand it the REST form.
+  if (serverName === 'splunk') return undefined
   const id = SERVER_TO_INTEGRATION.get(serverName) ?? serverName
   return getAllIntegrations().find((i) => i.id === id)
 }

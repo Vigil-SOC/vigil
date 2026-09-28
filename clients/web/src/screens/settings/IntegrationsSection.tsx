@@ -5,7 +5,6 @@ import { useMcpServers, useIntegrationsConfig } from './useSettings'
 import { useExtensions } from '../../extensions/ExtensionProvider'
 import {
   getIntegrationForServer,
-  HIDDEN_MCP_SERVERS,
   MCP_CATEGORIES,
   SERVER_DESCRIPTIONS,
   SERVER_DISPLAY_NAMES,
@@ -59,11 +58,6 @@ function ServersPanel({ notify }: SectionProps) {
   const [builderOpen, setBuilderOpen] = useState(false)
   const [wizardFor, setWizardFor] = useState<IntegrationMetadata | null>(null)
 
-  const visible = useMemo(
-    () => servers.filter((n) => !HIDDEN_MCP_SERVERS.has(n)),
-    [servers],
-  )
-
   const grouped = useMemo(() => {
     const q = search.toLowerCase()
     const match = (n: string) =>
@@ -71,18 +65,18 @@ function ServersPanel({ notify }: SectionProps) {
     const claimed = new Set<string>()
     const out: { label: string; servers: string[] }[] = []
     for (const cat of MCP_CATEGORIES) {
-      const inCat = visible.filter((n) => cat.servers.includes(n))
+      const inCat = servers.filter((n) => cat.servers.includes(n))
       inCat.forEach((n) => claimed.add(n))
       const shown = inCat.filter(match)
       if (shown.length) out.push({ label: cat.label, servers: shown })
     }
-    const other = visible.filter((n) => !claimed.has(n)).filter(match)
+    const other = servers.filter((n) => !claimed.has(n)).filter(match)
     if (other.length) out.push({ label: 'Other', servers: other })
     return out
-  }, [visible, search])
+  }, [servers, search])
 
-  const enabledCount = visible.filter((n) => enabled[n]).length
-  const runningCount = visible.filter((n) => statuses[n] === 'running').length
+  const enabledCount = servers.filter((n) => enabled[n]).length
+  const runningCount = servers.filter((n) => statuses[n] === 'running').length
 
   // gate M: MCP server on/off (agent tools)
   const onToggleMcp = async (name: string, want: boolean) => {
@@ -115,7 +109,7 @@ function ServersPanel({ notify }: SectionProps) {
         <div className="flex gap-2 flex-wrap flex-1">
           <span className="chip" style={{ color: 'var(--accent-2)' }}>{enabledCount} Enabled</span>
           <span className="chip" style={{ color: 'var(--ok)' }}>{runningCount} Running</span>
-          <span className="chip">{visible.length} Active</span>
+          <span className="chip">{servers.length} Active</span>
         </div>
         <div className="search" style={{ minWidth: 220 }}>
           <Icon name="search" size={15} />
