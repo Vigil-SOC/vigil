@@ -397,16 +397,78 @@ def _load_json_config(path: Path) -> dict:
         return {}
 
 
+def load_integrations_config(config_service: Any = None) -> dict[str, Any]:
+    """Enabled set and per-integration config. The database owns both.
+
+    Rows in ``integration_configs`` win. ``integrations_config.json`` is only
+    the fallback when that table is empty or unreachable — ``list_integrations``
+    already returns ``[]`` on error, and a failure before that call is treated
+    the same way. ``configured`` is false only when neither source has anything.
+
+    Pass ``config_service`` when the caller already holds one (the settings
+    route). Otherwise this builds one. An integration that is not enabled is
+    still present under ``integrations``; ``get_integration_config`` is what
+    hides it.
+    """
+    rows = _integration_rows(config_service)
+    if rows:
+        return {
+            "configured": True,
+            "enabled_integrations": [
+                row["integration_id"] for row in rows if row.get("enabled")
+            ],
+            "integrations": {
+                row["integration_id"]: row.get("config") or {} for row in rows
+            },
+        }
+    return _integrations_from_file()
+
+
+def _integration_rows(config_service: Any) -> list:
+    try:
+        if config_service is None:
+            # core.storage.connection imports get_settings from this module, so
+            # a top-level import of core.storage would cycle.
+            from core.storage.config_service import get_config_service
+
+            config_service = get_config_service()
+        return config_service.list_integrations() or []
+    except Exception:
+        logger.warning(
+            "Integration config unavailable from the database; using the file",
+            exc_info=True,
+        )
+        return []
+
+
+def _integrations_from_file() -> dict[str, Any]:
+    path = vigil_path("integrations_config.json")
+    if not path.exists():
+        return {
+            "configured": False,
+            "enabled_integrations": [],
+            "integrations": {},
+        }
+    data = _load_json_config(path)
+    integrations = data.get("integrations") or {}
+    return {
+        "configured": True,
+        "enabled_integrations": list(data.get("enabled_integrations") or []),
+        "integrations": {
+            integration_id: cfg or {} for integration_id, cfg in integrations.items()
+        },
+    }
+
+
 def get_integration_config(integration_id: str) -> dict[str, Any]:
-    data = _load_json_config(vigil_path("integrations_config.json"))
-    if integration_id not in data.get("enabled_integrations", []):
+    data = load_integrations_config()
+    if integration_id not in data["enabled_integrations"]:
         return {}
-    return data.get("integrations", {}).get(integration_id, {})
+    return data["integrations"].get(integration_id) or {}
 
 
 def is_integration_enabled(integration_id: str) -> bool:
-    data = _load_json_config(vigil_path("integrations_config.json"))
-    return integration_id in data.get("enabled_integrations", [])
+    return integration_id in load_integrations_config()["enabled_integrations"]
 
 
 def get_general_config(key: str, default: Any = None) -> Any:

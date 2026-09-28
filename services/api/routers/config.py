@@ -7,7 +7,12 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.config import get_settings, state_dir_status, vigil_path
+from core.config import (
+    get_settings,
+    load_integrations_config,
+    state_dir_status,
+    vigil_path,
+)
 from core.deps import provide_demo_data, provide_integration_bridge
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
@@ -664,47 +669,29 @@ async def get_integrations_config():
         Configuration status and enabled integrations
     """
     try:
-        # Try database first
-        config_service = get_config_service()
-        integrations_list = config_service.list_integrations()
-
-        if integrations_list:
-            enabled_integrations = [
-                i["integration_id"] for i in integrations_list if i["enabled"]
-            ]
-            # Redact registered secret fields so the frontend never receives
-            # plaintext credentials. Pre-secret-store rows may still contain
-            # them — strip on read so any legacy plaintext is sanitized.
-            integrations = {
-                i["integration_id"]: redact_secrets(
-                    i["integration_id"], i["config"] or {}
-                )
-                for i in integrations_list
-            }
+        # Same reader the daemon uses: database rows when the table has any,
+        # JSON file only when it is empty or unreachable.
+        loaded = load_integrations_config(get_config_service())
+        if not loaded["configured"]:
             return {
-                "configured": True,
-                "enabled_integrations": enabled_integrations,
-                "integrations": integrations,
-                "secrets_set": _secrets_set_map(integrations),
+                "configured": False,
+                "enabled_integrations": [],
+                "integrations": {},
             }
 
-        # Fallback to file-based config
-        config_file = vigil_path("integrations_config.json")
-        if config_file.exists():
-            with open(config_file, "r") as f:
-                config = json.load(f)
-                redacted = {
-                    iid: redact_secrets(iid, cfg or {})
-                    for iid, cfg in (config.get("integrations") or {}).items()
-                }
-                return {
-                    "configured": True,
-                    "enabled_integrations": config.get("enabled_integrations", []),
-                    "integrations": redacted,
-                    "secrets_set": _secrets_set_map(redacted),
-                }
-
-        return {"configured": False, "enabled_integrations": [], "integrations": {}}
+        # Redact registered secret fields so the frontend never receives
+        # plaintext credentials. Pre-secret-store rows may still contain
+        # them — strip on read so any legacy plaintext is sanitized.
+        redacted = {
+            iid: redact_secrets(iid, cfg or {})
+            for iid, cfg in loaded["integrations"].items()
+        }
+        return {
+            "configured": True,
+            "enabled_integrations": loaded["enabled_integrations"],
+            "integrations": redacted,
+            "secrets_set": _secrets_set_map(redacted),
+        }
     except Exception as e:
         logger.error(f"Error getting integrations config: {e}")
         return {
