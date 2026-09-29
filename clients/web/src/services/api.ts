@@ -637,60 +637,8 @@ export interface LLMProvider {
   updated_at: string | null
 }
 
-export interface LLMProviderCreate {
-  provider_id?: string
-  provider_type: 'anthropic' | 'openai' | 'ollama' | 'vertex'
-  name: string
-  base_url?: string
-  api_key?: string
-  default_model: string
-  is_active?: boolean
-  is_default?: boolean
-  config?: Record<string, any>
-}
-
-export interface LLMProviderUpdate {
-  name?: string
-  base_url?: string
-  api_key?: string
-  default_model?: string
-  is_active?: boolean
-  is_default?: boolean
-  config?: Record<string, any>
-}
-
 export const llmProviderApi = {
   list: () => api.get<LLMProvider[]>('/llm/providers/'),
-  create: (data: LLMProviderCreate) => api.post<LLMProvider>('/llm/providers/', data),
-  discoverModels: (data: {
-    provider_type: string
-    base_url?: string
-    api_key?: string
-    organization?: string
-  }) => api.post<{ models: string[] }>('/llm/providers/discover-models', data),
-  update: (providerId: string, data: LLMProviderUpdate) =>
-    api.put<LLMProvider>(`/llm/providers/${providerId}`, data),
-  remove: (providerId: string) => api.delete(`/llm/providers/${providerId}`),
-  test: (providerId: string) =>
-    api.post<{ success: boolean; provider_id: string; error: string | null }>(
-      `/llm/providers/${providerId}/test`,
-    ),
-  // no provider row required, so the wizard can verify before anything persists
-  testConnection: (data: {
-    provider_type: string
-    base_url?: string
-    api_key?: string
-    default_model?: string
-    organization?: string
-  }) =>
-    api.post<{ success: boolean; error: string | null }>(
-      '/llm/providers/test-connection',
-      data,
-    ),
-  listModels: (providerId: string) =>
-    api.get<{ models: string[] }>(`/llm/providers/${providerId}/models`),
-  setDefault: (providerId: string) =>
-    api.post<LLMProvider>(`/llm/providers/${providerId}/set-default`),
 }
 
 export interface AIModelInfo {
