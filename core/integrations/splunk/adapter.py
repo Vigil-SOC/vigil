@@ -57,20 +57,18 @@ class SplunkAdapter:
             return self._service
         if not self.is_configured():
             return None
-        try:
-            from core.integrations.splunk.client import SplunkService
+        from core.integrations.splunk.client import SplunkService
 
-            # resolve() reads the password from the secrets store; unset fields are None.
-            cfg = resolve(SPLUNK)
-            self._service = SplunkService(
-                server_url=cfg["server_url"] or "",
-                username=cfg["username"] or "",
-                password=cfg["password"] or "",
-                verify_ssl=bool(cfg["verify_ssl"]),
-            )
-        except Exception as e:
-            logger.warning("Splunk service init failed: %s", e)
-            self._service = None
+        # A configured source whose service cannot be built is failing, not
+        # empty: let the error reach the runner so the cursor is kept.
+        # resolve() reads the password from the secrets store; unset fields are None.
+        cfg = resolve(SPLUNK)
+        self._service = SplunkService(
+            server_url=cfg["server_url"] or "",
+            username=cfg["username"] or "",
+            password=cfg["password"] or "",
+            verify_ssl=bool(cfg["verify_ssl"]),
+        )
         return self._service
 
     async def fetch(
@@ -95,7 +93,13 @@ class SplunkAdapter:
             # First run: tiny window so we don't replay history.
             earliest_time = "-1m"
 
+        # search() returns None on any error (it logs and swallows them), so a
+        # query failed if it returned None or raised. An empty list ran and
+        # found nothing; it still falls through, since on non-ES installs
+        # `index=notable` is empty by design and the fallbacks must be reached.
         events = []
+        any_ran = False
+        last_error: Optional[Exception] = None
         for query_tmpl in _QUERIES:
             query = query_tmpl.format(limit=max_items)
             try:
@@ -107,12 +111,25 @@ class SplunkAdapter:
                     latest_time="now",
                     max_count=max_items,
                 )
-                if results:
-                    events = results
-                    break
             except Exception as e:
-                logger.debug("Splunk query failed (%s): %s", query, e)
+                logger.warning("Splunk query failed (%s): %s", query, e)
+                last_error = e
                 continue
+            if results is None:
+                logger.warning(
+                    "Splunk query failed (%s): search returned no result", query
+                )
+                continue
+            any_ran = True
+            if results:
+                events = results
+                break
+
+        # Every query failed: raise so the runner records a failure and keeps
+        # the cursor, instead of advancing it past the outage window.
+        if not any_ran:
+            detail = f": {last_error}" if last_error is not None else ""
+            raise RuntimeError(f"Splunk: every search query failed{detail}")
 
         findings = []
         for event in events[:max_items]:
