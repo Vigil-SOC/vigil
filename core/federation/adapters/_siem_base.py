@@ -47,6 +47,7 @@ class SIEMIngestionAdapter:
         service_factory: Callable[[], Any],
         external_id_prefix: str,
         alert_time: Optional[Callable[[Dict[str, Any]], Optional[datetime]]] = None,
+        settle_delay: Optional[timedelta] = None,
     ) -> None:
         self.name = name
         self._integration_id = integration_id
@@ -59,6 +60,12 @@ class SIEMIngestionAdapter:
         # cursor goes to now, as it did before, and a full batch skips the rest
         # of its window.
         self._alert_time = alert_time
+        # For sources that index an alert some time after its creation stamp
+        # (Filebeat into Elasticsearch/OpenSearch): each tick reads only up to
+        # now - settle_delay and persists that instant, so an alert still in
+        # flight at poll time is read on a later tick instead of skipped. The
+        # service must honour ``end_time``.
+        self._settle_delay = settle_delay
 
     def is_configured(self) -> bool:
         return is_integration_enabled(self._integration_id)
@@ -87,10 +94,18 @@ class SIEMIngestionAdapter:
         if svc is None:
             return FetchResult(findings=[], cursor=fresh_cursor())
 
+        # Taken before the fetch: the cursor never moves past the "now" the
+        # pre-change code would have stored, even if a source returns an alert
+        # stamped ahead of our clock. With a settle delay, "now" is the end of
+        # the settled window.
+        now = utcnow()
+        window_end = now - self._settle_delay if self._settle_delay else None
+        horizon = window_end or now
+
         start_time = parse_cursor_since(cursor) or since
         if start_time is None:
             # First run: small window so we don't backfill on enable.
-            start_time = utcnow() - timedelta(minutes=1)
+            start_time = horizon - timedelta(minutes=1)
 
         # A raised fetch reaches the runner, which records the failure and keeps
         # the cursor; swallowing it here would advance the cursor past alerts
@@ -100,13 +115,10 @@ class SIEMIngestionAdapter:
         # fit must be the newest ones so the next tick, starting from the newest
         # returned time, picks them up. Newest-first would drop the oldest of
         # the window for good.
-        # Taken before the fetch: the cursor never moves past the "now" the
-        # pre-change code would have stored, even if a source returns an alert
-        # stamped ahead of our clock.
-        now = utcnow()
+        extra = {"end_time": window_end} if window_end else {}
         alerts = list(
             await svc.fetch_alerts(
-                start_time=start_time, limit=max_items, oldest_first=True
+                start_time=start_time, limit=max_items, oldest_first=True, **extra
             )
             or []
         )
@@ -138,14 +150,24 @@ class SIEMIngestionAdapter:
         return FetchResult(
             findings=findings,
             cursor=self._next_cursor(
-                alerts, truncated=truncated, start=start_time, now=now
+                alerts, truncated=truncated, start=start_time, now=horizon
             ),
         )
+
+    def _drained_cursor(self, start: datetime, now: datetime) -> Dict[str, Any]:
+        if not self._settle_delay:
+            return fresh_cursor()
+        # The window read ended at ``now`` (now - settle_delay); never step
+        # back behind a cursor that was already later than that.
+        return cursor_at(max(start, now))
 
     def _next_cursor(
         self, alerts: list, *, truncated: bool, start: datetime, now: datetime
     ) -> Dict[str, Any]:
         """Where the next tick starts.
+
+        ``now`` is the end of the window read: the clock, or with a settle
+        delay the clock minus that delay.
 
         A short batch drained its window, so the cursor moves to now. A full
         batch may have left alerts behind, so the cursor stops at the newest
@@ -158,7 +180,7 @@ class SIEMIngestionAdapter:
         times would be skipped.
         """
         if not truncated or self._alert_time is None:
-            return fresh_cursor()
+            return self._drained_cursor(start, now)
 
         newest: Optional[datetime] = None
         for alert in alerts:
@@ -180,12 +202,12 @@ class SIEMIngestionAdapter:
                 self.name,
                 len(alerts),
             )
-            return fresh_cursor()
+            return self._drained_cursor(start, now)
 
         if newest > now:
             logger.warning(
                 "Federation %s: newest alert time %s is ahead of this host's clock "
-                "%s; capping the cursor at the clock",
+                "(window end %s); capping the cursor there",
                 self.name,
                 newest.isoformat(),
                 now.isoformat(),
