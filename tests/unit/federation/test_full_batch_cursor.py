@@ -4,7 +4,8 @@
 or not the batch filled ``max_items``. When more than ``max_items`` alerts
 arrived between two ticks, the next tick started at now and the rest of that
 window was never fetched. The cursor now stops at the newest alert returned
-when the batch was full, and only moves to now when the batch was short.
+when the batch was full, and only moves to now (less the settling margin)
+when the batch was short.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from core.federation.adapters._base import (
+    SETTLING_MARGIN,
     cursor_at,
     parse_alert_time,
     parse_cursor_since,
@@ -115,7 +117,9 @@ async def test_next_tick_starts_at_that_time_and_returns_the_remainder(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_short_batch_still_advances_the_cursor_to_now(monkeypatch):
+async def test_short_batch_advances_the_cursor_to_now_less_the_settling_margin(
+    monkeypatch,
+):
     svc = _WindowService([_alert(i, T0 + timedelta(minutes=i)) for i in range(1, 3)])
     adapter = _adapter(svc, monkeypatch)
 
@@ -123,7 +127,7 @@ async def test_short_batch_still_advances_the_cursor_to_now(monkeypatch):
     result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
 
     assert len(result.findings) == 2
-    assert parse_cursor_since(result.cursor) >= before
+    assert parse_cursor_since(result.cursor) >= before - SETTLING_MARGIN
 
 
 @pytest.mark.asyncio
@@ -191,7 +195,7 @@ async def test_full_batch_without_a_time_reader_falls_back_to_now(monkeypatch):
     before = utcnow()
     result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
 
-    assert parse_cursor_since(result.cursor) >= before
+    assert parse_cursor_since(result.cursor) >= before - SETTLING_MARGIN
 
 
 @pytest.mark.asyncio
@@ -204,7 +208,7 @@ async def test_full_batch_with_unreadable_times_falls_back_to_now(monkeypatch, c
     with caplog.at_level("WARNING"):
         result = await adapter.fetch(since=None, cursor=cursor_at(T0), max_items=3)
 
-    assert parse_cursor_since(result.cursor) >= before
+    assert parse_cursor_since(result.cursor) >= before - SETTLING_MARGIN
     assert "no alert carried a readable time" in caplog.text
 
 
@@ -268,10 +272,11 @@ async def test_runner_persists_the_newest_time_and_the_next_tick_drains(monkeypa
     # a3 a4 a5 fills max_items again, so the cursor stops at a5's time.
     assert parse_cursor_since(stored[1]) == T0 + timedelta(minutes=5)
 
-    # Only the boundary alert is left: a short batch, so the cursor moves to now.
+    # Only the boundary alert is left: a short batch, so the cursor moves to
+    # now less the settling margin.
     before = utcnow()
     await runner._do_one_tick(adapter, {**row, "cursor": stored[1]})
-    assert parse_cursor_since(stored[2]) >= before
+    assert parse_cursor_since(stored[2]) >= before - SETTLING_MARGIN
 
     enqueued = []
     while not queue.empty():

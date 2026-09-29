@@ -8,7 +8,12 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from core.config import is_integration_enabled
-from core.federation.adapters._base import fresh_cursor, parse_cursor_since
+from core.federation.adapters._base import (
+    fresh_cursor,
+    next_cursor,
+    parse_alert_time,
+    parse_cursor_since,
+)
 from core.federation.contract import (
     FederationAdapter,
     FetchResult,
@@ -19,6 +24,11 @@ from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+# The details call takes at most 100 IDs, so a larger batch would be cut
+# short without looking full.
+_DETAILS_BATCH = 100
+_CURSOR_STEP = timedelta(milliseconds=1)
 
 _SEVERITY_MAP = {
     "Critical": "critical",
@@ -77,26 +87,38 @@ class CrowdStrikeAdapter:
             # First run: small window, no backfill.
             cutoff = utcnow() - timedelta(minutes=1)
 
-        try:
-            detections = (
-                await asyncio.to_thread(
-                    svc.get_detections,
-                    filter_query=f"created_timestamp:>='{cutoff.isoformat()}Z'",
-                    limit=max_items,
-                )
-                or []
-            )
-        except Exception as e:
-            logger.debug("CrowdStrike fetch failed: %s", e)
-            detections = []
+        limit = min(max_items, _DETAILS_BATCH)
+        now = utcnow()
+        detections = await asyncio.to_thread(
+            svc.get_detections,
+            filter_query=f"created_timestamp:>='{cutoff.isoformat()}Z'",
+            limit=limit,
+            sort="created_timestamp|asc",
+        )
+        if detections is None:
+            # Raised so the runner records a failure and keeps the cursor.
+            raise RuntimeError("CrowdStrike detections query failed")
 
+        # The details call does not keep the query's order.
+        detections = sorted(
+            detections[:limit],
+            key=lambda d: parse_alert_time(d.get("created_timestamp")) or now,
+        )
         findings = []
-        for det in detections[:max_items]:
+        for det in detections:
             f = _detection_to_finding(det)
             if f is not None:
                 findings.append(f)
 
-        return FetchResult(findings=findings, cursor=fresh_cursor())
+        cursor, more = next_cursor(
+            (parse_alert_time(d.get("created_timestamp")) for d in detections),
+            truncated=len(detections) >= limit,
+            start=cutoff,
+            now=now,
+            step=_CURSOR_STEP,
+            source=self.name,
+        )
+        return FetchResult(findings=findings, cursor=cursor, truncated=more)
 
 
 def _detection_to_finding(detection: Dict[str, Any]) -> Optional[Dict[str, Any]]:

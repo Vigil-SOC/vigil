@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from core.federation import registry as fed_registry
 from core.federation import store as fed_store
+from core.federation.adapters._base import SETTLING_MARGIN
 from core.federation.runner import request_poll_now
 from core.routing import Auth, RouterMeta
 
@@ -60,8 +61,15 @@ class FederationSourcePatch(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _enrich_with_adapter(row: Dict[str, Any]) -> Dict[str, Any]:
-    """Merge live adapter state (is_configured, default_interval) into a row dict."""
+def _enrich_with_adapter(
+    row: Dict[str, Any], *, global_enabled: bool
+) -> Dict[str, Any]:
+    """Merge live adapter state (is_configured, default_interval) and lag into a row dict."""
+    row["lag_seconds"] = fed_store.source_lag_seconds(
+        row, global_enabled=global_enabled
+    )
+    # A caught-up source's lag is about one interval plus this.
+    row["settling_margin_seconds"] = SETTLING_MARGIN.total_seconds()
     adapter = fed_registry.get_adapter(row["source_id"])
     if adapter is None:
         row["is_configured"] = False
@@ -105,6 +113,8 @@ async def list_sources() -> Dict[str, Any]:
     not configured are still listed but flagged ``is_configured=false``.
     """
     rows_by_id = {row["source_id"]: row for row in fed_store.list_sources()}
+    global_settings = fed_store.get_global_settings()
+    global_enabled = bool(global_settings.get("enabled", False))
 
     out: List[Dict[str, Any]] = []
     for adapter in fed_registry.list_adapters():
@@ -125,9 +135,9 @@ async def list_sources() -> Dict[str, Any]:
                 "last_error": None,
                 "consecutive_errors": 0,
             }
-        out.append(_enrich_with_adapter(dict(row)))
+        out.append(_enrich_with_adapter(dict(row), global_enabled=global_enabled))
 
-    return {"sources": out, "global": fed_store.get_global_settings()}
+    return {"sources": out, "global": global_settings}
 
 
 @router.patch("/sources/{source_id}")
@@ -175,7 +185,7 @@ async def patch_source(
 
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to persist source")
-    return _enrich_with_adapter(row)
+    return _enrich_with_adapter(row, global_enabled=fed_store.is_globally_enabled())
 
 
 @router.post("/sources/{source_id}/poll-now")

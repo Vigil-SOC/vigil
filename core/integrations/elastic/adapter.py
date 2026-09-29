@@ -13,6 +13,11 @@ def _alert_time(alert):
     return parse_alert_time((alert.get("_source") or {}).get("@timestamp"))
 
 
+def _alert_id(alert):
+    """The alert's uuid, the tie-breaker the oldest-first search sorts on."""
+    return (alert.get("_source") or {}).get("kibana.alert.uuid")
+
+
 def _factory() -> FederationAdapter:
     def make_service():
 
@@ -27,6 +32,7 @@ def _factory() -> FederationAdapter:
         service_factory=make_service,
         external_id_prefix="elastic",
         alert_time=_alert_time,
+        alert_id=_alert_id,
     )
 
 

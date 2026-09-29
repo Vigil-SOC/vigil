@@ -17,6 +17,11 @@ from core.time import utcnow
 logger = logging.getLogger(__name__)
 
 
+def _odata_time(when: datetime) -> str:
+    """Naive UTC as an OData v4 DateTimeOffset literal."""
+    return when.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 class AzureSentinelIngestion(SIEMIngestionService):
     """Azure Sentinel ingestion service."""
 
@@ -41,8 +46,10 @@ class AzureSentinelIngestion(SIEMIngestionService):
             end_time: End time for incident query
             limit: Maximum number of incidents to fetch
             oldest_first: Return the ``limit`` oldest incidents in the window,
-                sorted by creation time. The SDK iterator is unordered, so this
-                scans the whole window before applying ``limit``. Federation
+                sorted by creation time. The window, order and limit go to the
+                service as OData ``filter``/``orderby``/``top`` so a poll does
+                not page through the workspace's whole history; the scan and
+                sort below still hold if the service ignores them. Federation
                 asks for this; the default stops at ``limit`` in API order, as
                 the daemon poller has always read.
 
@@ -91,8 +98,21 @@ class AzureSentinelIngestion(SIEMIngestionService):
             # Fetch incidents
             incidents = []
             created_times = []  # parallel to incidents; the oldest_first sort key
+            server_side: Dict[str, Any] = {}
+            if oldest_first:
+                created = "properties/createdTimeUtc"
+                server_side = {
+                    "filter": (
+                        f"{created} ge {_odata_time(start_time)} "
+                        f"and {created} le {_odata_time(end_time)}"
+                    ),
+                    "orderby": f"{created} asc",
+                    "top": limit,
+                }
             incident_list = client.incidents.list(
-                resource_group_name=resource_group, workspace_name=workspace_name
+                resource_group_name=resource_group,
+                workspace_name=workspace_name,
+                **server_side,
             )
 
             for incident in incident_list:

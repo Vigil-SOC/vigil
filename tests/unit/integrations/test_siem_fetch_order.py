@@ -50,8 +50,42 @@ async def test_elastic_federation_call_sorts_oldest_first():
     svc = _elastic()
     await svc.fetch_alerts(oldest_first=True, limit=7)
     kwargs = svc._elastic_service.fetch_detection_alerts.call_args.kwargs
-    assert kwargs["sort_order"] == "asc"
+    # Alerts from one rule run share a millisecond, so the uuid breaks ties.
+    assert kwargs["sort"] == [
+        {"@timestamp": {"order": "asc"}},
+        {"kibana.alert.uuid": {"order": "asc"}},
+    ]
     assert kwargs["size"] == 7
+
+
+@pytest.mark.asyncio
+async def test_elastic_resumes_strictly_after_the_last_alert_at_the_start_instant():
+    svc = _elastic()
+    start = datetime(2026, 9, 28, 12, 0, 0, 123000)
+    await svc.fetch_alerts(start_time=start, oldest_first=True, after_id="u-7")
+    filters = svc._elastic_service.fetch_detection_alerts.call_args.kwargs["query"][
+        "bool"
+    ]["filter"]
+    assert filters[0] == {"range": {"@timestamp": {"gte": start.isoformat() + "Z"}}}
+    assert filters[1] == {
+        "bool": {
+            "should": [
+                {"range": {"@timestamp": {"gt": start.isoformat() + "Z"}}},
+                {"range": {"kibana.alert.uuid": {"gt": "u-7"}}},
+            ],
+            "minimum_should_match": 1,
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_elastic_without_after_id_filters_on_time_alone():
+    svc = _elastic()
+    await svc.fetch_alerts(oldest_first=True)
+    filters = svc._elastic_service.fetch_detection_alerts.call_args.kwargs["query"][
+        "bool"
+    ]["filter"]
+    assert len(filters) == 1
 
 
 # -- Microsoft Defender ----------------------------------------------------
@@ -209,6 +243,37 @@ async def test_sentinel_federation_call_scans_the_window_then_takes_the_oldest(
     _unordered_incidents(fake_azure_sdk)
     incidents = await _sentinel().fetch_alerts(limit=2, oldest_first=True)
     assert [i["id"] for i in incidents] == ["oldest", "mid"]
+
+
+@pytest.mark.asyncio
+async def test_sentinel_federation_call_filters_orders_and_limits_at_the_service(
+    fake_azure_sdk,
+):
+    _unordered_incidents(fake_azure_sdk)
+    start = datetime(2026, 9, 28, 12, 0, 0)
+    end = datetime(2026, 9, 28, 13, 0, 0, 500)
+    await _sentinel().fetch_alerts(
+        start_time=start, end_time=end, limit=2, oldest_first=True
+    )
+    kwargs = (
+        fake_azure_sdk.SecurityInsights.return_value.incidents.list.call_args.kwargs
+    )
+    assert kwargs["filter"] == (
+        "properties/createdTimeUtc ge 2026-09-28T12:00:00.000000Z "
+        "and properties/createdTimeUtc le 2026-09-28T13:00:00.000500Z"
+    )
+    assert kwargs["orderby"] == "properties/createdTimeUtc asc"
+    assert kwargs["top"] == 2
+
+
+@pytest.mark.asyncio
+async def test_sentinel_default_call_sends_no_server_side_query(fake_azure_sdk):
+    _unordered_incidents(fake_azure_sdk)
+    await _sentinel().fetch_alerts(limit=2)
+    kwargs = (
+        fake_azure_sdk.SecurityInsights.return_value.incidents.list.call_args.kwargs
+    )
+    assert set(kwargs) == {"resource_group_name", "workspace_name"}
 
 
 @pytest.mark.asyncio

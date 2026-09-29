@@ -26,10 +26,14 @@ class FetchResult:
     of the daemon already consumes — see ``core.ingestion.ingestion_service``).
     ``cursor`` is the new persisted cursor for the next fetch — the runner
     writes it to ``federation_sources.cursor`` after a successful fetch.
+    ``truncated`` is True when the fetch filled ``max_items`` and the source
+    may hold more past the cursor, so the runner fetches again without
+    waiting a full interval.
     """
 
     findings: List[Dict[str, Any]] = field(default_factory=list)
     cursor: Dict[str, Any] = field(default_factory=dict)
+    truncated: bool = False
 
 
 class FederationAdapter(Protocol):

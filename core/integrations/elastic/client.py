@@ -246,12 +246,16 @@ class ElasticService:
         size: int = 100,
         sort_field: str = "@timestamp",
         sort_order: str = "desc",
+        sort: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Fetch detection alerts via the Kibana Detections API."""
+        """Fetch detection alerts via the Kibana Detections API.
+
+        ``sort``, when given, replaces the single ``sort_field`` ordering.
+        """
         body: Dict[str, Any] = {
             "query": query or {"match_all": {}},
             "size": size,
-            "sort": [{sort_field: {"order": sort_order}}],
+            "sort": sort or [{sort_field: {"order": sort_order}}],
         }
         try:
             resp = await self.kibana_client.post(

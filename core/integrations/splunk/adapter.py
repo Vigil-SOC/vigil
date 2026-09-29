@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import uuid
-from datetime import datetime
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 
 from core.config import is_integration_enabled
-from core.federation.adapters._base import fresh_cursor, parse_cursor_since
+from core.federation.adapters._base import (
+    fresh_cursor,
+    next_cursor,
+    parse_cursor_since,
+)
 from core.federation.contract import (
     FederationAdapter,
     FetchResult,
@@ -25,10 +30,18 @@ logger = logging.getLogger(__name__)
 # specific notable index first, falling back to broader queries if it's empty
 # (matching pre-federation behavior).
 _QUERIES = [
-    "index=notable | head {limit}",
-    "index=security sourcetype=*:alert* | head {limit}",
-    "`notable` | head {limit}",
+    "index=notable",
+    "index=security sourcetype=*:alert*",
+    "`notable`",
 ]
+
+# The cursor follows when Splunk indexed an alert, not the alert's own _time,
+# so one that arrives late is still read. The event-time window only has to be
+# wide enough to include it.
+_LATE_ARRIVAL = timedelta(hours=24)
+# _indextime is whole seconds.
+_CURSOR_STEP = timedelta(seconds=1)
+_INDEX_TIME_FIELD = "vigil_indextime"
 
 _SEVERITY_MAP = {
     "critical": "critical",
@@ -84,43 +97,75 @@ class SplunkAdapter:
         if svc is None:
             return FetchResult(findings=[], cursor=fresh_cursor())
 
-        # Use cursor's last_poll_at when available; otherwise "now" sentinel
-        # (no cold-start backfill — federation MVP design).
-        last = parse_cursor_since(cursor) or since
-        if last is not None:
-            # Convert to relative Splunk earliest_time (rounded up to minute)
-            delta_minutes = max(int((utcnow() - last).total_seconds() // 60) + 1, 1)
-            earliest_time = f"-{delta_minutes}m"
-        else:
-            # First run: tiny window so we don't replay history.
-            earliest_time = "-1m"
+        # No cold-start backfill — federation MVP design.
+        start = parse_cursor_since(cursor) or since or utcnow() - timedelta(minutes=1)
+        now = utcnow()
 
-        events = []
-        for query_tmpl in _QUERIES:
-            query = query_tmpl.format(limit=max_items)
-            try:
-                # search() polls its job with time.sleep for up to ~60s.
-                results = await asyncio.to_thread(
-                    svc.search,
-                    query=query,
-                    earliest_time=earliest_time,
-                    latest_time="now",
-                    max_count=max_items,
-                )
-                if results:
-                    events = results
-                    break
-            except Exception as e:
-                logger.debug("Splunk query failed (%s): %s", query, e)
+        events: List[Dict[str, Any]] = []
+        answered = False
+        for base in _QUERIES:
+            # search() polls its job with time.sleep for up to ~60s.
+            results = await asyncio.to_thread(
+                svc.search,
+                query=_index_time_query(base, start, now, max_items),
+                earliest_time=str(math.floor(_epoch(start - _LATE_ARRIVAL))),
+                latest_time="now",
+                max_count=max_items,
+            )
+            if results is None:
+                logger.debug("Splunk query failed: %s", base)
                 continue
+            answered = True
+            if results:
+                events = results
+                break
+        if not answered:
+            # Raised so the runner records a failure and keeps the cursor.
+            raise RuntimeError("every Splunk alert query failed")
 
+        events = events[:max_items]
         findings = []
-        for event in events[:max_items]:
+        for event in events:
             f = _splunk_event_to_finding(event)
             if f is not None:
                 findings.append(f)
 
-        return FetchResult(findings=findings, cursor=fresh_cursor())
+        cursor, more = next_cursor(
+            (_index_time(e) for e in events),
+            truncated=len(events) >= max_items,
+            start=start,
+            now=now,
+            step=_CURSOR_STEP,
+            source=self.name,
+        )
+        return FetchResult(findings=findings, cursor=cursor, truncated=more)
+
+
+def _epoch(when: datetime) -> float:
+    return when.replace(tzinfo=timezone.utc).timestamp()
+
+
+def _index_time_query(base: str, start: datetime, end: datetime, limit: int) -> str:
+    """Alerts Splunk indexed in [start, end), oldest first.
+
+    The index-time bounds go in front: the ``notable`` macro expands to a
+    search with pipes, so anything appended after it would bind to its last
+    command.
+    """
+    return (
+        f"_index_earliest={math.floor(_epoch(start))} "
+        f"_index_latest={math.ceil(_epoch(end))} {base} "
+        f"| eval {_INDEX_TIME_FIELD}=_indextime "
+        f"| sort 0 {_INDEX_TIME_FIELD} | head {limit}"
+    )
+
+
+def _index_time(event: Dict[str, Any]) -> Optional[datetime]:
+    try:
+        seconds = float(event[_INDEX_TIME_FIELD])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return datetime.fromtimestamp(seconds, tz=timezone.utc).replace(tzinfo=None)
 
 
 def _splunk_event_to_finding(event: Dict[str, Any]) -> Optional[Dict[str, Any]]:
