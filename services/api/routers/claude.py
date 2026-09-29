@@ -323,11 +323,14 @@ async def _relay(
 
     said: List[str] = []
     finished = False
+    # Said only once the retried attempt answers, so a retry that fails too is
+    # relayed as a plain failure.
+    note: Optional[str] = None
     try:
         async with httpx.AsyncClient(timeout=None) as client:
             while True:
                 retry = None
-                held: Optional[List[str]] = [] if refit else None
+                held: Optional[List[str]] = [] if refit or note else None
                 async with client.stream(
                     "POST",
                     agent_route("/chat/stream"),
@@ -343,17 +346,20 @@ async def _relay(
                     async for line in upstream.aiter_lines():
                         if not line.startswith("data: "):
                             continue
-                        if refit is not None and held is not None:
+                        if held is not None:
                             event = _event_in(line[6:])
                             if event.get("type") == "context_windowed":
                                 held.append(line)
                                 continue
                             if "error" in event:
                                 maximum = tools_ceiling(str(event["error"]))
-                                refitted = refit(maximum) if maximum else None
+                                refitted = refit(maximum) if refit and maximum else None
                                 if refitted:
                                     retry = (maximum, *refitted)
                                     break
+                            elif note:
+                                said.append(note)
+                                yield _frame({"type": "text", "content": note})
                             for frame in held:
                                 yield f"{frame}\n\n"
                             held = None
@@ -370,8 +376,6 @@ async def _relay(
                     f"_Left out of this answer, because the model takes at most "
                     f"{maximum} tools: {', '.join(dropped)}._\n\n"
                 )
-                said.append(note)
-                yield _frame({"type": "text", "content": note})
         finished = True
     except Exception as exc:  # noqa: BLE001 — the reader gets a frame, not a 500
         logger.error("chat stream relay failed: %s", exc, exc_info=True)

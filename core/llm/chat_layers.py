@@ -173,7 +173,10 @@ def _declare(
 # The provider names its own ceiling when it refuses the array, and that number
 # is the only one used: nothing is configured or stored per model, and a
 # provider that has no ceiling, or says it another way, never reaches this.
-_TOOLS_CEILING = re.compile(r"\btools\b.*?\bmaximum length (\d+)", re.I | re.S)
+# The array itself, not ``tools[3].function.name``, whose length limit is not one.
+_TOOLS_CEILING = re.compile(
+    r"\btools\b(?!\[)[^\n]*?\barray\b[^\n]*?\bmaximum length (\d+)", re.I
+)
 
 
 def tools_ceiling(reason: str) -> Optional[int]:

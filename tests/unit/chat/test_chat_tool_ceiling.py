@@ -31,8 +31,8 @@ def _server(prefix: str, count: int):
 class _Upstream:
     """The agent layer: refuses a config declaring more than ``ceiling`` tools."""
 
-    def __init__(self, ceiling, reason=REJECTION):
-        self.ceiling, self.reason, self.posts = ceiling, reason, []
+    def __init__(self, ceiling, reason=REJECTION, always=False):
+        self.ceiling, self.reason, self.always, self.posts = ceiling, reason, always, []
 
     def client(self, **_):
         upstream = self
@@ -58,7 +58,7 @@ class _Upstream:
                 tools = [t["id"] for t in yaml.safe_load(json["config"])["tools"]]
                 upstream.posts.append(tools)
                 windowed = 'data: {"type": "context_windowed", "windowed_messages": 1, "remaining_messages": 1}'
-                if len(tools) > upstream.ceiling:
+                if upstream.always or len(tools) > upstream.ceiling:
                     error = upstream.reason.format(max=upstream.ceiling, got=len(tools))
                     return _Response([windowed, f"data: {_json({'error': error})}"])
                 return _Response(
@@ -165,6 +165,22 @@ async def test_no_retry_for_another_error(monkeypatch, registry):
     assert "not found" in frames[-1]["error"]
 
 
+@pytest.mark.asyncio
+async def test_a_retry_that_fails_too_is_relayed_without_the_note(
+    monkeypatch, registry
+):
+    upstream = _Upstream(ceiling=BASE + 13, always=True)
+    frames = await _turn(monkeypatch, registry, upstream)
+    assert len(upstream.posts) == 2
+    assert not any(f.get("type") == "text" for f in frames)
+    assert "maximum length" in frames[-1]["error"]
+
+
 def test_the_ceiling_is_read_from_the_rejection():
     assert tools_ceiling(REJECTION.format(max=128, got=134)) == 128
     assert tools_ceiling("400 Invalid 'messages': maximum length 10") is None
+    per_tool = (
+        "400 Invalid 'tools[3].function.name': string too long. "
+        "Expected a string with maximum length 64, but got a string with length 70."
+    )
+    assert tools_ceiling(per_tool) is None
