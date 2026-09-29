@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+import respx
 
 pytestmark = pytest.mark.unit
 
@@ -192,11 +193,34 @@ async def test_sentinel_compares_aware_incident_times(fake_azure_sdk):
 
 
 @pytest.mark.asyncio
-async def test_elastic_without_kibana_is_not_a_failure():
+async def test_elastic_without_url_is_not_a_failure():
     from core.integrations.elastic.ingestion import ElasticIngestion
 
     with patch(
         "core.integrations.elastic.ingestion.resolve",
-        return_value={"elasticsearch_url": "https://es.test:9200", "kibana_url": None},
+        return_value={"elasticsearch_url": None, "kibana_url": None},
     ):
         assert await ElasticIngestion().fetch_alerts() == []
+
+
+@respx.mock
+@pytest.mark.asyncio
+async def test_elastic_without_kibana_raises_when_the_index_search_fails():
+    """No Kibana means the index is read directly (a Wazuh indexer), so an
+    unreachable indexer is an outage, not missing configuration."""
+    from core.integrations.elastic.ingestion import ElasticIngestion
+
+    respx.post("https://es.test:9200/wazuh-alerts-4.x-*/_search").mock(
+        return_value=httpx.Response(503, text="unavailable")
+    )
+    with patch(
+        "core.integrations.elastic.ingestion.resolve",
+        return_value={
+            "elasticsearch_url": "https://es.test:9200",
+            "kibana_url": None,
+            "index_pattern": "wazuh-alerts-4.x-*",
+        },
+    ):
+        ingestion = ElasticIngestion()
+    with pytest.raises(RuntimeError, match="index search failed"):
+        await ingestion.fetch_alerts()

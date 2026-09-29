@@ -1,13 +1,16 @@
 """
 Elastic Security Ingestion Service - Ingest detection alerts from Elastic Security.
 
-Fetches detection alerts via the Kibana Detections API and converts them to findings.
+Fetches detection alerts via the Kibana Detections API and converts them to
+findings. Without a Kibana URL the configured index pattern is read directly:
+that is how alerts come off an OpenSearch-based Wazuh indexer, which has no
+Kibana and stores every alert as a document in ``wazuh-alerts-4.x-*``.
 """
 
 import logging
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 
 from core.ingestion.siem_ingestion_service import SIEMIngestionService
 from core.integrations._base.config import resolve
@@ -17,6 +20,75 @@ from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
+# Wazuh rule levels run 0-16; 7 is where Wazuh's own classification starts
+# calling an alert significant.
+DEFAULT_MIN_RULE_LEVEL = 7
+MAX_RULE_LEVEL = 16
+
+
+def min_rule_level_from_config(config: Mapping[str, Any]) -> int:
+    """The minimum Wazuh rule level to ingest, defaulting to 7.
+
+    The Settings form saves a cleared number field as 0, and level-0 rules
+    never raise alerts, so 0 means unset rather than "ingest everything".
+    """
+    level = config.get("min_rule_level")
+    if not level:
+        return DEFAULT_MIN_RULE_LEVEL
+    try:
+        return max(1, min(MAX_RULE_LEVEL, int(level)))
+    except (TypeError, ValueError):
+        return DEFAULT_MIN_RULE_LEVEL
+
+
+def _rule_level(level: Any) -> Optional[int]:
+    try:
+        return int(level)
+    except (TypeError, ValueError):
+        return None
+
+
+def severity_for_rule_level(level: Any) -> str:
+    """Map a Wazuh rule level (0-16) onto Vigil's severity scale."""
+    value = _rule_level(level)
+    if value is None:
+        return "medium"
+    if value >= 12:
+        return "critical"
+    if value >= 10:
+        return "high"
+    if value >= 7:
+        return "medium"
+    if value >= 4:
+        return "low"
+    return "info"
+
+
+def is_wazuh_alert(source: Mapping[str, Any]) -> bool:
+    """A Wazuh indexer document: its ``rule`` carries a level.
+
+    Elastic Security alerts keep their rule under ``kibana.alert.rule.*`` (or
+    legacy ``signal.rule``) and the ECS ``rule`` field set has no ``level``;
+    a detection alert wrapping a forwarded Wazuh event stays a detection alert.
+    """
+    if "signal" in source or "kibana" in source:
+        return False
+    if any(k.startswith("kibana.alert.") for k in source):
+        return False
+    rule = source.get("rule")
+    return isinstance(rule, dict) and rule.get("level") is not None
+
+
+def _as_list(value: Any) -> List[Any]:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _add(bucket: List[str], value: Any) -> None:
+    if value and str(value) not in bucket:
+        bucket.append(str(value))
+
 
 class ElasticIngestion(SIEMIngestionService):
     """Elastic Security ingestion service."""
@@ -25,6 +97,7 @@ class ElasticIngestion(SIEMIngestionService):
         super().__init__()
         self.siem_name = "Elastic Security"
         self.config = resolve(ELASTIC)
+        self.min_rule_level = min_rule_level_from_config(self.config)
         self._elastic_service: Optional[ElasticService] = None
 
     def _get_elastic_service(self) -> Optional[ElasticService]:
@@ -79,11 +152,6 @@ class ElasticIngestion(SIEMIngestionService):
             svc = self._get_elastic_service()
             if not svc:
                 return []
-            # Detection alerts come from Kibana; without it there is nothing to
-            # ingest, which is missing configuration rather than an outage.
-            if not svc.kibana_url:
-                logger.error("Elastic configuration incomplete: missing kibana_url")
-                return []
 
             if not start_time:
                 start_time = utcnow() - timedelta(hours=24)
@@ -106,6 +174,26 @@ class ElasticIngestion(SIEMIngestionService):
                     ]
                 }
             }
+
+            # No Kibana: read the index pattern directly (a Wazuh indexer).
+            # Always oldest first, with _doc as a stable tiebreaker (sorting on
+            # _id needs id fielddata on Elasticsearch 8).
+            if not svc.kibana_url:
+                time_filter["bool"]["filter"].append(
+                    {"range": {"rule.level": {"gte": self.min_rule_level}}}
+                )
+                result = await svc.search(
+                    query=time_filter,
+                    size=limit,
+                    sort=[{"@timestamp": {"order": "asc"}}, {"_doc": {"order": "asc"}}],
+                )
+                if result is None:
+                    raise RuntimeError(
+                        f"Elastic index search failed: {svc.index_pattern}"
+                    )
+                hits = result.get("hits", {}).get("hits", [])
+                logger.info(f"Fetched {len(hits)} alerts from {svc.index_pattern}")
+                return hits
 
             result = await svc.fetch_detection_alerts(
                 query=time_filter,
@@ -131,6 +219,9 @@ class ElasticIngestion(SIEMIngestionService):
             source = alert.get("_source", {})
             alert_id = alert.get("_id", uuid.uuid4().hex[:12])
             finding_id = f"elastic-{alert_id}"
+
+            if is_wazuh_alert(source):
+                return self._wazuh_finding(alert, source, alert_id, finding_id)
 
             # Title from kibana.alert.rule.name or signal.rule.name
             kibana_alert = source.get("kibana.alert.rule.name") or ""
@@ -224,6 +315,90 @@ class ElasticIngestion(SIEMIngestionService):
             logger.error(f"Error transforming Elastic alert: {e}")
             return None
 
+    def _wazuh_finding(
+        self,
+        alert: Dict[str, Any],
+        source: Dict[str, Any],
+        alert_id: str,
+        finding_id: str,
+    ) -> Dict[str, Any]:
+        """A finding from a Wazuh alert document (Wazuh's schema, not ECS)."""
+        rule = source.get("rule") or {}
+        agent = source.get("agent") or {}
+        data = source.get("data") or {}
+        win = data.get("win") or {}
+        eventdata = win.get("eventdata") or {}
+        level = rule.get("level")
+
+        title = rule.get("description") or "Wazuh Alert"
+        # Windows eventchannel alerts carry no full_log.
+        description = (
+            source.get("full_log") or (win.get("system") or {}).get("message") or title
+        )
+
+        entity_context: Dict[str, List[str]] = {
+            "src_ips": [],
+            "dest_ips": [],
+            "hostnames": [],
+            "usernames": [],
+        }
+        _add(entity_context["src_ips"], data.get("srcip"))
+        _add(entity_context["src_ips"], eventdata.get("ipAddress"))
+        _add(entity_context["dest_ips"], data.get("dstip"))
+        _add(entity_context["hostnames"], agent.get("name"))
+        if agent.get("id") == "000":
+            # Agent 000 is the manager; for syslog it relays, the sending host
+            # is the one the predecoder saw.
+            _add(
+                entity_context["hostnames"],
+                (source.get("predecoder") or {}).get("hostname"),
+            )
+        for user in (
+            data.get("srcuser"),
+            data.get("dstuser"),
+            eventdata.get("targetUserName"),
+            eventdata.get("subjectUserName"),
+        ):
+            _add(entity_context["usernames"], user)
+
+        mitre = rule.get("mitre") or {}
+        parsed_level = _rule_level(level)
+        return {
+            "finding_id": finding_id,
+            "data_source": "elastic",
+            "timestamp": source.get("@timestamp")
+            or source.get("timestamp")
+            or utcnow().isoformat(),
+            "severity": severity_for_rule_level(level),
+            "status": "new",
+            "title": title,
+            "description": str(description)[:500],
+            "entity_context": entity_context,
+            "raw_event": alert,
+            "anomaly_score": (
+                round(min(max(parsed_level, 0), 15) / 15, 2)
+                if parsed_level is not None
+                else 0.5
+            ),
+            "mitre_predictions": {
+                str(tid): 0.9 for tid in _as_list(mitre.get("id")) if tid
+            },
+            "metadata": {
+                "elastic_alert_id": alert_id,
+                "vendor": "wazuh",
+                "wazuh_alert_id": source.get("id", alert_id),
+                "rule_id": rule.get("id", ""),
+                "rule_level": level,
+                "rule_name": title,
+                "rule_groups": _as_list(rule.get("groups")),
+                "mitre_tactics": _as_list(mitre.get("tactic")),
+                "mitre_techniques": _as_list(mitre.get("technique")),
+                "agent_id": agent.get("id", ""),
+                "agent_name": agent.get("name", ""),
+                "index": alert.get("_index", ""),
+            },
+        }
+
     async def update_upstream_alert_status(
         self,
         alert_id: str,
@@ -233,6 +408,9 @@ class ElasticIngestion(SIEMIngestionService):
         """Push a status change back to Elastic Security."""
         svc = self._get_elastic_service()
         if not svc:
+            return False
+        if not svc.kibana_url:
+            # Alert status lives in Kibana; an indexer has none to update.
             return False
 
         elastic_status_map = {

@@ -894,7 +894,7 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
         type: 'url',
         required: false,
         placeholder: 'https://kibana.example.com:5601',
-        helpText: 'Required for detection alert ingestion and case sync. Leave blank if only using Elasticsearch search.',
+        helpText: 'Required for Elastic Security detection alert ingestion and case sync. Leave blank for a Wazuh indexer: alerts are then ingested from the index pattern directly.',
       },
       {
         name: 'index_pattern',
@@ -903,6 +903,15 @@ export const INTEGRATIONS: IntegrationMetadata[] = [
         required: false,
         default: '.alerts-security.alerts-default',
         helpText: 'Elasticsearch index pattern for security alerts. For a Wazuh indexer use wazuh-alerts-4.x-* and leave Kibana URL blank.',
+      },
+      {
+        name: 'min_rule_level',
+        label: 'Minimum Rule Level (Wazuh)',
+        type: 'number',
+        required: false,
+        default: 7,
+        placeholder: '7',
+        helpText: 'Wazuh indexer only: ingest alerts at or above this rule level (1-16). Applies when Kibana URL is blank.',
       },
       {
         name: 'verify_ssl',
