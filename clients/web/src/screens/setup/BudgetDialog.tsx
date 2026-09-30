@@ -1,6 +1,8 @@
 // The cost-guardrails step reads ready once default_vk is non-empty.
+// budget_limit_usd and enforcement_mode are stored and ignored; round-trip
+// them so a save does not wipe the blob.
 import { useEffect, useState } from 'react'
-import { Field, NumberInput, Select, TextInput } from '../../shared/ui'
+import { Field, TextInput } from '../../shared/ui'
 import { Banner, StepFooter, useSaveAction } from '../../shared/formKit'
 import { budgetsApi, type BudgetSettings } from '../../services/api'
 
@@ -9,15 +11,12 @@ interface Props {
   onSaved: () => void
 }
 
-const ENFORCEMENT_OPTIONS = [
-  { value: 'warning', label: 'Warn only — log overages, keep running' },
-  { value: 'hard_stop', label: 'Hard stop — block calls once the cap is hit' },
-]
-
 const BudgetDialog = ({ onClose, onSaved }: Props) => {
   const [vk, setVk] = useState('')
-  const [limit, setLimit] = useState('')
-  const [enforcement, setEnforcement] = useState<BudgetSettings['enforcement_mode']>('warning')
+  const [stored, setStored] = useState<Pick<BudgetSettings, 'budget_limit_usd' | 'enforcement_mode'>>({
+    budget_limit_usd: 0,
+    enforcement_mode: 'warning',
+  })
   const [vkError, setVkError] = useState<string | null>(null)
   const { saving, error, run } = useSaveAction({ onSaved })
 
@@ -28,8 +27,10 @@ const BudgetDialog = ({ onClose, onSaved }: Props) => {
       .then(({ data }) => {
         if (!alive || !data) return
         setVk(data.default_vk ?? '')
-        if (data.budget_limit_usd) setLimit(String(data.budget_limit_usd))
-        if (data.enforcement_mode) setEnforcement(data.enforcement_mode)
+        setStored({
+          budget_limit_usd: data.budget_limit_usd ?? 0,
+          enforcement_mode: data.enforcement_mode ?? 'warning',
+        })
       })
       .catch(() => {})
     return () => {
@@ -38,16 +39,15 @@ const BudgetDialog = ({ onClose, onSaved }: Props) => {
   }, [])
 
   const save = () => {
-    // the cap is enforced through the vk, so it is the one required field
     if (!vk.trim()) {
-      setVkError('Add a Bifrost virtual key — Vigil enforces the spend cap through it.')
+      setVkError('Add a Bifrost virtual key — Vigil bills every call against it.')
       return
     }
     run(async () => {
       await budgetsApi.set({
         default_vk: vk.trim(),
-        budget_limit_usd: Number(limit) || 0,
-        enforcement_mode: enforcement,
+        budget_limit_usd: stored.budget_limit_usd,
+        enforcement_mode: stored.enforcement_mode,
       })
     }, 'Failed to save budget')
   }
@@ -56,8 +56,8 @@ const BudgetDialog = ({ onClose, onSaved }: Props) => {
     <div className="flex flex-col gap-3.5">
       {error && <Banner kind="err">{error}</Banner>}
       <p className="text-sm text-tx-2">
-        Cap spend through a Bifrost virtual key. Vigil reads the key&apos;s live usage and
-        enforces the limit on every model call.
+        Point Vigil at a Bifrost virtual key. The spend ceiling is that key&apos;s own
+        budget, set under Settings → AI Config → Virtual Keys.
       </p>
       <Field
         label="Bifrost virtual key"
@@ -71,21 +71,6 @@ const BudgetDialog = ({ onClose, onSaved }: Props) => {
             setVk(e.target.value)
             if (vkError) setVkError(null)
           }}
-        />
-      </Field>
-      <Field label="Monthly spend cap (USD)">
-        <NumberInput
-          min={0}
-          value={limit}
-          placeholder="e.g. 500"
-          onChange={(e) => setLimit(e.target.value)}
-        />
-      </Field>
-      <Field label="Enforcement">
-        <Select
-          value={enforcement}
-          options={ENFORCEMENT_OPTIONS}
-          onSelect={(v) => setEnforcement(v as BudgetSettings['enforcement_mode'])}
         />
       </Field>
       <StepFooter

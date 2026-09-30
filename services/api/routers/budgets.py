@@ -7,8 +7,10 @@ endpoints).
 This is the read/write surface for the Settings → LLM Providers →
 Budgets sub-panel. Three endpoints:
 
-* ``GET  /api/analytics/budget``       — current persisted settings
-                                          (default_vk, ceiling, mode).
+* ``GET  /api/analytics/budget``       — current persisted settings.
+                                          ``budget_limit_usd`` and
+                                          ``enforcement_mode`` are stored
+                                          and ignored at dispatch.
 * ``PUT  /api/analytics/budget``       — admin-intent write of the same.
 * ``GET  /api/analytics/budget/quota`` — live spend/quota for the
                                           configured VK, proxied from
@@ -39,19 +41,32 @@ ROUTER_META = RouterMeta(
 logger = logging.getLogger(__name__)
 
 
+# Stored so older clients keep round-tripping them. Dispatch never reads either.
+_IGNORED_CAP = (
+    "Stored and returned for compatibility. Ignored: Bifrost enforces the "
+    "virtual key's own budget, not this number."
+)
+_IGNORED_MODE = (
+    "Stored and returned for compatibility. Ignored: dispatch does not read "
+    "it, so warning and hard_stop behave the same."
+)
+
+
 class BudgetSettingsResponse(BaseModel):
     default_vk: str = ""
-    budget_limit_usd: float = 0.0
-    enforcement_mode: str = "warning"
+    budget_limit_usd: float = Field(default=0.0, description=_IGNORED_CAP)
+    enforcement_mode: str = Field(default="warning", description=_IGNORED_MODE)
 
 
 class BudgetSettingsUpdate(BaseModel):
     """Admin-intent body for PUT /budget. All fields required so the API
-    can't be used to silently drop a setting via an empty PATCH."""
+    can't be used to silently drop a setting via an empty PATCH.
+    budget_limit_usd and enforcement_mode are stored for compatibility
+    and ignored at dispatch."""
 
     default_vk: str = Field(default="")
-    budget_limit_usd: float = Field(default=0.0, ge=0)
-    enforcement_mode: str = Field(default="warning")
+    budget_limit_usd: float = Field(default=0.0, ge=0, description=_IGNORED_CAP)
+    enforcement_mode: str = Field(default="warning", description=_IGNORED_MODE)
 
 
 @router.get("/analytics/budget", response_model=BudgetSettingsResponse)

@@ -8161,6 +8161,7 @@ export interface components {
         BudgetSettingsResponse: {
             /**
              * Budget Limit Usd
+             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
              * @default 0
              */
             budget_limit_usd: number;
@@ -8171,6 +8172,7 @@ export interface components {
             default_vk: string;
             /**
              * Enforcement Mode
+             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
              * @default warning
              */
             enforcement_mode: string;
@@ -8179,10 +8181,13 @@ export interface components {
          * BudgetSettingsUpdate
          * @description Admin-intent body for PUT /budget. All fields required so the API
          *     can't be used to silently drop a setting via an empty PATCH.
+         *     budget_limit_usd and enforcement_mode are stored for compatibility
+         *     and ignored at dispatch.
          */
         BudgetSettingsUpdate: {
             /**
              * Budget Limit Usd
+             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
              * @default 0
              */
             budget_limit_usd: number;
@@ -8193,6 +8198,7 @@ export interface components {
             default_vk: string;
             /**
              * Enforcement Mode
+             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
              * @default warning
              */
             enforcement_mode: string;

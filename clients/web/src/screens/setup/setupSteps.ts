@@ -94,7 +94,7 @@ export const SETUP_STEPS: SetupStep[] = [
   {
     id: 'cost-guardrails',
     label: 'Set cost guardrails',
-    description: 'Cap how much Vigil spends each month.',
+    description: 'Set the monthly ceiling on a virtual key under Settings → AI Config → Virtual Keys.',
     doneLabel: 'Configured',
     tier: 'optional',
     settingsSection: 'ai-config',
