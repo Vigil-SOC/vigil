@@ -281,3 +281,21 @@ def test_report_never_raises(caplog):
     with patch("services.daemon.intent.read_intent", side_effect=RuntimeError("boom")):
         report_intent(DaemonConfig())
     assert any("non-fatal" in r.message for r in caplog.records)
+
+
+@pytest.mark.parametrize("bad", ["0", "-5"])
+def test_from_env_refuses_an_unbounded_handoff(
+    offline_config, monkeypatch, caplog, bad
+):
+    # asyncio.Queue(maxsize<=0) has no limit at all.
+    monkeypatch.setenv("DAEMON_HANDOFF_QUEUE_MAXSIZE", bad)
+    get_settings.cache_clear()
+    with caplog.at_level(logging.ERROR, logger="services.daemon.config"):
+        assert DaemonConfig.from_env().processing.handoff_queue_maxsize == 1000
+    assert "DAEMON_HANDOFF_QUEUE_MAXSIZE" in caplog.text
+
+
+def test_from_env_threads_the_handoff_size(offline_config, monkeypatch):
+    monkeypatch.setenv("DAEMON_HANDOFF_QUEUE_MAXSIZE", "250")
+    get_settings.cache_clear()
+    assert DaemonConfig.from_env().processing.handoff_queue_maxsize == 250
