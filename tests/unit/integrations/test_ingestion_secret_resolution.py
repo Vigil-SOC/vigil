@@ -86,6 +86,7 @@ def test_splunk_password_reaches_service_from_poller():
         username="svc",
         password="splunk-pw",
         verify_ssl=False,
+        ca_cert_path=None,
     )
 
 
@@ -101,6 +102,7 @@ def test_splunk_password_reaches_service_from_adapter():
         username="svc",
         password="splunk-pw",
         verify_ssl=False,
+        ca_cert_path=None,
     )
 
 

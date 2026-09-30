@@ -333,6 +333,40 @@ class TestChatRecordsGenAIMetrics:
         assert row.cache_write_cost_per_token is None
         assert row.rates_fetched_at is None
 
+    def test_persisted_row_does_not_store_the_virtual_key(self, monkeypatch):
+        """#1268: virtual_key_id used to be the key itself. New rows leave it empty."""
+        from contextlib import contextmanager
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        session_rows = []
+
+        @contextmanager
+        def _scope():
+            yield SimpleNamespace(add=session_rows.append)
+
+        monkeypatch.setattr(
+            "core.storage.connection.get_db_manager",
+            lambda: SimpleNamespace(session_scope=_scope),
+        )
+        # If persist still reads the active key, this value would land on the row.
+        monkeypatch.setattr(
+            "core.llm.cost.budget.get_active_vk", lambda: "sk-bf-configured-vk"
+        )
+        response = SimpleNamespace(
+            model="claude-sonnet-4-5-20250929",
+            stop_reason="end_turn",
+            usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+            content=[SimpleNamespace(type="text", text="ok")],
+        )
+        svc = self._svc(response)
+        with patch("core.llm.harness.claude.record_llm_call"):
+            svc.chat("hello")
+
+        assert len(session_rows) == 1
+        assert session_rows[0].virtual_key_id is None
+        assert "sk-bf-configured-vk" not in repr(session_rows[0].__dict__)
+
 
 class TestSpendFigureFreezesItsRates:
     """#1190: the dollar, the rates, and the fetch time are one write."""

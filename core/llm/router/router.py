@@ -192,8 +192,13 @@ def _scan_messages_for_injection(messages: List[Dict[str, Any]]) -> List[str]:
     return patterns
 
 
-def _bifrost_headers(interaction_id: Optional[str] = None) -> Dict[str, str]:
-    """Log-correlation and budget-VK headers every Bifrost call carries."""
+def bifrost_headers(interaction_id: Optional[str] = None) -> Dict[str, str]:
+    """Log-correlation and budget-VK headers every Bifrost call carries.
+
+    Shared by ``LLMRouter`` and ``ClaudeService.chat``. The VK is attached
+    only when enforcement is on; callers that are not talking to Bifrost
+    drop ``x-bf-vk`` themselves.
+    """
     headers: Dict[str, str] = {}
     if interaction_id:
         headers["x-bf-lh-vigil-interaction-id"] = interaction_id
@@ -286,7 +291,7 @@ class LLMRouter:
         messages, system_prompt = _pre_dispatch_sanitize(messages, system_prompt)
         model = model or provider.default_model
 
-        extra_headers = _bifrost_headers(interaction_id)
+        extra_headers = bifrost_headers(interaction_id)
         # Convert empty dict back to None so the dispatch helpers can use a
         # truthy check for "should I send any extra headers" without leaking
         # an empty dict into the SDK call.
@@ -447,7 +452,7 @@ class LLMRouter:
             kwargs["temperature"] = temperature
         if tools:
             kwargs["tools"] = anthropic_tools_to_openai(tools)
-        extra_headers = _bifrost_headers(interaction_id)
+        extra_headers = bifrost_headers(interaction_id)
         if extra_headers:
             kwargs["extra_headers"] = extra_headers
 

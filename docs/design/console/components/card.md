@@ -1,0 +1,2 @@
+# Card
+Container for one section. `bg1`, 1px `ln0`, radius 14, padding 16px 18px, column gap 10. Title 13px/650 `tx0`; optional sub 12px `tx2` at line-height 1.45. Every card with a number has an info button (see info-button.md) in its title row. Door tiles (Summary → audit tabs) are cards with hover `ln` → `ac-ln`, bg → `bg2`, and a "›" in the title row.

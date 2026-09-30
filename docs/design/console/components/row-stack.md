@@ -1,0 +1,2 @@
+# Row stack
+List of like items inside a card. Wrapper: `display:flex; flex-direction:column; gap:1px; background: var(--ln0); border-radius:10px; overflow:hidden`. Rows: `bg2`, padding 9–10px 12px, grid columns per table. Struck rows (unreliable, dropped) keep their place with `line-through` and `tx3`. Highlighted rows (citation target) use `ac-bg`. Never zebra-stripe.

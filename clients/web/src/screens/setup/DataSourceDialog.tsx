@@ -16,7 +16,6 @@ interface Props {
 // credentials configure. The official server takes SPLUNK_MCP_URL instead.
 const CATALOG_TO_SERVER: Record<string, string> = {
   'aws-security-hub': 'aws-security',
-  'gcp-security': 'gcp-scc',
   'elastic-siem': 'elastic',
   'splunk': 'splunk-selfhosted',
 }

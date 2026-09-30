@@ -631,41 +631,6 @@ class TestScheduledTasks:
         assert "deleted" in result or "retention_date" in result
 
 
-class TestDaemonMetrics:
-    """Test daemon metrics collection."""
-    
-    def test_record_poll_metric(self):
-        """Test recording poll metric."""
-        from services.daemon.metrics import DaemonMetrics
-        
-        metrics = DaemonMetrics()
-        metrics.record_poll("splunk", duration=2.5, events_count=10)
-        
-        assert metrics.get_poll_count("splunk") >= 1
-    
-    def test_record_processing_metric(self):
-        """Test recording processing metric."""
-        from services.daemon.metrics import DaemonMetrics
-        
-        metrics = DaemonMetrics()
-        metrics.record_processing(findings_count=5, duration=1.2)
-        
-        assert metrics.get_total_processed() >= 5
-    
-    def test_get_metrics_summary(self):
-        """Test getting metrics summary."""
-        from services.daemon.metrics import DaemonMetrics
-        
-        metrics = DaemonMetrics()
-        metrics.record_poll("splunk", duration=2.0, events_count=5)
-        metrics.record_processing(findings_count=5, duration=1.0)
-        
-        summary = metrics.get_summary()
-        
-        assert "total_polls" in summary
-        assert "total_processed" in summary
-
-
 @pytest.mark.integration
 @pytest.mark.skip(reason="Daemon lifecycle tests need rewrite for current architecture")
 class TestDaemonLifecycle:

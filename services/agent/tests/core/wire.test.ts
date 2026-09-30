@@ -520,6 +520,31 @@ describe("the wire streams", () => {
   });
 });
 
+// Bifrost applies a budget only to a request that carries its key; one without is
+// served ungoverned.
+describe("the Settings virtual key", () => {
+  async function optionsSent(key: string | null): Promise<Record<string, unknown>> {
+    const sent: Record<string, unknown>[] = [];
+    const create = async (_body: Body, options: Record<string, unknown>) => {
+      sent.push(options);
+      return completion({ role: "assistant", content: "ok" });
+    };
+    const client = { chat: { completions: { create } } } as unknown as OpenAI;
+    const surface = openAiSurface(client, "gpt-4o", limiter(), "openai", "openai/gpt-4o", async () => key);
+    await turn(surface, { messages: [{ role: "user", content: "go" }], tools: [] });
+    expect(sent).toHaveLength(1);
+    return sent[0]!;
+  }
+
+  it("rides every model call as x-bf-vk", async () => {
+    expect((await optionsSent("sk-bf-budget")).headers).toEqual({ "x-bf-vk": "sk-bf-budget" });
+  });
+
+  it("is left off entirely when the backend enforces nothing", async () => {
+    expect(await optionsSent(null)).not.toHaveProperty("headers");
+  });
+});
+
 async function usage(reported: Record<string, unknown>): Promise<TokenCounts> {
   const surface = surfaceOf(async () => completion({ role: "assistant", content: "ok" }, reported));
   return (await turn(surface, { messages: [], tools: [] })).tokens;

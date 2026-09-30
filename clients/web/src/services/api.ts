@@ -809,33 +809,6 @@ export const storageApi = {
   reconnect: () => api.post('/storage/reconnect'),
 }
 
-export const timesketchApi = {
-  getStatus: () => api.get('/timesketch/status'),
-  
-  listSketches: () => api.get('/timesketch/sketches'),
-  
-  createSketch: (data: { name: string; description?: string }) =>
-    api.post('/timesketch/sketches', data),
-  
-  getSketch: (id: number) => api.get(`/timesketch/sketches/${id}`),
-  
-  getDockerStatus: () => api.get('/timesketch/docker/status'),
-  
-  startDocker: (port: number = 5000) =>
-    api.post('/timesketch/docker/start', null, { params: { port } }),
-  
-  stopDocker: () => api.post('/timesketch/docker/stop'),
-  
-  exportToTimesketch: (data: {
-    sketch_id?: string
-    sketch_name?: string
-    sketch_description?: string
-    finding_ids?: string[]
-    case_id?: string
-    timeline_name: string
-  }) => api.post('/timesketch/export', data),
-}
-
 export const attackApi = {
   getTechniqueRollup: (
     min_confidence: number = 0.0,

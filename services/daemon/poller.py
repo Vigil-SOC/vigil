@@ -174,6 +174,7 @@ class DataPoller:
                         username=splunk_config["username"] or "",
                         password=splunk_config["password"] or "",
                         verify_ssl=bool(splunk_config["verify_ssl"]),
+                        ca_cert_path=splunk_config["ca_cert_path"],
                     )
                     logger.info("Splunk service initialized")
                 except Exception as e:
@@ -361,7 +362,9 @@ class DataPoller:
                     findings.extend(results)
                     break  # Use first successful query
             except Exception as e:
-                logger.debug(f"Splunk query failed: {query} - {e}")
+                # search() logs and swallows request errors itself; what reaches
+                # here is a client it could not build, such as a bad CA path.
+                logger.warning(f"Splunk query failed: {query} - {e}")
                 continue
 
         # Process findings

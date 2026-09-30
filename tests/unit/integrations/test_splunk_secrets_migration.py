@@ -46,11 +46,14 @@ _ENV_ONLY = {
 class _Constructed:
     """Stand-in for SplunkService that records what it was built with."""
 
-    def __init__(self, server_url, username, password, verify_ssl=False):
+    def __init__(
+        self, server_url, username, password, verify_ssl=False, ca_cert_path=None
+    ):
         self.server_url = server_url
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
+        self.ca_cert_path = ca_cert_path
 
 
 @pytest.fixture

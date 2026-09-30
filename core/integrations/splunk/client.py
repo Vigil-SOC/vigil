@@ -5,6 +5,8 @@ from typing import Dict, List, Optional
 
 import httpx
 
+from core.integrations._base.tls import tls_verify
+
 # urllib3.disable_warnings() used to live here to silence
 # InsecureRequestWarning; httpx doesn't use urllib3 and emits no such
 # warning.
@@ -38,7 +40,12 @@ class SplunkService:
     """Service for interacting with Splunk API."""
 
     def __init__(
-        self, server_url: str, username: str, password: str, verify_ssl: bool = False
+        self,
+        server_url: str,
+        username: str,
+        password: str,
+        verify_ssl: bool = False,
+        ca_cert_path: Optional[str] = None,
     ):
         """
         Initialize Splunk service.
@@ -48,23 +55,33 @@ class SplunkService:
             username: Username for authentication
             password: Password for authentication
             verify_ssl: Whether to verify SSL certificates (default: False)
+            ca_cert_path: PEM trusted for this client only, instead of the
+                default store (ignored when verify_ssl is False)
         """
         self.server_url = server_url.rstrip("/")
         self.username = username
         self.password = password
         self.verify_ssl = verify_ssl
-        # verify/timeout are constructor-only on httpx.Client; requests
-        # allowed session.verify to be assigned afterwards.
-        self.session = httpx.Client(
-            verify=verify_ssl,
-            timeout=DEFAULT_TIMEOUT,
-            follow_redirects=_FOLLOW_REDIRECTS,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Accept": "application/json",
-            },
-        )
+        self.ca_cert_path = ca_cert_path or None
+        self._session: Optional[httpx.Client] = None
         self.session_key: Optional[str] = None
+
+    @property
+    def session(self) -> httpx.Client:
+        # Built on first use so an unusable CA path fails the call that needs
+        # it, naming the file, instead of the constructor ("not configured").
+        # verify/timeout are constructor-only on httpx.Client.
+        if self._session is None:
+            self._session = httpx.Client(
+                verify=tls_verify(self.verify_ssl, self.ca_cert_path),
+                timeout=DEFAULT_TIMEOUT,
+                follow_redirects=_FOLLOW_REDIRECTS,
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                },
+            )
+        return self._session
 
     def authenticate(self) -> bool:
         """
@@ -73,6 +90,7 @@ class SplunkService:
         Returns:
             True if authentication successful, False otherwise.
         """
+        session = self.session  # an unusable CA path raises here, not below
         try:
             auth_url = f"{self.server_url}/services/auth/login"
             data = {
@@ -81,13 +99,13 @@ class SplunkService:
                 "output_mode": "json",
             }
 
-            response = self.session.post(auth_url, data=data)
+            response = session.post(auth_url, data=data)
 
             if response.status_code == 200:
                 result = response.json()
                 self.session_key = result.get("sessionKey")
                 if self.session_key:
-                    self.session.headers.update(
+                    session.headers.update(
                         {"Authorization": f"Splunk {self.session_key}"}
                     )
                     logger.info(
@@ -127,7 +145,7 @@ class SplunkService:
             else:
                 return False, f"Connection failed: HTTP {response.status_code}"
 
-        except _HTTP_ERRORS as e:
+        except (*_HTTP_ERRORS, OSError) as e:
             return False, f"Connection error: {str(e)}"
 
     def search(
@@ -153,6 +171,7 @@ class SplunkService:
         Returns:
             List of result dictionaries, or None if error
         """
+        session = self.session
         try:
             if not self.session_key:
                 if not self.authenticate():
@@ -167,7 +186,7 @@ class SplunkService:
                 "output_mode": "json",
             }
 
-            response = self.session.post(search_url, data=search_data)
+            response = session.post(search_url, data=search_data)
 
             if response.status_code not in [200, 201]:
                 logger.error(
@@ -189,9 +208,7 @@ class SplunkService:
             max_attempts = 60  # 60 attempts with 1 second wait = 1 minute max
 
             for attempt in range(max_attempts):
-                status_response = self.session.get(
-                    job_url, params={"output_mode": "json"}
-                )
+                status_response = session.get(job_url, params={"output_mode": "json"})
 
                 if status_response.status_code == 200:
                     job_status = status_response.json()
@@ -203,7 +220,7 @@ class SplunkService:
                     if is_done:
                         # Get results
                         results_url = f"{job_url}/results"
-                        results_response = self.session.get(
+                        results_response = session.get(
                             results_url,
                             params={"output_mode": "json", "count": max_count},
                         )
@@ -214,7 +231,7 @@ class SplunkService:
                             logger.info(f"Search completed with {len(results)} results")
 
                             # Clean up job
-                            self.session.delete(job_url)
+                            session.delete(job_url)
 
                             return results
                         else:
@@ -235,7 +252,7 @@ class SplunkService:
 
             logger.error("Search job timed out")
             # Try to cancel the job
-            self.session.delete(job_url)
+            session.delete(job_url)
             return None
 
         except Exception as e:

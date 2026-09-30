@@ -27,7 +27,6 @@ vi.mock('../../services/api', () => ({
   findingsApi: { getById: vi.fn() },
   caseSearchApi: { search: vi.fn() },
   timelineApi: { getCaseTimeline: vi.fn(() => Promise.resolve({ data: { events: [] } })) },
-  timesketchApi: { exportCase: vi.fn() },
 }))
 
 const CASE = {
