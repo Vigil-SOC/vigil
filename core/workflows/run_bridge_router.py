@@ -152,10 +152,12 @@ def record_terminal(
         status=status,
         result_summary=update.summary or None,
         # Only a failure writes the error column, which the console renders under a
-        # red heading. A run stopped at its ceiling has a reason, not an error, and
-        # that reason is on the terminal event and in the report.
+        # red heading. Every outcome still stores its reason beside the status: a
+        # run stopped at its ceiling has a reason, not an error.
         error=update.reason if status == "failed" else None,
         cost_usd=update.cost_usd,
+        outcome=update.outcome,
+        reason=update.reason or None,
     )
 
     # The case the run was started from, so its report reaches the case rather than

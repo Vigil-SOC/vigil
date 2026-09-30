@@ -261,6 +261,10 @@ class WorkflowRun(Base):
     )
     result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The agent layer's own terminal, beside the three-value status. Null when
+    # this side finalized the run (a cancel, a queue that refused the job).
+    outcome: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Set when an operator removes the run from History. The row and its ledger stay.
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

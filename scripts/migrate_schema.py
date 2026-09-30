@@ -209,6 +209,22 @@ def create_workflow_runs_triggered_by_index(conn):
     """))
 
 
+# The agent-layer terminal beside the three-value status (#1272). create_all
+# adds no column to a table that already exists. On Helm the table belongs to
+# the chart's user, so vigil_app passes here only once the columns exist.
+# 37_workflow_runs_outcome.sql builds them there; this step covers a database
+# that init SQL never reached. No backfill: rows this side finalized stay null.
+@migration("Add outcome and reason to workflow_runs")
+def add_workflow_run_outcome(conn):
+    if not _table_exists(conn, 'workflow_runs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE workflow_runs
+            ADD COLUMN IF NOT EXISTS outcome TEXT,
+            ADD COLUMN IF NOT EXISTS reason TEXT;
+    """))
+
+
 # ---------------------------------------------------------------------------
 # New tables (create if missing via SQLAlchemy create_all)
 # ---------------------------------------------------------------------------

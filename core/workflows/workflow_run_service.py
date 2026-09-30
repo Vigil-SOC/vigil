@@ -120,9 +120,16 @@ class WorkflowRunService:
         result_summary: Optional[str] = None,
         error: Optional[str] = None,
         cost_usd: Optional[float] = None,
+        outcome: Optional[str] = None,
+        reason: Optional[str] = None,
     ) -> bool:
         """Mark a run terminal. ``status`` must be one of the check-
-        constrained values: completed | failed | cancelled."""
+        constrained values: completed | failed | cancelled.
+
+        ``outcome`` and ``reason`` are the agent layer's own terminal, written
+        by the bridge. Callers that finalize a run themselves (a cancel, a
+        queue that refused the job) omit them and they stay null.
+        """
         if status not in ("completed", "failed", "cancelled"):
             logger.error("finalize_run: invalid status %r", status)
             return False
@@ -146,6 +153,10 @@ class WorkflowRunService:
                     row.result_summary = result_summary[:50_000]
                 if error is not None:
                     row.error = str(error)[:5_000]
+                if outcome is not None:
+                    row.outcome = str(outcome)[:80]
+                if reason is not None:
+                    row.reason = str(reason)[:5_000]
                 if cost_usd is not None:
                     row.total_cost_usd = cost_usd
                 if row.started_at is not None:
