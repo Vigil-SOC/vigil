@@ -80,9 +80,27 @@ def _index_exists(conn, name):
     ).scalar() is not None
 
 
-def migration(description):
-    """Decorator to register a migration step."""
+def _planner_reads(conn, index, query):
+    """Whether the planner would read the index for the query.
+
+    False for an INVALID index, which a failed CONCURRENTLY build leaves
+    behind, and for one whose WHERE no longer matches the query's.
+    """
+    conn.execute(text("SET enable_seqscan = off"))
+    try:
+        plan = conn.execute(text(f"EXPLAIN {query}")).scalars().all()
+    finally:
+        conn.execute(text("RESET enable_seqscan"))
+    return any(index in line for line in plan)
+
+
+def migration(description, autocommit=False):
+    """Decorator to register a migration step.
+
+    An autocommit step runs outside a transaction, as CREATE INDEX CONCURRENTLY must.
+    """
     def decorator(fn):
+        fn.autocommit = autocommit
         MIGRATIONS.append((description, fn))
         return fn
     return decorator
@@ -121,17 +139,25 @@ def create_findings_description_gin_index(conn):
 
 
 # create_all never adds an index to a table it finds, and findings predates
-# this one. The WHERE is the model's, so the sweep and the counts can use it.
-@migration("Create partial index on unrated findings")
+# this one. CONCURRENTLY so ingestion keeps writing while it builds; rebuilt when
+# a failed build left it INVALID or UNRATED_WHERE has moved on.
+@migration("Create partial index on unrated findings", autocommit=True)
 def create_findings_unrated_index(conn):
     from core.storage.models.finding import UNRATED_WHERE
 
+    name = 'idx_finding_unrated_created_at'
     if not _table_exists(conn, 'findings'):
         return
-    if _index_exists(conn, 'idx_finding_unrated_created_at'):
-        return
+    if _index_exists(conn, name):
+        probe = (
+            f"SELECT 1 FROM findings WHERE {UNRATED_WHERE} "
+            "ORDER BY created_at LIMIT 1"
+        )
+        if _planner_reads(conn, name, probe):
+            return
+        conn.execute(text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
     conn.execute(text(f"""
-        CREATE INDEX IF NOT EXISTS idx_finding_unrated_created_at
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS {name}
         ON findings (created_at) WHERE {UNRATED_WHERE};
     """))
 
@@ -502,7 +528,8 @@ def _role_to_rerun_as(engine, error):
 
 
 def run_migrations(url=None):
-    """Run every step in its own transaction, and return what became of each.
+    """Run every step in its own transaction (an autocommit step in none), and
+    return what became of each.
 
     A failed step rolls back alone: the steps before it stay committed and the
     ones after it still run. Returns the steps that applied, the ones skipped
@@ -523,8 +550,14 @@ def run_migrations(url=None):
         for number, (desc, fn) in enumerate(MIGRATIONS, 1):
             logger.info(f"[{number}/{len(MIGRATIONS)}] {desc}")
             try:
-                with engine.begin() as conn:
-                    fn(conn)
+                if getattr(fn, 'autocommit', False):
+                    with engine.connect().execution_options(
+                        isolation_level='AUTOCOMMIT'
+                    ) as conn:
+                        fn(conn)
+                else:
+                    with engine.begin() as conn:
+                        fn(conn)
             except Exception as e:
                 role = _role_to_rerun_as(engine, e)
                 if role is None:

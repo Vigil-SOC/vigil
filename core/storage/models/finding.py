@@ -26,7 +26,8 @@ if TYPE_CHECKING:
     from core.storage.models.case import Case
 
 # The enrichment sweep's "unrated": never enriched, or triage failed with no
-# later success (#965). One SQL string, so the queries match the partial index.
+# later success (#965). One SQL string, so the queries match the partial index;
+# migrate_schema.py rebuilds that index when this changes.
 UNRATED_WHERE = (
     "(ai_enrichment IS NULL"
     " OR (ai_enrichment ? 'ai_triage_error' AND NOT (ai_enrichment ? 'ai_triage')))"
