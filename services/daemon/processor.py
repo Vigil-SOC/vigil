@@ -42,7 +42,9 @@ class FindingProcessor:
         # The queue-for-response line is the band's review threshold, so the
         # processor reads the same ResponseConfig the responder does (#916).
         self.response_config = response_config or ResponseConfig.from_settings()
-        self.input_queue: asyncio.Queue = asyncio.Queue()
+        self.input_queue: asyncio.Queue = asyncio.Queue(
+            maxsize=config.handoff_queue_maxsize
+        )
         self._response_queue: Optional[asyncio.Queue] = None
 
         # Services (lazy loaded)

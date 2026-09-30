@@ -40,7 +40,7 @@ class SIEMIngestionService(ABC):
             oldest_first: Return the oldest ``limit`` alerts in the window,
                 oldest first, so a batch that fills ``limit`` is a contiguous
                 prefix the federation cursor can stop at. The default keeps
-                the source's usual order for the daemon poller.
+                the source's usual order.
 
         Returns:
             List of raw alert dictionaries
@@ -59,93 +59,6 @@ class SIEMIngestionService(ABC):
         Returns:
             Finding dictionary or None if transformation fails
         """
-
-    def ingest_alerts(
-        self,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        limit: int = 100,
-    ) -> Dict[str, Any]:
-        """
-        Fetch and ingest alerts from SIEM.
-
-        Args:
-            start_time: Start time for alert query
-            end_time: End time for alert query
-            limit: Maximum number of alerts to fetch
-
-        Returns:
-            Ingestion statistics
-        """
-        import asyncio
-
-        try:
-            # Fetch alerts
-            alerts = asyncio.run(self.fetch_alerts(start_time, end_time, limit))
-
-            if not alerts:
-                logger.info(f"No alerts fetched from {self.siem_name}")
-                return {
-                    "success": True,
-                    "siem": self.siem_name,
-                    "fetched": 0,
-                    "ingested": 0,
-                    "failed": 0,
-                    "errors": [],
-                }
-
-            logger.info(f"Fetched {len(alerts)} alerts from {self.siem_name}")
-
-            # Transform and ingest
-            ingested = 0
-            failed = 0
-            errors = []
-
-            for alert in alerts:
-                try:
-                    finding = self.transform_alert_to_finding(alert)
-                    if finding:
-                        success = self.ingestion_service.ingest_finding(finding)
-                        if success:
-                            ingested += 1
-                        else:
-                            failed += 1
-                            errors.append(
-                                f"Failed to ingest alert: {alert.get('id', 'unknown')}"
-                            )
-                    else:
-                        failed += 1
-                        errors.append(
-                            f"Failed to transform alert: {alert.get('id', 'unknown')}"
-                        )
-                except Exception as e:
-                    failed += 1
-                    errors.append(f"Error processing alert: {str(e)}")
-                    logger.error(f"Error processing alert from {self.siem_name}: {e}")
-
-            logger.info(
-                f"{self.siem_name} ingestion: {ingested} ingested, {failed} failed"
-            )
-
-            return {
-                "success": True,
-                "siem": self.siem_name,
-                "fetched": len(alerts),
-                "ingested": ingested,
-                "failed": failed,
-                "errors": errors[:10],  # Limit error messages
-            }
-
-        except Exception as e:
-            logger.error(f"Error ingesting from {self.siem_name}: {e}")
-            return {
-                "success": False,
-                "siem": self.siem_name,
-                "fetched": 0,
-                "ingested": 0,
-                "failed": 0,
-                "errors": [str(e)],
-            }
 
     async def update_upstream_alert_status(
         self,

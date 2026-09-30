@@ -7,10 +7,7 @@ config lookups are exact-match, so underscore forms silently never match.
 from __future__ import annotations
 
 import ast
-import sys
-import types
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -32,7 +29,6 @@ LEGACY_UNDERSCORE_IDS = (
 # Call sites that must use Integration IDs (settings keys), not federation
 # source names / Redis namespaces / finding source labels.
 TARGET_FILES = (
-    "services/daemon/poller.py",
     "core/integrations/azure_sentinel/ingestion.py",
     "core/integrations/aws_security_hub/ingestion.py",
     "core/integrations/microsoft_defender/ingestion.py",
@@ -90,24 +86,6 @@ def _integration_id_literals(path: Path) -> list[tuple[int, str, str]]:
                         if value is not None:
                             found.append((node.lineno, "integration_id=", value))
     return found
-
-
-def _make_poller():
-    from services.daemon.config import PollingConfig
-    from services.daemon.poller import DataPoller
-
-    with (
-        patch("services.daemon.poller.FederationRunner"),
-        patch("services.daemon.poller.RedisDedupSet"),
-    ):
-        return DataPoller(PollingConfig())
-
-
-def _stub_database_data_service():
-    """Avoid importing the real DB stack (SQLAlchemy, psycopg2) during unit tests."""
-    module = types.ModuleType("core.storage.database_data_service")
-    module.DatabaseDataService = MagicMock(name="DatabaseDataService")
-    return patch.dict(sys.modules, {"core.storage.database_data_service": module})
 
 
 @pytest.mark.parametrize("rel_path", TARGET_FILES)
@@ -168,66 +146,3 @@ def test_finding_data_source_values_remain_underscore(
 ):
     source = (REPO_ROOT / rel_path).read_text(encoding="utf-8")
     assert f'"data_source": "{expected_source}"' in source
-
-
-def test_poller_inits_cloud_siem_services_when_hyphenated_ids_enabled():
-    """Settings-style hyphenated enablement must start the three cloud pollers."""
-    enabled = set(CANONICAL_IDS)
-    azure = MagicMock(name="AzureSentinelIngestion")
-    aws = MagicMock(name="AWSSecurityHubIngestion")
-    defender = MagicMock(name="MicrosoftDefenderIngestion")
-
-    with (
-        _stub_database_data_service(),
-        patch(
-            "core.config.is_integration_enabled",
-            side_effect=lambda integration_id: integration_id in enabled,
-        ),
-        patch("core.config.get_integration_config", return_value={}),
-        patch(
-            "core.integrations.azure_sentinel.ingestion.AzureSentinelIngestion",
-            return_value=azure,
-        ),
-        patch(
-            "core.integrations.aws_security_hub.ingestion.AWSSecurityHubIngestion",
-            return_value=aws,
-        ),
-        patch(
-            "core.integrations.microsoft_defender.ingestion.MicrosoftDefenderIngestion",
-            return_value=defender,
-        ),
-    ):
-        poller = _make_poller()
-        poller._init_services()
-
-    assert poller._azure_sentinel_service is azure
-    assert poller._aws_security_hub_service is aws
-    assert poller._microsoft_defender_service is defender
-
-
-def test_poller_skips_cloud_siems_when_only_underscore_ids_enabled():
-    """Underscore keys must not satisfy the hyphenated enablement checks."""
-    enabled = set(LEGACY_UNDERSCORE_IDS)
-
-    with (
-        _stub_database_data_service(),
-        patch(
-            "core.config.is_integration_enabled",
-            side_effect=lambda integration_id: integration_id in enabled,
-        ),
-        patch("core.config.get_integration_config", return_value={}),
-        patch("core.integrations.azure_sentinel.ingestion.AzureSentinelIngestion") as azure,
-        patch("core.integrations.aws_security_hub.ingestion.AWSSecurityHubIngestion") as aws,
-        patch(
-            "core.integrations.microsoft_defender.ingestion.MicrosoftDefenderIngestion"
-        ) as defender,
-    ):
-        poller = _make_poller()
-        poller._init_services()
-
-    azure.assert_not_called()
-    aws.assert_not_called()
-    defender.assert_not_called()
-    assert poller._azure_sentinel_service is None
-    assert poller._aws_security_hub_service is None
-    assert poller._microsoft_defender_service is None

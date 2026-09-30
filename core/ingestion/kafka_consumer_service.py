@@ -24,6 +24,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from core.ingestion.dedup import RedisDedupSet
+from core.ingestion.handoff import envelope, put_or_shutdown
 from core.ingestion.kafka_config import KafkaConfig
 from core.time import utcnow
 
@@ -44,6 +45,7 @@ class KafkaConsumerService:
         self._dedup = dedup or RedisDedupSet("kafka")
         self._consumer = None
         self._running = False
+        self._shutdown = asyncio.Event()
 
         self.stats: Dict[str, Any] = {
             "connected": False,
@@ -89,6 +91,7 @@ class KafkaConsumerService:
 
     async def run(self, shutdown_event: asyncio.Event) -> None:
         """Main consumer loop. Exits when ``shutdown_event`` is set."""
+        self._shutdown = shutdown_event
         if not self.config.topics:
             logger.warning("Kafka consumer: no topics configured, refusing to start")
             return
@@ -119,7 +122,11 @@ class KafkaConsumerService:
                     batches = await self._consumer.getmany(timeout_ms=1000)
                     for tp, msgs in batches.items():
                         for msg in msgs:
-                            await self._handle_message(tp.topic, msg)
+                            if not await self._handle_message(tp.topic, msg):
+                                # Shutdown while the hand-off was full: leave
+                                # this partition's offset uncommitted so the
+                                # batch is re-read (and deduped) next start.
+                                return
                         # Commit offsets for this partition after processing
                         if msgs:
                             await self._consumer.commit()
@@ -144,8 +151,8 @@ class KafkaConsumerService:
             except Exception:
                 pass
 
-    async def _handle_message(self, topic: str, msg) -> None:
-        """Decode, dedupe, and enqueue a single Kafka message."""
+    async def _handle_message(self, topic: str, msg) -> bool:
+        """Decode, dedupe, and enqueue one message. False if shutdown came first."""
         self.stats["messages_consumed"] += 1
         self.stats["last_message_at"] = utcnow().isoformat()
 
@@ -158,7 +165,7 @@ class KafkaConsumerService:
             self.stats["decode_errors"] += 1
             self._record_error(f"decode error on topic {topic}: {e}")
             logger.warning("Kafka: skipping malformed message on %s: %s", topic, e)
-            return
+            return True
 
         if not isinstance(finding, dict):
             self.stats["decode_errors"] += 1
@@ -167,31 +174,28 @@ class KafkaConsumerService:
                 topic,
                 type(finding).__name__,
             )
-            return
+            return True
 
         finding_id = finding.get("finding_id")
         if not finding_id:
             self.stats["missing_id_errors"] += 1
             logger.warning("Kafka: skipping message on %s with no finding_id", topic)
-            return
+            return True
 
         if await self._dedup.is_processed(finding_id):
             self.stats["duplicates_skipped"] += 1
             logger.debug("Kafka: duplicate finding_id=%s skipped", finding_id)
-            return
+            return True
 
         finding.setdefault("data_source", f"kafka:{topic}")
 
-        await self._output_queue.put(
-            {
-                "type": "finding",
-                "source": f"kafka:{topic}",
-                "data": finding,
-                "timestamp": utcnow().isoformat(),
-            }
-        )
+        if not await put_or_shutdown(
+            self._output_queue, envelope(finding, f"kafka:{topic}"), self._shutdown
+        ):
+            return False
         await self._dedup.mark_processed(finding_id)
         self.stats["messages_enqueued"] += 1
+        return True
 
     def _record_error(self, msg: str) -> None:
         self.stats["last_error"] = msg

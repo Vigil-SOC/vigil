@@ -1,37 +1,27 @@
-"""Data source polling for the SOC daemon.
+"""Ingestion hosted in the SOC daemon: the Federation runner and the webhook.
 
-Two modes coexist here:
-
-* **Legacy per-source loops** (``_poll_<source>_loop``) — driven by env-var
-  intervals in :class:`daemon.config.PollingConfig`. These predate federation
-  and remain the path used when the global federation toggle is off.
 * **Federation runner** (:class:`core.federation.runner.FederationRunner`) —
-  spawned alongside the legacy loops. When ``federation.settings.enabled`` is
-  true and a source has a ``federation_sources`` row enabled, the legacy loop
-  for that source defers (skips that tick) so federation owns the pull.
-
-This co-existence keeps existing deployments working unchanged while the new
-opt-in feature is under MVP. Once federation is the default path we can
-delete the legacy loops in a follow-up.
+  the only path that polls a source, one task per adapter, each on its
+  ``federation_sources`` row's interval.
+* **Webhook** — pushed findings (the LogLM connector, generic senders). When
+  the hand-off to the processor is full it answers 503 with ``Retry-After``,
+  and the sender keeps its bookmark and retries.
 """
 
 import asyncio
 import hmac
 import logging
-from dataclasses import dataclass
-from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
 from core.federation.runner import FederationRunner
 from core.ingestion.dedup import RedisDedupSet
-from core.time import utcnow
+from core.ingestion.handoff import envelope
 from services.daemon.config import PollingConfig
 
 logger = logging.getLogger(__name__)
 
-
-class IngestionError(RuntimeError):
-    """An ingestion service reported success=False for a poll."""
+# Seconds a webhook sender is asked to wait when the hand-off is full.
+_BUSY_RETRY_AFTER = 5
 
 
 def normalize_mitre_predictions(raw: Any, finding_id: str) -> Dict[str, float]:
@@ -82,487 +72,50 @@ def normalize_mitre_predictions(raw: Any, finding_id: str) -> Dict[str, float]:
     return out
 
 
-@dataclass
-class PollState:
-    """Per-source polling cursor.
-
-    Deduplication lives in ``RedisDedupSet`` (see ``DataPoller``);
-    this dataclass tracks only the last-poll timestamp used to compute
-    query windows.
-    """
-
-    last_poll_time: Optional[datetime] = None
-
-
 class DataPoller:
-    """Polls various data sources for new security findings."""
+    """Hosts the Federation runner and the ingest webhook."""
 
     def __init__(self, config: PollingConfig):
         self.config = config
         self._output_queue: Optional[asyncio.Queue] = None
-
-        # Federation runner — owns pull for sources with a federation_sources
-        # row when the global federation.settings toggle is on. Always
-        # constructed; idle while federation is off.
         self._federation = FederationRunner(output_queue=None)
-
-        # Polling cursors for each source
-        self._splunk_state = PollState()
-        self._crowdstrike_state = PollState()
-        self._azure_sentinel_state = PollState()
-        self._aws_security_hub_state = PollState()
-        self._microsoft_defender_state = PollState()
-        self._elastic_state = PollState()
-        self._generic_state = PollState()
-
-        # Durable per-source dedup sets (Redis-backed)
-        self._splunk_dedup = RedisDedupSet("poller:splunk")
-        self._crowdstrike_dedup = RedisDedupSet("poller:crowdstrike")
-        self._azure_sentinel_dedup = RedisDedupSet("poller:azure_sentinel")
-        self._aws_security_hub_dedup = RedisDedupSet("poller:aws_security_hub")
-        self._microsoft_defender_dedup = RedisDedupSet("poller:microsoft_defender")
-        self._elastic_dedup = RedisDedupSet("poller:elastic")
         self._webhook_dedup = RedisDedupSet("poller:webhook")
-
-        # Services (lazy loaded)
-        self._splunk_service = None
-        self._crowdstrike_service = None
-        self._data_service = None
-        self._azure_sentinel_service = None
-        self._aws_security_hub_service = None
-        self._microsoft_defender_service = None
-        self._elastic_service = None
-
-        # Stats
-        self.stats = {
-            "splunk_polls": 0,
-            "splunk_findings": 0,
-            "crowdstrike_polls": 0,
-            "crowdstrike_findings": 0,
-            "azure_sentinel_polls": 0,
-            "azure_sentinel_findings": 0,
-            "aws_security_hub_polls": 0,
-            "aws_security_hub_findings": 0,
-            "microsoft_defender_polls": 0,
-            "microsoft_defender_findings": 0,
-            "elastic_polls": 0,
-            "elastic_findings": 0,
-            "webhook_findings": 0,
-            "errors": 0,
-        }
+        self.stats = {"webhook_findings": 0, "webhook_busy": 0}
 
     def set_output_queue(self, queue: asyncio.Queue):
         """Set the output queue for processed findings."""
         self._output_queue = queue
         self._federation.set_output_queue(queue)
 
-    def _init_services(self):
-        """Initialize data source services."""
-        try:
-            from core.config import is_integration_enabled
-            from core.integrations._base.config import resolve
-
-            # Initialize Splunk service if configured
-            if is_integration_enabled("splunk"):
-                try:
-                    from core.integrations.splunk.client import SplunkService
-                    from core.integrations.splunk.descriptor import SPLUNK
-
-                    splunk_config = resolve(SPLUNK)
-                    self._splunk_service = SplunkService(
-                        server_url=splunk_config["server_url"] or "",
-                        username=splunk_config["username"] or "",
-                        password=splunk_config["password"] or "",
-                        verify_ssl=bool(splunk_config["verify_ssl"]),
-                    )
-                    logger.info("Splunk service initialized")
-                except Exception as e:
-                    logger.warning(f"Failed to initialize Splunk service: {e}")
-
-            # Initialize CrowdStrike service if configured
-            if is_integration_enabled("crowdstrike"):
-                try:
-                    from core.integrations.crowdstrike.client import CrowdStrikeService
-                    from core.integrations.crowdstrike.descriptor import CROWDSTRIKE
-
-                    cs_config = resolve(CROWDSTRIKE)
-                    self._crowdstrike_service = CrowdStrikeService(
-                        client_id=cs_config["client_id"] or "",
-                        client_secret=cs_config["client_secret"] or "",
-                        base_url=cs_config["base_url"] or "https://api.crowdstrike.com",
-                    )
-                    logger.info("CrowdStrike service initialized")
-                except Exception as e:
-                    logger.warning(f"Failed to initialize CrowdStrike service: {e}")
-
-            # Initialize Azure Sentinel service if configured
-            if is_integration_enabled("azure-sentinel"):
-                try:
-                    from core.integrations.azure_sentinel.ingestion import (
-                        AzureSentinelIngestion,
-                    )
-
-                    self._azure_sentinel_service = AzureSentinelIngestion()
-                    logger.info("Azure Sentinel service initialized")
-                except Exception as e:
-                    logger.warning(f"Failed to initialize Azure Sentinel service: {e}")
-
-            # Initialize AWS Security Hub service if configured
-            if is_integration_enabled("aws-security-hub"):
-                try:
-                    from core.integrations.aws_security_hub.ingestion import (
-                        AWSSecurityHubIngestion,
-                    )
-
-                    self._aws_security_hub_service = AWSSecurityHubIngestion()
-                    logger.info("AWS Security Hub service initialized")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to initialize AWS Security Hub service: {e}"
-                    )
-
-            # Initialize Microsoft Defender service if configured
-            if is_integration_enabled("microsoft-defender"):
-                try:
-                    from core.integrations.microsoft_defender.ingestion import (
-                        MicrosoftDefenderIngestion,
-                    )
-
-                    self._microsoft_defender_service = MicrosoftDefenderIngestion()
-                    logger.info("Microsoft Defender service initialized")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to initialize Microsoft Defender service: {e}"
-                    )
-
-            # Initialize Elastic Security service if configured
-            if is_integration_enabled("elastic-siem"):
-                try:
-                    from core.integrations.elastic.ingestion import ElasticIngestion
-
-                    self._elastic_service = ElasticIngestion()
-                    logger.info("Elastic Security service initialized")
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to initialize Elastic Security service: {e}"
-                    )
-
-            # Initialize data service for database access
-            from core.storage.database_data_service import DatabaseDataService
-
-            self._data_service = DatabaseDataService()
-
-        except Exception as e:
-            logger.error(f"Error initializing services: {e}")
-
     async def run(self, shutdown_event: asyncio.Event):
-        """Run the polling loop."""
+        """Run the Federation runner, and the webhook when enabled."""
         logger.info("Data poller starting...")
-        self._init_services()
-
-        # Create polling tasks
-        tasks = []
-
-        # Federation runner is always spawned. It self-gates on the global
-        # federation.settings toggle and per-source rows; idle while disabled.
-        tasks.append(asyncio.create_task(self._federation.run(shutdown_event)))
-
-        if self._splunk_service:
-            tasks.append(asyncio.create_task(self._poll_splunk_loop(shutdown_event)))
-
-        if self._crowdstrike_service:
-            tasks.append(
-                asyncio.create_task(self._poll_crowdstrike_loop(shutdown_event))
-            )
-
-        for source in self._INGESTION_SOURCES:
-            if getattr(self, f"_{source}_service"):
-                tasks.append(
-                    asyncio.create_task(
-                        self._poll_ingestion_loop(source, shutdown_event)
-                    )
-                )
-
-        if self._elastic_service:
-            tasks.append(asyncio.create_task(self._poll_elastic_loop(shutdown_event)))
-
+        tasks = [asyncio.create_task(self._federation.run(shutdown_event))]
         if self.config.webhook_enabled:
             tasks.append(asyncio.create_task(self._run_webhook_server(shutdown_event)))
-
-        if not tasks:
-            logger.warning("No data sources configured for polling")
-            # Just wait for shutdown
-            await shutdown_event.wait()
-            return
-
-        # Wait for all tasks or shutdown
         try:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
             logger.info("Polling tasks cancelled")
 
-    async def _poll_splunk_loop(self, shutdown_event: asyncio.Event):
-        """Poll Splunk for new alerts on interval."""
-        logger.info(
-            f"Splunk polling loop started (interval: {self.config.splunk_interval}s)"
-        )
-
-        while not shutdown_event.is_set():
-            try:
-                await self._poll_splunk()
-                self._splunk_state.last_poll_time = utcnow()
-            except Exception as e:
-                logger.error(f"Splunk polling error: {e}")
-                self.stats["errors"] += 1
-
-            # Wait for interval or shutdown
-            try:
-                await asyncio.wait_for(
-                    shutdown_event.wait(), timeout=self.config.splunk_interval
-                )
-                break  # Shutdown requested
-            except asyncio.TimeoutError:
-                pass  # Continue polling
-
-    async def _poll_splunk(self):
-        """Poll Splunk for new security alerts."""
-        if not self._splunk_service:
-            return
-        if self._federation.is_active_for("splunk"):
-            return  # Federation owns this source while globally + per-source enabled
-
-        self.stats["splunk_polls"] += 1
-        logger.debug("Polling Splunk for new alerts...")
-
-        # Calculate time range
-        lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
-        earliest_time = f"-{lookback_minutes}m"
-
-        # Query for notable events / security alerts
-        queries = [
-            "index=notable | head 100",
-            "index=security sourcetype=*:alert* | head 100",
-            "`notable` | head 100",
-        ]
-
-        findings = []
-        for query in queries:
-            try:
-                # search() polls its job with time.sleep for up to ~60s,
-                # which would otherwise freeze the whole daemon loop.
-                results = await asyncio.to_thread(
-                    self._splunk_service.search,
-                    query=query,
-                    earliest_time=earliest_time,
-                    latest_time="now",
-                    max_count=100,
-                )
-                if results:
-                    findings.extend(results)
-                    break  # Use first successful query
-            except Exception as e:
-                logger.debug(f"Splunk query failed: {query} - {e}")
-                continue
-
-        # Process findings
-        new_count = 0
-        for event in findings:
-            finding = self._splunk_event_to_finding(event)
-            if finding and not await self._splunk_dedup.is_processed(
-                finding["finding_id"]
-            ):
-                if await self._enqueue_finding(finding, "splunk"):
-                    await self._splunk_dedup.mark_processed(finding["finding_id"])
-                    new_count += 1
-
-        if new_count > 0:
-            logger.info(f"Polled {new_count} new findings from Splunk")
-            self.stats["splunk_findings"] += new_count
-
-    def _splunk_event_to_finding(
-        self, event: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Convert Splunk event to finding format."""
-        import uuid
-
-        # Extract key fields
-        event_id = event.get("_cd") or event.get("event_id") or str(uuid.uuid4())
-        finding_id = f"splunk-{event_id[:32]}"
-
-        # Determine severity
-        severity_raw = event.get("urgency") or event.get("severity") or "medium"
-        severity_map = {
-            "critical": "critical",
-            "high": "high",
-            "medium": "medium",
-            "low": "low",
-            "info": "low",
-            "informational": "low",
-        }
-        severity = severity_map.get(severity_raw.lower(), "medium")
-
-        # Extract entity context
-        entity_context = {
-            "src_ips": [],
-            "dest_ips": [],
-            "hostnames": [],
-            "usernames": [],
-        }
-
-        for ip_field in ["src_ip", "src", "source_ip"]:
-            if event.get(ip_field):
-                entity_context["src_ips"].append(event[ip_field])
-
-        for ip_field in ["dest_ip", "dest", "destination_ip"]:
-            if event.get(ip_field):
-                entity_context["dest_ips"].append(event[ip_field])
-
-        for host_field in ["host", "hostname", "src_host", "dest_host"]:
-            if event.get(host_field):
-                entity_context["hostnames"].append(event[host_field])
-
-        for user_field in ["user", "username", "src_user"]:
-            if event.get(user_field):
-                entity_context["usernames"].append(event[user_field])
-
-        return {
-            "finding_id": finding_id,
-            "data_source": "splunk",
-            "timestamp": event.get("_time") or utcnow().isoformat(),
-            "severity": severity,
-            "status": "new",
-            "title": event.get("search_name")
-            or event.get("rule_name")
-            or "Splunk Alert",
-            "description": event.get("description") or event.get("_raw", "")[:500],
-            "entity_context": entity_context,
-            "raw_event": event,
-            "anomaly_score": 0.5,  # Default score
-            "mitre_predictions": {},
-        }
-
-    async def _poll_crowdstrike_loop(self, shutdown_event: asyncio.Event):
-        """Poll CrowdStrike for new detections on interval."""
-        logger.info(
-            f"CrowdStrike polling loop started (interval: {self.config.crowdstrike_interval}s)"
-        )
-
-        while not shutdown_event.is_set():
-            try:
-                await self._poll_crowdstrike()
-                self._crowdstrike_state.last_poll_time = utcnow()
-            except Exception as e:
-                logger.error(f"CrowdStrike polling error: {e}")
-                self.stats["errors"] += 1
-
-            try:
-                await asyncio.wait_for(
-                    shutdown_event.wait(), timeout=self.config.crowdstrike_interval
-                )
-                break
-            except asyncio.TimeoutError:
-                pass
-
-    async def _poll_crowdstrike(self):
-        """Poll CrowdStrike for new detections."""
-        if not self._crowdstrike_service:
-            return
-        if self._federation.is_active_for("crowdstrike"):
-            return
-
-        self.stats["crowdstrike_polls"] += 1
-        logger.debug("Polling CrowdStrike for new detections...")
-
-        try:
-            # Get recent detections
-            lookback_minutes = max(self.config.crowdstrike_interval // 60 + 1, 5)
-            since = utcnow() - timedelta(minutes=lookback_minutes)
-
-            detections = await asyncio.to_thread(
-                self._crowdstrike_service.get_detections,
-                filter_query=f"created_timestamp:>='{since.isoformat()}Z'",
-                limit=100,
-            )
-
-            if not detections:
-                return
-
-            new_count = 0
-            for detection in detections:
-                finding = self._crowdstrike_detection_to_finding(detection)
-                if finding and not await self._crowdstrike_dedup.is_processed(
-                    finding["finding_id"]
-                ):
-                    if await self._enqueue_finding(finding, "crowdstrike"):
-                        await self._crowdstrike_dedup.mark_processed(
-                            finding["finding_id"]
-                        )
-                        new_count += 1
-
-            if new_count > 0:
-                logger.info(f"Polled {new_count} new detections from CrowdStrike")
-                self.stats["crowdstrike_findings"] += new_count
-
-        except Exception as e:
-            logger.error(f"CrowdStrike API error: {e}")
-            raise
-
-    def _crowdstrike_detection_to_finding(
-        self, detection: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Convert CrowdStrike detection to finding format."""
-        detection_id = detection.get("detection_id", "")
-        if not detection_id:
-            return None
-
-        finding_id = f"cs-{detection_id[:32]}"
-
-        # Map severity
-        severity_raw = detection.get("max_severity_displayname", "Medium")
-        severity_map = {
-            "Critical": "critical",
-            "High": "high",
-            "Medium": "medium",
-            "Low": "low",
-            "Informational": "low",
-        }
-        severity = severity_map.get(severity_raw, "medium")
-
-        # Extract behaviors and tactics
-        behaviors = detection.get("behaviors", [])
-        mitre_predictions = {}
-        for behavior in behaviors:
-            technique = behavior.get("technique")
-            if technique:
-                mitre_predictions[technique] = 0.9  # High confidence from EDR
-
-        # Entity context
-        device = detection.get("device", {})
-        entity_context = {
-            "src_ips": [device.get("local_ip")] if device.get("local_ip") else [],
-            "hostnames": [device.get("hostname")] if device.get("hostname") else [],
-            "usernames": (
-                [detection.get("user_name")] if detection.get("user_name") else []
-            ),
-            "device_id": device.get("device_id"),
-        }
-
-        return {
-            "finding_id": finding_id,
-            "data_source": "crowdstrike",
-            "timestamp": detection.get("created_timestamp") or utcnow().isoformat(),
-            "severity": severity,
-            "status": "new",
-            "title": detection.get("scenario") or "CrowdStrike Detection",
-            "description": detection.get("description", ""),
-            "entity_context": entity_context,
-            "raw_event": detection,
-            "anomaly_score": detection.get("max_confidence", 50) / 100.0,
-            "mitre_predictions": mitre_predictions,
-        }
-
     async def _run_webhook_server(self, shutdown_event: asyncio.Event):
         """Run a simple webhook server for external ingestion."""
+        from aiohttp import web
+
+        runner = web.AppRunner(self._webhook_app())
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", self.config.webhook_port)
+
+        logger.info(f"Webhook server starting on port {self.config.webhook_port}")
+        await site.start()
+
+        # Wait for shutdown
+        await shutdown_event.wait()
+
+        await runner.cleanup()
+        logger.info("Webhook server stopped")
+
+    def _webhook_app(self):
         from aiohttp import web
 
         async def handle_webhook(request: web.Request) -> web.Response:
@@ -630,16 +183,27 @@ class DataPoller:
                         finding_data["finding_id"],
                     )
 
+                if self._output_queue is None:
+                    return _busy(0, "ingest not ready: no processor queue")
+
                 count = 0
                 for finding_data in findings:
                     finding_id = finding_data["finding_id"]
-                    if not await self._webhook_dedup.is_processed(finding_id):
-                        finding_data["data_source"] = finding_data.get(
-                            "data_source", "webhook"
-                        )
-                        if await self._enqueue_finding(finding_data, "webhook"):
-                            await self._webhook_dedup.mark_processed(finding_id)
-                            count += 1
+                    if await self._webhook_dedup.is_processed(finding_id):
+                        continue
+                    finding_data["data_source"] = finding_data.get(
+                        "data_source", "webhook"
+                    )
+                    try:
+                        # Never wait: the sender holds its bookmark and
+                        # retries, and the ones already taken dedup then.
+                        self._output_queue.put_nowait(envelope(finding_data, "webhook"))
+                    except asyncio.QueueFull:
+                        self.stats["webhook_findings"] += count
+                        self.stats["webhook_busy"] += 1
+                        return _busy(count, "ingest busy: processor queue full")
+                    await self._webhook_dedup.mark_processed(finding_id)
+                    count += 1
 
                 self.stats["webhook_findings"] += count
                 return web.json_response({"status": "ok", "ingested": count})
@@ -656,175 +220,14 @@ class DataPoller:
         app.router.add_post("/ingest", handle_webhook)
         app.router.add_post("/webhook", handle_webhook)
         app.router.add_get("/health", health_check)
+        return app
 
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", self.config.webhook_port)
 
-        logger.info(f"Webhook server starting on port {self.config.webhook_port}")
-        await site.start()
+def _busy(ingested: int, message: str):
+    from aiohttp import web
 
-        # Wait for shutdown
-        await shutdown_event.wait()
-
-        await runner.cleanup()
-        logger.info("Webhook server stopped")
-
-    async def _enqueue_finding(self, finding: Dict[str, Any], source: str) -> bool:
-        """Hand a finding off for processing. True if it was accepted.
-
-        Callers must not mark a finding processed unless this returns True:
-        the dedup key is what makes a retry possible, so marking a finding that
-        was never stored drops it permanently.
-
-        "Accepted" means handed off, not durable. On the queue path that is a
-        put() onto an in-process asyncio.Queue, so a finding still dies with
-        the daemon if it stops between the put and the processor's write. What
-        this closes is the larger hole: an ingest that raised, or no sink at
-        all, used to be marked processed just the same. Making the queue path
-        durable needs the queue itself to be, which is a separate change.
-        """
-        if self._output_queue:
-            await self._output_queue.put(
-                {
-                    "type": "finding",
-                    "source": source,
-                    "data": finding,
-                    "timestamp": utcnow().isoformat(),
-                }
-            )
-            logger.debug(f"Enqueued finding {finding.get('finding_id')} from {source}")
-            return True
-
-        if not self._data_service:
-            logger.error(
-                "Dropping finding %s from %s: no output queue and no data service",
-                finding.get("finding_id"),
-                source,
-            )
-            return False
-
-        try:
-            from core.ingestion.ingestion_service import IngestionService
-
-            IngestionService().ingest_finding(finding)
-            return True
-        except Exception:
-            logger.exception(
-                "Failed to store finding %s from %s; leaving it unmarked to retry",
-                finding.get("finding_id"),
-                source,
-            )
-            return False
-
-    # Sources that ingest through their own service's ingest_alerts(limit=...).
-    # (attribute/stat/federation key -> display label, what it calls a record)
-    _INGESTION_SOURCES = {
-        "azure_sentinel": ("Azure Sentinel", "incidents"),
-        "aws_security_hub": ("AWS Security Hub", "findings"),
-        "microsoft_defender": ("Microsoft Defender", "alerts"),
-    }
-
-    async def _poll_ingestion_source(self, source: str):
-        """Poll one ingestion-service source. Raises so the loop counts it."""
-        label, noun = self._INGESTION_SOURCES[source]
-        service = getattr(self, f"_{source}_service")
-        if not service or self._federation.is_active_for(source):
-            return
-
-        self.stats[f"{source}_polls"] += 1
-        logger.debug("Polling %s for new %s...", label, noun)
-
-        # ingest_alerts() calls asyncio.run(), which raises RuntimeError while
-        # this loop is running. A worker thread also keeps the blocking SDK
-        # and ingest_finding writes off the daemon loop.
-        result = await asyncio.to_thread(service.ingest_alerts, limit=100)
-
-        if not result.get("success"):
-            # Raise rather than log: the loop is what counts an error and what
-            # decides whether to stamp last_poll_time. Returning quietly here
-            # recorded a failed poll as a clean one -- the same blind spot the
-            # bare `except: log` in these pollers used to have, reached by the
-            # other branch.
-            raise IngestionError(f"{label} ingestion failed: {result.get('errors')}")
-
-        ingested = result.get("ingested", 0)
-        self.stats[f"{source}_findings"] += ingested
-        logger.info("%s: ingested %d %s", label, ingested, noun)
-
-    async def _poll_ingestion_loop(self, source: str, shutdown_event: asyncio.Event):
-        """Poll an ingestion-service source on interval until shutdown."""
-        label, _ = self._INGESTION_SOURCES[source]
-        state = getattr(self, f"_{source}_state")
-        interval = self.config.splunk_interval  # Use same interval as Splunk
-        logger.info(f"{label} polling loop started (interval: {interval}s)")
-
-        while not shutdown_event.is_set():
-            try:
-                await self._poll_ingestion_source(source)
-                state.last_poll_time = utcnow()
-            except Exception as e:
-                logger.error(f"{label} polling error: {e}")
-                self.stats["errors"] += 1
-
-            # Wait for interval or shutdown
-            try:
-                await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
-                break  # Shutdown requested
-            except asyncio.TimeoutError:
-                pass  # Continue polling
-
-    async def _poll_elastic_loop(self, shutdown_event: asyncio.Event):
-        """Poll Elastic Security for new detection alerts on interval."""
-        interval = self.config.splunk_interval  # Use same interval as Splunk
-        logger.info(f"Elastic Security polling loop started (interval: {interval}s)")
-
-        while not shutdown_event.is_set():
-            try:
-                await self._poll_elastic()
-                self._elastic_state.last_poll_time = utcnow()
-            except Exception as e:
-                logger.error(f"Elastic Security polling error: {e}")
-                self.stats["errors"] += 1
-
-            try:
-                await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
-                break
-            except asyncio.TimeoutError:
-                pass
-
-    async def _poll_elastic(self):
-        """Poll Elastic Security for new detection alerts."""
-        if not self._elastic_service:
-            return
-        if self._federation.is_active_for("elastic"):
-            return
-
-        self.stats["elastic_polls"] += 1
-        logger.debug("Polling Elastic Security for new alerts...")
-
-        try:
-            lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
-            start_time = utcnow() - timedelta(minutes=lookback_minutes)
-
-            alerts = await self._elastic_service.fetch_alerts(
-                start_time=start_time, limit=100
-            )
-
-            new_count = 0
-            for alert in alerts:
-                finding = self._elastic_service.transform_alert_to_finding(alert)
-                if finding and not await self._elastic_dedup.is_processed(
-                    finding["finding_id"]
-                ):
-                    if await self._enqueue_finding(finding, "elastic"):
-                        await self._elastic_dedup.mark_processed(finding["finding_id"])
-                        new_count += 1
-
-            if new_count > 0:
-                logger.info(f"Polled {new_count} new findings from Elastic Security")
-                self.stats["elastic_findings"] += new_count
-
-        except Exception as e:
-            logger.error(f"Elastic Security API error: {e}")
-            raise
+    return web.json_response(
+        {"error": message, "ingested": ingested},
+        status=503,
+        headers={"Retry-After": str(_BUSY_RETRY_AFTER)},
+    )

@@ -258,7 +258,8 @@ services:
       # these, _read_fold cannot reach agent-serve and completed runs stay executing.
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
       AGENT_URL: http://agent-serve:6989
-      # Polling intervals (seconds)
+      # Deprecated: read once by the Federation upgrade to carry a tuned
+      # cadence over; removed next release with the settings.
       DAEMON_SPLUNK_POLL_INTERVAL: ${DAEMON_SPLUNK_POLL_INTERVAL:-300}
       DAEMON_CROWDSTRIKE_POLL_INTERVAL: ${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
       # Processing

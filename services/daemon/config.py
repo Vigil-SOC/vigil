@@ -13,9 +13,6 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PollingConfig:
-    splunk_interval: int = 300  # 5 minutes
-    crowdstrike_interval: int = 60  # 1 minute
-    generic_interval: int = 120  # 2 minutes for other sources
     webhook_enabled: bool = True
     webhook_port: int = 8081
     webhook_token: str = ""  # required bearer for /ingest; empty = fail closed
@@ -31,6 +28,9 @@ class ProcessingConfig:
     enrich_max_inflight: int = (
         50  # cap on pending background enrich tasks (backpressure)
     )
+    # Findings waiting between the ingesters and the processor; producers
+    # wait (the webhook answers 503) rather than grow daemon memory.
+    handoff_queue_maxsize: int = 1000
     enrich_backfill_enabled: bool = True  # sweep for stored-but-never-enriched findings
     enrich_backfill_interval: int = 300  # seconds between sweeps
     enrich_backfill_batch: int = 50  # findings re-queued per sweep
@@ -144,8 +144,6 @@ class DaemonConfig:
 
         config.log_level = settings.daemon_log_level
 
-        config.polling.splunk_interval = settings.daemon_splunk_poll_interval
-        config.polling.crowdstrike_interval = settings.daemon_crowdstrike_poll_interval
         config.polling.webhook_enabled = settings.daemon_webhook_enabled
         config.polling.webhook_port = settings.daemon_webhook_port
         config.polling.webhook_token = get_secret("DAEMON_WEBHOOK_TOKEN") or ""
@@ -155,6 +153,7 @@ class DaemonConfig:
         config.processing.batch_size = settings.daemon_batch_size
         config.processing.triage_timeout = settings.daemon_triage_timeout
         config.processing.enrich_max_inflight = settings.daemon_enrich_max_inflight
+        config.processing.handoff_queue_maxsize = settings.daemon_handoff_queue_maxsize
         config.processing.enrich_backfill_enabled = settings.daemon_enrich_backfill
         config.processing.enrich_backfill_interval = (
             settings.daemon_enrich_backfill_interval

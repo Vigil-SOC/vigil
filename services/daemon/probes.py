@@ -19,6 +19,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from core.ingestion.handoff import envelope, put_or_shutdown
 from core.time import utcnow
 from services.daemon.metrics import probe_metrics
 
@@ -119,12 +120,18 @@ def build_probe_finding(probe: Dict[str, Any], day: date) -> Dict[str, Any]:
     }
 
 
-async def inject_probes(queue: asyncio.Queue, data_service: Any) -> int:
+async def inject_probes(
+    queue: asyncio.Queue,
+    data_service: Any,
+    shutdown: Optional[asyncio.Event] = None,
+) -> int:
     """Queue today's probes that do not exist yet; return how many were queued.
 
     The id carries the day, so an hourly sweep (or a restart) re-injects
-    nothing once the rows are stored — that gate is the "once a day".
+    nothing once the rows are stored — that gate is the "once a day". A full
+    queue is waited on, up to shutdown; the rest are injected next sweep.
     """
+    shutdown = shutdown or asyncio.Event()
     day = utcnow().date()
     injected = 0
     for probe in PROBES:
@@ -132,14 +139,10 @@ async def inject_probes(queue: asyncio.Queue, data_service: Any) -> int:
         if data_service.get_finding(finding["finding_id"]):
             continue
         # Same envelope the poller and Kafka ingestor use.
-        await queue.put(
-            {
-                "type": "finding",
-                "source": PROBE_DATA_SOURCE,
-                "data": finding,
-                "timestamp": utcnow().isoformat(),
-            }
-        )
+        if not await put_or_shutdown(
+            queue, envelope(finding, PROBE_DATA_SOURCE), shutdown
+        ):
+            break
         injected += 1
     if injected:
         logger.info("Injected %d known-answer probe(s) for %s", injected, day)

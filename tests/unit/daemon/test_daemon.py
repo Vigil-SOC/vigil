@@ -10,90 +10,9 @@ from core.time import utcnow
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 
 from services.daemon.config import ProcessingConfig
-from services.daemon.poller import DataPoller
 from services.daemon.processor import FindingProcessor
 from services.daemon.responder import AutonomousResponder
 from services.daemon.scheduler import TaskScheduler
-
-
-class TestPollingLogic:
-    """Test daemon polling logic."""
-    
-    @pytest.mark.skip(reason="Methods don't exist in DataPoller - needs rewrite for async polling")
-    def test_calculate_next_poll_time(self):
-        """Test calculating next poll time based on interval."""
-        from services.daemon.config import PollingConfig
-        config = PollingConfig()
-        poller = DataPoller(config)
-        interval = 300  # 5 minutes
-        
-        next_poll = poller.calculate_next_poll(interval)
-        
-        now = utcnow()
-        expected = now + timedelta(seconds=interval)
-        
-        # Allow 1 second tolerance
-        assert abs((next_poll - expected).total_seconds()) < 1
-    
-    @pytest.mark.skip(reason="Methods don't exist in DataPoller - needs rewrite for async polling")
-    def test_should_poll_true(self):
-        """Test polling when interval has elapsed."""
-        from services.daemon.config import PollingConfig
-        config = PollingConfig()
-        poller = DataPoller(config)
-        last_poll = utcnow() - timedelta(seconds=400)
-        interval = 300  # 5 minutes
-        
-        should_poll = poller.should_poll(last_poll, interval)
-        
-        assert should_poll is True
-    
-    @pytest.mark.skip(reason="Methods don't exist in DataPoller - needs rewrite for async polling")
-    def test_should_poll_false(self):
-        """Test not polling when interval hasn't elapsed."""
-        from services.daemon.config import PollingConfig
-        config = PollingConfig()
-        poller = DataPoller(config)
-        last_poll = utcnow() - timedelta(seconds=100)
-        interval = 300  # 5 minutes
-        
-        should_poll = poller.should_poll(last_poll, interval)
-        
-        assert should_poll is False
-    
-    @pytest.mark.skip(reason="Methods don't exist in DataPoller - needs rewrite for async polling")
-    @patch('services.daemon.poller.SplunkService')
-    def test_poll_splunk(self, mock_splunk):
-        """Test polling Splunk for new events."""
-        mock_splunk.search.return_value = [
-            {"id": "1", "severity": "high"},
-            {"id": "2", "severity": "medium"}
-        ]
-        
-        from services.daemon.config import PollingConfig
-        config = PollingConfig()
-        poller = DataPoller(config)
-        events = poller.poll_splunk(query="search index=security")
-        
-        assert len(events) == 2
-        assert events[0]["severity"] == "high"
-        mock_splunk.search.assert_called_once()
-    
-    @pytest.mark.skip(reason="Methods don't exist in DataPoller - needs rewrite for async polling")
-    @patch('services.daemon.poller.CrowdStrikeService')
-    def test_poll_crowdstrike(self, mock_cs):
-        """Test polling CrowdStrike for alerts."""
-        mock_cs.get_alerts.return_value = [
-            {"alert_id": "cs-001", "severity": "critical"}
-        ]
-        
-        from services.daemon.config import PollingConfig
-        config = PollingConfig()
-        poller = DataPoller(config)
-        alerts = poller.poll_crowdstrike()
-        
-        assert len(alerts) == 1
-        assert alerts[0]["severity"] == "critical"
 
 
 class TestBatchProcessing:

@@ -8,9 +8,7 @@ them; only the seeded secrets store holds the credential.
 
 from __future__ import annotations
 
-import sys
-import types
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -55,40 +53,6 @@ def seeded(monkeypatch):
     )
 
 
-def _make_poller():
-    from services.daemon.config import PollingConfig
-    from services.daemon.poller import DataPoller
-
-    with (
-        patch("services.daemon.poller.FederationRunner"),
-        patch("services.daemon.poller.RedisDedupSet"),
-    ):
-        return DataPoller(PollingConfig())
-
-
-def _init_poller(enabled: set[str]):
-    db = types.ModuleType("core.storage.database_data_service")
-    db.DatabaseDataService = MagicMock()
-    with (
-        patch.dict(sys.modules, {"core.storage.database_data_service": db}),
-        patch("core.config.is_integration_enabled", side_effect=enabled.__contains__),
-        patch("core.integrations.splunk.client.SplunkService") as splunk,
-        patch("core.integrations.crowdstrike.client.CrowdStrikeService") as cs,
-    ):
-        _make_poller()._init_services()
-    return splunk, cs
-
-
-def test_splunk_password_reaches_service_from_poller():
-    splunk, _ = _init_poller({"splunk"})
-    splunk.assert_called_once_with(
-        server_url="https://splunk:8089",
-        username="svc",
-        password="splunk-pw",
-        verify_ssl=False,
-    )
-
-
 def test_splunk_password_reaches_service_from_adapter():
     adapter = SplunkAdapter()
     with (
@@ -101,15 +65,6 @@ def test_splunk_password_reaches_service_from_adapter():
         username="svc",
         password="splunk-pw",
         verify_ssl=False,
-    )
-
-
-def test_crowdstrike_secret_reaches_service_from_poller():
-    _, cs = _init_poller({"crowdstrike"})
-    cs.assert_called_once_with(
-        client_id="cs-id",
-        client_secret="cs-secret",
-        base_url="https://api.crowdstrike.com",
     )
 
 
