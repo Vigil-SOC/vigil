@@ -237,8 +237,9 @@ class ElasticService:
 
     async def get_indices(self) -> Optional[List[str]]:
         """List available indices."""
+        client = self.es_client
         try:
-            resp = await self.es_client.get("/_cat/indices?format=json")
+            resp = await client.get("/_cat/indices?format=json")
             resp.raise_for_status()
             return [idx["index"] for idx in resp.json() if "index" in idx]
         except Exception as exc:
@@ -262,10 +263,9 @@ class ElasticService:
             "size": size,
             "sort": [{sort_field: {"order": sort_order}}],
         }
+        client = self.kibana_client
         try:
-            resp = await self.kibana_client.post(
-                "/api/detection_engine/signals/search", json=body
-            )
+            resp = await client.post("/api/detection_engine/signals/search", json=body)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:
