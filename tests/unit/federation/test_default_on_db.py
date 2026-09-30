@@ -318,3 +318,48 @@ def test_a_global_switch_already_on_audits_only_the_marker(adapters):
     assert [(key, action) for key, action, *_ in _audits()] == [
         (DEFAULT_ON_KEY, "create")
     ]
+
+
+def test_a_row_off_is_switched_on_even_when_its_integration_is_not(adapters):
+    # Seeding leaves an existing row alone, so a row left off here would stay
+    # off once its integration is configured again; legacy polled it then.
+    _seed(
+        global_enabled=False,
+        rows={
+            "elastic": {"enabled": False, "interval_seconds": 300},
+            # Its adapter module failed to import this boot.
+            "unregistered": {"enabled": False, "interval_seconds": 90},
+        },
+    )
+
+    assert sorted(apply_default_on()) == [
+        "crowdstrike",
+        "elastic",
+        "newsource",
+        "splunk",
+        "unregistered",
+    ]
+    rows = _state()["rows"]
+    assert rows["elastic"] == (True, 600)
+    assert rows["unregistered"] == (True, 90)
+
+
+def test_a_failure_writes_nothing_so_setup_retries(adapters, monkeypatch):
+    _seed(
+        global_enabled=False,
+        rows={"splunk": {"enabled": False, "interval_seconds": 300}},
+    )
+
+    def unreachable():
+        raise RuntimeError("config store unreachable")
+
+    monkeypatch.setattr(adapters[1], "is_configured", unreachable)
+
+    with pytest.raises(RuntimeError):
+        apply_default_on()
+
+    assert _state() == {
+        "rows": {"splunk": (False, 300)},
+        "global": False,
+        "marker": False,
+    }

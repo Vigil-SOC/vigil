@@ -119,6 +119,8 @@ def apply_default_on() -> List[str]:
     written in the same transaction, so a later deliberate switch-off
     survives restarts. Reads raise rather than default: a failed read of the
     marker must not look like an upgrade that never ran.
+    Any failure raises and writes nothing, so setup retries rather than
+    marking the upgrade done over a source it skipped.
     Returns the source ids switched on.
     """
     from core.storage.connection import get_db_manager
@@ -138,36 +140,27 @@ def apply_default_on() -> List[str]:
             r.enabled or r.last_poll_at is not None for r in rows.values()
         )
 
+        # Seeding never revisits a row, so one left off here stays off for good.
+        to_switch = [r for r in rows.values() if not r.enabled]
         for adapter in list_adapters():
-            try:
-                if not adapter.is_configured():
-                    continue
-                row = rows.get(adapter.name)
-                if row is None:
-                    row = FederationSource(
-                        source_id=adapter.name, **_row_defaults(adapter)
-                    )
-                    session.add(row)
-                elif row.enabled:
-                    continue
-                row.enabled = True
-                interval = _legacy_interval(adapter.name)
-                if interval and row.last_poll_at is None:
-                    row.interval_seconds = interval
-                row.cursor = _catch_up_cursor(session, adapter.name, now)
-                switched_on.append(adapter.name)
-                logger.info(
-                    "Federation upgrade: switched on %s (interval %ss, from %s)",
-                    adapter.name,
-                    row.interval_seconds,
-                    row.cursor.get("last_poll_at") or "now",
-                )
-            except Exception as e:
-                logger.warning(
-                    "Federation upgrade skipped %s: %s",
-                    getattr(adapter, "name", "?"),
-                    e,
-                )
+            if adapter.name not in rows and adapter.is_configured():
+                row = FederationSource(source_id=adapter.name, **_row_defaults(adapter))
+                session.add(row)
+                to_switch.append(row)
+
+        for row in to_switch:
+            row.enabled = True
+            interval = _legacy_interval(row.source_id)
+            if interval and row.last_poll_at is None:
+                row.interval_seconds = interval
+            row.cursor = _catch_up_cursor(session, row.source_id, now)
+            switched_on.append(row.source_id)
+            logger.info(
+                "Federation upgrade: switched on %s (interval %ss, from %s)",
+                row.source_id,
+                row.interval_seconds,
+                row.cursor.get("last_poll_at") or "now",
+            )
 
         if not global_value.get("enabled"):
             global_value["enabled"] = True
