@@ -5,7 +5,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import BudgetDialog from './BudgetDialog'
 
 const get = vi.fn()
-const set = vi.fn(() => Promise.resolve({ data: {} }))
+const set = vi.fn((_payload: unknown) => Promise.resolve({ data: {} }))
 
 vi.mock('../../services/api', () => ({
   budgetsApi: {
