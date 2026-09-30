@@ -164,6 +164,7 @@ describe('what the run will cost', () => {
     expect(screen.getByLabelText('Context')).toBeInTheDocument()
     expect(screen.queryByLabelText(/Iterations/)).toBeNull()
     expect(screen.queryByLabelText(/Cost ceiling/)).toBeNull()
+    expect(screen.queryByLabelText(/Hypothesis/)).toBeNull()
   })
 })
 

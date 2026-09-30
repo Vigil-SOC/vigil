@@ -80,7 +80,7 @@ checkpoints: { ${RCA_PERMIT}: ${permit} }
     arch: loadArch(fileURLToPath(new URL("../../arch/rootcause.yaml", import.meta.url)), RCA_ACTIONS),
     playbook: parsePlaybook("---\nname: root-cause-analysis\n---\nTrace the confirmed compromise back to its origin."),
     config: parseConfig(config, { config: ["checkpoints"] }),
-    prompt: "PC1 beacons to 45.1.2.3 from pid 4242.",
+    prompt: "**Additional Context:** PC1 beacons to 45.1.2.3 from pid 4242.",
   });
 }
 

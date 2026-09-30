@@ -797,6 +797,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   // and cost ceiling dropped on the way to the server, and nothing warned about an
   // unbound tool before the spend.
   const isHuntLike = wf.huntLike
+  // A root-cause run traces the finding it is given and states no beliefs, so a
+  // Hypothesis field would be sent as text it has no use for.
+  const takesHypothesis = wf.runKind !== 'root_cause'
   const turns = Number(iterations)
   const turnsBad = iterations.trim() !== '' && (!Number.isInteger(turns) || turns < 1 || turns > 40)
   const cost = Number(maxCost)
@@ -806,7 +809,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
     ...(findingId.trim() && { finding_id: findingId.trim() }),
     ...(caseId.trim() && { case_id: caseId.trim() }),
     ...(context.trim() && { context: context.trim() }),
-    ...(hypothesis.trim() && { hypothesis: hypothesis.trim() }),
+    ...(takesHypothesis && hypothesis.trim() && { hypothesis: hypothesis.trim() }),
   }
   const asked = subjectsAsked(hypothesis, subjects)
   const malformed = malformedSubjects(hypothesis, subjects)
@@ -866,7 +869,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
   return (
     <Popup open onClose={onClose} title={`Run · ${wf.name}`}>
       <div className="flex flex-col gap-3.5">
-        <p className="text-[12.5px] text-tx-3 leading-[1.5]">Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick. A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.</p>
+        <p className="text-[12.5px] text-tx-3 leading-[1.5]">Provide at least one target, then start the run — the agents work it on the server and History reports where it got to. A finding or case gives the run something to work from, and the report comes back onto the case you pick.{takesHypothesis
+            ? ' A run that tests beliefs takes what you state: each line of Hypothesis goes on the board as its own, and the benign explanation goes up beside them as the claim to beat.'
+            : ' A root-cause run traces the confirmed finding you give it back to how it began, and waits for someone to permit the trace before it starts.'}</p>
         {error && <div className="text-[12.5px] leading-[1.5]" style={{ color: 'var(--crit)' }}>{error}</div>}
         {isHuntLike && <Unpriced pricing={limits?.pricing} />}
         {isHuntLike && <Blindness unbound={limits?.capabilities?.unbound ?? []} />}
@@ -876,7 +881,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
         {isHuntLike && (
           <CoveragePanel entityKeys={Object.values(asked).flat()} onError={setError} onProposal={takeProposal} />
         )}
-        <Field
+        {takesHypothesis && <Field
           label="Hypothesis"
           value={hypothesis}
           onChange={setHypothesis}
@@ -885,7 +890,7 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
           hint={isHuntLike
             ? 'One belief per line, each a claim the run can argue against. The benign account is added for you as the claim to beat. Say what each one is about below, so its verdict can be found again by that host or address.'
             : undefined}
-        />
+        />}
         {isHuntLike && (
           <HypothesisPreview
             text={hypothesis}

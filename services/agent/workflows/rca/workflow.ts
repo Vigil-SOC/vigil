@@ -192,8 +192,14 @@ async function permitted(
 }
 
 // What the question names, so the inbox says which finding rather than "a run".
+// The prompt is markdown the target context built ("**Additional Context:** …"); an
+// inbox row shows it as plain text, so the emphasis and its labels go.
 function subjectOf(spec: RunSpec): string {
-  const text = spec.prompt.replace(/\s+/g, " ").trim();
+  const text = spec.prompt
+    .replace(/\*\*[^*]+:\*\*/g, "")
+    .replace(/[*_`#]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (text === "") return "";
   return ` ${text.length > 300 ? `${text.slice(0, 300)}…` : text}`;
 }
