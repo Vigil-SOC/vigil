@@ -120,16 +120,8 @@ class KafkaConsumerService:
                 try:
                     # getmany so we can check shutdown frequently
                     batches = await self._consumer.getmany(timeout_ms=1000)
-                    for tp, msgs in batches.items():
-                        for msg in msgs:
-                            if not await self._handle_message(tp.topic, msg):
-                                # Shutdown while the hand-off was full: leave
-                                # this partition's offset uncommitted so the
-                                # batch is re-read (and deduped) next start.
-                                return
-                        # Commit offsets for this partition after processing
-                        if msgs:
-                            await self._consumer.commit()
+                    if not await self._drain(batches):
+                        return
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -150,6 +142,41 @@ class KafkaConsumerService:
                 await self._dedup.close()
             except Exception:
                 pass
+
+    async def _drain(self, batches) -> bool:
+        """Hand off one ``getmany`` result, committing each partition as it ends.
+
+        Commits name the partition and offset: a bare ``commit()`` commits the
+        position of every partition, and ``getmany`` has already moved each one
+        past its whole batch. False on shutdown while the hand-off was full;
+        nothing more is committed, so the rest is re-read (and deduped) next
+        start. On an error, every partition not yet handed off is sought back
+        to its first unhandled message, so the next ``getmany`` re-reads it.
+        """
+        parts = list(batches.items())
+        for i, (tp, msgs) in enumerate(parts):
+            next_offset = msgs[0].offset if msgs else None
+            try:
+                for msg in msgs:
+                    if not await self._handle_message(tp.topic, msg):
+                        return False
+                    next_offset = msg.offset + 1
+                if msgs:
+                    await self._consumer.commit({tp: next_offset})
+            except Exception:
+                rest = [(t, m[0].offset) for t, m in parts[i + 1 :] if m]
+                self._rewind([(tp, next_offset), *rest])
+                raise
+        return True
+
+    def _rewind(self, positions) -> None:
+        for tp, offset in positions:
+            if offset is None:
+                continue
+            try:
+                self._consumer.seek(tp, offset)
+            except Exception as e:  # revoked: its new owner reads from the commit
+                logger.warning("Kafka: could not rewind %s to %s: %s", tp, offset, e)
 
     async def _handle_message(self, topic: str, msg) -> bool:
         """Decode, dedupe, and enqueue one message. False if shutdown came first."""
