@@ -56,6 +56,7 @@ def get_elastic_service():
             verify_ssl=verify,
             index_pattern=config.get("index_pattern")
             or ".alerts-security.alerts-default",
+            ca_cert_path=config.get("ca_cert_path"),
         )
         return _elastic_service
     except Exception:

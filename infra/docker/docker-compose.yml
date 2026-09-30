@@ -201,6 +201,15 @@ services:
       NODE_EXTRA_CA_CERTS:
     ports:
       - "6987:6987"
+    volumes:
+      # Must track HOME in Dockerfile.backend, or every UI-configured key dies
+      # on recreate: master.key is the only thing that decrypts secrets.enc.
+      # The image pre-creates the dir owned by 1000:1000 so a fresh named
+      # volume inherits that; a path the image does not create mounts as root.
+      # Shared with soc-daemon and llm-worker, which read it via vigil_path().
+      - vigil_home:/home/vigil/.vigil
+      # The orchestrator and cases routers read the daemon's workdirs.
+      - vigil_investigations:/app/data/investigations
     depends_on:
       postgres:
         condition: service_healthy
@@ -258,11 +267,14 @@ services:
       # these, _read_fold cannot reach agent-serve and completed runs stay executing.
       AGENT_INTERNAL_TOKEN: ${AGENT_INTERNAL_TOKEN:-}
       AGENT_URL: http://agent-serve:6989
-      # Polling intervals (seconds)
+      # Deprecated: read once by the Federation upgrade to carry a tuned
+      # cadence over; removed next release with the settings.
       DAEMON_SPLUNK_POLL_INTERVAL: ${DAEMON_SPLUNK_POLL_INTERVAL:-300}
       DAEMON_CROWDSTRIKE_POLL_INTERVAL: ${DAEMON_CROWDSTRIKE_POLL_INTERVAL:-60}
       # Processing
       DAEMON_BATCH_SIZE: ${DAEMON_BATCH_SIZE:-10}
+      DAEMON_ENRICH_MAX_INFLIGHT: ${DAEMON_ENRICH_MAX_INFLIGHT:-50}
+      DAEMON_HANDOFF_QUEUE_MAXSIZE: ${DAEMON_HANDOFF_QUEUE_MAXSIZE:-1000}
       # Response
       DAEMON_DRY_RUN: ${DAEMON_DRY_RUN:-false}
       # Escalation
@@ -318,6 +330,10 @@ services:
       - "8081:8081"  # Webhook ingestion
       - "9090:9090"  # Prometheus /metrics (DAEMON_METRICS_PORT)
       - "9091:9091"  # Health /health + /status
+    volumes:
+      # Same State Directory and workdirs as backend (see there).
+      - vigil_home:/home/vigil/.vigil
+      - vigil_investigations:/app/data/investigations
     depends_on:
       postgres:
         condition: service_healthy
@@ -366,6 +382,9 @@ services:
       - SSL_CERT_FILE
       - REQUESTS_CA_BUNDLE
       - NODE_EXTRA_CA_CERTS
+    volumes:
+      # Same State Directory as backend (see there).
+      - vigil_home:/home/vigil/.vigil
     depends_on:
       postgres:
         condition: service_healthy
@@ -812,6 +831,10 @@ volumes:
   prometheus_data:
     driver: local
   bifrost_data:
+    driver: local
+  vigil_home:
+    driver: local
+  vigil_investigations:
     driver: local
   grafana_data:
     driver: local

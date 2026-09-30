@@ -5,7 +5,7 @@ source on a configurable cadence and yields normalized findings. The
 :mod:`core.federation.registry` module enumerates available adapters, and
 :func:`core.federation.seed.seed_federation_sources` ensures a row exists in
 ``federation_sources`` for every adapter whose underlying integration is
-configured (default disabled, opt-in).
+configured, switched on: Federation is the only path that polls a source.
 """
 
 from core.federation.registry import (

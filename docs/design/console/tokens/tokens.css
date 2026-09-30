@@ -1,0 +1,109 @@
+/* Vigil Console · design tokens. Apply .vg-dark or .vg-light on the root. */
+.vg-dark {
+  --bg0: #141414; /* Page background */
+  --bg1: #1B1B1B; /* Panels, header, cards on page */
+  --bg2: #212121; /* Card interior, rows, inputs */
+  --bg3: #292929; /* Hover, selected row */
+  --bg4: #323232; /* Track backgrounds (bars), strong hover */
+  --ln0: #262626; /* Hairline dividers */
+  --ln1: #303030; /* Card and input borders */
+  --ln2: #454545; /* Button borders, scrollbar */
+  --tx0: #F5F5F5; /* Primary text */
+  --tx1: #C7C7C7; /* Secondary text */
+  --tx2: #9E9E9E; /* Muted text, labels */
+  --tx3: #838383; /* Placeholder, tertiary */
+  --ac: #3AA8FF; /* Accent (links, primary buttons, active tab) */
+  --ac-bg: rgba(58,168,255,0.12); /* Accent tint background */
+  --ac-ln: rgba(58,168,255,0.42); /* Accent tint border */
+  --ac-tx: #111111; /* Text on accent */
+  --good: #00E676; /* Good level */
+  --good-bg: rgba(0,230,118,0.10); /* Good tint */
+  --good-ln: rgba(0,230,118,0.38); /* Good border */
+  --fair: #FFB300; /* Fair level */
+  --fair-bg: rgba(255,179,0,0.11); /* Fair tint */
+  --fair-ln: rgba(255,179,0,0.40); /* Fair border */
+  --poor: #FF3B5C; /* Poor level, Needs you, destructive */
+  --poor-bg: rgba(255,59,92,0.12); /* Poor tint */
+  --poor-ln: rgba(255,59,92,0.45); /* Poor border */
+  --sev-crit: #FF3B5C; /* Severity critical */
+  --sev-high: #FF8A3D; /* Severity high */
+  --sev-med: #FFC53D; /* Severity medium */
+  --sev-low: #5AA9FF; /* Severity low */
+  --sev-none: #838383; /* Severity noise */
+  --vio: #A78BFA; /* Human contribution, Tell mode, parsed actions */
+  --vio-bg: rgba(167,139,250,0.13); /* Human tint */
+  --scrim: rgba(0,0,0,0.62); /* Drawer scrim */
+  --shadow: rgba(0,0,0,0.55); /* Elevation shadow colour */
+  --spot: rgba(0,0,0,0.66); /* Tour spotlight */
+  --dt-red: #D92424; /* DeepTempo brand red */
+  --dt-black: #0C0A0E; /* DeepTempo brand black */
+  --dt-silver: #A9B0B8; /* DeepTempo brand silver */
+}
+.vg-light {
+  --bg0: #F2F4F8; /* Page background */
+  --bg1: #FFFFFF; /* Panels, header, cards on page */
+  --bg2: #F7F8FB; /* Card interior, rows, inputs */
+  --bg3: #EDF0F5; /* Hover, selected row */
+  --bg4: #E3E8F0; /* Track backgrounds (bars), strong hover */
+  --ln0: #E3E7EE; /* Hairline dividers */
+  --ln1: #D5DBE5; /* Card and input borders */
+  --ln2: #B8C2D1; /* Button borders, scrollbar */
+  --tx0: #0B0F19; /* Primary text */
+  --tx1: #33415A; /* Secondary text */
+  --tx2: #56637A; /* Muted text, labels */
+  --tx3: #6E7A8F; /* Placeholder, tertiary */
+  --ac: #0A6FD6; /* Accent (links, primary buttons, active tab) */
+  --ac-bg: rgba(10,111,214,0.09); /* Accent tint background */
+  --ac-ln: rgba(10,111,214,0.38); /* Accent tint border */
+  --ac-tx: #FFFFFF; /* Text on accent */
+  --good: #00794A; /* Good level */
+  --good-bg: rgba(0,121,74,0.09); /* Good tint */
+  --good-ln: rgba(0,121,74,0.35); /* Good border */
+  --fair: #8F5E00; /* Fair level */
+  --fair-bg: rgba(209,148,0,0.12); /* Fair tint */
+  --fair-ln: rgba(143,94,0,0.35); /* Fair border */
+  --poor: #C8102E; /* Poor level, Needs you, destructive */
+  --poor-bg: rgba(200,16,46,0.08); /* Poor tint */
+  --poor-ln: rgba(200,16,46,0.35); /* Poor border */
+  --sev-crit: #C8102E; /* Severity critical */
+  --sev-high: #C24E00; /* Severity high */
+  --sev-med: #8F5E00; /* Severity medium */
+  --sev-low: #1F64C8; /* Severity low */
+  --sev-none: #6E7A8F; /* Severity noise */
+  --vio: #6D3FD9; /* Human contribution, Tell mode, parsed actions */
+  --vio-bg: rgba(109,63,217,0.09); /* Human tint */
+  --scrim: rgba(11,15,25,0.38); /* Drawer scrim */
+  --shadow: rgba(11,15,25,0.18); /* Elevation shadow colour */
+  --spot: rgba(11,15,25,0.55); /* Tour spotlight */
+  --dt-red: #D92424; /* DeepTempo brand red */
+  --dt-black: #0C0A0E; /* DeepTempo brand black */
+  --dt-silver: #8A939E; /* DeepTempo brand silver */
+}
+
+:root {
+  --font-ui: 'Plus Jakarta Sans', system-ui, sans-serif;
+  --font-mono: 'Roboto Mono', monospace;
+  --radius-pill-sm: 8px;
+  --radius-button: 10px;
+  --radius-card-inner: 10px;
+  --radius-card: 14px;
+  --radius-panel: 12px;
+  --radius-round: 999px;
+  --size-button-sm: 28px;
+  --size-button: 36px;
+  --size-tab: 38px;
+  --size-state-pill: 22px;
+  --size-header-row: 52px;
+  --size-nav-row: 46px;
+  --size-search: 38px;
+}
+
+/* Motion */
+@keyframes vg-rise{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes vg-fade{from{opacity:0}to{opacity:1}}
+@keyframes vg-slide-in{from{transform:translateX(40px);opacity:0}to{transform:translateX(0);opacity:1}}
+@keyframes vg-fuse{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+@keyframes vg-blink{0%,100%{opacity:1}50%{opacity:.25}}
+@keyframes vg-breathe{0%,100%{opacity:.55}50%{opacity:1}}
+@keyframes vg-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion: reduce){*{animation:none!important}}

@@ -13,6 +13,7 @@ import cycle. Those names are re-exported here for backward compatibility.
 
 from __future__ import annotations
 
+import importlib
 import logging
 from typing import List, Optional
 
@@ -65,6 +66,16 @@ def get_adapter(name: str) -> Optional[FederationAdapter]:
 
 _BUILTINS_LOADED = False
 
+# Every vendor adapter lives in its vertical slice.
+_BUILTIN_ADAPTER_MODULES = (
+    "core.integrations.aws_security_hub.adapter",
+    "core.integrations.azure_sentinel.adapter",
+    "core.integrations.crowdstrike.adapter",
+    "core.integrations.elastic.adapter",
+    "core.integrations.microsoft_defender.adapter",
+    "core.integrations.splunk.adapter",
+)
+
 
 def _ensure_builtins_loaded() -> None:
     """Import the builtin adapter modules so they self-register.
@@ -77,23 +88,10 @@ def _ensure_builtins_loaded() -> None:
     if _BUILTINS_LOADED:
         return
     _BUILTINS_LOADED = True
-    # Import for side effects (each module calls register_adapter at module scope).
-    # Every vendor adapter lives in its vertical slice; import the adapter module
-    # directly for the module-scope register_adapter() side effect.
-    try:
-        from core.integrations.aws_security_hub import (  # noqa: F401
-            adapter as _aws_adapter,
-        )
-        from core.integrations.azure_sentinel import (  # noqa: F401
-            adapter as _azure_adapter,
-        )
-        from core.integrations.crowdstrike import (  # noqa: F401
-            adapter as _crowdstrike_adapter,
-        )
-        from core.integrations.elastic import adapter as _elastic_adapter  # noqa: F401
-        from core.integrations.microsoft_defender import (  # noqa: F401
-            adapter as _defender_adapter,
-        )
-        from core.integrations.splunk import adapter as _splunk_adapter  # noqa: F401
-    except Exception as e:
-        logger.warning("Failed to load builtin federation adapters: %s", e)
+    # Each module calls register_adapter() at module scope. One at a time: a
+    # module that fails to import must not keep the others from registering.
+    for module in _BUILTIN_ADAPTER_MODULES:
+        try:
+            importlib.import_module(module)
+        except Exception as e:
+            logger.error("Federation adapter module %s failed to import: %s", module, e)

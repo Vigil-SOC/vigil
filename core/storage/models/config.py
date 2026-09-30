@@ -192,8 +192,8 @@ class FederationSource(Base):
     Federation Source - Per-source state for the federated monitoring poller.
 
     One row per data source the daemon pulls from on a configurable cadence.
-    Rows are auto-seeded on daemon boot from configured integrations (default
-    disabled). The global on/off lives in ``system_config`` under the key
+    Rows are auto-seeded on daemon boot from configured integrations (switched
+    on). The global on/off lives in ``system_config`` under the key
     ``federation.settings`` — a source only polls when both the global toggle
     and its own ``enabled`` flag are true.
     """

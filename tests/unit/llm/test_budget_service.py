@@ -140,6 +140,32 @@ def test_set_settings_validates_enforcement_mode():
         set_settings(default_vk="sk-bf-x", budget_limit_usd=10.0, enforcement_mode="bogus")
 
 
+def test_stored_cap_and_mode_do_not_change_vk_header(monkeypatch):
+    """The stored cap and mode are ignored. x-bf-vk follows default_vk only."""
+    monkeypatch.setenv("DEV_MODE", "false")
+    monkeypatch.setenv("LLM_BUDGET_UNLIMITED", "false")
+    from core.llm.router.router import bifrost_headers
+
+    def attached(stored: dict) -> str | None:
+        with patch("core.llm.cost.budget._get_settings", return_value=stored):
+            return bifrost_headers().get("x-bf-vk")
+
+    vk = "sk-bf-real-key"
+    with_key = [
+        attached({"default_vk": vk, "enforcement_mode": mode, "budget_limit_usd": limit})
+        for mode in ("warning", "hard_stop")
+        for limit in (0.0, 500.0)
+    ]
+    assert with_key == [vk, vk, vk, vk]
+
+    without_key = [
+        attached({"default_vk": "", "enforcement_mode": mode, "budget_limit_usd": limit})
+        for mode in ("warning", "hard_stop")
+        for limit in (0.0, 500.0)
+    ]
+    assert without_key == [None, None, None, None]
+
+
 # ---------------------------------------------------------------------------
 # BudgetExceeded — typed exception
 # ---------------------------------------------------------------------------

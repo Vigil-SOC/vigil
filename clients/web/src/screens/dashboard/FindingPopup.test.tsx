@@ -226,3 +226,42 @@ describe('FindingPopup IP exclusions', () => {
     expect(screen.queryByText('excluded')).not.toBeInTheDocument()
   })
 })
+
+describe('FindingPopup AI enrichment errors', () => {
+  beforeEach(() => vi.clearAllMocks())
+
+  it('shows a budget-spent state with no retry when the virtual key is spent', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({ data: baseFinding } as never)
+    vi.mocked(findingsApi.getEnrichment).mockRejectedValueOnce({
+      response: {
+        status: 402,
+        data: { code: 'BUDGET_EXCEEDED', tier: 'virtual_key', detail: 'spent' },
+      },
+    })
+    const onConfigureAi = vi.fn()
+    render(<FindingPopup id="f-source-1" onClose={vi.fn()} onConfigureAi={onConfigureAi} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate AI analysis' }))
+
+    expect(await screen.findByText('Virtual-key budget spent')).toBeInTheDocument()
+    expect(screen.getByText(/AI Config → Virtual Keys/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument()
+    expect(screen.queryByText('AI enrichment failed')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Open AI Config' }))
+    expect(onConfigureAi).toHaveBeenCalledOnce()
+  })
+
+  it('still offers retry when enrichment fails for another reason', async () => {
+    vi.mocked(findingsApi.getById).mockResolvedValueOnce({ data: baseFinding } as never)
+    vi.mocked(findingsApi.getEnrichment).mockRejectedValueOnce({
+      response: { status: 500, data: { code: 'INTERNAL_ERROR' } },
+    })
+    render(<FindingPopup id="f-source-1" onClose={vi.fn()} onConfigureAi={vi.fn()} />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Generate AI analysis' }))
+
+    expect(await screen.findByText('AI enrichment failed')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(screen.queryByText('Virtual-key budget spent')).not.toBeInTheDocument()
+  })
+})

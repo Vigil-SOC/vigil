@@ -1,0 +1,2 @@
+# Hold to confirm
+For anything Vigil cannot undo: isolate a host, declare an incident, revoke a credential, remove an integration. 36px button, 1px `poor` border, `poor` text; on pointer-down a `poor` fill grows left→right over 1.6s (`width` transition), label becomes "Keep holding…", text turns white; release early cancels. On completion the label becomes the done state ("Approved · isolating FIN-WS-0231") with no undo. ARIA: "…Press and hold to confirm; this cannot be undone." Never used for reversible actions.

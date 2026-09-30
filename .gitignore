@@ -237,12 +237,6 @@ clients/web/yarn-error.log*
 TestOutputs/*.pdf
 !TestOutputs/.gitkeep
 
-# Timesketch
-timesketch/data/
-timesketch/logs/
-timesketch/upload/
-timesketch/etc/
-
 # Temporary files
 tmp/
 temp/

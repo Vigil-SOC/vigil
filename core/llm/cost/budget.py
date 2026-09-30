@@ -107,7 +107,11 @@ def get_settings() -> dict:
 def set_settings(
     *, default_vk: str, budget_limit_usd: float, enforcement_mode: str
 ) -> dict:
-    """Persist the VK + budget config. Caller (API handler) is admin-gated."""
+    """Persist the VK config. Caller (API handler) is admin-gated.
+
+    ``budget_limit_usd`` and ``enforcement_mode`` are stored for
+    compatibility. ``should_enforce`` does not read them.
+    """
     if enforcement_mode not in ("warning", "hard_stop"):
         raise ValueError(
             f"enforcement_mode must be 'warning' or 'hard_stop', got {enforcement_mode!r}"

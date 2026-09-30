@@ -6,8 +6,7 @@
    own UI to provision one and paste its id back.
 
    The split of ownership: Bifrost owns the keys, their budgets and their rate
-   limits. Vigil owns only which key it presents as `x-bf-vk`, and what to do
-   when the gateway says no.
+   limits. Vigil owns only which key it presents as `x-bf-vk`.
    ============================================================ */
 import { useEffect, useState } from 'react'
 import { Icon } from '../../shared/icons'
@@ -26,11 +25,6 @@ import { useBudgets } from './useSettings'
 import { useVirtualKeys, bifrostError } from './useBifrost'
 import type { BifrostVirtualKey, BifrostVirtualKeyWrite } from '../../services/bifrostApi'
 import type { SectionProps } from './types'
-
-const ENFORCEMENT_OPTIONS = [
-  { value: 'warning', label: 'Warning only — log but allow' },
-  { value: 'hard_stop', label: 'Hard stop — block on exceed' },
-]
 
 const RESET_OPTIONS = [
   { value: 'daily', label: 'Daily' },
@@ -69,20 +63,19 @@ export default function AiBudgetsPanel({ notify }: SectionProps) {
   const [busy, setBusy] = useState(false)
   const [draftVk, setDraftVk] = useState(settings.default_vk)
   const [showVk, setShowVk] = useState(false)
-  const [enforcement, setEnforcement] = useState(settings.enforcement_mode)
 
   useEffect(() => {
     setDraftVk(settings.default_vk)
-    setEnforcement(settings.enforcement_mode)
   }, [settings])
 
-  const persistVigilSide = async (default_vk: string, mode: typeof settings.enforcement_mode) => {
+  const persistVigilSide = async (default_vk: string) => {
     setBusy(true)
     try {
+      // Round-trip the unused fields so a key change does not wipe the blob.
       await save({
         default_vk: default_vk.trim(),
         budget_limit_usd: settings.budget_limit_usd,
-        enforcement_mode: mode,
+        enforcement_mode: settings.enforcement_mode,
       })
       notify('ok', 'Gateway key settings saved.')
     } catch (e) {
@@ -190,7 +183,7 @@ export default function AiBudgetsPanel({ notify }: SectionProps) {
                                 ? 'Bifrost only returns a key’s secret once, at creation. Paste it into the field below to use this key.'
                                 : 'Send this key on every LLM call'
                             }
-                            onClick={() => persistVigilSide(vk.value || '', enforcement)}
+                            onClick={() => persistVigilSide(vk.value || '')}
                           >
                             Use
                           </button>
@@ -217,7 +210,7 @@ export default function AiBudgetsPanel({ notify }: SectionProps) {
 
       <SettingsCard
         title="What Vigil sends"
-        desc="The key presented as x-bf-vk on every upstream call, and what to do when the gateway refuses one. DEV_MODE=true or LLM_BUDGET_UNLIMITED=true bypasses enforcement entirely."
+        desc="The virtual key sent as x-bf-vk on every upstream call. DEV_MODE=true or LLM_BUDGET_UNLIMITED=true omits it, so those calls are not metered."
       >
         {vigilPhase === 'loading' ? (
           <div className="text-sm text-tx-3 py-6 text-center">Loading…</div>
@@ -240,18 +233,11 @@ export default function AiBudgetsPanel({ notify }: SectionProps) {
                 onChange={(e) => setDraftVk(e.target.value)}
               />
             </Field>
-            <Field label="Enforcement mode">
-              <Select
-                value={enforcement}
-                options={ENFORCEMENT_OPTIONS}
-                onSelect={(v) => setEnforcement(v as typeof enforcement)}
-              />
-            </Field>
             <div>
               <button
                 className="btn primary"
-                disabled={busy || (draftVk === settings.default_vk && enforcement === settings.enforcement_mode)}
-                onClick={() => persistVigilSide(draftVk, enforcement)}
+                disabled={busy || draftVk === settings.default_vk}
+                onClick={() => persistVigilSide(draftVk)}
               >
                 <Icon name="check2" /> {busy ? 'Saving…' : 'Save'}
               </button>
@@ -271,7 +257,7 @@ export default function AiBudgetsPanel({ notify }: SectionProps) {
             // put to use in the same breath rather than left for the operator
             // to copy out of a toast.
             if (!editing.vk && saved?.value && !isMasked(saved.value)) {
-              await persistVigilSide(saved.value, enforcement)
+              await persistVigilSide(saved.value)
               notify('ok', `Created ${saved.name} and pointed Vigil at it.`)
             } else {
               notify('ok', 'Virtual key saved.')

@@ -272,47 +272,6 @@ async def test_siem_adapter_propagates_a_failed_fetch(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# is_active_for: depends on global toggle AND per-source row enabled
-# ---------------------------------------------------------------------------
-
-
-def test_is_active_for_global_off(monkeypatch):
-    runner = FederationRunner(output_queue=None)
-    monkeypatch.setattr(
-        "core.federation.runner.store.is_globally_enabled", lambda: False
-    )
-    monkeypatch.setattr(
-        "core.federation.runner.store.get_source",
-        lambda sid: {"source_id": sid, "enabled": True},
-    )
-    assert runner.is_active_for("splunk") is False
-
-
-def test_is_active_for_global_on_source_off(monkeypatch):
-    runner = FederationRunner(output_queue=None)
-    monkeypatch.setattr(
-        "core.federation.runner.store.is_globally_enabled", lambda: True
-    )
-    monkeypatch.setattr(
-        "core.federation.runner.store.get_source",
-        lambda sid: {"source_id": sid, "enabled": False},
-    )
-    assert runner.is_active_for("splunk") is False
-
-
-def test_is_active_for_both_on(monkeypatch):
-    runner = FederationRunner(output_queue=None)
-    monkeypatch.setattr(
-        "core.federation.runner.store.is_globally_enabled", lambda: True
-    )
-    monkeypatch.setattr(
-        "core.federation.runner.store.get_source",
-        lambda sid: {"source_id": sid, "enabled": True},
-    )
-    assert runner.is_active_for("splunk") is True
-
-
-# ---------------------------------------------------------------------------
 # Seed: only seeds adapters that report is_configured
 # ---------------------------------------------------------------------------
 

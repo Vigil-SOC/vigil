@@ -30,6 +30,35 @@ _AI_ANALYSIS_KEYS = (
 )
 
 
+# The queue the depth gauge reads; the gauge is registered once per process.
+_gauged_queue: Optional[asyncio.Queue] = None
+
+
+def _register_queue_gauge(queue: asyncio.Queue) -> None:
+    global _gauged_queue
+    first = _gauged_queue is None
+    _gauged_queue = queue
+    if not first:
+        return
+    try:
+        from opentelemetry.metrics import Observation
+
+        from core.telemetry import get_meter
+
+        def _observe(_options: Any):
+            q = _gauged_queue
+            return [Observation(q.qsize())] if q is not None else []
+
+        get_meter("vigil.daemon").create_observable_gauge(
+            "soc_daemon_handoff_queue_depth",
+            callbacks=[_observe],
+            description="Findings waiting between the ingesters and the processor",
+            unit="1",
+        )
+    except Exception as e:
+        logger.debug("handoff queue gauge not registered: %s", e)
+
+
 class FindingProcessor:
     """Processes findings through AI triage and enrichment."""
 
@@ -42,7 +71,9 @@ class FindingProcessor:
         # The queue-for-response line is the band's review threshold, so the
         # processor reads the same ResponseConfig the responder does (#916).
         self.response_config = response_config or ResponseConfig.from_settings()
-        self.input_queue: asyncio.Queue = asyncio.Queue()
+        self.input_queue: asyncio.Queue = asyncio.Queue(
+            maxsize=config.handoff_queue_maxsize
+        )
         self._response_queue: Optional[asyncio.Queue] = None
 
         # Services (lazy loaded)
@@ -195,6 +226,7 @@ class FindingProcessor:
         """Run the processing loop."""
         logger.info("Finding processor starting...")
         self._init_services()
+        _register_queue_gauge(self.input_queue)
 
         # Start worker tasks
         workers = [

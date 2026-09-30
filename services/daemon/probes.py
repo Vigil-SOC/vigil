@@ -19,6 +19,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from core.ingestion.handoff import envelope
 from core.time import utcnow
 from services.daemon.metrics import probe_metrics
 
@@ -123,7 +124,9 @@ async def inject_probes(queue: asyncio.Queue, data_service: Any) -> int:
     """Queue today's probes that do not exist yet; return how many were queued.
 
     The id carries the day, so an hourly sweep (or a restart) re-injects
-    nothing once the rows are stored — that gate is the "once a day".
+    nothing once the rows are stored — that gate is the "once a day". A full
+    queue is not waited on: the scheduler runs its tasks in turn, so a wait
+    would hold every other task, and the rest are injected next sweep.
     """
     day = utcnow().date()
     injected = 0
@@ -132,14 +135,11 @@ async def inject_probes(queue: asyncio.Queue, data_service: Any) -> int:
         if data_service.get_finding(finding["finding_id"]):
             continue
         # Same envelope the poller and Kafka ingestor use.
-        await queue.put(
-            {
-                "type": "finding",
-                "source": PROBE_DATA_SOURCE,
-                "data": finding,
-                "timestamp": utcnow().isoformat(),
-            }
-        )
+        try:
+            queue.put_nowait(envelope(finding, PROBE_DATA_SOURCE))
+        except asyncio.QueueFull:
+            logger.info("Hand-off full; the remaining probes go in next sweep")
+            break
         injected += 1
     if injected:
         logger.info("Injected %d known-answer probe(s) for %s", injected, day)

@@ -7739,6 +7739,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/internal/pricing/vk": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Virtual Key */
+        get: operations["get_internal_pricing_vk"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/internal/runs/{run_id}/checkpoints": {
         parameters: {
             query?: never;
@@ -8144,6 +8161,7 @@ export interface components {
         BudgetSettingsResponse: {
             /**
              * Budget Limit Usd
+             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
              * @default 0
              */
             budget_limit_usd: number;
@@ -8154,6 +8172,7 @@ export interface components {
             default_vk: string;
             /**
              * Enforcement Mode
+             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
              * @default warning
              */
             enforcement_mode: string;
@@ -8162,10 +8181,13 @@ export interface components {
          * BudgetSettingsUpdate
          * @description Admin-intent body for PUT /budget. All fields required so the API
          *     can't be used to silently drop a setting via an empty PATCH.
+         *     budget_limit_usd and enforcement_mode are stored for compatibility
+         *     and ignored at dispatch.
          */
         BudgetSettingsUpdate: {
             /**
              * Budget Limit Usd
+             * @description Stored and returned for compatibility. Ignored: Bifrost enforces the virtual key's own budget, not this number.
              * @default 0
              */
             budget_limit_usd: number;
@@ -8176,6 +8198,7 @@ export interface components {
             default_vk: string;
             /**
              * Enforcement Mode
+             * @description Stored and returned for compatibility. Ignored: dispatch does not read it, so warning and hard_stop behave the same.
              * @default warning
              */
             enforcement_mode: string;
@@ -24898,6 +24921,39 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_internal_pricing_vk: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string | null;
                     };
                 };
             };

@@ -1,14 +1,18 @@
 """Federation poller — manages per-adapter loops driven by federation_sources.
 
-Spawned by :class:`daemon.poller.DataPoller` when the daemon starts. Owns one
-asyncio task per *configured* adapter; each task polls when the global toggle
-AND its row's ``enabled`` flag are both true. Tasks survive across enable/
-disable transitions — they just no-op while disabled.
+Spawned by :class:`daemon.poller.DataPoller` when the daemon starts; it is the
+only path that polls a source. Owns one asyncio task per *configured* adapter;
+each task polls when the global toggle AND its row's ``enabled`` flag are both
+true. Tasks survive across enable/disable transitions — they just no-op while
+disabled.
 
 Design notes (locked decisions from MVP plan):
 
+* On by default: the first boot switches Federation and every configured
+  source on, once (:func:`core.federation.seed.apply_default_on`).
 * No backfill on cold start — first run yields nothing, only finds events
-  created after the source is enabled.
+  created after the source is enabled. The one exception is a source the
+  upgrade switches on, which resumes where its legacy loop stopped.
 * No auto-disable on errors — backoff up to 8x interval, no row mutation
   beyond ``consecutive_errors`` and ``last_error``.
 * Per-source severity floor honored at ingest time (filter before enqueue).
@@ -26,17 +30,21 @@ from typing import Any, Dict, Optional
 
 from core.config import DEFAULT_REDIS_URL, get_settings
 from core.federation import registry, store
-from core.federation.seed import seed_federation_sources
+from core.federation.seed import apply_default_on, seed_federation_sources
 from core.ingestion.dedup import RedisDedupSet
+from core.ingestion.handoff import envelope, put_or_shutdown
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
 _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
-# Not zero: the hand-off to the processor has no size limit yet, so a source
-# catching up must not outrun it.
+# Not zero: a source catching up pages its vendor's API back to back, and the
+# hand-off's size limit paces the processor, not those calls.
 _CATCH_UP_SECONDS = 5
+
+_SETUP_RETRY_FIRST_SECONDS = 5.0
+_SETUP_RETRY_MAX_SECONDS = 60.0
 
 _lag_gauge_registered = False
 
@@ -94,6 +102,7 @@ class FederationRunner:
 
     def __init__(self, output_queue: Optional[asyncio.Queue]) -> None:
         self._output_queue = output_queue
+        self._shutdown = asyncio.Event()
         self._adapter_tasks: Dict[str, asyncio.Task] = {}
         self._dedup: Dict[str, RedisDedupSet] = {}
         # Sources that are currently "polling" — used so a source toggled OFF
@@ -111,11 +120,10 @@ class FederationRunner:
 
     async def run(self, shutdown_event: asyncio.Event) -> None:
         """Main entry point — called as an asyncio task by DataPoller."""
-        # 1. Seed rows for adapters whose integration is configured.
-        try:
-            seed_federation_sources()
-        except Exception as e:
-            logger.warning("Federation seed failed: %s", e)
+        self._shutdown = shutdown_event
+        # 1. Setup runs beside the adapter loops, which gate on the global
+        # switch and their row each tick, so polling starts once it succeeds.
+        setup = asyncio.create_task(self._setup_until_done(shutdown_event))
 
         _register_lag_gauge()
 
@@ -127,27 +135,39 @@ class FederationRunner:
                 self._adapter_loop(adapter, shutdown_event)
             )
 
+        self.stats["adapters"] = len(self._adapter_tasks)
+        waits = [setup, *self._adapter_tasks.values()]
         if not self._adapter_tasks:
-            # No adapters at all — wait for shutdown.
-            await shutdown_event.wait()
-            return
+            logger.error("Federation: no adapters registered; nothing will be polled")
+            waits.append(asyncio.ensure_future(shutdown_event.wait()))
 
         try:
-            await asyncio.gather(*self._adapter_tasks.values(), return_exceptions=True)
+            await asyncio.gather(*waits, return_exceptions=True)
         except asyncio.CancelledError:
             pass
 
-    def is_active_for(self, source_id: str) -> bool:
-        """True if federation owns polling for ``source_id`` right now.
+    async def _setup_until_done(self, shutdown_event: asyncio.Event) -> None:
+        """Switch Federation on once and seed rows, retrying until both succeed.
 
-        Used by the legacy per-source loops in :mod:`daemon.poller` to decide
-        whether to skip — when federation is on for a source, the legacy loop
-        must back off so we don't double-pull.
+        A failure (the DB unreachable at boot) must not leave Federation off
+        until the next restart: it is the only path that polls. The switch-on
+        runs first because it gives the rows it switches on their legacy
+        interval and catch-up cursor, and a row seeding creates is already on.
         """
-        if not store.is_globally_enabled():
-            return False
-        row = store.get_source(source_id)
-        return bool(row and row.get("enabled"))
+        self.stats["setup_ok"] = False
+        delay = _SETUP_RETRY_FIRST_SECONDS
+        while not shutdown_event.is_set():
+            try:
+                await asyncio.to_thread(apply_default_on)
+                await asyncio.to_thread(seed_federation_sources)
+                self.stats["setup_ok"] = True
+                return
+            except Exception as e:
+                logger.error("Federation setup failed, retrying in %ss: %s", delay, e)
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=delay)
+            except asyncio.TimeoutError:
+                delay = min(delay * 2, _SETUP_RETRY_MAX_SECONDS)
 
     # ------------------------------------------------------------------
     # Per-adapter loop
@@ -231,7 +251,13 @@ class FederationRunner:
             dedup = self._dedup[source_id]
             if await dedup.is_processed(ext):
                 continue
-            await self._enqueue(finding, source_id)
+            if not await self._enqueue(finding, source_id):
+                # Shutdown while the hand-off was full: drop the rest of the
+                # page and keep the cursor, so the next boot fetches it again.
+                logger.info(
+                    "Federation %s: shutdown during hand-off; cursor kept", source_id
+                )
+                return False
             await dedup.mark_processed(ext)
             new_count += 1
 
@@ -242,16 +268,12 @@ class FederationRunner:
         store.record_success(source_id, cursor=result.cursor or {})
         return result.truncated
 
-    async def _enqueue(self, finding: Dict[str, Any], source_id: str) -> None:
+    async def _enqueue(self, finding: Dict[str, Any], source_id: str) -> bool:
+        """Wait for room in the hand-off. False if shutdown came first."""
         if self._output_queue is None:
-            return
-        await self._output_queue.put(
-            {
-                "type": "finding",
-                "source": source_id,
-                "data": finding,
-                "timestamp": utcnow().isoformat(),
-            }
+            return True
+        return await put_or_shutdown(
+            self._output_queue, envelope(finding, source_id), self._shutdown
         )
 
     # ------------------------------------------------------------------

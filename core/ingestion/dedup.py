@@ -1,17 +1,16 @@
 """Redis-backed durable deduplication for ingestion pipelines.
 
-Replaces the in-memory ``PollState.processed_ids`` set (bounded, FIFO,
-lost on restart) with a Redis sorted set that survives daemon restarts
-and is shared across processes.
+A Redis sorted set of processed ids that survives daemon restarts and is
+shared across processes.
 
-Used by both the polling ingester (``daemon/poller.py``) and the Kafka
-consumer (``services/kafka_consumer_service.py``). Each caller picks a
-namespace (e.g. ``"splunk"``, ``"kafka"``) so dedup sets are isolated.
+Used by the Federation runner (``core/federation/runner.py``), the Kafka
+consumer (``core/ingestion/kafka_consumer_service.py``) and the ingest
+webhook (``services/daemon/poller.py``). Each caller picks a namespace (e.g.
+``"federation:splunk"``, ``"kafka"``) so dedup sets are isolated.
 
 If Redis is unavailable at init time or any call fails, the helper falls
 back to an in-memory set so ingestion keeps working — the trade-off is
-that restarts may re-process findings (same behaviour as the old
-``PollState``). A warning is logged on fallback.
+that restarts may re-process findings. A warning is logged on fallback.
 """
 
 from __future__ import annotations

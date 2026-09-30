@@ -10,6 +10,8 @@ tests pin both, so the extraction is provably behaviour-preserving:
   payload the chat drawer matches on — *not* a bare string
 * ``ProviderUnavailable`` → 503; other failures propagate so the global
   handler can render 500 ``Internal server error`` without ``str(e)``
+* ``BudgetExceeded`` → 402 ``BUDGET_EXCEEDED`` with the tier, and without
+  Bifrost's own message
 * the success envelope is ``{finding_id, cached: False, enrichment}``
 
 They also cover ``_resolve_provider``'s error mapping, which is where the old
@@ -18,6 +20,7 @@ inline ``HTTPException`` raises used to live.
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -36,6 +39,7 @@ from core.findings.enrichment import (  # noqa: E402
     ProviderUnavailable,
 )
 from core.findings.enrichment import service as enrichment_service  # noqa: E402
+from core.llm.cost.budget import BudgetExceeded  # noqa: E402
 from services.api.errors import register_exception_handlers  # noqa: E402
 from services.api.routers import findings as findings_api  # noqa: E402
 
@@ -236,9 +240,8 @@ async def test_unexpected_failure_propagates(stub_data_service, monkeypatch):
         await findings_api.get_or_generate_enrichment(FINDING_ID, False)
 
 
-def test_unexpected_failure_does_not_leak_to_the_client(stub_data_service, monkeypatch):
-    _stub_enrich(monkeypatch, raises=RuntimeError("gateway exploded"))
-
+def _client_for_enrich(monkeypatch, raises):
+    _stub_enrich(monkeypatch, raises=raises)
     app = FastAPI()
     register_exception_handlers(app)
     app.add_api_route(
@@ -246,11 +249,40 @@ def test_unexpected_failure_does_not_leak_to_the_client(stub_data_service, monke
         findings_api.get_or_generate_enrichment,
         methods=["POST"],
     )
-    response = TestClient(app).post(f"/enrich/{FINDING_ID}")
+    return TestClient(app)
+
+
+def test_unexpected_failure_does_not_leak_to_the_client(stub_data_service, monkeypatch):
+    response = _client_for_enrich(monkeypatch, RuntimeError("gateway exploded")).post(
+        f"/enrich/{FINDING_ID}"
+    )
 
     assert response.status_code == 500
     assert response.json()["detail"] == "Internal server error"
+    assert response.json()["code"] == "INTERNAL_ERROR"
     assert "gateway exploded" not in response.text
+
+
+def test_budget_exceeded_is_402_without_the_gateway_message(
+    stub_data_service, monkeypatch, caplog
+):
+    """A direct await of the route never runs the handler, so go through TestClient."""
+    caplog.set_level(logging.WARNING, logger="services.api.errors")
+    gateway_message = "virtual key vk-secret spent $10 of $10"
+    response = _client_for_enrich(
+        monkeypatch,
+        BudgetExceeded(tier="team", message=gateway_message, status_code=402),
+    ).post(f"/enrich/{FINDING_ID}")
+
+    assert response.status_code == 402
+    body = response.json()
+    assert body["code"] == "BUDGET_EXCEEDED"
+    assert body["tier"] == "team"
+    assert body["detail"] == (
+        "The virtual-key budget is spent. Raise its ceiling under AI Config → Virtual Keys."
+    )
+    assert "vk-secret" not in response.text
+    assert gateway_message in caplog.text
 
 
 # ---------------------------------------------------------------------------

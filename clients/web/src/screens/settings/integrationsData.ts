@@ -3,7 +3,6 @@ import type { IntegrationMetadata } from '../../config/integrationSchema'
 
 export const SERVER_TO_INTEGRATION = new Map(Object.entries({
   'aws-security': 'aws-security-hub',
-  'gcp-scc': 'gcp-security',
   'elastic': 'elastic-siem',
   'splunk-selfhosted': 'splunk',
 }))

@@ -15,6 +15,7 @@ MISP = register_descriptor(
             IntegrationField("url"),
             IntegrationField("api_key", secret=True),
             IntegrationField("verify_ssl", value_type="bool"),
+            IntegrationField("ca_cert_path"),
         ),
     )
 )

@@ -190,6 +190,7 @@ INTERNAL_ROUTES = [
         {"tool": "noop", "args": {}, "bounds": {"max_rows": 1, "timeout_ms": 1000}},
     ),
     ("GET", "/internal/pricing/rates?model_id=m&provider_type=p", None),
+    ("GET", "/internal/pricing/vk", None),
 ]
 
 
