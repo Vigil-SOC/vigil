@@ -25,6 +25,7 @@ from core.findings.enrichment.errors import (
 )
 from core.findings.enrichment.parse import parse_enrichment
 from core.findings.enrichment.prompt import build_prompt, summarize_finding
+from core.llm.gateway_retry import translate
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -111,15 +112,23 @@ async def _dispatch(
     """
     loop = asyncio.get_running_loop()
     if provider.provider_type == "anthropic":
-        # No retry here: the cloud path has never had one.
-        return await loop.run_in_executor(
-            None,
-            lambda: claude_service.chat(
-                message=prompt,
-                model=model_id,
-                max_tokens=ANTHROPIC_MAX_TOKENS,
-            ),
-        )
+        # No retry here: the cloud path has never had one. A spent key on the
+        # Anthropic passthrough is a raw SDK 402; translate turns only that
+        # into BudgetExceeded. Do not wrap this call in through_gateway.
+        try:
+            return await loop.run_in_executor(
+                None,
+                lambda: claude_service.chat(
+                    message=prompt,
+                    model=model_id,
+                    max_tokens=ANTHROPIC_MAX_TOKENS,
+                ),
+            )
+        except Exception as error:
+            translated = translate(error)
+            if translated is not error:
+                raise translated from error
+            raise
 
     dispatch_args = {
         "provider": provider,

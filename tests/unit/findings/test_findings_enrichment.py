@@ -30,6 +30,7 @@ from core.findings.enrichment import (
     parse_enrichment,
     summarize_finding,
 )
+from core.llm.cost.budget import BudgetExceeded
 from core.findings.enrichment import service as enrichment_service
 
 pytestmark = pytest.mark.unit
@@ -499,6 +500,55 @@ async def test_anthropic_dispatch_uses_claude_service_with_the_larger_cap():
             "max_tokens": enrichment_service.ANTHROPIC_MAX_TOKENS,
         }
     ]
+
+
+async def test_anthropic_dispatch_translates_a_spent_budget():
+    """The Anthropic SDK does not raise BudgetExceeded; translate does, and only on 402."""
+
+    class _Refusal(Exception):
+        def __init__(self, status_code: int, message: str):
+            super().__init__(message)
+            self.status_code = status_code
+            self.message = message
+
+    spent = _Refusal(402, "customer budget is spent")
+    claude_service = _FakeClaudeService([spent, '{"threat_summary": "second try"}'])
+
+    with pytest.raises(BudgetExceeded) as raised:
+        await enrichment_service._dispatch(
+            provider=_FakeProvider("anthropic", "anthropic-default"),
+            model_id="claude-opus-5",
+            prompt="PROMPT",
+            claude_service=claude_service,
+            finding_id="f-1",
+        )
+
+    assert raised.value.tier == "customer"
+    assert raised.value.message == "customer budget is spent"
+    assert raised.value.__cause__ is spent
+    assert len(claude_service.calls) == 1
+
+
+async def test_anthropic_dispatch_leaves_a_non_budget_sdk_error_alone():
+    class _Refusal(Exception):
+        def __init__(self):
+            super().__init__("upstream 500")
+            self.status_code = 500
+
+    refused = _Refusal()
+    claude_service = _FakeClaudeService([refused])
+
+    with pytest.raises(_Refusal) as raised:
+        await enrichment_service._dispatch(
+            provider=_FakeProvider("anthropic", "anthropic-default"),
+            model_id="claude-opus-5",
+            prompt="PROMPT",
+            claude_service=claude_service,
+            finding_id="f-1",
+        )
+
+    assert raised.value is refused
+    assert len(claude_service.calls) == 1
 
 
 async def test_anthropic_dispatch_does_not_retry():

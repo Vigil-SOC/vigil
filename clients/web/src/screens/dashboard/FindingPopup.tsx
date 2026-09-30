@@ -177,7 +177,7 @@ export default function FindingPopup({
   // on-demand: a getEnrichment call may invoke an LLM
   const [enrichment, setEnrichment] = useState<Enrichment | null>(null)
   const [enrichPhase, setEnrichPhase] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
-  const [enrichError, setEnrichError] = useState<'not_configured' | 'failed' | null>(null)
+  const [enrichError, setEnrichError] = useState<'not_configured' | 'budget' | 'failed' | null>(null)
   const [enrichmentProgressIndex, setEnrichmentProgressIndex] = useState(0)
 
   const [status, setStatus] = useState('')
@@ -257,8 +257,16 @@ export default function FindingPopup({
         setEnrichPhase('ready')
       })
       .catch((e) => {
-        const code = (e as { response?: { status?: number } })?.response?.status
-        setEnrichError(code === 503 ? 'not_configured' : 'failed')
+        const response = (e as { response?: { status?: number; data?: { code?: string } } })?.response
+        const status = response?.status
+        const code = response?.data?.code
+        setEnrichError(
+          status === 402 || code === 'BUDGET_EXCEEDED'
+            ? 'budget'
+            : status === 503
+              ? 'not_configured'
+              : 'failed',
+        )
         setEnrichPhase('error')
       })
   }
@@ -482,25 +490,33 @@ export default function FindingPopup({
                 <span>{ENRICHMENT_PROGRESS[enrichmentProgressIndex]}</span>
               </div>
             )}
-            {enrichPhase === 'error' && (
-              enrichError === 'not_configured' ? (
-                <EmptyState
-                  compact
-                  icon="sparkle"
-                  title="AI enrichment is not configured"
-                  body="Add an AI provider and assign a chat/enrichment model before generating finding analysis."
-                  primary={onConfigureAi ? { label: 'Open AI Config', onClick: onConfigureAi, icon: 'gear' } : undefined}
-                />
-              ) : (
-                <EmptyState
-                  error
-                  compact
-                  icon="alert"
-                  title="AI enrichment failed"
-                  body="The analysis request did not complete."
-                  primary={{ label: 'Retry', onClick: () => loadEnrichment(false), icon: 'refresh' }}
-                />
-              )
+            {enrichPhase === 'error' && enrichError === 'not_configured' && (
+              <EmptyState
+                compact
+                icon="sparkle"
+                title="AI enrichment is not configured"
+                body="Add an AI provider and assign a chat/enrichment model before generating finding analysis."
+                primary={onConfigureAi ? { label: 'Open AI Config', onClick: onConfigureAi, icon: 'gear' } : undefined}
+              />
+            )}
+            {enrichPhase === 'error' && enrichError === 'budget' && (
+              <EmptyState
+                compact
+                icon="alert"
+                title="Virtual-key budget spent"
+                body="The virtual-key budget is spent. Raise its ceiling under AI Config → Virtual Keys."
+                primary={onConfigureAi ? { label: 'Open AI Config', onClick: onConfigureAi, icon: 'gear' } : undefined}
+              />
+            )}
+            {enrichPhase === 'error' && enrichError === 'failed' && (
+              <EmptyState
+                error
+                compact
+                icon="alert"
+                title="AI enrichment failed"
+                body="The analysis request did not complete."
+                primary={{ label: 'Retry', onClick: () => loadEnrichment(false), icon: 'refresh' }}
+              />
             )}
             {enrichPhase === 'ready' && enrichment && <div style={{ marginTop: 10 }}><EnrichmentView e={enrichment} /></div>}
             {enrichPhase === 'ready' && !enrichment && <div className="muted" style={{ marginTop: 10 }}>No enrichment returned for this finding.</div>}
