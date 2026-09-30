@@ -19,7 +19,7 @@ export interface NavGate {
 }
 
 /** Nothing is gated today. Auto Ops is deliberately always-visible — gating it
- *  made it vanish confusingly — and Timesketch has no screen yet. */
+ *  made it vanish confusingly. */
 export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
   ['grid', 'Dashboard', 'dashboard'],
   ['folder', 'Cases', 'cases'],

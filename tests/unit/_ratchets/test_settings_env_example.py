@@ -42,8 +42,6 @@ NOT_SETTINGS = {
     "SPLUNK_PASSWORD",
     "SPLUNK_USERNAME",
     "TEAMS_WEBHOOK_URL",
-    "TIMESKETCH_PASSWORD",
-    "TIMESKETCH_USERNAME",
     "VIRUSTOTAL_API_KEY",
     "VSTRIKE_API_KEY",
     "VSTRIKE_INBOUND_API_KEY",
@@ -71,7 +69,6 @@ NOT_SETTINGS = {
     "SPLUNK_PATHS",
     "SPLUNK_URL",
     "STORY_PATHS",
-    "TIMESKETCH_URL",
     "VSTRIKE_BASE_URL",
     "VSTRIKE_VERIFY_SSL",
     # Per-integration CA paths, resolved like the fields above.

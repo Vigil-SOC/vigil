@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
 import { Markdown } from '../../shared/Markdown'
-import { timelineApi, caseSearchApi, casesApi, timesketchApi } from '../../services/api'
+import { timelineApi, caseSearchApi, casesApi } from '../../services/api'
 import { mapApiCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -205,7 +205,7 @@ function TimelineCard({ caseId }: { caseId: string }) {
   )
 }
 
-export default function CasesScreen({ openChat, goSettings, setViewFull }: ConsoleScreenProps) {
+export default function CasesScreen({ openChat, setViewFull }: ConsoleScreenProps) {
   // the open case is a ?case=<id> param, so a detail view is deep-linkable
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
@@ -228,7 +228,6 @@ export default function CasesScreen({ openChat, goSettings, setViewFull }: Conso
       onSelect={selectCase}
       onBack={backToList}
       openChat={openChat}
-      goSettings={goSettings}
       reloadList={reload}
     />
   ) : (
@@ -969,87 +968,12 @@ function MergeCaseDialog({ open, c, rows, onClose, onMerged }: { open: boolean; 
   )
 }
 
-function ExportTimesketchDialog({ open, c, onClose, onConfigure }: { open: boolean; c: CaseRow | null; onClose: () => void; onConfigure: () => void }) {
-  const [timeline, setTimeline] = useState('')
-  const [sketch, setSketch] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState('')
-  const [done, setDone] = useState(false)
-
-  useEffect(() => {
-    if (open && c) {
-      setTimeline(`${c.id} timeline`)
-      setSketch(c.title)
-      setErr('')
-      setDone(false)
-    }
-  }, [open, c])
-
-  const submit = async () => {
-    if (!c) return
-    if (!timeline.trim()) { setErr('Timeline name is required.'); return }
-    setBusy(true)
-    setErr('')
-    try {
-      await timesketchApi.exportToTimesketch({
-        case_id: c.id,
-        timeline_name: timeline.trim(),
-        sketch_name: sketch.trim() || undefined,
-      })
-      setDone(true)
-    } catch (e) {
-      setErr((e as { message?: string })?.message || 'Export failed — is Timesketch configured?')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <Popup open={open} onClose={onClose} title="Export to Timesketch" width={520}>
-      {done ? (
-        <div className="flex flex-col gap-3.5">
-          <div className="text-[13px] text-tx-2">Case <span className="mono text-tx">{c?.id}</span> was exported to Timesketch.</div>
-          <div className="flex justify-end"><button className="btn primary" onClick={onClose}>Done</button></div>
-        </div>
-      ) : (
-        <div className="flex flex-col gap-3.5">
-          <p className="text-[13px] text-tx-2 leading-[1.5] m-0">Push this case's findings into a Timesketch timeline for forensic analysis.</p>
-          <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-            <span>Timeline name</span>
-            <input className={inputCls} value={timeline} onChange={(e) => setTimeline(e.target.value)} autoFocus />
-          </label>
-          <label className="flex flex-col gap-1.5 text-xs font-semibold uppercase tracking-wide text-tx-3">
-            <span>Sketch name <span className="normal-case font-normal text-tx-faint">(new sketch if it doesn't exist)</span></span>
-            <input className={inputCls} value={sketch} onChange={(e) => setSketch(e.target.value)} />
-          </label>
-          {err && (
-            <EmptyState
-              error
-              compact
-              icon="alert"
-              title="Timesketch export failed"
-              body={err}
-              primary={{ label: 'Configure integrations', onClick: onConfigure, icon: 'link' }}
-              secondary={{ label: 'Retry', onClick: submit, icon: 'refresh' }}
-            />
-          )}
-          <div className="flex justify-end gap-2.5">
-            <button className="btn ghost" onClick={onClose}>Cancel</button>
-            <button className="btn primary" onClick={submit} disabled={busy}>{busy ? 'Exporting…' : 'Export'}</button>
-          </div>
-        </div>
-      )}
-    </Popup>
-  )
-}
-
 function CasesDetail({
   id,
   rows,
   onSelect,
   onBack,
   openChat,
-  goSettings,
   reloadList,
 }: {
   id: string
@@ -1057,7 +981,6 @@ function CasesDetail({
   onSelect: (id: string) => void
   onBack: () => void
   openChat: (prompt?: string) => void
-  goSettings: ConsoleScreenProps['goSettings']
   reloadList: () => void
 }) {
   const { row, created, linked, sev, activities, resolutionSteps, phase, error, reload: reloadDetail } =
@@ -1068,7 +991,7 @@ function CasesDetail({
   const c = row || rows.find((x) => x.id === id) || null
   const [tab, setTab] = useState<CaseTab>('Overview')
   const [listQuery, setListQuery] = useState('')
-  const [action, setAction] = useState<'edit' | 'merge' | 'export' | 'delete' | null>(null)
+  const [action, setAction] = useState<'edit' | 'merge' | 'delete' | null>(null)
 
   const listRows = useMemo(() => {
     const q = listQuery.trim().toLowerCase()
@@ -1182,7 +1105,6 @@ function CasesDetail({
               <div className="dh-actions">
                 <button className="btn ghost" onClick={() => setAction('edit')}><Icon name="edit" /> Edit</button>
                 <button className="btn ghost" onClick={() => setAction('merge')}><Icon name="link" /> Merge</button>
-                <button className="btn ghost" onClick={() => setAction('export')}><Icon name="download" /> Timesketch</button>
                 {canDelete && (
                   <button className="btn danger" onClick={() => setAction('delete')}>
                     <Icon name="trash" /> Delete case
@@ -1225,12 +1147,6 @@ function CasesDetail({
         rows={rows}
         onClose={() => setAction(null)}
         onMerged={() => { reloadList(); onBack() }}
-      />
-      <ExportTimesketchDialog
-        open={action === 'export'}
-        c={c}
-        onClose={() => setAction(null)}
-        onConfigure={() => goSettings('integrations')}
       />
       <DeleteCaseDialog
         target={action === 'delete' ? c : null}

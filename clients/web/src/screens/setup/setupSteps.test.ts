@@ -31,7 +31,6 @@ describe('DATA_SOURCE_CATALOG_IDS', () => {
       'azure-sentinel',
       'elastic-siem',
       'aws-security-hub',
-      'gcp-security',
     ])
       expect(DATA_SOURCE_CATALOG_IDS.has(id)).toBe(true)
     // enrichment / identity / reference integrations must not count as a data source
