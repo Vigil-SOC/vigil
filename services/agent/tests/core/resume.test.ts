@@ -1,12 +1,16 @@
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { UnrecoverableError } from "bullmq";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { RunJob } from "../../contracts/job.js";
+import { GatewayExhausted } from "../../core/limiter.js";
 import { InProcessLeases } from "../../core/leases.js";
 import { InProcessState } from "../../core/state.js";
-import { advance, MAX_STALLED_RESUMES, resolveSpec, specOf } from "../../worker.js";
+import { advance, handle, MAX_STALLED_RESUMES, resolveSpec, specOf } from "../../worker.js";
 import { SpecError } from "../../core/spec.js";
+import type { HarnessFactory } from "../../harness.js";
+import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
 import type { ScriptedTurn } from "../support/scripted-provider.js";
 
@@ -329,5 +333,96 @@ describe("a run waiting on a person", () => {
     // No terminal at all: the run is still answerable, and writing one would have
     // thrown away the answer the operator was in the middle of giving.
     expect(await state.terminal(RUN)).toBeNull();
+  });
+});
+
+// Hunt already journals a gateway 402 as budget_exhausted. Lead and compose let
+// the throw leave the workflow, so BullMQ and the sweeper retry it until the stall
+// guard abandons the run for "failing without saying so" and the 402 is gone.
+describe("a run the gateway refuses because its budget is spent", () => {
+  const REASON = "402 Payment Required: budget exceeded";
+
+  function exhausted(): HarnessFactory {
+    return (kind, spec, state, memory, seed) => {
+      const harness = scriptedHarness([])(kind, spec, state, memory, seed);
+      return {
+        ...harness,
+        provider: {
+          model: harness.provider.model,
+          provider_type: harness.provider.provider_type,
+          stream() {
+            throw new GatewayExhausted(REASON);
+          },
+        },
+      };
+    };
+  }
+
+  function job(kind: "investigate" | "compose"): Extract<RunJob, { reason: "start" }> {
+    const dir = mkdtempSync(join(tmpdir(), "vigil-402-"));
+    const cfg = join(dir, "vigil.config.yaml");
+    copyFileSync(join(FIXTURES, "case.config.yaml"), cfg);
+    const playbook = kind === "investigate" ? join(FIXTURES, "case.playbook.yaml") : join(dir, "compose.playbook.yaml");
+    if (kind === "compose") {
+      writeFileSync(
+        playbook,
+        ["---", "name: writeup", "phases:", "  - id: report", "    agent: reporter", "    name: Report", "    instructions: write it up", "---", "Write the case up.", ""].join("\n"),
+      );
+    }
+    return {
+      schema_version: 1,
+      run_id: RUN,
+      run_kind: kind,
+      tenant_id: null,
+      enqueued_at: new Date().toISOString(),
+      enqueued_by: "test",
+      reason: "start",
+      request: { arch: "", playbook, config: cfg, prompt: "go" },
+    };
+  }
+
+  async function mirrorPosts(run: () => Promise<void>): Promise<{ url: string; body: unknown }[]> {
+    const posted: { url: string; body: unknown }[] = [];
+    const real = globalThis.fetch;
+    process.env["VIGIL_RUNS_URL"] = "http://backend/internal/runs";
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      if (init?.body !== undefined) posted.push({ url: String(url), body: JSON.parse(String(init.body)) });
+      return { ok: true, status: 200, json: async () => ({ decisions: [] }) } as Response;
+    }) as typeof globalThis.fetch;
+    try {
+      await run();
+    } finally {
+      globalThis.fetch = real;
+      delete process.env["VIGIL_RUNS_URL"];
+    }
+    return posted;
+  }
+
+  it.each(["investigate", "compose"] as const)("ends a %s run on the first attempt and leaves nothing for the sweeper", async (kind) => {
+    const state = new InProcessState();
+    const posted = await mirrorPosts(async () => {
+      await expect(advance(state, leases, job(kind), exhausted())).rejects.toThrow(GatewayExhausted);
+    });
+
+    const terminal = await state.terminal(RUN);
+    expect(terminal?.outcome).toBe("budget_exhausted");
+    expect(terminal?.reason).toBe(REASON);
+    expect(await leases.sweep(60_000, 10)).toEqual([]);
+    // Once, and as budget_exhausted. compose used to hear "failed" from abandon()
+    // and then nothing from the journal path.
+    expect(posted.filter((one) => one.url.endsWith("/terminal"))).toEqual([
+      { url: `http://backend/internal/runs/${RUN}/terminal`, body: { outcome: "budget_exhausted", reason: REASON, summary: "" } },
+    ]);
+  });
+
+  // handle is the queue boundary. advance() keeps throwing GatewayExhausted so a
+  // caller without a queue still sees the gateway's error.
+  it("fails the job as unrecoverable so BullMQ does not retry it", async () => {
+    const caught = await handle(new InProcessState(), leases, job("investigate"), new InProcessDirectiveQueue(), exhausted()).catch(
+      (error: unknown) => error,
+    );
+
+    expect(caught).toBeInstanceOf(UnrecoverableError);
+    expect((caught as Error).message).toBe(REASON);
   });
 });
