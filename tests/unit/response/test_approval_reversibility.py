@@ -261,3 +261,72 @@ class TestIpLessIsolationKey:
         action = response.approval_service.get_action(first["action_id"])
         assert action is not None
         assert action.idempotency_key == "isolate_host:host:host-c"
+
+
+class TestIsolationUnsupported:
+    """#1276: the isolation stub must not record a containment that never happened."""
+
+    def test_auto_approved_isolation_is_recorded_failed(self):
+        response = AutonomousResponseService()
+        response.approval_service.force_manual_approval = False
+        correlation = {"indicators": ["c2_communication"], "reasoning": ["beacon"]}
+
+        first = response.create_isolation_action(
+            ip_address="10.0.7.7",
+            hostname="ws-7",
+            confidence=0.95,
+            reason="c2",
+            evidence=["ev-1"],
+            correlation_data=correlation,
+        )
+        assert first["status"] == ActionStatus.FAILED.value
+        assert first["result"]["success"] is False
+        assert first["result"]["error"] == "unsupported_action_type"
+        action = response.approval_service.get_action(first["action_id"])
+        assert action is not None
+        assert action.status == ActionStatus.FAILED.value
+        assert action.execution_result == {"error": "unsupported_action_type"}
+
+        # A failed row is outside the idempotency unique index, so the next
+        # finding for this host inserts another row rather than reusing a success.
+        second = response.create_isolation_action(
+            ip_address="10.0.7.7",
+            hostname="ws-7",
+            confidence=0.95,
+            reason="c2",
+            evidence=["ev-1"],
+            correlation_data=correlation,
+        )
+        assert second["action_id"] != first["action_id"]
+        assert second["status"] == ActionStatus.FAILED.value
+
+    def test_approved_isolation_execution_marks_failed(self):
+        response = AutonomousResponseService()
+        response.approval_service.force_manual_approval = False
+        created = response.create_isolation_action(
+            ip_address="10.0.6.6",
+            hostname="ws-6",
+            confidence=0.70,
+            reason="c2",
+            evidence=["ev-1"],
+            correlation_data={
+                "indicators": ["c2_communication"],
+                "reasoning": ["beacon"],
+            },
+        )
+        assert created["status"] == "pending_approval"
+        approved = response.approval_service.approve_action(
+            created["action_id"], approved_by="analyst"
+        )
+        assert approved is not None
+        assert approved.status == ActionStatus.APPROVED.value
+
+        results = response.execute_approved_actions()
+        match = [r for r in results if r["action_id"] == created["action_id"]]
+        assert len(match) == 1
+        assert match[0]["result"]["success"] is False
+        assert match[0]["result"]["error"] == "unsupported_action_type"
+        action = response.approval_service.get_action(created["action_id"])
+        assert action is not None
+        assert action.status == ActionStatus.FAILED.value
+        assert action.execution_result == {"error": "unsupported_action_type"}

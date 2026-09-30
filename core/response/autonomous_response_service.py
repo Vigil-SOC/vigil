@@ -1,7 +1,6 @@
 """Autonomous response service with approval workflow integration."""
 
 import logging
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.agents.builtins import AgentId
@@ -212,18 +211,32 @@ class AutonomousResponseService:
                     f"Action {action.action_id} auto-approved (confidence: {confidence:.2%})"
                 )
 
-                # Execute isolation (would call actual CrowdStrike API in production)
                 execution_result = self._execute_isolation(
                     ip_address, hostname, reason, confidence
                 )
 
-                # Mark as executed
-                self.approval_service.mark_executed(action.action_id, execution_result)
+                if execution_result.get("success"):
+                    self.approval_service.mark_executed(
+                        action.action_id, execution_result
+                    )
+                    return {
+                        "status": "executed",
+                        "action_id": action.action_id,
+                        "message": f"Host {hostname or ip_address} isolated automatically",
+                        "confidence": confidence,
+                        "result": execution_result,
+                    }
 
+                error = execution_result.get("error", "Unknown error")
+                failed = self.approval_service.mark_failed(action.action_id, error)
                 return {
-                    "status": "executed",
+                    "status": (
+                        failed.status
+                        if failed is not None
+                        else ActionStatus.FAILED.value
+                    ),
                     "action_id": action.action_id,
-                    "message": f"Host {hostname or ip_address} isolated automatically",
+                    "message": f"Host {hostname or ip_address} was not isolated",
                     "confidence": confidence,
                     "result": execution_result,
                 }
@@ -246,33 +259,18 @@ class AutonomousResponseService:
     def _execute_isolation(
         self, ip_address: str, hostname: Optional[str], reason: str, confidence: float
     ) -> Dict:
-        """
-        Execute host isolation via CrowdStrike.
-
-        In production, this would call the actual CrowdStrike API.
-        For now, it returns a mock result.
-        """
+        """Host isolation has no executor. Recording success would claim a containment that never happened."""
         logger.info(
-            f"Executing isolation: {hostname or ip_address} (confidence: {confidence:.2%})"
+            f"Isolation unsupported for {hostname or ip_address} "
+            f"(confidence: {confidence:.2%})"
         )
-
-        # Mock execution result
         return {
-            "success": True,
-            "action": "host_isolated",
+            "success": False,
+            "error": "unsupported_action_type",
             "ip_address": ip_address,
             "hostname": hostname,
             "reason": reason,
             "confidence": confidence,
-            "timestamp": datetime.now().isoformat(),
-            "isolation_type": "network",
-            "message": "Host has been network isolated successfully (MOCK)",
-            "next_steps": [
-                "Verify threat containment",
-                "Conduct forensic analysis",
-                "Remediate threat",
-                "Consider unisolation after remediation",
-            ],
         }
 
     def execute_approved_actions(self) -> List[Dict]:
