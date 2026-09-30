@@ -19,19 +19,18 @@ COMPOSE_RUN_KIND = "compose"
 HUNT_RUN_KIND = "hunt"
 ROOT_CAUSE_RUN_KIND = "root_cause"
 ADJUDICATE_RUN_KIND = "adjudicate"
-# All three drive the same hypothesis loop and read the same projection: a hunt asks
-# whether a threat is real, a root-cause run works backward from a confirmed one to
-# how it began, an adjudication is a shadow second opinion on a finding intake has
-# already admitted. Everything that gates on "is this the hunt loop?" tests this
-# set, so the kinds stay in lockstep and none silently loses telemetry_search.
-HUNT_LIKE_RUN_KINDS = frozenset(
-    {HUNT_RUN_KIND, ROOT_CAUSE_RUN_KIND, ADJUDICATE_RUN_KIND}
-)
+# Both drive the same hypothesis loop and read the same projection: a hunt asks
+# whether a threat is real, an adjudication is a shadow second opinion on a finding
+# intake has already admitted. Everything that gates on "is this the hunt loop?"
+# tests this set, so the kinds stay in lockstep and neither silently loses
+# telemetry_search. A root-cause run is not in it: it traces one confirmed finding
+# back through causal steps, has no hypotheses to state, and runs its own loop.
+HUNT_LIKE_RUN_KINDS = frozenset({HUNT_RUN_KIND, ADJUDICATE_RUN_KIND})
 WORKFLOW_SCHEME = "workflow:"
 
 
 def is_hunt_like(run_kind: Optional[str]) -> bool:
-    """True when a run_kind drives the hunt hypothesis loop (hunt, root-cause, adjudicate)."""
+    """True when a run_kind drives the hunt hypothesis loop (hunt, adjudicate)."""
     return run_kind in HUNT_LIKE_RUN_KINDS
 
 
@@ -141,11 +140,20 @@ def _not_a_claim(statement: str) -> bool:
     return not any(verb in padded for verb in _TOPIC_VERBS)
 
 
+# What a root-cause run may be pointed at: any one is a confirmed finding to trace.
+ROOT_CAUSE_SUBJECTS = ("finding_id", "case_id", "context")
+
+
 # A hunt tests what it was given, from the definition or from this caller. Neither
 # must carry one alone; between them one is, or the run tests nothing.
 def _nothing_to_run(
     workflow: "WorkflowDefinition", parameters: Optional[Dict[str, Any]] = None
 ) -> str:
+    # A trace starts from a confirmed finding, so it needs one to start from: a
+    # finding, the case holding it, or the finding's text.
+    if workflow.run_kind == ROOT_CAUSE_RUN_KIND:
+        given = parameters or {}
+        return "" if any(given.get(key) for key in ROOT_CAUSE_SUBJECTS) else "subject"
     if is_hunt_like(workflow.run_kind):
         if workflow.metadata.get("hypotheses"):
             return ""
@@ -487,6 +495,14 @@ class WorkflowsService:
                     "A hypothesis has to be a claim the hunt can argue against. "
                     '"credential access" names a subject; "credentials taken '
                     'from HOST-42 were reused elsewhere" can be shown false.'
+                ),
+            }
+        if missing == "subject":
+            return {
+                "success": False,
+                "error": (
+                    "A root-cause trace starts from a confirmed finding. Give the "
+                    "finding, the case that holds it, or describe it in Context."
                 ),
             }
         if missing == "hypotheses":

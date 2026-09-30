@@ -11,7 +11,11 @@ from typing import Dict, List, Set
 
 import pytest
 
-from core.workflows.playbook_resolver import CAPABILITIES, HUNT_CAPABILITIES
+from core.workflows.playbook_resolver import (
+    CAPABILITIES,
+    HUNT_CAPABILITIES,
+    ROOT_CAUSE_CAPABILITIES,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -19,15 +23,16 @@ ROOT = Path(__file__).resolve().parents[3]
 MCP_CONFIG = ROOT / "mcp-config.json"
 
 # Every arch that drives the hunt loop, with the definition it is resolved for.
-# Both resolve through resolve_hunt and are granted HUNT_CAPABILITIES, so both are
+# Each resolves through resolve_hunt and is granted HUNT_CAPABILITIES, so each is
 # what this ratchet is about -- a second arch checked against nothing is a worker
 # free to lose a tool, which is the failure the file exists to catch. Not globbed:
 # investigate, compose and chat are granted something else entirely.
 HUNT_LIKE = [
     ("threathunt.yaml", "threat-hunt"),
-    ("rootcause.yaml", "root-cause-analysis"),
     ("adjudicate.yaml", "shadow-adjudication"),
 ]
+# Its own loop and its own resolver, which binds exactly what it asks for.
+ROOT_CAUSE_ARCH = ROOT / "services" / "agent" / "arch" / "rootcause.yaml"
 ARCHES = [ROOT / "services" / "agent" / "arch" / name for name, _ in HUNT_LIKE]
 ARCH = ARCHES[0]
 
@@ -86,14 +91,18 @@ def test_python_binds_every_capability_the_arch_asks_for(arch):
     )
 
 
-# Over the union, not per arch: a capability only rootcause.yaml asks for is still
-# one the resolver is right to bind, and checking each alone would call it unused.
+# Over the union, not per arch: a capability only one arch asks for is still one
+# the resolver is right to bind, and checking each alone would call it unused.
 def test_the_resolver_emits_nothing_any_hunt_like_arch_does_not_ask_for():
     asked = set().union(*(_needs_in_arch(arch) for arch in ARCHES))
     unused = set(HUNT_CAPABILITIES) - asked
     assert (
         not unused
     ), f"the resolver binds capabilities no role asks for: {sorted(unused)}"
+
+
+def test_the_root_cause_resolver_binds_exactly_what_its_arch_asks_for():
+    assert _needs_in_arch(ROOT_CAUSE_ARCH) == set(ROOT_CAUSE_CAPABILITIES)
 
 
 def test_every_capability_names_at_least_one_candidate():

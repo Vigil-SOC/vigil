@@ -10,10 +10,10 @@ export const EVENT_SCHEMA_VERSION = 1;
 
 // tally is the conformance workflow, not a product surface: it keeps the harness
 // boundary exercised by something that is not a real domain.
-// root-cause reuses the hunt loop (its arch entry declares workflow: "hunt"): a
-// hunt confirms that a threat exists, root-cause works backward from a confirmed
-// one to how it got there. Same machinery, its own kind so it is never mislabelled.
-// adjudicate is the same loop again, framed as a shadow second opinion on a finding
+// root-cause has its own loop (workflow: "rca"): a hunt confirms that a threat
+// exists, root-cause traces a confirmed one back to how it got there, one causal
+// step and the value linking it at a time.
+// adjudicate reuses the hunt loop, framed as a shadow second opinion on a finding
 // intake already admitted: it proposes a workflow and executes nothing.
 export const RUN_KINDS = ["hunt", "root_cause", "adjudicate", "investigate", "compose", "chat", "tally"] as const;
 export type RunKind = (typeof RUN_KINDS)[number];

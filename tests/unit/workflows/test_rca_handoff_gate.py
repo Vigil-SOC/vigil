@@ -1,16 +1,16 @@
 """The RCA-on-handoff gate: a proven threat hunt tees up a root-cause-analysis run
-that parks for operator approval; an RCA's own handoff spawns nothing (no loop)."""
+that parks for an operator to permit the trace; an RCA's own handoff spawns nothing
+(no loop)."""
 
 from unittest.mock import AsyncMock, Mock, patch
 
 from core.workflows import run_bridge_router as rbr
 from core.workflows.run_bridge_router import (
     TerminalHandoff,
-    _rca_hypothesis,
     _source_is_hunt,
     _start_root_cause,
 )
-from core.workflows.workflows_service import _not_a_claim
+from core.workflows.workflows_service import WorkflowsService, _nothing_to_run
 
 HANDOFF = TerminalHandoff(
     case_id="case-abc",
@@ -57,7 +57,7 @@ class TestTheSourceGuard:
 
 
 class TestTeeingUpTheRootCause:
-    def test_a_hunt_handoff_enqueues_exactly_one_rca_with_a_derived_hypothesis(self):
+    def test_a_hunt_handoff_enqueues_exactly_one_rca_on_the_confirmed_finding(self):
         # _process_handoff owns the dedup guard, so _start_root_cause is the sole
         # tee-up and takes no run_service of its own.
         enqueue = AsyncMock(return_value={"success": True, "run_id": "r-1"})
@@ -67,16 +67,13 @@ class TestTeeingUpTheRootCause:
         enqueue.assert_awaited_once()
         params, triggered_by = enqueue.await_args.args
         assert triggered_by == "handoff:run-1:case-abc"
-        # Only what the run reads. agent_id and source_run_id used to ride along
-        # here unconsumed — the roster is rootcause.yaml's, and triggered_by above
-        # already carries which run this traces back from.
-        assert set(params) == {"hypothesis", "context", "case_id"}
-        # Ties the backward claim to the escalation it traces back from. The host is
-        # deliberately not named: nothing here knows which one it is, and the finding
-        # travels verbatim in context, where the run reads it on turn 0.
-        assert "case-abc" in params["hypothesis"]
+        # Only what the run reads: the finding to trace and the case to report onto.
+        # No synthesized hypothesis -- a trace has none to state, and triggered_by
+        # above already carries which run this traces back from.
+        assert set(params) == {"context", "case_id"}
+        # The finding travels verbatim in context, where the run reads it on turn 0.
         assert "FYODOR-L" in params["context"]
-        # No approve_hypotheses pinned, so the workflow's ask checkpoint governs.
+        # No approve_hypotheses pinned, so the workflow's rca_permit policy governs.
         assert "approve_hypotheses" not in params
         # Files back onto the IR case the hunt opened.
         assert params["case_id"] == "case-opened"
@@ -120,22 +117,10 @@ class TestProcessHandoff:
         start_rca.assert_not_called()
 
 
-def test_the_hypothesis_names_the_escalation_and_never_a_host():
-    # The case file is the rendered document, payload JSON and all. Nothing in it is
-    # a subject this side can pick out: a hash algorithm, a CVE or a cloud region
-    # reads exactly like a hostname, and the C2 address reads exactly like the
-    # victim's. So the claim is stated about the compromise, not about a machine.
-    noisy = TerminalHandoff(
-        case_id="case-x",
-        title="Exploitation of CVE-2024-21412 confirmed",
-        markdown="payload SHA-256: 9f2c… in region US-EAST-1, egress to 45.77.53.176",
-    )
-    h = _rca_hypothesis(noisy)
-    assert "case-x" in h
-    assert "patient zero" in h
-    for guess in ("CVE-2024", "SHA-256", "US-EAST", "45.77.53.176"):
-        assert guess not in h
-
-    # And it is still a claim a run can argue against, which _nothing_to_run checks
-    # before the run is allowed to start.
-    assert not _not_a_claim(h)
+def test_what_the_tee_up_sends_is_something_a_trace_can_start_from():
+    # The run is refused unless it names a finding, a case, or describes one.
+    params = {"context": rbr._rca_context(HANDOFF), "case_id": "case-opened"}
+    rca = WorkflowsService().get_workflow("root-cause-analysis")
+    assert _nothing_to_run(rca, params) == ""
+    assert _nothing_to_run(rca, {}) == "subject"
+    assert _nothing_to_run(rca, {"hypothesis": "anything at all"}) == "subject"

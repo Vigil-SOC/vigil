@@ -122,27 +122,11 @@ export const NULL_HYPOTHESIS = "the activity has a benign explanation and no att
 // benign account a genuine competitor from turn 0 rather than a placeholder. The
 // argue-the-null critic still sharpens it further with the specific counter-story it
 // constructs against the linked evidence at VALIDATE.
-//
-// A backward root_cause run starts from a CONFIRMED compromise and must not re-open
-// "no attack occurred" — WORKFLOW.md: an RCA "does not re-prove that something bad
-// happened". Its origin hypothesis is a claim about the *initial-access vector*, so
-// negating it whole would deny the compromise itself. The backward null grants the
-// compromise and denies only the vector: the earliest activity has an ordinary
-// explanation, not attacker delivery.
-export function nullHypothesisFor(hypotheses: readonly string[], runKind: RunKind = "hunt"): string {
-  if (runKind === "root_cause") return BACKWARD_NULL_HYPOTHESIS;
+export function nullHypothesisFor(hypotheses: readonly string[]): string {
   const primary = hypotheses.find((h) => h.trim().length > 0);
   if (primary === undefined) return NULL_HYPOTHESIS;
   return `the activity described in "${primary}" has a legitimate explanation — expected operations, sanctioned tooling, or normal user/automation behavior — and is not adversary action`;
 }
-
-// The null for a backward run: the compromise is a given, so this contests only how
-// it began. The benign account of the earliest activity — an ordinary download, an
-// admin action, a sanctioned service — is the origin claim to beat.
-export const BACKWARD_NULL_HYPOTHESIS =
-  "the earliest suspicious activity preceding the confirmed compromise has an ordinary explanation" +
-  " — a legitimate download, an administrative action, or a sanctioned service — rather than being the" +
-  " attacker's initial-access vector";
 
 // What the deployment reports about its own reach, never a worker's telemetry. Kept
 // out of data_domains so it earns no corroboration credit.
@@ -393,8 +377,8 @@ export async function startHunt(
   runId: string,
   spec: HuntSpec,
   startedBy = "worker",
-  // Defaults to "hunt" so every existing caller and test is unchanged; a backward
-  // run passes "root_cause" so its events and run envelope carry the right kind.
+  // Defaults to "hunt" so every existing caller and test is unchanged; an
+  // adjudication passes its own kind so its events and run envelope carry it.
   runKind: RunKind = "hunt",
 ): Promise<Journal> {
   const now = new Date().toISOString();
@@ -474,7 +458,7 @@ export async function startHunt(
       kind: "hypothesis",
       payload: {
         hypothesis_id: newId("h", 4),
-        statement: nullHypothesisFor([...spec.operator_hypotheses, ...spec.hypotheses], runKind),
+        statement: nullHypothesisFor([...spec.operator_hypotheses, ...spec.hypotheses]),
         status: "active",
         attack_technique: null,
         provenance: BASE_RATE_PROVENANCE,
@@ -511,9 +495,9 @@ export async function startHunt(
   // Raised whichever way the policy falls, so the approval is a ledger fact
   // rather than something a caller remembers. An ask with nothing pending deadlocks.
   //
-  // "this run", not "this hunt": a root-cause run parks here too, and it is usually
-  // one no operator started -- a hunt's escalation teed it up -- so a question in
-  // the inbox calling it a hunt names the wrong run. spec.name is not the substitute
+  // "this run", not "this hunt": an adjudication parks here too, and it is one no
+  // operator started, so a question in the inbox calling it a hunt names the wrong
+  // run. spec.name is not the substitute
   // it looks like: it is the playbook's own name, which is as often a phrase about
   // the activity ("beaconing on the finance segment") as it is a title.
   const checkpoint = raiseCheckpoint(

@@ -12,7 +12,7 @@ export interface Workflow {
   useCase: string
   /** "hunt" runs the hypothesis loop and is bounded by turns; the rest walk phases. */
   runKind: string
-  /** Whether runKind drives the hypothesis loop — "hunt" and "root_cause" both do.
+  /** Whether runKind drives the hypothesis loop — "hunt" and "adjudicate" both do.
    *  Derived by the backend from its own set, so this stays true of a kind added
    *  there without a change here. What the Run dialog gates its hunt fields on. */
   huntLike: boolean

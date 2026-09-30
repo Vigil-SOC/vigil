@@ -28,7 +28,7 @@ export interface AdapterOptions {
   harness: Harness<HuntKinds>;
   spec: RunSpec;
   run_id: string;
-  // The run's kind, stamped on every turn event so a root-cause run's dispatches
+  // The run's kind, stamped on every turn event so an adjudication's dispatches
   // are not journalled as "hunt". Defaults handled by the caller (ports in runHunt).
   run_kind: RunKind;
   actions: readonly string[];

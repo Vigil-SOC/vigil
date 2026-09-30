@@ -32,7 +32,7 @@ vi.mock('../../services/skillsApi', () => ({
 // huntLike is the backend's own answer about the kind, which is what the dialog
 // gates on. Defaulted from the kind here so a case that only cares about one of
 // them says one thing.
-const wf = (runKind = 'hunt', huntLike = runKind === 'hunt' || runKind === 'root_cause') => ({
+const wf = (runKind = 'hunt', huntLike = runKind === 'hunt') => ({
   id: 'threat-hunt', icon: 'flow' as const, name: 'Threat Hunt', desc: '',
   agents: [], cmds: [], source: 'file', useCase: '', runKind, huntLike,
 })
@@ -154,16 +154,16 @@ describe('what the run will cost', () => {
     expect(screen.queryByLabelText(/Iterations/)).toBeNull()
   })
 
-  /* root_cause runs the same hypothesis loop a hunt does. Asking by kind gave it the
-     phase-walking dialog: the ceilings the operator typed were dropped on the way to
-     the server, and nothing named an unbound tool before the spend. */
-  it('gives a root-cause workflow the same ceilings and warnings a hunt gets', async () => {
-    preflight.mockResolvedValueOnce(limits(['telemetry_search']))
+  /* root_cause runs its own loop: it traces the finding it is given, so it takes a
+     finding, a case or context, and no hunt turn count or ceilings. */
+  it('asks a root-cause workflow for the finding to trace, not hunt ceilings', async () => {
+    preflight.mockResolvedValueOnce({ data: {} })
     open('root_cause')
 
-    expect(await screen.findByLabelText(/Iterations/)).toBeInTheDocument()
-    expect(screen.getByLabelText(/Cost ceiling/)).toBeInTheDocument()
-    expect(screen.getByText(/telemetry_search/)).toBeInTheDocument()
+    await waitFor(() => expect(preflight).toHaveBeenCalled())
+    expect(screen.getByLabelText('Context')).toBeInTheDocument()
+    expect(screen.queryByLabelText(/Iterations/)).toBeNull()
+    expect(screen.queryByLabelText(/Cost ceiling/)).toBeNull()
   })
 })
 

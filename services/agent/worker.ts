@@ -33,6 +33,8 @@ import type { HuntKinds } from "./workflows/hunt/ledger.js";
 import type { DirectiveQueue } from "./workflows/hunt/ports.js";
 import { InProcessDirectiveQueue } from "./workflows/hunt/directives.js";
 import { DirectiveRepository } from "./ledger/directives.js";
+import { runRootCause } from "./workflows/rca/workflow.js";
+import { RCA_PERMIT, type RcaKinds } from "./workflows/rca/vocabulary.js";
 
 type StartJob = Extract<RunJob, { reason: "start" }>;
 
@@ -49,7 +51,9 @@ export async function resolveSpec(job: StartJob, resolve: PlaybookResolver = def
   const recallKeys = job.request.recall_keys ?? [];
   const turns = job.request.iterations;
   // Only ever tightens: a caller may ask to be asked, never to skip a declared gate.
-  const gate = job.request.approve_hypotheses === true ? { hypothesis_approval: "ask" } : {};
+  // A root-cause run's start gate is its own class: it permits a trace, not hypotheses.
+  const gateClass = job.run_kind === "root_cause" ? RCA_PERMIT : "hypothesis_approval";
+  const gate = job.request.approve_hypotheses === true ? { [gateClass]: "ask" } : {};
   const tighten = (spec: RunSpec): RunSpec =>
     withOverrides(
       {
@@ -171,14 +175,17 @@ async function drive(
   const entry = archFor(kind);
   if (entry.workflow === "hunt") {
     const harness = build(kind, spec, as<HuntKinds>(state), undefined, seed);
-    // run_kind threaded so a hunt-loop run started as root-cause journals its own
+    // run_kind threaded so a hunt-loop run started as adjudicate journals its own
     // kind rather than the "hunt" the loop was first written for.
     // Only a forward hunt files its handoffs early: it escalates and keeps hunting,
-    // so its case must not wait on a terminal that may be far off or never come. A
-    // backward root-cause run concludes and stops, so its handoff rides the terminal
-    // as every kind's did -- and firing it early would double-open the same case.
+    // so its case must not wait on a terminal that may be far off or never come.
     const onHandoff = kind === "hunt" ? handoffFor() : undefined;
     await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), signal });
+    return;
+  }
+  if (entry.workflow === "rca") {
+    const harness = build(kind, spec, as<RcaKinds>(state), undefined, seed);
+    await runRootCause(harness, { run_id, run_kind: kind, spec, started_by, announce: announceFor(), signal });
     return;
   }
   if (kind === "hunt" || kind === "investigate") {

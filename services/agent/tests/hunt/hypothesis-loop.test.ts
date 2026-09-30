@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TERMINATION, DEFAULT_VERDICTS } from "../../workflows/hunt/config.js";
 import {
-  BACKWARD_NULL_HYPOTHESIS,
   BASE_RATE_PROVENANCE,
   InvalidDecision,
   NULL_HYPOTHESIS,
@@ -75,17 +74,6 @@ describe("nullHypothesisFor phrases the base rate against the activity under tes
   it("falls back to the generic null when no hypothesis is given", () => {
     expect(nullHypothesisFor([])).toBe(NULL_HYPOTHESIS);
     expect(nullHypothesisFor(["", "   "])).toBe(NULL_HYPOTHESIS);
-  });
-
-  // A backward run starts from a confirmed compromise, so its null must contest the
-  // origin vector, never re-open "no attack occurred". The origin claim is ignored:
-  // negating it whole would deny the very compromise the RCA is told to take as given.
-  it("grants the compromise and denies only the vector on a root_cause run", () => {
-    expect(nullHypothesisFor(["FYODOR-L was compromised via phishing"], "root_cause")).toBe(
-      BACKWARD_NULL_HYPOTHESIS,
-    );
-    expect(nullHypothesisFor([], "root_cause")).toBe(BACKWARD_NULL_HYPOTHESIS);
-    expect(BACKWARD_NULL_HYPOTHESIS).not.toMatch(/no attack occurred|is not adversary action/);
   });
 });
 

@@ -14,7 +14,12 @@ from core.deps import provide_mcp_registry, provide_workflows
 from core.integrations.mcp.registry import MCPRegistry
 from core.llm import target
 from core.routing import Auth, RouterMeta
-from core.workflows.playbook_resolver import UnknownPlaybook, resolve, resolve_hunt
+from core.workflows.playbook_resolver import (
+    UnknownPlaybook,
+    resolve,
+    resolve_hunt,
+    resolve_root_cause,
+)
 from core.workflows.workflows_service import WorkflowsService
 
 router = APIRouter()
@@ -37,13 +42,15 @@ class ResolvedPlaybook(BaseModel):
 
 
 def _resolver_for(workflows: WorkflowsService, workflow_id: str):
-    from core.workflows.workflows_service import is_hunt_like
+    from core.workflows.workflows_service import ROOT_CAUSE_RUN_KIND, is_hunt_like
 
     definition = workflows.get_workflow(workflow_id)
     if definition is None:
         raise UnknownPlaybook(f"no such workflow: {workflow_id}")
-    # Both hunt and root-cause resolve through resolve_hunt so root-cause inherits
-    # HUNT_CAPABILITIES (telemetry_search et al.) and the hypothesis-loop config.
+    # Hunt-like kinds resolve through resolve_hunt so each inherits HUNT_CAPABILITIES
+    # and the hypothesis-loop config; a root-cause trace binds only its log search.
+    if definition.run_kind == ROOT_CAUSE_RUN_KIND:
+        return resolve_root_cause
     return resolve_hunt if is_hunt_like(definition.run_kind) else resolve
 
 

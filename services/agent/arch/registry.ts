@@ -9,11 +9,12 @@ import type { HuntKinds } from "../workflows/hunt/ledger.js";
 import { huntProjection } from "../workflows/hunt/projection.js";
 import { huntNotes } from "../workflows/hunt/recall.js";
 import { leadProjection } from "../workflows/lead/projection.js";
+import { RCA_ACTIONS } from "../workflows/rca/vocabulary.js";
 import type { LeadKinds } from "../workflows/lead/workflow.js";
 
 // Which loop drives a kind, and what its workflow may act on. Named here rather
 // than switched on in the worker: an agent type is a file and an entry, not a branch.
-export type WorkflowId = "lead" | "compose" | "hunt";
+export type WorkflowId = "lead" | "compose" | "hunt" | "rca";
 
 export interface ArchEntry {
   arch: string;
@@ -35,7 +36,7 @@ export interface ArchEntry {
   distil?: (runId: string, events: readonly AgentEvent<Record<never, never>>[]) => unknown;
 }
 
-// The hunt lead-loop, minus its arch prompt. `hunt`, `root_cause` and `adjudicate`
+// The hunt lead-loop, minus its arch prompt. `hunt` and `adjudicate`
 // run this exact loop — same actions, halts, ownership, projection and notes — and
 // differ only in the arch that frames the lead's job, so the shared mechanics live
 // here and drift between the kinds is impossible rather than a three-place edit.
@@ -59,10 +60,16 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     ...HUNT_LOOP,
     distil: (runId, events) => huntDistil(runId, events as readonly AgentEvent<HuntKinds>[]),
   },
-  // root-cause is a hunt run backward: only rootcause.yaml differs, framing the
-  // lead's job as tracing a confirmed compromise to its origin. Sharing HUNT_LOOP
-  // keeps the kind honest rather than borrowing "hunt".
-  root_cause: { arch: packaged("rootcause.yaml"), ...HUNT_LOOP },
+  // root-cause is not a hunt run backward: its unit is a causal step and the value
+  // tying it to the one before, not a hypothesis and a verdict, so it has its own
+  // loop. It reads the checkpoint policies the definition declares and nothing else.
+  root_cause: {
+    arch: packaged("rootcause.yaml"),
+    workflow: "rca",
+    actions: RCA_ACTIONS,
+    halts: RCA_ACTIONS,
+    owned: { config: ["checkpoints"] },
+  },
   // adjudicate is a hunt run as a second opinion: the lead is shown a finding
   // intake admitted and the workflow intake chose, tests the stated intent against
   // the seeded benign account, and proposes a workflow without starting one. Same
@@ -107,7 +114,7 @@ export function registeredKinds(): RunKind[] {
   return (Object.keys(REGISTERED) as RunKind[]).sort();
 }
 
-// Whether a kind runs the shared hunt lead-loop -- `hunt`, `root_cause`, and any
+// Whether a kind runs the shared hunt lead-loop -- `hunt`, `adjudicate`, and any
 // future kind that reuses HUNT_LOOP. The one place the membership is decided, so a
 // new hunt-like kind is registered above and nothing downstream has to be found and
 // widened by hand. Mirrors Python's is_hunt_like / HUNT_LIKE_RUN_KINDS.

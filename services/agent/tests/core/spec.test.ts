@@ -59,6 +59,7 @@ describe("the registry resolves a run kind to an arch", () => {
     expect(archFor("hunt").workflow).toBe("hunt");
     expect(archFor("investigate").workflow).toBe("lead");
     expect(archFor("compose").workflow).toBe("compose");
+    expect(archFor("root_cause").workflow).toBe("rca");
   });
 
   // A kind in the union with no arch behind it is the failure this prevents.
@@ -72,7 +73,8 @@ describe("the registry resolves a run kind to an arch", () => {
   // for a new kind and the next three being found later, one bug at a time.
   it("answers which kinds run the hunt loop from what they were registered with", () => {
     expect(isHuntLike("hunt")).toBe(true);
-    expect(isHuntLike("root_cause")).toBe(true);
+    // Its own loop: a causal step and its link, not a hypothesis and a verdict.
+    expect(isHuntLike("root_cause")).toBe(false);
     expect(isHuntLike("adjudicate")).toBe(true);
     expect(isHuntLike("investigate")).toBe(false);
     expect(isHuntLike("compose")).toBe(false);

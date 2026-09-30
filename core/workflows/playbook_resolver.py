@@ -479,14 +479,70 @@ def resolve_hunt(
         "hypothesis_loop": HUNT_HYPOTHESIS_LOOP,
     }
 
-    # Checkpoint policies a definition declares (e.g. root-cause-analysis sets
-    # hypothesis_approval: ask so it parks for operator go-ahead at start). The
-    # agent merges these over its DEFAULT_CHECKPOINTS, so an unset policy keeps the
-    # default; omit the key entirely when the definition names none.
+    # Checkpoint policies a definition declares. The agent merges these over its
+    # DEFAULT_CHECKPOINTS, so an unset policy keeps the default; omit the key
+    # entirely when the definition names none.
     checkpoints = _checkpoints(definition)
     if checkpoints:
         config["checkpoints"] = checkpoints
 
+    return _dump(playbook), _dump(config)
+
+
+# What the rootcause arch asks for. Only the log search: the trace's checks are
+# questions to the store that holds the logs, and a finding it starts from arrives
+# as the run's own context.
+ROOT_CAUSE_CAPABILITIES = ("telemetry_search",)
+
+# A trace is one investigator in one conversation, measured in stretches of tool
+# turns; the finish gate judges a report draft at the end of each. Five stretches of
+# twelve is the sixty turns the method was worked out on.
+ROOT_CAUSE_SEGMENTS = 5
+ROOT_CAUSE_RUNTIME = {**DEFAULT_RUNTIME, "max_turns": 12}
+ROOT_CAUSE_BUDGETS = {
+    # Each stretch is its tool turns and up to two emission attempts.
+    "max_calls": ROOT_CAUSE_SEGMENTS * (int(ROOT_CAUSE_RUNTIME["max_turns"]) + 2),
+    "max_cost_usd": 10.0,
+    "max_wall_ms": 5_400_000,
+}
+
+
+# The two layers a root-cause run needs. No hypotheses: what it traces is the
+# confirmed finding the caller supplies, and it binds only the log search.
+def resolve_root_cause(
+    workflow_id: str,
+    model: Optional[str] = None,
+    workflows: Optional["WorkflowsService"] = None,
+    registry: Optional["MCPRegistry"] = None,
+    provider: Optional[str] = None,
+) -> Tuple[str, str]:
+    from core.workflows.workflows_service import WorkflowsService
+
+    definition = (workflows or WorkflowsService()).get_workflow(workflow_id)
+    if definition is None:
+        raise UnknownPlaybook(f"no such workflow: {workflow_id}")
+
+    playbook = {
+        "name": definition.name,
+        "description": definition.description,
+        "use_case": definition.use_case,
+        "trigger_examples": list(definition.trigger_examples),
+        "narrative": definition.body,
+    }
+    config = {
+        "model": model or DEFAULT_MODEL,
+        **({"provider": provider} if provider else {}),
+        "budgets": dict(ROOT_CAUSE_BUDGETS),
+        "runtime": dict(ROOT_CAUSE_RUNTIME),
+        "tools": _bound_capabilities(
+            list(ROOT_CAUSE_CAPABILITIES), _tool_catalogue(registry)
+        ),
+        "approvals": [],
+        "thresholds": {"max_iterations": ROOT_CAUSE_SEGMENTS},
+    }
+    checkpoints = _checkpoints(definition)
+    if checkpoints:
+        config["checkpoints"] = checkpoints
     return _dump(playbook), _dump(config)
 
 

@@ -10,7 +10,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:unit": "vitest run tests/core tests/hunt tests/chat",
+    "test:unit": "vitest run tests/core tests/hunt tests/chat tests/rca",
     "test:integration": "vitest run tests/integration",
     "build": "tsc -p tsconfig.build.json",
     "worker": "tsx worker.ts",
