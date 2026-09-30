@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from core.time import utcnow
@@ -15,6 +16,22 @@ logger = logging.getLogger(__name__)
 # for the cooldown so a backfill can't stampede a dead gateway. Findings still ingest.
 _ENRICH_BREAKER_THRESHOLD = 8
 _ENRICH_BREAKER_COOLDOWN = 120  # seconds
+
+BACKFILL_SOURCE = "backfill"
+# A swept Finding stored this long after its event is history: rate it, don't act on it.
+BACKFILL_MAX_ARRIVAL_LAG = timedelta(hours=24)
+
+
+def _arrived_as_history(finding: Dict[str, Any]) -> bool:
+    """Stored long after its event, or with no event time to tell."""
+    from services.daemon.orchestrator import _as_naive_utc
+
+    event = _as_naive_utc(finding.get("timestamp"))
+    stored = _as_naive_utc(finding.get("created_at"))
+    if event is None or stored is None:
+        return True
+    return stored - event > BACKFILL_MAX_ARRIVAL_LAG
+
 
 # Finding-dict keys that triage/enrich produce; cached together in the
 # ai_enrichment JSONB column (these dict keys don't map to columns 1:1).
@@ -101,6 +118,7 @@ class FindingProcessor:
             "queued_for_response": 0,
             "queued_for_investigation": 0,
             "sanitization_flagged": 0,
+            "backfill_not_responded": 0,
         }
 
     def _sanitize_finding(self, finding: Dict[str, Any], source: Optional[str]) -> None:
@@ -381,6 +399,11 @@ class FindingProcessor:
         if finding.get("data_source") == PROBE_DATA_SOURCE:
             return
 
+        if source == BACKFILL_SOURCE and _arrived_as_history(finding):
+            self.stats["backfill_not_responded"] += 1
+            logger.debug(f"Not responding to {finding_id}: stored long after its event")
+            return
+
         # Response evaluation always runs — even when enrichment is off or paused.
         try:
             await self._evaluate_for_response(finding)
@@ -446,7 +469,7 @@ class FindingProcessor:
             for finding in batch:
                 if shutdown_event.is_set():
                     break
-                await self._spawn_enrich(finding)  # blocks on the cap → self-pacing
+                await self._spawn_enrich(finding, BACKFILL_SOURCE)  # blocks on the cap
 
     async def _store_finding(self, finding: Dict[str, Any]) -> bool:
         """Return True if persisted (or already present), False if the write
