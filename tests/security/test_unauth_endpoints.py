@@ -248,6 +248,7 @@ ADMIN_ONLY_ROUTES = [
     ("POST", "/api/mcp/surface/credentials", {"label": "x"}),
     ("DELETE", "/api/mcp/surface/credentials/mcpc-none", None),
     ("POST", "/api/mcp/servers/reload", None),
+    ("POST", "/api/config/integrations/github/test", None),
     (
         "POST",
         "/api/llm/providers/discover-models",

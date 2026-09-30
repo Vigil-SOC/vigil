@@ -13,7 +13,7 @@ from core.config import (
     state_dir_status,
     vigil_path,
 )
-from core.deps import provide_demo_data, provide_integration_bridge
+from core.deps import provide_demo_data, provide_integration_bridge, provide_mcp_client
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
     redact_secrets,
@@ -26,6 +26,12 @@ from core.routing import Auth, RouterMeta
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
 from core.storage.config_service import get_config_service
+from core.storage.models import User
+from core.time import utcnow
+from services.api.middleware.auth import (
+    get_current_active_user,
+    require_integrations_admin,
+)
 from services.daemon.intent import intent_report
 
 router = APIRouter()
@@ -798,59 +804,160 @@ async def get_integrations_status(
     return {"success": True, "statuses": statuses}
 
 
+def _connected_session(mcp_client: Any, server_name: str) -> Any:
+    """Live session for a server that is already connected, if any.
+
+    ``connect_to_server`` returns early in that case and does not call
+    ``list_tools``. Anything else (including a MagicMock client) is not a session.
+    """
+    sessions = getattr(mcp_client, "persistent_sessions", None)
+    if not isinstance(sessions, dict):
+        return None
+    holder = sessions.get(server_name)
+    if holder is None or not getattr(holder, "is_connected", False):
+        return None
+    return getattr(holder, "session", None)
+
+
+async def _probe_mcp_server(
+    mcp_client: Any,
+    server_name: str,
+    *,
+    persistent: bool,
+    skip_enabled_check: bool,
+) -> Dict[str, Any]:
+    """Connect and, when a session was already up, list its tools."""
+    already = _connected_session(mcp_client, server_name)
+    error: Optional[str] = None
+    missing: Optional[List[str]] = None
+    try:
+        ok = await mcp_client.connect_to_server(
+            server_name,
+            persistent=persistent,
+            skip_enabled_check=skip_enabled_check,
+        )
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        error = f"{type(exc).__name__}: {exc}"
+    else:
+        if ok and already is not None:
+            try:
+                await already.list_tools()
+            except Exception as exc:  # noqa: BLE001
+                ok = False
+                error = f"{type(exc).__name__}: {exc}"
+        if not ok and error is None:
+            error = mcp_client.get_last_error(server_name)
+            missing = mcp_client.get_missing_credentials(server_name)
+
+    result: Dict[str, Any] = {"name": server_name, "success": bool(ok)}
+    if not ok:
+        result["error"] = error or "connection failed"
+    if missing:
+        result["missing_credentials"] = missing
+    return result
+
+
+def _probe_error_summary(servers: List[Dict[str, Any]]) -> Optional[str]:
+    parts = []
+    for server in servers:
+        if server["success"]:
+            continue
+        error = server.get("error")
+        parts.append(f"{server['name']}: {error}" if error else server["name"])
+    return "; ".join(parts) or None
+
+
 @router.post("/integrations/{integration_id}/test")
 async def test_integration(
     integration_id: str,
+    current_user: User = Depends(get_current_active_user),
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
+    mcp_client=Depends(provide_mcp_client),
 ):
-    """
-    Test an integration connection.
+    """Probe the MCP servers behind an integration.
 
-    Args:
-        integration_id: Integration identifier
-
-    Returns:
-        Test result with success/failure and message
+    Catalog entries have no descriptor, so they are not testable. A stored
+    config of ``{}`` is still configured — secret-only rows keep the secret
+    outside this dict. The integration's enabled flag does not block the
+    probe: enabled MCP servers are contacted, and if none are enabled every
+    declared server is probed with a temporary session.
     """
+    require_integrations_admin(current_user)
+
+    server_names = list(bridge.server_names_for(integration_id))
     status = bridge.get_integration_status(integration_id)
+    if not server_names:
+        return {
+            "success": False,
+            "reason": "not_testable",
+            "message": f"Integration '{integration_id}' is not testable.",
+            "status": status,
+        }
 
+    # Membership, not a non-empty dict. A secret-only row (VirusTotal) is stored
+    # as {} after split_secrets and is still configured.
     if not status["configured"]:
         raise HTTPException(status_code=400, detail="Integration not configured")
 
-    if not status["server_available"]:
+    if mcp_client is None:
         return {
             "success": False,
-            "message": f"Integration server not yet implemented. The '{integration_id}' integration is planned but the backend MCP server needs to be created.",
+            "message": "MCP client is not available.",
             "status": status,
-            "implementation_status": "pending",
+            "server_names": server_names,
+            "servers": [],
         }
 
-    if not status["enabled"]:
-        return {
-            "success": False,
-            "message": "Integration is configured but not enabled. Please enable it in the integrations list.",
-            "status": status,
-        }
+    mcp_service = getattr(mcp_client, "mcp_service", None)
+    if mcp_service is not None:
+        try:
+            mcp_service.reload_server_configs()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("reload_server_configs before test failed: %s", exc)
 
-    # TODO: Implement actual connection test using MCP client
-    # For now, we just verify the configuration is complete
-    integration_config = bridge.get_integration_config(integration_id)
+    enabled = [
+        name
+        for name in server_names
+        if mcp_service is not None and mcp_service.is_server_enabled(name)
+    ]
+    # None enabled: probe every declared server without turning it on.
+    temporary = not enabled
+    targets = server_names if temporary else enabled
 
-    # Check if required fields are present (basic validation)
-    if not integration_config:
-        raise HTTPException(
-            status_code=400, detail="Integration configuration is empty"
+    servers = []
+    for name in targets:
+        servers.append(
+            await _probe_mcp_server(
+                mcp_client,
+                name,
+                persistent=not temporary,
+                skip_enabled_check=temporary,
+            )
         )
+    success = all(server["success"] for server in servers)
+    error_summary = None if success else _probe_error_summary(servers)
 
-    # Prepare environment variables to verify they're being set correctly
-    env_vars = bridge._config_to_env_vars(integration_id, integration_config)
+    recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
+        integration_id,
+        success=success,
+        error=error_summary,
+        tested_at=utcnow(),
+    )
+    if not recorded:
+        logger.warning("Integration '%s' test result was not saved", integration_id)
+
+    if success:
+        message = f"Integration '{integration_id}' connected."
+    else:
+        message = error_summary or f"Integration '{integration_id}' failed to connect."
 
     return {
-        "success": True,
-        "message": f"Integration '{integration_id}' is configured and ready. Configuration will be passed to the MCP server as environment variables.",
+        "success": success,
+        "message": message,
         "status": status,
-        "env_var_count": len(env_vars),
-        "server_name": status.get("server_name", "unknown"),
+        "server_names": server_names,
+        "servers": servers,
     }
 
 

@@ -7,6 +7,7 @@ and integration configurations with automatic audit logging.
 
 import logging
 from contextlib import contextmanager
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Set
 
 from sqlalchemy.orm import Session
@@ -241,6 +242,40 @@ class ConfigService:
 
             session.commit()
             logger.info(f"Integration '{integration_id}' {action}d by {self.user_id}")
+            return True
+
+    @default_on_error(False)
+    def record_integration_test(
+        self,
+        integration_id: str,
+        *,
+        success: bool,
+        error: Optional[str],
+        tested_at: datetime,
+    ) -> bool:
+        """Stamp the last probe on an existing row.
+
+        Does not rewrite ``config`` or ``enabled``. A missing row is left
+        missing — creating one would invent a configuration.
+        """
+        with get_session() as session:
+            integration = (
+                session.query(IntegrationConfig)
+                .filter_by(integration_id=integration_id)
+                .first()
+            )
+            if integration is None:
+                return False
+            integration.last_test_at = tested_at
+            integration.last_test_success = success
+            integration.last_error = error
+            integration.updated_by = self.user_id
+            logger.info(
+                "Integration '%s' test recorded success=%s by %s",
+                integration_id,
+                success,
+                self.user_id,
+            )
             return True
 
     @default_on_error(list)
