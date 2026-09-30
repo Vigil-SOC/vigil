@@ -2807,13 +2807,13 @@ export interface paths {
         put?: never;
         /**
          * Test Integration
-         * @description Test an integration connection.
+         * @description Probe the MCP servers behind an integration.
          *
-         *     Args:
-         *         integration_id: Integration identifier
-         *
-         *     Returns:
-         *         Test result with success/failure and message
+         *     Catalog entries have no descriptor, so they are not testable. A stored
+         *     config of ``{}`` is still configured — secret-only rows keep the secret
+         *     outside this dict. The integration's enabled flag does not block the
+         *     probe: enabled MCP servers are contacted, and if none are enabled every
+         *     declared server is probed with a temporary session.
          */
         post: operations["post_api_config_integrations_integration_id_test"];
         delete?: never;
