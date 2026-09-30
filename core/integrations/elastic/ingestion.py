@@ -130,6 +130,7 @@ class ElasticIngestion(SIEMIngestionService):
                 verify_ssl=verify,
                 index_pattern=self.config.get("index_pattern")
                 or ".alerts-security.alerts-default",
+                ca_cert_path=self.config.get("ca_cert_path"),
             )
             return self._elastic_service
         except Exception as e:

@@ -1,0 +1,2 @@
+# Info button (ⓘ)
+14px `info` icon in `tx3`, right of any widget title or number. Opens a small popover with three lines: **Source** (the events or table), **Calculation** (the formula in words), **Limit** (the threshold and where it is set). Every widget that shows a number has one. Copy lives with the widget, not in a glossary.

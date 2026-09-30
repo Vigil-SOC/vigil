@@ -1,8 +1,10 @@
 """Application-wide exception handlers.
 
 Route handlers raise ``core.exceptions.SOCError`` subclasses for expected
-failures and let anything else propagate. These handlers render both as JSON,
-so no route needs its own ``try``/``except`` to produce an HTTP error response.
+failures and let anything else propagate. ``BudgetExceeded`` is not a
+``SOCError``; it has its own handler so a spent virtual key is a 402 rather
+than an internal error. These handlers render both as JSON, so no route needs
+its own ``try``/``except`` to produce an HTTP error response.
 
 Unexpected exceptions never put their text in the response body: the detail is
 logged with the OTEL trace id, and the client gets that id to quote instead.
@@ -15,9 +17,16 @@ from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from core.exceptions import SOCError
+from core.llm.cost.budget import BudgetExceeded
 from core.telemetry import current_trace_ids
 
 logger = logging.getLogger(__name__)
+
+# Bifrost's own text can name the key and the spend. That stays in the log.
+# The ceiling an operator can raise is the virtual key under AI Config.
+BUDGET_EXCEEDED_DETAIL = (
+    "The virtual-key budget is spent. Raise its ceiling under AI Config → Virtual Keys."
+)
 
 
 async def soc_error_handler(request: Request, exc: SOCError) -> JSONResponse:
@@ -38,6 +47,27 @@ async def soc_error_handler(request: Request, exc: SOCError) -> JSONResponse:
     log = logger.exception if status >= 500 else logger.warning
     log("%s %s -> %d: %s", request.method, request.url.path, status, exc.message)
     return JSONResponse(status_code=status, content=body)
+
+
+async def budget_exceeded_handler(
+    request: Request, exc: BudgetExceeded
+) -> JSONResponse:
+    trace_id, _ = current_trace_ids()
+    logger.warning(
+        "%s %s -> 402 budget exceeded (%s): %s",
+        request.method,
+        request.url.path,
+        exc.tier,
+        exc.message,
+    )
+    body = {
+        "detail": BUDGET_EXCEEDED_DETAIL,
+        "code": "BUDGET_EXCEEDED",
+        "tier": exc.tier,
+    }
+    if trace_id:
+        body["trace_id"] = trace_id
+    return JSONResponse(status_code=402, content=body)
 
 
 async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -88,8 +118,11 @@ class CatchUnhandledMiddleware:
 
 
 def register_exception_handlers(app: FastAPI) -> None:
-    """Register the domain-error handler. Call before adding CORSMiddleware."""
+    """Register JSON error handlers. Call before adding CORSMiddleware."""
     app.add_exception_handler(SOCError, soc_error_handler)  # type: ignore[arg-type]
+    # Own class, not a SOCError: Starlette routes it inside ExceptionMiddleware
+    # so the 402 still passes back through CORS. Exception stays on the outer net.
+    app.add_exception_handler(BudgetExceeded, budget_exceeded_handler)  # type: ignore[arg-type]
     # Terminal net for the case above where the response had already started.
     app.add_exception_handler(Exception, unhandled_error_handler)
     app.add_middleware(CatchUnhandledMiddleware)

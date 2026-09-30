@@ -1,0 +1,2 @@
+# Citation chip
+22px, radius 999, 1px `ac-ln`, `ac-bg`, 11px mono: "step 3 · CrowdStrike". Hover inverts to `ac` fill. Click opens the Evidence tab with that row highlighted (`ac-bg`). Appears under any answer from the record.

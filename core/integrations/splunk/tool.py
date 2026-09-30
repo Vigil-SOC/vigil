@@ -80,6 +80,7 @@ def get_splunk_service():
             username=config["username"],
             password=config["password"],
             verify_ssl=bool(config.get("verify_ssl")),
+            ca_cert_path=config.get("ca_cert_path"),
         )
     except Exception as exc:  # noqa: BLE001
         # A DB, decrypt or descriptor failure must not read as "not configured":

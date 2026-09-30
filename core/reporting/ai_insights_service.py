@@ -241,6 +241,9 @@ Provide ONLY the JSON array, no other text."""
             if result is None:
                 raise ValueError("Empty response from LLM queue")
             if isinstance(result, dict):
+                # llm_call reports failure as {"type": "error"} instead of raising.
+                if result.get("type") == "error":
+                    raise RuntimeError(result.get("error") or "LLM call failed")
                 return result.get("content", "")
             return str(result)
         except ImportError:
@@ -262,19 +265,29 @@ Provide ONLY the JSON array, no other text."""
             raise
 
     def _parse_insights(self, insights_text: str) -> List[Dict[str, Any]]:
-        """Parse insights from Claude's JSON response."""
+        """Parse insights from Claude's JSON response.
+
+        A missing or malformed JSON array raises so ``generate_insights`` can
+        return the rule-based fallback. A valid array, including ``[]``, is
+        returned as parsed.
+        """
+        # Extract JSON from response (in case there's extra text)
+        start = insights_text.find("[")
+        end = insights_text.rfind("]") + 1
+
+        if start == -1 or end == 0:
+            logger.warning("No JSON array found in Claude response")
+            raise ValueError("No JSON array found in Claude response")
+
+        json_text = insights_text[start:end]
         try:
-            # Extract JSON from response (in case there's extra text)
-            start = insights_text.find("[")
-            end = insights_text.rfind("]") + 1
-
-            if start == -1 or end == 0:
-                logger.warning("No JSON array found in Claude response")
-                return []
-
-            json_text = insights_text[start:end]
             insights_raw = json.loads(json_text)
+        except json.JSONDecodeError as e:
+            logger.error(f"Error parsing insights JSON: {str(e)}")
+            logger.debug(f"Raw response: {insights_text}")
+            raise
 
+        try:
             # Add timestamps and IDs
             insights = []
             for i, insight in enumerate(insights_raw):
@@ -291,11 +304,6 @@ Provide ONLY the JSON array, no other text."""
                 )
 
             return insights
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parsing insights JSON: {str(e)}")
-            logger.debug(f"Raw response: {insights_text}")
-            return []
         except Exception as e:
             logger.error(f"Error processing insights: {str(e)}")
             return []

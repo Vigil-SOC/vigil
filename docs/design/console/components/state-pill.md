@@ -1,0 +1,2 @@
+# State pill
+Height 22, padding 0 9, radius 999, font 12/700, 7px dot before the text. Colour pairs: Acting `good`/`good-bg`; Running · asks first `ac`/`ac-bg`; Needs you `poor`/`poor-bg` with a 1.6s blink on the dot; Closed `tx2`/`bg3`; Handed off / Idle `tx2`,`tx3`. Always followed by the reason in 12px `tx2`.

@@ -8,6 +8,7 @@ import { httpAnnounce, noAnnounce, type Announce } from "./core/checkpoints.js";
 import { harnessFor, internalToken, type HarnessFactory } from "./harness.js";
 import { poolConfig, redisConfig } from "./core/db.js";
 import { healthPort, healthServer } from "./core/health.js";
+import { GatewayExhausted } from "./core/limiter.js";
 import { jobIdFor, RUN_QUEUE, JOB_SCHEMA_VERSION, type RunJob } from "./contracts/job.js";
 import type { AgentEvent, CheckpointPayload, ResolutionPayload, RunPayload, TerminalHandoff } from "./contracts/events.js";
 import type { SpendPayload } from "./contracts/budget.js";
@@ -272,14 +273,30 @@ async function forget(state: State, leases: Leases, job: RunJob, owner: string, 
 }
 
 // A spec error answers the same way on every attempt, and on a resume the layers come
-// off the ledger, so no retry can change it. Say why it stopped and stop, rather than
-// refilling the queue with jobs none of which could succeed.
+// off the ledger, so no retry can change it. A gateway 402 is the same shape: the
+// budget is spent, and the next call is refused for the same reason. Say why it
+// stopped and stop, rather than refilling the queue with jobs none of which could succeed.
 async function stopBecauseItCannotSucceed(
   state: State,
   leases: Leases,
   job: RunJob,
   error: unknown,
 ): Promise<boolean> {
+  // Not exempted when a checkpoint is open: the gateway will refuse the next call
+  // whether or not a person still owes this run an answer. The exemption below is
+  // for a spec error whose cause is that open checkpoint.
+  if (error instanceof GatewayExhausted) {
+    const reason = error.message;
+    await state.append(job.run_id, [
+      { run_id: job.run_id, run_kind: job.run_kind, kind: "terminal", payload: { outcome: "budget_exhausted", reason } },
+    ]);
+    // abandon() does not report this error, so every kind, compose included, hears
+    // budget_exhausted once. The spec-error path leaves compose to abandon().
+    await mirrorFor().terminal(job.run_id, { outcome: "budget_exhausted", reason, summary: "" });
+    await reap(leases, job.run_id);
+    return true;
+  }
+
   if (!(error instanceof SpecError)) return false;
   // SpecError is not only about specs: a lead that emits no decision throws one, often
   // because a checkpoint is open. A run waiting on a person must never be killed.
@@ -356,7 +373,7 @@ export async function spentOn(state: State, runId: string): Promise<number> {
 // A run that dies before it journals a terminal leaves its record open, and a
 // resolution failure dies before there is a ledger to journal one onto.
 async function abandon(job: RunJob, error: unknown): Promise<void> {
-  if (job.run_kind !== "compose") return;
+  if (job.run_kind !== "compose" || error instanceof GatewayExhausted) return;
   await mirrorFor().terminal(job.run_id, { outcome: "failed", reason: error instanceof Error ? error.message : String(error), summary: "" });
 }
 
@@ -504,19 +521,21 @@ export async function sweepOnce(leases: Leases, queue: Enqueue, limit = 50): Pro
 }
 
 // advance(), with the one distinction the retry policy above needs to be told
-// about: a spec that does not parse parses no better on the third attempt. Retries
-// exist for the infrastructure going away mid-run, not for a malformed playbook, and
+// about: a spec that does not parse parses no better on the third attempt, and a
+// gateway that answered 402 answers 402 again. Retries exist for the infrastructure
+// going away mid-run, not for a malformed playbook or a spent budget, and
 // UnrecoverableError is how BullMQ is told which is which -- the job fails on
 // attempt 1 and the console sees the real message rather than the same one thrice,
 // fifteen seconds apart.
 //
 // Only here, not inside advance(): what a failure means to the queue is the queue's
 // business, and advance() is driven without one by the tests and by run-once.ts.
-async function handle(state: State, leases: Leases, job: RunJob, directives: DirectiveQueue, build: HarnessFactory = harnessFor): Promise<void> {
+// advance() still throws the original error; this is the only place that wraps it.
+export async function handle(state: State, leases: Leases, job: RunJob, directives: DirectiveQueue, build: HarnessFactory = harnessFor): Promise<void> {
   try {
     await advance(state, leases, job, build, directives);
   } catch (error) {
-    if (error instanceof SpecError) throw new UnrecoverableError(error.message);
+    if (error instanceof SpecError || error instanceof GatewayExhausted) throw new UnrecoverableError(error.message);
     throw error;
   }
 }

@@ -1,0 +1,2 @@
+# Tab strip
+Buttons in a row, gap 22, height 38, font 13/600, colour `tx2` → `tx0` when active, 2px bottom border `ac` when active (transparent otherwise), margin-bottom −1 to sit on the container's 1px `ln0`. Count chip after the label: 11px mono, 1px 6px, radius 6, `bg3`/`tx2` → `ac-bg`/`ac` when active. Sticky at the top of its scroll area when content is long (Investigation sub-tabs). Tabs replace jump pills wherever a section can exceed one screen.

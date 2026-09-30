@@ -142,6 +142,28 @@ def create_llm_interaction_vk_index(conn):
         ON llm_interaction_logs (virtual_key_id, created_at);
     """))
 
+# Rows written before #1268 stored the virtual key (sk-bf-…) in this column.
+# The column stays; the secret does not.
+@migration("Null llm_interaction_logs.virtual_key_id (it stored the key)")
+def null_llm_interaction_virtual_key_id(conn):
+    if not _table_exists(conn, 'llm_interaction_logs'):
+        return
+    # The ADD COLUMN step above is skipped when this role does not own the
+    # table. Nothing to clear until that column exists.
+    present = conn.execute(text("""
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'llm_interaction_logs'
+          AND column_name = 'virtual_key_id'
+    """)).scalar()
+    if not present:
+        return
+    conn.execute(text("""
+        UPDATE llm_interaction_logs
+        SET virtual_key_id = NULL
+        WHERE virtual_key_id IS NOT NULL;
+    """))
+
 # Unpriced is stored as NULL, not 0 (#1115). Existing rows are left as they are.
 @migration("Make llm_interaction_logs.cost_usd nullable")
 def make_llm_interaction_cost_nullable(conn):

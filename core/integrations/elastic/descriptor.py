@@ -20,6 +20,7 @@ ELASTIC = register_descriptor(
             IntegrationField("index_pattern"),
             IntegrationField("min_rule_level", value_type="int"),
             IntegrationField("verify_ssl", value_type="bool"),
+            IntegrationField("ca_cert_path"),
         ),
     )
 )

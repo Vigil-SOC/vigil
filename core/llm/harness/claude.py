@@ -6,8 +6,10 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional, Union
 
+from core.config import get_settings
 from core.llm.cost.calls import CallQuote, quote_call
 from core.llm.defaults import DEFAULT_MODEL
+from core.llm.router.router import bifrost_headers
 from core.secrets import get_secret
 from core.telemetry import record_llm_call
 
@@ -343,15 +345,6 @@ class ClaudeService:
                     cache_creation_tokens,
                 )
 
-            # #186: capture which Bifrost VK serviced this call so we can
-            # group spend per-VK in analytics. Empty in dev / bypass mode.
-            try:
-                from core.llm.cost.budget import get_active_vk
-
-                _vk = get_active_vk()
-            except Exception:
-                _vk = None
-
             row = LLMInteractionLog(
                 # Caller-supplied interaction_id (#185 Bifrost correlation)
                 # falls back to a fresh UUID for legacy callers that don't
@@ -382,7 +375,8 @@ class ClaudeService:
                 rates_fetched_at=quote.rates_fetched_at,
                 duration_ms=int(duration_ms or 0),
                 error=error,
-                virtual_key_id=_vk,
+                # Never the key. Older rows stored it; the migration nulls them (#1268).
+                virtual_key_id=None,
             )
             db_manager = get_db_manager()
             with db_manager.session_scope() as session:
@@ -411,11 +405,16 @@ class ClaudeService:
         # log entry's custom metadata) and written to the row below, so the
         # two stores can be joined (#185).
         interaction_id = str(uuid.uuid4())
+        extra_headers = bifrost_headers(interaction_id)
+        # ANTHROPIC_BASE_URL points this client off Bifrost (clients.py).
+        # x-bf-vk is a Bifrost header; do not send the key anywhere else.
+        if get_settings().anthropic_base_url.strip():
+            extra_headers.pop("x-bf-vk", None)
         api_kwargs: Dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
             "messages": messages,
-            "extra_headers": {"x-bf-lh-vigil-interaction-id": interaction_id},
+            "extra_headers": extra_headers,
         }
         if system_prompt:
             api_kwargs["system"] = system_prompt

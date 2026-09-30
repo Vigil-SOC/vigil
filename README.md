@@ -130,7 +130,6 @@ Vigil uses the [Model Context Protocol](https://modelcontextprotocol.io/) to con
 | **EDR / XDR** | CrowdStrike | Alert lookup, host isolation/unisolation, host status |
 | **Threat Intel** | VirusTotal, Shodan, AlienVault OTX, MISP | Hash/IP/domain/URL reputation, host recon, pulse matching, IOC search |
 | **Sandbox** | Hybrid Analysis, Joe Sandbox, ANY.RUN | File submission, report retrieval, IOC extraction |
-| **Timeline** | Timesketch | Forensic timeline analysis, evidence export |
 | **Detection Engineering** | Security-Detections-MCP | 7,200+ rules (Sigma, Splunk, Elastic, KQL), 71 tools, coverage analysis, gap identification |
 | **Ticketing** | Jira | Issue creation, updates, search |
 | **Communication** | Slack | Alerts, channel creation, file uploads |
@@ -404,7 +403,7 @@ cd clients/desktop && npm run dist
 │     Backend Services     │  │          MCP Servers (30+)         │
 │  Detections (7,200+)     │  │  Splunk │ CrowdStrike │ VirusTotal │
 │  Case Management         │  │  Shodan │ Jira │ Slack │ Cribl    │
-│  Approvals │ MITRE ATT&CK│  │  Timesketch │ MISP │ ANY.RUN      │
+│  Approvals │ MITRE ATT&CK│  │  MISP │ ANY.RUN                   │
 │  Similarity Search       │  │  Hybrid Analysis │ Joe Sandbox    │
 └──────────────────────────┘  └────────────────────────────────────┘
                 │
