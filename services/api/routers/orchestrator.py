@@ -106,12 +106,17 @@ async def get_orchestrator_status():
         review = [i for i in investigations if i.get("status") == "review_submitted"]
 
         # Waiting room is intake_triggers. Count it here like GET /intake;
-        # swallowing a miss as 0 would look like an empty queue.
+        # swallowing a miss as 0 would look like an empty queue. The same goes
+        # for the Findings waiting to be rated.
         from core.storage.connection import get_db_manager
         from core.storage.models import IntakeTrigger
+        from core.storage.rating import count_unrated
 
         with get_db_manager().session_scope() as session:
             queued = session.query(IntakeTrigger).filter_by(state="queued").count()
+            rating = count_unrated(
+                session, get_settings().daemon_enrich_backfill_max_age_hours
+            )
 
         max_agents = 3
         try:
@@ -129,6 +134,8 @@ async def get_orchestrator_status():
             "active_agents": len(active),
             "max_concurrent_agents": max_agents,
             "queued": queued,
+            "waiting_to_be_rated": rating["waiting_to_be_rated"],
+            "never_rated": rating["never_rated"],
             "completed": len(completed),
             "failed": len(failed),
             "pending_review": len(review),

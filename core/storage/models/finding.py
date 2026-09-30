@@ -25,6 +25,13 @@ from core.time import utcnow
 if TYPE_CHECKING:
     from core.storage.models.case import Case
 
+# The enrichment sweep's "unrated": never enriched, or triage failed with no
+# later success (#965). One SQL string, so the queries match the partial index.
+UNRATED_WHERE = (
+    "(ai_enrichment IS NULL"
+    " OR (ai_enrichment ? 'ai_triage_error' AND NOT (ai_enrichment ? 'ai_triage')))"
+)
+
 
 class Finding(Base):
     """Finding model - represents a security finding from DeepTempo LogLM."""
@@ -105,6 +112,11 @@ class Finding(Base):
             postgresql_where=text(
                 "data_source IS NOT NULL AND external_id IS NOT NULL"
             ),
+        ),
+        Index(
+            "idx_finding_unrated_created_at",
+            "created_at",
+            postgresql_where=text(UNRATED_WHERE),
         ),
     )
 

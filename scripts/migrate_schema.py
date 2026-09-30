@@ -120,6 +120,22 @@ def create_findings_description_gin_index(conn):
     """))
 
 
+# create_all never adds an index to a table it finds, and findings predates
+# this one. The WHERE is the model's, so the sweep and the counts can use it.
+@migration("Create partial index on unrated findings")
+def create_findings_unrated_index(conn):
+    from core.storage.models.finding import UNRATED_WHERE
+
+    if not _table_exists(conn, 'findings'):
+        return
+    if _index_exists(conn, 'idx_finding_unrated_created_at'):
+        return
+    conn.execute(text(f"""
+        CREATE INDEX IF NOT EXISTS idx_finding_unrated_created_at
+        ON findings (created_at) WHERE {UNRATED_WHERE};
+    """))
+
+
 # ---------------------------------------------------------------------------
 # llm_interaction_logs table
 # ---------------------------------------------------------------------------
