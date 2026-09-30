@@ -334,6 +334,12 @@ class MetricsServer:
 
         if self.poller:
             components["poller"] = "running"
+            # Degraded, not unhealthy: setup retrying (the DB down at boot)
+            # must not fail the probes and restart the pod.
+            fed = self.poller.stats.get("federation") or {}
+            components["federation"] = (
+                "running" if fed.get("setup_ok") and fed.get("adapters") else "degraded"
+            )
         else:
             components["poller"] = "not_initialized"
 
@@ -401,7 +407,15 @@ class MetricsServer:
             metrics["kafka"] = dict(self.kafka_ingestor.stats)
 
         if self.processor:
-            metrics["processor"] = self.processor.stats.copy()
+            from core.ingestion import handoff
+
+            queue = self.processor.input_queue
+            metrics["processor"] = {
+                **self.processor.stats,
+                "queue_depth": queue.qsize(),
+                "queue_maxsize": queue.maxsize,
+                "handoff_full_waits": dict(handoff.full_waits),
+            }
 
         if self.responder:
             metrics["responder"] = self.responder.stats.copy()

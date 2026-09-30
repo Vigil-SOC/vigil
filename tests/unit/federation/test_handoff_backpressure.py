@@ -103,3 +103,39 @@ async def test_put_or_shutdown_puts_nothing_once_shutdown_is_set():
 
     assert await put_or_shutdown(queue, "x", shutdown) is False
     assert queue.empty()
+
+
+@pytest.fixture
+def full_waits(monkeypatch):
+    from collections import defaultdict
+
+    from core.ingestion import handoff
+
+    counts: dict = defaultdict(int)
+    monkeypatch.setattr(handoff, "full_waits", counts)
+    return counts
+
+
+@pytest.mark.asyncio
+async def test_a_queue_with_room_takes_the_item_without_counting_a_wait(full_waits):
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+
+    assert await put_or_shutdown(queue, {"source": "splunk"}, asyncio.Event())
+
+    assert queue.qsize() == 1
+    assert dict(full_waits) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_full_queue_counts_the_wait_and_shutdown_still_wins(full_waits):
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+    queue.put_nowait("already waiting")
+    shutdown = asyncio.Event()
+
+    put = asyncio.create_task(put_or_shutdown(queue, {"source": "splunk"}, shutdown))
+    await asyncio.sleep(0.05)
+    shutdown.set()
+
+    assert await asyncio.wait_for(put, timeout=1) is False
+    assert dict(full_waits) == {"splunk": 1}
+    assert queue.qsize() == 1

@@ -80,7 +80,12 @@ class DataPoller:
         self._output_queue: Optional[asyncio.Queue] = None
         self._federation = FederationRunner(output_queue=None)
         self._webhook_dedup = RedisDedupSet("poller:webhook")
-        self.stats = {"webhook_findings": 0, "webhook_busy": 0}
+        # The runner's own dict, so /status reads its counts live.
+        self.stats = {
+            "webhook_findings": 0,
+            "webhook_busy": 0,
+            "federation": self._federation.stats,
+        }
 
     def set_output_queue(self, queue: asyncio.Queue):
         """Set the output queue for processed findings."""

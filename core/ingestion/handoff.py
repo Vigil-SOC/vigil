@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections import defaultdict
 from typing import Any, Dict
 
 from core.time import utcnow
+
+logger = logging.getLogger(__name__)
+
+# Producers that found the hand-off full and had to wait, by source.
+full_waits: Dict[str, int] = defaultdict(int)
+_full_counter: Any = None
 
 
 def envelope(finding: Dict[str, Any], source: str) -> Dict[str, Any]:
@@ -15,6 +23,25 @@ def envelope(finding: Dict[str, Any], source: str) -> Dict[str, Any]:
         "data": finding,
         "timestamp": utcnow().isoformat(),
     }
+
+
+def _record_full(item: Any) -> None:
+    global _full_counter
+    source = str(item.get("source")) if isinstance(item, dict) else "unknown"
+    full_waits[source] += 1
+    try:
+        # Created on first use so it binds to the meter init_telemetry set up.
+        if _full_counter is None:
+            from core.telemetry import get_meter
+
+            _full_counter = get_meter("vigil.daemon").create_counter(
+                "soc_daemon_handoff_full_total",
+                description="Findings whose producer waited on a full hand-off",
+                unit="1",
+            )
+        _full_counter.add(1, {"source": source})
+    except Exception as e:
+        logger.debug("handoff full counter unavailable: %s", e)
 
 
 async def put_or_shutdown(
@@ -29,6 +56,11 @@ async def put_or_shutdown(
     """
     if shutdown.is_set():
         return False
+    try:
+        queue.put_nowait(item)
+        return True
+    except asyncio.QueueFull:
+        _record_full(item)
     put = asyncio.ensure_future(queue.put(item))
     stop = asyncio.ensure_future(shutdown.wait())
     try:
