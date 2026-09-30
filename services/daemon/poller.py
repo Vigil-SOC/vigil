@@ -335,8 +335,17 @@ class DataPoller:
         self.stats["splunk_polls"] += 1
         logger.debug("Polling Splunk for new alerts...")
 
-        # Calculate time range
-        lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
+        # After a successful poll, look back to that timestamp (rounded up one
+        # minute, same as SplunkAdapter.fetch) so an outage is re-queried.
+        # Cap at 60 minutes: an uncapped window can exceed the ~60s job timeout,
+        # fail, and then retry the same window forever. First run keeps the
+        # fixed interval window.
+        last = self._splunk_state.last_poll_time
+        if last is not None:
+            delta_minutes = max(int((utcnow() - last).total_seconds() // 60) + 1, 1)
+            lookback_minutes = min(delta_minutes, 60)
+        else:
+            lookback_minutes = max(self.config.splunk_interval // 60 + 1, 5)
         earliest_time = f"-{lookback_minutes}m"
 
         # Query for notable events / security alerts
@@ -346,7 +355,13 @@ class DataPoller:
             "`notable` | head 100",
         ]
 
+        # search() returns None on any error (it logs and swallows them), so a
+        # query failed if it returned None or raised. An empty list ran and
+        # found nothing; it still falls through, since on non-ES installs
+        # `index=notable` is empty by design and the fallbacks must be reached.
         findings = []
+        any_ran = False
+        last_error: Optional[Exception] = None
         for query in queries:
             try:
                 # search() polls its job with time.sleep for up to ~60s,
@@ -358,14 +373,25 @@ class DataPoller:
                     latest_time="now",
                     max_count=100,
                 )
-                if results:
-                    findings.extend(results)
-                    break  # Use first successful query
             except Exception as e:
-                # search() logs and swallows request errors itself; what reaches
-                # here is a client it could not build, such as a bad CA path.
-                logger.warning(f"Splunk query failed: {query} - {e}")
+                logger.warning("Splunk query failed (%s): %s", query, e)
+                last_error = e
                 continue
+            if results is None:
+                logger.warning(
+                    "Splunk query failed (%s): search returned no result", query
+                )
+                continue
+            any_ran = True
+            if results:
+                findings.extend(results)
+                break  # Use first successful query
+
+        # Every query failed: raise so the loop counts an error and leaves
+        # last_poll_time alone, instead of advancing past the outage window.
+        if not any_ran:
+            detail = f": {last_error}" if last_error is not None else ""
+            raise RuntimeError(f"Splunk: every search query failed{detail}")
 
         # Process findings
         new_count = 0
