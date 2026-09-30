@@ -19,6 +19,7 @@ VSTRIKE = register_descriptor(
             IntegrationField("username", secret=True),
             IntegrationField("password", secret=True),
             IntegrationField("verify_ssl", value_type="bool"),
+            IntegrationField("ca_cert_path"),
         ),
     )
 )

@@ -174,6 +174,7 @@ class DataPoller:
                         username=splunk_config["username"] or "",
                         password=splunk_config["password"] or "",
                         verify_ssl=bool(splunk_config["verify_ssl"]),
+                        ca_cert_path=splunk_config["ca_cert_path"],
                     )
                     logger.info("Splunk service initialized")
                 except Exception as e:

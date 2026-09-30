@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from core.integrations._base.tls import tls_verify
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,6 +22,7 @@ class ElasticService:
         password: Optional[str] = None,
         verify_ssl: bool = True,
         index_pattern: str = ".alerts-security.alerts-default",
+        ca_cert_path: Optional[str] = None,
     ):
         self.elasticsearch_url = elasticsearch_url.rstrip("/")
         self.kibana_url = (kibana_url or "").rstrip("/") or None
@@ -28,6 +31,7 @@ class ElasticService:
         self.password = password
         self.verify_ssl = verify_ssl
         self.index_pattern = index_pattern
+        self.ca_cert_path = ca_cert_path or None
 
         self._es_client: Optional[httpx.AsyncClient] = None
         self._kibana_client: Optional[httpx.AsyncClient] = None
@@ -47,7 +51,7 @@ class ElasticService:
             base_url=self.elasticsearch_url,
             headers=headers,
             auth=auth,
-            verify=self.verify_ssl,
+            verify=tls_verify(self.verify_ssl, self.ca_cert_path),
             timeout=30.0,
         )
 
@@ -67,7 +71,7 @@ class ElasticService:
             base_url=self.kibana_url,
             headers=headers,
             auth=auth,
-            verify=self.verify_ssl,
+            verify=tls_verify(self.verify_ssl, self.ca_cert_path),
             timeout=30.0,
         )
 
@@ -132,13 +136,18 @@ class ElasticService:
         size: int = 100,
         sort: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[Dict[str, Any]]:
-        """Run an Elasticsearch query and return the raw response body."""
+        """Run an Elasticsearch query and return the raw response body.
+
+        A failed request returns None, but a client that cannot be built (an
+        unusable CA path) raises, so the caller reports why.
+        """
         target = index or self.index_pattern
         body: Dict[str, Any] = {"query": query, "size": size}
         if sort:
             body["sort"] = sort
+        client = self.es_client
         try:
-            resp = await self.es_client.post(f"/{target}/_search", json=body)
+            resp = await client.post(f"/{target}/_search", json=body)
             resp.raise_for_status()
             return resp.json()
         except Exception as exc:

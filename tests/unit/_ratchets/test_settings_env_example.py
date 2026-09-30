@@ -74,6 +74,12 @@ NOT_SETTINGS = {
     "TIMESKETCH_URL",
     "VSTRIKE_BASE_URL",
     "VSTRIKE_VERIFY_SSL",
+    # Per-integration CA paths, resolved like the fields above.
+    "ELASTIC_SIEM_CA_CERT_PATH",
+    "MISP_CA_CERT_PATH",
+    "PALO_ALTO_CA_CERT_PATH",
+    "SPLUNK_CA_CERT_PATH",
+    "VSTRIKE_CA_CERT_PATH",
     # core.platform.runtime_config ENV_FALLBACKS: DB-first settings whose env var is
     # only the fallback when the system_config row is absent.
     "LOCAL_OLLAMA_RECOVERY_ENABLED",

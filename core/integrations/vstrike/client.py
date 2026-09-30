@@ -28,6 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
+from core.integrations._base.tls import tls_verify
 from core.secrets import get_secret
 
 logger = logging.getLogger(__name__)
@@ -203,9 +204,11 @@ class VStrikeService:
         *,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        ca_cert_path: Optional[str] = None,
     ):
         self.base_url = base_url.rstrip("/")
         self.verify_ssl = verify_ssl
+        self.ca_cert_path = ca_cert_path or None
         self.timeout = timeout
         self.username = username
         self.password = password
@@ -251,7 +254,7 @@ class VStrikeService:
                 url,
                 params=params,
                 timeout=self.timeout,
-                verify=self.verify_ssl,
+                verify=tls_verify(self.verify_ssl, self.ca_cert_path),
                 follow_redirects=_FOLLOW_REDIRECTS,
                 headers=self._bearer_headers(jwt),
                 **kwargs,
@@ -274,7 +277,7 @@ class VStrikeService:
             if response.status_code == 200:
                 return True, "Connection successful"
             return False, f"HTTP {response.status_code}: {response.text[:200]}"
-        except _HTTP_ERRORS as e:
+        except (*_HTTP_ERRORS, OSError) as e:
             return False, f"Connection error: {e}"
 
     def get_asset_topology(self, asset_id: str) -> Optional[Dict[str, Any]]:
@@ -348,7 +351,7 @@ class VStrikeService:
                 url,
                 json={"username": self.username, "password": self.password},
                 timeout=self.timeout,
-                verify=self.verify_ssl,
+                verify=tls_verify(self.verify_ssl, self.ca_cert_path),
                 follow_redirects=_FOLLOW_REDIRECTS,
                 headers={
                     "Content-Type": "application/json",
@@ -432,7 +435,7 @@ class VStrikeService:
                 url,
                 json=payload,
                 timeout=self.timeout,
-                verify=self.verify_ssl,
+                verify=tls_verify(self.verify_ssl, self.ca_cert_path),
                 follow_redirects=_FOLLOW_REDIRECTS,
                 headers={
                     "Authorization": f"Bearer {jwt}",
@@ -502,7 +505,7 @@ class VStrikeService:
                 url,
                 json=payload,
                 timeout=self.timeout,
-                verify=self.verify_ssl,
+                verify=tls_verify(self.verify_ssl, self.ca_cert_path),
                 follow_redirects=_FOLLOW_REDIRECTS,
                 headers=self._bearer_headers(jwt),
             )
@@ -888,9 +891,10 @@ def get_vstrike_service() -> Optional[VStrikeService]:
     Configured when ``VSTRIKE_BASE_URL`` is set AND ``VSTRIKE_USERNAME`` +
     ``VSTRIKE_PASSWORD`` are both present. Credentials are looked up via
     Vigil's secrets manager (encrypted store → env → dotenv → keyring,
-    in priority order). The non-secret ``url`` and ``verify_ssl`` values
-    can come from the same chain, or from ``IntegrationConfig`` (DB) and
-    its JSON back-compat mirror via ``core.config.get_integration_config``.
+    in priority order). The non-secret ``url``, ``verify_ssl`` and
+    ``ca_cert_path`` values can come from the same chain, or from
+    ``IntegrationConfig`` (DB) and its JSON back-compat mirror via
+    ``core.config.get_integration_config``.
 
     The legacy ``VSTRIKE_API_KEY`` / ``api_key`` field is deprecated —
     Vigil now exchanges username + password for a JWT internally on first
@@ -901,6 +905,7 @@ def get_vstrike_service() -> Optional[VStrikeService]:
     username = get_secret("VSTRIKE_USERNAME")
     password = get_secret("VSTRIKE_PASSWORD")
     verify_ssl_value = get_secret("VSTRIKE_VERIFY_SSL")
+    ca_cert_path = get_secret("VSTRIKE_CA_CERT_PATH")
     verify_ssl_env: Optional[bool] = None
     if verify_ssl_value is not None:
         verify_ssl_env = verify_ssl_value.lower() != "false"
@@ -919,6 +924,7 @@ def get_vstrike_service() -> Optional[VStrikeService]:
     base_url = base_url or _config_value("url", config)
     username = username or _config_value("username", config)
     password = password or _config_value("password", config)
+    ca_cert_path = ca_cert_path or _config_value("ca_cert_path", config)
 
     if not base_url:
         return None
@@ -937,4 +943,5 @@ def get_vstrike_service() -> Optional[VStrikeService]:
         verify_ssl=verify_ssl,
         username=username,
         password=password,
+        ca_cert_path=ca_cert_path,
     )

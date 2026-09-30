@@ -497,6 +497,13 @@ stateDirectory:
 # SSL_CERT_FILE replaces the default store — the PEM should include public CAs
 # as well as the inspecting one. NODE_EXTRA_CA_CERTS appends.
 #
+# This trusts the CA for every host Vigil calls. For a private CA that signs one
+# self-hosted server (a Wazuh indexer, an internal Splunk, MISP, PAN-OS or
+# VStrike), set that integration's "CA Certificate Path" in Settings, or
+# <INTEGRATION>_CA_CERT_PATH (e.g. ELASTIC_SIEM_CA_CERT_PATH) via extraEnv,
+# instead: that PEM is trusted for that integration's clients only. The file
+# must be readable in the backend and daemon pods; this block does not mount it.
+#
 # Point at an existing Secret or ConfigMap — this chart does not create one.
 # Leave both names empty (the default) to skip the mount. Prefer the Secret
 # when both are set.

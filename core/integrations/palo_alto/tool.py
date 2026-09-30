@@ -19,6 +19,7 @@ from mcp.server import NotificationOptions, Server
 from mcp.server.models import InitializationOptions
 
 from core.integrations._base.config import missing, resolve
+from core.integrations._base.tls import tls_verify
 from core.integrations.palo_alto.descriptor import PALO_ALTO
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
     # resolve() always returns every declared field, so a .get(k, True) default
     # would never fire — verify_ssl is present-but-None when unset.
     verify = True if config.get("verify_ssl") is None else config.get("verify_ssl")
+    ca_cert_path = config.get("ca_cert_path")
 
     args = arguments or {}
 
@@ -81,7 +83,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
                     "xpath": f"/config/devices/entry/vsys/entry[@name='vsys1']/address/entry[@name='blocked-{ip}']",
                     "element": f"<ip-netmask>{ip}/32</ip-netmask><description>Blocked: {args.get('reason', 'security')}</description>",
                 },
-                verify=verify,
+                verify=tls_verify(verify, ca_cert_path),
                 timeout=30,
             )
             # httpx doesn't follow redirects, so a 3xx here means the configured
@@ -106,7 +108,7 @@ async def handle_call_tool(name: str, arguments: dict | None):
                     "key": api_key,
                     "nlogs": args.get("limit") or 20,
                 },
-                verify=verify,
+                verify=tls_verify(verify, ca_cert_path),
                 timeout=30,
             )
             # Parse XML response (simplified)
