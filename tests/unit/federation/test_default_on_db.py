@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -47,10 +48,13 @@ def adapters(monkeypatch):
 @pytest.fixture(autouse=True)
 def clean_state():
     from core.storage.connection import get_db_manager
-    from core.storage.models import FederationSource, SystemConfig
+    from core.storage.models import FederationSource, Finding, SystemConfig
 
     with get_db_manager().session_scope() as session:
         session.query(FederationSource).delete()
+        session.query(Finding).filter(Finding.finding_id.like("upgrade-%")).delete(
+            synchronize_session=False
+        )
         session.query(SystemConfig).filter(
             SystemConfig.key.in_([GLOBAL_KEY, DEFAULT_ON_KEY])
         ).delete(synchronize_session=False)
@@ -59,7 +63,7 @@ def clean_state():
 
 def _seed(**state):
     from core.storage.connection import get_db_manager
-    from core.storage.models import FederationSource, SystemConfig
+    from core.storage.models import FederationSource, Finding, SystemConfig
 
     with get_db_manager().session_scope() as session:
         if "global_enabled" in state:
@@ -76,6 +80,23 @@ def _seed(**state):
             )
         for source_id, fields in state.get("rows", {}).items():
             session.add(FederationSource(source_id=source_id, **fields))
+        for n, (source_id, when) in enumerate(state.get("stored", [])):
+            session.add(
+                Finding(
+                    finding_id=f"upgrade-{n}", data_source=source_id, timestamp=when
+                )
+            )
+
+
+def _cursors():
+    from core.storage.connection import get_db_manager
+    from core.storage.models import FederationSource
+
+    with get_db_manager().session_scope() as session:
+        return {
+            r.source_id: (r.cursor or {}).get("last_poll_at")
+            for r in session.query(FederationSource).all()
+        }
 
 
 def _state():
@@ -176,3 +197,69 @@ def test_it_runs_once_so_a_later_switch_off_survives_a_restart(adapters):
     state = _state()
     assert state["global"] is False
     assert state["rows"] == {}
+
+
+def test_a_switched_on_source_resumes_from_the_newest_alert_legacy_stored(adapters):
+    now = utcnow()
+    legacy_newest = now - timedelta(minutes=7)
+    _seed(
+        global_enabled=False,
+        rows={
+            # Federation ran it in August; the legacy loop polled it since.
+            "splunk": {
+                "enabled": False,
+                "interval_seconds": 300,
+                "cursor": {"last_poll_at": (now - timedelta(days=40)).isoformat()},
+                "last_poll_at": now - timedelta(days=40),
+            },
+        },
+        stored=[
+            ("splunk", now - timedelta(minutes=30)),
+            ("splunk", legacy_newest),
+            ("crowdstrike", now - timedelta(days=3)),
+        ],
+    )
+
+    apply_default_on()
+
+    cursors = _cursors()
+    assert cursors["splunk"] == legacy_newest.isoformat()
+    # Stored long ago: no further back than the catch-up limit.
+    capped = datetime.fromisoformat(cursors["crowdstrike"])
+    assert abs(capped - (now - timedelta(hours=1))) < timedelta(seconds=5)
+    # Nothing stored: a cold start, as for a source Federation never saw.
+    assert cursors["newsource"] is None
+
+
+def test_a_row_federation_already_polls_keeps_its_cursor(adapters):
+    mine = {"last_poll_at": "2026-09-30T12:00:00"}
+    _seed(
+        global_enabled=True,
+        rows={"splunk": {"enabled": True, "interval_seconds": 120, "cursor": mine}},
+        stored=[("splunk", utcnow())],
+    )
+
+    apply_default_on()
+
+    assert _cursors()["splunk"] == mine["last_poll_at"]
+
+
+def test_a_missing_findings_table_still_switches_everything_on(adapters, monkeypatch):
+    # A fresh install: the daemon can boot before the backend creates findings.
+    from sqlalchemy import Column, DateTime, String
+    from sqlalchemy.orm import declarative_base
+
+    class _Missing(declarative_base()):
+        __tablename__ = "no_such_findings"
+        finding_id = Column(String, primary_key=True)
+        data_source = Column(String)
+        timestamp = Column(DateTime)
+
+    monkeypatch.setattr("core.storage.models.Finding", _Missing)
+
+    assert sorted(apply_default_on()) == ["crowdstrike", "newsource", "splunk"]
+
+    state = _state()
+    assert state["global"] is True
+    assert state["marker"] is True
+    assert set(_cursors().values()) == {None}

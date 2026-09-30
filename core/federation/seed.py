@@ -9,9 +9,13 @@ Federation UI survive restarts.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+from sqlalchemy import func
+
 from core.config import get_settings
+from core.federation.adapters._base import cursor_at
 from core.federation.registry import list_adapters
 from core.federation.store import GLOBAL_KEY, upsert_source
 from core.time import utcnow
@@ -28,6 +32,9 @@ _SPLUNK_CADENCE = {
     "microsoft_defender",
     "elastic",
 }
+
+# How far back a source switched on at the upgrade may start reading.
+_CATCH_UP_LIMIT = timedelta(hours=1)
 
 
 def _row_defaults(adapter: Any) -> Dict[str, Any]:
@@ -50,6 +57,30 @@ def _legacy_interval(source_id: str) -> Optional[int]:
     return None
 
 
+def _catch_up_cursor(session: Any, source_id: str, now: datetime) -> Dict[str, Any]:
+    """Resume where the legacy loop stopped: its newest stored alert.
+
+    Empty (a cold start) when nothing is stored, and never earlier than
+    ``_CATCH_UP_LIMIT`` ago. In a savepoint, so a missing ``findings`` table
+    on a fresh install does not abort the upgrade's transaction.
+    """
+    from core.storage.models import Finding
+
+    try:
+        with session.begin_nested():
+            newest = (
+                session.query(func.max(Finding.timestamp))
+                .filter(Finding.data_source == source_id)
+                .scalar()
+            )
+    except Exception as e:
+        logger.info("Federation upgrade: no stored findings for %s: %s", source_id, e)
+        return {}
+    if newest is None:
+        return {}
+    return cursor_at(max(min(newest, now), now - _CATCH_UP_LIMIT))
+
+
 def apply_default_on() -> List[str]:
     """Switch Federation and every configured source on, once.
 
@@ -60,6 +91,9 @@ def apply_default_on() -> List[str]:
     that were being polled. A row already on is left as it is. A row switched
     on here takes the interval its legacy loop polled at, unless Federation
     has polled it before (``last_poll_at``), in which case it keeps its own.
+    Its cursor resumes from the newest alert the legacy loop stored, so the
+    alerts between the last legacy poll and this boot are still read; any
+    cursor it held is from before the legacy loop took over, and is behind.
 
     The marker is written in the same transaction, so a later deliberate
     switch-off survives restarts. Reads raise rather than default: a failed
@@ -70,6 +104,7 @@ def apply_default_on() -> List[str]:
     from core.storage.models import FederationSource, SystemConfig
 
     switched_on: List[str] = []
+    now = utcnow()
     with get_db_manager().session_scope() as session:
         if session.get(SystemConfig, DEFAULT_ON_KEY) is not None:
             return []
@@ -97,11 +132,13 @@ def apply_default_on() -> List[str]:
                 interval = _legacy_interval(adapter.name)
                 if interval and row.last_poll_at is None:
                     row.interval_seconds = interval
+                row.cursor = _catch_up_cursor(session, adapter.name, now)
                 switched_on.append(adapter.name)
                 logger.info(
-                    "Federation upgrade: switched on %s (interval %ss)",
+                    "Federation upgrade: switched on %s (interval %ss, from %s)",
                     adapter.name,
                     row.interval_seconds,
+                    row.cursor.get("last_poll_at") or "now",
                 )
             except Exception as e:
                 logger.warning(
