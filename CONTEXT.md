@@ -57,6 +57,11 @@ A vendor slice carries both: `ingestion.py` subclasses `SIEMIngestionService`,
 and `adapter.py` wraps that service to satisfy the Federation contract.
 _Avoid_: polling, sync, multi-tenancy (it is not Vigil-to-Vigil federation)
 
+**Lag**:
+How far behind a source Vigil is: now minus the point in time before which
+everything that source received has been fetched.
+_Avoid_: behind by, freshness, last success (a successful poll is not the same as caught up)
+
 **Workflow** (`workflows`):
 The user-facing product noun — a named, multi-agent procedure an analyst runs
 from the Workflows screen. Authored as a **Playbook**, executed by **Compose**.

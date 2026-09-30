@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import logging
 import re
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Iterable, Optional, Tuple
 
 from core.time import utcnow
+
+logger = logging.getLogger(__name__)
+
+# A drained window's cursor stops this far short of the fetch time, so an alert
+# the source had not finished indexing when we asked is read on the next tick
+# instead of falling behind the cursor. The overlap is re-read and deduped.
+SETTLING_MARGIN = timedelta(minutes=1)
 
 # Fractional seconds beyond microseconds: Defender emits seven digits, which
 # datetime.fromisoformat rejects.
@@ -35,6 +43,88 @@ def parse_cursor_since(cursor: Dict[str, Any]) -> Optional[datetime]:
 def fresh_cursor() -> Dict[str, Any]:
     """Cursor value to persist after a fetch that drained its window."""
     return {"last_poll_at": utcnow().isoformat()}
+
+
+def drained_cursor(now: datetime) -> Dict[str, Any]:
+    """Cursor value after a fetch that read its whole window, taken at ``now``."""
+    return cursor_at(now - SETTLING_MARGIN)
+
+
+def next_cursor(
+    times: Iterable[Optional[datetime]],
+    *,
+    truncated: bool,
+    start: datetime,
+    now: datetime,
+    step: timedelta,
+    source: str,
+    ids: Optional[Iterable[Optional[str]]] = None,
+    after: Optional[str] = None,
+    drained: Optional[Dict[str, Any]] = None,
+) -> Tuple[Dict[str, Any], bool]:
+    """Where the next tick starts, and whether the source may hold more past it.
+
+    ``times`` are the returned alerts' times as naive UTC (None if unreadable),
+    ``start`` the tick's cursor and ``now`` the end of the window read: the
+    clock taken before the fetch, or a settled window's end. A short batch
+    drained its window and moves to ``drained``, by default ``now`` less the
+    settling margin. A full batch stops at the newest alert
+    returned, capped at ``now`` so a source clock ahead of ours cannot carry the
+    cursor into the future; the next tick re-reads that boundary alert (start
+    filters are inclusive) and dedup absorbs it. A full batch sitting entirely
+    at or before ``start`` steps past it, skipping whatever at that instant did
+    not fit, so the tick cannot fetch the same page forever.
+
+    ``ids`` (parallel to ``times``) is for a source that can resume strictly
+    after one alert: its full batch stores the last alert's ID beside the
+    time, and the next fetch starts after that alert instead of at the
+    instant, so a burst sharing one timestamp is paged rather than stepped
+    over. ``after`` is the ID the tick started from.
+    """
+    if drained is None:
+        drained = drained_cursor(now)
+    if not truncated:
+        return drained, False
+
+    times = list(times)
+    newest = max((t for t in times if t is not None), default=None)
+    if newest is None:
+        logger.warning(
+            "Federation %s: batch filled max_items but no alert carried a readable "
+            "time; cursor moves to now and the rest of the window is skipped",
+            source,
+        )
+        return drained, False
+
+    if newest > now:
+        logger.warning(
+            "Federation %s: newest alert time %s is past the window end %s; "
+            "capping the cursor there",
+            source,
+            newest.isoformat(),
+            now.isoformat(),
+        )
+        return cursor_at(now), True
+
+    if ids is not None:
+        at_newest = [i for t, i in zip(times, ids) if t == newest and i is not None]
+        tie = max(at_newest, default=None)
+        if tie is not None and (newest > start or after is None or tie > after):
+            return {**cursor_at(newest), "after_id": tie}, True
+
+    if newest <= start:
+        logger.warning(
+            "Federation %s: batch filled max_items with newest alert time %s not "
+            "past the tick start %s; stepping the cursor to %s. Alerts at that "
+            "instant beyond this batch are skipped",
+            source,
+            newest.isoformat(),
+            start.isoformat(),
+            (start + step).isoformat(),
+        )
+        newest = start + step
+
+    return cursor_at(newest), True
 
 
 def cursor_at(when: datetime) -> Dict[str, Any]:

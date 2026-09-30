@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from core.exceptions import default_on_error
+from core.federation.adapters._base import parse_cursor_since
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -155,3 +156,25 @@ def record_failure(source_id: str, error: str) -> None:
             row.consecutive_errors = (row.consecutive_errors or 0) + 1
     except Exception as e:
         logger.debug("record_failure(%s) failed: %s", source_id, e)
+
+
+# ---------------------------------------------------------------------------
+# Lag
+# ---------------------------------------------------------------------------
+
+
+def source_lag_seconds(
+    row: Dict[str, Any], *, global_enabled: bool, now: Optional[datetime] = None
+) -> Optional[float]:
+    """How far behind this source Vigil is: seconds since its cursor.
+
+    None when the source is not polling or has not completed a fetch. Not
+    clamped at zero: a cursor ahead of the clock is a bug worth seeing.
+    """
+    if not (global_enabled and row.get("enabled")):
+        return None
+    cursor = row.get("cursor")
+    covered = parse_cursor_since(cursor if isinstance(cursor, dict) else {})
+    if covered is None:
+        return None
+    return ((now or utcnow()) - covered).total_seconds()

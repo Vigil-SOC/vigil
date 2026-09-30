@@ -20,6 +20,8 @@ from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
+_ALERT_UUID = "kibana.alert.uuid"
+
 # Wazuh rule levels run 0-16; 7 is where Wazuh's own classification starts
 # calling an alert significant.
 DEFAULT_MIN_RULE_LEVEL = 7
@@ -140,13 +142,17 @@ class ElasticIngestion(SIEMIngestionService):
         end_time: Optional[datetime] = None,
         limit: int = 100,
         oldest_first: bool = False,
+        after_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Fetch detection alerts in the window.
 
         ``oldest_first`` is what federation asks for: a batch that fills
         ``limit`` must be a contiguous oldest-first prefix of the window so the
-        cursor can stop at its newest alert. The default keeps the newest-first
-        order the daemon poller has always read.
+        cursor can stop at its newest alert. It orders by ``@timestamp`` then
+        ``kibana.alert.uuid``, because alerts from one rule run are written in
+        bulk and share a millisecond. ``after_id`` resumes strictly after the
+        alert at ``start_time`` with that uuid. The default keeps the
+        newest-first order the daemon poller has always read.
         """
         try:
             svc = self._get_elastic_service()
@@ -156,24 +162,30 @@ class ElasticIngestion(SIEMIngestionService):
             if not start_time:
                 start_time = utcnow() - timedelta(hours=24)
 
-            time_filter: Dict[str, Any] = {
-                "bool": {
-                    "filter": [
-                        {
-                            "range": {
-                                "@timestamp": {
-                                    "gte": start_time.isoformat() + "Z",
-                                    **(
-                                        {"lte": end_time.isoformat() + "Z"}
-                                        if end_time
-                                        else {}
-                                    ),
-                                }
-                            }
+            start = start_time.isoformat() + "Z"
+            filters: List[Dict[str, Any]] = [
+                {
+                    "range": {
+                        "@timestamp": {
+                            "gte": start,
+                            **({"lte": end_time.isoformat() + "Z"} if end_time else {}),
                         }
-                    ]
+                    }
                 }
-            }
+            ]
+            if after_id:
+                filters.append(
+                    {
+                        "bool": {
+                            "should": [
+                                {"range": {"@timestamp": {"gt": start}}},
+                                {"range": {_ALERT_UUID: {"gt": after_id}}},
+                            ],
+                            "minimum_should_match": 1,
+                        }
+                    }
+                )
+            time_filter: Dict[str, Any] = {"bool": {"filter": filters}}
 
             # No Kibana: read the index pattern directly (a Wazuh indexer).
             # Always oldest first, with _doc as a stable tiebreaker (sorting on
@@ -195,11 +207,22 @@ class ElasticIngestion(SIEMIngestionService):
                 logger.info(f"Fetched {len(hits)} alerts from {svc.index_pattern}")
                 return hits
 
-            result = await svc.fetch_detection_alerts(
-                query=time_filter,
-                size=limit,
-                sort_order="asc" if oldest_first else "desc",
-            )
+            if oldest_first:
+                result = await svc.fetch_detection_alerts(
+                    query=time_filter,
+                    size=limit,
+                    sort=[
+                        {"@timestamp": {"order": "asc"}},
+                        # An index without the field (legacy .siem-signals)
+                        # would otherwise fail its shards, and the search
+                        # returns 200 with that index's alerts missing.
+                        {_ALERT_UUID: {"order": "asc", "unmapped_type": "keyword"}},
+                    ],
+                )
+            else:
+                result = await svc.fetch_detection_alerts(
+                    query=time_filter, size=limit, sort_order="desc"
+                )
             if result is None:
                 # The client returns None on any request failure.
                 raise RuntimeError("Elastic detection alert search failed")

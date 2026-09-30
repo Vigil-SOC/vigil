@@ -12,10 +12,16 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core.config import is_integration_enabled
-from core.federation.adapters._base import cursor_at, fresh_cursor, parse_cursor_since
+from core.federation.adapters._base import (
+    cursor_at,
+    drained_cursor,
+    fresh_cursor,
+    next_cursor,
+    parse_cursor_since,
+)
 from core.federation.contract import FetchResult
 from core.time import utcnow
 
@@ -24,8 +30,8 @@ logger = logging.getLogger(__name__)
 # How far past a stuck instant the cursor steps. Elastic's ``date`` fields and
 # Security Hub's ``CreatedAt`` resolve to the millisecond, so a smaller step
 # would round back to the same instant on their side and re-read the same page
-# every tick; Defender and Sentinel compare finer than this and lose nothing
-# they were not already losing at that instant.
+# every tick. Defender and Sentinel record finer times, so on those two a step
+# also skips alerts later in the same millisecond.
 _CURSOR_STEP = timedelta(milliseconds=1)
 
 
@@ -47,6 +53,7 @@ class SIEMIngestionAdapter:
         service_factory: Callable[[], Any],
         external_id_prefix: str,
         alert_time: Optional[Callable[[Dict[str, Any]], Optional[datetime]]] = None,
+        alert_id: Optional[Callable[[Dict[str, Any]], Optional[str]]] = None,
         settle_delay: Optional[timedelta] = None,
     ) -> None:
         self.name = name
@@ -60,11 +67,16 @@ class SIEMIngestionAdapter:
         # cursor goes to now, as it did before, and a full batch skips the rest
         # of its window.
         self._alert_time = alert_time
+        # For a service whose fetch_alerts takes after_id: resumes strictly
+        # after the last alert of a full batch rather than stepping past its
+        # instant.
+        self._alert_id = alert_id
         # For sources that index an alert some time after its creation stamp
         # (Filebeat into Elasticsearch/OpenSearch): each tick reads only up to
         # now - settle_delay and persists that instant, so an alert still in
-        # flight at poll time is read on a later tick instead of skipped. The
-        # service must honour ``end_time``.
+        # flight at poll time is read on a later tick instead of skipped. It
+        # replaces the settling margin for that source. The service must
+        # honour ``end_time``.
         self._settle_delay = settle_delay
 
     def is_configured(self) -> bool:
@@ -115,7 +127,10 @@ class SIEMIngestionAdapter:
         # fit must be the newest ones so the next tick, starting from the newest
         # returned time, picks them up. Newest-first would drop the oldest of
         # the window for good.
-        extra = {"end_time": window_end} if window_end else {}
+        after = cursor.get("after_id") if self._alert_id else None
+        extra: Dict[str, Any] = {"end_time": window_end} if window_end else {}
+        if self._alert_id:
+            extra["after_id"] = after
         alerts = list(
             await svc.fetch_alerts(
                 start_time=start_time, limit=max_items, oldest_first=True, **extra
@@ -147,42 +162,31 @@ class SIEMIngestionAdapter:
                     finding["external_id"] = fid
             findings.append(finding)
 
-        return FetchResult(
-            findings=findings,
-            cursor=self._next_cursor(
-                alerts, truncated=truncated, start=start_time, now=horizon
-            ),
+        drained = self._drained_cursor(start_time, horizon)
+        if self._alert_time is None:
+            return FetchResult(findings=findings, cursor=drained)
+        cursor, more = next_cursor(
+            self._alert_times(alerts),
+            truncated=truncated,
+            start=start_time,
+            now=horizon,
+            step=_CURSOR_STEP,
+            source=self.name,
+            ids=[self._alert_id(a) for a in alerts] if self._alert_id else None,
+            after=after,
+            drained=drained,
         )
+        return FetchResult(findings=findings, cursor=cursor, truncated=more)
 
     def _drained_cursor(self, start: datetime, now: datetime) -> Dict[str, Any]:
         if not self._settle_delay:
-            return fresh_cursor()
+            return drained_cursor(now)
         # The window read ended at ``now`` (now - settle_delay); never step
         # back behind a cursor that was already later than that.
         return cursor_at(max(start, now))
 
-    def _next_cursor(
-        self, alerts: list, *, truncated: bool, start: datetime, now: datetime
-    ) -> Dict[str, Any]:
-        """Where the next tick starts.
-
-        ``now`` is the end of the window read: the clock, or with a settle
-        delay the clock minus that delay.
-
-        A short batch drained its window, so the cursor moves to now. A full
-        batch may have left alerts behind, so the cursor stops at the newest
-        alert actually returned; the next tick re-reads that boundary alert
-        (the start filters are inclusive) and the runner's dedup and the
-        ``(data_source, external_id)`` unique index absorb it. The cursor is
-        capped at ``now`` (taken before the fetch): only Elastic's query has an
-        upper bound of its own, so an alert stamped ahead of our clock must
-        not carry the cursor into the future, where later alerts with earlier
-        times would be skipped.
-        """
-        if not truncated or self._alert_time is None:
-            return self._drained_cursor(start, now)
-
-        newest: Optional[datetime] = None
+    def _alert_times(self, alerts: list) -> List[Optional[datetime]]:
+        times: List[Optional[datetime]] = []
         for alert in alerts:
             try:
                 when = self._alert_time(alert)
@@ -191,44 +195,5 @@ class SIEMIngestionAdapter:
                 when = None
             if when is not None and when.tzinfo is not None:
                 when = when.astimezone(timezone.utc).replace(tzinfo=None)
-            if when is not None and (newest is None or when > newest):
-                newest = when
-
-        if newest is None:
-            logger.warning(
-                "Federation %s: batch filled max_items=%d but no alert carried a "
-                "readable time; cursor moves to now and the rest of the window "
-                "is skipped",
-                self.name,
-                len(alerts),
-            )
-            return self._drained_cursor(start, now)
-
-        if newest > now:
-            logger.warning(
-                "Federation %s: newest alert time %s is ahead of this host's clock "
-                "(window end %s); capping the cursor there",
-                self.name,
-                newest.isoformat(),
-                now.isoformat(),
-            )
-            newest = now
-
-        if newest <= start:
-            # Every alert in a full batch sits at or before the tick's start.
-            # Step just past that instant so the next tick cannot fetch the
-            # same page forever; any alerts at the instant that did not fit
-            # this batch are skipped, and the warning says so.
-            logger.warning(
-                "Federation %s: batch filled max_items=%d with newest alert time "
-                "%s not past the tick start %s; stepping the cursor to %s. Alerts "
-                "at that instant beyond this batch are skipped",
-                self.name,
-                len(alerts),
-                newest.isoformat(),
-                start.isoformat(),
-                (start + _CURSOR_STEP).isoformat(),
-            )
-            newest = start + _CURSOR_STEP
-
-        return cursor_at(newest)
+            times.append(when)
+        return times

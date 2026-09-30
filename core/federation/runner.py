@@ -34,6 +34,48 @@ logger = logging.getLogger(__name__)
 
 _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
+# Not zero: the hand-off to the processor has no size limit yet, so a source
+# catching up must not outrun it.
+_CATCH_UP_SECONDS = 5
+
+_lag_gauge_registered = False
+
+
+def _register_lag_gauge() -> None:
+    global _lag_gauge_registered
+    if _lag_gauge_registered:
+        return
+    _lag_gauge_registered = True
+    try:
+        from opentelemetry.metrics import Observation
+
+        from core.telemetry import get_meter
+
+        def _observe(_options: Any):
+            try:
+                enabled = store.is_globally_enabled()
+                now = utcnow()
+                observations = []
+                for row in store.list_sources():
+                    lag = store.source_lag_seconds(row, global_enabled=enabled, now=now)
+                    if lag is not None:
+                        observations.append(
+                            Observation(lag, {"source_id": row["source_id"]})
+                        )
+                return observations
+            except Exception as e:
+                logger.debug("federation lag observation failed: %s", e)
+                return []
+
+        get_meter("vigil.federation").create_observable_gauge(
+            "soc_daemon_federation_source_lag_seconds",
+            callbacks=[_observe],
+            description="How far behind each polling federation source Vigil is",
+            unit="s",
+        )
+    except Exception as e:
+        logger.debug("federation lag gauge not registered: %s", e)
+
 
 def _severity_passes(finding_sev: Optional[str], floor: Optional[str]) -> bool:
     if not floor:
@@ -74,6 +116,8 @@ class FederationRunner:
             seed_federation_sources()
         except Exception as e:
             logger.warning("Federation seed failed: %s", e)
+
+        _register_lag_gauge()
 
         # 2. Spawn one task per registered adapter (instantiated once, reused).
         for adapter in registry.list_adapters():
@@ -142,7 +186,8 @@ class FederationRunner:
             if await self._consume_poll_now(source_id):
                 sleep_for = 0
 
-            await self._do_one_tick(adapter, row)
+            if await self._do_one_tick(adapter, row):
+                sleep_for = min(sleep_for, _CATCH_UP_SECONDS)
 
             try:
                 await asyncio.wait_for(shutdown_event.wait(), timeout=sleep_for)
@@ -156,7 +201,8 @@ class FederationRunner:
         self,
         adapter: registry.FederationAdapter,
         row: Dict[str, Any],
-    ) -> None:
+    ) -> bool:
+        """Fetch once and hand off what is new. True when the source may hold more."""
         source_id = adapter.name
         max_items = int(row.get("max_items") or 100)
         cursor = row.get("cursor") or {}
@@ -173,7 +219,7 @@ class FederationRunner:
             logger.warning("Federation %s fetch raised: %s", source_id, e)
             self.stats["errors"] = self.stats.get("errors", 0) + 1
             store.record_failure(source_id, str(e))
-            return
+            return False
 
         new_count = 0
         for finding in result.findings:
@@ -194,6 +240,7 @@ class FederationRunner:
             logger.info("Federation %s ingested %d finding(s)", source_id, new_count)
 
         store.record_success(source_id, cursor=result.cursor or {})
+        return result.truncated
 
     async def _enqueue(self, finding: Dict[str, Any], source_id: str) -> None:
         if self._output_queue is None:

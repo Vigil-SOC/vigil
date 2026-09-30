@@ -89,7 +89,10 @@ class CrowdStrikeService:
             return False, str(e)
 
     def get_detections(
-        self, filter_query: Optional[str] = None, limit: int = 100
+        self,
+        filter_query: Optional[str] = None,
+        limit: int = 100,
+        sort: Optional[str] = None,
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Get detections from CrowdStrike.
@@ -97,6 +100,7 @@ class CrowdStrikeService:
         Args:
             filter_query: FQL filter string (e.g., "created_timestamp:>='2024-01-01'")
             limit: Maximum number of detections to return
+            sort: FQL sort (e.g., "created_timestamp|asc"); API default when None
 
         Returns:
             List of detection details or None on error
@@ -109,6 +113,8 @@ class CrowdStrikeService:
             params = {"limit": limit}
             if filter_query:
                 params["filter"] = filter_query
+            if sort:
+                params["sort"] = sort
 
             response = self.session.get(
                 f"{self.base_url}/detects/queries/detects/v1", params=params, timeout=30

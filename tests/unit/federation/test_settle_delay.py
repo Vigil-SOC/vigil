@@ -118,8 +118,8 @@ async def test_an_alert_indexed_after_the_poll_is_read_on_the_next_tick(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_without_a_delay_the_same_alert_is_skipped(monkeypatch):
-    """The regression the delay exists for: the pre-change cursor is now."""
+async def test_without_a_delay_the_settling_margin_still_reads_it(monkeypatch):
+    """Without a delay the whole window is read and the cursor stops a margin short."""
     late = _alert("late", T0 - timedelta(seconds=10), lag=timedelta(seconds=30))
     clock = _Clock(T0)
     svc = _Indexer(clock, [late])
@@ -132,7 +132,8 @@ async def test_without_a_delay_the_same_alert_is_skipped(monkeypatch):
     assert svc.calls[0]["end_time"] is None
     clock.now = T0 + timedelta(minutes=5)
     second = await adapter.fetch(since=None, cursor=first.cursor, max_items=10)
-    assert first.findings == second.findings == []
+    assert first.findings == []
+    assert [f["external_id"] for f in second.findings] == ["late"]
 
 
 @pytest.mark.asyncio
