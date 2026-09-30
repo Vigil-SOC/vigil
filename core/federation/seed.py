@@ -36,6 +36,9 @@ _SPLUNK_CADENCE = {
 # How far back a source switched on at the upgrade may start reading.
 _CATCH_UP_LIMIT = timedelta(hours=1)
 
+_UPGRADE_BY = "system"
+_UPGRADE_REASON = "Federation default-on upgrade"
+
 
 def _row_defaults(adapter: Any) -> Dict[str, Any]:
     return {
@@ -55,6 +58,23 @@ def _legacy_interval(source_id: str) -> Optional[int]:
     if source_id in _SPLUNK_CADENCE:
         return settings.daemon_splunk_poll_interval
     return None
+
+
+def _audit(session: Any, key: str, action: str, old: Any, new: Any) -> None:
+    """Record a config change in the upgrade's own transaction, as ConfigService does."""
+    from core.storage.models import ConfigAuditLog
+
+    session.add(
+        ConfigAuditLog(
+            config_type="federation",
+            config_key=key,
+            action=action,
+            old_value=old,
+            new_value=new,
+            changed_by=_UPGRADE_BY,
+            change_reason=_UPGRADE_REASON,
+        )
+    )
 
 
 def _catch_up_cursor(session: Any, source_id: str, now: datetime) -> Dict[str, Any]:
@@ -95,9 +115,10 @@ def apply_default_on() -> List[str]:
     alerts between the last legacy poll and this boot are still read; any
     cursor it held is from before the legacy loop took over, and is behind.
 
-    The marker is written in the same transaction, so a later deliberate
-    switch-off survives restarts. Reads raise rather than default: a failed
-    read of the marker must not look like an upgrade that never ran.
+    The marker, and an audit entry for it and for the global switch, are
+    written in the same transaction, so a later deliberate switch-off
+    survives restarts. Reads raise rather than default: a failed read of the
+    marker must not look like an upgrade that never ran.
     Returns the source ids switched on.
     """
     from core.storage.connection import get_db_manager
@@ -111,6 +132,7 @@ def apply_default_on() -> List[str]:
 
         global_row = session.get(SystemConfig, GLOBAL_KEY)
         global_value = dict(global_row.value or {}) if global_row else {}
+        global_before = dict(global_value) if global_row else None
         rows = {r.source_id: r for r in session.query(FederationSource).all()}
         used = bool(global_value.get("enabled")) or any(
             r.enabled or r.last_poll_at is not None for r in rows.values()
@@ -156,24 +178,36 @@ def apply_default_on() -> List[str]:
                         value=global_value,
                         description="Federated monitoring global on/off",
                         config_type="federation",
+                        updated_by=_UPGRADE_BY,
                     )
                 )
             else:
                 global_row.value = global_value
+                global_row.updated_by = _UPGRADE_BY
+            _audit(
+                session,
+                GLOBAL_KEY,
+                "create" if global_row is None else "update",
+                global_before,
+                global_value,
+            )
             logger.info("Federation upgrade: switched Federation on")
 
+        marker = {
+            "applied_at": utcnow().isoformat(),
+            "switched_on": switched_on,
+            "already_in_use": used,
+        }
         session.add(
             SystemConfig(
                 key=DEFAULT_ON_KEY,
-                value={
-                    "applied_at": utcnow().isoformat(),
-                    "switched_on": switched_on,
-                    "already_in_use": used,
-                },
+                value=marker,
                 description="Federation's one-time switch-on has run",
                 config_type="federation",
+                updated_by=_UPGRADE_BY,
             )
         )
+        _audit(session, DEFAULT_ON_KEY, "create", None, marker)
     return switched_on
 
 

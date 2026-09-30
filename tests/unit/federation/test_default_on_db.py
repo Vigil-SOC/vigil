@@ -48,10 +48,18 @@ def adapters(monkeypatch):
 @pytest.fixture(autouse=True)
 def clean_state():
     from core.storage.connection import get_db_manager
-    from core.storage.models import FederationSource, Finding, SystemConfig
+    from core.storage.models import (
+        ConfigAuditLog,
+        FederationSource,
+        Finding,
+        SystemConfig,
+    )
 
     with get_db_manager().session_scope() as session:
         session.query(FederationSource).delete()
+        session.query(ConfigAuditLog).filter(
+            ConfigAuditLog.config_key.in_([GLOBAL_KEY, DEFAULT_ON_KEY])
+        ).delete(synchronize_session=False)
         session.query(Finding).filter(Finding.finding_id.like("upgrade-%")).delete(
             synchronize_session=False
         )
@@ -86,6 +94,23 @@ def _seed(**state):
                     finding_id=f"upgrade-{n}", data_source=source_id, timestamp=when
                 )
             )
+
+
+def _audits():
+    from core.storage.connection import get_db_manager
+    from core.storage.models import ConfigAuditLog
+
+    with get_db_manager().session_scope() as session:
+        entries = (
+            session.query(ConfigAuditLog)
+            .filter(ConfigAuditLog.config_key.in_([GLOBAL_KEY, DEFAULT_ON_KEY]))
+            .order_by(ConfigAuditLog.id)
+            .all()
+        )
+        return [
+            (e.config_key, e.action, e.old_value, e.new_value, e.changed_by)
+            for e in entries
+        ]
 
 
 def _cursors():
@@ -263,3 +288,33 @@ def test_a_missing_findings_table_still_switches_everything_on(adapters, monkeyp
     assert state["global"] is True
     assert state["marker"] is True
     assert set(_cursors().values()) == {None}
+
+
+@pytest.mark.parametrize(
+    "seeded, action, before",
+    [
+        ({"global_enabled": False}, "update", {"enabled": False}),
+        ({}, "create", None),
+    ],
+    ids=["global-row-off", "no-global-row"],
+)
+def test_the_switch_on_is_audited_with_the_marker(adapters, seeded, action, before):
+    _seed(**seeded)
+
+    apply_default_on()
+
+    switch, marker = _audits()
+    assert switch == (GLOBAL_KEY, action, before, {"enabled": True}, "system")
+    key, marker_action, old, new, by = marker
+    assert (key, marker_action, old, by) == (DEFAULT_ON_KEY, "create", None, "system")
+    assert sorted(new["switched_on"]) == ["crowdstrike", "newsource", "splunk"]
+
+
+def test_a_global_switch_already_on_audits_only_the_marker(adapters):
+    _seed(global_enabled=True)
+
+    apply_default_on()
+
+    assert [(key, action) for key, action, *_ in _audits()] == [
+        (DEFAULT_ON_KEY, "create")
+    ]
