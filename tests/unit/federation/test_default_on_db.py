@@ -116,35 +116,55 @@ def test_an_install_nobody_used_is_switched_on_at_the_legacy_cadence(adapters):
     assert state["marker"] is True
 
 
-def test_a_global_switch_already_on_leaves_every_row_alone(adapters):
+def test_rows_federation_already_polls_are_left_alone(adapters):
+    # A disabled row was still polled, by its legacy loop.
     _seed(
         global_enabled=True,
-        rows={"splunk": {"enabled": False, "interval_seconds": 300}},
+        rows={
+            "splunk": {"enabled": True, "interval_seconds": 120},
+            "crowdstrike": {"enabled": False, "interval_seconds": 300},
+        },
     )
 
-    assert apply_default_on() == []
+    assert sorted(apply_default_on()) == ["crowdstrike", "newsource"]
 
     state = _state()
-    assert state["rows"] == {"splunk": (False, 300)}
+    assert state["global"] is True
+    assert state["rows"] == {
+        "splunk": (True, 120),
+        "crowdstrike": (True, 30),
+        "newsource": (True, 45),
+    }
     assert state["marker"] is True
 
 
 @pytest.mark.parametrize(
-    "row",
+    "row, switched",
     [
-        {"enabled": True, "interval_seconds": 120},
-        {"enabled": False, "interval_seconds": 120, "last_poll_at": utcnow()},
+        ({"enabled": True, "interval_seconds": 120}, ["newsource", "splunk"]),
+        (
+            {"enabled": False, "interval_seconds": 120, "last_poll_at": utcnow()},
+            ["crowdstrike", "newsource", "splunk"],
+        ),
     ],
     ids=["a-row-enabled", "a-row-polled"],
 )
-def test_a_paused_install_that_used_federation_is_left_alone(adapters, row):
+def test_a_paused_install_is_switched_on_and_keeps_its_settings(
+    adapters, row, switched
+):
+    # Paused, the legacy loops polled every source; switching on keeps that.
     _seed(global_enabled=False, rows={"crowdstrike": row})
 
-    assert apply_default_on() == []
+    assert sorted(apply_default_on()) == switched
 
     state = _state()
-    assert state["global"] is False
-    assert state["rows"] == {"crowdstrike": (row["enabled"], 120)}
+    assert state["global"] is True
+    assert state["rows"] == {
+        # Federation ran it: its own interval, not the legacy one.
+        "crowdstrike": (True, 120),
+        "splunk": (True, 600),
+        "newsource": (True, 45),
+    }
     assert state["marker"] is True
 
 
