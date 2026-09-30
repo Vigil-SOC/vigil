@@ -2,8 +2,9 @@
 
 The poller in `daemon/threat_feed_poller.py` calls into this module on its
 configured interval. Imports of `taxii2-client` / `stix2` are deferred so a
-missing wheel does not break daemon startup; failures degrade to a logged
-no-op.
+missing wheel does not break daemon startup and degrades to a logged no-op.
+A TAXII fetch that fails raises, so the poller leaves that collection's
+watermark where it is.
 """
 
 from __future__ import annotations
@@ -270,8 +271,11 @@ def fetch_taxii_collection(
 ) -> List[NormalizedIndicator]:
     """Pull a single TAXII 2.1 collection and return normalized indicators.
 
-    Returns an empty list (not an exception) on failure so the poller can
-    keep going across other collections.
+    A transport, auth, discovery, or missing-collection failure raises. The
+    poller already isolates each collection, and a raised error leaves that
+    collection's watermark on the last good poll. An empty envelope is a real
+    answer and returns []. A missing taxii2-client wheel is a deploy state
+    and still returns [].
     """
     try:
         from taxii2client.v21 import Server  # type: ignore[import-untyped]
@@ -280,30 +284,23 @@ def fetch_taxii_collection(
         return []
 
     headers = {"Authorization": f"Bearer {api_token}"}
-    try:
-        server = Server(server_url, headers=headers)
-        collection = None
-        for api_root in server.api_roots:
-            for c in api_root.collections:
-                if c.id == collection_id:
-                    collection = c
-                    break
-            if collection:
+    server = Server(server_url, headers=headers)
+    collection = None
+    for api_root in server.api_roots:
+        for c in api_root.collections:
+            if c.id == collection_id:
+                collection = c
                 break
-        if collection is None:
-            logger.warning(
-                "Collection %s not found on TAXII server %s", collection_id, server_url
-            )
-            return []
-        params: Dict[str, Any] = {}
-        if since:
-            params["added_after"] = since.isoformat() + "Z"
-        envelope = (
-            collection.get_objects(**params) if params else collection.get_objects()
+        if collection:
+            break
+    if collection is None:
+        raise LookupError(
+            f"Collection {collection_id} not found on TAXII server {server_url}"
         )
-    except Exception as e:  # noqa: BLE001
-        logger.error("TAXII fetch failed (%s/%s): %s", server_url, collection_id, e)
-        return []
+    params: Dict[str, Any] = {}
+    if since:
+        params["added_after"] = since.isoformat() + "Z"
+    envelope = collection.get_objects(**params) if params else collection.get_objects()
 
     objects = (
         envelope.get("objects")
