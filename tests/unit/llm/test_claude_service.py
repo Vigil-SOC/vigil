@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 from core.llm.harness.claude import ClaudeService
 
 
@@ -96,3 +98,67 @@ class TestChatBifrostCorrelation:
         header_id = captured_kwargs["extra_headers"]["x-bf-lh-vigil-interaction-id"]
         assert len(persisted) == 1
         assert persisted[0].interaction_id == header_id
+        assert persisted[0].virtual_key_id is None
+
+
+class TestChatVirtualKeyHeader:
+    """#1268: the direct Anthropic path uses the same VK rule as the router."""
+
+    @pytest.mark.parametrize(
+        ("dev_mode", "unlimited", "vk", "base_url", "expect_vk"),
+        [
+            (False, False, "sk-bf-configured-vk", "", True),
+            (False, False, "sk-bf-configured-vk", "   ", True),
+            (True, False, "sk-bf-configured-vk", "", False),
+            (False, True, "sk-bf-configured-vk", "", False),
+            (False, False, None, "", False),
+            (False, False, "sk-bf-configured-vk", "https://litellm.internal", False),
+        ],
+        ids=[
+            "enforcement-on",
+            "blank-override",
+            "dev-mode",
+            "unlimited",
+            "no-key",
+            "off-bifrost",
+        ],
+    )
+    def test_messages_create_headers(
+        self, dev_mode, unlimited, vk, base_url, expect_vk, monkeypatch
+    ):
+        app = SimpleNamespace(
+            dev_mode=dev_mode,
+            llm_budget_unlimited=unlimited,
+            anthropic_base_url=base_url,
+        )
+        monkeypatch.setattr("core.llm.cost.budget.get_app_settings", lambda: app)
+        monkeypatch.setattr("core.llm.cost.budget.get_active_vk", lambda: vk)
+        monkeypatch.setattr("core.llm.harness.claude.get_settings", lambda: app)
+
+        with patch(
+            "core.llm.harness.claude.get_secret", return_value="test-api-key-123"
+        ), patch("core.llm.harness.claude.record_llm_call"):
+            service = ClaudeService()
+
+        captured = {}
+
+        def fake_create(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text="ok")],
+                usage=SimpleNamespace(input_tokens=1, output_tokens=1),
+                model=kwargs["model"],
+                stop_reason="end_turn",
+            )
+
+        service.client = SimpleNamespace(messages=SimpleNamespace(create=fake_create))
+        monkeypatch.setattr(service, "_persist_interaction", lambda **kwargs: None)
+
+        assert service.chat("hi") == "ok"
+
+        headers = captured["extra_headers"]
+        assert headers["x-bf-lh-vigil-interaction-id"]
+        if expect_vk:
+            assert headers["x-bf-vk"] == vk
+        else:
+            assert "x-bf-vk" not in headers

@@ -148,10 +148,8 @@ class LLMInteractionLog(Base):
     rates_fetched_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Bifrost virtual-key attribution (#186). Stores the VK the call was
-    # made under so we can group spend per-tenant once Vigil grows a
-    # tenant model. Empty / NULL for calls made before the budget feature
-    # was enabled or while running in DEV_MODE / LLM_BUDGET_UNLIMITED.
+    # Reserved for a future per-tenant id (#186). Not written: values that
+    # used to land here were the virtual key itself (#1268).
     virtual_key_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (
