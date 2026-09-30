@@ -715,7 +715,8 @@ async def set_integrations_config(
     from the dict that lands in the DB / JSON file. Empty strings are
     treated as "keep existing secret" (matches the S3 endpoint convention)
     so editing non-secret fields without re-typing the password doesn't
-    clobber stored credentials.
+    clobber stored credentials. A failed secret write or integration-config
+    row is HTTP 500; the detail names the integration and field, never the value.
 
     Args:
         config: Integrations configuration
@@ -728,8 +729,12 @@ async def set_integrations_config(
     # Build a sanitized integrations dict (no secrets) for DB/JSON
     # persistence. Apply secret writes to the encrypted store.
     sanitized_integrations: dict = {}
+    not_stored: list[str] = []
     for integration_id, raw_config in config.integrations.items():
         secrets, non_secrets = split_secrets(integration_id, raw_config)
+        field_by_env = {
+            env: field for field, env in secret_fields_for(integration_id).items()
+        }
 
         # Empty string ⇒ user didn't re-type the secret on edit; leave
         # the existing encrypted value untouched. Non-empty ⇒ overwrite.
@@ -737,9 +742,13 @@ async def set_integrations_config(
             if value == "":
                 continue
             if not set_secret(env_key, value):
+                field = field_by_env.get(env_key, env_key)
                 logger.error(
                     f"Failed to write secret '{env_key}' for "
                     f"integration '{integration_id}'"
+                )
+                not_stored.append(
+                    f"integration '{integration_id}' field '{field}' ({env_key})"
                 )
 
         sanitized_integrations[integration_id] = non_secrets
@@ -753,6 +762,16 @@ async def set_integrations_config(
         )
         if not success:
             logger.error(f"Failed to save integration '{integration_id}'")
+            not_stored.append(f"integration '{integration_id}' config")
+
+    if not_stored:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to save integrations configuration: "
+                + "; ".join(f"{item} was not stored" for item in not_stored)
+            ),
+        )
 
     _mirror_to_file(
         "integrations_config.json",
