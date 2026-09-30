@@ -60,12 +60,15 @@ def next_cursor(
     source: str,
     ids: Optional[Iterable[Optional[str]]] = None,
     after: Optional[str] = None,
+    drained: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], bool]:
     """Where the next tick starts, and whether the source may hold more past it.
 
     ``times`` are the returned alerts' times as naive UTC (None if unreadable),
-    ``start`` the tick's cursor and ``now`` the clock taken before the fetch.
-    A short batch drained its window. A full batch stops at the newest alert
+    ``start`` the tick's cursor and ``now`` the end of the window read: the
+    clock taken before the fetch, or a settled window's end. A short batch
+    drained its window and moves to ``drained``, by default ``now`` less the
+    settling margin. A full batch stops at the newest alert
     returned, capped at ``now`` so a source clock ahead of ours cannot carry the
     cursor into the future; the next tick re-reads that boundary alert (start
     filters are inclusive) and dedup absorbs it. A full batch sitting entirely
@@ -78,8 +81,10 @@ def next_cursor(
     instant, so a burst sharing one timestamp is paged rather than stepped
     over. ``after`` is the ID the tick started from.
     """
+    if drained is None:
+        drained = drained_cursor(now)
     if not truncated:
-        return drained_cursor(now), False
+        return drained, False
 
     times = list(times)
     newest = max((t for t in times if t is not None), default=None)
@@ -89,12 +94,12 @@ def next_cursor(
             "time; cursor moves to now and the rest of the window is skipped",
             source,
         )
-        return drained_cursor(now), False
+        return drained, False
 
     if newest > now:
         logger.warning(
-            "Federation %s: newest alert time %s is ahead of this host's clock %s; "
-            "capping the cursor at the clock",
+            "Federation %s: newest alert time %s is past the window end %s; "
+            "capping the cursor there",
             source,
             newest.isoformat(),
             now.isoformat(),

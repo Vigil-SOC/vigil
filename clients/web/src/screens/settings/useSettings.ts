@@ -7,7 +7,6 @@ import api, {
   federationApi,
   ingestionApi,
   kafkaApi,
-  llmProviderApi,
   localServicesApi,
   mcpApi,
   orchestratorApi,
@@ -19,7 +18,6 @@ import api, {
   type ComponentAssignment,
   type FederationSourceView,
   type IngestionJob,
-  type LLMProvider,
   type PlatformDatabaseProxyConfig,
 } from '../../services/api'
 import { loadCustomIntegrations } from '../../config/integrations'
@@ -498,44 +496,6 @@ export function useSplunk() {
   const restart = useCallback(() => run(() => localServicesApi.restartSplunk(), 2000), [run])
 
   return { status, busy, reload, start, stop, restart }
-}
-
-export function useLlmProviders() {
-  const [providers, setProviders] = useState<LLMProvider[]>([])
-  const [phase, setPhase] = useState<Phase>('loading')
-  const [error, setError] = useState<string | null>(null)
-  const [reloadKey, setReloadKey] = useState(0)
-  const reload = useCallback(() => setReloadKey((k) => k + 1), [])
-
-  useEffect(() => {
-    let cancelled = false
-    setPhase('loading')
-    setError(null)
-    llmProviderApi
-      .list()
-      .then((res) => {
-        if (cancelled) return
-        setProviders(res.data)
-        setPhase('ready')
-      })
-      .catch((e) => {
-        if (cancelled) return
-        setError(e?.response?.data?.detail || e?.message || 'Failed to load providers')
-        setPhase('error')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [reloadKey])
-
-  const test = useCallback((id: string) => llmProviderApi.test(id).then((r) => r.data), [])
-  const remove = useCallback((id: string) => llmProviderApi.remove(id).then(() => reload()), [reload])
-  const setDefault = useCallback(
-    (id: string) => llmProviderApi.setDefault(id).then(() => reload()),
-    [reload],
-  )
-
-  return { providers, phase, error, reload, test, remove, setDefault }
 }
 
 export interface AIOperationsSettings {

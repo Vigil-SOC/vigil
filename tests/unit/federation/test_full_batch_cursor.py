@@ -173,7 +173,7 @@ async def test_a_future_stamped_alert_does_not_move_the_cursor_past_now(
 
     assert len(result.findings) == 3
     assert parse_cursor_since(result.cursor) == now
-    assert "ahead of this host's clock" in caplog.text
+    assert "past the window end" in caplog.text
 
 
 @pytest.mark.asyncio

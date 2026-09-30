@@ -74,10 +74,42 @@ class MCPRegistry:
             List of tool definitions with server-prefixed names.
         """
         all_tools = []
-        seen = set()
+        for server_name, tool_name, tool in self._named_tools():
+            # Prefix the description with the server so the model sees a
+            # tool's provenance — but leave it empty when the tool has none,
+            # so a downstream "drop tools with no description" guard still
+            # fires (a fabricated "[server] " would read as truthy).
+            raw_desc = (tool.get("description") or "").strip()
+            description = f"[{server_name}] {raw_desc}" if raw_desc else ""
 
+            all_tools.append(
+                {
+                    "name": tool_name,
+                    "description": description,
+                    "input_schema": tool.get(
+                        "input_schema",
+                        tool.get(
+                            "inputSchema",
+                            {
+                                "type": "object",
+                                "properties": {},
+                                "required": [],
+                            },
+                        ),
+                    ),
+                }
+            )
+
+        return all_tools
+
+    def tool_servers(self) -> Dict[str, str]:
+        """Which active server each name in ``get_all_tools`` belongs to."""
+        return {name: server for server, name, _ in self._named_tools()}
+
+    def _named_tools(self):
         from core.integrations.mcp.surface import VIGIL_SERVER
 
+        seen = set()
         for server_name in self.get_active_servers():
             for tool in self._tools_cache.get(server_name, []):
                 # Prefix tool name with server name (matching ClaudeService
@@ -93,33 +125,7 @@ class MCPRegistry:
                 if tool_name in seen:
                     continue
                 seen.add(tool_name)
-
-                # Prefix the description with the server so the model sees a
-                # tool's provenance — but leave it empty when the tool has none,
-                # so a downstream "drop tools with no description" guard still
-                # fires (a fabricated "[server] " would read as truthy).
-                raw_desc = (tool.get("description") or "").strip()
-                description = f"[{server_name}] {raw_desc}" if raw_desc else ""
-
-                all_tools.append(
-                    {
-                        "name": tool_name,
-                        "description": description,
-                        "input_schema": tool.get(
-                            "input_schema",
-                            tool.get(
-                                "inputSchema",
-                                {
-                                    "type": "object",
-                                    "properties": {},
-                                    "required": [],
-                                },
-                            ),
-                        ),
-                    }
-                )
-
-        return all_tools
+                yield server_name, tool_name, tool
 
     def get_tool_names(self) -> List[str]:
         """Get all tool names (server-prefixed) from active servers."""

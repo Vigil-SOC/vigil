@@ -5,6 +5,13 @@ Schema migration script for Vigil SOC.
 Brings an existing database up to date with the current SQLAlchemy models
 defined in core.storage.models. Safe to run multiple times (idempotent).
 
+Each step commits on its own. A step the connecting role lacks the privilege
+for is skipped and named with the role that can run it, and the steps around
+it still apply. On a Helm install the tables the chart's SQL creates belong to
+the chart's database user and the ones create_all builds belong to vigil_app,
+so running as vigil_app may leave a step for the chart's user. The exit status
+is 0 only once every step has applied.
+
 Usage:
     python scripts/migrate_schema.py
     # or with a custom connection string:
@@ -12,6 +19,7 @@ Usage:
 """
 
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -52,9 +60,20 @@ def _table_exists(conn, name):
 
     Column migrations run after create_all has made any missing tables, but a
     table can still be absent -- an older database that predates it, a partial
-    restore. ALTER on a missing table aborts the transaction all of these share,
-    so every step after it fails too, reporting a schema problem that is not
-    there.
+    restore. ALTER on a missing table would fail the step over a schema problem
+    that is not there.
+    """
+    return conn.execute(
+        text("SELECT to_regclass(:name)"), {"name": name}
+    ).scalar() is not None
+
+
+def _index_exists(conn, name):
+    """Whether an index of that name is already there.
+
+    CREATE INDEX IF NOT EXISTS checks that the role owns the table before it
+    checks the name, so a role that doesn't own the table fails even when there
+    is nothing to create.
     """
     return conn.execute(
         text("SELECT to_regclass(:name)"), {"name": name}
@@ -155,8 +174,13 @@ def add_llm_interaction_rate_columns(conn):
 
 # create_all is checkfirst=True, so a table that already exists gets no new index
 # from the model. A hunt handing off looks this column up twice per escalation.
+# On Helm the table belongs to the chart's user, so vigil_app passes here only
+# once the index exists. 36_workflow_runs_triggered_by_index.sql builds it
+# there; this step covers a database that init SQL never reached.
 @migration("Create idx_workflow_runs_triggered_by index")
 def create_workflow_runs_triggered_by_index(conn):
+    if _index_exists(conn, 'idx_workflow_runs_triggered_by'):
+        return
     conn.execute(text("""
         CREATE INDEX IF NOT EXISTS idx_workflow_runs_triggered_by
         ON workflow_runs (triggered_by, started_at);
@@ -253,12 +277,50 @@ def add_case_closure_actor(conn):
     """))
 
 
+# The CHECK below as Postgres 16 prints it back. A version that prints it
+# differently only makes _markers_widened() say no, and the step runs as before.
+MARKERS_ORIGIN_CHECK = (
+    "CHECK ((((investigation_kind = 'hunt'::text) = (origin_run_id IS NOT NULL))"
+    " AND ((origin_run_id IS NULL) = (origin_seq IS NULL))))"
+)
+
+
+def _markers_widened(conn):
+    """Whether episodic_distil_markers already has everything the step makes.
+
+    The step drops and re-creates the index and the CHECK, so without this it
+    needs the table's owner on every run. On Helm that is the chart's user,
+    whose 26_episodic_memory.sql already builds the table this way.
+    """
+    return conn.execute(text("""
+        SELECT
+            (SELECT count(*) FROM information_schema.columns
+             WHERE table_schema = current_schema()
+               AND table_name = 'episodic_distil_markers'
+               AND ((column_name IN ('origin_run_id', 'origin_seq')
+                     AND is_nullable = 'YES')
+                    OR column_name = 'origin_run_ids')) = 3
+            AND EXISTS (
+                SELECT 1 FROM pg_indexes
+                WHERE schemaname = current_schema()
+                  AND indexname = 'idx_episodic_markers_origin'
+                  AND indexdef LIKE '%USING gin (origin_run_ids)')
+            AND EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = to_regclass('episodic_distil_markers')
+                  AND conname = 'episodic_distil_markers_origin_matches_kind'
+                  AND pg_get_constraintdef(oid) = :check)
+    """), {"check": MARKERS_ORIGIN_CHECK}).scalar()
+
+
 # The runs a marker accounts for (#731), and the origin pair a Case has no value
 # for (#733). A Case is closed and never run, so its marker's origin is absent;
 # the CHECK ties that absence to the kind, so neither shape can be half-written.
 @migration("Widen episodic_distil_markers for Case-authored Verdicts")
 def widen_episodic_distil_markers(conn):
     if not _table_exists(conn, 'episodic_distil_markers'):
+        return
+    if _markers_widened(conn):
         return
     conn.execute(text("""
         ALTER TABLE episodic_distil_markers
@@ -368,30 +430,86 @@ def seed_default_roles(conn):
 # Runner
 # ---------------------------------------------------------------------------
 
-def run_migrations():
-    url = get_connection_url()
+# Postgres names the object in its privilege errors, e.g.
+# "must be owner of table workflow_runs".
+_PRIVILEGE_OBJECT = re.compile(
+    r'(?:must be owner of|permission denied for) '
+    r'(?:table|relation|index|view|materialized view|sequence) "?([\w.]+)"?'
+)
+
+
+def _role_to_rerun_as(engine, error):
+    """Who can run a step that failed for want of privilege, or None.
+
+    None means the step failed for another reason. Otherwise the answer names
+    the owner of the object in the error when it can be looked up: only that
+    owner or a superuser may alter a table or add an index to it.
+    """
+    orig = getattr(error, 'orig', None)
+    if getattr(orig, 'pgcode', None) != '42501':
+        return None
+    match = _PRIVILEGE_OBJECT.search(str(orig))
+    if match:
+        try:
+            with engine.connect() as conn:
+                owner = conn.execute(text(
+                    "SELECT pg_get_userbyid(relowner) FROM pg_class "
+                    "WHERE oid = to_regclass(:name)"
+                ), {"name": match.group(1)}).scalar()
+        except Exception:
+            owner = None
+        if owner:
+            return f"{owner} (owner of {match.group(1)}) or a superuser"
+    return "a superuser"
+
+
+def run_migrations(url=None):
+    """Run every step in its own transaction, and return what became of each.
+
+    A failed step rolls back alone: the steps before it stay committed and the
+    ones after it still run. Returns the steps that applied, the ones skipped
+    for want of privilege (with who can run them), and the ones that failed,
+    each numbered as the log numbers it.
+    """
+    url = url or get_connection_url()
     safe_url = url.split('@')[-1] if '@' in url else url
     logger.info(f"Connecting to: ...@{safe_url}")
 
     engine = create_engine(url)
-
-    applied = 0
-    errors = 0
-
-    with engine.begin() as conn:
-        for desc, fn in MIGRATIONS:
+    applied, skipped, failed = [], [], []
+    try:
+        # Each step connects on its own, so an unreachable database would
+        # otherwise fail, or wait out the TCP timeout, once per step.
+        with engine.connect():
+            pass
+        for number, (desc, fn) in enumerate(MIGRATIONS, 1):
+            logger.info(f"[{number}/{len(MIGRATIONS)}] {desc}")
             try:
-                logger.info(f"[{applied+1}/{len(MIGRATIONS)}] {desc}")
-                fn(conn)
-                applied += 1
+                with engine.begin() as conn:
+                    fn(conn)
             except Exception as e:
-                logger.error(f"  FAILED: {e}")
-                errors += 1
+                role = _role_to_rerun_as(engine, e)
+                if role is None:
+                    logger.error(f"  FAILED: {e}")
+                    failed.append((number, desc))
+                else:
+                    reason = str(e.orig).strip().splitlines()[0]
+                    logger.warning(f"  SKIPPED: {reason}. Run it as {role}.")
+                    skipped.append((number, desc, role))
+            else:
+                applied.append((number, desc))
+    finally:
+        engine.dispose()
 
-    logger.info(f"\nDone: {applied} applied, {errors} errors out of {len(MIGRATIONS)} migrations.")
-    return errors == 0
+    logger.info(
+        f"\nDone: {len(applied)} applied, {len(skipped)} skipped, "
+        f"{len(failed)} failed, out of {len(MIGRATIONS)} migrations."
+    )
+    for number, desc, role in skipped:
+        logger.info(f"  [{number}] {desc}: run the script again as {role}.")
+    return {"applied": applied, "skipped": skipped, "failed": failed}
 
 
 if __name__ == '__main__':
-    success = run_migrations()
-    sys.exit(0 if success else 1)
+    result = run_migrations()
+    sys.exit(1 if result["skipped"] or result["failed"] else 0)

@@ -4,7 +4,7 @@ import asyncio
 import json
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -14,7 +14,7 @@ from core.agents.projections import agent_route
 from core.auth import tool_principal
 from core.deps import provide_mcp_registry
 from core.integrations.mcp.registry import MCPRegistry, live_mcp_tools
-from core.llm.chat_layers import chat_config, run_id_for
+from core.llm.chat_layers import chat_config, run_id_for, tools_ceiling, trim_servers
 from core.llm.defaults import DEFAULT_MODEL
 from core.llm.providers.registry import get_registry, is_chat_model
 from core.llm.system_prompt import validate_system_prompt
@@ -241,7 +241,8 @@ async def chat_stream(
     active_provider = provider_for(provider_id)
     if active_provider is None:
         _raise_no_provider()
-    request.model = model_for(active_provider, request.model)
+    model = request.model = model_for(active_provider, request.model)
+    provider_type = active_provider.provider_type
 
     # Surface whatever MCP integrations are connected right now (VirusTotal, OTX,
     # MISP, Shodan, …) so the assistant can call them the moment their server is
@@ -256,9 +257,7 @@ async def chat_stream(
         # The provider rides alongside the model so the gateway routes to the
         # account this request resolved to, rather than to whichever provider
         # claims the bare model name first.
-        "config": chat_config(
-            request.model, tools, mcp_tools, provider=active_provider.provider_type
-        ),
+        "config": chat_config(model, tools, mcp_tools, provider=provider_type),
         # So the tools this turn calls record the person driving it, the same
         # name the /mcp door binds. Signed here; the agent layer only carries it.
         "principal": tool_principal.mint(current_user.username),
@@ -269,8 +268,21 @@ async def chat_stream(
     if not payload["turns"]:
         raise HTTPException(status_code=400, detail="No messages provided")
 
+    def refit(maximum: int) -> Optional[Tuple[str, List[str]]]:
+        trimmed = trim_servers(tools, mcp_tools, registry.tool_servers(), maximum)
+        if trimmed is None:
+            return None
+        kept, dropped = trimmed
+        return chat_config(model, tools, kept, provider=provider_type), dropped
+
     return StreamingResponse(
-        _relay(payload, request, session_id, getattr(current_user, "user_id", None)),
+        _relay(
+            payload,
+            request,
+            session_id,
+            getattr(current_user, "user_id", None),
+            refit if mcp_tools else None,
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
@@ -296,33 +308,74 @@ def _turns_of(messages: List[ChatMessage]) -> List[Dict[str, str]]:
 
 # Relayed rather than re-encoded: the agent layer already speaks the console's
 # vocabulary, so this reads the frames only to accumulate the turn for history.
+#
+# With ``refit``, frames are held until the model has taken the turn: a provider
+# that refuses the tools array does so before any text or tool call, and that
+# attempt is replaced — once — by one declaring fewer servers, rather than shown.
 async def _relay(
     payload: Dict[str, Any],
     request: ChatRequest,
     session_id: str,
     user_id: Optional[str],
+    refit: Optional[Callable[[int], Optional[Tuple[str, List[str]]]]] = None,
 ):
     import httpx
 
     said: List[str] = []
     finished = False
+    # Said only once the retried attempt answers, so a retry that fails too is
+    # relayed as a plain failure.
+    note: Optional[str] = None
     try:
         async with httpx.AsyncClient(timeout=None) as client:
-            async with client.stream(
-                "POST",
-                agent_route("/chat/stream"),
-                json=payload,
-                headers=_internal_headers(),
-            ) as upstream:
-                if upstream.status_code != 200:
-                    detail = (await upstream.aread()).decode("utf-8", "replace")
-                    yield _frame({"error": f"agent layer refused the turn: {detail}"})
-                    return
-                async for line in upstream.aiter_lines():
-                    if not line.startswith("data: "):
-                        continue
-                    said.append(_text_in(line[6:]))
-                    yield f"{line}\n\n"
+            while True:
+                retry = None
+                held: Optional[List[str]] = [] if refit or note else None
+                async with client.stream(
+                    "POST",
+                    agent_route("/chat/stream"),
+                    json=payload,
+                    headers=_internal_headers(),
+                ) as upstream:
+                    if upstream.status_code != 200:
+                        detail = (await upstream.aread()).decode("utf-8", "replace")
+                        yield _frame(
+                            {"error": f"agent layer refused the turn: {detail}"}
+                        )
+                        return
+                    async for line in upstream.aiter_lines():
+                        if not line.startswith("data: "):
+                            continue
+                        if held is not None:
+                            event = _event_in(line[6:])
+                            if event.get("type") == "context_windowed":
+                                held.append(line)
+                                continue
+                            if "error" in event:
+                                maximum = tools_ceiling(str(event["error"]))
+                                refitted = refit(maximum) if refit and maximum else None
+                                if refitted:
+                                    retry = (maximum, *refitted)
+                                    break
+                            elif note:
+                                said.append(note)
+                                yield _frame({"type": "text", "content": note})
+                            for frame in held:
+                                yield f"{frame}\n\n"
+                            held = None
+                        said.append(_text_in(line[6:]))
+                        yield f"{line}\n\n"
+                    if retry is None:
+                        for frame in held or []:
+                            yield f"{frame}\n\n"
+                        break
+                maximum, config, dropped = retry
+                payload = {**payload, "config": config}
+                refit = None
+                note = (
+                    f"_Left out of this answer, because the model takes at most "
+                    f"{maximum} tools: {', '.join(dropped)}._\n\n"
+                )
         finished = True
     except Exception as exc:  # noqa: BLE001 — the reader gets a frame, not a 500
         logger.error("chat stream relay failed: %s", exc, exc_info=True)
@@ -350,11 +403,16 @@ def _frame(event: Dict[str, Any]) -> str:
     return f"data: {json.dumps(event)}\n\n"
 
 
-def _text_in(data: str) -> str:
+def _event_in(data: str) -> Dict[str, Any]:
     try:
         event = json.loads(data)
     except ValueError:
-        return ""
+        return {}
+    return event if isinstance(event, dict) else {}
+
+
+def _text_in(data: str) -> str:
+    event = _event_in(data)
     return event.get("content", "") if event.get("type") == "text" else ""
 
 

@@ -4,20 +4,23 @@
 
 from __future__ import annotations
 
+import re
 import uuid
-from typing import Any, Dict, List, Optional
+from collections import Counter
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 
 from core.integrations.atomic_red_team.descriptor import EXECUTE_IDS
+from core.integrations.mcp.surface import VIGIL_SERVER
 from core.llm.tool_schemas import ALL_TOOLS
 
 REMOTE = "remote"
 
 # Direct-action verbs that make an MCP tool destructive: calling it changes the
 # world (isolates a host, blocks an IP, kills a process) and a later read cannot
-# undo it. Chat declares connected MCP tools unconditionally (see ``_declare``),
-# but the chat surface has no approval-resume path — a parked call would hang
+# undo it. Chat offers every connected MCP tool the provider will take, and says
+# which it would not (see ``_declare`` and ``trim_servers``), but the chat surface has no approval-resume path — a parked call would hang
 # forever, never gate — so these are dropped from chat entirely. Real containment
 # goes through the approval queue (``create_approval_action``) and workflows, not
 # ad-hoc chat calls.
@@ -116,13 +119,14 @@ def _declare(
     mcp_tools: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
     # Two surfaces. Static built-ins are curated: a per-agent recommended-tools
-    # list (``wanted``) narrows them. Connected MCP integrations (server-prefixed,
-    # e.g. virustotal_get_ip_report) are ALWAYS offered when present — a user who
-    # connected an integration expects the assistant to use it regardless of any
-    # agent's tool list, and hunts curate separately (playbook_resolver). So a
-    # ``wanted`` list filters only the built-ins; live integrations are appended —
-    # except direct-action MCP tools (see ``_is_destructive_mcp``), which chat
-    # cannot safely gate.
+    # list (``wanted``) narrows them. Chat offers every connected MCP tool
+    # (server-prefixed, e.g. virustotal_get_ip_report) the provider will take,
+    # and says which it would not — a user who connected an integration expects
+    # the assistant to use it regardless of any agent's tool list, and hunts
+    # curate separately (playbook_resolver). So a ``wanted`` list filters only
+    # the built-ins; live integrations are appended — except direct-action MCP
+    # tools (see ``_is_destructive_mcp``), which chat cannot safely gate. What
+    # the provider will not take is cut by ``trim_servers``, never here.
     static = {t["name"]: t for t in ALL_TOOLS if t.get("name")}
     mcp = {t["name"]: t for t in (mcp_tools or []) if t.get("name")}
     static_names = (
@@ -164,6 +168,58 @@ def _declare(
             }
         )
     return declared
+
+
+# The provider names its own ceiling when it refuses the array, and that number
+# is the only one used: nothing is configured or stored per model, and a
+# provider that has no ceiling, or says it another way, never reaches this.
+# The array itself, not ``tools[3].function.name``, whose length limit is not one.
+_TOOLS_CEILING = re.compile(
+    r"\btools\b(?!\[)[^\n]*?\barray\b[^\n]*?\bmaximum length (\d+)", re.I
+)
+
+
+def tools_ceiling(reason: str) -> Optional[int]:
+    """The tools-array maximum a provider rejection states, else None."""
+    match = _TOOLS_CEILING.search(reason or "")
+    return int(match.group(1)) if match else None
+
+
+def trim_servers(
+    wanted: Optional[List[str]],
+    mcp_tools: Optional[List[Dict[str, Any]]],
+    servers: Dict[str, str],
+    maximum: int,
+) -> Optional[Tuple[List[Dict[str, Any]], List[str]]]:
+    """Drop whole third-party MCP servers until ``_declare`` fits ``maximum``.
+
+    Returns the MCP tools to declare instead and the servers left out, or None
+    when nothing needs dropping or nothing fits. Whole servers, because a
+    search whose fetch is missing fails in a way the model cannot reason about;
+    largest first (ties by name), so the fewest are lost. The built-in
+    catalogue and Vigil's own server are what the agent is, and never go.
+    """
+    declared = _declare(wanted, mcp_tools)
+    static = {t["name"] for t in ALL_TOOLS if t.get("name")}
+
+    def droppable(name: str) -> Optional[str]:
+        server = servers.get(name)
+        return None if name in static or server == VIGIL_SERVER else server
+
+    sizes = Counter(filter(None, (droppable(t["id"]) for t in declared)))
+    excess = len(declared) - maximum
+    if excess <= 0:
+        return None
+    dropped: List[str] = []
+    for server, size in sorted(sizes.items(), key=lambda kv: (-kv[1], kv[0])):
+        if excess <= 0:
+            break
+        dropped.append(server)
+        excess -= size
+    if excess > 0:
+        return None
+    kept = [t for t in mcp_tools or [] if droppable(t.get("name", "")) not in dropped]
+    return kept, dropped
 
 
 def chat_config(

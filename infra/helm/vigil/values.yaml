@@ -427,6 +427,7 @@ dbInit:
     - 34_drop_skills.sql
     - 34_mcp_credentials.sql
     - 35_ip_exclusions.sql
+    - 36_workflow_runs_triggered_by_index.sql
   resources:
     requests:
       cpu: 50m

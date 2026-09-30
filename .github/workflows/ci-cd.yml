@@ -736,6 +736,45 @@ jobs:
               raise SystemExit(1)
           PY
 
+      - name: Default rows are seeded
+        # init_database() seeds the default SLA policies and case templates into
+        # empty tables after create_all (#1246), and logs rather than fails when
+        # it cannot, so only a count shows an install left without them. The
+        # expected count is one row per INSERT the backend's seeder finds, so a
+        # multi-row VALUES default would need this to count rows instead.
+        env:
+          POSTGRES_USER: vigil_app
+        run: |
+          python - <<'PY'
+          from sqlalchemy import text
+
+          from core.storage.connection import get_db_manager
+          from core.storage.reference_seed import SEED_FILE, find_seed_file, inserts_by_table
+
+          path = find_seed_file()
+          if path is None:
+              print(f"::error::{SEED_FILE} not found; the backend seeds nothing without it")
+              raise SystemExit(1)
+          expected = {t: len(s) for t, s in inserts_by_table(path.read_text()).items()}
+          if not expected:
+              print(f"::error::No INSERT found in {SEED_FILE}; this check needs updating")
+              raise SystemExit(1)
+
+          manager = get_db_manager()
+          manager.initialize()
+          short = []
+          with manager.engine.connect() as conn:
+              quote = conn.dialect.identifier_preparer.quote
+              for table, want in sorted(expected.items()):
+                  got = conn.execute(text(f"SELECT count(*) FROM {quote(table)}")).scalar()
+                  print(f"{table}: {got} of {want} default rows")
+                  if got != want:
+                      short.append(f"{table} has {got}, expected {want}")
+          if short:
+              print(f"::error::Default rows after a Helm install: {'; '.join(short)}")
+              raise SystemExit(1)
+          PY
+
   # ============================================================================
   # Security Scanning
   # ============================================================================

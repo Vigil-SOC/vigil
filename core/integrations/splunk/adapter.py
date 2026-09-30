@@ -71,20 +71,18 @@ class SplunkAdapter:
             return self._service
         if not self.is_configured():
             return None
-        try:
-            from core.integrations.splunk.client import SplunkService
+        from core.integrations.splunk.client import SplunkService
 
-            # resolve() reads the password from the secrets store; unset fields are None.
-            cfg = resolve(SPLUNK)
-            self._service = SplunkService(
-                server_url=cfg["server_url"] or "",
-                username=cfg["username"] or "",
-                password=cfg["password"] or "",
-                verify_ssl=bool(cfg["verify_ssl"]),
-            )
-        except Exception as e:
-            logger.warning("Splunk service init failed: %s", e)
-            self._service = None
+        # A configured source whose service cannot be built is failing, not
+        # empty: let the error reach the runner so the cursor is kept.
+        # resolve() reads the password from the secrets store; unset fields are None.
+        cfg = resolve(SPLUNK)
+        self._service = SplunkService(
+            server_url=cfg["server_url"] or "",
+            username=cfg["username"] or "",
+            password=cfg["password"] or "",
+            verify_ssl=bool(cfg["verify_ssl"]),
+        )
         return self._service
 
     async def fetch(
@@ -107,21 +105,33 @@ class SplunkAdapter:
         pinned = cursor.get("query")
         queries = [pinned] if pinned in _QUERIES else _QUERIES
 
+        # search() returns None on any error (it logs and swallows them), so a
+        # query failed if it returned None or raised. An empty list ran and
+        # found nothing; it still falls through, since on non-ES installs
+        # `index=notable` is empty by design and the fallbacks must be reached.
         events: List[Dict[str, Any]] = []
         answered_by: Optional[str] = None
         splunk_now: Optional[datetime] = None
         answered = False
+        last_error: Optional[Exception] = None
         for base in queries:
-            # search() polls its job with time.sleep for up to ~60s.
-            results = await asyncio.to_thread(
-                svc.search,
-                query=_index_time_query(base, start, max_items),
-                earliest_time=str(math.floor(_epoch(start - _LATE_ARRIVAL))),
-                latest_time="now",
-                max_count=max_items + 1,  # the clock row
-            )
+            try:
+                # search() polls its job with time.sleep for up to ~60s.
+                results = await asyncio.to_thread(
+                    svc.search,
+                    query=_index_time_query(base, start, max_items),
+                    earliest_time=str(math.floor(_epoch(start - _LATE_ARRIVAL))),
+                    latest_time="now",
+                    max_count=max_items + 1,  # the clock row
+                )
+            except Exception as e:
+                logger.warning("Splunk query failed (%s): %s", base, e)
+                last_error = e
+                continue
             if results is None:
-                logger.debug("Splunk query failed: %s", base)
+                logger.warning(
+                    "Splunk query failed (%s): search returned no result", base
+                )
                 continue
             answered = True
             rows, clock = _split_clock_row(results)
@@ -129,9 +139,11 @@ class SplunkAdapter:
             if rows:
                 events, answered_by = rows, base
                 break
+        # Every query failed: raise so the runner records a failure and keeps
+        # the cursor, instead of advancing it past the outage window.
         if not answered:
-            # Raised so the runner records a failure and keeps the cursor.
-            raise RuntimeError("every Splunk alert query failed")
+            detail = f": {last_error}" if last_error is not None else ""
+            raise RuntimeError(f"Splunk: every search query failed{detail}")
 
         # _indextime is stamped by Splunk's clock, so the cursor must be too:
         # with ours, a Splunk running behind would index alerts behind it.
