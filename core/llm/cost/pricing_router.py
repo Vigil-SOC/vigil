@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Header
 
 from core.agents.internal_auth import authorise
+from core.llm.cost.budget import get_active_vk, should_enforce
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
@@ -58,6 +59,18 @@ async def rates(
         "source": resolved["pricing_source"],
         "fetched_at": resolved["rates_fetched_at"],
     }
+
+
+# The virtual key the agent sends as x-bf-vk, or null when the budget is not
+# enforced. should_enforce() decides, so DEV_MODE and LLM_BUDGET_UNLIMITED mean the
+# same thing to agent traffic as to the router's. Asked for rather than put in the
+# RunSpec: a checkpointed spec would resume carrying a key rotated since.
+@router.get("/vk")
+async def virtual_key(
+    authorization: Optional[str] = Header(default=None),
+) -> Dict[str, Optional[str]]:
+    authorise(authorization, "virtual key lookup")
+    return {"vk": get_active_vk() if should_enforce() else None}
 
 
 # What the agent layer names when it knows only the gateway it called.
