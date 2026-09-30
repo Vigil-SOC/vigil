@@ -49,7 +49,9 @@ async def soc_error_handler(request: Request, exc: SOCError) -> JSONResponse:
     return JSONResponse(status_code=status, content=body)
 
 
-async def budget_exceeded_handler(request: Request, exc: BudgetExceeded) -> JSONResponse:
+async def budget_exceeded_handler(
+    request: Request, exc: BudgetExceeded
+) -> JSONResponse:
     trace_id, _ = current_trace_ids()
     logger.warning(
         "%s %s -> 402 budget exceeded (%s): %s",
