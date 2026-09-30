@@ -11,6 +11,7 @@ import { registryOf } from "./core/registry.js";
 import { remoteDispatch } from "./core/remote.js";
 import type { Memory, State } from "./core/seams.js";
 import type { RunSpec } from "./core/spec.js";
+import { httpVirtualKey } from "./core/vk.js";
 import { openAiSurface } from "./core/wire.js";
 import { toolsFrom } from "./tools/remote.js";
 import { grantsOf as chatGrants } from "./workflows/chat/workflow.js";
@@ -43,11 +44,16 @@ const limiter = new Limiter({ rpm: 500, tpm: 400_000 }, 4);
 // Memoised across runs, since a per-run memo dies with the run, but only for as long
 // as the backend keeps its own copy: MODEL_CATALOG_REFRESH_INTERVAL_S is the variable
 // core/config.py reads, and its default there.
-const prices = httpPrices({
+const pricing = {
   url: process.env["VIGIL_PRICING_URL"] ?? "http://localhost:6987/internal/pricing",
   token: internalToken(),
   ttlMs: Number(process.env["MODEL_CATALOG_REFRESH_INTERVAL_S"] ?? 300) * 1000,
-});
+};
+const prices = httpPrices(pricing);
+
+// The Settings → Budgets key, sent on every model call so Bifrost's budget binds
+// agent runs too. Read per process, never carried in a RunSpec.
+const vk = httpVirtualKey(pricing);
 
 // Which grants a run kind's roles hold. Compose grants per phase agent and chat
 // per declared tool, because neither reads a roster the arch wrote.
@@ -81,7 +87,7 @@ export function harnessFor<K extends Record<string, unknown>>(
     // a different account entirely. The same provider is handed to pricing: the
     // gateway bills nothing of its own, and a catalog left to guess from the
     // model's name priced a paid "llama" on a commercial host at $0.
-    provider: openAiSurface(client, spec.model, limiter, spec.provider ?? "bifrost", wireModel(spec)),
+    provider: openAiSurface(client, spec.model, limiter, spec.provider ?? "bifrost", wireModel(spec), vk),
     registry: registryOf(toolsFrom(spec.tools), grantsFor(kind, spec)),
     dispatch: remoteDispatch({ url: tools, token: internalToken(), ...(principal === undefined ? {} : { principal }) }),
     budget: budgetOf(spec.budgets, unmeteredQuota, Date.now, seed, prices),

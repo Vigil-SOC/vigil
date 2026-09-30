@@ -11,6 +11,7 @@ import {
   type Turn,
   type TurnRequest,
 } from "./provider.js";
+import { noVirtualKey, type VirtualKey } from "./vk.js";
 
 // Unset, the gateway's own default cuts a long emission off mid-JSON, which
 // arrives as an unparseable answer rather than as a limit that was hit.
@@ -89,8 +90,9 @@ export function openAiSurface(
   limiter: Limiter,
   provider_type: string,
   wire_model: string = model,
+  vk: VirtualKey = noVirtualKey,
 ): Provider {
-  return new OpenAiSurface(client, model, limiter, provider_type, wire_model);
+  return new OpenAiSurface(client, model, limiter, provider_type, wire_model, vk);
 }
 
 // The one surface built. The gateway routes to either provider family behind a
@@ -108,6 +110,7 @@ class OpenAiSurface implements Provider {
     private readonly limiter: Limiter,
     readonly provider_type: string,
     private readonly wire_model: string = model,
+    private readonly vk: VirtualKey = noVirtualKey,
   ) {}
 
   // Assembled before the events are emitted, so usage precedes the tool calls. The
@@ -235,9 +238,12 @@ class OpenAiSurface implements Provider {
     // Assembled inside run() rather than after it, so the rate-limit slot is held
     // for the whole call and a mid-stream failure is retried like any other.
     return this.limiter.run(estimate, async () => {
+      // Per request, not the client's defaultHeaders: the client is shared by every
+      // run, and a key changed in Settings has to reach the next call.
+      const vk = await this.vk();
       const stream = await this.client.chat.completions.create(
         { ...limit, ...body, stream: true, stream_options: { include_usage: true } },
-        signal ? { signal } : {},
+        { ...(signal ? { signal } : {}), ...(vk === null ? {} : { headers: { "x-bf-vk": vk } }) },
       );
       if (!(Symbol.asyncIterator in stream)) {
         throw new ProviderError("the gateway answered a stream request with a whole completion");
