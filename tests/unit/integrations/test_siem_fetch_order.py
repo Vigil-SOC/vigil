@@ -53,7 +53,7 @@ async def test_elastic_federation_call_sorts_oldest_first():
     # Alerts from one rule run share a millisecond, so the uuid breaks ties.
     assert kwargs["sort"] == [
         {"@timestamp": {"order": "asc"}},
-        {"kibana.alert.uuid": {"order": "asc"}},
+        {"kibana.alert.uuid": {"order": "asc", "unmapped_type": "keyword"}},
     ]
     assert kwargs["size"] == 7
 

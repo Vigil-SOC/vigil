@@ -7,7 +7,7 @@ import logging
 import math
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from core.config import is_integration_enabled
 from core.federation.adapters._base import (
@@ -42,6 +42,7 @@ _LATE_ARRIVAL = timedelta(hours=24)
 # _indextime is whole seconds.
 _CURSOR_STEP = timedelta(seconds=1)
 _INDEX_TIME_FIELD = "vigil_indextime"
+_CLOCK_FIELD = "vigil_now"
 
 _SEVERITY_MAP = {
     "critical": "critical",
@@ -99,29 +100,49 @@ class SplunkAdapter:
 
         # No cold-start backfill — federation MVP design.
         start = parse_cursor_since(cursor) or since or utcnow() - timedelta(minutes=1)
-        now = utcnow()
+        local_now = utcnow()
+
+        # A truncated batch's query keeps the source until it drains: another
+        # query answering in between would move the cursor past its backlog.
+        pinned = cursor.get("query")
+        queries = [pinned] if pinned in _QUERIES else _QUERIES
 
         events: List[Dict[str, Any]] = []
+        answered_by: Optional[str] = None
+        splunk_now: Optional[datetime] = None
         answered = False
-        for base in _QUERIES:
+        for base in queries:
             # search() polls its job with time.sleep for up to ~60s.
             results = await asyncio.to_thread(
                 svc.search,
-                query=_index_time_query(base, start, now, max_items),
+                query=_index_time_query(base, start, max_items),
                 earliest_time=str(math.floor(_epoch(start - _LATE_ARRIVAL))),
                 latest_time="now",
-                max_count=max_items,
+                max_count=max_items + 1,  # the clock row
             )
             if results is None:
                 logger.debug("Splunk query failed: %s", base)
                 continue
             answered = True
-            if results:
-                events = results
+            rows, clock = _split_clock_row(results)
+            splunk_now = clock or splunk_now
+            if rows:
+                events, answered_by = rows, base
                 break
         if not answered:
             # Raised so the runner records a failure and keeps the cursor.
             raise RuntimeError("every Splunk alert query failed")
+
+        # _indextime is stamped by Splunk's clock, so the cursor must be too:
+        # with ours, a Splunk running behind would index alerts behind it.
+        now = splunk_now
+        if now is None:
+            logger.warning(
+                "Federation %s: search answer carried no Splunk clock; placing the "
+                "cursor by this host's clock",
+                self.name,
+            )
+            now = local_now
 
         events = events[:max_items]
         findings = []
@@ -138,6 +159,8 @@ class SplunkAdapter:
             step=_CURSOR_STEP,
             source=self.name,
         )
+        if more and answered_by:
+            cursor["query"] = answered_by
         return FetchResult(findings=findings, cursor=cursor, truncated=more)
 
 
@@ -145,24 +168,37 @@ def _epoch(when: datetime) -> float:
     return when.replace(tzinfo=timezone.utc).timestamp()
 
 
-def _index_time_query(base: str, start: datetime, end: datetime, limit: int) -> str:
-    """Alerts Splunk indexed in [start, end), oldest first.
+def _index_time_query(base: str, start: datetime, limit: int) -> str:
+    """Alerts Splunk indexed from ``start`` to its own now, oldest first.
 
     The index-time bounds go in front: the ``notable`` macro expands to a
     search with pipes, so anything appended after it would bind to its last
-    command.
+    command. The appended row carries Splunk's clock, and is there even when
+    no alert is.
     """
     return (
-        f"_index_earliest={math.floor(_epoch(start))} "
-        f"_index_latest={math.ceil(_epoch(end))} {base} "
+        f"_index_earliest={math.floor(_epoch(start))} _index_latest=now {base} "
         f"| eval {_INDEX_TIME_FIELD}=_indextime "
-        f"| sort 0 {_INDEX_TIME_FIELD} | head {limit}"
+        f"| sort 0 {_INDEX_TIME_FIELD} | head {limit} "
+        f"| appendpipe [stats count | eval {_CLOCK_FIELD}=now()]"
     )
 
 
+def _split_clock_row(
+    results: List[Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], Optional[datetime]]:
+    rows = [r for r in results if _CLOCK_FIELD not in r]
+    clocks = [_epoch_field(r, _CLOCK_FIELD) for r in results if _CLOCK_FIELD in r]
+    return rows, next((c for c in clocks if c is not None), None)
+
+
 def _index_time(event: Dict[str, Any]) -> Optional[datetime]:
+    return _epoch_field(event, _INDEX_TIME_FIELD)
+
+
+def _epoch_field(row: Dict[str, Any], field: str) -> Optional[datetime]:
     try:
-        seconds = float(event[_INDEX_TIME_FIELD])
+        seconds = float(row[field])
     except (KeyError, TypeError, ValueError):
         return None
     return datetime.fromtimestamp(seconds, tz=timezone.utc).replace(tzinfo=None)

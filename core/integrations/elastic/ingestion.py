@@ -125,7 +125,10 @@ class ElasticIngestion(SIEMIngestionService):
                     size=limit,
                     sort=[
                         {"@timestamp": {"order": "asc"}},
-                        {_ALERT_UUID: {"order": "asc"}},
+                        # An index without the field (legacy .siem-signals)
+                        # would otherwise fail its shards, and the search
+                        # returns 200 with that index's alerts missing.
+                        {_ALERT_UUID: {"order": "asc", "unmapped_type": "keyword"}},
                     ],
                 )
             else:

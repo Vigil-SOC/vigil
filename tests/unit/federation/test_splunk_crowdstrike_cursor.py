@@ -49,7 +49,10 @@ class _Splunk:
         self.calls.append(
             {"query": query, "earliest_time": earliest_time, "max_count": max_count}
         )
-        return self._answers.pop(0)
+        answer = self._answers.pop(0)
+        if answer is None:
+            return None
+        return answer + [{"count": str(len(answer)), "vigil_now": str(_epoch(NOW))}]
 
 
 def _splunk(service: _Splunk) -> SplunkAdapter:
@@ -72,9 +75,9 @@ async def test_splunk_asks_by_index_time_oldest_first_with_a_late_arrival_window
 
     query = svc.calls[0]["query"]
     assert query.startswith(
-        f"_index_earliest={_epoch(T0)} _index_latest={_epoch(NOW)} index=notable "
+        f"_index_earliest={_epoch(T0)} _index_latest=now index=notable "
     )
-    assert "| sort 0 vigil_indextime | head 10" in query
+    assert "| sort 0 vigil_indextime | head 10 |" in query
     # Event time reaches back far enough to include an alert indexed late.
     assert svc.calls[0]["earliest_time"] == str(_epoch(T0 - timedelta(hours=24)))
 
