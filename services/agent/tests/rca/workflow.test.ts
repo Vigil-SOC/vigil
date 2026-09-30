@@ -255,6 +255,18 @@ describe("a root-cause run", () => {
     expect((await state.terminal(RUN))?.summary).toMatch(/^Block 45\.1\.2\.3\./);
   });
 
+  it("folds a ledger written before stretches ended on a move", async () => {
+    const state = new InProcessState<RcaKinds>();
+    await runRootCause(harnessOf(CHAIN, splunk().dispatch, state), { run_id: RUN, run_kind: "root_cause", spec: specOf() });
+    const older = (await state.read(RUN)).map((event) => {
+      if (event.kind !== "segment") return event;
+      const { move: _dropped, ...rest } = event.payload as SegmentPayload;
+      return { ...event, payload: rest };
+    });
+    const view = traceProjection(RUN, older as never);
+    expect(view.moves.map((m) => [m.action, m.accepted])).toEqual([["FINISH", true]]);
+  });
+
   it("says up front when the log search is not Splunk, before any model call", async () => {
     const state = new InProcessState<RcaKinds>();
     const done = await runRootCause(harnessOf([], splunk().dispatch, state), {

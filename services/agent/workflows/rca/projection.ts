@@ -109,12 +109,15 @@ export function traceProjection(_runId: string, events: readonly Event[]): Trace
       case "segment": {
         const segment = event.payload as SegmentPayload;
         const finishing = segment.draft !== null;
-        if (finishing && Array.isArray(segment.move.next_steps)) nextSteps = segment.move.next_steps.map(String);
+        // A ledger written before stretches ended on a move has only the draft: each
+        // of its stretches was a report sent to the gate.
+        const move: Partial<Move> = segment.move ?? { action: "FINISH", rationale: "" };
+        if (finishing && Array.isArray(move.next_steps)) nextSteps = move.next_steps.map(String);
         moves.push({
           segment: segment.segment,
-          action: segment.move.action,
-          rationale: segment.move.rationale,
-          next: segment.move.next ?? null,
+          action: move.action ?? "FINISH",
+          rationale: move.rationale ?? "",
+          next: move.next ?? null,
           accepted: finishing ? segment.refused === null : null,
           refused: segment.refused,
           searches,

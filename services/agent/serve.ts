@@ -144,7 +144,15 @@ async function foldedBy(state: State, runId: string, view: "projection" | "disti
 }
 
 async function readFold(state: State, runId: string, view: "projection" | "distil", res: ServerResponse): Promise<void> {
-  const folded = await foldedBy(state, runId, view);
+  // One ledger a fold cannot read is that run's problem, answered as such. Thrown, it
+  // took the process down, and every run's view with it.
+  let folded: unknown | null;
+  try {
+    folded = await foldedBy(state, runId, view);
+  } catch (error) {
+    console.warn(`${view} of ${runId} failed: ${error instanceof Error ? error.message : String(error)}`);
+    return refuse(res, 500, `the ${view} of ${runId} could not be folded`);
+  }
   if (folded === null) return refuse(res, 404, `no readable run: ${runId}`);
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify(folded));
