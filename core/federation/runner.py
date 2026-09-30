@@ -42,6 +42,9 @@ _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 # catching up must not outrun it.
 _CATCH_UP_SECONDS = 5
 
+_SETUP_RETRY_FIRST_SECONDS = 5.0
+_SETUP_RETRY_MAX_SECONDS = 60.0
+
 _lag_gauge_registered = False
 
 
@@ -117,18 +120,9 @@ class FederationRunner:
     async def run(self, shutdown_event: asyncio.Event) -> None:
         """Main entry point — called as an asyncio task by DataPoller."""
         self._shutdown = shutdown_event
-        # 1. Switch Federation on the first time, then seed rows for adapters
-        # whose integration is configured. The switch-on reads "has anyone
-        # used Federation" from the rows, so it must run before seeding
-        # creates any.
-        try:
-            apply_default_on()
-        except Exception as e:
-            logger.warning("Federation default-on upgrade failed: %s", e)
-        try:
-            seed_federation_sources()
-        except Exception as e:
-            logger.warning("Federation seed failed: %s", e)
+        # 1. Setup runs beside the adapter loops, which gate on the global
+        # switch and their row each tick, so polling starts once it succeeds.
+        setup = asyncio.create_task(self._setup_until_done(shutdown_event))
 
         _register_lag_gauge()
 
@@ -140,15 +134,39 @@ class FederationRunner:
                 self._adapter_loop(adapter, shutdown_event)
             )
 
+        self.stats["adapters"] = len(self._adapter_tasks)
+        waits = [setup, *self._adapter_tasks.values()]
         if not self._adapter_tasks:
-            # No adapters at all — wait for shutdown.
-            await shutdown_event.wait()
-            return
+            logger.error("Federation: no adapters registered; nothing will be polled")
+            waits.append(asyncio.ensure_future(shutdown_event.wait()))
 
         try:
-            await asyncio.gather(*self._adapter_tasks.values(), return_exceptions=True)
+            await asyncio.gather(*waits, return_exceptions=True)
         except asyncio.CancelledError:
             pass
+
+    async def _setup_until_done(self, shutdown_event: asyncio.Event) -> None:
+        """Switch Federation on once and seed rows, retrying until both succeed.
+
+        A failure (the DB unreachable at boot) must not leave Federation off
+        until the next restart: it is the only path that polls. The switch-on
+        runs first because it gives the rows it switches on their legacy
+        interval and catch-up cursor, and a row seeding creates is already on.
+        """
+        self.stats["setup_ok"] = False
+        delay = _SETUP_RETRY_FIRST_SECONDS
+        while not shutdown_event.is_set():
+            try:
+                await asyncio.to_thread(apply_default_on)
+                await asyncio.to_thread(seed_federation_sources)
+                self.stats["setup_ok"] = True
+                return
+            except Exception as e:
+                logger.error("Federation setup failed, retrying in %ss: %s", delay, e)
+            try:
+                await asyncio.wait_for(shutdown_event.wait(), timeout=delay)
+            except asyncio.TimeoutError:
+                delay = min(delay * 2, _SETUP_RETRY_MAX_SECONDS)
 
     # ------------------------------------------------------------------
     # Per-adapter loop
