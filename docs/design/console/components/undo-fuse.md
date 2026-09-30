@@ -1,0 +1,2 @@
+# Undo fuse
+For the user's own reversible actions (approve narrower, reject, hold, commit parsed actions, revert). Outlined 24–28px "Undo" button with a 2px `ac` bar along its bottom edge that shrinks with `vg-fuse 8s linear`; the action is final when the bar is gone. Sits at the right of the confirmation row.
