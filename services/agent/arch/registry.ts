@@ -9,7 +9,8 @@ import type { HuntKinds } from "../workflows/hunt/ledger.js";
 import { huntProjection } from "../workflows/hunt/projection.js";
 import { huntNotes } from "../workflows/hunt/recall.js";
 import { leadProjection } from "../workflows/lead/projection.js";
-import { RCA_ACTIONS } from "../workflows/rca/vocabulary.js";
+import { traceProjection } from "../workflows/rca/projection.js";
+import { RCA_ACTIONS, RCA_HALTS, type RcaKinds } from "../workflows/rca/vocabulary.js";
 import type { LeadKinds } from "../workflows/lead/workflow.js";
 
 // Which loop drives a kind, and what its workflow may act on. Named here rather
@@ -67,8 +68,9 @@ const REGISTERED: Partial<Record<RunKind, ArchEntry>> = {
     arch: packaged("rootcause.yaml"),
     workflow: "rca",
     actions: RCA_ACTIONS,
-    halts: RCA_ACTIONS,
+    halts: RCA_HALTS,
     owned: { config: ["checkpoints"] },
+    projection: (runId, events) => traceProjection(runId, events as readonly AgentEvent<RcaKinds>[]),
   },
   // adjudicate is a hunt run as a second opinion: the lead is shown a finding
   // intake admitted and the workflow intake chose, tests the stated intent against

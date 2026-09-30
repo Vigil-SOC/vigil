@@ -495,10 +495,11 @@ def resolve_hunt(
 ROOT_CAUSE_CAPABILITIES = ("telemetry_search",)
 
 # A trace is one investigator in one conversation, measured in stretches of tool
-# turns; the finish gate judges a report draft at the end of each. Five stretches of
-# twelve is the sixty turns the method was worked out on.
-ROOT_CAUSE_SEGMENTS = 5
-ROOT_CAUSE_RUNTIME = {**DEFAULT_RUNTIME, "max_turns": 12}
+# turns, each ended by a move: carry on, with why, or a report the finish gate
+# judges. Short stretches so the moves are a reasoning trail; fifteen of four is the
+# sixty turns the method was worked out on.
+ROOT_CAUSE_SEGMENTS = 15
+ROOT_CAUSE_RUNTIME = {**DEFAULT_RUNTIME, "max_turns": 4}
 ROOT_CAUSE_BUDGETS = {
     # Each stretch is its tool turns and up to two emission attempts.
     "max_calls": ROOT_CAUSE_SEGMENTS * (int(ROOT_CAUSE_RUNTIME["max_turns"]) + 2),

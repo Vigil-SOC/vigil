@@ -104,7 +104,12 @@ export class Findings {
   private readonly total = new Map<string, number>();
   private readonly beforeKey = (finding: Finding) => `${canon(finding.who)}|${finding.when}`;
 
-  constructor(private readonly lookups: Lookups) {}
+  // given: what the caller handed the run -- the confirmed finding. A value in it is a
+  // fact the run started from, never an unproven actor to hide.
+  constructor(
+    private readonly lookups: Lookups,
+    private readonly given = "",
+  ) {}
 
   // What the model was shown. Only these rows count as evidence it can cite.
   saw(rows: readonly string[]): void {
@@ -114,8 +119,9 @@ export class Findings {
     }
   }
 
+  // A copy: the notebook goes on changing after it is journaled.
   snapshot(): NotebookState {
-    return { list: this.list, hyps: this.hyps, refusals: this.refusals, dispositionAsked: this.dispositionAsked };
+    return structuredClone({ list: this.list, hyps: this.hyps, refusals: this.refusals, dispositionAsked: this.dispositionAsked });
   }
 
   // A resumed run's notebook, with the provenance counts asked again: they are the
@@ -425,6 +431,7 @@ export class Findings {
       for (const name of [finding.who, short, ...from]) {
         const wanted = canon(name);
         if (wanted.length <= 2 || !text.includes(wanted)) continue;
+        if (canon(this.given).includes(wanted)) continue;
         if (this.list.some((one) => proven.has(one.id) && canon(one.who).includes(wanted))) continue;
         names.add(name);
       }

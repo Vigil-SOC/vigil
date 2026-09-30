@@ -11,6 +11,7 @@ import { assembleSpec, loadArch, parseConfig, parsePlaybook, type RunSpec } from
 import { InProcessState } from "../../core/state.js";
 import { RCA_ACTIONS, RCA_PERMIT, type RcaKinds, type SegmentPayload } from "../../workflows/rca/vocabulary.js";
 import { runRootCause } from "../../workflows/rca/workflow.js";
+import { traceProjection } from "../../workflows/rca/projection.js";
 import { scriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
 
 const RUN = "7d3c2d3e-0000-4000-8000-000000001284";
@@ -98,7 +99,8 @@ function harnessOf(script: readonly ScriptedTurn[], dispatch: ToolDispatch, stat
 const query = (spl: string): ScriptedTurn => ({ calls: [{ tool: "splunk_query", args: JSON.stringify({ spl }) }] });
 const write = (finding: Record<string, string>): ScriptedTurn => ({ calls: [{ tool: "findings", args: JSON.stringify({ op: "write", ...finding }) }] });
 const STOP: ScriptedTurn = { calls: [] };
-const report = (text: string): ScriptedTurn => ({ emit: { action: "FINISH", report: text } });
+const report = (text: string): ScriptedTurn => ({ emit: { action: "FINISH", rationale: "the chain reaches its origin", report: text, next_steps: ["Block the sender"] } });
+const carryOn = (next: string): ScriptedTurn => ({ emit: { action: "CONTINUE", rationale: "the beacon's process is known", next } });
 
 const F1 = { what: "connected to 45.1.2.3", who: "PC1", session: "4242", when: C2._time, evidence: "conn-9" };
 const F2 = { what: "winword.exe opened inv.docm", who: "PC1", session: "4242", when: PROC._time, evidence: "proc-evt-1", why: "F3", link: "inv.docm" };
@@ -221,6 +223,36 @@ describe("a root-cause run", () => {
     expect(notebook.list.map((one) => one.id)).toEqual(["F1", "F2", "F3"]);
     const segments = (await resumed.read(RUN)).filter((one) => one.kind === "segment").map((one) => (one.payload as SegmentPayload).segment);
     expect(segments).toEqual([1, 2]);
+  });
+
+  it("records each CONTINUE as a move with the searches of its stretch, and the projection shows them", async () => {
+    const state = new InProcessState<RcaKinds>();
+    const script: ScriptedTurn[] = [...CHAIN.slice(0, 2), STOP, carryOn("what launched pid 4242"), ...CHAIN.slice(2)];
+    const done = await runRootCause(harnessOf(script, splunk().dispatch, state), { run_id: RUN, run_kind: "root_cause", spec: specOf() });
+    expect(done.status).toBe("completed");
+
+    const view = traceProjection(RUN, await state.read(RUN));
+    expect(view.status).toBe("ended");
+    expect(view.moves.map((m) => [m.action, m.accepted])).toEqual([["CONTINUE", null], ["FINISH", true]]);
+    expect(view.moves[0]).toMatchObject({ rationale: "the beacon's process is known", next: "what launched pid 4242", wrote: ["F1"] });
+    expect(view.moves[0]?.searches.map((q) => q.spl)).toEqual(["index=main sourcetype=net dest=45.1.2.3"]);
+    expect(view.moves[1]?.searches).toHaveLength(2);
+    expect(view.findings.map((f) => f.id)).toEqual(["F1", "F2", "F3"]);
+    expect(view.report_markdown).toBe(REPORT);
+    expect(view.next_steps).toEqual(["Block the sender"]);
+    // One per finding: the row each one's evidence was copied from.
+    expect(view.evidence.map((e) => [e.finding, e.segment, e.row?.["sourcetype"]])).toEqual([["F1", 1, "net"], ["F2", 2, "proc"], ["F3", 2, "mail"]]);
+    expect(view.evidence[0]?.spl).toBe("index=main sourcetype=net dest=45.1.2.3");
+  });
+
+  it("keeps a value the run was given, however the notebook files it", async () => {
+    const state = new InProcessState<RcaKinds>();
+    // The C2 address is in the confirmed finding the run started from; a finding that
+    // records it as an unlinked actor must not make the report hide it.
+    const c2 = { what: "sent a mail", who: "45.1.2.3", session: "none", when: iso(T0 - 30), evidence: "conn-9", why: "unknown" };
+    const script: ScriptedTurn[] = [...CHAIN.slice(0, 6), write(c2), STOP, report("Block 45.1.2.3. " + REPORT)];
+    await runRootCause(harnessOf(script, splunk().dispatch, state), { run_id: RUN, run_kind: "root_cause", spec: specOf({ segments: 1 }) });
+    expect((await state.terminal(RUN))?.summary).toMatch(/^Block 45\.1\.2\.3\./);
   });
 
   it("says up front when the log search is not Splunk, before any model call", async () => {

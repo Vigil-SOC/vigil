@@ -14,7 +14,11 @@ in ``core.workflows.hunt_preflight`` behind its own console route.
 
 from typing import Any, Dict, Optional
 
-from core.workflows.workflows_service import WorkflowsService, is_hunt_like
+from core.workflows.workflows_service import (
+    ROOT_CAUSE_RUN_KIND,
+    WorkflowsService,
+    is_hunt_like,
+)
 
 
 def is_hunt(workflows: WorkflowsService, workflow_id: Optional[str]) -> bool:
@@ -26,6 +30,15 @@ def is_hunt(workflows: WorkflowsService, workflow_id: Optional[str]) -> bool:
         return False
     definition = workflows.get_workflow(str(workflow_id))
     return definition is not None and is_hunt_like(definition.run_kind)
+
+
+def is_trace(workflows: WorkflowsService, workflow_id: Optional[str]) -> bool:
+    """True when a workflow is a root-cause trace, which reports its moves and
+    notebook rather than phase rows or a hunt's beliefs."""
+    if not workflow_id:
+        return False
+    definition = workflows.get_workflow(str(workflow_id))
+    return definition is not None and definition.run_kind == ROOT_CAUSE_RUN_KIND
 
 
 def listing(service: WorkflowsService) -> Dict[str, Any]:

@@ -8,19 +8,32 @@ import type { Survey } from "./survey.js";
 // tracing one confirmed finding, and there are no hypotheses to count.
 export const RCA_PERMIT = "rca_permit";
 
-// The one verb the investigator emits. The arch's schema is checked against it.
-export const RCA_ACTIONS = ["FINISH"] as const;
+// What the investigator emits at the end of every stretch: carry on, saying what it
+// learned and what it checks next, or finish with its report. The moves are the run's
+// reasoning trail, the way a hunt's lead decisions are. Only FINISH halts, and only
+// once the finish gate takes the report.
+export const RCA_ACTIONS = ["CONTINUE", "FINISH"] as const;
+export const RCA_HALTS = ["FINISH"] as const;
 
-export interface ReportEmission {
-  action: "FINISH";
-  report: string;
+export interface Move {
+  action: (typeof RCA_ACTIONS)[number];
+  // What the last stretch established and why it matters for the trace.
+  rationale: string;
+  // CONTINUE: the question the next stretch goes after.
+  next?: string;
+  // FINISH: the report, markdown.
+  report?: string;
+  // FINISH: what a responder should do, most urgent first.
+  next_steps?: string[];
 }
 
-// One stretch of the investigation, ended by a report draft the finish gate either
-// accepted or sent back. The transcript is what the next stretch continues from.
+// One stretch of the investigation and the move that ended it. A FINISH the gate
+// sent back carries why; the transcript is what the next stretch continues from.
 export interface SegmentPayload {
   segment: number;
   transcript: Message[];
+  move: Move;
+  // FINISH only: the report as drafted, and the gate's refusal, null when it was taken.
   draft: string | null;
   refused: string | null;
 }

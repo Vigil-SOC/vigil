@@ -1324,3 +1324,59 @@ describe('the evidence table', () => {
     expect(screen.getByText(/^weakens/).textContent?.replace(/\s+/g, ' ').trim()).toBe('weakens H2 H3')
   })
 })
+
+/* A root-cause trace has no hypotheses: it shows its moves, the searches behind
+   them, its notebook, the report and what to do next. */
+const trace = (over = {}) => ({
+  kind: 'root_cause',
+  status: 'ended',
+  open_checkpoint: null,
+  sources: 3,
+  searches: 2,
+  moves: [
+    { segment: 1, action: 'CONTINUE', rationale: 'pid 4242 beaconed', next: 'what launched pid 4242', accepted: null, refused: null, searches: [{ spl: 'index=main dest=45.1.2.3', rows: 1 }], wrote: ['F1'] },
+    { segment: 2, action: 'FINISH', rationale: 'the chain reaches the mail', next: null, accepted: false, refused: 'refused: 1 why still open: F1', searches: [], wrote: [] },
+  ],
+  current: null,
+  evidence: [{ finding: 'F1', value: 'conn-9', segment: 1, spl: 'index=main dest=45.1.2.3', row: { _time: '2018-08-20T10:02:00Z', sourcetype: 'net', conn_id: 'conn-9' }, raw: '{"conn_id":"conn-9"}' }],
+  findings: [{ id: 'F1', when: '2018-08-20T10:02:00Z', who: 'PC1', session: '4242', what: 'connected to 45.1.2.3', why: 'unknown', evidence: 'conn-9' }],
+  hypotheses: [],
+  next_steps: ['Block the sender'],
+  outcome: 'completed',
+  reason: 'reported after 2 stretch(es), 1 finding(s)',
+  report_markdown: 'The report.',
+  ...over,
+})
+
+describe('what a finished root-cause trace shows an operator', () => {
+  it('offers evidence, moves, findings, report and next steps, and opens on the report', () => {
+    renderPanel({ trace: trace() })
+
+    expect(screen.getByText('The report.')).toBeInTheDocument()
+    for (const name of [/Evidence/, /Moves/, /Findings/, /Report/, /Next steps/]) expect(screen.getByRole('tab', { name })).toBeInTheDocument()
+
+    tabTo(/Moves/)
+    expect(screen.getByText('pid 4242 beaconed')).toBeInTheDocument()
+    expect(screen.getByText(/next: what launched pid 4242/)).toBeInTheDocument()
+    expect(screen.getByText('sent back')).toBeInTheDocument()
+    expect(screen.getByText(/1 why still open: F1/)).toBeInTheDocument()
+
+    tabTo(/Evidence/)
+    // The event the finding rests on, not the search that found it.
+    expect(screen.getByText('connected to 45.1.2.3')).toBeInTheDocument()
+    expect(screen.getByText('net')).toBeInTheDocument()
+
+    tabTo(/Next steps/)
+    expect(screen.getByText('Block the sender')).toBeInTheDocument()
+  })
+
+  it('says it is waiting on a permit, and where to give one', () => {
+    renderPanel({
+      status: 'running',
+      trace: trace({ status: 'waiting', open_checkpoint: { checkpoint_id: 'rca-permit-1', checkpoint_class: 'rca_permit', question: 'Permit a root-cause trace of this finding?' }, moves: [], evidence: [], report_markdown: null, next_steps: [] }),
+    })
+    expect(screen.getByText('Permit a root-cause trace of this finding?')).toBeInTheDocument()
+    expect(screen.getByText(/Pending Approvals/)).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { name: /Next steps/ })).toBeNull()
+  })
+})

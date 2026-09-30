@@ -1209,10 +1209,43 @@ interface HuntView {
    *  never asked -- older runs, and runs whose beliefs named no entity. */
   recall?: HuntRecall | null
 }
+/** A root-cause trace, folded by the agent layer: its moves, each with the searches
+ *  and notebook writes of the stretch it ended, and the findings notebook. */
+interface TraceSearch { spl: string; earliest?: string; latest?: string; rows: number }
+interface TraceMove {
+  segment: number
+  action: 'CONTINUE' | 'FINISH'
+  rationale: string
+  next: string | null
+  accepted: boolean | null
+  refused: string | null
+  searches: TraceSearch[]
+  wrote: string[]
+}
+/** The event a finding rests on: the row its evidence was copied from. */
+interface TraceEvidence { finding: string; value: string; segment: number; spl: string; row: Record<string, unknown> | null; raw: string | null }
+interface TraceFinding { id: string; when: string; who: string; session: string; what: string; why: string; link?: string; evidence: string }
+interface TraceView {
+  kind: 'root_cause'
+  status: 'waiting' | 'running' | 'ended'
+  open_checkpoint: { checkpoint_id: string; checkpoint_class: string; question: string } | null
+  sources: number
+  searches: number
+  moves: TraceMove[]
+  current: { segment: number; searches: TraceSearch[]; wrote: string[] } | null
+  evidence: TraceEvidence[]
+  findings: TraceFinding[]
+  hypotheses: { id: string; text: string; test: string; status: string }[]
+  next_steps: string[]
+  outcome: string | null
+  reason: string | null
+  report_markdown: string | null
+}
 interface WfRunDetail extends WfRun {
   result_summary?: string | null
   phases?: WfPhase[]
   hunt?: HuntView | null
+  trace?: TraceView | null
 }
 
 const RUN_POLL_MS = 5_000
@@ -1392,7 +1425,7 @@ export function RunDetail({ d, onSteered }: { d: WfRunDetail; onSteered: () => v
           <pre className="font-mono text-[11.5px] leading-[1.5] whitespace-pre-wrap m-0" style={{ color: 'var(--crit)' }}>{d.error}</pre>
         </div>
       )}
-      {hunt ? <HuntTabs d={d} hunt={hunt} onReload={onSteered} /> : <ComposeDetail d={d} />}
+      {hunt ? <HuntTabs d={d} hunt={hunt} onReload={onSteered} /> : d.trace ? <TraceTabs d={d} trace={d.trace} /> : <ComposeDetail d={d} />}
       {IN_FLIGHT.includes(d.status) && <Steer runId={d.run_id} hunt={hunt !== null} onSteered={onSteered} />}
     </div>
   )
@@ -2183,6 +2216,228 @@ function RejectPhaseGate({
         </div>
       </div>
     </Popup>
+  )
+}
+
+type TraceTab = 'evidence' | 'moves' | 'findings' | 'report' | 'next'
+
+/** A root-cause trace: the moves it made, as a hunt's decisions are shown, the
+ *  notebook its checks ran over, and the report once the finish gate took one. */
+function TraceTabs({ d, trace }: { d: WfRunDetail; trace: TraceView }) {
+  const report = trace.report_markdown ?? d.result_summary ?? ''
+  const [tab, setTab] = useState<TraceTab>(report === '' ? 'moves' : 'report') // at mount, so a poll cannot move it
+  const evidence = trace.evidence ?? []
+  const steps = trace.next_steps ?? []
+  const tabs: [TraceTab, string, number | null][] = [
+    ...(evidence.length > 0 ? ([['evidence', 'Evidence', evidence.length]] as [TraceTab, string, number][]) : []),
+    ['moves', 'Moves', trace.moves.length],
+    ['findings', 'Findings', trace.findings.length],
+    ['report', 'Report', null],
+    ...(steps.length > 0 ? ([['next', 'Next steps', steps.length]] as [TraceTab, string, number][]) : []),
+  ]
+  const shown = tabs.some(([k]) => k === tab) ? tab : 'moves'
+  return (
+    <>
+      {trace.open_checkpoint && (
+        <div className="modal-section">
+          <h4>Waiting for a permit</h4>
+          <div className="text-[12.5px] leading-[1.5]">{trace.open_checkpoint.question}</div>
+          <div className="muted text-[11.5px] mt-1">Answer it in AI Decisions → Pending Approvals. Nothing is spent until someone does.</div>
+        </div>
+      )}
+      <div className="muted text-[11.5px] mt-2">
+        {trace.sources} source{trace.sources === 1 ? '' : 's'} surveyed · {trace.searches} search{trace.searches === 1 ? '' : 'es'}
+        {trace.reason && !IN_FLIGHT.includes(d.status) && <> · {trace.reason}</>}
+      </div>
+      <div className="detail-tabs" role="tablist" aria-label="Trace views">
+        {tabs.map(([k, label, count]) => (
+          <button key={k} role="tab" aria-selected={shown === k} className={`tab${shown === k ? ' active' : ''}`} onClick={() => setTab(k)}>
+            {label}{count !== null && <span className="mono text-[10.5px] text-tx-3 ml-1.5">{count}</span>}
+          </button>
+        ))}
+      </div>
+      {shown === 'evidence' && <TraceEvidenceList trace={trace} />}
+      {shown === 'moves' && <TraceMoves trace={trace} />}
+      {shown === 'findings' && <TraceFindings trace={trace} />}
+      {shown === 'next' && <TraceNextSteps steps={steps} />}
+      {shown === 'report' && (report === ''
+        ? <div className="muted text-[12.5px] py-3">The report is written when the finish gate takes one, or when the trace runs out of stretches.</div>
+        : <div className="modal-section"><ReportBody md={report} /></div>)}
+    </>
+  )
+}
+
+// The fields that say what an event is, first; then whatever else it carries, short.
+const EVIDENCE_LEAD = ['_time', 'sourcetype', 'host', 'EventCode', 'Operation', 'user', 'UserId', 'Image', 'CommandLine', 'TargetFilename', 'ParentImage', 'src_ip', 'dest_ip', 'ClientIP']
+
+function evidenceFields(row: Record<string, unknown>): [string, string][] {
+  const text = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v))
+  const lead = EVIDENCE_LEAD.filter((k) => row[k] !== undefined && row[k] !== '').map((k): [string, string] => [k, text(row[k])])
+  const rest = Object.entries(row)
+    .filter(([k, v]) => !EVIDENCE_LEAD.includes(k) && !k.startsWith('_') && v !== '' && v !== null)
+    .slice(0, Math.max(0, 8 - lead.length))
+    .map(([k, v]): [string, string] => [k, text(v)])
+  return [...lead, ...rest]
+}
+
+/** What each finding rests on: the event its evidence was copied from. */
+function TraceEvidenceList({ trace }: { trace: TraceView }) {
+  const byId = new Map(trace.findings.map((f) => [f.id, f]))
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="muted text-[11.5px] mb-2">One event per finding: the row its evidence was copied from, as the trace was shown it. A finding cannot cite a value no search returned.</div>
+      <div className="flex flex-col gap-2.5">
+        {trace.evidence.map((e) => {
+          const f = byId.get(e.finding)
+          return (
+            <div key={e.finding} className="rounded-[9px] border border-line-soft bg-bg px-3 py-2.5">
+              <div className="flex gap-2 items-baseline flex-wrap">
+                <span className="mono text-[11px]">{e.finding}</span>
+                {f && <span className="text-[12.5px]">{f.what}</span>}
+              </div>
+              <div className="muted text-[11px] mt-0.5">evidence <span className="mono">{e.value}</span>{e.segment > 0 && <> · stretch {e.segment}</>}</div>
+              {e.row ? (
+                <table className="tbl mt-1.5">
+                  <tbody>
+                    {evidenceFields(e.row).map(([k, v]) => (
+                      <tr key={k}><td className="muted tight mono text-[10.5px]">{k}</td><td className="mono text-[11px] break-all">{v.length > 300 ? `${v.slice(0, 300)}…` : v}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="text-[11px] mt-1" style={{ color: 'var(--high)' }}>No row the trace was shown carries this value.</div>
+              )}
+              {e.raw && (
+                <details className="mt-1">
+                  <summary className="muted text-[11px] cursor-pointer">raw row · from <span className="mono">{e.spl}</span></summary>
+                  <pre className="font-mono text-[10.5px] leading-[1.45] whitespace-pre-wrap break-all m-0 mt-1">{e.raw}</pre>
+                </details>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function TraceNextSteps({ steps }: { steps: string[] }) {
+  return (
+    <div className="hunt-actions">
+      <div className="hunt-actions-head">What to do now</div>
+      <ol className="hunt-actions-list">
+        {steps.map((step, at) => (
+          <li key={at}>
+            <span className="hunt-actions-n">{at + 1}</span>
+            <span>{step}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  )
+}
+
+function TraceSearches({ searches }: { searches: TraceSearch[] }) {
+  if (searches.length === 0) return null
+  return (
+    <details className="mt-1.5">
+      <summary className="muted text-[11px] cursor-pointer">{searches.length} search{searches.length === 1 ? '' : 'es'}</summary>
+      <ul className="m-0 mt-1 pl-4">
+        {searches.map((q, at) => (
+          <li key={at} className="text-[11px] leading-[1.5]">
+            <span className="mono break-all">{q.spl}</span>
+            <span className="muted"> · {q.rows} row{q.rows === 1 ? '' : 's'}{q.earliest || q.latest ? ` · ${q.earliest ?? '…'} → ${q.latest ?? '…'}` : ''}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
+}
+
+function TraceMoves({ trace }: { trace: TraceView }) {
+  if (trace.moves.length === 0 && trace.current === null) {
+    return <div className="muted text-[12.5px] py-3">No moves yet. The first comes at the end of the first stretch of searches.</div>
+  }
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="muted text-[11.5px] mb-2">Newest first. Each move ends a stretch of searches: carry on, or a report the finish gate takes or sends back.</div>
+      <div className="table-wrap">
+        <table className="tbl">
+          <thead><tr><th className="tight">Stretch</th><th className="tight">Move</th><th>Why</th></tr></thead>
+          <tbody>
+            {trace.current && (
+              <tr>
+                <td className="muted tight">{trace.current.segment}</td>
+                <td className="tight"><span className="chip" style={{ fontSize: 10 }}>in progress</span></td>
+                <td>
+                  <span className="muted">Searching…</span>
+                  {trace.current.wrote.length > 0 && <div className="muted text-[11px] mt-0.5">wrote {trace.current.wrote.join(', ')}</div>}
+                  <TraceSearches searches={trace.current.searches} />
+                </td>
+              </tr>
+            )}
+            {[...trace.moves].reverse().map((m) => (
+              <tr key={m.segment}>
+                <td className="muted tight">{m.segment}</td>
+                <td className="tight">
+                  <span className="mono text-[11px]">{m.action}</span>
+                  {m.accepted === true && <div className="text-[10.5px] mt-0.5" style={{ color: 'var(--ok, var(--low))' }}>taken</div>}
+                  {m.accepted === false && <div className="text-[10.5px] mt-0.5" style={{ color: 'var(--high)' }}>sent back</div>}
+                </td>
+                <td>
+                  {m.rationale}
+                  {m.next && <div className="muted text-[11px] mt-0.5">next: {m.next}</div>}
+                  {m.wrote.length > 0 && <div className="muted text-[11px] mt-0.5">wrote {m.wrote.join(', ')}</div>}
+                  {m.refused && <div className="text-[11px] mt-1" style={{ color: 'var(--high)' }}>{m.refused}</div>}
+                  <TraceSearches searches={m.searches} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+// A why that names a finding points back along the chain; anything else is still open.
+const traceCause = (why: string) => /^\s*F\d+\b/.test(why) ? 'cause' : /^\s*origin\b/i.test(why) ? 'origin' : 'open'
+
+function TraceFindings({ trace }: { trace: TraceView }) {
+  if (trace.findings.length === 0) {
+    return <div className="muted text-[12.5px] py-3">The notebook is empty. A finding is written once an event shows when, who and what.</div>
+  }
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="muted text-[11.5px] mb-2">Oldest first. A why is proven only by its link — a value both events carry that did not exist before the cause; the run's checks decide which hold.</div>
+      <div className="table-wrap">
+        <table className="tbl">
+          <thead><tr><th className="tight">Id</th><th className="tight">When</th><th>Who / what</th><th>Why</th><th>Evidence</th></tr></thead>
+          <tbody>
+            {trace.findings.map((f) => (
+              <tr key={f.id}>
+                <td className="mono tight">{f.id}</td>
+                <td className="mono tight text-[11px]">{f.when}</td>
+                <td><span className="mono text-[11px]">{f.who}</span><div className="text-[12px] mt-0.5">{f.what}</div></td>
+                <td>
+                  <span className="chip" style={{ fontSize: 10, color: traceCause(f.why) === 'open' ? 'var(--high)' : undefined }}>{f.why}</span>
+                  {f.link && <div className="muted text-[11px] mt-0.5">via <span className="mono">{f.link}</span></div>}
+                </td>
+                <td className="mono text-[11px] break-all">{f.evidence}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {trace.hypotheses.length > 0 && (
+        <div className="modal-section">
+          <h4>Working hypotheses</h4>
+          <ul className="m-0 pl-4">
+            {trace.hypotheses.map((h) => <li key={h.id} className="text-[12px]">{h.id} ({h.status}): {h.text}</li>)}
+          </ul>
+        </div>
+      )}
+    </div>
   )
 }
 

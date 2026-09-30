@@ -428,6 +428,8 @@ async def get_workflow_run(
     row["phases"] = run_service.list_phases(run_id)
     if catalog.is_hunt(workflows, row.get("workflow_id")):
         row["hunt"] = await read_projection(run_id)
+    elif catalog.is_trace(workflows, row.get("workflow_id")):
+        row["trace"] = await read_projection(run_id)
     return row
 
 

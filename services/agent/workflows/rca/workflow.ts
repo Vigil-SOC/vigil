@@ -18,7 +18,7 @@ import { Findings, type Lookups } from "./findings.js";
 import { isSplunk, quote, splunkSiem, type Siem } from "./siem.js";
 import { renderSurvey, scopeOf, startsOf, survey, type Survey } from "./survey.js";
 import { findingsTool, splunkQueryTool, type ToolContext } from "./tools.js";
-import { RCA_ACTIONS, RCA_PERMIT, type RcaKinds, type ReportEmission, type SegmentPayload } from "./vocabulary.js";
+import { RCA_ACTIONS, RCA_PERMIT, type Move, type RcaKinds, type SegmentPayload } from "./vocabulary.js";
 
 type Event = NewEvent<RcaKinds>;
 
@@ -38,9 +38,10 @@ export interface RcaReport {
   reason: string;
 }
 
-// Stretches of the investigation, each ended by a report draft the finish gate
-// judges. A refusal is carried into the next one; the last draft stands when they run out.
-export const DEFAULT_SEGMENTS = 5;
+// Stretches of the investigation, each ended by a move: carry on, or a report the
+// finish gate judges. A refusal is carried into the next one; the last draft stands
+// when they run out.
+export const DEFAULT_SEGMENTS = 15;
 // Refusals stop once this much of the cost ceiling is gone, so a run always has
 // room left to write the report it is going to be held to.
 const REFUSE_UNTIL = 0.8;
@@ -75,7 +76,7 @@ export async function runRootCause(harness: Harness<RcaKinds>, options: RcaOptio
   if (surveyed === undefined) await append(harness, options, [event(options, "survey", found)]);
   if (found.error !== undefined) return end(harness, options, "failed", `the log store could not be surveyed: ${found.error}`);
 
-  const findings = new Findings(lookupsFor(siem, found, options.signal));
+  const findings = new Findings(lookupsFor(siem, found, options.signal), spec.prompt);
   let searches = 0;
   for (const one of events) {
     if (one.kind !== "query") continue;
@@ -113,37 +114,46 @@ export async function runRootCause(harness: Harness<RcaKinds>, options: RcaOptio
   let draft = segments.map((one) => one.draft).filter((one): one is string => one !== null).at(-1) ?? null;
   // Accepted, then the process died before the terminal: the report already stands.
   const last = segments.at(-1);
-  if (last !== undefined && last.refused === null && last.draft !== null) {
+  if (last !== undefined && last.draft !== null && last.refused === null) {
     return end(harness, options, "completed", `reported after ${last.segment} stretch(es), ${findings.list.length} finding(s)`, findings.redact(last.draft));
   }
 
   for (let segment = segments.length + 1; segment <= ceiling; segment += 1) {
-    const outcome = await drain(streamTurn<ReportEmission, RcaKinds>(turnFor(options, lead.prompt, task, lead.output_schema, history), own));
+    // The last stretch is told so: a trace that ends on CONTINUE has no report.
+    const final = segment === ceiling ? [{ role: "user" as const, content: LAST_STRETCH }] : [];
+    const asked = [...history, ...final];
+    const outcome = await drain(streamTurn<Move, RcaKinds>(turnFor(options, lead.prompt, task, lead.output_schema, asked), own));
     if (outcome.status === "waiting_approval") {
       if (outcome.pending !== null) await announceOpen(harness.state, run_id, options.run_kind, outcome.pending.checkpoint_id, options.announce ?? noAnnounce);
       return { status: "waiting_approval", reason: outcome.reason };
     }
     if (outcome.status === "failed" || outcome.value === null) {
       if (outcome.refusal === null) return end(harness, options, "failed", outcome.reason);
-      return draft === null
-        ? end(harness, options, "budget_exhausted", outcome.reason, fallback(findings))
-        : end(harness, options, "budget_exhausted", outcome.reason, findings.redact(draft));
+      return end(harness, options, "budget_exhausted", outcome.reason, draft === null ? fallback(findings) : findings.redact(draft));
     }
 
-    draft = outcome.value.report;
-    const spent = harness.budget.spent.cost_usd;
-    const budgetLeft = segment < ceiling && spent < harness.budget.limits.max_cost_usd * REFUSE_UNTIL;
-    const refused = findings.gate(draft, budgetLeft) ?? null;
+    const move = outcome.value;
+    // From history's end, so the last-stretch notice is carried with the stretch it opened.
     const added = outcome.transcript.slice(history.length);
-    const carried: Message[] =
-      refused === null
-        ? added
-        : [...added, { role: "assistant", content: JSON.stringify(outcome.value), tool_calls: [] }, { role: "user", content: `${refused} Run the searches that settle it, then report again.` }];
+    const said: Message = { role: "assistant", content: JSON.stringify(move), tool_calls: [] };
+    let refused: string | null = null;
+    let carried: Message[];
+    const finishing = move.action === "FINISH" && typeof move.report === "string" && move.report.trim() !== "";
+    if (finishing) {
+      draft = move.report!;
+      const budgetLeft = segment < ceiling && harness.budget.spent.cost_usd < harness.budget.limits.max_cost_usd * REFUSE_UNTIL;
+      refused = findings.gate(draft, budgetLeft) ?? null;
+      carried = refused === null ? added : [...added, said, { role: "user", content: `${refused} Run the searches that settle it, then report again.` }];
+    } else {
+      carried = [...added, said, { role: "user", content: "Carry on with what you said you would check next." }];
+    }
     await append(harness, options, [
-      event(options, "segment", { segment, transcript: carried, draft, refused }),
+      event(options, "segment", { segment, transcript: carried, move, draft: finishing ? draft : null, refused }),
       event(options, "notebook", findings.snapshot()),
     ]);
-    if (refused === null) return end(harness, options, "completed", `reported after ${segment} stretch(es), ${findings.list.length} finding(s)`, findings.redact(draft));
+    if (finishing && refused === null) {
+      return end(harness, options, "completed", `reported after ${segment} stretch(es), ${findings.list.length} finding(s)`, findings.redact(draft!));
+    }
     history = [...history, ...carried];
   }
 
@@ -151,6 +161,8 @@ export async function runRootCause(harness: Harness<RcaKinds>, options: RcaOptio
   const reason = `ran out of stretches with ${unanswered} why${unanswered === 1 ? "" : "s"} open; the last report stands`;
   return end(harness, options, "completed", reason, draft === null ? fallback(findings) : findings.redact(draft));
 }
+
+const LAST_STRETCH = "This is your last stretch. Settle what you can, then FINISH with your report: the proven chain, what is still open and why, and what to close first.";
 
 // The first capability-bound log search the config carries, as its declared spec.
 function telemetryOf(spec: RunSpec): ToolSpec | undefined {
