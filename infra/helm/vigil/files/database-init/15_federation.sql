@@ -3,7 +3,7 @@
 --
 -- Each row represents one data source (Splunk, CrowdStrike, etc.) that the
 -- daemon's federation poller pulls from on a configurable cadence. Rows are
--- auto-seeded on daemon boot from configured integrations (default disabled);
+-- auto-seeded on daemon boot from configured integrations, switched on;
 -- the global on/off lives in `system_config` under key `federation.settings`.
 
 CREATE TABLE IF NOT EXISTS federation_sources (
@@ -37,7 +37,9 @@ CREATE INDEX IF NOT EXISTS idx_federation_sources_enabled
 -- — leaving the federation feature silently unconfigured on every fresh
 -- docker-compose stack.
 
--- Seed the global federation toggle (off by default — opt-in feature).
+-- Seed the global federation toggle off. The daemon's first boot switches it
+-- on, once (core/federation/seed.py apply_default_on): Federation is the only
+-- path that polls a source.
 INSERT INTO system_config (key, value, description, config_type)
 VALUES (
     'federation.settings',

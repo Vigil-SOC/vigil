@@ -44,7 +44,6 @@ class TaskScheduler:
         self._tasks: List[ScheduledTask] = []
         # The processor's input queue; probes go on it like polled findings.
         self._processor_queue: Optional[asyncio.Queue] = None
-        self._shutdown = asyncio.Event()
 
         # Services (lazy loaded)
         self._data_service = None
@@ -176,7 +175,6 @@ class TaskScheduler:
     async def run(self, shutdown_event: asyncio.Event):
         """Run the scheduler loop."""
         logger.info("Task scheduler starting...")
-        self._shutdown = shutdown_event
         self._init_services()
         # The Claude service prices its calls from this process's own copy of
         # the gateway's rates.
@@ -404,9 +402,7 @@ class TaskScheduler:
             return 0
         scored = await asyncio.to_thread(score_probes, self._data_service)
         self.stats["probes_scored"] += scored
-        injected = await inject_probes(
-            self._processor_queue, self._data_service, self._shutdown
-        )
+        injected = await inject_probes(self._processor_queue, self._data_service)
         self.stats["probes_injected"] += injected
         return injected
 

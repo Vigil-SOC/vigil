@@ -134,6 +134,16 @@ class TestTheSweep:
         assert await inject_probes(queue, _Data(today)) == 0
         assert queue.empty()
 
+    async def test_a_full_hand_off_is_not_waited_on(self):
+        # A wait would hold every other scheduled task behind the sweep.
+        queue: asyncio.Queue = asyncio.Queue(maxsize=1)
+        queue.put_nowait("already waiting")
+
+        assert await asyncio.wait_for(inject_probes(queue, _Data()), timeout=1) == 0
+
+        queue.get_nowait()
+        assert await inject_probes(queue, _Data()) == 1
+
 
 class TestScoring:
     beacon, patch_window, travel = PROBES

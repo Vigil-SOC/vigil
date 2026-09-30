@@ -11,7 +11,8 @@ Design notes (locked decisions from MVP plan):
 * On by default: the first boot switches Federation and every configured
   source on, once (:func:`core.federation.seed.apply_default_on`).
 * No backfill on cold start — first run yields nothing, only finds events
-  created after the source is enabled.
+  created after the source is enabled. The one exception is a source the
+  upgrade switches on, which resumes where its legacy loop stopped.
 * No auto-disable on errors — backoff up to 8x interval, no row mutation
   beyond ``consecutive_errors`` and ``last_error``.
 * Per-source severity floor honored at ingest time (filter before enqueue).
@@ -38,8 +39,8 @@ logger = logging.getLogger(__name__)
 
 _SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
-# Not zero: the hand-off to the processor has no size limit yet, so a source
-# catching up must not outrun it.
+# Not zero: a source catching up pages its vendor's API back to back, and the
+# hand-off's size limit paces the processor, not those calls.
 _CATCH_UP_SECONDS = 5
 
 _SETUP_RETRY_FIRST_SECONDS = 5.0
