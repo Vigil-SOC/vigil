@@ -33,4 +33,11 @@ describe("the virtual key reader", () => {
     expect(await vk()).toBeNull();
     expect(await vk()).toBe("sk-bf-x");
   });
+
+  it("gives up on a backend that never answers rather than holding the model call", async () => {
+    const hung = ((_url: string, init: RequestInit) =>
+      new Promise((_resolve, reject) => init.signal?.addEventListener("abort", () => reject(init.signal?.reason)))) as unknown as typeof globalThis.fetch;
+    const vk = httpVirtualKey({ url: "http://backend/internal/pricing", token: "t", ttlMs: 1000, timeoutMs: 20, fetch: hung, warn: () => {} });
+    expect(await vk()).toBeNull();
+  });
 });

@@ -11,6 +11,9 @@ export interface VirtualKeyOptions {
   // The backend's refresh interval, as for prices: a key changed in Settings
   // reaches agent traffic within one of these.
   ttlMs: number;
+  // The lookup sits inside the model call's limiter slot, so a hung backend must
+  // cost a few seconds and no header, not the fetch default of minutes.
+  timeoutMs?: number;
   fetch?: typeof globalThis.fetch;
   now?: () => number;
   warn?: (message: string) => void;
@@ -31,6 +34,7 @@ export function httpVirtualKey(options: VirtualKeyOptions): VirtualKey {
     try {
       const response = await call(url, {
         headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
+        signal: AbortSignal.timeout(options.timeoutMs ?? 5_000),
       });
       if (!response.ok) throw new Error(`answered ${response.status}`);
       const body = (await response.json()) as { vk?: unknown } | null;
