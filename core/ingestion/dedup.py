@@ -54,6 +54,10 @@ class RedisDedupSet:
 
         self._redis = None
         self._fallback: set[str] = set()
+        # Ids we tried to forget while Redis rejected the zrem. Checked before
+        # the sorted set so a failed delete cannot leave the id looking handled.
+        # mark_processed clears an id here — a later successful enqueue sticks.
+        self._pending_forget: set[str] = set()
         self._fallback_warned = False
         self._lock = asyncio.Lock()
 
@@ -86,6 +90,10 @@ class RedisDedupSet:
     async def is_processed(self, finding_id: str) -> bool:
         if not finding_id:
             return False
+        if finding_id in self._pending_forget:
+            if await self._remove_from_redis(finding_id):
+                self._pending_forget.discard(finding_id)
+            return False
         r = await self._get_redis()
         if r is None:
             return finding_id in self._fallback
@@ -99,6 +107,7 @@ class RedisDedupSet:
     async def mark_processed(self, finding_id: str) -> None:
         if not finding_id:
             return
+        self._pending_forget.discard(finding_id)
         now = time.time()
         r = await self._get_redis()
         if r is None:
@@ -121,6 +130,36 @@ class RedisDedupSet:
             self._warn_fallback(f"zadd error: {e}")
             self._redis = None
             self._fallback.add(finding_id)
+
+    async def forget(self, finding_id: str) -> None:
+        """Drop one id so a later poll can enqueue it again.
+
+        Removes it from Redis (``zrem``) and from this instance's in-memory
+        fallback. Another ``RedisDedupSet`` does not share that fallback, so
+        the caller must be the instance that marked the id. A failed ``zrem``
+        stays pending on this instance until a later call succeeds, so
+        ``is_processed`` does not read the member back out of Redis.
+        """
+        if not finding_id:
+            return
+        self._fallback.discard(finding_id)
+        if await self._remove_from_redis(finding_id):
+            self._pending_forget.discard(finding_id)
+            return
+        self._pending_forget.add(finding_id)
+
+    async def _remove_from_redis(self, finding_id: str) -> bool:
+        """True when Redis accepted the delete. False when it could not."""
+        r = await self._get_redis()
+        if r is None:
+            return False
+        try:
+            await r.zrem(self.key, finding_id)
+            return True
+        except Exception as e:
+            self._warn_fallback(f"zrem error: {e}")
+            self._redis = None
+            return False
 
     async def size(self) -> int:
         r = await self._get_redis()
