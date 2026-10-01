@@ -227,6 +227,21 @@ export const exclusionsApi = {
     api.post<IpExclusion>(`/exclusions/${encodeURIComponent(id)}/remove`, { reason: reason || null }),
 }
 
+export interface CaseRecordRow {
+  id: string
+  at: string
+  kind: string
+  source: string
+  chained: boolean
+  text: string
+}
+
+export interface CaseRecordResponse {
+  run_id: string | null
+  investigation_id: string | null
+  rows: CaseRecordRow[]
+}
+
 export const casesApi = {
   getAll: (params?: {
     status?: string
@@ -327,8 +342,12 @@ export const casesApi = {
   escalate: (id: string, data: Schema<'EscalationAdd'>) =>
     api.post<Schema<'CaseSuccessResponse'>>(`/cases/${id}/escalate`, data),
 
-  // No /cases/{id}/audit-log route — left untyped on purpose. See #699.
-  getAuditLog: (id: string) => api.get(`/cases/${id}/audit-log`),
+  getEscalations: (id: string) =>
+    api.get<Schema<'CaseEscalationsResponse'>>(`/cases/${id}/escalations`),
+
+  // The merged record. There is no audit-log route; this read replaced it.
+  getRecord: (id: string) =>
+    api.get<CaseRecordResponse>(`/cases/${id}/record`),
 
   merge: (targetCaseId: string, sourceCaseId: string) =>
     api.post<Schema<'CaseMergeResponse'>>(`/cases/${targetCaseId}/merge`, {
@@ -991,6 +1010,8 @@ export const workflowApi = {
   // the agent side, so it is asked for on a click and never on the getRun poll.
   getReplay: (runId: string, decisionId: string) =>
     api.get<ReplayReport>(`/workflows/runs/${runId}/replay`, { params: { decision_id: decisionId } }),
+  replayRun: (runId: string) => api.get(`/workflows/runs/${runId}/replay`),
+  verifyRun: (runId: string) => api.get(`/workflows/runs/${runId}/verify`),
   // Hides a finished run from History. The row and its ledger stay: what the
   // agents did is still auditable by run_id after an operator tidies the list.
   deleteRun: (runId: string) => api.delete(`/workflows/runs/${runId}`),

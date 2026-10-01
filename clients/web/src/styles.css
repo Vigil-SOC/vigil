@@ -1979,6 +1979,92 @@
       animation: soc-fade .18s ease;
    }
 
+   .case-stage {
+      display: flex;
+      flex: 1;
+      min-height: 0;
+   }
+
+   .case-side {
+      flex: 0 0 280px;
+      width: 280px;
+      border-left: 1px solid var(--line);
+      overflow-y: auto;
+      padding: 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      font-size: 13px;
+   }
+
+   .case-side .k {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--tx-3);
+      margin-bottom: 2px;
+   }
+
+   .case-ask {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      padding: 12px 24px;
+      border-top: 1px solid var(--line);
+   }
+
+   .case-ask input { flex: 1; }
+
+   .case-count {
+      margin-left: 4px;
+      color: var(--tx-faint);
+      font-variant-numeric: tabular-nums;
+   }
+
+   .case-trust {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--tx-3);
+   }
+
+   .case-mark {
+      display: inline-flex;
+      vertical-align: middle;
+      margin-left: 6px;
+      color: var(--tx-3);
+   }
+
+   .case-later {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+      opacity: 0.55;
+      padding: 6px 0;
+   }
+
+   .case-doors, .case-actions, .case-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+   }
+
+   .case-record {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+   }
+
+   .case-record > div { flex: 1; min-width: 0; }
+
+   .case-fold > summary {
+      cursor: pointer;
+      font-weight: 600;
+      margin: 4px 0;
+   }
+
    /* flex-shrink:0 is essential: without it the cards compress to fit the
      panel (a flex column squishes its children) instead of keeping their
      natural height and letting .detail-body scroll. */

@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
-import { Markdown } from '../../shared/Markdown'
-import { timelineApi, caseSearchApi, casesApi } from '../../services/api'
+import { caseSearchApi, casesApi } from '../../services/api'
 import { mapApiCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -11,20 +9,8 @@ import { useCases, useCaseDetail, type Phase } from './useCases'
 import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
-import {
-  inputCls,
-  SectionCard,
-  EvidenceCard,
-  ResolutionStepsCard,
-  TasksCard,
-  SLACard,
-  CommentsCard,
-  WatchersCard,
-  IOCsCard,
-  RelatedCasesCard,
-  AuditLogCard,
-  ActivityCard,
-} from './CaseSections'
+import { inputCls } from './CaseSections'
+import { CasePage } from './CasePage'
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1)
 
@@ -32,11 +18,6 @@ function caseActionError(error: unknown, fallback: string): string {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
   if (typeof detail === 'string' && detail.trim()) return detail
   return (error as { message?: string })?.message || fallback
-}
-
-function casePrompt(c: CaseRow): string {
-  const tactic = c.tactic !== '—' ? `, primary tactic ${c.tactic}` : ''
-  return `Investigate case ${c.id}: "${c.title}" — ${c.prio} priority, status ${c.status}, ${c.findings} linked findings${tactic}. Summarize the case and recommend next steps.`
 }
 
 type SortKey = 'id' | 'title' | 'status' | 'prio' | 'ownerName' | 'findings' | 'tactic' | 'age' | 'sla' | 'updated'
@@ -82,128 +63,6 @@ function Th({ label, k, sort, onSort }: { label: string; k: SortKey; sort: SortS
   )
 }
 
-type CaseTab = 'Overview' | 'Investigation' | 'Resolution' | 'Collaboration' | 'Details'
-const CASE_TABS: CaseTab[] = ['Overview', 'Investigation', 'Resolution', 'Collaboration', 'Details']
-
-type DetailData = ReturnType<typeof useCaseDetail>
-
-function Metrics({ findings, crit, high, sla }: { findings: number; crit: number; high: number; sla: string }) {
-  return (
-    <div className="bg-panel border border-line rounded-lg overflow-hidden">
-      <div className="kpi-strip">
-        <div className="kpi"><div className="k-label">Total findings</div><div className="k-row"><span className="k-val">{findings}</span></div></div>
-        <div className="kpi"><div className="k-label">Critical</div><div className="k-row"><span className="k-val crit">{crit}</span></div></div>
-        <div className="kpi"><div className="k-label">High</div><div className="k-row"><span className="k-val high">{high}</span></div></div>
-        <div className="kpi"><div className="k-label">SLA remaining</div><div className="k-row"><span className="k-val" style={{ fontSize: 18 }}>{sla}</span></div></div>
-      </div>
-    </div>
-  )
-}
-
-function CaseDetailsCard({ c, created }: { c: CaseRow | null; created: string }) {
-  return (
-    <SectionCard title="Case details">
-      <div className="p-[18px]">
-        <div className="mb-[15px]">
-          <div className="text-xs text-tx-3 mb-[5px]">Description</div>
-          {c?.desc ? (
-            <div className="text-[13px] leading-[1.55]"><Markdown>{c.desc}</Markdown></div>
-          ) : (
-            <div className="text-[13px] leading-[1.55] text-tx-3">No description provided.</div>
-          )}
-        </div>
-        <div className="kv-grid">
-          <span className="k">Status</span><span className="v"><span className={`status ${c?.status ?? 'open'}`}>{c?.status ?? '—'}</span></span>
-          <span className="k">Priority</span><span className="v"><span className={`prio ${c?.prio ?? 'medium'}`}>{c ? cap(c.prio) : '—'}</span></span>
-          <span className="k">Created</span><span className="v">{created}</span>
-          <span className="k">Primary tactic</span><span className="v"><span className="tag">{c?.tactic ?? '—'}</span></span>
-          <span className="k">Assignee</span><span className="v">{c?.ownerName ?? '—'}</span>
-        </div>
-      </div>
-    </SectionCard>
-  )
-}
-
-function FindingsCard({ total, linked, phase }: { total: number; linked: DetailData['linked']; phase: Phase }) {
-  return (
-    <SectionCard title="Linked findings" count={`${total} total`} wide>
-      <div className="table-wrap">
-        <table className="tbl">
-          <thead><tr><th>Finding ID</th><th>Severity</th><th>Technique</th><th>Time</th></tr></thead>
-          <tbody>
-            {phase === 'loading' && (
-              <tr><td colSpan={4}><EmptyState loading table compact icon="search" title="Loading findings…" /></td></tr>
-            )}
-            {phase === 'ready' && linked.length === 0 && (
-              <tr><td colSpan={4}><EmptyState table compact icon="shield" title="No findings linked" body="Attach findings to this case to keep investigation evidence in one place." /></td></tr>
-            )}
-            {linked.map((f) => (
-              <tr key={f.id}>
-                <td><span className="id-cell">{f.id}</span></td>
-                <td><span className={`sev ${f.sev.toLowerCase()}`}><span className="dot" />{f.sev}</span></td>
-                <td><span className="tag">{f.tech}</span></td>
-                <td className="muted">{f.time}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </SectionCard>
-  )
-}
-
-/* Aggregated case timeline — creation + findings + activities + notes +
-   workflow events, from GET /timeline/case/{id} (same source the old UI
-   used). Rendered as the lightweight .timeline list, not the vis-timeline. */
-type TlEvent = { content: string; start: string; severity?: string | null }
-function TimelineCard({ caseId }: { caseId: string }) {
-  const [events, setEvents] = useState<TlEvent[]>([])
-  const [phase, setPhase] = useState<Phase>('loading')
-
-  const load = useCallback(() => {
-    let cancelled = false
-    setPhase('loading')
-    timelineApi
-      .getCaseTimeline(caseId)
-      .then((r) => {
-        if (cancelled) return
-        const evs = ((r.data?.events as TlEvent[]) || []).filter((e) => e.content)
-        setEvents(evs)
-        setPhase('ready')
-      })
-      .catch(() => !cancelled && setPhase('error'))
-    return () => {
-      cancelled = true
-    }
-  }, [caseId])
-
-  useEffect(() => load(), [load])
-
-  const fmt = (s: string) => {
-    const d = new Date(s)
-    return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d · HH:mm')
-  }
-
-  return (
-    <SectionCard title="Timeline" count={phase === 'ready' ? `${events.length} events` : undefined}>
-      <div className="p-[18px]">
-        {phase === 'loading' && <EmptyState loading compact icon="clock" title="Loading timeline…" />}
-        {phase === 'error' && <EmptyState error compact icon="alert" title="Couldn’t load the timeline" primary={{ label: 'Retry', onClick: load, icon: 'refresh' }} />}
-        {phase === 'ready' && events.length === 0 && <EmptyState compact icon="clock" title="No timeline events" body="Case activity, findings, comments, and workflow events will appear here." />}
-        {phase === 'ready' && events.length > 0 && (
-          <div className="timeline">
-            {events.map((e, i) => (
-              <div key={i} className={`tl-item${e.severity === 'critical' ? ' crit' : ''}`}>
-                <div className="tl-time">{fmt(e.start)}</div>
-                <div className="tl-txt">{e.content}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </SectionCard>
-  )
-}
 
 export default function CasesScreen({ openChat, setViewFull }: ConsoleScreenProps) {
   // the open case is a ?case=<id> param, so a detail view is deep-linkable
@@ -983,13 +842,12 @@ export function CasesDetail({
   openChat: (prompt?: string) => void
   reloadList: () => void
 }) {
-  const { row, created, linked, sev, activities, resolutionSteps, phase, error, reload: reloadDetail } =
+  const { row, created, combinedState, investigations, closure, phase, error, reload: reloadDetail } =
     useCaseDetail(id)
   const { hasPermission } = useAuth()
   const canDelete = hasPermission('cases.delete')
   // prefer the freshly-fetched detail; fall back to the list row while it loads
   const c = row || rows.find((x) => x.id === id) || null
-  const [tab, setTab] = useState<CaseTab>('Overview')
   const [listQuery, setListQuery] = useState('')
   const [action, setAction] = useState<'edit' | 'merge' | 'delete' | null>(null)
 
@@ -1003,44 +861,6 @@ export function CasesDetail({
         r.ownerName.toLowerCase().includes(q),
     )
   }, [rows, listQuery])
-
-  // header + tab bar stay pinned; only the active tab's body scrolls
-  const groups = {
-    Overview: (
-      <>
-        <Metrics findings={c?.findings ?? 0} crit={sev.critical} high={sev.high} sla={c?.sla ?? '—'} />
-        <CaseDetailsCard c={c} created={created} />
-        <ActivityCard activities={activities} />
-      </>
-    ),
-    Investigation: (
-      <>
-        <FindingsCard total={c?.findings ?? 0} linked={linked} phase={phase} />
-        <TimelineCard caseId={id} />
-        <EvidenceCard caseId={id} />
-      </>
-    ),
-    Resolution: (
-      <>
-        <ResolutionStepsCard steps={resolutionSteps} />
-        <TasksCard caseId={id} />
-        <SLACard caseId={id} />
-      </>
-    ),
-    Collaboration: (
-      <>
-        <CommentsCard caseId={id} />
-        <WatchersCard caseId={id} />
-      </>
-    ),
-    Details: (
-      <>
-        <IOCsCard caseId={id} />
-        <RelatedCasesCard caseId={id} rows={rows} onSelect={onSelect} />
-        <AuditLogCard caseId={id} />
-      </>
-    ),
-  } satisfies Record<CaseTab, ReactNode>
 
   return (
     <div className="split">
@@ -1082,58 +902,23 @@ export function CasesDetail({
           ))}
         </div>
       </div>
-      <div className="detail-pane">
-        <div className="detail-head">
-          <div className="dh-crumb">
-            <button className="back" onClick={onBack}><Icon name="chevL" size={13} /> All cases</button>
-            <span>/</span><span className="mono">{id}</span>
-          </div>
-          {phase === 'error' ? (
-            <div className="muted" style={{ padding: '6px 0' }}>Couldn’t load this case: {error}</div>
-          ) : c ? (
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
-              <div style={{ flex: 1 }}>
-                <h2>{c.title}</h2>
-                <div className="dh-meta">
-                  <span className={`status ${c.status}`}>{c.status}</span>
-                  <span className={`prio ${c.prio}`}>{cap(c.prio)} priority</span>
-                  <span><Icon name="clock" size={13} /> SLA {c.sla}</span>
-                  <span className="assignee"><span className="avatar">{c.owner}</span>{c.ownerName}</span>
-                  <span>{c.findings} linked findings</span>
-                </div>
-              </div>
-              <div className="dh-actions">
-                <button className="btn ghost" onClick={() => setAction('edit')}><Icon name="edit" /> Edit</button>
-                <button className="btn ghost" onClick={() => setAction('merge')}><Icon name="link" /> Merge</button>
-                {canDelete && (
-                  <button className="btn danger" onClick={() => setAction('delete')}>
-                    <Icon name="trash" /> Delete case
-                  </button>
-                )}
-                <button className="btn primary to-vigil-case" onClick={() => openChat(casePrompt(c))}><Icon name="brain" /> Open in Vigil</button>
-              </div>
-            </div>
-          ) : (
-            <div className="muted" style={{ padding: '6px 0' }}>Loading case…</div>
-          )}
-        </div>
-        <nav className="detail-tabs" role="tablist" aria-label="Case detail sections">
-          {CASE_TABS.map((t) => (
-            <button
-              key={t}
-              role="tab"
-              aria-selected={tab === t}
-              className={`tab${tab === t ? ' active' : ''}`}
-              onClick={() => setTab(t)}
-            >
-              {t}
-            </button>
-          ))}
-        </nav>
-        <div className="detail-body" key={tab}>
-          {groups[tab]}
-        </div>
-      </div>
+      <CasePage
+        id={id}
+        c={c}
+        created={created}
+        combinedState={combinedState}
+        investigations={investigations}
+        closure={closure}
+        phase={phase}
+        error={error}
+        openChat={openChat}
+        onBack={onBack}
+        onEdit={() => setAction('edit')}
+        onMerge={() => setAction('merge')}
+        onDelete={() => setAction('delete')}
+        canDelete={canDelete}
+        onChanged={() => { reloadDetail(); reloadList() }}
+      />
 
       <EditCaseDialog
         open={action === 'edit'}
