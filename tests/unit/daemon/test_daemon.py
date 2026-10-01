@@ -427,6 +427,26 @@ class TestConfiguredFloors:
         assert responder.stats["reused"] == 0
 
     @pytest.mark.asyncio
+    async def test_failed_isolation_is_not_counted_as_auto_executed(self, caplog):
+        """#1276: a failed isolation must not be logged or counted as contained."""
+        finding = {
+            "finding_id": "f-1276",
+            "severity": "critical",
+            "triage_confidence": 0.95,
+            "entity_context": {"src_ips": ["10.0.0.5"]},
+        }
+        responder = self._responder()
+        responder._response_service.create_isolation_action.return_value = {
+            "status": "failed",
+            "action_id": "action-failed",
+            "result": {"success": False, "error": "unsupported_action_type"},
+        }
+        with caplog.at_level("INFO", logger="services.daemon.responder"):
+            await responder._evaluate_response(finding)
+        assert responder.stats["auto_executed"] == 0
+        assert "Auto-executed" not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_processor_queues_at_review_threshold(self):
         from services.daemon.config import ResponseConfig
 

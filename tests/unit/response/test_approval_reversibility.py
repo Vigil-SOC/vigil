@@ -261,3 +261,63 @@ class TestIpLessIsolationKey:
         action = response.approval_service.get_action(first["action_id"])
         assert action is not None
         assert action.idempotency_key == "isolate_host:host:host-c"
+
+
+class TestUnwiredIsolation:
+    """#1276: the isolation stub must not record a containment that never ran."""
+
+    def test_auto_approved_isolation_is_recorded_failed(self):
+        response = AutonomousResponseService()
+        response.approval_service.force_manual_approval = False
+        result = response.create_isolation_action(
+            ip_address="10.0.0.5",
+            hostname="host-a",
+            confidence=0.95,
+            reason="test",
+            evidence=["ev-1"],
+            correlation_data={"indicators": [], "reasoning": []},
+        )
+        assert result["status"] == ActionStatus.FAILED.value
+        assert result["result"]["success"] is False
+        assert result["result"]["error"] == "unsupported_action_type"
+        action = response.approval_service.get_action(result["action_id"])
+        assert action is not None
+        assert action.status == ActionStatus.FAILED.value
+        assert action.execution_result == {"error": "unsupported_action_type"}
+
+        retry = response.create_isolation_action(
+            ip_address="10.0.0.5",
+            hostname="host-a",
+            confidence=0.95,
+            reason="test",
+            evidence=["ev-1"],
+            correlation_data={"indicators": [], "reasoning": []},
+        )
+        assert retry["action_id"] != result["action_id"]
+        assert retry["status"] == ActionStatus.FAILED.value
+
+    def test_analyst_approved_isolation_is_recorded_failed(self):
+        response = AutonomousResponseService()
+        response.approval_service.force_manual_approval = False
+        created = response.create_isolation_action(
+            ip_address="10.0.0.6",
+            hostname="host-b",
+            confidence=0.50,
+            reason="test",
+            evidence=["ev-1"],
+            correlation_data={"indicators": [], "reasoning": []},
+        )
+        assert created["status"] == "pending_approval"
+        approved = response.approval_service.approve_action(created["action_id"])
+        assert approved is not None
+        assert approved.status == ActionStatus.APPROVED.value
+
+        results = response.execute_approved_actions()
+        match = [r for r in results if r["action_id"] == created["action_id"]]
+        assert len(match) == 1
+        assert match[0]["result"]["success"] is False
+        assert match[0]["result"]["error"] == "unsupported_action_type"
+        action = response.approval_service.get_action(created["action_id"])
+        assert action is not None
+        assert action.status == ActionStatus.FAILED.value
+        assert action.execution_result == {"error": "unsupported_action_type"}
