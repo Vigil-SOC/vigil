@@ -446,6 +446,38 @@ jobs:
         run: npm test
 
   # ============================================================================
+  # Column snapshot must not change inside a patch release
+  # ============================================================================
+  # A PR that only updates the snapshot (VERSION untouched) stays green. The
+  # release PR is what fails: VERSION moved, major.minor did not, and the
+  # snapshot differs from the previous v* tag.
+  schema-snapshot-patch-gate:
+    name: Schema Snapshot Patch Gate
+    if: github.repository == 'Vigil-SOC/vigil' && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Default checkout is depth 1 and does not fetch tags, so
+          # `git show v0.6.0:<snapshot>` cannot resolve the tag. Full history
+          # makes the three-dot VERSION diff against the PR base work; tags
+          # are fetched explicitly below.
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch release tags
+        # An unknown tag fails the gate. A tag that resolves but whose tree
+        # has no snapshot file is the bootstrap pass. Fetching is what makes
+        # those two outcomes different; a shallow clone reports both as an
+        # unknown object.
+        run: git fetch --force --tags origin
+
+      - name: Fail a patch release that changes the column snapshot
+        env:
+          SCHEMA_GATE_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/check_schema_snapshot_patch.py
+
+  # ============================================================================
   # Integration Tests
   # ============================================================================
   test-integration:

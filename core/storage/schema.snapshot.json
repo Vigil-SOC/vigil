@@ -1,0 +1,2748 @@
+{
+  "agent_directives": {
+    "actor": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "directive_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "bigint",
+      "nullable": false
+    },
+    "kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "payload": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "run_id": {
+      "data_type": "uuid",
+      "nullable": false
+    }
+  },
+  "agent_events": {
+    "event_hash": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "payload": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "prev_hash": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "run_id": {
+      "data_type": "uuid",
+      "nullable": false
+    },
+    "run_kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "schema_version": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "seq": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "snapshot": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "ts": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    }
+  },
+  "agent_run_leases": {
+    "claim_until": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "owner": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "run_id": {
+      "data_type": "uuid",
+      "nullable": false
+    },
+    "run_kind": {
+      "data_type": "text",
+      "nullable": false
+    }
+  },
+  "ai_decision_logs": {
+    "accuracy_grade": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "action_appropriateness": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "actual_outcome": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "agent_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "confidence_score": {
+      "data_type": "double precision",
+      "nullable": false
+    },
+    "decision_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "decision_metadata": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "decision_type": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "feedback_comment": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "feedback_timestamp": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "finding_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "human_decision": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "human_reviewer": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "reasoning": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "reasoning_grade": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "recommended_action": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "time_saved_minutes": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "timestamp": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "workflow_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    }
+  },
+  "ai_model_configs": {
+    "component": {
+      "data_type": "character varying(64)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "model_id": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "provider_id": {
+      "data_type": "character varying(64)",
+      "nullable": false
+    },
+    "settings": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "updated_by": {
+      "data_type": "character varying(64)",
+      "nullable": true
+    }
+  },
+  "approval_actions": {
+    "action_id": {
+      "data_type": "character varying(80)",
+      "nullable": false
+    },
+    "action_type": {
+      "data_type": "character varying(40)",
+      "nullable": false
+    },
+    "approved_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "approved_by": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "confidence": {
+      "data_type": "numeric(4,3)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "created_by": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "evidence": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "executed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "execution_result": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "idempotency_key": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "parameters": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "reason": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "rejection_reason": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "requires_approval": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "reversibility": {
+      "data_type": "character varying(16)",
+      "nullable": false
+    },
+    "status": {
+      "data_type": "character varying(16)",
+      "nullable": false
+    },
+    "target": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "title": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "workflow_phase_id": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "workflow_run_id": {
+      "data_type": "character varying(80)",
+      "nullable": true
+    }
+  },
+  "case_attachments": {
+    "attachment_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "file_path": {
+      "data_type": "character varying(500)",
+      "nullable": false
+    },
+    "file_size": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "file_type": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "filename": {
+      "data_type": "character varying(255)",
+      "nullable": false
+    },
+    "mime_type": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "scan_details": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "tags": {
+      "data_type": "character varying[]",
+      "nullable": true
+    },
+    "uploaded_by": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "virus_scan_result": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    }
+  },
+  "case_audit_logs": {
+    "action": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "audit_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "change_summary": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "changed_by": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "entity_id": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "entity_type": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "field_name": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "ip_address": {
+      "data_type": "character varying(45)",
+      "nullable": true
+    },
+    "new_value": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "old_value": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "timestamp": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "user_agent": {
+      "data_type": "character varying(200)",
+      "nullable": true
+    }
+  },
+  "case_closure_info": {
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "closed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "closed_by": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "closed_by_kind": {
+      "data_type": "character varying(16)",
+      "nullable": false
+    },
+    "closure_category": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "closure_notes": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "contributing_factors": {
+      "data_type": "character varying[]",
+      "nullable": true
+    },
+    "executive_summary": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "false_positive_reason": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "lessons_learned": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "recommendations": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "recurrence_prevention": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "root_cause": {
+      "data_type": "text",
+      "nullable": true
+    }
+  },
+  "case_comments": {
+    "attachment_ids": {
+      "data_type": "integer[]",
+      "nullable": true
+    },
+    "author": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "comment_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "content": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "is_deleted": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "is_edited": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "mentions": {
+      "data_type": "character varying[]",
+      "nullable": true
+    },
+    "parent_comment_id": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "case_escalations": {
+    "acknowledged_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "escalated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "escalated_from": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "escalated_to": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "escalation_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "reason": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "resolution_notes": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "resolved_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "status": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "urgency_level": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    }
+  },
+  "case_evidence": {
+    "analysis_results": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "chain_of_custody": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "collected_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "collected_by": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "evidence_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "evidence_type": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "file_hash_md5": {
+      "data_type": "character varying(32)",
+      "nullable": true
+    },
+    "file_hash_sha256": {
+      "data_type": "character varying(64)",
+      "nullable": true
+    },
+    "file_path": {
+      "data_type": "character varying(500)",
+      "nullable": true
+    },
+    "file_size": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "name": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "source": {
+      "data_type": "character varying(200)",
+      "nullable": true
+    },
+    "tags": {
+      "data_type": "character varying[]",
+      "nullable": true
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "case_findings": {
+    "added_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "case_id": {
+      "data_type": "character varying",
+      "nullable": false
+    },
+    "finding_id": {
+      "data_type": "character varying",
+      "nullable": false
+    }
+  },
+  "case_iocs": {
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "confidence": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "context": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "enrichment_data": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "first_seen": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "ioc_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "ioc_type": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "is_active": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "is_false_positive": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "last_seen": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "reputation_score": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "source": {
+      "data_type": "character varying(200)",
+      "nullable": true
+    },
+    "tags": {
+      "data_type": "character varying[]",
+      "nullable": true
+    },
+    "threat_level": {
+      "data_type": "character varying(20)",
+      "nullable": true
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "value": {
+      "data_type": "character varying(500)",
+      "nullable": false
+    }
+  },
+  "case_metrics": {
+    "analyst_handoffs_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "comment_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "evidence_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "ioc_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "resolution_sla_met": {
+      "data_type": "boolean",
+      "nullable": true
+    },
+    "response_sla_met": {
+      "data_type": "boolean",
+      "nullable": true
+    },
+    "sla_met": {
+      "data_type": "boolean",
+      "nullable": true
+    },
+    "task_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "time_to_contain": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "time_to_detect": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "time_to_resolve": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "time_to_respond": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "total_work_hours": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "case_notifications": {
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "delivery_channel": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "is_read": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "is_sent": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "message": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "notification_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "notification_metadata": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "notification_type": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "priority": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "read_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "sent_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "title": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "user_id": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    }
+  },
+  "case_relationships": {
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "created_by": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "notes": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "related_case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "relationship_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "relationship_type": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    }
+  },
+  "case_slas": {
+    "breach_reason": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "breach_time": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "breached": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "is_paused": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "paused_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "resolution_completed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "resolution_due": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "resolution_sla_met": {
+      "data_type": "boolean",
+      "nullable": true
+    },
+    "response_completed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "response_due": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "response_sla_met": {
+      "data_type": "boolean",
+      "nullable": true
+    },
+    "resumed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "sla_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "sla_policy_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "total_pause_duration": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "case_tasks": {
+    "actual_hours": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "assignee": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "checklist_items": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "completed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "due_date": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "estimated_hours": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "parent_task_id": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "priority": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "status": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "task_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "task_order": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "title": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "case_templates": {
+    "applicable_mitre_techniques": {
+      "data_type": "character varying[]",
+      "nullable": true
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "default_priority": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "default_sla_policy_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "default_status": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "is_active": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "name": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "playbook_steps": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "tags": {
+      "data_type": "character varying[]",
+      "nullable": true
+    },
+    "task_templates": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "template_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "template_type": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "usage_count": {
+      "data_type": "integer",
+      "nullable": false
+    }
+  },
+  "case_watchers": {
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "notification_preferences": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "user_id": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    }
+  },
+  "cases": {
+    "activities": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "assignee": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "mitre_techniques": {
+      "data_type": "character varying[]",
+      "nullable": true
+    },
+    "notes": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "priority": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "resolution_steps": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "status": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "tags": {
+      "data_type": "character varying[]",
+      "nullable": true
+    },
+    "timeline": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "title": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "chat_messages": {
+    "complete": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "content": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "conversation_id": {
+      "data_type": "character varying(120)",
+      "nullable": false
+    },
+    "cost_usd": {
+      "data_type": "numeric(10,6)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "input_tokens": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "model": {
+      "data_type": "character varying(80)",
+      "nullable": true
+    },
+    "output_tokens": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "role": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "seq": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "thinking": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "tool_calls": {
+      "data_type": "jsonb",
+      "nullable": false
+    }
+  },
+  "config_audit_log": {
+    "action": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "change_reason": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "changed_by": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "config_key": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "config_type": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "new_value": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "old_value": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "timestamp": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "conversations": {
+    "agent_id": {
+      "data_type": "character varying(60)",
+      "nullable": true
+    },
+    "archived": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "character varying(120)",
+      "nullable": false
+    },
+    "last_message_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "message_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "model": {
+      "data_type": "character varying(80)",
+      "nullable": true
+    },
+    "title": {
+      "data_type": "character varying(200)",
+      "nullable": true
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "user_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    }
+  },
+  "custom_agents": {
+    "color": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "component_category": {
+      "data_type": "character varying(32)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "created_by": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "enable_thinking": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "extra_principles": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "forked_from": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "icon": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "max_tokens": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "methodology": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "model": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "name": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "recommended_tools": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "role": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "specialization": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "system_prompt_override": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "custom_workflows": {
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "created_by": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "graph_layout": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "is_active": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "name": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "phases": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "trigger_examples": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "use_case": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "version": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "workflow_id": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    }
+  },
+  "episodic_distil_failures": {
+    "attempts": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "distil_version": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "failure_key": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "first_failed_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "investigation_kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "last_error": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "last_failed_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "next_attempt_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "origin_seq": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "reason": {
+      "data_type": "text",
+      "nullable": false
+    }
+  },
+  "episodic_distil_markers": {
+    "concluded_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "distil_version": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "distilled_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "gaps_written": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "investigation_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "investigation_kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "origin_run_id": {
+      "data_type": "uuid",
+      "nullable": true
+    },
+    "origin_run_ids": {
+      "data_type": "uuid[]",
+      "nullable": false
+    },
+    "origin_seq": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "sightings_written": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "verdicts_written": {
+      "data_type": "integer",
+      "nullable": false
+    }
+  },
+  "episodic_gaps": {
+    "concluded_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "disposition": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "hypothesis_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "bigint",
+      "nullable": false
+    },
+    "investigation_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "investigation_kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "reason": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "statement": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "subject_entities": {
+      "data_type": "text[]",
+      "nullable": false
+    }
+  },
+  "episodic_read_log": {
+    "as_of": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "caller_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "caller_kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "dropped": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "bigint",
+      "nullable": false
+    },
+    "keys": {
+      "data_type": "text[]",
+      "nullable": false
+    },
+    "ranking": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "row_counts": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "ts": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    }
+  },
+  "episodic_sightings": {
+    "attacker_influenceable": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "concluded_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "entity_key": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "first_seen": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "hit_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "bigint",
+      "nullable": false
+    },
+    "investigation_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "investigation_kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "last_seen": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "source_system": {
+      "data_type": "text",
+      "nullable": false
+    }
+  },
+  "episodic_verdict_sources": {
+    "id": {
+      "data_type": "bigint",
+      "nullable": false
+    },
+    "source_system": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "source_tier": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "stance": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "verdict_id": {
+      "data_type": "bigint",
+      "nullable": false
+    }
+  },
+  "episodic_verdicts": {
+    "attacker_influenceable_only": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "concluded_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "first_seen": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "hypothesis_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "bigint",
+      "nullable": false
+    },
+    "investigation_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "investigation_kind": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "last_seen": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "outcome": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "rationale": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "statement": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "subject_entities": {
+      "data_type": "text[]",
+      "nullable": false
+    },
+    "techniques": {
+      "data_type": "text[]",
+      "nullable": false
+    },
+    "trust": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "window_source": {
+      "data_type": "text",
+      "nullable": false
+    }
+  },
+  "federation_sources": {
+    "consecutive_errors": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    },
+    "cursor": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "enabled": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "interval_seconds": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "last_error": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "last_poll_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": true
+    },
+    "last_success_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": true
+    },
+    "max_items": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "min_severity": {
+      "data_type": "character varying(16)",
+      "nullable": true
+    },
+    "source_id": {
+      "data_type": "character varying(64)",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp with time zone",
+      "nullable": false
+    }
+  },
+  "finding_mitre_predictions": {
+    "confidence": {
+      "data_type": "double precision",
+      "nullable": false
+    },
+    "finding_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "technique_id": {
+      "data_type": "text",
+      "nullable": false
+    }
+  },
+  "findings": {
+    "ai_enrichment": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "anomaly_score": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "cluster_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "data_source": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "entity_context": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "evidence_links": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "external_id": {
+      "data_type": "character varying(255)",
+      "nullable": true
+    },
+    "finding_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "severity": {
+      "data_type": "character varying(20)",
+      "nullable": true
+    },
+    "status": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "timestamp": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "intake_triggers": {
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "decided_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "finding_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "investigation_id": {
+      "data_type": "character varying(60)",
+      "nullable": true
+    },
+    "kind": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "merged_into": {
+      "data_type": "character varying(60)",
+      "nullable": true
+    },
+    "payload": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "priority": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "reason": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "state": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    }
+  },
+  "integration_configs": {
+    "config": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "enabled": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "integration_id": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "integration_name": {
+      "data_type": "character varying(200)",
+      "nullable": true
+    },
+    "integration_type": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "last_error": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "last_test_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "last_test_success": {
+      "data_type": "boolean",
+      "nullable": true
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "updated_by": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    }
+  },
+  "investigation_logs": {
+    "details": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "event_type": {
+      "data_type": "character varying(30)",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "investigation_id": {
+      "data_type": "character varying(60)",
+      "nullable": false
+    },
+    "timestamp": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "tokens_used": {
+      "data_type": "integer",
+      "nullable": false
+    }
+  },
+  "investigations": {
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "completed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "cost_usd": {
+      "data_type": "double precision",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "current_activity": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "current_step": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "error_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "input_tokens": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "investigation_id": {
+      "data_type": "character varying(60)",
+      "nullable": false
+    },
+    "iteration_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "last_activity_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "last_error": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "master_review_notes": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "max_cost_usd": {
+      "data_type": "double precision",
+      "nullable": false
+    },
+    "max_iterations": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "max_runtime_seconds": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "output_tokens": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "priority": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "proposed_actions": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "started_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "status": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "summary": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "total_steps": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "trigger_ids": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "trigger_type": {
+      "data_type": "character varying(30)",
+      "nullable": false
+    },
+    "workdir": {
+      "data_type": "character varying(255)",
+      "nullable": false
+    },
+    "workflow_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    }
+  },
+  "ip_exclusions": {
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "created_by": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "exclusion_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "ip": {
+      "data_type": "character varying(45)",
+      "nullable": false
+    },
+    "origin": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "origin_ref": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "reason": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "removal_reason": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "removed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "removed_by": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    }
+  },
+  "llm_interaction_logs": {
+    "agent_id": {
+      "data_type": "character varying(60)",
+      "nullable": true
+    },
+    "cache_creation_tokens": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "cache_read_cost_per_token": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "cache_read_tokens": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "cache_write_cost_per_token": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "cost_usd": {
+      "data_type": "numeric(10,6)",
+      "nullable": true
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "duration_ms": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "error": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "input_cost_per_token": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "input_tokens": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "interaction_id": {
+      "data_type": "character varying(60)",
+      "nullable": false
+    },
+    "investigation_id": {
+      "data_type": "character varying(60)",
+      "nullable": true
+    },
+    "model": {
+      "data_type": "character varying(80)",
+      "nullable": false
+    },
+    "output_cost_per_token": {
+      "data_type": "double precision",
+      "nullable": true
+    },
+    "output_tokens": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "rates_fetched_at": {
+      "data_type": "character varying(64)",
+      "nullable": true
+    },
+    "request_messages": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "response_content": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "session_id": {
+      "data_type": "character varying(120)",
+      "nullable": true
+    },
+    "stop_reason": {
+      "data_type": "character varying(40)",
+      "nullable": true
+    },
+    "system_prompt": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "thinking_budget": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "thinking_content": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "thinking_enabled": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "tool_calls": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "tool_results": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "virtual_key_id": {
+      "data_type": "character varying(64)",
+      "nullable": true
+    }
+  },
+  "llm_provider_configs": {
+    "api_key_ref": {
+      "data_type": "character varying(200)",
+      "nullable": true
+    },
+    "base_url": {
+      "data_type": "character varying(500)",
+      "nullable": true
+    },
+    "config": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "default_model": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "is_active": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "is_default": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "last_error": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "last_test_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "last_test_success": {
+      "data_type": "boolean",
+      "nullable": true
+    },
+    "name": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "provider_id": {
+      "data_type": "character varying(64)",
+      "nullable": false
+    },
+    "provider_type": {
+      "data_type": "character varying(32)",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "mcp_credentials": {
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "credential_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "expires_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "label": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "last_used_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "revoked_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "token_hash": {
+      "data_type": "character(64)",
+      "nullable": false
+    },
+    "user_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    }
+  },
+  "roles": {
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "is_system_role": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "name": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "permissions": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "role_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "shared_iocs": {
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "investigation_id": {
+      "data_type": "character varying(60)",
+      "nullable": false
+    },
+    "ioc_type": {
+      "data_type": "character varying(30)",
+      "nullable": false
+    },
+    "value": {
+      "data_type": "character varying(500)",
+      "nullable": false
+    }
+  },
+  "sketch_mappings": {
+    "case_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "finding_id": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
+    "id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "sketch_id": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "sketch_name": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "sketch_url": {
+      "data_type": "character varying(500)",
+      "nullable": true
+    }
+  },
+  "sla_policies": {
+    "business_hours_only": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "escalation_rules": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "is_active": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "is_default": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "name": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "notification_thresholds": {
+      "data_type": "integer[]",
+      "nullable": true
+    },
+    "policy_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "priority_level": {
+      "data_type": "character varying(20)",
+      "nullable": false
+    },
+    "resolution_time_hours": {
+      "data_type": "double precision",
+      "nullable": false
+    },
+    "response_time_hours": {
+      "data_type": "double precision",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    }
+  },
+  "system_config": {
+    "config_type": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "description": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "key": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "updated_by": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "value": {
+      "data_type": "jsonb",
+      "nullable": false
+    }
+  },
+  "threat_indicators": {
+    "collection_id": {
+      "data_type": "character varying(128)",
+      "nullable": true
+    },
+    "confidence": {
+      "data_type": "numeric(5,2)",
+      "nullable": true
+    },
+    "first_seen": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "id": {
+      "data_type": "bigint",
+      "nullable": false
+    },
+    "indicator_type": {
+      "data_type": "character varying(32)",
+      "nullable": false
+    },
+    "indicator_value": {
+      "data_type": "character varying(2048)",
+      "nullable": false
+    },
+    "labels": {
+      "data_type": "text[]",
+      "nullable": true
+    },
+    "last_seen": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "raw_stix": {
+      "data_type": "jsonb",
+      "nullable": true
+    },
+    "source": {
+      "data_type": "character varying(64)",
+      "nullable": false
+    },
+    "threat_level": {
+      "data_type": "character varying(16)",
+      "nullable": true
+    },
+    "valid_from": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "valid_until": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    }
+  },
+  "user_preferences": {
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "display_name": {
+      "data_type": "character varying(200)",
+      "nullable": true
+    },
+    "email": {
+      "data_type": "character varying(200)",
+      "nullable": true
+    },
+    "last_login": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "preferences": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "user_id": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    }
+  },
+  "users": {
+    "created_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "email": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "failed_login_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "full_name": {
+      "data_type": "character varying(200)",
+      "nullable": false
+    },
+    "is_active": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "is_verified": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "last_login": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "locked_until": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "login_count": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "mfa_enabled": {
+      "data_type": "boolean",
+      "nullable": false
+    },
+    "mfa_recovery_codes": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "mfa_secret": {
+      "data_type": "character varying(255)",
+      "nullable": true
+    },
+    "password_changed_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "password_hash": {
+      "data_type": "character varying(255)",
+      "nullable": false
+    },
+    "password_history": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "role_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "updated_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "user_id": {
+      "data_type": "character varying(50)",
+      "nullable": false
+    },
+    "username": {
+      "data_type": "character varying(100)",
+      "nullable": false
+    }
+  },
+  "workflow_run_phases": {
+    "agent_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "approval_state": {
+      "data_type": "character varying(16)",
+      "nullable": true
+    },
+    "cost_usd": {
+      "data_type": "numeric(10,4)",
+      "nullable": false
+    },
+    "duration_ms": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "error": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "finished_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "input_context": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "output": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "phase_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "phase_order": {
+      "data_type": "integer",
+      "nullable": false
+    },
+    "run_id": {
+      "data_type": "character varying(80)",
+      "nullable": false
+    },
+    "started_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "status": {
+      "data_type": "character varying(16)",
+      "nullable": false
+    }
+  },
+  "workflow_runs": {
+    "deleted_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "duration_ms": {
+      "data_type": "integer",
+      "nullable": true
+    },
+    "error": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "finished_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "outcome": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "reason": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "result_summary": {
+      "data_type": "text",
+      "nullable": true
+    },
+    "run_id": {
+      "data_type": "character varying(80)",
+      "nullable": false
+    },
+    "started_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": false
+    },
+    "status": {
+      "data_type": "character varying(16)",
+      "nullable": false
+    },
+    "total_cost_usd": {
+      "data_type": "numeric(10,4)",
+      "nullable": false
+    },
+    "trigger_context": {
+      "data_type": "jsonb",
+      "nullable": false
+    },
+    "triggered_by": {
+      "data_type": "character varying(100)",
+      "nullable": true
+    },
+    "workflow_id": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "workflow_name": {
+      "data_type": "text",
+      "nullable": false
+    },
+    "workflow_source": {
+      "data_type": "character varying(16)",
+      "nullable": false
+    },
+    "workflow_version": {
+      "data_type": "integer",
+      "nullable": true
+    }
+  }
+}
