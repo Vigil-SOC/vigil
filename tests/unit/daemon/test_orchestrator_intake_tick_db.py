@@ -262,3 +262,64 @@ async def test_round_trips_do_not_grow_with_the_queue():
         trips[size] = len(statements)
 
     assert trips[20] == trips[2000]
+
+
+def _reads():
+    """Round trips and rows read, counted on the engine."""
+    from core.storage.connection import get_db_manager
+
+    seen = {"trips": 0, "rows": 0}
+
+    def count(_conn, cursor, *_args):
+        seen["trips"] += 1
+        if cursor.description is not None:
+            seen["rows"] += cursor.rowcount
+
+    engine = get_db_manager().engine
+    event.listen(engine, "after_cursor_execute", count)
+    return lambda: event.remove(engine, "after_cursor_execute", count), seen
+
+
+def _grow_case(case_id, n):
+    from sqlalchemy import insert
+
+    from core.storage.connection import get_db_manager
+    from core.storage.models import Finding, case_findings
+
+    with get_db_manager().session_scope() as session:
+        ids = [f"tick-pad-{i}" for i in range(n)]
+        session.execute(
+            insert(Finding), [{"finding_id": i, "data_source": "tick"} for i in ids]
+        )
+        session.execute(
+            insert(case_findings),
+            [{"case_id": case_id, "finding_id": i, "added_at": utcnow()} for i in ids],
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_merge_costs_the_same_however_big_the_case():
+    # A surge on one host: every queued row merges into the same Case.
+    _live_work()
+    cost = {}
+    for run in ("small", "big"):
+        if run == "big":
+            _grow_case("case-tick-a", 600)
+        ids = _queue(
+            *(
+                (f"m{run}-{n}", "high", {"src_ip": "10.9.0.1"}, timedelta(seconds=n))
+                for n in range(20)
+            )
+        )
+        orch, launched = _orchestrator(set(ids.values()))
+        stop, seen = _reads()
+        try:
+            await orch._drain_intake(None)
+        finally:
+            stop()
+        assert launched == []
+        assert all(_states()[i][0] == "merged" for i in ids.values())
+        cost[run] = seen
+
+    assert len(_case_findings("case-tick-a")) == 640
+    assert cost["big"] == cost["small"]

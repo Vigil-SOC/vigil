@@ -8,7 +8,8 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, any_, func, or_, select
+from sqlalchemy import DateTime, and_, any_, exists, func, literal, or_, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import joinedload, noload, selectinload
 
 from core.exceptions import default_on_error
@@ -21,6 +22,7 @@ from core.storage.models import (
     Case,
     Finding,
     FindingMitrePrediction,
+    case_findings,
 )
 from core.storage.rating import in_sweep_index, unrated
 from core.storage.schemas import FindingSchema
@@ -695,31 +697,43 @@ class DatabaseService:
 
     @default_on_error(False)
     def add_finding_to_case(self, case_id: str, finding_id: str) -> bool:
-        """
-        Add a finding to a case.
+        """Link a finding to a case: True once linked (now or before), False if either is missing.
 
-        Args:
-            case_id: Case ID
-            finding_id: Finding ID
-
-        Returns:
-            True if successful, False otherwise
+        Writes the link row directly. Loading ``case.findings`` reads every finding
+        already on the case, so each merge into a busy case would cost its size.
         """
+        now = utcnow()
         with self.db_manager.session_scope() as session:
-            case = session.get(Case, case_id)
-            finding = session.get(Finding, finding_id)
-
-            if not case or not finding:
-                logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
-                return False
-
-            if finding not in case.findings:
-                case.findings.append(finding)
-                case.updated_at = utcnow()
-                session.flush()
+            added = session.execute(
+                pg_insert(case_findings)
+                .from_select(
+                    ["case_id", "finding_id", "added_at"],
+                    select(
+                        literal(case_id), literal(finding_id), literal(now, DateTime)
+                    ).where(
+                        exists().where(Case.case_id == case_id),
+                        exists().where(Finding.finding_id == finding_id),
+                    ),
+                )
+                .on_conflict_do_nothing()
+                .returning(case_findings.c.case_id)
+            ).first()
+            if added:
+                session.execute(
+                    update(Case).where(Case.case_id == case_id).values(updated_at=now)
+                )
                 logger.info(f"Added finding {finding_id} to case {case_id}")
+                return True
 
-            return True
+            linked = session.execute(
+                select(case_findings.c.case_id).where(
+                    case_findings.c.case_id == case_id,
+                    case_findings.c.finding_id == finding_id,
+                )
+            ).first()
+            if linked is None:
+                logger.warning(f"Case or finding not found: {case_id}, {finding_id}")
+            return linked is not None
 
     @default_on_error(False)
     def remove_finding_from_case(self, case_id: str, finding_id: str) -> bool:
