@@ -717,23 +717,39 @@ async def health_check():
     # schema internals and stay on GET /api/storage/status, which is not.
     schema_block = {"state": drift["state"]} if drift is not None else None
 
+    # Read before the storage check. A failure there must still report the real
+    # flags, and this handler has to answer 200 — a 500 restarts the pod.
+    demo_mode = False
+    auth_bypassed = False
     try:
-        from core.config import is_demo_mode, state_dir_status
+        from core.config import is_demo_mode
+
+        demo_mode = is_demo_mode()
+        auth_bypassed = get_settings().dev_mode
+    except Exception:
+        logger.exception("Health check could not read process flags")
+
+    try:
+        from core.config import state_dir_status
         from core.storage.database_data_service import DatabaseDataService
 
         service = DatabaseDataService()
         backend_info = service.get_backend_info()
         state_dir = state_dir_status()
+        database_available = bool(backend_info.get("database_available", False))
+        # Demo mode runs without Postgres. Schema drift stays healthy; the
+        # schema block already reports it.
+        status = "healthy" if demo_mode or database_available else "degraded"
 
         payload = {
-            "status": "healthy",
+            "status": status,
             "version": __version__,
-            "demo_mode": is_demo_mode(),
+            "demo_mode": demo_mode,
             # The SPA's bypass indicator reads this. It cannot use its own build
             # flag: DEV_MODE is set at runtime, and a prebuilt bundle served by a
             # bypassed backend would otherwise show nothing. Public on purpose --
             # an unauthenticated caller can already tell by being served.
-            "auth_bypassed": get_settings().dev_mode,
+            "auth_bypassed": auth_bypassed,
             # Booleans only — this route is public, and the resolved path names
             # where credentials live. Full status: GET /api/config/state-directory.
             "state_directory": {
@@ -742,21 +758,22 @@ async def health_check():
             },
             "storage": {
                 "backend": backend_info["backend"],
-                "database_available": backend_info.get("database_available", False),
+                "database_available": database_available,
                 "demo_mode": backend_info.get("demo_mode", False),
             },
         }
         if schema_block is not None:
             payload["schema"] = schema_block
         return payload
-    except Exception as e:
-        logger.error(f"Health check error: {e}")
+    except Exception:
+        # The message can name missing tables. It stays in the log.
+        logger.exception("Health check error")
         payload = {
-            "status": "healthy",
+            "status": "degraded",
             "version": __version__,
-            "demo_mode": False,
-            "auth_bypassed": get_settings().dev_mode,
-            "storage": {"backend": "unknown", "error": str(e)},
+            "demo_mode": demo_mode,
+            "auth_bypassed": auth_bypassed,
+            "storage": {"backend": "unknown", "error": "storage_check_failed"},
         }
         if schema_block is not None:
             payload["schema"] = schema_block
