@@ -5000,10 +5000,12 @@ export interface paths {
         };
         /**
          * Get Servers Status
-         * @description Get status of all MCP servers including enabled state.
+         * @description Session state for every catalog server.
          *
-         *     Returns:
-         *         List of server status objects with enabled flag
+         *     ``status`` is ``running`` only while that server's persistent session is
+         *     connected. With no MCP client, every server is disconnected: the catalog
+         *     has no session state of its own. Dormant reconnect stays on
+         *     ``GET /connections/status``.
          */
         get: operations["get_api_mcp_servers_status"];
         put?: never;
