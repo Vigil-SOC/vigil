@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { format } from 'date-fns'
 import { casesApi } from '../../services/api'
-import { mapApiCase } from '../../data/mappers'
+import { mapApiCase, mapQueueCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
 
 export type Phase = 'loading' | 'ready' | 'error'
@@ -26,8 +26,67 @@ export interface CaseClosureView {
   verdict: string
 }
 
-export function useCases() {
+/** Matches ``CaseRepository`` page size. */
+export const CASE_PAGE_LIMIT = 100
+
+export interface CaseFilters {
+  query: string
+  state: string
+  priority: string
+  sla: '' | 'risk'
+  assignee: string
+  workflow: string
+  dataSource: string
+  limit: number
+  offset: number
+}
+
+export const INITIAL_CASE_FILTERS: CaseFilters = {
+  query: '',
+  state: '',
+  priority: 'any',
+  sla: '',
+  assignee: '',
+  workflow: '',
+  dataSource: '',
+  limit: CASE_PAGE_LIMIT,
+  offset: 0,
+}
+
+export interface CaseStrip {
+  by_state: Record<string, number>
+  sla_at_risk: number
+  closed_today: number
+  agent_closure_share: number
+}
+
+export const EMPTY_STRIP: CaseStrip = {
+  by_state: {},
+  sla_at_risk: 0,
+  closed_today: 0,
+  agent_closure_share: 0,
+}
+
+function toParams(f: CaseFilters) {
+  const params: NonNullable<Parameters<typeof casesApi.getAll>[0]> = {
+    limit: f.limit,
+    offset: f.offset,
+  }
+  if (f.state === 'closed') params.closed = true
+  else if (f.state) params.state = f.state
+  if (f.priority && f.priority !== 'any') params.priority = f.priority
+  if (f.sla === 'risk') params.sla_at_risk = true
+  if (f.assignee.trim()) params.assignee = f.assignee.trim()
+  if (f.workflow.trim()) params.workflow = f.workflow.trim()
+  if (f.dataSource.trim()) params.data_source = f.dataSource.trim()
+  if (f.query.trim()) params.query = f.query.trim()
+  return params
+}
+
+export function useCases(filters: CaseFilters) {
   const [rows, setRows] = useState<CaseRow[]>([])
+  const [total, setTotal] = useState(0)
+  const [strip, setStrip] = useState<CaseStrip>(EMPTY_STRIP)
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -38,10 +97,17 @@ export function useCases() {
     setPhase('loading')
     setError(null)
     casesApi
-      .getAll()
+      .getAll(toParams(filters))
       .then((res) => {
         if (cancelled) return
-        setRows(res.data.cases.map(mapApiCase))
+        const data = res.data as typeof res.data & {
+          strip?: CaseStrip
+          total?: number
+        }
+        const cases = data.cases ?? []
+        setRows(cases.map((c) => mapQueueCase(c)))
+        setTotal(data.total ?? cases.length)
+        setStrip(data.strip ?? EMPTY_STRIP)
         setPhase('ready')
       })
       .catch((e) => {
@@ -52,9 +118,9 @@ export function useCases() {
     return () => {
       cancelled = true
     }
-  }, [reloadKey])
+  }, [filters, reloadKey])
 
-  return { rows, phase, error, reload }
+  return { rows, total, strip, phase, error, reload }
 }
 
 function asInvestigations(raw: unknown): CaseInvestigationRef[] {

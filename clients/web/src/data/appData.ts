@@ -16,6 +16,12 @@ export interface Workflow {
    *  Derived by the backend from its own set, so this stays true of a kind added
    *  there without a change here. What the Run dialog gates its hunt fields on. */
   huntLike: boolean
+  /** Runs started since UTC midnight. */
+  runsToday: number
+  /** Mean cost of today's finished runs. Null when none have finished. */
+  meanCostUsd: number | null
+  /** Custom workflows only; file workflows omit it. */
+  updatedAt?: string
 }
 
 // AGENT_META was mirrored here until #482 moved it to GET /agents, so built-in
@@ -53,7 +59,7 @@ export interface AgentTemplate {
   spec: string
   ini: string
   color: string
-  /** count of recommended tools; undefined when the list endpoint omits it */
+  /** count of recommended_tools on the agent list */
   tools?: number
   /** true for DB-backed forked copies (handle starts with "custom-") */
   custom: boolean

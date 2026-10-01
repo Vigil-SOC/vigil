@@ -1210,14 +1210,11 @@ export interface paths {
         };
         /**
          * Get Cases
-         * @description Get all cases with optional filters.
+         * @description One page of the case queue, plus the strip.
          *
-         *     Args:
-         *         status: Filter by status
-         *         priority: Filter by priority
-         *
-         *     Returns:
-         *         List of cases
+         *     Default is cases that are not closed. Sort is resolution time left
+         *     ascending, rows with no SLA last, then last activity descending. Page
+         *     size defaults to the repository limit.
          */
         get: operations["get_api_cases"];
         put?: never;
@@ -6596,14 +6593,11 @@ export interface paths {
         };
         /**
          * Get Cases
-         * @description Get all cases with optional filters.
+         * @description One page of the case queue, plus the strip.
          *
-         *     Args:
-         *         status: Filter by status
-         *         priority: Filter by priority
-         *
-         *     Returns:
-         *         List of cases
+         *     Default is cases that are not closed. Sort is resolution time left
+         *     ascending, rows with no SLA last, then last activity descending. Page
+         *     size defaults to the repository limit.
          */
         get: operations["get_api_v1_cases"];
         put?: never;
@@ -8510,10 +8504,10 @@ export interface components {
             title: string;
         };
         /**
-         * CaseDetailSchema
-         * @description ``GET /cases/{id}``. The list stays ``CaseSchema``.
+         * CaseDetailResponse
+         * @description ``GET /cases/{id}`` — the case, its combined state, and the runs on it.
          */
-        CaseDetailSchema: {
+        CaseDetailResponse: {
             /**
              * Activities
              * @default []
@@ -8524,10 +8518,7 @@ export interface components {
             /** Case Id */
             case_id?: string | null;
             closure?: components["schemas"]["CaseClosureView"] | null;
-            /**
-             * Combined State
-             * @default
-             */
+            /** Combined State */
             combined_state: string;
             /** Created At */
             created_at?: string | null;
@@ -8769,7 +8760,14 @@ export interface components {
         /** CaseListResponse */
         CaseListResponse: {
             /** Cases */
-            cases: components["schemas"]["CaseSchema"][];
+            cases: components["schemas"]["CaseQueueItem"][];
+            /** Has More */
+            has_more: boolean;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            strip: components["schemas"]["CaseQueueStrip"];
             /** Total */
             total: number;
         };
@@ -8817,6 +8815,69 @@ export interface components {
             message: string;
             /** Success */
             success: boolean;
+        };
+        /**
+         * CaseQueueItem
+         * @description One row of the case queue.
+         *
+         *     ``case_id`` and ``title`` stay so callers that only need a picker
+         *     (the workflow start dialog) can keep reading the list.
+         */
+        CaseQueueItem: {
+            /** Age Seconds */
+            age_seconds: number;
+            /** Assignee */
+            assignee?: string | null;
+            /** Budget Health */
+            budget_health?: string | null;
+            /** Case Id */
+            case_id: string;
+            /** Combined State */
+            combined_state: string;
+            /**
+             * Comment Count
+             * @default 0
+             */
+            comment_count: number;
+            /** Cost Usd */
+            cost_usd?: number | null;
+            /**
+             * Findings Count
+             * @default 0
+             */
+            findings_count: number;
+            /** Health Status */
+            health_status?: string | null;
+            /** Iteration Count */
+            iteration_count?: number | null;
+            /** Last Activity */
+            last_activity?: string | null;
+            /** Max Cost Usd */
+            max_cost_usd?: number | null;
+            /** Priority */
+            priority?: string | null;
+            /** Sla Seconds Left */
+            sla_seconds_left?: number | null;
+            /** Title */
+            title: string;
+            /** Workflow Id */
+            workflow_id?: string | null;
+        };
+        /**
+         * CaseQueueStrip
+         * @description Counts for the queue strip. Independent of the page filters.
+         */
+        CaseQueueStrip: {
+            /** Agent Closure Share */
+            agent_closure_share: number;
+            /** By State */
+            by_state: {
+                [key: string]: number;
+            };
+            /** Closed Today */
+            closed_today: number;
+            /** Sla At Risk */
+            sla_at_risk: number;
         };
         /**
          * CaseRecordResponse
@@ -14198,8 +14259,16 @@ export interface operations {
     get_api_cases: {
         parameters: {
             query?: {
-                status?: string | null;
+                state?: string | null;
+                workflow?: string | null;
                 priority?: string | null;
+                data_source?: string | null;
+                sla_at_risk?: boolean;
+                assignee?: string | null;
+                closed?: boolean | null;
+                query?: string | null;
+                limit?: number;
+                offset?: number;
             };
             header?: {
                 authorization?: string | null;
@@ -15136,7 +15205,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CaseDetailSchema"];
+                    "application/json": components["schemas"]["CaseDetailResponse"];
                 };
             };
             /** @description Validation Error */
@@ -23433,8 +23502,16 @@ export interface operations {
     get_api_v1_cases: {
         parameters: {
             query?: {
-                status?: string | null;
+                state?: string | null;
+                workflow?: string | null;
                 priority?: string | null;
+                data_source?: string | null;
+                sla_at_risk?: boolean;
+                assignee?: string | null;
+                closed?: boolean | null;
+                query?: string | null;
+                limit?: number;
+                offset?: number;
             };
             header?: {
                 authorization?: string | null;
@@ -23991,7 +24068,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CaseDetailSchema"];
+                    "application/json": components["schemas"]["CaseDetailResponse"];
                 };
             };
             /** @description Validation Error */

@@ -181,12 +181,15 @@ class WorkflowDefinition:
         metadata: Dict[str, Any],
         body: str,
         source: str = "file",
+        updated_at: Optional[str] = None,
     ):
         self.id = workflow_id
         self.file_path = file_path
         self.metadata = metadata
         self.body = body
         self.source = source  # "file" or "custom"
+        # Custom rows only. File workflows leave this unset so to_dict omits it.
+        self.updated_at = updated_at
 
     @property
     def name(self) -> str:
@@ -259,6 +262,8 @@ class WorkflowDefinition:
             # hunt-like kind joins HUNT_LIKE_RUN_KINDS and every client follows.
             "hunt_like": is_hunt_like(self.run_kind),
         }
+        if self.source == "custom":
+            result["updated_at"] = self.updated_at
         if include_body:
             result["body"] = self.body
         # Custom workflows carry structured phases for the builder UI
@@ -286,12 +291,18 @@ def _custom_workflow_to_definition(wf: Dict[str, Any]) -> WorkflowDefinition:
     }
 
     body = _render_custom_workflow_body(wf, phases)
+    updated_at = wf.get("updated_at")
+    if isinstance(updated_at, datetime):
+        updated_at = updated_at.isoformat()
+    elif updated_at is not None:
+        updated_at = str(updated_at)
     return WorkflowDefinition(
         workflow_id=wf["workflow_id"],
         file_path=None,
         metadata=metadata,
         body=body,
         source="custom",
+        updated_at=updated_at,
     )
 
 

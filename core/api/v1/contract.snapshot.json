@@ -321,8 +321,8 @@
         "title": "CaseCreate",
         "type": "object"
       },
-      "CaseDetailSchema": {
-        "description": "``GET /cases/{id}``. The list stays ``CaseSchema``.",
+      "CaseDetailResponse": {
+        "description": "``GET /cases/{id}`` \u2014 the case, its combined state, and the runs on it.",
         "properties": {
           "activities": {
             "default": [],
@@ -363,7 +363,6 @@
             ]
           },
           "combined_state": {
-            "default": "",
             "title": "Combined State",
             "type": "string"
           },
@@ -483,7 +482,10 @@
             "title": "Updated At"
           }
         },
-        "title": "CaseDetailSchema",
+        "required": [
+          "combined_state"
+        ],
+        "title": "CaseDetailResponse",
         "type": "object"
       },
       "CaseEvidenceListResponse": {
@@ -987,10 +989,25 @@
         "properties": {
           "cases": {
             "items": {
-              "$ref": "#/components/schemas/CaseSchema"
+              "$ref": "#/components/schemas/CaseQueueItem"
             },
             "title": "Cases",
             "type": "array"
+          },
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "title": "Offset",
+            "type": "integer"
+          },
+          "strip": {
+            "$ref": "#/components/schemas/CaseQueueStrip"
           },
           "total": {
             "title": "Total",
@@ -999,7 +1016,11 @@
         },
         "required": [
           "cases",
-          "total"
+          "total",
+          "limit",
+          "offset",
+          "has_more",
+          "strip"
         ],
         "title": "CaseListResponse",
         "type": "object"
@@ -1088,6 +1109,188 @@
           "critical_cases"
         ],
         "title": "CaseMetricsSummaryResponse",
+        "type": "object"
+      },
+      "CaseQueueItem": {
+        "description": "One row of the case queue.\n\n``case_id`` and ``title`` stay so callers that only need a picker\n(the workflow start dialog) can keep reading the list.",
+        "properties": {
+          "age_seconds": {
+            "title": "Age Seconds",
+            "type": "number"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "budget_health": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Budget Health"
+          },
+          "case_id": {
+            "title": "Case Id",
+            "type": "string"
+          },
+          "combined_state": {
+            "title": "Combined State",
+            "type": "string"
+          },
+          "comment_count": {
+            "default": 0,
+            "title": "Comment Count",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "findings_count": {
+            "default": 0,
+            "title": "Findings Count",
+            "type": "integer"
+          },
+          "health_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Health Status"
+          },
+          "iteration_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Iteration Count"
+          },
+          "last_activity": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Activity"
+          },
+          "max_cost_usd": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Cost Usd"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "sla_seconds_left": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sla Seconds Left"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "workflow_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Workflow Id"
+          }
+        },
+        "required": [
+          "case_id",
+          "title",
+          "combined_state",
+          "age_seconds"
+        ],
+        "title": "CaseQueueItem",
+        "type": "object"
+      },
+      "CaseQueueStrip": {
+        "description": "Counts for the queue strip. Independent of the page filters.",
+        "properties": {
+          "agent_closure_share": {
+            "title": "Agent Closure Share",
+            "type": "number"
+          },
+          "by_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "By State",
+            "type": "object"
+          },
+          "closed_today": {
+            "title": "Closed Today",
+            "type": "integer"
+          },
+          "sla_at_risk": {
+            "title": "Sla At Risk",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "by_state",
+          "sla_at_risk",
+          "closed_today",
+          "agent_closure_share"
+        ],
+        "title": "CaseQueueStrip",
         "type": "object"
       },
       "CaseSchema": {
@@ -3738,7 +3941,7 @@
         "parameters": [
           {
             "in": "query",
-            "name": "status",
+            "name": "state",
             "required": false,
             "schema": {
               "anyOf": [
@@ -3749,7 +3952,23 @@
                   "type": "null"
                 }
               ],
-              "title": "Status"
+              "title": "State"
+            }
+          },
+          {
+            "in": "query",
+            "name": "workflow",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Workflow"
             }
           },
           {
@@ -3766,6 +3985,103 @@
                 }
               ],
               "title": "Priority"
+            }
+          },
+          {
+            "in": "query",
+            "name": "data_source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Data Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sla_at_risk",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Sla At Risk",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "assignee",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Assignee"
+            }
+          },
+          {
+            "in": "query",
+            "name": "closed",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Closed"
+            }
+          },
+          {
+            "in": "query",
+            "name": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Query"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
             }
           },
           {
@@ -4509,7 +4825,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CaseDetailSchema"
+                  "$ref": "#/components/schemas/CaseDetailResponse"
                 }
               }
             },

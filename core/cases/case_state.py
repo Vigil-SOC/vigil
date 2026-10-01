@@ -9,45 +9,37 @@ from __future__ import annotations
 from typing import Optional, Sequence
 
 from core.agents.projections import run_id_for
+from core.cases.combined_state import budget_health as _budget_health
+from core.cases.combined_state import combined_state as _combined_state
 from core.storage.models import (
     LIVE_INVESTIGATION_STATUSES,
     CaseClosureInfo,
     Investigation,
 )
 
-# The same cuts CaseSLAService uses for SLA health. Budget on the case page
-# uses them here so the client does not grow a second copy.
-_BUDGET_CRITICAL = 90
-_BUDGET_WARNING = 75
-
 
 def combined_state(
     case_status: Optional[str], investigation_statuses: Sequence[str]
 ) -> str:
-    """Newest-first investigation statuses.
+    """Newest-first investigation statuses, via the queue's one function.
 
-    A closed case is ``closed``. A live investigation contributes its status.
-    Otherwise the case status stands, including an open case whose run has
-    finished. The run's outcome is not this pill.
+    A closed case is ``closed``. The newest live investigation contributes its
+    status. Otherwise the case status stands.
     """
-    if case_status == "closed":
-        return "closed"
-    for status in investigation_statuses:
-        if status in LIVE_INVESTIGATION_STATUSES:
-            return status
-    return case_status or "open"
+    live = next(
+        (
+            status
+            for status in investigation_statuses
+            if status in LIVE_INVESTIGATION_STATUSES
+        ),
+        None,
+    )
+    return _combined_state(case_status, live) or "open"
 
 
 def budget_health(cost_usd: float, max_cost_usd: float) -> str:
-    """``healthy`` / ``warning`` / ``critical``, from spend against the cap."""
-    if max_cost_usd <= 0:
-        return "healthy"
-    spent = (cost_usd / max_cost_usd) * 100
-    if spent >= _BUDGET_CRITICAL:
-        return "critical"
-    if spent >= _BUDGET_WARNING:
-        return "warning"
-    return "healthy"
+    """The queue's 75 / 90 word. No cap reads as healthy."""
+    return _budget_health(cost_usd, max_cost_usd) or "healthy"
 
 
 def investigation_ref(investigation: Investigation) -> dict:

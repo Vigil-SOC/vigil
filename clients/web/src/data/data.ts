@@ -67,8 +67,15 @@ export interface CaseRow {
   id: string
   title: string
   desc?: string
-  status: 'open' | 'investigating' | 'closed'
+  /** Combined state when the queue sent one, otherwise the case status. */
+  status: string
   prio: 'critical' | 'high' | 'medium' | 'low' | 'unknown'
+  workflowId?: string
+  iterations?: number | null
+  costUsd?: number | null
+  maxCostUsd?: number | null
+  budgetHealth?: string | null
+  comments?: number
   owner: string
   ownerName: string
   findings: number

@@ -1,10 +1,11 @@
 import { Fragment, createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
+import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
 import { EmptyState, Popup, TextInput, activateOnKey } from '../../shared/ui'
 import { Markdown } from '../../shared/Markdown'
 import { type Workflow, type AgentTemplate } from '../../data/appData'
-import { useWorkflows, useAgents, useAgentMeta, useSkills } from './useWorkflowsData'
+import { useWorkflows, useAgents, useAgentMeta, useSkills, workflowsOffered } from './useWorkflowsData'
 import { approvalsApi, workflowApi, agentsApi, findingsApi, casesApi, type GeneratedAgentDraft, type ReplayReport } from '../../services/api'
 import WorkflowBuilder from './WorkflowBuilder'
 import type { ConsoleScreenProps } from '../../shared/types'
@@ -103,6 +104,14 @@ function AgentSequence({ agents }: { agents: string[] }) {
   )
 }
 
+const TRUST_INFO = 'Tier, trust, and agreement are not recorded.'
+
+function fmtEdited(iso?: string): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : format(d, 'MMM d · HH:mm')
+}
+
 type WfModal = { kind: 'run' | 'history' | 'edit' | 'delete' | 'details'; wf: Workflow }
 
 function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSettings'] }) {
@@ -140,46 +149,56 @@ function WorkflowCatalog({ goSettings }: { goSettings: ConsoleScreenProps['goSet
         </StateMsg>
       )}
       {phase === 'ready' && list.length > 0 && (
-        <div className="grid gap-4 px-[22px] py-5 [grid-template-columns:repeat(auto-fill,minmax(390px,1fr))]">
-          {list.map((w) => (
-            <div className="flex flex-col gap-[13px] bg-panel border border-line rounded-lg p-[18px] shadow-panel transition-[border-color,transform] duration-150 hover:border-[#2e3744] hover:-translate-y-0.5" key={w.id}>
-              <div className="flex gap-[13px] items-center">
-                <div className="w-11 h-11 rounded-[11px] bg-accent-dim text-accent-2 grid place-items-center shrink-0"><Icon name={w.icon} size={22} /></div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-base font-semibold">{w.name}</div>
-                </div>
-                <button className="btn ghost icon shrink-0" title="Workflow details" onClick={() => setModal({ kind: 'details', wf: w })}><Icon name="info" /></button>
-              </div>
-              <p className="text-[13px] text-tx-2 leading-[1.5]">{w.desc}</p>
-              {w.agents.length > 0 && (
-                <div>
-                  <div className="text-[10.5px] uppercase tracking-[0.07em] text-tx-3 mb-2">Agent sequence</div>
-                  <AgentSequence agents={w.agents} />
-                </div>
-              )}
-              {w.cmds.length > 0 && (
-                <div>
-                  <div className="text-[10.5px] uppercase tracking-[0.07em] text-tx-3 mb-2">Example commands</div>
-                  <div className="flex flex-col gap-1.5">
-                    {w.cmds.map((c, i) => (
-                      <div className="font-mono text-[11.5px] text-tx-3 bg-bg border border-line-soft rounded-[7px] px-2.5 py-1.5 truncate" key={i}>{c}</div>
-                    ))}
-                  </div>
-                </div>
-              )}
-              <div className="flex items-center gap-2 mt-auto pt-1">
-                <button className="btn ghost" onClick={() => setModal({ kind: 'history', wf: w })}><Icon name="clock" /> History</button>
-                <span className="flex-1" />
-                {w.source === 'custom' && (
-                  <>
-                    <button className="btn ghost icon" title="Edit workflow" onClick={() => setModal({ kind: 'edit', wf: w })}><Icon name="edit" /></button>
-                    <button className="btn ghost icon danger" title="Delete workflow" onClick={() => setModal({ kind: 'delete', wf: w })}><Icon name="trash" /></button>
-                  </>
-                )}
-                <button className="btn primary" onClick={() => setModal({ kind: 'run', wf: w })}><Icon name="play" /> Run workflow</button>
-              </div>
-            </div>
-          ))}
+        <div className="px-[22px] py-5">
+          <div className="table-wrap">
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Agents</th>
+                  <th>Runs today</th>
+                  <th>Cost per run</th>
+                  <th>Last edited</th>
+                  <th>Trust</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((w) => (
+                  <tr key={w.id}>
+                    <td>
+                      <div className="font-semibold">{w.name}</div>
+                      {w.desc && <div className="text-[12px] text-tx-3 mt-0.5">{w.desc}</div>}
+                    </td>
+                    <td>{w.agents.length > 0 ? <AgentSequence agents={w.agents} /> : '—'}</td>
+                    <td>{w.runsToday}</td>
+                    <td>{w.meanCostUsd == null ? '—' : <Cost usd={w.meanCostUsd} />}</td>
+                    <td>{fmtEdited(w.updatedAt)}</td>
+                    <td>
+                      <span className="inline-flex items-center gap-1.5">
+                        Not measured yet
+                        <button type="button" className="btn ghost icon" aria-label={TRUST_INFO} title={TRUST_INFO}>
+                          <Icon name="info" size={14} />
+                        </button>
+                      </span>
+                    </td>
+                    <td>
+                      <div className="flex items-center gap-2 justify-end">
+                        <button className="btn ghost" onClick={() => setModal({ kind: 'history', wf: w })}><Icon name="clock" /> History</button>
+                        {w.source === 'custom' && (
+                          <>
+                            <button className="btn ghost icon" title="Edit workflow" onClick={() => setModal({ kind: 'edit', wf: w })}><Icon name="edit" /></button>
+                            <button className="btn ghost icon danger" title="Delete workflow" onClick={() => setModal({ kind: 'delete', wf: w })}><Icon name="trash" /></button>
+                          </>
+                        )}
+                        <button className="btn primary" onClick={() => setModal({ kind: 'run', wf: w })}><Icon name="play" /> Run workflow</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {modal?.kind === 'details' && <DetailsModal wf={modal.wf} onClose={close} />}
@@ -3332,8 +3351,16 @@ function AgentDeleteModal({ agent, onClose, onDeleted }: { agent: AgentTemplate;
   )
 }
 
+const SKILL_GRANT_INFO = 'The grant offers the whole library.'
+const LATER_RELEASE = 'Coming in a later release'
+
 function SkillsTab() {
   const { rows, phase, error, reload } = useSkills()
+  const workflows = useWorkflows()
+  const agents = useAgents()
+  const offered = workflows.phase === 'ready' && agents.phase === 'ready'
+    ? workflowsOffered(workflows.rows, agents.grants)
+    : null
 
   return (
     <>
@@ -3341,6 +3368,8 @@ function SkillsTab() {
         <div className="flex-1 min-w-[200px]"><h2 className="text-[19px]">Skills</h2>
           <p className="text-[13px] text-tx-3 mt-[5px] max-w-[640px] leading-[1.5]">Capabilities loaded as files from the repository or a mounted skills directory. Edit them there; this list is read-only.</p></div>
         <div className="flex items-center gap-2.5 flex-wrap">
+          <span title={LATER_RELEASE}><button className="btn ghost" disabled title={LATER_RELEASE}>Import</button></span>
+          <span title={LATER_RELEASE}><button className="btn ghost" disabled title={LATER_RELEASE}>Edit</button></span>
           <button className="btn ghost" onClick={reload}><Icon name="refresh" /> Refresh</button>
         </div>
       </div>
@@ -3354,6 +3383,15 @@ function SkillsTab() {
               <h3 className="text-base min-w-0">{s.name}</h3>
               {s.source && <div className="text-[11.5px] text-tx-3 mono break-all">{s.source}</div>}
               <p className="text-[13px] text-tx-2 leading-[1.5] flex-1">{s.desc}</p>
+              <div className="text-[12.5px] text-tx-2">
+                <span className="inline-flex items-center gap-1 text-tx-3">
+                  Offered to
+                  <button type="button" className="btn ghost icon" aria-label={SKILL_GRANT_INFO} title={SKILL_GRANT_INFO}>
+                    <Icon name="info" size={14} />
+                  </button>
+                </span>
+                <div>{offered === null ? '…' : (offered.length > 0 ? offered.join(', ') : '—')}</div>
+              </div>
             </div>
           ))}
         </div>

@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CasesDetail } from '../screens/cases/CasesScreen'
-import { useCases } from '../screens/cases/useCases'
+import { INITIAL_CASE_FILTERS, useCases } from '../screens/cases/useCases'
 
 /** Case detail under the header. The cases list keeps its own ?case= param. */
 export default function CaseDrawer({
@@ -16,7 +16,7 @@ export default function CaseDrawer({
   openChat: (prompt?: string) => void
 }) {
   const navigate = useNavigate()
-  const { rows, reload } = useCases()
+  const { rows, reload } = useCases(INITIAL_CASE_FILTERS)
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {

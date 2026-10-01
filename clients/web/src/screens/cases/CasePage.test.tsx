@@ -113,7 +113,8 @@ describe('case page', () => {
     renderCase('case-hunt')
 
     expect(await screen.findByRole('heading', { name: 'Hunt case' })).toBeInTheDocument()
-    expect(screen.getByText('executing', { selector: '.status' })).toBeInTheDocument()
+    const header = document.querySelector('.detail-head') as HTMLElement
+    expect(within(header).getByText('executing')).toBeInTheDocument()
     expect(screen.getByText('2 alerts combined')).toBeInTheDocument()
     expect(await screen.findByText(/who logged in · threat_hunter/)).toBeInTheDocument()
 

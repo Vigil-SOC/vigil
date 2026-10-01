@@ -244,8 +244,16 @@ export interface CaseRecordResponse {
 
 export const casesApi = {
   getAll: (params?: {
-    status?: string
+    state?: string
+    workflow?: string
     priority?: string
+    data_source?: string
+    sla_at_risk?: boolean
+    assignee?: string
+    closed?: boolean
+    query?: string
+    limit?: number
+    offset?: number
   }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
 
   getById: (id: string) => api.get<Schema<'CaseSchema'>>(`/cases/${id}`),

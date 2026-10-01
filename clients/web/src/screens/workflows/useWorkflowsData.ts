@@ -11,6 +11,23 @@ import {
 import { prettyHandle } from '../../data/appData'
 import type { Workflow, AgentTemplate, Skill } from '../../data/appData'
 
+export interface AgentGrant {
+  id: string
+  recommended_tools: string[]
+}
+
+/** Workflows whose phase agents are granted read_skill. An id the agent list
+ *  does not have is skipped. Phase tool arrays are not the grant. */
+export function workflowsOffered(
+  workflows: Pick<Workflow, 'name' | 'agents'>[],
+  agents: AgentGrant[],
+): string[] {
+  const tools = new Map(agents.map((a) => [a.id, a.recommended_tools]))
+  return workflows
+    .filter((w) => w.agents.some((id) => (tools.get(id) ?? []).includes('read_skill')))
+    .map((w) => w.name)
+}
+
 export type Phase = 'loading' | 'ready' | 'error'
 
 export function useWorkflows() {
@@ -47,6 +64,7 @@ export function useWorkflows() {
 
 export function useAgents() {
   const [rows, setRows] = useState<AgentTemplate[]>([])
+  const [grants, setGrants] = useState<AgentGrant[]>([])
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -62,6 +80,7 @@ export function useAgents() {
         if (cancelled) return
         const list = (res.data?.agents || []) as ApiAgent[]
         setRows(list.map(mapApiAgent))
+        setGrants(list.map((a) => ({ id: a.id, recommended_tools: a.recommended_tools ?? [] })))
         setPhase('ready')
       })
       .catch((e) => {
@@ -74,7 +93,7 @@ export function useAgents() {
     }
   }, [reloadKey])
 
-  return { rows, phase, error, reload }
+  return { rows, grants, phase, error, reload }
 }
 
 /* sourced from GET /agents (#482 — replaces the old

@@ -35,6 +35,7 @@ vi.mock('../../services/skillsApi', () => ({
 const wf = (runKind = 'hunt', huntLike = runKind === 'hunt' || runKind === 'root_cause') => ({
   id: 'threat-hunt', icon: 'flow' as const, name: 'Threat Hunt', desc: '',
   agents: [], cmds: [], source: 'file', useCase: '', runKind, huntLike,
+  runsToday: 0, meanCostUsd: null,
 })
 
 const limits = (unbound: string[], source = 'exact') => ({
