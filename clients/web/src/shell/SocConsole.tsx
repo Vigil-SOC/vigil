@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import '../../../../docs/design/console/tokens/tokens.css'
 import '../styles.css'
+import './shell.css'
 import { useAuth } from '../contexts/AuthContext'
-import { orchestratorApi } from '../services/api'
+import { configApi, consoleApi, federationApi, mcpApi, orchestratorApi } from '../services/api'
 import { Icon, type IconName } from '../shared/icons'
 import { NAV, TITLES, type ConsoleScreenKey, type NavGate } from '../data/data'
 import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvider'
@@ -28,7 +30,27 @@ import AutoOpsScreen from '../screens/autoops/AutoOpsScreen'
 import HealthScreen from '../screens/health/HealthScreen'
 import SettingsScreen from '../screens/settings/SettingsScreen'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
-import { VigilMark, VigilLogo } from '../shared/VigilLogo'
+import { VigilLogo } from '../shared/VigilLogo'
+import {
+  foldStatus,
+  type FederationRead,
+  type HealthRead,
+  type McpRead,
+  type RoutabilityRead,
+  type StatusFold,
+} from './statusLine'
+
+const PRIMARY_KEYS = ['cases', 'workflows', 'settings']
+const MORE_KEYS = ['dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
+
+const AUTONOMY_ACT = 'Autonomy · Act · reversible changes on its own'
+const AUTONOMY_ASSIST = 'Autonomy · Assist · asks before changes'
+
+const LEVEL_WORD: Record<StatusFold['level'], string> = {
+  good: 'Good',
+  fair: 'Fair',
+  poor: 'Poor',
+}
 
 const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Element> = {
   dashboard: DashboardScreen,
@@ -137,8 +159,14 @@ function SocConsoleInner() {
   const currentPerm = valid ? screenPerms[current] : undefined
   const allowed = !currentPerm || hasPermission(currentPerm)
 
-  const { accent, bg } = useSocTheme()
+  const { accent, bg, scheme } = useSocTheme()
   const [chatOpen, setChatOpen] = useState(false)
+  const [moreOpen, setMoreOpen] = useState(false)
+  const [infoOpen, setInfoOpen] = useState(false)
+  const [assist, setAssist] = useState<boolean | null>(null)
+  const [status, setStatus] = useState<StatusFold | null>(null)
+  const moreRef = useRef<HTMLDivElement>(null)
+  const infoRef = useRef<HTMLDivElement>(null)
   const [chatWidth, setChatWidth] = useState(readChatWidth)
   const [viewportWidth, setViewportWidth] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
@@ -154,24 +182,7 @@ function SocConsoleInner() {
   // the rail is the only thing on screen from every other view; without this
   // badge a parked run sat in a tab nobody opened
   const parked = usePendingApprovals().actions.length
-  const [railExpanded, setRailExpanded] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('soc.rail.expanded') === '1'
-    } catch {
-      return false
-    }
-  })
-  const toggleRail = useCallback(() => {
-    setRailExpanded((v) => {
-      const next = !v
-      try {
-        localStorage.setItem('soc.rail.expanded', next ? '1' : '0')
-      } catch {
-        /* empty */
-      }
-      return next
-    })
-  }, [])
+  const canReadRoutability = hasPermission('settings.write')
 
   const openChat = useCallback((prompt?: string) => {
     setChatOpen(true)
@@ -234,11 +245,112 @@ function SocConsoleInner() {
     return () => clearInterval(id)
   }, [])
 
+  useEffect(() => {
+    let live = true
+    configApi
+      .getAutonomy()
+      .then((res) => {
+        if (!live) return
+        const auto = Boolean(res.data?.auto_response_enabled)
+        const force = Boolean(res.data?.force_manual_approval)
+        setAssist(force || !auto)
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let live = true
+    const settled = <T,>(p: Promise<T>): Promise<T | null> => p.then((v) => v).catch(() => null)
+    Promise.all([
+      settled(consoleApi.getHealth().then((res) => res.data as HealthRead)),
+      settled(federationApi.getHealth().then((res) => res.data as FederationRead)),
+      settled(mcpApi.getStatuses().then((res) => res.data as McpRead)),
+      canReadRoutability
+        ? settled(consoleApi.getRoutability().then((res) => res.data as RoutabilityRead))
+        : Promise.resolve(null),
+    ]).then(([health, federation, mcp, routability]) => {
+      if (live) setStatus(foldStatus({ health, federation, mcp, routability }))
+    })
+    return () => {
+      live = false
+    }
+  }, [canReadRoutability])
+
+  useEffect(() => {
+    if (!moreOpen && !infoOpen) return
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (moreOpen && !moreRef.current?.contains(t)) setMoreOpen(false)
+      if (infoOpen && !infoRef.current?.contains(t)) setInfoOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMoreOpen(false)
+        setInfoOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [moreOpen, infoOpen])
+
   const [title, sub] = valid ? titles[current] : ['Page not found', 'This page doesn’t exist']
   const Screen = screens[current]
 
+  const visibleNav = navItems.filter(([, , key, gate]) => {
+    const perm = key ? screenPerms[key] : undefined
+    if (perm && !hasPermission(perm)) return false
+    if (gate?.integration && !enabledIntegrations.includes(gate.integration)) return false
+    if (gate?.orchestrator && !orchestratorEnabled) return false
+    return Boolean(key)
+  })
+  const byKey = new Map(visibleNav.map((item) => [item[2] as string, item]))
+  const primary = PRIMARY_KEYS.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item))
+  const moreKeySet = new Set<string>(MORE_KEYS)
+  const primaryKeySet = new Set<string>(PRIMARY_KEYS)
+  const more = [
+    ...MORE_KEYS.map((key) => byKey.get(key)).filter((item): item is NavItem => Boolean(item)),
+    ...visibleNav.filter((item) => {
+      const key = item[2] as string
+      return !primaryKeySet.has(key) && !moreKeySet.has(key)
+    }),
+  ]
+  const moreCurrent = more.some((item) => valid && item[2] === current)
+
+  const navButton = (item: NavItem) => {
+    const [icon, rawLabel, key] = item
+    if (!key) return null
+    const label = key === 'workflows' ? 'Agents & workflows' : rawLabel
+    const waiting = key === 'decisions' ? parked : 0
+    const active = valid && key === current
+    return (
+      <button
+        key={key}
+        type="button"
+        className={`vg-nav-btn${active ? ' active' : ''}`}
+        aria-current={active ? 'page' : undefined}
+        aria-label={waiting ? `${label} (${waiting} waiting)` : label}
+        onClick={() => {
+          setMoreOpen(false)
+          go(key, waiting ? { search: '?tab=approvals' } : undefined)
+        }}
+      >
+        <Icon name={icon} size={16} />
+        <span>{label}</span>
+        {waiting > 0 && <span className="vg-nav-count">{waiting > 99 ? '99+' : waiting}</span>}
+      </button>
+    )
+  }
+
   const wrapperClass = [
     'soc-console',
+    scheme === 'light' ? 'vg-light' : 'vg-dark',
     chatOpen ? 'chat-active' : '',
     chatResizing ? 'chat-resizing' : '',
   ].filter(Boolean).join(' ')
@@ -263,49 +375,72 @@ function SocConsoleInner() {
       style={consoleStyle}
     >
       <ToastProvider>
-      <div className="shell">
-        {/* nav rail */}
-        <nav className={`rail${railExpanded ? ' expanded' : ''}`}>
-          <button
-            className="nav-btn nav-toggle"
-            onClick={toggleRail}
-            aria-label={railExpanded ? 'Collapse navigation' : 'Expand navigation'}
-            aria-expanded={railExpanded}
-          >
-            <VigilMark className="nav-logo mark" />
-            <VigilLogo className="nav-logo full" />
-          </button>
-          <div className="rail-sep" />
-          {navItems.filter(([, , key, gate]) => {
-            const perm = key ? screenPerms[key] : undefined
-            if (perm && !hasPermission(perm)) return false
-            if (gate?.integration && !enabledIntegrations.includes(gate.integration)) return false
-            if (gate?.orchestrator && !orchestratorEnabled) return false
-            return true
-          }).map((n) => {
-            const [icon, label, key] = n
-            const active = valid && key === current
-            const waiting = key === 'decisions' ? parked : 0
-            return (
+      <div className="shell vg-shell">
+        <header className="vg-header">
+          <div className="vg-brand">
+            <VigilLogo className="vg-logo" />
+            <DevModeWarning />
+          </div>
+          <div className="vg-command-slot" data-command-slot="" aria-hidden="true" />
+          <div className="vg-header-end">
+            {assist !== null && (
+              <div className="vg-autonomy" ref={infoRef}>
+                <span>{assist ? AUTONOMY_ASSIST : AUTONOMY_ACT}</span>
+                <button
+                  type="button"
+                  className="vg-info"
+                  aria-label="How autonomy is derived"
+                  aria-expanded={infoOpen}
+                  onClick={() => setInfoOpen((open) => !open)}
+                >
+                  <Icon name="info" size={14} />
+                </button>
+                {infoOpen && (
+                  <div className="vg-info-pop" role="tooltip">
+                    Assist when force_manual_approval is set or auto_response_enabled is off; otherwise Act.
+                  </div>
+                )}
+              </div>
+            )}
+            <UserMenu />
+          </div>
+        </header>
+        <nav className="vg-nav" aria-label="Primary">
+          {primary.map(navButton)}
+          {more.length > 0 && (
+            <div className="vg-more" ref={moreRef}>
               <button
-                key={label}
-                className={`nav-btn${active ? ' active' : ''}`}
-                // a badged item is a pointer at the approvals queue, so send the
-                // click there rather than to the screen's default tab (#746)
-                onClick={key ? () => go(key, waiting ? { search: '?tab=approvals' } : undefined) : undefined}
-                aria-label={waiting ? `${label} (${waiting} waiting)` : label}
+                type="button"
+                className={`vg-nav-btn${moreOpen || moreCurrent ? ' active' : ''}`}
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+                aria-label="More"
+                onClick={() => setMoreOpen((open) => !open)}
               >
-                <Icon name={icon} />
-                <span className="nav-label">{label}</span>
-                {waiting > 0 && <span className="nav-count">{waiting > 99 ? '99+' : waiting}</span>}
-                <span className="tip">{label}</span>
+                <Icon name="more" size={16} />
+                <span>More</span>
               </button>
-            )
-          })}
-          <div className="nav-spacer" />
-          <DevModeWarning />
-          <UserMenu />
+              {moreOpen && (
+                <div className="vg-more-menu" role="menu" aria-label="More screens">
+                  {more.map(navButton)}
+                </div>
+              )}
+            </div>
+          )}
         </nav>
+        <div
+          className={`vg-status${status?.level === 'poor' ? ' is-poor' : ''}`}
+          role={status ? 'status' : undefined}
+          aria-label={status ? 'System status' : undefined}
+          data-level={status?.level}
+        >
+          {status && (
+            <>
+              <span className="vg-status-level">{LEVEL_WORD[status.level]}</span>
+              <span>{status.sentence}</span>
+            </>
+          )}
+        </div>
 
         {/* main */}
         <div className={mainClass}>

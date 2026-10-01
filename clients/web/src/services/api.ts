@@ -514,6 +514,13 @@ export interface AgentSummary {
   decision_id?: string
 }
 
+/** Reads the shell folds itself. Health is public; routability is admin-only. */
+export const consoleApi = {
+  getHealth: () => api.get('/health'),
+  getRoutability: () =>
+    api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
+}
+
 export const configApi = {
   getClaude: () => api.get('/config/claude'),
   setClaude: (api_key: string) => api.post('/config/claude', { api_key }),
@@ -550,6 +557,11 @@ export const configApi = {
   
   getTheme: () => api.get('/config/theme'),
   setTheme: (theme: string) => api.post('/config/theme', { theme }),
+
+  getAutonomy: () =>
+    api.get<{ auto_response_enabled: boolean; force_manual_approval: boolean }>(
+      '/config/autonomy',
+    ),
   
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),

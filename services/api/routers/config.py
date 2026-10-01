@@ -32,7 +32,8 @@ from services.api.middleware.auth import (
     get_current_active_user,
     require_integrations_admin,
 )
-from services.daemon.intent import intent_report
+from services.daemon.config import DaemonConfig
+from services.daemon.intent import effective_daemon_config, intent_report
 
 router = APIRouter()
 
@@ -1316,6 +1317,28 @@ async def get_intent_report() -> IntentReportResponse:
             )
             for row in rows
         ],
+    )
+
+
+class AutonomyConfig(BaseModel):
+    """The two flags the console chip folds into Assist or Act.
+
+    Not stored. ``force_manual_approval`` is the env flag OR the
+    ``approval.force_manual_approval`` row. ``auto_response_enabled`` is
+    ``Settings.daemon_auto_response``.
+    """
+
+    auto_response_enabled: bool
+    force_manual_approval: bool
+
+
+@router.get("/autonomy", response_model=AutonomyConfig)
+async def get_autonomy_config() -> AutonomyConfig:
+    """Effective response autonomy for the console chip."""
+    effective = effective_daemon_config(DaemonConfig.from_env())
+    return AutonomyConfig(
+        auto_response_enabled=effective.response.auto_response_enabled,
+        force_manual_approval=effective.response.force_manual_approval,
     )
 
 

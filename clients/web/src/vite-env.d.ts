@@ -3,6 +3,8 @@
 
 interface ImportMetaEnv {
   readonly VITE_DEV_MODE?: string
+  /** Base URL for the profile menu's Share feedback link. */
+  readonly VITE_FEEDBACK_URL?: string
   readonly DEV: boolean
   readonly PROD: boolean
   readonly MODE: string

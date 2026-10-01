@@ -1,0 +1,290 @@
+/* Shell chrome. Screen bodies keep the ramp from styles.css.
+   Font files are Plus Jakarta Sans and Roboto Mono (OFL), self-hosted. */
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('./fonts/plus-jakarta-sans.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Roboto Mono';
+  font-style: normal;
+  font-weight: 100 700;
+  font-display: swap;
+  src: url('./fonts/roboto-mono.woff2') format('woff2');
+}
+
+/* The console root is position:fixed to the viewport. The shell inside it is
+   at least 1440px wide, so a narrower window scrolls this root sideways. */
+.soc-console.vg-dark,
+.soc-console.vg-light {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.soc-console .vg-shell {
+  flex-direction: column;
+  min-width: 1440px;
+  height: 100%;
+}
+
+.soc-console .vg-shell > .main {
+  flex: 1;
+  min-height: 0;
+}
+
+/* The dock is position:fixed from the viewport top. Drop it below the header,
+   nav, and status line so it neither covers the chip and avatar nor sits
+   under the nav bar. */
+.soc-console .chat {
+  top: 130px;
+}
+
+.vg-header {
+  height: 52px;
+  flex: 0 0 52px;
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px 0 20px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--ln0);
+  color: var(--tx0);
+  font-family: var(--font-ui);
+  position: relative;
+  z-index: 30;
+}
+
+.vg-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.vg-logo {
+  display: block;
+  height: 24px;
+  width: auto;
+}
+
+.vg-header .dev-mode-warning {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.vg-header .dev-mode-warning .tip {
+  display: none;
+}
+
+/* Empty on purpose: the command bar mounts here later. No input, no keys. */
+.vg-command-slot {
+  height: 36px;
+  border: 1px dashed var(--ln1);
+  border-radius: 10px;
+  background: var(--bg2);
+}
+
+.vg-header-end {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vg-autonomy {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 30px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--ln1);
+  border-radius: 999px;
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.vg-info {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: transparent;
+  color: var(--tx3);
+  border-radius: 999px;
+}
+
+.vg-info-pop {
+  position: absolute;
+  top: 36px;
+  right: 0;
+  width: 280px;
+  padding: 10px 12px;
+  background: var(--bg2);
+  border: 1px solid var(--ln2);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px var(--shadow);
+  color: var(--tx1);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.45;
+  white-space: normal;
+  z-index: 60;
+}
+
+.vg-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  border: 1px solid var(--ln1);
+  background: var(--bg3);
+  color: var(--tx0);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.vg-avatar.active {
+  border-color: var(--ac);
+}
+
+.vg-nav {
+  height: 46px;
+  flex: 0 0 46px;
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  padding: 0 8px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--ln0);
+  font-family: var(--font-ui);
+  position: relative;
+  z-index: 40;
+}
+
+.vg-nav-btn {
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--tx1);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vg-nav-btn.active {
+  color: var(--tx0);
+  box-shadow: inset 0 -2px 0 var(--ac);
+}
+
+.vg-nav-count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--poor);
+  color: var(--ac-tx);
+}
+
+.vg-more {
+  position: relative;
+  display: flex;
+}
+
+.vg-more-menu {
+  position: absolute;
+  top: 44px;
+  left: 0;
+  min-width: 232px;
+  padding: 6px;
+  background: var(--bg2);
+  border: 1px solid var(--ln1);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px var(--shadow);
+  display: flex;
+  flex-direction: column;
+  z-index: 60;
+}
+
+.vg-more-menu .vg-nav-btn {
+  height: 36px;
+  width: 100%;
+  border-radius: 8px;
+  box-shadow: none;
+}
+
+.vg-more-menu .vg-nav-btn.active {
+  background: var(--bg3);
+  box-shadow: none;
+}
+
+.vg-status {
+  height: 32px;
+  flex: 0 0 32px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  background: var(--bg1);
+  border-bottom: 1px solid var(--ln0);
+  color: var(--tx1);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.vg-status-level {
+  font-weight: 700;
+  color: var(--tx0);
+}
+
+.vg-status.is-poor,
+.vg-status.is-poor .vg-status-level {
+  color: var(--poor);
+}
+
+.soc-console .user-pop {
+  font-family: var(--font-ui);
+}
+
+.soc-console .user-pop a {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--tx-2);
+  padding: 8px 11px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  text-decoration: none;
+}
+
+.soc-console .user-pop a:hover {
+  background: var(--hover);
+  color: var(--tx);
+}
+
+.user-pop-about {
+  padding: 8px 11px 4px;
+  font-size: 12.5px;
+  color: var(--tx-2);
+}
