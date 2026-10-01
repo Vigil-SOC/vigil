@@ -157,9 +157,7 @@ def restore_snapshot(
             swapped = True
             created = False
             # The swap stays even when this fails. --test returned above.
-            lines.extend(
-                _settle_restored(cfg, manifest, snapshot_id, _actor(actor))
-            )
+            lines.extend(_settle_restored(cfg, manifest, snapshot_id, _actor(actor)))
             return "\n".join(lines)
     except BackupError as exc:
         error = exc
@@ -706,7 +704,9 @@ def _remove_path(path: Path) -> None:
         path.unlink()
 
 
-def _snapshot_id(repo: str, env: dict[str, str], snapshot: str, priority: list[str]) -> str:
+def _snapshot_id(
+    repo: str, env: dict[str, str], snapshot: str, priority: list[str]
+) -> str:
     # `restic ls` prints a short id. The audit and the rejection reason use
     # the full id `restic snapshots` returns, which is what `create` prints.
     raw = _checked(
@@ -819,9 +819,7 @@ def _reencrypt_and_expire(
         with get_db_manager().session_scope() as session:
             users = session.query(User).filter(User.mfa_secret.isnot(None)).all()
             if users and not old_key:
-                raise BackupError(
-                    "JWT secret not found; cannot re-encrypt MFA secrets"
-                )
+                raise BackupError("JWT secret not found; cannot re-encrypt MFA secrets")
             if old_key:
                 auth_service.JWT_SECRET_KEY = old_key
                 plaintext = [
@@ -854,15 +852,15 @@ def _load_auth_service():
     # this process's env is the wrong key to keep. The placeholder exists so
     # the import can finish; it is gone before the database work.
     placeholder_set = False
-    if not os.environ.get("JWT_SECRET_KEY"):
-        os.environ["JWT_SECRET_KEY"] = "restore-import-placeholder"
+    if not os.environ.get("JWT_SECRET_KEY"):  # noqa: ENV001 - auth import boundary
+        os.environ["JWT_SECRET_KEY"] = "restore-import-placeholder"  # noqa: ENV001
         placeholder_set = True
     try:
         import core.auth.auth_service as auth_service
         from core.auth.auth_service import AuthService
     finally:
         if placeholder_set:
-            os.environ.pop("JWT_SECRET_KEY", None)
+            os.environ.pop("JWT_SECRET_KEY", None)  # noqa: ENV001
     return auth_service, AuthService
 
 
