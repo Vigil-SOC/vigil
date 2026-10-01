@@ -78,10 +78,6 @@ class MCPServer:
         # server. Read by mcp_client.connect_to_server at connect time.
         self.required_env_vars: List[str] = list(required_env_vars or [])
 
-    def get_status(self) -> str:
-        """Catalog row only. Whether the session is up is the MCP client's."""
-        return "stopped"
-
 
 class MCPService:
     """Service for managing MCP servers."""
@@ -370,18 +366,6 @@ class MCPService:
             logger.warning(f"Could not enrich security-detections env vars: {e}")
 
         return config
-
-    def get_all_statuses(self) -> Dict[str, str]:
-        """
-        Get status of all servers.
-
-        Returns:
-            Dictionary mapping server names to status strings.
-        """
-        statuses = {}
-        for name, server in self.servers.items():
-            statuses[name] = server.get_status()
-        return statuses
 
     def list_servers(self) -> List[str]:
         """

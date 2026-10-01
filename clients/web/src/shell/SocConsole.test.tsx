@@ -79,7 +79,14 @@ vi.mock('../services/api', () => ({
     getModels: () => Promise.resolve({ data: { models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }] } }),
   },
   mcpApi: {
-    getStatuses: () => Promise.resolve({ data: { statuses: [{ status: 'ok' }, { status: 'ok' }] } }),
+    getStatuses: () => Promise.resolve({
+      data: {
+        statuses: [
+          { name: 'a', status: 'running', enabled: true },
+          { name: 'b', status: 'running', enabled: true },
+        ],
+      },
+    }),
   },
   aiConfigApi: {
     getConfig: () => Promise.resolve({ data: { components: [], assignments: {} } }),

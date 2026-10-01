@@ -96,21 +96,33 @@ async def list_servers():
 
 
 @router.get("/servers/status")
-async def get_servers_status():
-    """
-    Get status of all MCP servers including enabled state.
+async def get_servers_status(mcp_client=Depends(provide_mcp_client)):
+    """Session state for every catalog server.
 
-    Returns:
-        List of server status objects with enabled flag
+    ``status`` is ``running`` only while that server's persistent session is
+    connected. With no MCP client, every server is disconnected: the catalog
+    has no session state of its own. Dormant reconnect stays on
+    ``GET /connections/status``.
     """
-    statuses_dict = mcp_service.get_all_statuses()
-    enabled_dict = mcp_service.get_all_enabled_states()
-    # Convert dict to list of objects for frontend
-    statuses_list = [
-        {"name": name, "status": status, "enabled": enabled_dict.get(name, False)}
-        for name, status in statuses_dict.items()
-    ]
-    return {"statuses": statuses_list}
+    enabled = mcp_service.get_all_enabled_states()
+    connected = mcp_client.get_connection_status() if mcp_client else {}
+    statuses = []
+    for name in mcp_service.list_servers():
+        is_up = bool(connected.get(name))
+        row: Dict = {
+            "name": name,
+            "status": "running" if is_up else "disconnected",
+            "enabled": bool(enabled.get(name, False)),
+        }
+        if mcp_client and not is_up:
+            missing = mcp_client.get_missing_credentials(name)
+            if missing:
+                row["missing_credentials"] = missing
+            err = mcp_client.get_last_error(name)
+            if err:
+                row["error"] = err
+        statuses.append(row)
+    return {"statuses": statuses}
 
 
 @router.get("/servers/enabled")

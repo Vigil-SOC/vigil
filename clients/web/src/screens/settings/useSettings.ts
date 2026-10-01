@@ -655,6 +655,8 @@ export function useMcpServers() {
   const [servers, setServers] = useState<string[]>([])
   const [statuses, setStatuses] = useState<Record<string, string>>({})
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [missingCredentials, setMissingCredentials] = useState<Record<string, string[]>>({})
   const [phase, setPhase] = useState<Phase>('loading')
   const [error, setError] = useState<string | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
@@ -669,14 +671,28 @@ export function useMcpServers() {
         const statusList = st.data.statuses || []
         const statusDict: Record<string, string> = {}
         const enabledDict: Record<string, boolean> = {}
+        const errorDict: Record<string, string> = {}
+        const missingDict: Record<string, string[]> = {}
         if (Array.isArray(statusList)) {
-          statusList.forEach((item: { name?: string; status?: string; enabled?: boolean }) => {
+          statusList.forEach((item: {
+            name?: string
+            status?: string
+            enabled?: boolean
+            error?: string
+            missing_credentials?: string[]
+          }) => {
             if (item.name && item.status) statusDict[item.name] = item.status
             if (item.name) enabledDict[item.name] = !!item.enabled
+            if (item.name && item.error) errorDict[item.name] = item.error
+            if (item.name && item.missing_credentials?.length) {
+              missingDict[item.name] = item.missing_credentials
+            }
           })
         }
         setStatuses(statusDict)
         setEnabled(enabledDict)
+        setErrors(errorDict)
+        setMissingCredentials(missingDict)
         setPhase('ready')
       })
       .catch((e) => {
@@ -723,7 +739,7 @@ export function useMcpServers() {
     [fetchAll],
   )
 
-  return { servers, statuses, enabled, phase, error, reload, setServerEnabled }
+  return { servers, statuses, enabled, errors, missingCredentials, phase, error, reload, setServerEnabled }
 }
 
 export type CostTimeRange = '24h' | '7d' | '30d' | 'all'

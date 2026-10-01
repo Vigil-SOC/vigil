@@ -49,7 +49,7 @@ export default function IntegrationsSection({ notify }: SectionProps) {
 }
 
 function ServersPanel({ notify }: SectionProps) {
-  const { servers, statuses, enabled, phase, error, reload, setServerEnabled } = useMcpServers()
+  const { servers, statuses, enabled, errors, missingCredentials, phase, error, reload, setServerEnabled } = useMcpServers()
   const { config: intCfg, reload: reloadInt, saveIntegration, setIntegrationEnabled } = useIntegrationsConfig()
   // refresh the extension registry so a newly-configured connector mounts at once
   const { reload: reloadExtensions } = useExtensions()
@@ -146,6 +146,12 @@ function ServersPanel({ notify }: SectionProps) {
               {cat.servers.map((name) => {
                 const isEnabled = !!enabled[name]
                 const isRunning = statuses[name] === 'running'
+                const rowError = errors[name]
+                const missing = missingCredentials[name] ?? []
+                const sessionDetail = [
+                  missing.length ? `Missing ${missing.join(', ')}` : '',
+                  rowError || '',
+                ].filter(Boolean).join(' — ')
                 const integration = getIntegrationForServer(name)
                 const isConfigured = integration
                   ? intCfg.enabled_integrations.includes(integration.id)
@@ -215,6 +221,11 @@ function ServersPanel({ notify }: SectionProps) {
                     <p className="text-xs text-tx-3 leading-snug line-clamp-2 min-h-[2rem]">
                       {SERVER_DESCRIPTIONS.get(name) || integration?.description || 'Custom MCP integration.'}
                     </p>
+                    {sessionDetail && (
+                      <p className="text-[11px] text-tx-3 leading-snug line-clamp-2" title={sessionDetail}>
+                        {sessionDetail}
+                      </p>
+                    )}
                     <div className="flex items-center gap-1.5 mt-auto">
                       <span style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor }} />
                       <span className="text-xs text-tx-3 flex-1">{label}</span>
