@@ -541,6 +541,58 @@ jobs:
             -f infra/database/init/20_agent_directives.sql \
             -f infra/database/init/21_agent_run_leases.sql
 
+      - name: Install restic and pg_dump
+        # backup create shells out to both. pg_dump's major must be at least the
+        # server's (16). restic is pinned.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y curl bzip2 ca-certificates
+          pg_major() {
+            pg_dump --version | sed -n 's/.*PostgreSQL) \([0-9][0-9]*\).*/\1/p'
+          }
+          need_client=0
+          if ! command -v pg_dump >/dev/null 2>&1; then
+            need_client=1
+          else
+            major="$(pg_major)"
+            if [ -z "$major" ] || [ "$major" -lt 16 ]; then
+              need_client=1
+            fi
+          fi
+          if [ "$need_client" -eq 1 ]; then
+            sudo apt-get install -y gnupg
+            curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+              | sudo gpg --dearmor -o /usr/share/keyrings/postgresql.gpg
+            . /etc/os-release
+            echo "deb [signed-by=/usr/share/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+              | sudo tee /etc/apt/sources.list.d/pgdg.list
+            sudo apt-get update
+            sudo apt-get install -y postgresql-client-16
+          fi
+          if [ -x /usr/lib/postgresql/16/bin/pg_dump ]; then
+            echo "/usr/lib/postgresql/16/bin" >> "$GITHUB_PATH"
+            export PATH="/usr/lib/postgresql/16/bin:${PATH}"
+          fi
+          major="$(pg_major)"
+          if [ -z "$major" ] || [ "$major" -lt 16 ]; then
+            echo "pg_dump $(pg_dump --version) is older than server 16" >&2
+            exit 1
+          fi
+          version=0.19.1
+          case "$(uname -m)" in
+            x86_64) arch=amd64; sha=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c ;;
+            aarch64) arch=arm64; sha=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465 ;;
+            *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+          esac
+          curl -fsSL -o /tmp/restic.bz2 \
+            "https://github.com/restic/restic/releases/download/v${version}/restic_${version}_linux_${arch}.bz2"
+          echo "${sha}  /tmp/restic.bz2" | sha256sum -c -
+          bunzip2 -f /tmp/restic.bz2
+          sudo install -m 0755 /tmp/restic /usr/local/bin/restic
+          restic version
+          pg_dump --version
+
       - name: Run integration tests
         run: |
           pytest tests/integration/ -v --cov=services --cov=core --cov-report=xml
