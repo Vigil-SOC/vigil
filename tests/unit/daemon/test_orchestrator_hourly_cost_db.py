@@ -56,7 +56,7 @@ def _orchestrator() -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig(max_total_hourly_cost=CAP)
     orch._queued_intake_triggers = MagicMock(return_value=[{"id": 1}])
-    orch._resolve_intake_row = lambda row, _now: row
+    orch._resolve_queue = lambda _now: orch._queued_intake_triggers()
     orch._process_intake_row = AsyncMock()
     orch._queued_intake_depth = MagicMock(return_value=None)
     orch._in_flight = MagicMock(return_value=0)

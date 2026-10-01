@@ -201,6 +201,22 @@ class DatabaseDataService:
                 return None
         return None
 
+    def get_findings_by_ids(self, finding_ids: List[str]) -> Dict[str, Dict]:
+        """Each found id's Finding, as get_finding returns it. {} on a failed read."""
+        if self._demo_mode and self._demo_service:
+            found = (self._demo_service.get_finding(i) for i in finding_ids)
+            return {f["finding_id"]: f for f in found if f}
+        if not self._db_available:
+            return {}
+        try:
+            return {
+                f["finding_id"]: f
+                for f in self._db_service.get_findings_by_ids(finding_ids)
+            }
+        except Exception as e:
+            logger.error(f"Error getting findings from DB: {e}")
+            return {}
+
     def get_findings_by_technique(
         self,
         technique_id: str,

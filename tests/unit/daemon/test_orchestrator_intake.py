@@ -8,6 +8,7 @@ Ranking, TTL and slot-wait live in test_orchestrator_rank.py (#922).
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -39,11 +40,19 @@ UNRATED = {
 }
 
 
+def _overlap(orch, ids):
+    orch.shared_intel.overlaps_by_finding.side_effect = lambda findings: {
+        f["finding_id"]: ids for f in findings
+    }
+
+
 def _orchestrator(**extra) -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig()
     orch.shared_intel = MagicMock()
-    orch.shared_intel.check_overlap.return_value = None
+    _overlap(orch, [])
+    orch._overlapping_case_ids = MagicMock(return_value={})
+    orch._expire_queued = MagicMock()
     orch.stats = {"dedup_prevented": 0, "investigations_created": 0}
     orch._log_ai_decision = MagicMock()
     orch._create_investigation = AsyncMock()
@@ -155,11 +164,11 @@ async def test_schedule_and_human_ask_are_never_shed():
 @pytest.mark.asyncio
 async def test_overlap_ends_merged_with_the_case_it_joined():
     orch = _orchestrator()
-    orch.shared_intel.check_overlap.return_value = ["inv-1"]
+    _overlap(orch, ["inv-1"])
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
 
-    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-1"])
+    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-1"], {})
     orch._decide_trigger.assert_called_once_with(
         9, state="merged", reason="overlaps_open_work", merged_into="case-1"
     )
@@ -170,11 +179,11 @@ async def test_overlap_ends_merged_with_the_case_it_joined():
 @pytest.mark.asyncio
 async def test_a_medium_finding_that_overlaps_merges_instead_of_shedding():
     orch = _orchestrator()
-    orch.shared_intel.check_overlap.return_value = ["inv-1"]
+    _overlap(orch, ["inv-1"])
 
     await orch._create_investigation_for_finding(MEDIUM, None, trigger_id=8)
 
-    orch._attach_to_overlapping_case.assert_called_once_with("f-med", ["inv-1"])
+    orch._attach_to_overlapping_case.assert_called_once_with("f-med", ["inv-1"], {})
     orch._decide_trigger.assert_called_once_with(
         8, state="merged", reason="overlaps_open_work", merged_into="case-1"
     )
@@ -184,12 +193,12 @@ async def test_a_medium_finding_that_overlaps_merges_instead_of_shedding():
 @pytest.mark.asyncio
 async def test_failed_attach_leaves_row_queued():
     orch = _orchestrator()
-    orch.shared_intel.check_overlap.return_value = ["inv-1"]
+    _overlap(orch, ["inv-1"])
     orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.HOLD, None))
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
 
-    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-1"])
+    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-1"], {})
     orch._decide_trigger.assert_not_called()
     orch._create_investigation.assert_not_awaited()
 
@@ -197,7 +206,7 @@ async def test_failed_attach_leaves_row_queued():
 @pytest.mark.asyncio
 async def test_failed_attach_does_not_count_dedup():
     orch = _orchestrator()
-    orch.shared_intel.check_overlap.return_value = ["inv-1"]
+    _overlap(orch, ["inv-1"])
     orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.HOLD, None))
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
@@ -208,14 +217,16 @@ async def test_failed_attach_does_not_count_dedup():
 @pytest.mark.asyncio
 async def test_failed_attach_on_resolve_is_not_launchable():
     orch = _orchestrator()
-    orch.shared_intel.check_overlap.return_value = ["inv-1"]
+    _overlap(orch, ["inv-1"])
     orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.HOLD, None))
-    orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
+    orch._hydrate_detection_findings = MagicMock(return_value={"f-high": HIGH})
     row = {"id": 9, "kind": "detection", "finding_id": "f-high"}
 
-    kept = orch._resolve_intake_row(row, utcnow())
+    orch._queued_intake_triggers = MagicMock(return_value=[row])
 
-    assert kept is None
+    kept = orch._resolve_queue(utcnow())
+
+    assert kept == []
     orch._decide_trigger.assert_not_called()
     assert orch.stats["dedup_prevented"] == 0
 
@@ -223,12 +234,12 @@ async def test_failed_attach_on_resolve_is_not_launchable():
 @pytest.mark.asyncio
 async def test_overlap_with_caseless_run_is_not_a_merge():
     orch = _orchestrator()
-    orch.shared_intel.check_overlap.return_value = ["inv-hunt"]
+    _overlap(orch, ["inv-hunt"])
     orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.LAUNCH, None))
 
     await orch._create_investigation_for_finding(HIGH, None, trigger_id=9)
 
-    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-hunt"])
+    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-hunt"], {})
     orch._decide_trigger.assert_not_called()
     orch._create_investigation.assert_awaited_once()
     assert orch.stats["dedup_prevented"] == 0
@@ -237,14 +248,16 @@ async def test_overlap_with_caseless_run_is_not_a_merge():
 @pytest.mark.asyncio
 async def test_caseless_overlap_on_resolve_stays_launchable():
     orch = _orchestrator()
-    orch.shared_intel.check_overlap.return_value = ["inv-hunt"]
+    _overlap(orch, ["inv-hunt"])
     orch._attach_to_overlapping_case = MagicMock(return_value=(_Overlap.LAUNCH, None))
-    orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
+    orch._hydrate_detection_findings = MagicMock(return_value={"f-high": HIGH})
     row = {"id": 9, "kind": "detection", "finding_id": "f-high"}
 
-    kept = orch._resolve_intake_row(row, utcnow())
+    orch._queued_intake_triggers = MagicMock(return_value=[row])
 
-    assert kept is row
+    kept = orch._resolve_queue(utcnow())
+
+    assert kept == [row]
     orch._decide_trigger.assert_not_called()
     assert orch.stats["dedup_prevented"] == 0
 
@@ -278,7 +291,7 @@ async def test_drain_routes_detection_and_human_ask():
             },
         ]
     )
-    orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
+    orch._hydrate_detection_findings = MagicMock(return_value={"f-high": HIGH})
 
     await orch._drain_intake(None)
 
@@ -516,8 +529,8 @@ async def test_second_scan_of_a_queued_finding_is_a_noop(monkeypatch):
 @pytest.mark.asyncio
 async def test_scan_row_merges_into_live_case():
     orch = _orchestrator()
-    orch.shared_intel.check_overlap.return_value = ["inv-1"]
-    orch._hydrate_detection_finding = MagicMock(return_value=HIGH)
+    _overlap(orch, ["inv-1"])
+    orch._hydrate_detection_findings = MagicMock(return_value={"f-high": HIGH})
     row = {
         "id": 12,
         "kind": "detection",
@@ -525,14 +538,41 @@ async def test_scan_row_merges_into_live_case():
         "payload": {"trigger_type": "scan"},
     }
 
-    kept = orch._resolve_intake_row(row, utcnow())
+    orch._queued_intake_triggers = MagicMock(return_value=[row])
 
-    assert kept is None
-    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-1"])
+    kept = orch._resolve_queue(utcnow())
+
+    assert kept == []
+    orch._attach_to_overlapping_case.assert_called_once_with("f-high", ["inv-1"], {})
     orch._decide_trigger.assert_called_once_with(
         12, state="merged", reason="overlaps_open_work", merged_into="case-1"
     )
     orch._create_investigation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_resolve_phase_leaves_the_event_loop_free():
+    import threading
+
+    orch = _orchestrator()
+    started, released = threading.Event(), threading.Event()
+
+    def resolve(_now):
+        started.set()
+        # On the event loop, the other coroutine could never run to release this.
+        assert released.wait(timeout=2), "resolve blocked the event loop"
+        return []
+
+    async def another_loop():
+        while not started.is_set():
+            await asyncio.sleep(0.01)
+        released.set()
+
+    orch._resolve_queue = resolve
+
+    await asyncio.wait_for(
+        asyncio.gather(orch._drain_intake(None), another_loop()), timeout=5
+    )
 
 
 @pytest.mark.asyncio
