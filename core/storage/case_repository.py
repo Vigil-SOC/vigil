@@ -14,13 +14,6 @@ from typing import List, Optional, Sequence, Tuple, Union
 from sqlalchemy import Select, and_, case, exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from core.cases.closure import ClosedByKind
-from core.cases.combined_state import (
-    HEALTH_WARNING,
-    budget_health,
-    combined_state,
-    sla_clock,
-)
 from core.storage.models import (
     Case,
     CaseClosureInfo,
@@ -38,6 +31,13 @@ Filterable = Optional[Union[str, Sequence[str]]]
 
 # Default page size for ``search`` and the case queue.
 PAGE_LIMIT = 100
+
+# Same 75% elapsed cut as ``CaseSLAService.get_sla_status``. Stored here so the
+# queue filter does not import the cases domain.
+_SLA_AT_RISK = 0.75
+
+# ``case_closure_info.closed_by_kind`` value for an agent close, as stored.
+_CLOSED_BY_AGENT = "agent"
 
 
 def _as_list(value: Filterable) -> List[str]:
@@ -161,7 +161,7 @@ def _open_clock_at_risk(due, completed, created, now):
     return and_(
         completed.is_(None),
         total > 0,
-        elapsed >= total * HEALTH_WARNING,
+        elapsed >= total * _SLA_AT_RISK,
     )
 
 
@@ -212,22 +212,33 @@ def _finding_source_exists(data_source: str):
 
 @dataclass(frozen=True)
 class CaseQueueRow:
+    """One queue row before combined state and the health words.
+
+    Those are applied in ``core.cases.combined_state`` so this module does not
+    import the cases domain.
+    """
+
     case_id: str
     title: str
     priority: Optional[str]
     assignee: Optional[str]
-    combined_state: str
+    status: str
+    live_status: Optional[str]
     workflow_id: Optional[str]
     findings_count: int
     iteration_count: Optional[int]
     cost_usd: Optional[float]
     max_cost_usd: Optional[float]
-    budget_health: Optional[str]
     comment_count: int
     last_activity: Optional[datetime]
     age_seconds: float
-    sla_seconds_left: Optional[float]
-    health_status: Optional[str]
+    has_sla: bool
+    sla_created_at: Optional[datetime]
+    response_due: Optional[datetime]
+    resolution_due: Optional[datetime]
+    response_completed_at: Optional[datetime]
+    resolution_completed_at: Optional[datetime]
+    is_paused: bool
 
 
 @dataclass(frozen=True)
@@ -558,16 +569,6 @@ class CaseRepository:
         )
         rows = []
         for record in self.session.execute(stmt).mappings():
-            health, seconds_left = sla_clock(
-                now=now,
-                has_sla=record["sla_case_id"] is not None,
-                sla_created_at=record["sla_created_at"],
-                response_due=record["response_due"],
-                resolution_due=record["resolution_due"],
-                response_completed_at=record["response_completed_at"],
-                resolution_completed_at=record["resolution_completed_at"],
-                is_paused=bool(record["is_paused"]),
-            )
             created_at = record["created_at"]
             age = (now - created_at).total_seconds() if created_at else 0.0
             cost = record["cost_usd"]
@@ -578,9 +579,8 @@ class CaseRepository:
                     title=record["title"],
                     priority=record["priority"],
                     assignee=record["assignee"],
-                    combined_state=combined_state(
-                        record["status"], record["live_status"]
-                    ),
+                    status=record["status"],
+                    live_status=record["live_status"],
                     workflow_id=record["workflow_id"],
                     findings_count=int(record["findings_count"] or 0),
                     iteration_count=(
@@ -590,15 +590,16 @@ class CaseRepository:
                     ),
                     cost_usd=None if cost is None else float(cost),
                     max_cost_usd=None if max_cost is None else float(max_cost),
-                    budget_health=budget_health(
-                        None if cost is None else float(cost),
-                        None if max_cost is None else float(max_cost),
-                    ),
                     comment_count=int(record["comment_count"] or 0),
                     last_activity=record["last_activity"],
                     age_seconds=age,
-                    sla_seconds_left=seconds_left,
-                    health_status=health,
+                    has_sla=record["sla_case_id"] is not None,
+                    sla_created_at=record["sla_created_at"],
+                    response_due=record["response_due"],
+                    resolution_due=record["resolution_due"],
+                    response_completed_at=record["response_completed_at"],
+                    resolution_completed_at=record["resolution_completed_at"],
+                    is_paused=bool(record["is_paused"]),
                 )
             )
         return rows, int(total)
@@ -644,7 +645,7 @@ class CaseRepository:
         closed_today = int(self.session.execute(today).scalar_one())
         agent_today = int(
             self.session.execute(
-                today.where(CaseClosureInfo.closed_by_kind == ClosedByKind.AGENT.value)
+                today.where(CaseClosureInfo.closed_by_kind == _CLOSED_BY_AGENT)
             ).scalar_one()
         )
         share = (agent_today / closed_today) if closed_today else 0.0

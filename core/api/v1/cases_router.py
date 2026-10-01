@@ -26,7 +26,7 @@ from core.cases import case_journal_service
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
 from core.cases.closure import ClosedByKind, ClosureCategory
-from core.cases.combined_state import combined_state
+from core.cases.combined_state import combined_state, queue_item
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.case_repository import PAGE_LIMIT, CaseRepository
 from core.storage.database_data_service import DatabaseDataService
@@ -309,7 +309,7 @@ async def get_cases(
         )
         strip = repo.strip(now=now)
     return {
-        "cases": [asdict(row) for row in rows],
+        "cases": [asdict(queue_item(row, now)) for row in rows],
         "total": total,
         "limit": limit,
         "offset": offset,

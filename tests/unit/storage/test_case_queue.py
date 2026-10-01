@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
+from core.cases.combined_state import queue_item
 from core.storage.case_repository import CaseRepository
 from core.storage.connection import get_db_session
 from core.storage.models import (
@@ -136,6 +137,10 @@ def _ids(rows) -> list[str]:
     return [row.case_id for row in rows]
 
 
+def _shown(rows, now=NOW):
+    return [queue_item(row, now) for row in rows]
+
+
 def test_default_queue_is_soonest_resolution_first_with_no_sla_last(session):
     _policy(session)
     # Overdue, then one hour, then two cases sharing a due (newer activity
@@ -203,6 +208,7 @@ def test_default_queue_is_soonest_resolution_first_with_no_sla_last(session):
     )
 
     rows, total = CaseRepository(session).queue(now=NOW)
+    shown = _shown(rows)
 
     assert total == 7
     assert _ids(rows) == [
@@ -214,10 +220,10 @@ def test_default_queue_is_soonest_resolution_first_with_no_sla_last(session):
         "met",
         "no-sla",
     ]
-    assert rows[0].sla_seconds_left < 0
-    assert rows[-1].health_status is None
-    assert rows[-1].sla_seconds_left is None
-    by_id = {row.case_id: row for row in rows}
+    assert shown[0].sla_seconds_left < 0
+    assert shown[-1].health_status is None
+    assert shown[-1].sla_seconds_left is None
+    by_id = {row.case_id: row for row in shown}
     assert by_id["paused"].sla_seconds_left is None
     assert by_id["met"].sla_seconds_left is None
 
@@ -290,6 +296,7 @@ def test_sla_at_risk_is_warning_critical_or_breached(session):
     )
 
     rows, total = CaseRepository(session).queue(sla_at_risk=True, now=NOW)
+    shown = _shown(rows)
 
     assert total == 5
     assert set(_ids(rows)) == {
@@ -299,7 +306,7 @@ def test_sla_at_risk_is_warning_critical_or_breached(session):
         "breached",
         "response",
     }
-    by_id = {row.case_id: row for row in rows}
+    by_id = {row.case_id: row for row in shown}
     assert by_id["boundary"].health_status == "warning"
     assert by_id["warning"].health_status == "warning"
     assert by_id["critical"].health_status == "critical"
@@ -401,7 +408,7 @@ def test_row_reads_the_latest_investigation_and_the_strip(session):
     repo = CaseRepository(session)
     rows, _ = repo.queue(state="executing", now=NOW)
     assert len(rows) == 1
-    row = rows[0]
+    row = queue_item(rows[0], NOW)
     assert row.combined_state == "executing"
     assert row.workflow_id == "new-wf"
     assert row.iteration_count == 7

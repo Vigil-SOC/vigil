@@ -3,8 +3,9 @@
 import pytest
 from fastapi.routing import APIRoute
 
-from core.storage.schemas import CaseSchema, CaseWithFindingsSchema
 from core.api.v1 import cases_router as v1_cases
+from core.storage.schemas import CaseWithFindingsSchema
+from core.storage.schemas.case_api import CaseDetailResponse
 from services.api.routers import cases
 
 pytestmark = pytest.mark.unit
@@ -22,9 +23,10 @@ def test_every_cases_route_declares_response_model():
 
 
 def test_get_case_documents_ids_not_inlined_findings():
-    """GET /cases/{id} dumps CaseSchema (finding_ids). Inlined findings would
-    be a behaviour change — DatabaseDataService.get_case loads findings then
-    still dumps CaseSchema.
+    """GET /cases/{id} keeps finding ids, plus combined state.
+
+    Inlined findings would be a behaviour change — DatabaseDataService.get_case
+    loads findings then still dumps them as ids.
     """
     get_case = [
         route
@@ -34,5 +36,8 @@ def test_get_case_documents_ids_not_inlined_findings():
         and "GET" in route.methods
     ]
     assert len(get_case) == 1
-    assert get_case[0].response_model is CaseSchema
-    assert get_case[0].response_model is not CaseWithFindingsSchema
+    model = get_case[0].response_model
+    assert model is CaseDetailResponse
+    assert model is not CaseWithFindingsSchema
+    assert "finding_ids" in model.model_fields
+    assert "findings" not in model.model_fields

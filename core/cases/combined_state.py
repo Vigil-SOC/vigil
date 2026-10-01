@@ -7,7 +7,9 @@ elapsed cuts as ``CaseSLAService.get_sla_status``.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 from core.storage.models.workflow import LIVE_INVESTIGATION_STATUSES
 
@@ -102,3 +104,57 @@ def sla_clock(
     if resolution_completed_at is None and resolution_due is not None:
         seconds_left = (resolution_due - now).total_seconds()
     return health, seconds_left
+
+
+@dataclass(frozen=True)
+class QueueItem:
+    """List item after combined state and the health words."""
+
+    case_id: str
+    title: str
+    priority: Optional[str]
+    assignee: Optional[str]
+    combined_state: str
+    workflow_id: Optional[str]
+    findings_count: int
+    iteration_count: Optional[int]
+    cost_usd: Optional[float]
+    max_cost_usd: Optional[float]
+    budget_health: Optional[str]
+    comment_count: int
+    last_activity: Optional[datetime]
+    age_seconds: float
+    sla_seconds_left: Optional[float]
+    health_status: Optional[str]
+
+
+def queue_item(row, now: datetime) -> QueueItem:
+    """Apply combined state and the 75 / 90 health words to one SQL row."""
+    health, seconds_left = sla_clock(
+        now=now,
+        has_sla=row.has_sla,
+        sla_created_at=row.sla_created_at,
+        response_due=row.response_due,
+        resolution_due=row.resolution_due,
+        response_completed_at=row.response_completed_at,
+        resolution_completed_at=row.resolution_completed_at,
+        is_paused=row.is_paused,
+    )
+    return QueueItem(
+        case_id=row.case_id,
+        title=row.title,
+        priority=row.priority,
+        assignee=row.assignee,
+        combined_state=combined_state(row.status, row.live_status),
+        workflow_id=row.workflow_id,
+        findings_count=row.findings_count,
+        iteration_count=row.iteration_count,
+        cost_usd=row.cost_usd,
+        max_cost_usd=row.max_cost_usd,
+        budget_health=budget_health(row.cost_usd, row.max_cost_usd),
+        comment_count=row.comment_count,
+        last_activity=row.last_activity,
+        age_seconds=row.age_seconds,
+        sla_seconds_left=seconds_left,
+        health_status=health,
+    )
