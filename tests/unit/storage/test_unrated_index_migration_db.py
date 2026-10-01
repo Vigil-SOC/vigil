@@ -1,4 +1,4 @@
-"""migrate_schema.py keeps idx_finding_unrated_created_at one the planner reads.
+"""migrate_schema.py keeps idx_finding_unrated_sweep one the planner reads.
 
 It builds the index concurrently, leaves a working one alone, and rebuilds one
 that a failed build left INVALID or whose WHERE no longer matches UNRATED_WHERE.
@@ -21,8 +21,11 @@ from core.storage.models.finding import UNRATED_WHERE
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
 MIGRATE_SCHEMA = Path(__file__).resolve().parents[3] / "scripts" / "migrate_schema.py"
-INDEX = "idx_finding_unrated_created_at"
-PROBE = f"SELECT 1 FROM findings WHERE {UNRATED_WHERE} ORDER BY created_at LIMIT 1"
+INDEX = "idx_finding_unrated_sweep"
+PROBE = (
+    f"SELECT 1 FROM findings WHERE {UNRATED_WHERE} "
+    "ORDER BY bulk_imported, created_at LIMIT 1"
+)
 
 
 @functools.cache
@@ -108,7 +111,8 @@ def test_leaves_a_working_index_alone():
 
 def test_rebuilds_an_index_whose_where_has_moved_on():
     _replace_index(
-        f"CREATE INDEX {INDEX} ON findings (created_at) WHERE ai_enrichment IS NULL"
+        f"CREATE INDEX {INDEX} ON findings (bulk_imported, created_at) "
+        "WHERE ai_enrichment IS NULL"
     )
     stale = _index()
     assert not _planner_reads_it()

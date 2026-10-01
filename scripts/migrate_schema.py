@@ -80,6 +80,13 @@ def _index_exists(conn, name):
     ).scalar() is not None
 
 
+def _column_exists(conn, table, column):
+    return conn.execute(text(
+        "SELECT 1 FROM information_schema.columns WHERE table_schema = "
+        "current_schema() AND table_name = :t AND column_name = :c"
+    ), {"t": table, "c": column}).scalar() is not None
+
+
 def _planner_reads(conn, index, query):
     """Whether the planner would read the index for the query.
 
@@ -138,6 +145,21 @@ def create_findings_description_gin_index(conn):
     """))
 
 
+# NULL on rows already there (a DEFAULT here would mark every one live); the
+# default is for new rows. A step of its own so the lock ends before marking.
+# 37_findings_bulk_imported.sql does the same from db-init.
+@migration("Add bulk_imported column to findings")
+def add_findings_bulk_imported(conn):
+    if not _table_exists(conn, 'findings'):
+        return
+    if _column_exists(conn, 'findings', 'bulk_imported'):
+        return
+    conn.execute(text("ALTER TABLE findings ADD COLUMN bulk_imported BOOLEAN"))
+    conn.execute(text(
+        "ALTER TABLE findings ALTER COLUMN bulk_imported SET DEFAULT false"
+    ))
+
+
 # create_all never adds an index to a table it finds, and findings predates
 # this one. CONCURRENTLY so ingestion keeps writing while it builds; rebuilt when
 # a failed build left it INVALID or UNRATED_WHERE has moved on.
@@ -145,20 +167,35 @@ def create_findings_description_gin_index(conn):
 def create_findings_unrated_index(conn):
     from core.storage.models.finding import UNRATED_WHERE
 
-    name = 'idx_finding_unrated_created_at'
-    if not _table_exists(conn, 'findings'):
+    name = 'idx_finding_unrated_sweep'
+    if not _column_exists(conn, 'findings', 'bulk_imported'):
         return
     if _index_exists(conn, name):
         probe = (
             f"SELECT 1 FROM findings WHERE {UNRATED_WHERE} "
-            "ORDER BY created_at LIMIT 1"
+            "ORDER BY bulk_imported, created_at LIMIT 1"
         )
         if _planner_reads(conn, name, probe):
             return
         conn.execute(text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
     conn.execute(text(f"""
         CREATE INDEX CONCURRENTLY IF NOT EXISTS {name}
-        ON findings (created_at) WHERE {UNRATED_WHERE};
+        ON findings (bulk_imported, created_at) WHERE {UNRATED_WHERE};
+    """))
+
+
+# Unrated rows stored before the column, marked by the old guess: no event
+# time, or stored over 24h after it. Re-runs find none.
+@migration("Mark unrated findings stored before bulk_imported")
+def mark_findings_bulk_imported(conn):
+    from core.storage.models.finding import UNRATED_WHERE
+
+    if not _column_exists(conn, 'findings', 'bulk_imported'):
+        return
+    conn.execute(text(f"""
+        UPDATE findings SET bulk_imported =
+            (timestamp IS NULL OR created_at - timestamp > interval '24 hours')
+        WHERE bulk_imported IS NULL AND {UNRATED_WHERE};
     """))
 
 

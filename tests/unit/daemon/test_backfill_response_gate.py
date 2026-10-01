@@ -1,15 +1,13 @@
-"""The sweep rates Findings that arrived as history, but never responds to them."""
+"""The sweep rates bulk imports, but never responds to them."""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from core.time import utcnow
 from services.daemon.config import ProcessingConfig
 from services.daemon.processor import BACKFILL_SOURCE, FindingProcessor
 
@@ -24,24 +22,16 @@ def _processor(**config) -> FindingProcessor:
     return processor
 
 
-def _iso(dt):
-    return dt.replace(tzinfo=timezone.utc).isoformat()
-
-
-# Shaped like the sweep's rows: FindingSchema dumps datetimes as "+00:00" strings.
-def _swept(*, stored_ago, event_before_stored):
-    stored = utcnow() - stored_ago
+def _finding(*, bulk_imported, timestamp="2026-09-01T00:00:00+00:00"):
     return {
         "finding_id": "f1",
         "severity": "high",
-        "created_at": _iso(stored),
-        "timestamp": (
-            None if event_before_stored is None else _iso(stored - event_before_stored)
-        ),
+        "timestamp": timestamp,
+        "bulk_imported": bulk_imported,
     }
 
 
-async def test_an_upload_of_old_events_is_rated_but_not_responded_to():
+async def test_a_swept_import_is_rated_but_not_responded_to():
     processor = FindingProcessor(
         ProcessingConfig(auto_triage_enabled=True, auto_enrich_enabled=False)
     )
@@ -51,45 +41,30 @@ async def test_an_upload_of_old_events_is_rated_but_not_responded_to():
     )
     processor._update_finding = AsyncMock()
     processor._data_service = object()
-    finding = _swept(
-        stored_ago=timedelta(hours=1), event_before_stored=timedelta(days=30)
-    )
 
-    await processor._enrich_in_background(finding, BACKFILL_SOURCE)
+    await processor._enrich_in_background(_finding(bulk_imported=True), BACKFILL_SOURCE)
 
     processor._triage_finding.assert_awaited_once()
     processor._update_finding.assert_awaited_once()
     processor._evaluate_for_response.assert_not_awaited()
-    assert processor.stats["backfill_not_responded"] == 1
+    assert processor.stats["import_not_responded"] == 1
 
 
-async def test_a_finding_rerated_after_an_outage_still_is():
+async def test_a_swept_live_finding_with_no_event_time_is_responded_to():
+    # LogLM rows can carry no event time; one re-rated after an outage still acts.
     processor = _processor()
-    finding = _swept(
-        stored_ago=timedelta(days=6), event_before_stored=timedelta(minutes=1)
-    )
 
-    await processor._enrich_in_background(finding, BACKFILL_SOURCE)
+    await processor._enrich_in_background(
+        _finding(bulk_imported=False, timestamp=None), BACKFILL_SOURCE
+    )
 
     processor._evaluate_for_response.assert_awaited_once()
 
 
-async def test_a_swept_finding_with_no_event_time_is_not():
+async def test_a_live_payload_cannot_mark_itself_an_import():
     processor = _processor()
-    finding = _swept(stored_ago=timedelta(hours=1), event_before_stored=None)
 
-    await processor._enrich_in_background(finding, BACKFILL_SOURCE)
-
-    processor._evaluate_for_response.assert_not_awaited()
-
-
-async def test_live_ingest_of_an_old_event_still_is():
-    processor = _processor()
-    finding = _swept(
-        stored_ago=timedelta(minutes=1), event_before_stored=timedelta(days=30)
-    )
-
-    await processor._enrich_in_background(finding, "webhook")
+    await processor._enrich_in_background(_finding(bulk_imported=True), "webhook")
 
     processor._evaluate_for_response.assert_awaited_once()
 

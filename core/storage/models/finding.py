@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -68,6 +69,12 @@ class Finding(Base):
     # AI-generated enrichment (cached analysis)
     ai_enrichment: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
+    # Upload or S3 import: rated after live Findings, never responded to. NULL
+    # predates the column; migrate_schema.py marks the unrated ones.
+    bulk_imported: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True, default=False, server_default=text("false")
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utcnow, server_default=text("now()")
@@ -115,7 +122,8 @@ class Finding(Base):
             ),
         ),
         Index(
-            "idx_finding_unrated_created_at",
+            "idx_finding_unrated_sweep",
+            "bulk_imported",
             "created_at",
             postgresql_where=text(UNRATED_WHERE),
         ),

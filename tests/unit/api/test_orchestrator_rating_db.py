@@ -49,7 +49,9 @@ def client(monkeypatch):
     return TestClient(app)
 
 
-def _store(name, *, stored_ago, enrichment=None, event_ago=timedelta(0)):
+def _store(
+    name, *, stored_ago, enrichment=None, event_ago=timedelta(0), bulk_imported=False
+):
     from core.storage.connection import get_db_manager
     from core.storage.models import Finding
 
@@ -64,17 +66,22 @@ def _store(name, *, stored_ago, enrichment=None, event_ago=timedelta(0)):
                 **fields,
                 created_at=now - stored_ago,
                 timestamp=None if event_ago is None else now - event_ago,
+                bulk_imported=bulk_imported,
             )
         )
 
 
-def _sweep():
+def _swept_rows():
     from core.storage.service import DatabaseService
 
     batch = DatabaseService().get_findings_missing_enrichment(
         limit=50, max_age_hours=168
     )
-    return [f["finding_id"] for f in batch if f["finding_id"].startswith("rating-")]
+    return [f for f in batch if f["finding_id"].startswith("rating-")]
+
+
+def _sweep():
+    return [f["finding_id"] for f in _swept_rows()]
 
 
 def test_status_counts_findings_waiting_to_be_rated_and_never_rated(client):
@@ -99,6 +106,17 @@ def test_age_is_when_it_was_stored_not_its_event_time(client):
 
     assert (body["waiting_to_be_rated"], body["never_rated"]) == (2, 1)
     assert _sweep() == ["rating-no-event-time", "rating-old-event"]
+
+
+def test_the_sweep_rates_live_findings_before_imports(client):
+    _store("import", stored_ago=timedelta(hours=2), bulk_imported=True)
+    _store("live", stored_ago=timedelta(hours=1))
+
+    # The gate reads the flag off these rows.
+    assert [(f["finding_id"], f["bulk_imported"]) for f in _swept_rows()] == [
+        ("rating-live", False),
+        ("rating-import", True),
+    ]
 
 
 def test_a_failed_count_fails_the_status_instead_of_reporting_zero(client, monkeypatch):
@@ -136,4 +154,4 @@ def test_the_counts_and_the_sweep_read_the_partial_index(client):
             # A near-empty table favours a seq scan; the index must be usable.
             conn.exec_driver_sql("SET LOCAL enable_seqscan = off")
             plan = conn.exec_driver_sql("EXPLAIN " + statement, parameters)
-            assert "idx_finding_unrated_created_at" in " ".join(r[0] for r in plan)
+            assert "idx_finding_unrated_sweep" in " ".join(r[0] for r in plan)
