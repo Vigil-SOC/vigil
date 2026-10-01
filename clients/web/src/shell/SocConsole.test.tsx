@@ -44,6 +44,13 @@ vi.mock('../services/api', () => ({
         data: { case_id: id, title: 'Defense Evasion: Obfuscated Loader', status: 'open', priority: 'high', assignee: 'j.reyes', finding_ids: ['f-1'], created_at: '2026-06-15T09:14:00Z' },
       }),
     getSummary: () => Promise.resolve({ data: { total: 7, by_status: { open: 5, investigating: 1, closed: 1 } } }),
+    getSLA: () => Promise.resolve({ data: {} }),
+    getRecord: () => Promise.resolve({ data: { rows: [], run_id: null, investigation_id: null } }),
+    getComments: () => Promise.resolve({ data: { comments: [] } }),
+    getTasks: () => Promise.resolve({ data: { tasks: [] } }),
+    getEvidence: () => Promise.resolve({ data: { evidence: [] } }),
+    getIOCs: () => Promise.resolve({ data: { iocs: [] } }),
+    getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
   },
   exclusionsApi: {
     list: () => Promise.resolve({ data: { exclusions: [], total: 0 } }),
@@ -447,9 +454,7 @@ describe('SocConsole', () => {
     fireEvent.click(await screen.findByText('Defense Evasion: Obfuscated Loader'))
     const back = screen.getByRole('button', { name: /All cases/ })
     expect(back).toBeInTheDocument()
-    // "Case details" is stable Overview content; "Linked findings" moved to the
-    // Investigation tab
-    expect(screen.getByText('Case details')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Summary/ })).toBeInTheDocument()
     fireEvent.click(back)
     expect(screen.getByRole('button', { name: 'New Case' })).toBeInTheDocument()
   })

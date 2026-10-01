@@ -31,6 +31,13 @@ vi.mock('../services/api', () => ({
         ],
       },
     }),
+    getSLA: () => Promise.resolve({ data: {} }),
+    getRecord: () => Promise.resolve({ data: { rows: [], run_id: null, investigation_id: null } }),
+    getComments: () => Promise.resolve({ data: { comments: [] } }),
+    getTasks: () => Promise.resolve({ data: { tasks: [] } }),
+    getEvidence: () => Promise.resolve({ data: { evidence: [] } }),
+    getIOCs: () => Promise.resolve({ data: { iocs: [] } }),
+    getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
   },
   findingsApi: {
     getById: (id: string) => getFinding(id),
