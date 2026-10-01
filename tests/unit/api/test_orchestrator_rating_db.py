@@ -171,7 +171,6 @@ def test_the_counts_and_the_sweep_read_the_partial_index(client):
                 r[0] for r in conn.exec_driver_sql("EXPLAIN " + statement, parameters)
             ]
         assert "idx_finding_unrated_sweep" in " ".join(plan)
-        if "count(" in statement:
-            # A range on created_at, not a walk over every given-up row.
-            cond = next(line for line in plan if "Index Cond" in line)
-            assert "bulk_imported = ANY" in cond and "created_at" in cond
+        # A range on created_at, not a walk over every given-up row.
+        cond = next(line for line in plan if "Index Cond" in line)
+        assert "bulk_imported = ANY" in cond and "created_at" in cond

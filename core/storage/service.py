@@ -21,7 +21,7 @@ from core.storage.models import (
     Finding,
     FindingMitrePrediction,
 )
-from core.storage.rating import unrated
+from core.storage.rating import in_sweep_index, unrated
 from core.storage.schemas import FindingSchema
 from core.time import utcnow
 
@@ -310,7 +310,7 @@ class DatabaseService:
             query = (
                 select(Finding)
                 .options(selectinload(Finding.mitre_prediction_rows))
-                .where(unrated())
+                .where(unrated(), in_sweep_index())
             )
             if max_age_hours:
                 cutoff = utcnow() - timedelta(hours=max_age_hours)

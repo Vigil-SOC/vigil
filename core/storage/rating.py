@@ -22,7 +22,7 @@ def unrated():
     return text(UNRATED_WHERE)
 
 
-def _in_sweep_index():
+def in_sweep_index():
     # Pins the index's first column so Postgres 16 range-scans created_at, its
     # second. NULL is only the moment between migrate's column and marking steps.
     return Finding.bulk_imported.in_([False, True])
@@ -37,7 +37,7 @@ def count_unrated(
 
     waiting_where = [
         unrated(),
-        _in_sweep_index(),
+        in_sweep_index(),
         Finding.created_at < now - WAITING_AFTER,
     ]
     if cutoff is not None:
@@ -51,7 +51,7 @@ def count_unrated(
         past_max_age = (
             select(literal(1))
             .select_from(Finding)
-            .where(unrated(), _in_sweep_index(), Finding.created_at < cutoff)
+            .where(unrated(), in_sweep_index(), Finding.created_at < cutoff)
             .limit(NEVER_RATED_CAP + 1)
             .subquery()
         )
