@@ -52,9 +52,24 @@ def _run_migrate_steps():
         migrate.mark_findings_bulk_imported(conn)
 
 
+def _statements(sql):
+    # One at a time, as psql -f sends them; DO bodies hold their own semicolons.
+    statements, lines, in_body = [], [], False
+    for line in sql.splitlines():
+        if line.lstrip().startswith("--"):
+            continue
+        lines.append(line)
+        in_body ^= line.count("$$") % 2 == 1
+        if not in_body and line.rstrip().endswith(";"):
+            statements.append("\n".join(lines))
+            lines = []
+    return statements
+
+
 def _apply_init_sql():
     with _autocommit() as conn:
-        conn.exec_driver_sql(INIT_SQL.read_text(encoding="utf-8"))
+        for statement in _statements(INIT_SQL.read_text(encoding="utf-8")):
+            conn.exec_driver_sql(statement)
 
 
 def _store_without_the_column():
@@ -118,6 +133,14 @@ def test_marks_unrated_rows_stored_before_the_column(apply):
         "bfmig-failed-old": True,
         "bfmig-rated-old": None,
     }
+    with _autocommit() as conn:
+        valid = conn.execute(
+            text(
+                "SELECT indisvalid FROM pg_index "
+                "WHERE indexrelid = to_regclass('idx_finding_unrated_sweep')"
+            )
+        ).scalar()
+    assert valid is True
 
 
 @pytest.mark.parametrize("apply", [_run_migrate_steps, _apply_init_sql])

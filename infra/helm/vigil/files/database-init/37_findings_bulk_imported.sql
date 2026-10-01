@@ -49,3 +49,9 @@ BEGIN
       AND (ai_enrichment IS NULL
            OR (ai_enrichment ? 'ai_triage_error' AND NOT (ai_enrichment ? 'ai_triage')));
 END $$;
+
+-- Outside a DO block: CONCURRENTLY can't run in a transaction. Errors harmlessly on a fresh DB.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_finding_unrated_sweep
+    ON findings (bulk_imported, created_at)
+    WHERE (ai_enrichment IS NULL
+           OR (ai_enrichment ? 'ai_triage_error' AND NOT (ai_enrichment ? 'ai_triage')));
