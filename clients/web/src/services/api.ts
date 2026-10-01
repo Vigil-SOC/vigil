@@ -514,6 +514,13 @@ export interface AgentSummary {
   decision_id?: string
 }
 
+/** Reads the shell folds itself. Health is public; routability is admin-only. */
+export const consoleApi = {
+  getHealth: () => api.get('/health'),
+  getRoutability: () =>
+    api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
+}
+
 export const configApi = {
   getClaude: () => api.get('/config/claude'),
   setClaude: (api_key: string) => api.post('/config/claude', { api_key }),
@@ -550,6 +557,11 @@ export const configApi = {
   
   getTheme: () => api.get('/config/theme'),
   setTheme: (theme: string) => api.post('/config/theme', { theme }),
+
+  getAutonomy: () =>
+    api.get<{ auto_response_enabled: boolean; force_manual_approval: boolean }>(
+      '/config/autonomy',
+    ),
   
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),
@@ -1220,6 +1232,63 @@ export interface BootstrapPayload {
 
 // First-account creation: creating a user otherwise needs an existing admin.
 // Self-closes once any user exists.
+export interface OverviewArrival {
+  data_source: string
+  count: number
+  source_text: string
+}
+
+export interface OverviewOutcome {
+  state: string
+  label: string
+  count: number | null
+  source_text: string
+  info: string | null
+  unmeasured_text: string | null
+}
+
+export interface OverviewAgent {
+  workflow_id: string
+  name: string
+  running: number
+  sample_size: number
+  rate: number | null
+  level: 'good' | 'fair' | 'poor' | null
+  current_step: string | null
+}
+
+export interface OverviewFeedItem {
+  finding_id: string
+  severity: string | null
+  data_source: string
+  status: string
+  terminal_state: string
+  terminal_label: string
+  description: string | null
+  created_at: string | null
+  evidence_links: Array<{ ref?: string }>
+  source_evidence: Record<string, unknown> | null
+}
+
+export interface OverviewPayload {
+  day: string
+  empty: boolean
+  arrivals: OverviewArrival[]
+  engine: { source_text: string }
+  outcomes: OverviewOutcome[]
+  running_source: string
+  step_source: string
+  rate_info: string
+  good_at: number
+  fair_at: number
+  agents: OverviewAgent[]
+  feed: OverviewFeedItem[]
+}
+
+export const overviewApi = {
+  get: () => api.get<OverviewPayload>('/overview'),
+}
+
 export const bootstrapApi = {
   status: () => api.get<BootstrapStatus>('/auth/bootstrap'),
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),

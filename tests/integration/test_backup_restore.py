@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import os
 import shutil
@@ -9,12 +11,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import jwt
 import psycopg2
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, text
 
+import core.storage.connection  # noqa: F401  registers models on Base.metadata
 from core.config import REPO_ROOT as CORE_REPO_ROOT
+from core.storage.models.base import Base
 
 pytestmark = [pytest.mark.integration, pytest.mark.database]
 
@@ -406,6 +411,9 @@ def test_test_flag_leaves_live_byte_identical(scratch_databases, tmp_path: Path)
     assert proc.returncode == 0, proc.stderr
     assert "discarded staged copies" in proc.stdout
     assert "previous database:" not in proc.stdout
+    assert "backup date:" not in proc.stdout
+    assert "approvals expired:" not in proc.stdout
+    assert "integration credentials and user accounts" not in proc.stdout
     assert _oid("vigil_r_test") == before_oid
     assert _payloads("vigil_r_test") == before_rows
     assert {name: _files(path) for name, path in paths.items()} == before_files
@@ -564,3 +572,257 @@ def test_failed_location_removes_staging_siblings(scratch_databases, tmp_path: P
     assert {name: _files(path) for name, path in dest.items()} == before
     staged = list(dest_root.rglob("*.vigil-restore-stage-*"))
     assert staged == []
+
+
+_CHECK_TOKENS = """
+import os
+import sys
+
+os.environ.pop("JWT_SECRET_KEY", None)
+from core.auth.auth_service import AuthService
+
+old, new, mfa = sys.argv[1:]
+print("reject_old", AuthService.verify_jwt_token(old) is None)
+print("accept_new", (AuthService.verify_jwt_token(new) or {}).get("sub"))
+print("mfa", AuthService._decrypt_mfa_secret(mfa))
+"""
+
+_OLD_KEY = "old-jwt-secret-from-store"
+_STALE_ENV_KEY = "stale-process-environment-secret"
+_TOTP = "JBSWY3DPEHPK3PXP"
+
+
+def _mfa_ciphertext(key: str, secret: str) -> str:
+    fernet_key = base64.urlsafe_b64encode(hashlib.sha256(key.encode()).digest())
+    return Fernet(fernet_key).encrypt(secret.encode()).decode()
+
+
+def _rows(database: str, statement: str) -> list[tuple]:
+    engine = create_engine(_url(database))
+    with engine.connect() as conn:
+        found = conn.execute(text(statement)).fetchall()
+    engine.dispose()
+    return [tuple(row) for row in found]
+
+
+def _install_app_rows(database: str, mfa: str) -> None:
+    engine = create_engine(_url(database))
+    Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO roles "
+                "(role_id, name, description, permissions, is_system_role) "
+                "VALUES ('role-analyst', 'Analyst', 'analyst', '{}', true)"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO users "
+                "(user_id, username, email, password_hash, full_name, role_id, "
+                "is_active, is_verified, mfa_enabled, mfa_secret, mfa_recovery_codes, "
+                "login_count) VALUES "
+                "('u-mfa', 'ada', 'ada@example.com', 'hash', 'Ada', 'role-analyst', "
+                "true, true, true, :mfa, '[]', 0), "
+                "('u-none', 'bea', 'bea@example.com', 'hash', 'Bea', 'role-analyst', "
+                "true, true, false, NULL, '[]', 0)"
+            ),
+            {"mfa": mfa},
+        )
+        conn.execute(
+            text(
+                "INSERT INTO workflow_runs "
+                "(run_id, workflow_id, workflow_name, status) "
+                "VALUES ('run-keep', 'wf', 'keep', 'paused')"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO approval_actions "
+                "(action_id, action_type, title, description, target, reason, "
+                "created_by, status, workflow_run_id) VALUES "
+                "('pend-plain', 'custom', 't', 'd', 'x', 'because', 'agent', "
+                "'pending', NULL), "
+                "('pend-run', 'custom', 't', 'd', 'x', 'because', 'agent', "
+                "'pending', 'run-keep'), "
+                "('keep-approved', 'custom', 't', 'd', 'x', 'because', 'agent', "
+                "'approved', NULL), "
+                "('keep-executed', 'custom', 't', 'd', 'x', 'because', 'agent', "
+                "'executed', NULL), "
+                "('keep-failed', 'custom', 't', 'd', 'x', 'because', 'agent', "
+                "'failed', NULL)"
+            )
+        )
+    engine.dispose()
+
+
+def test_restore_rotates_jwt_and_expires_pending_approvals(
+    scratch_databases, tmp_path: Path
+):
+    root = tmp_path / "settle"
+    root.mkdir()
+    paths = _layout(root, secret="sekrit")
+    key = (paths["state"] / "master.key").read_bytes()
+    (paths["state"] / "secrets.enc").write_bytes(
+        Fernet(key).encrypt(
+            json.dumps(
+                {"token": "sekrit", "JWT_SECRET_KEY": _OLD_KEY}
+            ).encode()
+        )
+    )
+    (paths["state"] / "jwt_secret").write_text(_OLD_KEY, encoding="utf-8")
+    (paths["state"] / ".env").write_text(
+        'KEEP_STATE=yes\nJWT_SECRET_KEY="not-the-key"\n'
+        f'JWT_SECRET_KEY="{_OLD_KEY}"\n',
+        encoding="utf-8",
+    )
+    env_path = CORE_REPO_ROOT / ".env"
+    env_path.write_text(
+        "# sentinel-keep\nOTHER_KEY=leave-me\n"
+        f"JWT_SECRET_KEY=not-the-key\nJWT_SECRET_KEY={_OLD_KEY}\n",
+        encoding="utf-8",
+    )
+    _create_database("vigil_r_settle", ledger=True)
+    ciphertext = _mfa_ciphertext(_OLD_KEY, _TOTP)
+    _install_app_rows("vigil_r_settle", ciphertext)
+    repo = root / "repo"
+    passphrase = _passphrase(root / "pass")
+    env = _child_env(root, "vigil_r_settle", **paths)
+    env["JWT_SECRET_KEY"] = _STALE_ENV_KEY
+    created = _create(env, repo, passphrase)
+    assert created.returncode == 0, created.stderr
+
+    before_files = {name: _files(path) for name, path in paths.items()}
+    before_env = env_path.read_bytes()
+    before_rows = _rows(
+        "vigil_r_settle",
+        "SELECT action_id, status, rejection_reason FROM approval_actions "
+        "ORDER BY action_id",
+    )
+    probed = _restore(env, repo, passphrase, "--test")
+    assert probed.returncode == 0, probed.stderr
+    assert "approvals expired:" not in probed.stdout
+    assert "backup date:" not in probed.stdout
+    assert "integration credentials and user accounts" not in probed.stdout
+    assert {name: _files(path) for name, path in paths.items()} == before_files
+    assert env_path.read_bytes() == before_env
+    assert (
+        _rows(
+            "vigil_r_settle",
+            "SELECT action_id, status, rejection_reason FROM approval_actions "
+            "ORDER BY action_id",
+        )
+        == before_rows
+    )
+    assert _rows(
+        "vigil_r_settle",
+        "SELECT count(*) FROM config_audit_log WHERE config_type = 'backup'",
+    ) == [(0,)]
+
+    dest_root = root / "dest"
+    dest_root.mkdir()
+    dest = _empty_layout(dest_root)
+    _create_database("vigil_r_settle_dst", ledger=False)
+    dest_env = _child_env(dest_root, "vigil_r_settle_dst", **dest)
+    dest_env["JWT_SECRET_KEY"] = _STALE_ENV_KEY
+    dest_env["RESTIC_CACHE_DIR"] = str(root / "cache")
+    restored = _restore(dest_env, repo, passphrase, "--actor", "restore-bot")
+    assert restored.returncode == 0, restored.stderr
+    assert "approvals expired: 2" in restored.stdout
+    assert "integration credentials and user accounts date from the backup" in (
+        restored.stdout
+    )
+
+    live = "vigil_r_settle_dst"
+    audit = _rows(
+        live,
+        "SELECT config_type, config_key, action, changed_by, "
+        "old_value, new_value FROM config_audit_log "
+        "WHERE config_type = 'backup'",
+    )
+    assert len(audit) == 1
+    config_type, config_key, action, changed_by, old_value, new_value = audit[0]
+    assert (config_type, config_key, action, changed_by, old_value) == (
+        "backup",
+        "restore",
+        "restore",
+        "restore-bot",
+        None,
+    )
+    payload = new_value if isinstance(new_value, dict) else json.loads(new_value)
+    assert payload["expired_count"] == 2
+    assert f"backup date: {payload['created_at']}" in restored.stdout
+    reason = (
+        f"expired: restored from backup {payload['snapshot_id']} "
+        f"taken {payload['created_at']}"
+    )
+    approvals = _rows(
+        live,
+        "SELECT action_id, status, rejection_reason, approved_by, "
+        "approved_at IS NOT NULL FROM approval_actions ORDER BY action_id",
+    )
+    by_id = {row[0]: row for row in approvals}
+    assert by_id["pend-plain"] == ("pend-plain", "rejected", reason, "restore-bot", True)
+    assert by_id["pend-run"] == ("pend-run", "rejected", reason, "restore-bot", True)
+    assert by_id["keep-approved"][1] == "approved"
+    assert by_id["keep-approved"][2] is None
+    assert by_id["keep-executed"][1] == "executed"
+    assert by_id["keep-failed"][1] == "failed"
+    assert _rows(live, "SELECT status FROM workflow_runs WHERE run_id = 'run-keep'") == [
+        ("paused",)
+    ]
+    assert _rows(
+        "vigil_r_settle",
+        "SELECT status FROM approval_actions WHERE action_id = 'pend-plain'",
+    ) == [("pending",)]
+
+    stored = json.loads(
+        Fernet((dest["state"] / "master.key").read_bytes()).decrypt(
+            (dest["state"] / "secrets.enc").read_bytes()
+        )
+    )
+    new_key = stored["JWT_SECRET_KEY"]
+    assert stored["token"] == "sekrit"
+    assert new_key != _OLD_KEY
+    assert new_key != _STALE_ENV_KEY
+    assert (dest["state"] / "jwt_secret").read_text(encoding="utf-8") == new_key
+    assert (dest["state"] / ".env").read_text(encoding="utf-8") == (
+        "KEEP_STATE=yes\n"
+        f'JWT_SECRET_KEY="{new_key}"\n'
+        f'JWT_SECRET_KEY="{new_key}"\n'
+    )
+    assert env_path.read_text(encoding="utf-8") == (
+        "# sentinel-keep\nOTHER_KEY=leave-me\n"
+        f"JWT_SECRET_KEY={new_key}\nJWT_SECRET_KEY={new_key}\n"
+    )
+    assert {name: _files(path) for name, path in paths.items()} == before_files
+
+    listing = subprocess.check_output(
+        ["restic", "-r", str(repo), "snapshots", "--json", "latest"],
+        env={**env, "RESTIC_PASSWORD_FILE": str(passphrase)},
+        text=True,
+    )
+    snap = json.loads(listing)[0]
+    assert payload["snapshot_id"] == snap["id"]
+
+    mfa = _rows(live, "SELECT mfa_secret FROM users WHERE user_id = 'u-mfa'")[0][0]
+    assert mfa != ciphertext
+    assert _rows(live, "SELECT mfa_secret FROM users WHERE user_id = 'u-none'") == [
+        (None,)
+    ]
+    old_token = jwt.encode({"sub": "u-mfa"}, _OLD_KEY, algorithm="HS256")
+    new_token = jwt.encode({"sub": "u-mfa"}, new_key, algorithm="HS256")
+    check_env = dest_env.copy()
+    check_env.pop("JWT_SECRET_KEY", None)
+    assert _OLD_KEY not in check_env.values()
+    checked = subprocess.run(
+        [sys.executable, "-c", _CHECK_TOKENS, old_token, new_token, mfa],
+        cwd=REPO_ROOT,
+        env=check_env,
+        text=True,
+        capture_output=True,
+    )
+    assert checked.returncode == 0, checked.stderr
+    assert "reject_old True" in checked.stdout
+    assert "accept_new u-mfa" in checked.stdout
+    assert f"mfa {_TOTP}" in checked.stdout

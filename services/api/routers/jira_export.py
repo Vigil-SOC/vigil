@@ -12,9 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from core.auth.auth_service import AuthService
-from core.config import get_integration_config
+from core.integrations._base.config import resolve
+from core.integrations.jira.descriptor import JIRA
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
-from core.storage.models import Case, Finding, User
+from core.storage.models import Case, User
 from services.api.middleware.auth import get_current_user
 
 logger = logging.getLogger(__name__)
@@ -84,13 +85,13 @@ def export_case_to_jira(
             detail="Permission denied: cases.read required",
         )
 
-    # Get JIRA config
-    jira_config = get_integration_config("jira")
-    url = jira_config.get("url")
-    email = jira_config.get("email")
-    token = jira_config.get("api_token")
+    # get_integration_config strips secrets, so the token is never in that dict.
+    jira = resolve(JIRA)
+    url = jira.get("url")
+    username = jira.get("username")
+    token = jira.get("api_token")
 
-    if not all([url, email, token]):
+    if not all([url, username, token]):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="JIRA not configured. Set JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN in environment.",
@@ -117,12 +118,13 @@ def export_case_to_jira(
         if case.description:
             description += f"*Description:*\n{case.description}\n\n"
 
-        # Get findings
-        findings = session.query(Finding).filter(Finding.case_id == case_id).all()
+        # Findings link through the case, not a case_id column on Finding.
+        findings = list(case.findings or [])
         if findings:
             description += f"*Findings ({len(findings)}):*\n"
             for f in findings[:10]:  # Limit to 10
-                description += f"- [{(f.severity or 'unknown').upper()}] {f.title}\n"
+                label = getattr(f, "title", None) or f.finding_id
+                description += f"- [{(f.severity or 'unknown').upper()}] {label}\n"
             if len(findings) > 10:
                 description += f"- ... and {len(findings) - 10} more\n"
             description += "\n"
@@ -150,7 +152,7 @@ def export_case_to_jira(
         jira_priority = priority_map.get(case.priority.lower(), "Medium")
 
         # Create main issue
-        auth = (email, token)
+        auth = (username, token)
         headers = {"Content-Type": "application/json"}
 
         issue_data = {
@@ -184,7 +186,7 @@ def export_case_to_jira(
                     "fields": {
                         "project": {"key": request.project_key},
                         "parent": {"key": issue_key},
-                        "summary": f"[{(finding.severity or 'unknown').upper()}] {finding.title}",
+                        "summary": f"[{(finding.severity or 'unknown').upper()}] {getattr(finding, 'title', None) or finding.finding_id}",
                         "description": (
                             finding.description[:500]
                             if finding.description
@@ -258,13 +260,13 @@ def export_remediation_to_jira(
             detail="Permission denied: cases.read required",
         )
 
-    # Get JIRA config
-    jira_config = get_integration_config("jira")
-    url = jira_config.get("url")
-    email = jira_config.get("email")
-    token = jira_config.get("api_token")
+    # Same reader as case export: username plus the secret api_token.
+    jira = resolve(JIRA)
+    url = jira.get("url")
+    username = jira.get("username")
+    token = jira.get("api_token")
 
-    if not all([url, email, token]):
+    if not all([url, username, token]):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="JIRA not configured"
         )
@@ -288,7 +290,7 @@ def export_remediation_to_jira(
             )
 
         # Get parent issue to determine project
-        auth = (email, token)
+        auth = (username, token)
         headers = {"Content-Type": "application/json"}
 
         parent_response = httpx.get(

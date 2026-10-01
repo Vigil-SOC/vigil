@@ -1,5 +1,8 @@
 """Stage a snapshot, check it, and swap it in. ``--test`` discards the stage.
 
+After a swap, rotate the JWT secret, re-encrypt MFA secrets, reject pending
+approvals, and write one audit row. ``--test`` returns before any of that.
+
 The dump is restored into a new database. ``agent_events_assign_hashes`` is a
 BEFORE INSERT trigger and would re-hash rows if the dump landed in a schema
 that already had it. Checks run before any rename. A failure before the swap
@@ -8,8 +11,11 @@ drops the stage and leaves the live database and files where they were.
 
 from __future__ import annotations
 
+import getpass
 import json
 import os
+import re
+import secrets
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -34,12 +40,16 @@ from core.backup.create import (
 )
 from core.config import REPO_ROOT, get_settings, vigil_path
 from core.intent import intent_file
+from core.response.approval_service import ActionStatus
 from core.secrets_manager import EncryptedFileBackend
+from core.storage.config_service import get_config_service
 from core.storage.connection import (
     DatabaseConfig,
     get_db_manager,
     init_database,
 )
+from core.storage.models import ApprovalAction, User
+from core.time import utcnow
 from core.version import __version__
 
 # The FIRST_BREAK query from services/agent/ledger/verify.ts. The hash stays
@@ -64,6 +74,7 @@ SELECT run_id, seq,
 """
 
 _APP_NAME = f"vigil-backup-{os.getpid()}"
+_JWT_ENV_LINE = re.compile(r"^(\s*(?:export\s+)?JWT_SECRET_KEY\s*=\s*)(.*)$")
 
 
 @dataclass
@@ -79,6 +90,7 @@ def restore_snapshot(
     passphrase_file: str,
     snapshot: str,
     test: bool,
+    actor: str | None = None,
 ) -> str:
     passphrase = Path(passphrase_file)
     if not passphrase.is_file():
@@ -93,7 +105,9 @@ def restore_snapshot(
     if not test:
         _assert_no_other_clients(cfg)
 
-    manifest, dump_in_snapshot = _load_manifest(repo, passphrase, snapshot, priority)
+    manifest, dump_in_snapshot, snapshot_id = _load_manifest(
+        repo, passphrase, snapshot, priority
+    )
     _assert_compatible(manifest)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     staged_name = _suffixed(cfg.database, "_stage_", stamp)
@@ -142,6 +156,8 @@ def restore_snapshot(
             lines.extend(_swap(cfg, staged_name, pre_name, placed, stamp))
             swapped = True
             created = False
+            # The swap stays even when this fails. --test returned above.
+            lines.extend(_settle_restored(cfg, manifest, snapshot_id, _actor(actor)))
             return "\n".join(lines)
     except BackupError as exc:
         error = exc
@@ -221,7 +237,7 @@ def _other_clients(
 
 def _load_manifest(
     repo: str, passphrase: Path, snapshot: str, priority: list[str]
-) -> tuple[dict, str]:
+) -> tuple[dict, str, str]:
     env = _restic_env(passphrase)
     listed = _checked(
         priority + ["restic", "-r", repo, "ls", snapshot],
@@ -262,7 +278,7 @@ def _load_manifest(
             found.append((dump, payload))
     if len(found) != 1:
         raise BackupError("snapshot does not contain one Vigil manifest")
-    return found[0][1], found[0][0]
+    return found[0][1], found[0][0], _snapshot_id(repo, env, snapshot, priority)
 
 
 def _assert_compatible(manifest: dict) -> None:
@@ -686,3 +702,239 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
     elif path.is_symlink() or path.exists():
         path.unlink()
+
+
+def _snapshot_id(
+    repo: str, env: dict[str, str], snapshot: str, priority: list[str]
+) -> str:
+    # `restic ls` prints a short id. The audit and the rejection reason use
+    # the full id `restic snapshots` returns, which is what `create` prints.
+    raw = _checked(
+        priority + ["restic", "-r", repo, "snapshots", "--json", snapshot],
+        env=env,
+        what="restic snapshots",
+    )
+    try:
+        rows = json.loads(raw.stdout)
+    except json.JSONDecodeError as exc:
+        raise BackupError(f"snapshot id could not be read: {exc}") from exc
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        raise BackupError("snapshot id could not be read")
+    snapshot_id = rows[0].get("id")
+    if not isinstance(snapshot_id, str) or not snapshot_id:
+        raise BackupError("snapshot id could not be read")
+    return snapshot_id
+
+
+def _actor(actor: str | None) -> str:
+    if actor is not None and actor.strip():
+        return actor.strip()
+    try:
+        return getpass.getuser()
+    except Exception as exc:
+        raise BackupError(f"could not identify the restoring user: {exc}") from exc
+
+
+def _settle_restored(
+    cfg: DatabaseConfig, manifest: dict, snapshot_id: str, actor: str
+) -> list[str]:
+    created_at = manifest.get("created_at")
+    if not isinstance(created_at, str) or not created_at.strip():
+        raise BackupError("manifest has no created_at")
+    _point_at_live(cfg)
+    old_key = _stored_jwt_secret()
+    new_key = secrets.token_urlsafe(48)
+    expired = _reencrypt_and_expire(old_key, new_key, snapshot_id, created_at, actor)
+    _write_jwt_stores(new_key)
+    get_config_service(user_id=actor).record_audit(
+        config_type="backup",
+        config_key="restore",
+        action="restore",
+        old_value=None,
+        new_value={
+            "snapshot_id": snapshot_id,
+            "created_at": created_at,
+            "expired_count": expired,
+        },
+    )
+    return [
+        f"backup date: {created_at}",
+        f"approvals expired: {expired}",
+        "integration credentials and user accounts date from the backup",
+    ]
+
+
+def _point_at_live(cfg: DatabaseConfig) -> None:
+    # _check_schema left the manager aimed at the staged name, which the swap
+    # removed. close() does not clear that config.
+    manager = get_db_manager()
+    manager.close()
+    # _config_for re-reads the platform proxy from secrets.enc. That file is
+    # the restored copy now, and a proxy stored in the backup must not move
+    # these writes off the server the swap just used.
+    live = _config_for(cfg, cfg.database)
+    live.proxy = cfg.proxy
+    manager.config = live
+    try:
+        manager.initialize()
+    except Exception as exc:
+        raise BackupError(f"could not open the restored database: {exc}") from exc
+
+
+def _stored_jwt_secret() -> str | None:
+    # The next start.sh process, skipping this process's JWT_SECRET_KEY.
+    # EnvironmentBackend outranks both .env files, so the env var must not win.
+    state = vigil_path()
+    encrypted = _encrypted_jwt(state)
+    if encrypted:
+        return encrypted
+    for path in (REPO_ROOT / ".env", vigil_path(".env")):
+        value = _env_jwt(path)
+        if value:
+            return value
+    return _file_jwt(state / "jwt_secret")
+
+
+def _encrypted_jwt(state: Path) -> str | None:
+    backend = EncryptedFileBackend(data_dir=state)
+    if not backend.secrets_path.is_file():
+        return None
+    value = backend.get("JWT_SECRET_KEY")
+    return value or None
+
+
+def _reencrypt_and_expire(
+    old_key: str | None,
+    new_key: str,
+    snapshot_id: str,
+    created_at: str,
+    actor: str,
+) -> int:
+    reason = f"expired: restored from backup {snapshot_id} taken {created_at}"
+    decided_at = utcnow()
+    try:
+        # auth_service reads JWT_SECRET_KEY at import and raises when it is
+        # unset, which would stop `create` and `restore --test`.
+        auth_service, auth_cls = _load_auth_service()
+        with get_db_manager().session_scope() as session:
+            users = session.query(User).filter(User.mfa_secret.isnot(None)).all()
+            if users and not old_key:
+                raise BackupError("JWT secret not found; cannot re-encrypt MFA secrets")
+            if old_key:
+                auth_service.JWT_SECRET_KEY = old_key
+                plaintext = [
+                    auth_cls._decrypt_mfa_secret(user.mfa_secret) for user in users
+                ]
+                auth_service.JWT_SECRET_KEY = new_key
+                for user, secret in zip(users, plaintext):
+                    user.mfa_secret = auth_cls._encrypt_mfa_secret(secret)
+            else:
+                auth_service.JWT_SECRET_KEY = new_key
+            pending = (
+                session.query(ApprovalAction)
+                .filter(ApprovalAction.status == ActionStatus.PENDING.value)
+                .all()
+            )
+            for row in pending:
+                row.status = ActionStatus.REJECTED.value
+                row.rejection_reason = reason
+                row.approved_by = actor
+                row.approved_at = decided_at
+            return len(pending)
+    except BackupError:
+        raise
+    except Exception as exc:
+        raise BackupError(f"could not settle the restored database: {exc}") from exc
+
+
+def _load_auth_service():
+    # A secret that lives only in jwt_secret is invisible to get_secret, and
+    # this process's env is the wrong key to keep. The placeholder exists so
+    # the import can finish; it is gone before the database work.
+    placeholder_set = False
+    if not os.environ.get("JWT_SECRET_KEY"):  # noqa: ENV001 - auth import boundary
+        os.environ["JWT_SECRET_KEY"] = "restore-import-placeholder"  # noqa: ENV001
+        placeholder_set = True
+    try:
+        import core.auth.auth_service as auth_service
+        from core.auth.auth_service import AuthService
+    finally:
+        if placeholder_set:
+            os.environ.pop("JWT_SECRET_KEY", None)  # noqa: ENV001
+    return auth_service, AuthService
+
+
+def _write_jwt_stores(new_key: str) -> None:
+    state = vigil_path()
+    backend = EncryptedFileBackend(data_dir=state)
+    if backend.secrets_path.is_file() and backend.get("JWT_SECRET_KEY"):
+        if not backend.set("JWT_SECRET_KEY", new_key):
+            raise BackupError("could not rotate JWT_SECRET_KEY in secrets.enc")
+    seen: set[Path] = set()
+    for path in (REPO_ROOT / ".env", vigil_path(".env")):
+        key = path.resolve() if path.exists() else path
+        if key in seen:
+            continue
+        seen.add(key)
+        _edit_env_jwt(path, new_key)
+    _write_jwt_file(state / "jwt_secret", new_key)
+
+
+def _edit_env_jwt(path: Path, value: str) -> None:
+    if not path.is_file():
+        return
+    original = path.read_bytes()
+    text = original.decode("utf-8")
+    newline = "\r\n" if b"\r\n" in original else "\n"
+    lines = text.splitlines()
+    changed = False
+    for index, line in enumerate(lines):
+        match = _JWT_ENV_LINE.match(line)
+        if match is None:
+            continue
+        lines[index] = match.group(1) + _requote(match.group(2), value)
+        changed = True
+    if not changed:
+        return
+    body = newline.join(lines)
+    if text.endswith(("\n", "\r\n")):
+        body += newline
+    path.write_bytes(body.encode("utf-8"))
+
+
+def _requote(raw: str, value: str) -> str:
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        return f"{raw[0]}{value}{raw[0]}"
+    return value
+
+
+def _env_jwt(path: Path) -> str | None:
+    # `source` keeps the last assignment. An empty one clears the variable.
+    if not path.is_file():
+        return None
+    value: str | None = None
+    seen = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        match = _JWT_ENV_LINE.match(line)
+        if match is None:
+            continue
+        seen = True
+        raw = match.group(2).strip()
+        if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+            raw = raw[1:-1]
+        value = raw or None
+    return value if seen else None
+
+
+def _file_jwt(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    return path.read_text(encoding="utf-8").strip() or None
+
+
+def _write_jwt_file(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(value, encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)

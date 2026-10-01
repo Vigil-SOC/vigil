@@ -16,10 +16,10 @@ import { basePath } from '../config/basePath'
  * is the deployment where an outsider can reach it. So the component asks the
  * backend as well, and warns if either says so.
  *
- * It lives in the rail rather than as a bar across the top because the top bar
- * overlays the console — a warning that hides the thing you are working on gets
- * removed, and a removed warning warns nobody. The rail is on screen from every
- * view and costs the content nothing.
+ * It lives in the header rather than as a bar across the page because a warning
+ * that hides the thing you are working on gets removed, and a removed warning
+ * warns nobody. The header is on screen from every view and costs the content
+ * nothing.
  *
  * Not dismissible. A warning you can dismiss is one someone dismissed three
  * weeks ago.

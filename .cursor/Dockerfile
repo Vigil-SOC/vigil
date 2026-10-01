@@ -132,6 +132,32 @@ ENV AGENT_BROWSER_SKILLS_DIR=/usr/local/share/agent-browser/skill-data
 ENV AGENT_BROWSER_ARGS="--no-sandbox"
 
 ########################################################
+# RESTIC (integration backup tests)
+########################################################
+
+# ci-cd.yml "Install restic and pg_dump" pins restic 0.19.1 and unpacks the
+# release with bunzip2 before tests/integration. Backup create and restore
+# shell out to `restic`. pg_dump 16 is already the Ubuntu 24.04 client.
+# Checksums are the ones in that workflow.
+RUN apt-get update && apt-get install -y --no-install-recommends bzip2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && ARCH="$(dpkg --print-architecture)" \
+    && case "$ARCH" in \
+         amd64) RARCH=amd64; SHA=f415415624dcc452f2a02b8c33641791a8c6d6d3b65bbb3543fcf9a25151585c ;; \
+         arm64) RARCH=arm64; SHA=a5f64aaab53d51e311fa3829124c5b703f2d14cf187d8640b6be3b2b49376465 ;; \
+         *) echo "unsupported arch $ARCH" && exit 1 ;; \
+       esac \
+    && RESTIC_VERSION=0.19.1 \
+    && curl --retry 3 --retry-delay 5 -fsSL -o /tmp/restic.bz2 \
+       "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_${RARCH}.bz2" \
+    && printf '%s  %s\n' "$SHA" /tmp/restic.bz2 > /tmp/restic.bz2.sha256 \
+    && sha256sum -c /tmp/restic.bz2.sha256 \
+    && bunzip2 -f /tmp/restic.bz2 \
+    && install -m 0755 /tmp/restic /usr/local/bin/restic \
+    && rm -f /tmp/restic /tmp/restic.bz2.sha256 \
+    && restic version
+
+########################################################
 # CONFIG UBUNTU USER
 ########################################################
 

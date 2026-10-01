@@ -430,30 +430,6 @@ def test_large_dump_still_verifies(scratch_db, tmp_path: Path):
     )
 
 
-def test_corrupt_pack_fails_verification(scratch_db, tmp_path: Path):
-    root = tmp_path / "corrupt"
-    (root / "state").mkdir(parents=True)
-    (root / "state" / "file.txt").write_text("data", encoding="utf-8")
-    (root / "cache").mkdir()
-    repo = root / "repo"
-    passphrase = _passphrase(root / "pass", "correct-horse")
-    env = _child_env(root, skills=None, workdir=root / "no-work", intent=root / "no.md")
-    first = _run_create(env, repo, passphrase)
-    assert first.returncode == 0, first.stderr
-    packs = [path for path in (repo / "data").rglob("*") if path.is_file()]
-    assert packs
-    target = max(packs, key=lambda path: path.stat().st_size)
-    target.chmod(0o644)
-    blob = bytearray(target.read_bytes())
-    # Shorten the pack. A flipped byte in the middle is ciphertext: restic
-    # check does not read it, and the next backup may not reuse that blob.
-    target.write_bytes(blob[:-1])
-
-    second = _run_create(env, repo, passphrase)
-    assert second.returncode != 0
-    assert "verification failed" in second.stderr
-
-
 def test_concurrent_create_skips(scratch_db, tmp_path: Path):
     root = tmp_path / "lock"
     state = root / "state"

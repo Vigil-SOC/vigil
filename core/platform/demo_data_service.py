@@ -146,6 +146,7 @@ class DemoDataService:
             "entity_context": generate_entity_context(),
             "cluster_id": random.choice(CLUSTERS) if random.random() < 0.7 else None,
             "description": desc,
+            "demo": True,
         }
 
     def _generate_case(self, findings: List[Dict]) -> Dict[str, Any]:
@@ -189,6 +190,7 @@ class DemoDataService:
             "resolution_steps": [],
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
+            "demo": True,
         }
 
     def _generate_demo_data(self, num_findings: int = 25, num_cases: int = 5):
@@ -222,6 +224,7 @@ class DemoDataService:
         return None
 
     def create_finding(self, finding_data: Dict) -> Optional[Dict]:
+        finding_data["demo"] = True
         DemoDataService._findings.append(finding_data)
         return finding_data
 
@@ -246,6 +249,7 @@ class DemoDataService:
             "created_at": now.isoformat(),
             "updated_at": now.isoformat(),
             "tags": ["demo"],
+            "demo": True,
             "notes": [],
             "timeline": [{"timestamp": now.isoformat(), "event": "Case created"}],
             "activities": [],
