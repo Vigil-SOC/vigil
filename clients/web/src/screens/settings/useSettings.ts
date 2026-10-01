@@ -453,7 +453,9 @@ export function useForceManualApproval() {
         setPhase('ready')
       })
       .catch(() => {
-        if (!cancelled) setPhase('ready')
+        // The default state is Act; showing it would claim approvals are off
+        // when the stored flag was never read.
+        if (!cancelled) setPhase('error')
       })
     return () => {
       cancelled = true

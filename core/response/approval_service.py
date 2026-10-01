@@ -33,6 +33,8 @@ from core.time import utcnow
 
 logger = logging.getLogger(__name__)
 
+APPROVAL_CONFIG_KEY = "approval.force_manual_approval"
+
 _pending_gauge: Any = None
 
 
@@ -180,36 +182,46 @@ class ApprovalService:
         self._load_config()
 
     # ------------------------------------------------------------------
-    # Config (force_manual_approval) — unchanged, still db/config-backed
+    # Config (force_manual_approval) — db/config-backed, read per decision
     # ------------------------------------------------------------------
+    #
+    # ``self.force_manual_approval`` is this process forcing approval on
+    # (the daemon does when DAEMON_FORCE_APPROVAL is set) and is never
+    # written to the row. The row is what Settings writes; it is read at each
+    # decision so a long-lived service sees a change without a restart.
 
     def _load_config(self):
-        """Load approval configuration from database."""
+        """Create the stored flag, off, when no row exists yet."""
+        self.force_manual_approval = False
+        self._last_stored = False
         try:
             config_service = get_config_service()
-            config_value = config_service.get_system_config(
-                "approval.force_manual_approval"
-            )
-            if config_value:
-                self.force_manual_approval = config_value.get("enabled", False)
-                logger.debug(
-                    "Loaded approval config: force_manual_approval=%s",
-                    self.force_manual_approval,
-                )
+            value = config_service.get_system_config(APPROVAL_CONFIG_KEY)
+            if value:
+                self._last_stored = bool(value.get("enabled", False))
             else:
-                self.force_manual_approval = False
-                self._save_config()
+                self._save_default()
         except Exception as e:  # noqa: BLE001
             logger.error("Error loading approval config: %s", e)
-            self.force_manual_approval = False
 
-    def _save_config(self):
-        """Save approval configuration to database."""
+    def _stored_force_manual_approval(self) -> bool:
+        """The stored flag, or the last one read when the read fails."""
         try:
-            config_value = {"enabled": self.force_manual_approval}
+            value = get_config_service().get_system_config(APPROVAL_CONFIG_KEY)
+        except Exception as e:  # noqa: BLE001
+            logger.error("Error reading approval config: %s", e)
+            value = None
+        if value is not None:
+            self._last_stored = bool(value.get("enabled", False))
+        return self._last_stored
+
+    def _save_default(self):
+        """Store the flag off, for an install that has no row yet."""
+        try:
+            config_value = {"enabled": False}
             config_service = get_config_service(user_id="approval_service")
             config_service.set_system_config(
-                key="approval.force_manual_approval",
+                key=APPROVAL_CONFIG_KEY,
                 value=config_value,
                 description="Force manual approval for all actions",
                 config_type="approval",
@@ -219,9 +231,8 @@ class ApprovalService:
             logger.error("Error saving approval config: %s", e)
 
     def set_force_manual_approval(self, force: bool):
-        """Set whether to force manual approval for all actions."""
+        """Force manual approval for this process; the stored row is left as is."""
         self.force_manual_approval = force
-        self._save_config()
         logger.info("Force manual approval set to: %s", force)
 
     # ------------------------------------------------------------------
@@ -295,8 +306,9 @@ class ApprovalService:
 
         # The branch that set requires_approval is appended to the caller's
         # narrative so the row records the rule it was decided by (#917).
+        forced = self.force_manual_approval or self._stored_force_manual_approval()
         requires_approval, rule = approval_requirement(
-            self.force_manual_approval, reversibility, confidence, self.config
+            forced, reversibility, confidence, self.config
         )
         reason = f"{reason}; {rule}" if reason else rule
 

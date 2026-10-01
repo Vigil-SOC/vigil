@@ -22,6 +22,7 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
+from core.response.approval_service import APPROVAL_CONFIG_KEY
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
@@ -1487,10 +1488,6 @@ async def set_orchestrator_config(
     return {"success": True, "message": "Orchestrator settings saved"}
 
 
-# Assist is the stored flag on; Act is the flag off. Not part of orchestrator.settings.
-APPROVAL_FORCE_MANUAL_KEY = "approval.force_manual_approval"
-
-
 class ForceManualApprovalConfig(BaseModel):
     """``approval.force_manual_approval``. Assist is true, Act is false."""
 
@@ -1510,7 +1507,7 @@ def _environment_wins() -> bool:
 
 
 def _stored_force_manual(config_service) -> bool:
-    value = config_service.get_system_config(APPROVAL_FORCE_MANUAL_KEY)
+    value = config_service.get_system_config(APPROVAL_CONFIG_KEY)
     if isinstance(value, dict):
         return bool(value.get("enabled", False))
     return False
@@ -1518,12 +1515,18 @@ def _stored_force_manual(config_service) -> bool:
 
 @router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
 async def get_force_manual_approval():
-    """Read ``approval.force_manual_approval`` without inserting a default row."""
+    """Read ``approval.force_manual_approval`` without inserting a default row.
+
+    A failed read is an error, not Act: reporting the default would show
+    approvals as off while the stored flag may be forcing them on.
+    """
     try:
         enabled = _stored_force_manual(get_config_service())
     except Exception as e:
         logger.error(f"Error getting force-manual approval: {e}")
-        enabled = False
+        raise HTTPException(
+            status_code=503, detail="Could not read the approval setting"
+        ) from e
     return ForceManualApprovalResponse(
         enabled=enabled, environment_wins=_environment_wins()
     )
@@ -1544,7 +1547,7 @@ async def set_force_manual_approval(
         )
     config_service = _for_user(current_user)
     success = config_service.set_system_config(
-        key=APPROVAL_FORCE_MANUAL_KEY,
+        key=APPROVAL_CONFIG_KEY,
         value={"enabled": config.enabled},
         description="Force manual approval for all actions",
         config_type="approval",

@@ -248,41 +248,50 @@ export default function AutoInvestigateSection({ notify }: SectionProps) {
         title="Response mode"
         desc="Assist forces a person to approve each response. Act does not. Act is the default."
       >
-        {approval.environment_wins && (
-          <div className="settings-banner info mb-3">
-            <Icon name="info" size={14} />
-            <span>The environment wins. Act cannot be saved.</span>
+        {approval.phase === 'error' ? (
+          <div className="settings-banner err">
+            <Icon name="alert" size={14} />
+            <span>Could not load the response mode. Reload to try again.</span>
           </div>
+        ) : (
+          <>
+            {approval.environment_wins && (
+              <div className="settings-banner info mb-3">
+                <Icon name="info" size={14} />
+                <span>The environment wins. Act cannot be saved.</span>
+              </div>
+            )}
+            <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
+              <button
+                onClick={selectAssist}
+                className={`card card-sq text-left p-3.5 transition-colors ${
+                  assistOn ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
+                }`}
+                style={assistOn ? { borderColor: 'var(--accent-line)' } : undefined}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[13px] font-semibold text-tx">Assist</span>
+                  {assistOn && <span className="chip sel">Active</span>}
+                </div>
+                <span className="text-xs text-tx-3">Force manual approval before a response runs.</span>
+              </button>
+              <button
+                onClick={selectAct}
+                className={`card card-sq text-left p-3.5 transition-colors ${
+                  !assistOn ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
+                }`}
+                style={!assistOn ? { borderColor: 'var(--accent-line)' } : undefined}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[13px] font-semibold text-tx">Act</span>
+                  <span className="chip">Recommended</span>
+                  {!assistOn && <span className="chip sel">Active</span>}
+                </div>
+                <span className="text-xs text-tx-3">Let autonomous response proceed without forcing approval.</span>
+              </button>
+            </div>
+          </>
         )}
-        <div className="settings-grid-2" style={{ gridTemplateColumns: 'repeat(2, 1fr)' }}>
-          <button
-            onClick={selectAssist}
-            className={`card card-sq text-left p-3.5 transition-colors ${
-              assistOn ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
-            }`}
-            style={assistOn ? { borderColor: 'var(--accent-line)' } : undefined}
-          >
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[13px] font-semibold text-tx">Assist</span>
-              {assistOn && <span className="chip sel">Active</span>}
-            </div>
-            <span className="text-xs text-tx-3">Force manual approval before a response runs.</span>
-          </button>
-          <button
-            onClick={selectAct}
-            className={`card card-sq text-left p-3.5 transition-colors ${
-              !assistOn ? 'border-accent-line bg-[var(--accent-dim)]' : 'hover:border-line'
-            }`}
-            style={!assistOn ? { borderColor: 'var(--accent-line)' } : undefined}
-          >
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-[13px] font-semibold text-tx">Act</span>
-              <span className="chip">Recommended</span>
-              {!assistOn && <span className="chip sel">Active</span>}
-            </div>
-            <span className="text-xs text-tx-3">Let autonomous response proceed without forcing approval.</span>
-          </button>
-        </div>
       </SettingsCard>
 
       <SettingsCard

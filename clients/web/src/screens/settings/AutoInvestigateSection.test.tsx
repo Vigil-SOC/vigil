@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import AutoInvestigateSection from './AutoInvestigateSection'
-import { ORCHESTRATOR_DEFAULTS, type OrchestratorConfig } from './useSettings'
+import { ORCHESTRATOR_DEFAULTS, type OrchestratorConfig, type Phase } from './useSettings'
 
 vi.mock('./IntentReportCard', () => ({ default: () => null }))
 
@@ -46,7 +46,7 @@ const state = vi.hoisted(() => ({
   save: vi.fn(() => Promise.resolve()),
   setConfig: vi.fn(),
   approvalSave: vi.fn(() => Promise.resolve()),
-  approval: { enabled: true, environment_wins: false, phase: 'ready' as const },
+  approval: { enabled: true, environment_wins: false, phase: 'ready' as Phase },
 }))
 
 vi.mock('./useSettings', async () => {
@@ -151,5 +151,14 @@ describe('Auto Investigate profiles and approval', () => {
     expect(state.approvalSave).toHaveBeenCalledWith(false)
     expect(await screen.findByText(/The environment wins/)).toBeInTheDocument()
     expect(notify).toHaveBeenCalledWith('err', 'The environment wins; Act was not saved.')
+  })
+
+  it('shows an error, not Act, when the response mode fails to load', () => {
+    state.approval = { enabled: false, environment_wins: false, phase: 'error' }
+    render(<AutoInvestigateSection notify={notify} />)
+
+    expect(screen.getByText(/Could not load the response mode/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Act/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Assist/ })).not.toBeInTheDocument()
   })
 })
