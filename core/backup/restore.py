@@ -156,8 +156,16 @@ def restore_snapshot(
             lines.extend(_swap(cfg, staged_name, pre_name, placed, stamp))
             swapped = True
             created = False
-            # The swap stays even when this fails. --test returned above.
-            lines.extend(_settle_restored(cfg, manifest, snapshot_id, _actor(actor)))
+            # The swap stays even when this fails. --test returned above. The
+            # lines naming what it moved aside go out with the error.
+            try:
+                lines.extend(
+                    _settle_restored(cfg, manifest, snapshot_id, _actor(actor))
+                )
+            except BackupError as exc:
+                raise BackupError(
+                    "\n".join([*lines, f"swapped in, but {exc}"])
+                ) from exc
             return "\n".join(lines)
     except BackupError as exc:
         error = exc
@@ -742,10 +750,35 @@ def _settle_restored(
     if not isinstance(created_at, str) or not created_at.strip():
         raise BackupError("manifest has no created_at")
     _point_at_live(cfg)
+    # Approvals first, in their own transaction: they must not stay pending
+    # because a later step about the signing key failed.
+    expired = _expire_pending(snapshot_id, created_at, actor)
     old_key = _stored_jwt_secret()
+    if old_key is None:
+        # The key comes from outside this install (a deployment's environment),
+        # so a jwt_secret written here would never be read and every old
+        # session would stay valid.
+        _audit_restore(actor, snapshot_id, created_at, expired, rotated=False)
+        raise BackupError(
+            f"approvals expired: {expired}\n"
+            "JWT_SECRET_KEY is not in secrets.enc, either .env, or jwt_secret, so "
+            "it is set outside this install; old sessions stay valid until it is "
+            "rotated where it is defined"
+        )
     new_key = secrets.token_urlsafe(48)
-    expired = _reencrypt_and_expire(old_key, new_key, snapshot_id, created_at, actor)
+    _reencrypt_mfa(old_key, new_key)
     _write_jwt_stores(new_key)
+    _audit_restore(actor, snapshot_id, created_at, expired, rotated=True)
+    return [
+        f"backup date: {created_at}",
+        f"approvals expired: {expired}",
+        "integration credentials and user accounts date from the backup",
+    ]
+
+
+def _audit_restore(
+    actor: str, snapshot_id: str, created_at: str, expired: int, *, rotated: bool
+) -> None:
     get_config_service(user_id=actor).record_audit(
         config_type="backup",
         config_key="restore",
@@ -755,13 +788,9 @@ def _settle_restored(
             "snapshot_id": snapshot_id,
             "created_at": created_at,
             "expired_count": expired,
+            "jwt_rotated": rotated,
         },
     )
-    return [
-        f"backup date: {created_at}",
-        f"approvals expired: {expired}",
-        "integration credentials and user accounts date from the backup",
-    ]
 
 
 def _point_at_live(cfg: DatabaseConfig) -> None:
@@ -803,33 +832,11 @@ def _encrypted_jwt(state: Path) -> str | None:
     return value or None
 
 
-def _reencrypt_and_expire(
-    old_key: str | None,
-    new_key: str,
-    snapshot_id: str,
-    created_at: str,
-    actor: str,
-) -> int:
+def _expire_pending(snapshot_id: str, created_at: str, actor: str) -> int:
     reason = f"expired: restored from backup {snapshot_id} taken {created_at}"
     decided_at = utcnow()
     try:
-        # auth_service reads JWT_SECRET_KEY at import and raises when it is
-        # unset, which would stop `create` and `restore --test`.
-        auth_service, auth_cls = _load_auth_service()
         with get_db_manager().session_scope() as session:
-            users = session.query(User).filter(User.mfa_secret.isnot(None)).all()
-            if users and not old_key:
-                raise BackupError("JWT secret not found; cannot re-encrypt MFA secrets")
-            if old_key:
-                auth_service.JWT_SECRET_KEY = old_key
-                plaintext = [
-                    auth_cls._decrypt_mfa_secret(user.mfa_secret) for user in users
-                ]
-                auth_service.JWT_SECRET_KEY = new_key
-                for user, secret in zip(users, plaintext):
-                    user.mfa_secret = auth_cls._encrypt_mfa_secret(secret)
-            else:
-                auth_service.JWT_SECRET_KEY = new_key
             pending = (
                 session.query(ApprovalAction)
                 .filter(ApprovalAction.status == ActionStatus.PENDING.value)
@@ -841,10 +848,26 @@ def _reencrypt_and_expire(
                 row.approved_by = actor
                 row.approved_at = decided_at
             return len(pending)
-    except BackupError:
-        raise
     except Exception as exc:
-        raise BackupError(f"could not settle the restored database: {exc}") from exc
+        raise BackupError(f"could not expire pending approvals: {exc}") from exc
+
+
+def _reencrypt_mfa(old_key: str, new_key: str) -> None:
+    try:
+        # auth_service reads JWT_SECRET_KEY at import and raises when it is
+        # unset, which would stop `create` and `restore --test`.
+        auth_service, auth_cls = _load_auth_service()
+        with get_db_manager().session_scope() as session:
+            users = session.query(User).filter(User.mfa_secret.isnot(None)).all()
+            auth_service.JWT_SECRET_KEY = old_key
+            plaintext = [
+                auth_cls._decrypt_mfa_secret(user.mfa_secret) for user in users
+            ]
+            auth_service.JWT_SECRET_KEY = new_key
+            for user, secret in zip(users, plaintext):
+                user.mfa_secret = auth_cls._encrypt_mfa_secret(secret)
+    except Exception as exc:
+        raise BackupError(f"could not re-encrypt MFA secrets: {exc}") from exc
 
 
 def _load_auth_service():
