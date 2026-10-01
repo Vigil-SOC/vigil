@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -24,6 +25,14 @@ from core.time import utcnow
 
 if TYPE_CHECKING:
     from core.storage.models.case import Case
+
+# The enrichment sweep's "unrated": never enriched, or triage failed with no
+# later success (#965). One SQL string, so the queries match the partial index;
+# migrate_schema.py rebuilds that index when this changes.
+UNRATED_WHERE = (
+    "(ai_enrichment IS NULL"
+    " OR (ai_enrichment ? 'ai_triage_error' AND NOT (ai_enrichment ? 'ai_triage')))"
+)
 
 
 class Finding(Base):
@@ -59,6 +68,12 @@ class Finding(Base):
 
     # AI-generated enrichment (cached analysis)
     ai_enrichment: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+    # Upload or S3 import: rated after live Findings, never responded to. NULL
+    # predates the column; migrate_schema.py marks the unrated ones.
+    bulk_imported: Mapped[Optional[bool]] = mapped_column(
+        Boolean, nullable=True, default=False, server_default=text("false")
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -105,6 +120,12 @@ class Finding(Base):
             postgresql_where=text(
                 "data_source IS NOT NULL AND external_id IS NOT NULL"
             ),
+        ),
+        Index(
+            "idx_finding_unrated_sweep",
+            "bulk_imported",
+            "created_at",
+            postgresql_where=text(UNRATED_WHERE),
         ),
     )
 

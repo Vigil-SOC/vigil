@@ -74,11 +74,31 @@ try:
         description="Queued intake triggers waiting for admission",
         unit="1",
     )
+
+    def _observe_unrated_findings(_options: Any):
+        try:
+            from opentelemetry.metrics import Observation
+
+            counts = _count_unrated_findings()
+            return [
+                Observation(counts[s], {"state": s})
+                for s in ("waiting_to_be_rated", "never_rated")
+            ]
+        except Exception as e:
+            logger.debug("unrated findings observation failed: %s", e)
+            return []
+
+    _unrated_findings = _orch_meter.create_observable_gauge(
+        "soc_daemon_findings_unrated",
+        callbacks=[_observe_unrated_findings],
+        description="Unrated Findings, waiting for the sweep or past its max age",
+        unit="1",
+    )
 except Exception:
     _tracer = None  # type: ignore[assignment]
     _inv_created = _inv_completed = _inv_failed = _dedup_prevented = _stuck_agents = (
         _intake_queue_depth
-    ) = None  # type: ignore[assignment]
+    ) = _unrated_findings = None  # type: ignore[assignment]
 from core.agents.projections import read_projection, run_id_for
 from core.agents.queue import RUN_KINDS, build_start_job, enqueue_run
 from core.memory.entity_keys import finding_entity_keys, normalise_keys
@@ -114,6 +134,15 @@ logger = logging.getLogger(__name__)
 def _count_queued_intake_rows() -> int:
     with get_db_manager().session_scope() as session:
         return session.query(IntakeTrigger).filter_by(state="queued").count()
+
+
+def _count_unrated_findings() -> Dict[str, int]:
+    from core.storage.rating import count_unrated
+
+    with get_db_manager().session_scope() as session:
+        return count_unrated(
+            session, get_settings().daemon_enrich_backfill_max_age_hours
+        )
 
 
 # Proactive hunts (nightly, intel) never hold more than this many slots, so a

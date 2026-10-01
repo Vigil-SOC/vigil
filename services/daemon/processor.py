@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 _ENRICH_BREAKER_THRESHOLD = 8
 _ENRICH_BREAKER_COOLDOWN = 120  # seconds
 
+BACKFILL_SOURCE = "backfill"
+
 # Finding-dict keys that triage/enrich produce; cached together in the
 # ai_enrichment JSONB column (these dict keys don't map to columns 1:1).
 _AI_ANALYSIS_KEYS = (
@@ -101,6 +103,7 @@ class FindingProcessor:
             "queued_for_response": 0,
             "queued_for_investigation": 0,
             "sanitization_flagged": 0,
+            "import_not_responded": 0,
         }
 
     def _sanitize_finding(self, finding: Dict[str, Any], source: Optional[str]) -> None:
@@ -381,6 +384,12 @@ class FindingProcessor:
         if finding.get("data_source") == PROBE_DATA_SOURCE:
             return
 
+        # Only the sweep's rows: they come from the database, not a payload.
+        if source == BACKFILL_SOURCE and finding.get("bulk_imported"):
+            self.stats["import_not_responded"] += 1
+            logger.debug(f"Not responding to {finding_id}: bulk import")
+            return
+
         # Response evaluation always runs — even when enrichment is off or paused.
         try:
             await self._evaluate_for_response(finding)
@@ -446,7 +455,7 @@ class FindingProcessor:
             for finding in batch:
                 if shutdown_event.is_set():
                     break
-                await self._spawn_enrich(finding)  # blocks on the cap → self-pacing
+                await self._spawn_enrich(finding, BACKFILL_SOURCE)  # blocks on the cap
 
     async def _store_finding(self, finding: Dict[str, Any]) -> bool:
         """Return True if persisted (or already present), False if the write

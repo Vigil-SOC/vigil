@@ -152,6 +152,14 @@ def _patch_status_orchestrator(monkeypatch):
         "max_concurrent_agents": 3,
     }
     monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: cfg)
+    monkeypatch.setattr(
+        "core.storage.rating.count_unrated",
+        lambda *a, **k: {
+            "waiting_to_be_rated": 0,
+            "never_rated": 0,
+            "never_rated_capped": False,
+        },
+    )
 
 
 def test_status_queued_is_intake_depth_not_investigation_status(client, monkeypatch):

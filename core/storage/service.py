@@ -21,6 +21,7 @@ from core.storage.models import (
     Finding,
     FindingMitrePrediction,
 )
+from core.storage.rating import in_sweep_index, unrated
 from core.storage.schemas import FindingSchema
 from core.time import utcnow
 
@@ -160,6 +161,7 @@ class DatabaseService:
                         cluster_id=r.get("cluster_id"),
                         severity=r.get("severity"),
                         status=r.get("status", "new"),
+                        bulk_imported=True,
                     )
                     _set_mitre_prediction_rows(
                         finding, r.get("mitre_predictions") or {}
@@ -300,28 +302,28 @@ class DatabaseService:
     ) -> List[Dict[str, Any]]:
         """Findings stored but never enriched (ai_enrichment IS NULL) or whose
         triage failed without a later success (ai_triage_error recorded, no
-        ai_triage — #965), oldest first. Returns dicts (FindingSchema.dump inside
-        the session) so callers get detached-safe data. ``max_age_hours`` bounds
-        the working set so ancient, un-enrichable findings aren't retried forever."""
+        ai_triage — #965): live Findings before bulk imports, oldest stored first.
+        Returns dicts (FindingSchema.dump inside the session) so callers get
+        detached-safe data. ``max_age_hours`` bounds the working set so ancient,
+        un-enrichable findings aren't retried forever."""
         with self.db_manager.session_scope() as session:
             query = (
                 select(Finding)
                 .options(selectinload(Finding.mitre_prediction_rows))
-                .where(
-                    or_(
-                        Finding.ai_enrichment.is_(None),
-                        and_(
-                            Finding.ai_enrichment.has_key("ai_triage_error"),
-                            ~Finding.ai_enrichment.has_key("ai_triage"),
-                        ),
-                    )
-                )
+                .where(unrated(), in_sweep_index())
             )
             if max_age_hours:
                 cutoff = utcnow() - timedelta(hours=max_age_hours)
-                query = query.where(Finding.timestamp >= cutoff)
-            query = query.order_by(Finding.timestamp.asc()).limit(limit)
-            return FindingSchema.dump_many(session.execute(query).scalars().all())
+                query = query.where(Finding.created_at >= cutoff)
+            query = query.order_by(
+                Finding.bulk_imported.asc(), Finding.created_at.asc()
+            ).limit(limit)
+            findings = session.execute(query).scalars().all()
+            rows = FindingSchema.dump_many(findings)
+            # For the sweep's response gate only; not part of the Finding contract.
+            for row, finding in zip(rows, findings):
+                row["bulk_imported"] = finding.bulk_imported
+            return rows
 
     @default_on_error(0)
     def count_findings(

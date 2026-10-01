@@ -80,9 +80,34 @@ def _index_exists(conn, name):
     ).scalar() is not None
 
 
-def migration(description):
-    """Decorator to register a migration step."""
+def _column_exists(conn, table, column):
+    return conn.execute(text(
+        "SELECT 1 FROM information_schema.columns WHERE table_schema = "
+        "current_schema() AND table_name = :t AND column_name = :c"
+    ), {"t": table, "c": column}).scalar() is not None
+
+
+def _planner_reads(conn, index, query):
+    """Whether the planner would read the index for the query.
+
+    False for an INVALID index, which a failed CONCURRENTLY build leaves
+    behind, and for one whose WHERE no longer matches the query's.
+    """
+    conn.execute(text("SET enable_seqscan = off"))
+    try:
+        plan = conn.execute(text(f"EXPLAIN {query}")).scalars().all()
+    finally:
+        conn.execute(text("RESET enable_seqscan"))
+    return any(index in line for line in plan)
+
+
+def migration(description, autocommit=False):
+    """Decorator to register a migration step.
+
+    An autocommit step runs outside a transaction, as CREATE INDEX CONCURRENTLY must.
+    """
     def decorator(fn):
+        fn.autocommit = autocommit
         MIGRATIONS.append((description, fn))
         return fn
     return decorator
@@ -117,6 +142,60 @@ def create_findings_description_gin_index(conn):
     conn.execute(text("""
         CREATE INDEX IF NOT EXISTS idx_finding_description
         ON findings USING gin (description gin_trgm_ops);
+    """))
+
+
+# NULL on rows already there (a DEFAULT here would mark every one live); the
+# default is for new rows. A step of its own so the lock ends before marking.
+# 37_findings_bulk_imported.sql does the same from db-init.
+@migration("Add bulk_imported column to findings")
+def add_findings_bulk_imported(conn):
+    if not _table_exists(conn, 'findings'):
+        return
+    if _column_exists(conn, 'findings', 'bulk_imported'):
+        return
+    conn.execute(text("ALTER TABLE findings ADD COLUMN bulk_imported BOOLEAN"))
+    conn.execute(text(
+        "ALTER TABLE findings ALTER COLUMN bulk_imported SET DEFAULT false"
+    ))
+
+
+# create_all never adds an index to a table it finds, and findings predates
+# this one. CONCURRENTLY so ingestion keeps writing while it builds; rebuilt when
+# a failed build left it INVALID or UNRATED_WHERE has moved on.
+@migration("Create partial index on unrated findings", autocommit=True)
+def create_findings_unrated_index(conn):
+    from core.storage.models.finding import UNRATED_WHERE
+
+    name = 'idx_finding_unrated_sweep'
+    if not _column_exists(conn, 'findings', 'bulk_imported'):
+        return
+    if _index_exists(conn, name):
+        probe = (
+            f"SELECT 1 FROM findings WHERE {UNRATED_WHERE} "
+            "ORDER BY bulk_imported, created_at LIMIT 1"
+        )
+        if _planner_reads(conn, name, probe):
+            return
+        conn.execute(text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
+    conn.execute(text(f"""
+        CREATE INDEX CONCURRENTLY IF NOT EXISTS {name}
+        ON findings (bulk_imported, created_at) WHERE {UNRATED_WHERE};
+    """))
+
+
+# Unrated rows stored before the column, marked by the old guess: no event
+# time, or stored over 24h after it. Re-runs find none.
+@migration("Mark unrated findings stored before bulk_imported")
+def mark_findings_bulk_imported(conn):
+    from core.storage.models.finding import UNRATED_WHERE
+
+    if not _column_exists(conn, 'findings', 'bulk_imported'):
+        return
+    conn.execute(text(f"""
+        UPDATE findings SET bulk_imported =
+            (timestamp IS NULL OR created_at - timestamp > interval '24 hours')
+        WHERE bulk_imported IS NULL AND {UNRATED_WHERE};
     """))
 
 
@@ -486,7 +565,8 @@ def _role_to_rerun_as(engine, error):
 
 
 def run_migrations(url=None):
-    """Run every step in its own transaction, and return what became of each.
+    """Run every step in its own transaction (an autocommit step in none), and
+    return what became of each.
 
     A failed step rolls back alone: the steps before it stay committed and the
     ones after it still run. Returns the steps that applied, the ones skipped
@@ -507,8 +587,14 @@ def run_migrations(url=None):
         for number, (desc, fn) in enumerate(MIGRATIONS, 1):
             logger.info(f"[{number}/{len(MIGRATIONS)}] {desc}")
             try:
-                with engine.begin() as conn:
-                    fn(conn)
+                if getattr(fn, 'autocommit', False):
+                    with engine.connect().execution_options(
+                        isolation_level='AUTOCOMMIT'
+                    ) as conn:
+                        fn(conn)
+                else:
+                    with engine.begin() as conn:
+                        fn(conn)
             except Exception as e:
                 role = _role_to_rerun_as(engine, e)
                 if role is None:
