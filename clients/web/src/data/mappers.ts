@@ -70,12 +70,6 @@ function fmt(iso: string | undefined, pattern: string): string {
   return Number.isNaN(d.getTime()) ? DASH : format(d, pattern)
 }
 
-function caseStatus(s?: string): CaseRow['status'] {
-  if (s === 'investigating') return 'investigating'
-  if (s === 'open') return 'open'
-  return 'closed' // resolved / closed / anything else
-}
-
 function casePrio(p?: string): CaseRow['prio'] {
   const v = (p || '').toLowerCase()
   if (v === 'critical' || v === 'high' || v === 'medium' || v === 'low' || v === 'unknown') return v
@@ -83,22 +77,84 @@ function casePrio(p?: string): CaseRow['prio'] {
 }
 
 export function mapApiCase(c: ApiCase): CaseRow {
+  // The record's own status. Combined state belongs on the queue row; writing
+  // it back through Edit would store an investigation status on the case.
+  const row = mapQueueCase(c)
+  return { ...row, status: c.status || 'open' }
+}
+
+/** Queue row or a case record. Combined state is shown as given. */
+export interface QueueCase {
+  case_id?: string | null
+  title?: string | null
+  description?: string | null
+  status?: string | null
+  priority?: string | null
+  assignee?: string | null
+  combined_state?: string | null
+  finding_ids?: string[] | null
+  findings_count?: number | null
+  workflow_id?: string | null
+  iteration_count?: number | null
+  cost_usd?: number | null
+  max_cost_usd?: number | null
+  budget_health?: string | null
+  comment_count?: number | null
+  last_activity?: string | null
+  age_seconds?: number | null
+  created_at?: string | null
+  updated_at?: string | null
+  sla_seconds_left?: number | null
+  health_status?: string | null
+  mitre_techniques?: string[] | null
+}
+
+function formatSpan(seconds?: number | null): string {
+  if (seconds == null || Number.isNaN(seconds)) return DASH
+  const sign = seconds < 0 ? '-' : ''
+  const sec = Math.abs(seconds)
+  if (sec < 3600) return `${sign}${Math.round(sec / 60)}m`
+  if (sec < 86400) return `${sign}${Math.round(sec / 3600)}h`
+  return `${sign}${Math.round(sec / 86400)}d`
+}
+
+function slaTone(health?: string | null): CaseRow['slaState'] {
+  if (health === 'warning') return 'warn'
+  if (health === 'critical' || health === 'breached') return 'danger'
+  return 'ok'
+}
+
+function slaText(seconds?: number | null, health?: string | null): string {
+  if (seconds == null && !health) return DASH
+  if (seconds == null) return health || DASH
+  if (!health) return formatSpan(seconds)
+  return `${formatSpan(seconds)} · ${health}`
+}
+
+export function mapQueueCase(c: QueueCase): CaseRow {
+  const activity = c.last_activity || c.updated_at || c.created_at || undefined
   return {
     id: c.case_id || '',
     title: c.title || c.case_id || '',
     desc: c.description || '',
-    status: caseStatus(c.status ?? undefined),
+    status: c.combined_state || c.status || 'open',
     prio: casePrio(c.priority ?? undefined),
     owner: initials(c.assignee ?? undefined),
     ownerName: c.assignee || 'unassigned',
-    findings: c.finding_ids?.length ?? 0,
+    findings: c.findings_count ?? c.finding_ids?.length ?? 0,
     tactic: c.mitre_techniques?.[0] || DASH,
-    age: compactAge(c.created_at ?? undefined),
-    sla: DASH,
-    slaState: 'ok',
-    updated: fmt(c.updated_at || c.created_at || undefined, 'MMM d'),
-    updatedTs: epochMs(c.updated_at || c.created_at || undefined),
+    age: c.age_seconds != null ? formatSpan(c.age_seconds) : compactAge(c.created_at ?? undefined),
+    sla: slaText(c.sla_seconds_left, c.health_status),
+    slaState: slaTone(c.health_status),
+    updated: fmt(activity ?? undefined, 'MMM d'),
+    updatedTs: epochMs(activity ?? undefined),
     createdTs: epochMs(c.created_at ?? undefined),
+    workflowId: c.workflow_id || undefined,
+    iterations: c.iteration_count,
+    costUsd: c.cost_usd,
+    maxCostUsd: c.max_cost_usd,
+    budgetHealth: c.budget_health,
+    comments: c.comment_count ?? undefined,
   }
 }
 

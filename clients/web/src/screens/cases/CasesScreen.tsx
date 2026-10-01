@@ -4,10 +4,17 @@ import { format } from 'date-fns'
 import { Icon } from '../../shared/icons'
 import { Markdown } from '../../shared/Markdown'
 import { timelineApi, caseSearchApi, casesApi } from '../../services/api'
-import { mapApiCase } from '../../data/mappers'
+import { mapQueueCase } from '../../data/mappers'
 import type { CaseRow } from '../../data/data'
 import type { ConsoleScreenProps } from '../../shared/types'
-import { useCases, useCaseDetail, type Phase } from './useCases'
+import {
+  useCases,
+  useCaseDetail,
+  INITIAL_CASE_FILTERS,
+  type CaseFilters,
+  type CaseStrip,
+  type Phase,
+} from './useCases'
 import { ConfirmDialog, EmptyState, FilterButton, FilterGroup, Popup, Select } from '../../shared/ui'
 import { useAuth } from '../../contexts/AuthContext'
 import { useToast } from '../../shell/toast'
@@ -39,8 +46,6 @@ function casePrompt(c: CaseRow): string {
   return `Investigate case ${c.id}: "${c.title}" — ${c.prio} priority, status ${c.status}, ${c.findings} linked findings${tactic}. Summarize the case and recommend next steps.`
 }
 
-type SortKey = 'id' | 'title' | 'status' | 'prio' | 'ownerName' | 'findings' | 'tactic' | 'age' | 'sla' | 'updated'
-const PRIO_RANK = { critical: 0, high: 1, medium: 2, low: 3, unknown: 4 } satisfies Record<CaseRow['prio'], number>
 const CASE_PRIO_OPTIONS: { value: CaseRow['prio']; label: string }[] = [
   { value: 'critical', label: 'Critical' },
   { value: 'high', label: 'High' },
@@ -50,36 +55,29 @@ const CASE_PRIO_OPTIONS: { value: CaseRow['prio']; label: string }[] = [
 ]
 const RATED_PRIO_OPTIONS = CASE_PRIO_OPTIONS.filter((o) => o.value !== 'unknown')
 
-function sortValue(c: CaseRow, key: SortKey): string | number {
-  switch (key) {
-    case 'findings': return c.findings
-    case 'prio': return PRIO_RANK[c.prio]
-    case 'updated': return c.updatedTs ?? 0
-    case 'age': return c.createdTs ?? 0
-    case 'id': return c.id.toLowerCase()
-    case 'title': return c.title.toLowerCase()
-    case 'status': return c.status
-    case 'ownerName': return c.ownerName.toLowerCase()
-    case 'tactic': return c.tactic.toLowerCase()
-    case 'sla': return c.sla
-    default: return ''
-  }
+const STATE_OPTIONS = [
+  { value: '', label: 'Open queue' },
+  { value: 'new', label: 'New' },
+  { value: 'open', label: 'Open' },
+  { value: 'investigating', label: 'Investigating' },
+  { value: 'assigned', label: 'Assigned' },
+  { value: 'executing', label: 'Executing' },
+  { value: 'waiting_approval', label: 'Waiting approval' },
+  { value: 'review_submitted', label: 'In review' },
+  { value: 'closed', label: 'Closed' },
+]
+
+function budgetCell(c: CaseRow): string {
+  if (c.costUsd == null && c.maxCostUsd == null) return '—'
+  const cost = c.costUsd == null ? '—' : c.costUsd.toFixed(2)
+  const max = c.maxCostUsd == null ? '—' : c.maxCostUsd.toFixed(2)
+  return c.budgetHealth ? `${cost}/${max} ${c.budgetHealth}` : `${cost}/${max}`
 }
 
-type SortState = { key: SortKey; dir: 'asc' | 'desc' }
-function Th({ label, k, sort, onSort }: { label: string; k: SortKey; sort: SortState; onSort: (k: SortKey) => void }) {
-  const active = sort.key === k
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(k)}>
-      {label}{' '}
-      <span
-        className="arr"
-        style={{ opacity: active ? 1 : 0.25, transform: active && sort.dir === 'asc' ? 'rotate(180deg)' : 'none' }}
-      >
-        <Icon name="arrowDn" size={12} />
-      </span>
-    </th>
-  )
+function stripStates(by: Record<string, number>): string {
+  const parts = Object.entries(by).filter(([, n]) => n > 0)
+  if (!parts.length) return '—'
+  return parts.map(([state, n]) => `${n} ${state}`).join(' · ')
 }
 
 type CaseTab = 'Overview' | 'Investigation' | 'Resolution' | 'Collaboration' | 'Details'
@@ -209,7 +207,8 @@ export default function CasesScreen({ openChat, setViewFull }: ConsoleScreenProp
   // the open case is a ?case=<id> param, so a detail view is deep-linkable
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
-  const { rows, phase, error, reload } = useCases()
+  const [filters, setFilters] = useState(INITIAL_CASE_FILTERS)
+  const { rows, total, strip, phase, error, reload } = useCases(filters)
 
   const selectCase = useCallback(
     (id: string) => setSearchParams({ case: id }),
@@ -231,7 +230,17 @@ export default function CasesScreen({ openChat, setViewFull }: ConsoleScreenProp
       reloadList={reload}
     />
   ) : (
-    <CasesTable rows={rows} phase={phase} error={error} reload={reload} onSelect={selectCase} />
+    <CasesTable
+      rows={rows}
+      total={total}
+      strip={strip}
+      phase={phase}
+      error={error}
+      reload={reload}
+      filters={filters}
+      onFilters={setFilters}
+      onSelect={selectCase}
+    />
   )
 }
 
@@ -239,7 +248,7 @@ export default function CasesScreen({ openChat, setViewFull }: ConsoleScreenProp
 function StateRow({ children }: { children: ReactNode }) {
   return (
     <tr>
-      <td colSpan={11}>
+      <td colSpan={14}>
         {children}
       </td>
     </tr>
@@ -248,78 +257,55 @@ function StateRow({ children }: { children: ReactNode }) {
 
 function CasesTable({
   rows,
+  total,
+  strip,
   phase,
   error,
   reload,
+  filters,
+  onFilters,
   onSelect,
 }: {
   rows: CaseRow[]
+  total: number
+  strip: CaseStrip
   phase: Phase
   error: string | null
   reload: () => void
+  filters: CaseFilters
+  onFilters: (next: CaseFilters) => void
   onSelect: (id: string) => void
 }) {
   const { hasPermission } = useAuth()
   const canDelete = hasPermission('cases.delete')
-  const [query, setQuery] = useState('')
-  const [statusF, setStatusF] = useState('any')
-  const [prioF, setPrioF] = useState('any')
-  const [assigneeF, setAssigneeF] = useState('any')
   const [showAdvanced, setShowAdvanced] = useState(false)
-  // null = not searching; fall back to the client-filtered list
+  // Advanced search replaces the page until cleared. Results stay in API order.
   const [results, setResults] = useState<CaseRow[] | null>(null)
-  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'updated', dir: 'desc' })
-  const [page, setPage] = useState(0)
-  const [pageSize, setPageSize] = useState(10)
   const [newOpen, setNewOpen] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<CaseRow | null>(null)
 
-  const toggleSort = (key: SortKey) =>
-    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }))
-
-  const assigneeOptions = useMemo(() => {
-    const set = Array.from(new Set(rows.map((c) => c.ownerName).filter(Boolean))).sort()
-    return [{ value: 'any', label: 'Any' }, ...set.map((a) => ({ value: a, label: a }))]
-  }, [rows])
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return rows.filter((c) => {
-      if (statusF !== 'any' && c.status !== statusF) return false
-      if (prioF !== 'any' && c.prio !== prioF) return false
-      if (assigneeF !== 'any' && c.ownerName !== assigneeF) return false
-      if (!q) return true
-      return (
-        c.id.toLowerCase().includes(q) ||
-        c.title.toLowerCase().includes(q) ||
-        c.ownerName.toLowerCase().includes(q)
-      )
+  const setFilters = (partial: Partial<CaseFilters>) =>
+    onFilters({
+      ...filters,
+      ...partial,
+      offset: 'offset' in partial ? partial.offset ?? 0 : 0,
     })
-  }, [rows, query, statusF, prioF, assigneeF])
 
-  // server search results take over the table when present
-  const display = results ?? filtered
-
-  const sorted = useMemo(() => {
-    const dir = sort.dir === 'asc' ? 1 : -1
-    return [...display].sort((a, b) => {
-      const va = sortValue(a, sort.key)
-      const vb = sortValue(b, sort.key)
-      if (va < vb) return -dir
-      if (va > vb) return dir
-      return 0
-    })
-  }, [display, sort])
-
-  const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize))
-  const safePage = Math.min(page, pageCount - 1)
-  const paged = useMemo(
-    () => sorted.slice(safePage * pageSize, safePage * pageSize + pageSize),
-    [sorted, safePage, pageSize],
-  )
-
-  // jump back to the first page whenever the result set or page size changes
-  useEffect(() => { setPage(0) }, [query, statusF, prioF, assigneeF, results, pageSize])
+  const activeFilters =
+    (filters.state ? 1 : 0) +
+    (filters.priority !== 'any' ? 1 : 0) +
+    (filters.sla ? 1 : 0) +
+    (filters.assignee.trim() ? 1 : 0) +
+    (filters.workflow.trim() ? 1 : 0) +
+    (filters.dataSource.trim() ? 1 : 0)
+  const showingSearch = results !== null
+  const display = showingSearch ? results : rows
+  const openCount = Object.values(strip.by_state).reduce((sum, n) => sum + n, 0)
+  const pageStart = total === 0 ? 0 : filters.offset + 1
+  const pageEnd = Math.min(filters.offset + rows.length, total)
+  const agentShare = strip.closed_today
+    ? `${Math.round(strip.agent_closure_share * 100)}%`
+    : '—'
 
   return (
     <>
@@ -329,35 +315,54 @@ function CasesTable({
           <input
             aria-label="Search cases"
             placeholder="Search cases by title, ID, owner…"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            value={filters.query}
+            onChange={(e) => setFilters({ query: e.target.value })}
           />
         </div>
         <FilterButton
-          activeCount={(statusF !== 'any' ? 1 : 0) + (prioF !== 'any' ? 1 : 0) + (assigneeF !== 'any' ? 1 : 0)}
-          onClearAll={() => { setStatusF('any'); setPrioF('any'); setAssigneeF('any') }}
+          activeCount={activeFilters}
+          onClearAll={() => setFilters({
+            state: '',
+            priority: 'any',
+            sla: '',
+            assignee: '',
+            workflow: '',
+            dataSource: '',
+          })}
         >
           <FilterGroup
-            label="Status"
-            value={statusF}
-            onSelect={setStatusF}
-            options={[
-              { value: 'any', label: 'Any' },
-              { value: 'open', label: 'Open' },
-              { value: 'investigating', label: 'Investigating' },
-              { value: 'closed', label: 'Closed' },
-            ]}
+            label="State"
+            value={filters.state}
+            onSelect={(state) => setFilters({ state })}
+            options={STATE_OPTIONS}
           />
           <FilterGroup
             label="Priority"
-            value={prioF}
-            onSelect={setPrioF}
+            value={filters.priority}
+            onSelect={(priority) => setFilters({ priority })}
+            options={[{ value: 'any', label: 'Any' }, ...CASE_PRIO_OPTIONS]}
+          />
+          <FilterGroup
+            label="SLA"
+            value={filters.sla}
+            onSelect={(sla) => setFilters({ sla: sla as CaseFilters['sla'] })}
             options={[
-              { value: 'any', label: 'Any' },
-              ...CASE_PRIO_OPTIONS,
+              { value: '', label: 'Any' },
+              { value: 'risk', label: 'At risk' },
             ]}
           />
-          <FilterGroup label="Assignee" value={assigneeF} onSelect={setAssigneeF} options={assigneeOptions} />
+          <label className="filter-grp">
+            <span className="filter-grp-label">Assignee</span>
+            <input aria-label="Assignee filter" className={inputCls} value={filters.assignee} onChange={(e) => setFilters({ assignee: e.target.value })} />
+          </label>
+          <label className="filter-grp">
+            <span className="filter-grp-label">Workflow</span>
+            <input aria-label="Workflow filter" className={inputCls} value={filters.workflow} onChange={(e) => setFilters({ workflow: e.target.value })} />
+          </label>
+          <label className="filter-grp">
+            <span className="filter-grp-label">Data source</span>
+            <input aria-label="Data source filter" className={inputCls} value={filters.dataSource} onChange={(e) => setFilters({ dataSource: e.target.value })} />
+          </label>
         </FilterButton>
         <div className="flex-1" />
         <button
@@ -376,20 +381,42 @@ function CasesTable({
           <button className="btn ghost" onClick={() => setResults(null)}>Clear search</button>
         </div>
       )}
+      <div className="kpi-strip">
+        <div className="kpi">
+          <div className="k-label">Open</div>
+          <div className="k-row"><span className="k-val">{openCount}</span></div>
+          <div className="muted" style={{ fontSize: 12 }}>{stripStates(strip.by_state)}</div>
+        </div>
+        <div className="kpi">
+          <div className="k-label">SLA at risk</div>
+          <div className="k-row"><span className="k-val">{strip.sla_at_risk}</span></div>
+        </div>
+        <div className="kpi">
+          <div className="k-label">Closed today</div>
+          <div className="k-row"><span className="k-val">{strip.closed_today}</span></div>
+        </div>
+        <div className="kpi">
+          <div className="k-label">Agent closures</div>
+          <div className="k-row"><span className="k-val" style={{ fontSize: 18 }}>{agentShare}</span></div>
+        </div>
+      </div>
       <div className="table-wrap list-scroll">
         <table className="tbl cases-tbl">
           <thead>
             <tr>
-              <Th label="Case ID" k="id" sort={sort} onSort={toggleSort} />
-              <Th label="Title" k="title" sort={sort} onSort={toggleSort} />
-              <Th label="Status" k="status" sort={sort} onSort={toggleSort} />
-              <Th label="Priority" k="prio" sort={sort} onSort={toggleSort} />
-              <Th label="Assignee" k="ownerName" sort={sort} onSort={toggleSort} />
-              <Th label="Findings" k="findings" sort={sort} onSort={toggleSort} />
-              <Th label="Tactic" k="tactic" sort={sort} onSort={toggleSort} />
-              <Th label="Age" k="age" sort={sort} onSort={toggleSort} />
-              <Th label="SLA" k="sla" sort={sort} onSort={toggleSort} />
-              <Th label="Updated" k="updated" sort={sort} onSort={toggleSort} />
+              <th>Case ID</th>
+              <th>Title</th>
+              <th>State</th>
+              <th>Priority</th>
+              <th>Assignee</th>
+              <th>Findings</th>
+              <th>Workflow</th>
+              <th>Iterations</th>
+              <th>Budget</th>
+              <th>Comments</th>
+              <th>Age</th>
+              <th>SLA</th>
+              <th>Last activity</th>
               <th />
             </tr>
           </thead>
@@ -400,19 +427,19 @@ function CasesTable({
                 <EmptyState error table icon="alert" title="Couldn’t load cases" body={error} primary={{ label: 'Retry', onClick: reload, icon: 'refresh' }} />
               </StateRow>
             )}
-            {phase === 'ready' && sorted.length === 0 && (
+            {phase === 'ready' && display.length === 0 && (
               <StateRow>
                 <EmptyState
                   table
-                  icon={rows.length === 0 ? 'folder' : 'filter'}
-                  title={results ? 'No cases match this search' : rows.length === 0 ? 'No cases yet' : 'No cases match these filters'}
-                  body={results || rows.length > 0 ? 'Clear the search and filters to return to the full case queue.' : 'Create a case manually or link findings from the dashboard to start an investigation record.'}
-                  primary={results || rows.length > 0 ? { label: 'Clear filters', onClick: () => { setResults(null); setQuery(''); setStatusF('any'); setPrioF('any'); setAssigneeF('any') }, icon: 'close' } : { label: 'New case', onClick: () => setNewOpen(true), icon: 'plus' }}
+                  icon={showingSearch || activeFilters || filters.query ? 'filter' : 'folder'}
+                  title={showingSearch ? 'No cases match this search' : activeFilters || filters.query ? 'No cases match these filters' : 'No cases yet'}
+                  body={showingSearch || activeFilters || filters.query ? 'Clear the search and filters to return to the open queue.' : 'Create a case manually or link findings from the dashboard to start an investigation record.'}
+                  primary={showingSearch || activeFilters || filters.query ? { label: 'Clear filters', onClick: () => { setResults(null); onFilters({ ...INITIAL_CASE_FILTERS, limit: filters.limit }) }, icon: 'close' } : { label: 'New case', onClick: () => setNewOpen(true), icon: 'plus' }}
                 />
               </StateRow>
             )}
             {phase === 'ready' &&
-              paged.map((c) => (
+              display.map((c) => (
                 <tr key={c.id} className="clickable" onClick={() => onSelect(c.id)}>
                   <td><span className="id-cell">{c.id}</span></td>
                   <td className="case-title" title={c.title}>{c.title}</td>
@@ -420,7 +447,10 @@ function CasesTable({
                   <td><span className={`prio ${c.prio}`}>{cap(c.prio)}</span></td>
                   <td><span className="assignee"><span className="avatar">{c.owner}</span><span className="muted">{c.ownerName}</span></span></td>
                   <td><b>{c.findings}</b></td>
-                  <td><span className="tag">{c.tactic}</span></td>
+                  <td className="muted">{c.workflowId || '—'}</td>
+                  <td className="muted">{c.iterations ?? '—'}</td>
+                  <td className="muted">{budgetCell(c)}</td>
+                  <td>{c.comments ?? 0}</td>
                   <td className="muted">{c.age}</td>
                   <td><span className={`sla ${c.slaState}`}>{c.sla}</span></td>
                   <td className="muted">{c.updated}</td>
@@ -458,27 +488,28 @@ function CasesTable({
           </tbody>
         </table>
       </div>
-      <div className="pager">
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          Rows per page:
-          <select
-            className="pg-size"
-            value={pageSize}
-            onChange={(e) => setPageSize(Number(e.target.value))}
-          >
-            {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </span>
-        <span>
-          {sorted.length === 0
-            ? '0 of 0'
-            : `${safePage * pageSize + 1}–${Math.min((safePage + 1) * pageSize, sorted.length)} of ${sorted.length}`}
-        </span>
-        <span style={{ display: 'flex', gap: 6 }}>
-          <button className="pg-btn" disabled={safePage <= 0} onClick={() => setPage((p) => Math.max(0, p - 1))}><Icon name="chevL" size={14} /></button>
-          <button className="pg-btn" disabled={safePage >= pageCount - 1} onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}><Icon name="chevR" size={14} /></button>
-        </span>
-      </div>
+      {!showingSearch && (
+        <div className="pager">
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            Rows per page:
+            <select
+              className="pg-size"
+              aria-label="Rows per page"
+              value={filters.limit}
+              onChange={(e) => setFilters({ limit: Number(e.target.value) })}
+            >
+              {[10, 25, 50, 100].map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </span>
+          <span>
+            {total === 0 ? '0 of 0' : `${pageStart}–${pageEnd} of ${total}`}
+          </span>
+          <span style={{ display: 'flex', gap: 6 }}>
+            <button className="pg-btn" aria-label="Previous page" disabled={filters.offset <= 0} onClick={() => setFilters({ offset: Math.max(0, filters.offset - filters.limit) })}><Icon name="chevL" size={14} /></button>
+            <button className="pg-btn" aria-label="Next page" disabled={filters.offset + rows.length >= total} onClick={() => setFilters({ offset: filters.offset + filters.limit })}><Icon name="chevR" size={14} /></button>
+          </span>
+        </div>
+      )}
 
       <NewCaseDialog open={newOpen} onClose={() => setNewOpen(false)} onCreated={reload} />
       <DeleteCaseDialog
@@ -601,8 +632,8 @@ function AdvancedSearchPanel({ onResults, rows }: { onResults: (r: CaseRow[] | n
     setErr('')
     try {
       const res = await caseSearchApi.search({ query: query.trim(), filters, limit: 50 })
-      const cases = (res.data?.cases || []) as Parameters<typeof mapApiCase>[0][]
-      onResults(cases.map((c) => mapApiCase(c)))
+      const cases = (res.data?.cases || []) as Parameters<typeof mapQueueCase>[0][]
+      onResults(cases.map((c) => mapQueueCase(c)))
     } catch (e) {
       setErr((e as { message?: string })?.message || 'Search failed')
     } finally {

@@ -137,6 +137,31 @@ describe('case deletion', () => {
   })
 })
 
+describe('server queue', () => {
+  it('asks the server for the first page and opens a row', async () => {
+    renderCases()
+
+    await screen.findByText(CASE.title)
+    expect(casesApi.getAll).toHaveBeenCalledWith(expect.objectContaining({ limit: 100, offset: 0 }))
+    fireEvent.click(screen.getByText(CASE.title))
+    expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
+  })
+
+  it('sends a closed filter to the server', async () => {
+    renderCases()
+    await screen.findByText(CASE.title)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Filters' })).getByRole('button', { name: 'Closed' }),
+    )
+
+    await waitFor(() =>
+      expect(casesApi.getAll).toHaveBeenCalledWith(expect.objectContaining({ closed: true, offset: 0 })),
+    )
+  })
+})
+
 describe('unknown priority', () => {
   it('renders Unknown on the list and offers it as a filter', async () => {
     testState.cases = [{ ...CASE, priority: 'unknown' }]

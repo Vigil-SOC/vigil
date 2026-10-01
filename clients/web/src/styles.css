@@ -3543,6 +3543,12 @@
       color: var(--crit);
    }
 
+   /* The queue has more columns than the pane. A floor lets the existing
+      table scroll sideways instead of crushing SLA and last activity. */
+   .cases-tbl {
+      min-width: 1180px;
+   }
+
    /* Title column: truncate long titles with an ellipsis (full text on hover). */
    .cases-tbl td.case-title {
       max-width: 340px;
