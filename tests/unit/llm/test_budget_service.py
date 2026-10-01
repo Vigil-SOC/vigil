@@ -137,7 +137,12 @@ def test_set_settings_validates_enforcement_mode():
     from core.llm.cost.budget import set_settings
 
     with pytest.raises(ValueError, match="enforcement_mode must be"):
-        set_settings(default_vk="sk-bf-x", budget_limit_usd=10.0, enforcement_mode="bogus")
+        set_settings(
+            default_vk="sk-bf-x",
+            budget_limit_usd=10.0,
+            enforcement_mode="bogus",
+            updated_by="tester",
+        )
 
 
 def test_stored_cap_and_mode_do_not_change_vk_header(monkeypatch):

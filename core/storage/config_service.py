@@ -363,23 +363,10 @@ class ConfigService:
             )
 
 
-# Global instance for singleton pattern
-_config_service: Optional[ConfigService] = None
-
-
 def get_config_service(user_id: str = "system") -> ConfigService:
+    """A config service whose writes are audited as ``user_id``.
+
+    One instance per call. The service holds no other state, and a shared
+    instance would record a later caller under an earlier caller's id.
     """
-    Get or create the global config service instance.
-
-    Args:
-        user_id: ID of the user (for audit trail)
-
-    Returns:
-        ConfigService instance
-    """
-    global _config_service
-
-    if _config_service is None or _config_service.user_id != user_id:
-        _config_service = ConfigService(user_id=user_id)
-
-    return _config_service
+    return ConfigService(user_id=user_id)

@@ -10,12 +10,14 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from core.config import get_settings
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
 
@@ -141,7 +143,7 @@ async def get_orchestrator_status():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _persist_orchestrator_enabled(enabled: bool) -> None:
+def _persist_orchestrator_enabled(enabled: bool, user_id: str) -> None:
     """Write the `enabled` flag into the single `orchestrator.settings` key.
 
     Read-modify-write so the rest of the settings struct is preserved. If no
@@ -152,7 +154,7 @@ def _persist_orchestrator_enabled(enabled: bool) -> None:
         from core.storage.config_service import get_config_service
         from services.api.routers.config import ORCHESTRATOR_DEFAULTS
 
-        svc = get_config_service(user_id="web_ui")
+        svc = get_config_service(user_id=user_id)
         current = svc.get_system_config("orchestrator.settings")
         base = (
             dict(current) if isinstance(current, dict) else dict(ORCHESTRATOR_DEFAULTS)
@@ -170,26 +172,30 @@ def _persist_orchestrator_enabled(enabled: bool) -> None:
 
 
 @router.post("/enable")
-async def enable_orchestrator():
+async def enable_orchestrator(
+    current_user: User = Depends(get_current_active_user),
+):
     """Enable the orchestrator at runtime."""
     try:
         orch = _get_orchestrator()
         if orch:
             orch.enable()
-        _persist_orchestrator_enabled(True)
+        _persist_orchestrator_enabled(True, str(current_user.user_id))
         return {"success": True, "enabled": True, "message": "Orchestrator enabled"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/disable")
-async def disable_orchestrator():
+async def disable_orchestrator(
+    current_user: User = Depends(get_current_active_user),
+):
     """Gracefully disable the orchestrator. Running agents finish their current step."""
     try:
         orch = _get_orchestrator()
         if orch:
             orch.disable()
-        _persist_orchestrator_enabled(False)
+        _persist_orchestrator_enabled(False, str(current_user.user_id))
         return {
             "success": True,
             "enabled": False,

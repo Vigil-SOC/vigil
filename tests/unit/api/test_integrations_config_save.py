@@ -31,6 +31,10 @@ def _payload():
     )
 
 
+class _User:
+    user_id = "user-1"
+
+
 def _run(payload, *, set_secret, config_saved=True):
     from services.api.routers import config as config_module
 
@@ -40,7 +44,9 @@ def _run(payload, *, set_secret, config_saved=True):
         patch.object(config_module, "set_secret", set_secret),
         patch.object(config_module, "get_config_service", return_value=config_service),
     ):
-        return asyncio.run(config_module.set_integrations_config(payload))
+        return asyncio.run(
+            config_module.set_integrations_config(payload, current_user=_User())
+        )
 
 
 def test_failed_secret_write_is_not_success():

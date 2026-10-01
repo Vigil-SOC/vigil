@@ -36,8 +36,12 @@ def get_global_settings() -> Dict[str, Any]:
     return {"enabled": False}
 
 
-def set_global_settings(value: Dict[str, Any], updated_by: str = "api") -> None:
-    """Write ``federation.settings`` (read-modify-write so we don't drop fields)."""
+def set_global_settings(value: Dict[str, Any], updated_by: str) -> None:
+    """Write ``federation.settings`` (read-modify-write so we don't drop fields).
+
+    ``updated_by`` is the actor stored on the audit row. Callers name one;
+    there is no placeholder default.
+    """
     try:
         from core.storage.config_service import get_config_service
 

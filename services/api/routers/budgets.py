@@ -22,11 +22,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.llm.cost.budget import get_active_vk, get_settings, set_settings
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
 
@@ -77,7 +79,10 @@ async def get_budget_settings() -> Dict[str, Any]:
 
 
 @router.put("/analytics/budget", response_model=BudgetSettingsResponse)
-async def put_budget_settings(payload: BudgetSettingsUpdate) -> Dict[str, Any]:
+async def put_budget_settings(
+    payload: BudgetSettingsUpdate,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
     """Update the Bifrost VK + budget config.
 
     Admin operation. The dispatch path picks up the change on the next
@@ -91,6 +96,7 @@ async def put_budget_settings(payload: BudgetSettingsUpdate) -> Dict[str, Any]:
             default_vk=payload.default_vk.strip(),
             budget_limit_usd=payload.budget_limit_usd,
             enforcement_mode=payload.enforcement_mode,
+            updated_by=str(current_user.user_id),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

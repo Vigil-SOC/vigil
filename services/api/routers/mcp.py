@@ -337,7 +337,7 @@ async def set_surface(
 
     from core.integrations.mcp.surface import set_enabled
 
-    if not set_enabled(body.enabled):
+    if not set_enabled(body.enabled, updated_by=str(current_user.user_id)):
         raise HTTPException(status_code=500, detail="Could not save the setting")
 
     logger.warning(

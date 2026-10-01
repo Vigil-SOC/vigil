@@ -44,6 +44,11 @@ ROUTER_META = RouterMeta(
 logger = logging.getLogger(__name__)
 
 
+def _for_user(user: User):
+    """Config service stamped with the signed-in user for the audit row."""
+    return get_config_service(user_id=str(user.user_id))
+
+
 def _mirror_to_file(filename: str, config_data: Dict[str, Any]) -> None:
     """Copy config the database already owns, for backward compatibility.
 
@@ -341,7 +346,10 @@ async def get_s3_config():
 
 
 @router.post("/s3")
-async def set_s3_config(config: S3Config):
+async def set_s3_config(
+    config: S3Config,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set S3 configuration.
 
@@ -376,7 +384,7 @@ async def set_s3_config(config: S3Config):
     }
 
     # Save to database
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_integration_config(
         integration_id="s3",
         config=config_data,
@@ -623,7 +631,10 @@ async def get_theme_config():
 
 
 @router.post("/theme")
-async def set_theme_config(config: ThemeConfig):
+async def set_theme_config(
+    config: ThemeConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set theme configuration.
 
@@ -636,7 +647,7 @@ async def set_theme_config(config: ThemeConfig):
     config_data = {"theme": config.theme}
 
     # Save to database
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="theme.current",
         value=config_data,
@@ -711,6 +722,7 @@ async def get_integrations_config():
 @router.post("/integrations")
 async def set_integrations_config(
     config: IntegrationsConfig,
+    current_user: User = Depends(get_current_active_user),
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
 ):
     """
@@ -730,7 +742,7 @@ async def set_integrations_config(
     Returns:
         Success status
     """
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
 
     # Build a sanitized integrations dict (no secrets) for DB/JSON
     # persistence. Apply secret writes to the encrypted store.
@@ -1027,7 +1039,10 @@ async def get_general_config():
 
 
 @router.post("/general")
-async def set_general_config(config: GeneralConfig):
+async def set_general_config(
+    config: GeneralConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set general application settings.
 
@@ -1045,7 +1060,7 @@ async def set_general_config(config: GeneralConfig):
     }
 
     # Save to database
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="general.settings",
         value=config_data,
@@ -1208,10 +1223,13 @@ async def get_ai_operations_config():
 
 
 @router.post("/ai-operations")
-async def set_ai_operations_config(config: AIOperationsSettingsConfig):
+async def set_ai_operations_config(
+    config: AIOperationsSettingsConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Persist the AI-operations toggles and invalidate the in-process cache."""
     config_data = config.model_dump()
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="ai_operations.settings",
         value=config_data,
@@ -1319,14 +1337,17 @@ async def get_orchestrator_config():
 
 
 @router.post("/orchestrator")
-async def set_orchestrator_config(config: OrchestratorSettingsConfig):
+async def set_orchestrator_config(
+    config: OrchestratorSettingsConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Set orchestrator configuration. Persists settings AND syncs the
     runtime enabled flag used by GET /api/orchestrator/status (which
     NavigationRail uses to show/hide the Auto Ops tab).
     """
     config_data = config.model_dump()
 
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="orchestrator.settings",
         value=config_data,
@@ -1398,10 +1419,13 @@ async def get_darktrace_config():
 
 
 @router.post("/darktrace")
-async def set_darktrace_config(config: DarktraceConfig):
+async def set_darktrace_config(
+    config: DarktraceConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Persist Darktrace config. The webhook_secret is stored separately via the
     secrets manager; if omitted, the existing secret is preserved."""
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     settings = {
         "enabled": config.enabled,
         "url": config.url,

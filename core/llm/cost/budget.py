@@ -105,10 +105,15 @@ def get_settings() -> dict:
 
 
 def set_settings(
-    *, default_vk: str, budget_limit_usd: float, enforcement_mode: str
+    *,
+    default_vk: str,
+    budget_limit_usd: float,
+    enforcement_mode: str,
+    updated_by: str,
 ) -> dict:
     """Persist the VK config. Caller (API handler) is admin-gated.
 
+    ``updated_by`` is the signed-in user, stored on the audit row.
     ``budget_limit_usd`` and ``enforcement_mode`` are stored for
     compatibility. ``should_enforce`` does not read them.
     """
@@ -119,7 +124,7 @@ def set_settings(
     try:
         from core.storage.config_service import get_config_service
 
-        get_config_service(user_id="api").set_system_config(
+        get_config_service(user_id=updated_by).set_system_config(
             key=GLOBAL_KEY,
             value={
                 "default_vk": default_vk or "",
