@@ -9,6 +9,8 @@ vi.mock('../../services/api', () => ({
     setS3: vi.fn(),
     getDarktrace: vi.fn(() => Promise.resolve({ data: {} })),
     setDarktrace: vi.fn(),
+    getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false } })),
+    resetDemoData: vi.fn(),
   },
   kafkaApi: {
     getConfig: vi.fn(() => Promise.resolve({ data: {} })),
@@ -56,6 +58,7 @@ describe('manual upload', () => {
     vi.clearAllMocks()
     vi.mocked(configApi.getS3).mockResolvedValue({ data: { configured: false } } as never)
     vi.mocked(configApi.getDarktrace).mockResolvedValue({ data: {} } as never)
+    vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: false } } as never)
     vi.mocked(ingestionApi.listJobs).mockResolvedValue({ data: [] } as never)
   })
 
@@ -114,6 +117,26 @@ describe('manual upload', () => {
     renderPanel()
 
     expect(await screen.findByText(/Ingestion failed: bad parquet/)).toBeInTheDocument()
+  })
+
+  it('hides the demo clear control when demo mode is off', async () => {
+    renderPanel()
+    await screen.findByText('Manual Upload')
+    await waitFor(() => expect(configApi.getDemoMode).toHaveBeenCalled())
+    expect(screen.queryByRole('button', { name: 'Clear demo data' })).not.toBeInTheDocument()
+  })
+
+  it('clears demo data and reports the regenerated counts', async () => {
+    vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: true } } as never)
+    vi.mocked(configApi.resetDemoData).mockResolvedValue({
+      data: { success: true, findings_count: 25, cases_count: 5 },
+    } as never)
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Clear demo data' }))
+
+    expect(await screen.findByText('Regenerated 25 findings and 5 cases.')).toBeInTheDocument()
+    expect(configApi.resetDemoData).toHaveBeenCalledOnce()
   })
 
   it('clears the file input so the same file can be retried', async () => {

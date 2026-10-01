@@ -177,6 +177,7 @@ function SocConsoleInner() {
   // from ExtensionProvider, so a connector configured in Settings reaches the
   // rail without a refresh
   const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
+  const [demoOn, setDemoOn] = useState(false)
 
   useDesktopNotifications()
   // the rail is the only thing on screen from every other view; without this
@@ -243,6 +244,19 @@ function SocConsoleInner() {
     pollStatus()
     const id = setInterval(pollStatus, 10_000)
     return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
+    let live = true
+    configApi
+      .getDemoMode()
+      .then((res) => {
+        if (live) setDemoOn(Boolean(res.data?.enabled))
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
   }, [])
 
   useEffect(() => {
@@ -451,6 +465,11 @@ function SocConsoleInner() {
             </div>
             <div className="grow" />
           </header>
+          {demoOn && (
+            <div className="demo-banner" role="status">
+              The data on screen is demo data.
+            </div>
+          )}
           <main className="view" style={{ overflowY: viewFull ? 'hidden' : 'auto' }}>
             <div className="screen" style={viewFull ? { height: '100%' } : undefined}>
               <ErrorBoundary resetKey={valid ? current : 'notfound'}>

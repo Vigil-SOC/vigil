@@ -173,6 +173,7 @@ vi.mock('../services/api', () => ({
     getAutonomy: vi.fn(() => Promise.resolve({
       data: { auto_response_enabled: true, force_manual_approval: false },
     })),
+    getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false } })),
   },
   orchestratorApi: {
     getStatus: () => Promise.resolve({ data: { enabled: false } }),
@@ -240,6 +241,7 @@ afterEach(() => {
   vi.mocked(configApi.getAutonomy).mockResolvedValue({
     data: { auto_response_enabled: true, force_manual_approval: false },
   } as never)
+  vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: false } } as never)
 })
 
 const title = () => screen.getByRole('heading', { level: 1 }).textContent
@@ -260,6 +262,16 @@ describe('SocConsole', () => {
     renderConsole()
     expect(title()).toBe('Dashboard')
     expect(screen.getByText('Security operations overview')).toBeInTheDocument()
+  })
+
+  it('shows one demo banner only while demo mode is on', async () => {
+    renderConsole()
+    await screen.findByText('Security operations overview')
+    expect(screen.queryByText('The data on screen is demo data.')).not.toBeInTheDocument()
+
+    vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: true } } as never)
+    renderConsole()
+    expect(await screen.findByText('The data on screen is demo data.')).toBeInTheDocument()
   })
 
   it('renders the 404 screen for an unknown path and routes home', async () => {
