@@ -33,6 +33,7 @@ describe("the calls a dispatch ran", () => {
     expect(call!.tool).toBe("telemetry_search");
     expect(call!.arguments).toContain("index=botsv3");
     expect(call!.result).toContain("1 row(s) from duckdb");
+    expect(call).not.toHaveProperty("duration_ms");
   });
 
   it("shares one budget across the calls, so a large answer cannot crowd out the rest", () => {
@@ -48,6 +49,13 @@ describe("the calls a dispatch ran", () => {
 
   it("has nothing to say about a worker that ran no tools", () => {
     expect(callsOf([])).toEqual([]);
+  });
+
+  it("copies the duration invoke recorded, and leaves it off when the attempt never ran", () => {
+    const timed = { ...attempt("telemetry_search", "{}", [{ n: 1 }]), duration_ms: 40 };
+    const [call] = callsOf([timed, attempt("whois", "{}", [])]);
+    expect(call).toMatchObject({ tool: "telemetry_search", duration_ms: 40 });
+    expect(callsOf([attempt("whois", "{}", [])])[0]).not.toHaveProperty("duration_ms");
   });
 });
 

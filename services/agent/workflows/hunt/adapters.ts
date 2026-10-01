@@ -397,10 +397,11 @@ const CALL_BUDGET = 16_000;
 export function callsOf(attempts: readonly Attempt[]): ToolCall[] {
   if (attempts.length === 0) return [];
   const share = Math.max(1, Math.floor(CALL_BUDGET / attempts.length));
-  return attempts.map(({ tool, args, wrapped }) => ({
+  return attempts.map(({ tool, args, wrapped, duration_ms }) => ({
     tool,
     arguments: clamp(args, share),
     result: clamp(wrapped.text, share),
+    ...(duration_ms === undefined ? {} : { duration_ms }),
   }));
 }
 

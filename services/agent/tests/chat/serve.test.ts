@@ -8,7 +8,7 @@ import type { AgentEvent, NewEvent } from "../../contracts/events.js";
 import { InProcessState } from "../../core/state.js";
 import type { State } from "../../core/seams.js";
 import type { HarnessFactory } from "../../harness.js";
-import { chatServer, chatSpec, memoryFor, streamChat, type ChatRequest } from "../../serve.js";
+import { chatServer, chatSpec, memoryFor, streamChat, type ChatRequest, type VerifyRun } from "../../serve.js";
 import type { ReplayReport } from "../../workflows/hunt/replay.js";
 import { newLedger, resolve } from "../support/hunt.js";
 import { scriptedHarness } from "../support/scripted-harness.js";
@@ -46,11 +46,11 @@ let state: InProcessState;
 let base: string;
 let stop: () => void;
 
-async function listen(script: readonly ScriptedTurn[]): Promise<void> {
+async function listen(script: readonly ScriptedTurn[], verify?: VerifyRun): Promise<void> {
   state = new InProcessState();
   // Ready by construction: the ledger here is in-process, so there is no Postgres
   // for readiness to be reporting on.
-  const server = chatServer(state, async () => true, scriptedHarness(script));
+  const server = chatServer(state, async () => true, scriptedHarness(script), verify);
   await new Promise<void>((ready) => server.listen(0, "127.0.0.1", ready));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   stop = () => server.close();
@@ -213,6 +213,42 @@ describe("replaying what the hunt lead was shown", () => {
     expect((await get(`/runs/${HUNT}/replay`, "")).status).toBe(401);
   });
 
+  it("returns an investigate run's decisions and calls, and 404s compose", async () => {
+    await listen([]);
+    const investigate = "5a2c2d3e-0000-4000-8000-000000000891";
+    const compose = "5a2c2d3e-0000-4000-8000-000000000892";
+    await state.append(investigate, [
+      { run_id: investigate, run_kind: "investigate", kind: "run", payload: { run_kind: "investigate" } },
+      { run_id: investigate, run_kind: "investigate", kind: "decision", payload: { action: "EXAMINE", rationale: "look", worker: "worker" } },
+      {
+        run_id: investigate,
+        run_kind: "investigate",
+        kind: "dispatch",
+        payload: {
+          dispatch_id: "dsp-1",
+          agent_id: "worker",
+          status: "complete",
+          question_id: null,
+          failure_reason: null,
+          cost_usd: 0.05,
+          calls: [{ tool: "case_records", arguments: "{}", result: "abcd" }],
+        },
+      },
+    ] as never);
+    await state.append(compose, [
+      { run_id: compose, run_kind: "compose", kind: "run", payload: { run_kind: "compose" } },
+    ] as never);
+
+    const res = await get(`/runs/${investigate}/replay`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { run_kind: string; decisions: { action: string; calls: unknown[] }[] };
+    expect(body.run_kind).toBe("investigate");
+    expect(body.decisions.map((decision) => decision.action)).toEqual(["EXAMINE"]);
+    expect(body.decisions[0]?.calls).toEqual([{ tool: "case_records", arguments: "{}", result: "abcd" }]);
+    expect(body).not.toHaveProperty("reproduced");
+    expect((await get(`/runs/${compose}/replay`)).status).toBe(404);
+  });
+
   it("404s a run that is not a hunt, and one that does not exist", async () => {
     await listen([{ content: "ok" }]);
     await post(asked()).then((res) => res.text());
@@ -233,6 +269,26 @@ describe("replaying what the hunt lead was shown", () => {
     await state.append(HUNT, recordedHunt());
     expect((await get(`/runs/${HUNT}/projection?decision_id=x`)).status).toBe(404);
     expect((await get(`/runs/${HUNT}/projection`)).status).toBe(200);
+  });
+});
+
+describe("verifying a run's chain", () => {
+  it("returns the chain walk verifyLedger produced", async () => {
+    const asked: string[] = [];
+    await listen([], async (runId) => {
+      asked.push(runId);
+      return { ok: true, events: 3, runs: 1 };
+    });
+
+    const res = await get(`/runs/${RUN}/verify`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, events: 3, runs: 1 });
+    expect(asked).toEqual([RUN]);
+  });
+
+  it("refuses a request with no token", async () => {
+    await listen([], async () => ({ ok: true, events: 0, runs: 0 }));
+    expect((await get(`/runs/${RUN}/verify`, "")).status).toBe(401);
   });
 });
 

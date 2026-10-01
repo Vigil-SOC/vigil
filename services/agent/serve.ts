@@ -4,6 +4,7 @@ import pg from "pg";
 import { archFor, isHuntLike, registeredKinds } from "./arch/registry.js";
 import { cachedReady, handleHealth, type Ready } from "./core/health.js";
 import { LedgerRepository } from "./ledger/repository.js";
+import { verifyLedger, type VerifyResult } from "./ledger/verify.js";
 import { poolConfig } from "./core/db.js";
 import type { RunKind } from "./contracts/events.js";
 import type { ToolPrincipal } from "./contracts/tool.js";
@@ -17,6 +18,7 @@ import { harnessFor, type HarnessFactory } from "./harness.js";
 import { narrateRun } from "./workflows/hunt/workflow.js";
 import type { HuntEvent, HuntKinds } from "./workflows/hunt/ledger.js";
 import { replay, type ReplayReport } from "./workflows/hunt/replay.js";
+import { investigateReplay } from "./workflows/lead/replay.js";
 
 const CHAT = "/chat/stream";
 // GET /runs/<id>/projection -- what a supervisor outside this process reads.
@@ -27,6 +29,8 @@ const NARRATE = /^\/runs\/([0-9a-fA-F-]{36})\/narrate$/;
 // GET /runs/<id>/replay[?decision_id=...] -- what each decision was shown, rebuilt
 // from the ledger. Matched on the pathname, since this one takes a query.
 const REPLAY = /^\/runs\/([0-9a-fA-F-]{36})\/replay$/;
+// GET /runs/<id>/verify -- the hash chain, walked by verifyLedger. Python forwards it.
+const VERIFY = /^\/runs\/([0-9a-fA-F-]{36})\/verify$/;
 // A conversation is prose and a config, not an upload. Anything larger is a
 // mistake or an attack, and either way it is refused before it is parsed.
 const MAX_BODY = 1_000_000;
@@ -177,10 +181,17 @@ async function writeNarrative(state: State, runId: string, res: ServerResponse, 
 }
 
 // What the hunt lead was shown at each decision, rebuilt from the ledger alone: no
-// Memory, no verify, no append. Same gate and narrowing as writeNarrative.
+// Memory, no verify, no append. An investigate run has no digest to rebuild, so it
+// returns the journaled decisions and the calls that followed them. Compose and
+// chat stay 404.
 async function readReplay(state: State, runId: string, decisionId: string | null, res: ServerResponse): Promise<void> {
   const events = await state.read(runId);
   const opened = events[0];
+  if (opened?.run_kind === "investigate") {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(investigateReplay(runId, events)));
+    return;
+  }
   if (opened === undefined || !isHuntLike(opened.run_kind)) return refuse(res, 404, `no hunt to replay: ${runId}`);
 
   let report: ReplayReport;
@@ -203,6 +214,17 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   res.end(JSON.stringify(report));
 }
 
+async function readVerify(runId: string, verify: VerifyRun | undefined, res: ServerResponse): Promise<void> {
+  if (verify === undefined) return refuse(res, 500, "ledger verify is not wired");
+  try {
+    const result = await verify(runId);
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify(result));
+  } catch (error) {
+    return refuse(res, 502, error instanceof Error ? error.message : String(error));
+  }
+}
+
 async function openChat(state: State, req: IncomingMessage, res: ServerResponse, build: HarnessFactory): Promise<void> {
   let request: ChatRequest;
   try {
@@ -217,7 +239,9 @@ async function openChat(state: State, req: IncomingMessage, res: ServerResponse,
   await streamChat(state, request, res, build);
 }
 
-export function chatServer(state: State, ready: Ready, build: HarnessFactory = harnessFor): Server {
+export type VerifyRun = (runId: string) => Promise<VerifyResult>;
+
+export function chatServer(state: State, ready: Ready, build: HarnessFactory = harnessFor, verify?: VerifyRun): Server {
   return createServer((req, res) => {
     void (async () => {
       // Before the auth check, because the kubelet has no token. These say only
@@ -252,6 +276,9 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
       const replayed = req.method === "GET" ? REPLAY.exec(parsed.pathname) : null;
       if (replayed !== null) return readReplay(state, replayed[1] as string, parsed.searchParams.get("decision_id"), res);
 
+      const verified = req.method === "GET" ? VERIFY.exec(parsed.pathname) : null;
+      if (verified !== null) return readVerify(verified[1] as string, verify, res);
+
       return refuse(res, 404, `no such route: ${req.method} ${url}`);
     })();
   });
@@ -278,7 +305,9 @@ if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].sp
   const pool = new pg.Pool(poolConfig());
   // Cached: unauthenticated probes would otherwise take a connection each out of
   // the pool this process serves chat from.
-  const serving = chatServer(new LedgerRepository(pool), cachedReady(serveReady(pool))).listen(chatPort());
+  const serving = chatServer(new LedgerRepository(pool), cachedReady(serveReady(pool)), harnessFor, (runId) =>
+    verifyLedger(pool, runId),
+  ).listen(chatPort());
   const stop = () => {
     serving.close();
     void pool.end();

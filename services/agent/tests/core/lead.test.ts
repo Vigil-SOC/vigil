@@ -113,10 +113,40 @@ describe("an arch drives the loop", () => {
     expect(events.find((event) => event.kind === "dispatch")?.payload).toMatchObject({
       agent_id: "network_analyst",
       status: "complete",
+      query_intent: "periodicity of outbound flows from the finance segment",
+      calls: [],
+      cost_usd: expect.any(Number),
     });
   });
 
   // The other dispatch mode, on the same loop: no roster, no fan-out, no critic.
+  it("journals the questions the lead asked, since an investigation has no worker to hand them to", async () => {
+    const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
+    const state = new InProcessState<LeadKinds>();
+    const script: ScriptedTurn[] = [
+      { calls: [{ tool: "get_finding", args: "{}" }] },
+      STOP,
+      { emit: { action: "EXAMINE", rationale: "one finding", query_intent: "what the finding says", citations: [] } },
+      STOP,
+      { emit: { action: "CONCLUDE", rationale: "a scheduled task holding a stale password", citations: [] } },
+    ];
+
+    const report = await runLead(harnessOf(spec, script, state), options("investigate", spec));
+
+    expect(report.status).toBe("completed");
+    expect(report.dispatched).toBe(1);
+    const payload = (await state.read(RUN)).find((event) => event.kind === "dispatch")?.payload as {
+      calls?: { tool?: string; result?: string; duration_ms?: number }[];
+    };
+    expect(payload).toMatchObject({
+      agent_id: "lead",
+      query_intent: "what the finding says",
+      cost_usd: expect.any(Number),
+    });
+    expect(payload.calls?.[0]).toMatchObject({ tool: "get_finding", duration_ms: expect.any(Number) });
+    expect(typeof payload.calls?.[0]?.result).toBe("string");
+  });
+
   it("runs the single-lead arch to completion with nothing to dispatch to", async () => {
     const spec = specFor("investigate", "case.playbook.yaml", "case.config.yaml");
     const state = new InProcessState<LeadKinds>();

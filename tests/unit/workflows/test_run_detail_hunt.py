@@ -38,12 +38,12 @@ async def test_a_hunt_run_carries_the_standing_of_its_hypotheses(monkeypatch):
     )
 
     assert detail["hunt"] == STANDING
+    assert "projection" not in detail
 
 
-# Investigate is not the hunt loop, and asking the agent layer about one is a
-# round trip whose answer nothing would read.
+# A non-hunt fold is the same read, under `projection`. `hunt` stays hunt-like.
 @pytest.mark.asyncio
-async def test_a_compose_run_is_not_asked_about(monkeypatch):
+async def test_a_non_hunt_run_carries_the_fold_as_projection(monkeypatch):
     asked = []
 
     async def _record(run_id):
@@ -56,7 +56,8 @@ async def test_a_compose_run_is_not_asked_about(monkeypatch):
         "run-2", _runs_for("incident-response"), WorkflowsService()
     )
 
-    assert asked == []
+    assert asked == ["run-2"]
+    assert detail["projection"] == STANDING
     assert "hunt" not in detail
 
 

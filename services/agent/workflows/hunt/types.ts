@@ -331,6 +331,8 @@ export interface ToolCall {
   tool: string;
   arguments: string;
   result: string;
+  // Absent on a ledger written before calls were timed.
+  duration_ms?: number;
 }
 
 export interface DispatchRecord {

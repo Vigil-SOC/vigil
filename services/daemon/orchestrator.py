@@ -1457,7 +1457,11 @@ class Orchestrator:
                 if inv is None:
                     logger.warning("progress for %s: row not found", inv_id)
                     return
-                inv.iteration_count = projection.get("iterations", 0)
+                # Hunt folds report `iteration`; lead folds report `iterations`.
+                counted = projection.get("iterations")
+                inv.iteration_count = (
+                    projection.get("iteration", 0) if counted is None else counted
+                )
                 inv.last_activity_at = utcnow()
                 # Null is "the gateway priced nothing", which is not zero spent.
                 cost = projection.get("cost_usd")

@@ -1,5 +1,6 @@
 import { openCheckpoint, type OpenCheckpoint } from "../../contracts/events.js";
 import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
+import { callViews, type CallView } from "../call-view.js";
 import { fold, type HuntEvent, type Projection } from "./ledger.js";
 import { citedTechniques, isGap, sensorAttested } from "./strength.js";
 import { renderReport, type HuntReport } from "./report.js";
@@ -53,6 +54,8 @@ export interface HuntProjection {
   // Every move the Hunt Lead made and why, newest first: the standings say what a
   // hunt believes, never how it got there.
   moves: MoveView[];
+  // Every question a dispatch asked, in ledger order.
+  calls: CallView[];
   // What the run opened on: the episodic rows it read at start, off its own ledger
   // rather than from a fresh read -- memory has moved since, and a panel that
   // re-read it would show the reader something the hunt never saw (ADR 0015).
@@ -142,6 +145,9 @@ export interface HypothesisStanding {
   resolution_reason: string | null;
   // Where the belief came from: the definition, the caller, or the base rate.
   provenance: string;
+  // From the full link set, not the capped evidence list above.
+  supports: number;
+  weakens: number;
 }
 
 export function huntProjection(runId: string, events: readonly HuntEvent[]): HuntProjection {
@@ -181,6 +187,7 @@ export function huntProjection(runId: string, events: readonly HuntEvent[]): Hun
         spawned_iteration,
       })),
     moves: [...view.decisions].reverse().slice(0, MOVES_SHOWN).map(moveView),
+    calls: callViews(view.dispatches.values()),
     recall: recalledPayloadOf(events),
   };
 }
@@ -271,6 +278,7 @@ function evidenceView(
 
 function standing(hypothesis: Hypothesis, view: Projection): HypothesisStanding {
   const { hypothesis_id, statement, status, attack_technique, resolution_reason, provenance } = hypothesis;
+  const links = view.links.filter((link) => link.hypothesis_id === hypothesis_id);
   return {
     hypothesis_id,
     statement,
@@ -279,5 +287,7 @@ function standing(hypothesis: Hypothesis, view: Projection): HypothesisStanding 
     techniques_cited: citedTechniques(view, hypothesis_id),
     resolution_reason,
     provenance,
+    supports: links.filter((link) => link.relation === "supports").length,
+    weakens: links.filter((link) => link.relation === "weakens").length,
   };
 }

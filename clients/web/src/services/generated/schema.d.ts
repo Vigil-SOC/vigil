@@ -7606,6 +7606,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/runs/{run_id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Verify Workflow Run
+         * @description Walk the hash chain of ``run_id``. The agent layer hashes it.
+         *
+         *     Python forwards the result and does not re-check the chain.
+         */
+        get: operations["get_api_workflows_runs_run_id_verify"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/threat-hunt/coverage": {
         parameters: {
             query?: never;
@@ -24756,6 +24778,39 @@ export interface operations {
                 "application/json": components["schemas"]["WorkflowRunResumeRequest"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_workflows_runs_run_id_verify: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

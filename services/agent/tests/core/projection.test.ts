@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { archFor } from "../../arch/registry.js";
 import type { AgentEvent, NewEvent } from "../../contracts/events.js";
+import { emptyRecall } from "../../contracts/memory.js";
 import { TOOL_APPROVAL } from "../../core/loop.js";
 import { InProcessState } from "../../core/state.js";
 import { composeProjection } from "../../workflows/compose/projection.js";
 import { leadProjection } from "../../workflows/lead/projection.js";
+import { investigateReplay } from "../../workflows/lead/replay.js";
 import type { LeadKinds } from "../../workflows/lead/workflow.js";
 
 const RUN = "7d3c2d3e-0000-4000-8000-000000000629";
@@ -107,6 +109,74 @@ describe("the checkpoint a resolution must answer", () => {
     // approval to a run that already ended.
     const projection = await project(opened(), parked(), ended("failed", "the budget refused another iteration"));
     expect(projection.status).toBe("terminal");
+  });
+});
+
+describe("the calls and the opening recall", () => {
+  it("lists each call and keeps the recall the run opened on", async () => {
+    const recall = emptyRecall(["host:a"], "2026-03-07T00:00:00.000Z");
+    const projection = await project(
+      opened(),
+      event("recall", recall),
+      event("dispatch", {
+        dispatch_id: "dsp-1",
+        agent_id: "worker",
+        status: "complete",
+        question_id: null,
+        failure_reason: null,
+        query_intent: "what locked the accounts",
+        cost_usd: 0.05,
+        calls: [{ tool: "case_records", arguments: "{}", result: "abcd", duration_ms: 12 }],
+      }),
+    );
+
+    expect(projection.calls).toEqual([
+      { question: "what locked the accounts", tool: "case_records", result_length: 4, cost_usd: 0.05, duration_ms: 12 },
+    ]);
+    expect(projection.recall).toEqual(recall);
+  });
+
+  it("says the run never asked when there is no recall event", async () => {
+    const projection = await project(opened());
+    expect(projection.recall).toBeNull();
+    expect(projection.calls).toEqual([]);
+  });
+});
+
+describe("investigate replay", () => {
+  it("returns the decisions and the calls that followed them, without a digest", async () => {
+    const state = new InProcessState<LeadKinds>();
+    await state.append(RUN, [
+      opened(),
+      event("decision", { action: "EXAMINE", rationale: "look", worker: "worker" }),
+      event("dispatch", {
+        dispatch_id: "dsp-1",
+        agent_id: "worker",
+        status: "complete",
+        question_id: null,
+        failure_reason: null,
+        query_intent: "what locked the accounts",
+        cost_usd: 0.05,
+        calls: [{ tool: "case_records", arguments: "{}", result: "abcd", duration_ms: 12 }],
+      }),
+      decided("CONCLUDE", "done"),
+    ]);
+
+    expect(investigateReplay(RUN, await state.read(RUN))).toEqual({
+      run_id: RUN,
+      run_kind: "investigate",
+      decisions: [
+        {
+          iteration: 1,
+          action: "EXAMINE",
+          rationale: "look",
+          worker: "worker",
+          cost_usd: 0.05,
+          calls: [{ tool: "case_records", arguments: "{}", result: "abcd", duration_ms: 12 }],
+        },
+        { iteration: 2, action: "CONCLUDE", rationale: "done", worker: null, cost_usd: 0, calls: [] },
+      ],
+    });
   });
 });
 

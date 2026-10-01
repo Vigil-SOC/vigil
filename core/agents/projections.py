@@ -130,6 +130,30 @@ async def read_replay(
     return response.json()
 
 
+async def read_verify(run_id: str) -> Optional[Dict[str, Any]]:
+    """Walk the hash chain of ``run_id``. The agent layer hashes it.
+
+    None is serve's 404. Anything else that is not a result raises, because
+    an operator clicked Verify and is owed the reason. Python does not hash
+    the chain.
+    """
+    import httpx
+
+    url = agent_route(f"/runs/{run_id}/verify")
+    try:
+        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
+            response = await client.get(url, headers=_headers())
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
+
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        detail = response.text[:400]
+        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
+    return response.json()
+
+
 THREAT_HUNT_WORKFLOW_ID = "threat-hunt"
 PROJECTION_READ_CONCURRENCY = 8
 

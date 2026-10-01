@@ -1,5 +1,7 @@
 import type { SpendPayload } from "../../contracts/budget.js";
-import { openCheckpoint, type AgentEvent, type CheckpointPayload, type OpenCheckpoint, type ResolutionPayload, type TerminalPayload } from "../../contracts/events.js";
+import { openCheckpoint, type AgentEvent, type CheckpointPayload, type DispatchPayload, type OpenCheckpoint, type ResolutionPayload, type TerminalPayload } from "../../contracts/events.js";
+import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
+import { callViews, type CallView } from "../call-view.js";
 import type { DecisionPayload, FindingPayload, LeadKinds } from "./workflow.js";
 
 // What a reader outside this process is told about a run -- deliberately not the
@@ -16,11 +18,16 @@ export interface LeadProjection {
   findings: FindingPayload[];
   // Null while nothing is parked, which is what a supervisor is actually asking.
   open_checkpoint: OpenCheckpoint | null;
+  // Every question a dispatch asked, in ledger order.
+  calls: CallView[];
+  // The opening recall, off the ledger. Null when the run never asked.
+  recall: RecallPayload | null;
 }
 
 export function leadProjection(runId: string, events: readonly AgentEvent<LeadKinds>[]): LeadProjection {
   const decisions: DecisionPayload[] = [];
   const findings: FindingPayload[] = [];
+  const dispatches: DispatchPayload[] = [];
   const raised: CheckpointPayload[] = [];
   const answered = new Set<string>();
   let dispatched = 0;
@@ -39,6 +46,7 @@ export function leadProjection(runId: string, events: readonly AgentEvent<LeadKi
         break;
       case "dispatch":
         dispatched += 1;
+        dispatches.push(event.payload as DispatchPayload);
         break;
       case "checkpoint":
         raised.push(event.payload as CheckpointPayload);
@@ -69,5 +77,7 @@ export function leadProjection(runId: string, events: readonly AgentEvent<LeadKi
     decisions,
     findings,
     open_checkpoint: open === null ? null : openCheckpoint(open),
+    calls: callViews(dispatches),
+    recall: recalledPayloadOf(events),
   };
 }

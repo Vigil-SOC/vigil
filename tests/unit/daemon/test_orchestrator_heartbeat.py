@@ -77,6 +77,19 @@ def test_progress_writes_fields_via_session_scope():
     assert row.cost_usd == 0.12
 
 
+def test_progress_reads_iteration_when_the_fold_has_no_iterations():
+    orch = _make_orchestrator()
+    row = MagicMock()
+    row.iteration_count = 0
+
+    db_manager = _patch_session_scope(row)
+    with patch("core.storage.connection.get_db_manager", return_value=db_manager):
+        with patch("core.storage.models.Investigation"):
+            orch._record_progress("inv-hunt", {"iteration": 4, "cost_usd": 0.1})
+
+    assert row.iteration_count == 4
+
+
 def test_progress_stamps_the_heartbeat():
     orch = _make_orchestrator()
     row = MagicMock()

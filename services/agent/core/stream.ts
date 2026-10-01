@@ -206,7 +206,8 @@ class Run<T, Kinds extends Record<string, unknown>> {
           yield* this.record(call, gate.result, gate.checkpoint_id);
           continue;
         }
-        yield* this.record(call, await this.invoke(tool, call.args), gate.checkpoint_id);
+        const measured = await this.invoke(tool, call.args);
+        yield* this.record(call, measured.result, gate.checkpoint_id, measured.duration_ms);
       }
     }
 
@@ -240,18 +241,36 @@ class Run<T, Kinds extends Record<string, unknown>> {
     return answer === "approve" ? { kind: "allowed", checkpoint_id } : { kind: "rejected" };
   }
 
-  private async invoke(tool: RegisteredTool, rawArgs: string): Promise<ToolResult> {
+  private async invoke(tool: RegisteredTool, rawArgs: string): Promise<{ result: ToolResult; duration_ms: number }> {
+    const started = performance.now();
+    const finish = (result: ToolResult): { result: ToolResult; duration_ms: number } => ({
+      result,
+      duration_ms: Math.max(0, Math.round(performance.now() - started)),
+    });
     const args = parseArgs(rawArgs);
-    if (args === null) return { ok: false, failure: { kind: "invalid_args", detail: "arguments were not valid JSON" } };
-    return this.harness.dispatch.invoke(tool, args, this.cfg.signal);
+    if (args === null) {
+      return finish({ ok: false, failure: { kind: "invalid_args", detail: "arguments were not valid JSON" } });
+    }
+    return finish(await this.harness.dispatch.invoke(tool, args, this.cfg.signal));
   }
 
   // The one path a result takes, and where wrap scans it. A gated call is journaled
   // with its outcome, so a later attempt is served from the ledger instead of run.
-  private async *record(call: ToolCall, result: ToolResult, gated?: string): AsyncGenerator<StreamEvent<T>, void> {
+  private async *record(
+    call: ToolCall,
+    result: ToolResult,
+    gated?: string,
+    duration_ms?: number,
+  ): AsyncGenerator<StreamEvent<T>, void> {
     yield { type: "tool_call", call };
     const wrapped = wrap(call.tool, result, this.scan, this.cfg.result_cap);
-    const attempt: Attempt = { tool: call.tool, args: call.args, result, wrapped };
+    const attempt: Attempt = {
+      tool: call.tool,
+      args: call.args,
+      result,
+      wrapped,
+      ...(duration_ms === undefined ? {} : { duration_ms }),
+    };
     this.calls.push(attempt);
     this.transcript.push({ role: "tool", call_id: call.id, content: wrapped.text });
     if (gated !== undefined) await this.journalExecuted(gated, call.tool, result);
