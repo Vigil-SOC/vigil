@@ -198,6 +198,21 @@ vi.mock('../services/api', () => ({
     listInteractions: () => Promise.resolve({ interactions: [] }),
     getInteraction: () => Promise.resolve({}),
   },
+  triageApi: {
+    get: () => Promise.resolve({
+      data: {
+        rows: [],
+        strip: {
+          picked_up: { launched_or_merged: 0, created_today: 0, share: null },
+          waiting: 0,
+          cases_created_today: 0,
+          trust_floor: 'Not measured yet',
+        },
+        sources: [],
+        unmeasured_text: 'Not measured yet',
+      },
+    }),
+  },
   overviewApi: {
     get: () => Promise.resolve({
       data: {
@@ -264,7 +279,7 @@ afterEach(() => {
 
 const title = () => screen.getByRole('heading', { level: 1 }).textContent
 
-const MORE_LABELS = ['Overview', 'Dashboard', 'Case Metrics', 'Analytics', 'AI Decisions', 'Auto Ops', 'Health']
+const MORE_LABELS = ['Overview', 'Triage', 'Dashboard', 'Case Metrics', 'Analytics', 'AI Decisions', 'Auto Ops', 'Health']
 
 function clickScreen(name: string) {
   const inMore = MORE_LABELS.some((label) => name === label || name.startsWith(`${label} (`))
@@ -309,6 +324,7 @@ describe('SocConsole', () => {
       ['Agents & workflows', 'Workflows & Skills'],
       ['Settings', 'Settings'],
       ['Overview', 'Overview'],
+      ['Triage', 'Triage'],
       ['Dashboard', 'Dashboard'],
       ['Case Metrics', 'Case Metrics'],
       ['Analytics', 'Analytics Dashboard'],

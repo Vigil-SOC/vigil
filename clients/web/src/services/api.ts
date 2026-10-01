@@ -1281,6 +1281,65 @@ export const overviewApi = {
   get: () => api.get<OverviewPayload>('/overview'),
 }
 
+export interface TriageRow {
+  id: number
+  kind: string
+  kind_label: string
+  state: string
+  state_label: string
+  source: string
+  severity_band: string
+  age_seconds: number
+  ttl_seconds: number
+  last_quarter: boolean
+  score: null
+  trust: null
+  weight: null
+  pickup_seconds: number | null
+  workflow_id: string
+  case_door: string | null
+  document: string | null
+  source_link: string | null
+  source_evidence: Record<string, unknown> | null
+  description: string | null
+  finding_id: string | null
+  created_at: string | null
+  decided_at: string | null
+}
+
+export interface TriageSource {
+  data_source: string
+  arrivals: number
+  lag_seconds: number | null
+  quiet: boolean | null
+}
+
+export interface TriagePayload {
+  rows: TriageRow[]
+  strip: {
+    picked_up: {
+      launched_or_merged: number
+      created_today: number
+      share: number | null
+    }
+    waiting: number
+    cases_created_today: number
+    trust_floor: string
+  }
+  sources: TriageSource[]
+  unmeasured_text: string
+}
+
+export interface TriageQuery {
+  kind?: string
+  source?: string
+  state?: string
+}
+
+export const triageApi = {
+  get: (params: TriageQuery = {}) => api.get<TriagePayload>('/triage', { params }),
+}
+
 export const bootstrapApi = {
   status: () => api.get<BootstrapStatus>('/auth/bootstrap'),
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),

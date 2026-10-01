@@ -33,6 +33,7 @@ import HealthScreen from '../screens/health/HealthScreen'
 import SettingsScreen from '../screens/settings/SettingsScreen'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import OverviewScreen from '../screens/overview/OverviewScreen'
+import TriageScreen from '../screens/triage/TriageScreen'
 import { VigilLogo } from '../shared/VigilLogo'
 import {
   foldStatus,
@@ -44,7 +45,7 @@ import {
 } from './statusLine'
 
 const PRIMARY_KEYS = ['cases', 'workflows', 'settings']
-const MORE_KEYS = ['overview', 'dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
+const MORE_KEYS = ['overview', 'triage', 'dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
 
 const AUTONOMY_ACT = 'Autonomy · Act · reversible changes on its own'
 const AUTONOMY_ASSIST = 'Autonomy · Assist · asks before changes'
@@ -57,6 +58,7 @@ const LEVEL_WORD: Record<StatusFold['level'], string> = {
 
 const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Element> = {
   overview: OverviewScreen,
+  triage: TriageScreen,
   dashboard: DashboardScreen,
   cases: CasesScreen,
   metrics: MetricsScreen,
