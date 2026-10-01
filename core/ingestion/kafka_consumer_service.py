@@ -188,6 +188,8 @@ class KafkaConsumerService:
                 "source": f"kafka:{topic}",
                 "data": finding,
                 "timestamp": utcnow().isoformat(),
+                "dedup": self._dedup,
+                "dedup_key": finding_id,
             }
         )
         await self._dedup.mark_processed(finding_id)

@@ -185,7 +185,9 @@ class FederationRunner:
             dedup = self._dedup[source_id]
             if await dedup.is_processed(ext):
                 continue
-            await self._enqueue(finding, source_id)
+            # No queue means the put never happened — leave the key unmarked.
+            if not await self._enqueue(finding, source_id, dedup, ext):
+                continue
             await dedup.mark_processed(ext)
             new_count += 1
 
@@ -195,17 +197,27 @@ class FederationRunner:
 
         store.record_success(source_id, cursor=result.cursor or {})
 
-    async def _enqueue(self, finding: Dict[str, Any], source_id: str) -> None:
+    async def _enqueue(
+        self,
+        finding: Dict[str, Any],
+        source_id: str,
+        dedup: RedisDedupSet,
+        dedup_key: str,
+    ) -> bool:
+        """True when the finding was put. False leaves it unmarked."""
         if self._output_queue is None:
-            return
+            return False
         await self._output_queue.put(
             {
                 "type": "finding",
                 "source": source_id,
                 "data": finding,
                 "timestamp": utcnow().isoformat(),
+                "dedup": dedup,
+                "dedup_key": dedup_key,
             }
         )
+        return True
 
     # ------------------------------------------------------------------
     # Poll-now bypass (Redis flag set by the API)

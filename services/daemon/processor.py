@@ -5,6 +5,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from core.ingestion.dedup import RedisDedupSet
 from core.time import utcnow
 from services.daemon.config import ProcessingConfig, ResponseConfig
 from services.daemon.probes import PROBE_DATA_SOURCE
@@ -15,6 +16,11 @@ logger = logging.getLogger(__name__)
 # for the cooldown so a backfill can't stampede a dead gateway. Findings still ingest.
 _ENRICH_BREAKER_THRESHOLD = 8
 _ENRICH_BREAKER_COOLDOWN = 120  # seconds
+
+# Transient database outages: retry the store in place, then give up.
+# Not a re-queue — the dedup key is what lets a later poll try again.
+_STORE_ATTEMPTS = 3
+_STORE_RETRY_BACKOFF = 0.2  # seconds
 
 # Finding-dict keys that triage/enrich produce; cached together in the
 # ai_enrichment JSONB column (these dict keys don't map to columns 1:1).
@@ -70,6 +76,7 @@ class FindingProcessor:
             "queued_for_response": 0,
             "queued_for_investigation": 0,
             "sanitization_flagged": 0,
+            "store_dropped": 0,
         }
 
     def _sanitize_finding(self, finding: Dict[str, Any], source: Optional[str]) -> None:
@@ -240,12 +247,21 @@ class FindingProcessor:
         item_type = item.get("type")
 
         if item_type == "finding":
-            await self._process_finding(item["data"], item.get("source"))
+            await self._process_finding(
+                item["data"],
+                item.get("source"),
+                dedup=item.get("dedup"),
+                dedup_key=item.get("dedup_key"),
+            )
         else:
             logger.warning(f"Unknown item type: {item_type}")
 
     async def _process_finding(
-        self, finding: Dict[str, Any], source: Optional[str] = None
+        self,
+        finding: Dict[str, Any],
+        source: Optional[str] = None,
+        dedup: Optional[RedisDedupSet] = None,
+        dedup_key: Optional[str] = None,
     ):
         """Store a finding immediately; triage + enrich it in the background."""
         finding_id = finding.get("finding_id", "unknown")
@@ -260,15 +276,12 @@ class FindingProcessor:
             except Exception as e:  # noqa: BLE001
                 logger.debug(f"Sanitization hook error (non-fatal): {e}")
 
-            # A failed store must not be counted as ingested — bail so /health
-            # surfaces the drop instead of logging "Stored".
-            if self._data_service and not await self._store_finding(finding):
-                self.stats["errors"] += 1
-                logger.warning(
-                    "Dropped finding %s: database store failed (see 'Error "
-                    "creating finding' above)",
-                    finding_id,
-                )
+            # A failed store must not be counted as ingested. Retry in place;
+            # on give-up, forget the dedup key so a source that re-reads its
+            # lookback can enqueue the finding again. No data service is a
+            # failed store — same path, including probes (they carry no key).
+            if not await self._store_with_retry(finding):
+                await self._drop_unstored(finding_id, dedup, dedup_key)
                 return
 
             self.stats["processed"] += 1
@@ -415,6 +428,27 @@ class FindingProcessor:
                 if shutdown_event.is_set():
                     break
                 await self._spawn_enrich(finding)  # blocks on the cap → self-pacing
+
+    async def _store_with_retry(self, finding: Dict[str, Any]) -> bool:
+        """True once the row is stored. A few attempts, then the caller gives up."""
+        for attempt in range(1, _STORE_ATTEMPTS + 1):
+            if self._data_service and await self._store_finding(finding):
+                return True
+            if attempt < _STORE_ATTEMPTS:
+                await asyncio.sleep(_STORE_RETRY_BACKOFF)
+        return False
+
+    async def _drop_unstored(
+        self,
+        finding_id: str,
+        dedup: Optional[RedisDedupSet],
+        dedup_key: Optional[str],
+    ) -> None:
+        """Count the drop and unmark the key the ingestor wrote at enqueue."""
+        self.stats["store_dropped"] += 1
+        logger.error("Dropped finding %s: database store failed", finding_id)
+        if dedup is not None and dedup_key:
+            await dedup.forget(dedup_key)
 
     async def _store_finding(self, finding: Dict[str, Any]) -> bool:
         """Return True if persisted (or already present), False if the write

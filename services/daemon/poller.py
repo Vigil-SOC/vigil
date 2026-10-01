@@ -400,7 +400,9 @@ class DataPoller:
             if finding and not await self._splunk_dedup.is_processed(
                 finding["finding_id"]
             ):
-                if await self._enqueue_finding(finding, "splunk"):
+                if await self._enqueue_finding(
+                    finding, "splunk", self._splunk_dedup, finding["finding_id"]
+                ):
                     await self._splunk_dedup.mark_processed(finding["finding_id"])
                     new_count += 1
 
@@ -522,7 +524,12 @@ class DataPoller:
                 if finding and not await self._crowdstrike_dedup.is_processed(
                     finding["finding_id"]
                 ):
-                    if await self._enqueue_finding(finding, "crowdstrike"):
+                    if await self._enqueue_finding(
+                        finding,
+                        "crowdstrike",
+                        self._crowdstrike_dedup,
+                        finding["finding_id"],
+                    ):
                         await self._crowdstrike_dedup.mark_processed(
                             finding["finding_id"]
                         )
@@ -666,7 +673,12 @@ class DataPoller:
                         finding_data["data_source"] = finding_data.get(
                             "data_source", "webhook"
                         )
-                        if await self._enqueue_finding(finding_data, "webhook"):
+                        if await self._enqueue_finding(
+                            finding_data,
+                            "webhook",
+                            self._webhook_dedup,
+                            finding_id,
+                        ):
                             await self._webhook_dedup.mark_processed(finding_id)
                             count += 1
 
@@ -699,19 +711,24 @@ class DataPoller:
         await runner.cleanup()
         logger.info("Webhook server stopped")
 
-    async def _enqueue_finding(self, finding: Dict[str, Any], source: str) -> bool:
+    async def _enqueue_finding(
+        self,
+        finding: Dict[str, Any],
+        source: str,
+        dedup: Optional[RedisDedupSet] = None,
+        dedup_key: Optional[str] = None,
+    ) -> bool:
         """Hand a finding off for processing. True if it was accepted.
 
         Callers must not mark a finding processed unless this returns True:
         the dedup key is what makes a retry possible, so marking a finding that
         was never stored drops it permanently.
 
-        "Accepted" means handed off, not durable. On the queue path that is a
-        put() onto an in-process asyncio.Queue, so a finding still dies with
-        the daemon if it stops between the put and the processor's write. What
-        this closes is the larger hole: an ingest that raised, or no sink at
-        all, used to be marked processed just the same. Making the queue path
-        durable needs the queue itself to be, which is a separate change.
+        On the queue path the item carries the dedup set and the exact key
+        about to be marked. If the processor gives up on the store, it forgets
+        that key on this same instance. The queue is still in-process, so a
+        daemon stop between put and the store drops the finding. A durable
+        queue is a separate change.
         """
         if self._output_queue:
             await self._output_queue.put(
@@ -720,6 +737,8 @@ class DataPoller:
                     "source": source,
                     "data": finding,
                     "timestamp": utcnow().isoformat(),
+                    "dedup": dedup,
+                    "dedup_key": dedup_key,
                 }
             )
             logger.debug(f"Enqueued finding {finding.get('finding_id')} from {source}")
@@ -846,7 +865,9 @@ class DataPoller:
                 if finding and not await self._elastic_dedup.is_processed(
                     finding["finding_id"]
                 ):
-                    if await self._enqueue_finding(finding, "elastic"):
+                    if await self._enqueue_finding(
+                        finding, "elastic", self._elastic_dedup, finding["finding_id"]
+                    ):
                         await self._elastic_dedup.mark_processed(finding["finding_id"])
                         new_count += 1
 
