@@ -28,6 +28,11 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="run the checks, then drop the stage without renaming",
     )
+    restore.add_argument(
+        "--actor",
+        default=None,
+        help="recorded as changed_by on the restore audit row (default: the OS user)",
+    )
     return parser
 
 
@@ -50,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
                     passphrase_file=args.passphrase_file,
                     snapshot=args.snapshot,
                     test=args.test,
+                    actor=args.actor,
                 )
             )
             return 0
