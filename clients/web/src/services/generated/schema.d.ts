@@ -2677,6 +2677,9 @@ export interface paths {
         /**
          * Get Force Manual Approval
          * @description Read ``approval.force_manual_approval`` without inserting a default row.
+         *
+         *     A failed read is an error, not Act: reporting the default would show
+         *     approvals as off while the stored flag may be forcing them on.
          */
         get: operations["get_api_config_force-manual-approval"];
         put?: never;

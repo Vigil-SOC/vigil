@@ -1492,12 +1492,18 @@ def _stored_force_manual(config_service) -> bool:
 
 @router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
 async def get_force_manual_approval():
-    """Read ``approval.force_manual_approval`` without inserting a default row."""
+    """Read ``approval.force_manual_approval`` without inserting a default row.
+
+    A failed read is an error, not Act: reporting the default would show
+    approvals as off while the stored flag may be forcing them on.
+    """
     try:
         enabled = _stored_force_manual(get_config_service())
     except Exception as e:
         logger.error(f"Error getting force-manual approval: {e}")
-        enabled = False
+        raise HTTPException(
+            status_code=503, detail="Could not read the approval setting"
+        ) from e
     return ForceManualApprovalResponse(
         enabled=enabled, environment_wins=_environment_wins()
     )

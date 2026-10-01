@@ -165,6 +165,23 @@ async def test_assist_and_act_write_only_the_approval_flag():
 
 
 @pytest.mark.asyncio
+async def test_a_failed_approval_read_is_an_error_not_act():
+    svc = MagicMock()
+    svc.get_system_config.side_effect = RuntimeError("db down")
+    with (
+        patch("services.api.routers.config.get_config_service", return_value=svc),
+        patch(
+            "services.api.routers.config.get_settings",
+            return_value=_settings(False, True),
+        ),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await get_force_manual_approval()
+
+    assert exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("force", "auto"),
     [(True, True), (False, False), (True, False)],
