@@ -119,6 +119,19 @@ def test_the_sweep_rates_live_findings_before_imports(client):
     ]
 
 
+def test_never_rated_reads_as_the_cap_past_it(client, monkeypatch):
+    monkeypatch.setattr("core.storage.rating.NEVER_RATED_CAP", 2)
+    for n in (1, 2):
+        _store(f"given-up-{n}", stored_ago=timedelta(days=8))
+
+    at_cap = client.get("/api/orchestrator/status").json()
+    _store("given-up-3", stored_ago=timedelta(days=9))
+    past_cap = client.get("/api/orchestrator/status").json()
+
+    assert (at_cap["never_rated"], at_cap["never_rated_capped"]) == (2, False)
+    assert (past_cap["never_rated"], past_cap["never_rated_capped"]) == (2, True)
+
+
 def test_a_failed_count_fails_the_status_instead_of_reporting_zero(client, monkeypatch):
     def unreachable(*a, **k):
         raise RuntimeError("findings unreadable")
@@ -148,10 +161,17 @@ def test_the_counts_and_the_sweep_read_the_partial_index(client):
     finally:
         event.remove(engine, "before_cursor_execute", capture)
 
-    assert len(seen) == 2
+    # waiting, never rated, the sweep
+    assert len(seen) == 3
     for statement, parameters in seen:
         with engine.begin() as conn:
             # A near-empty table favours a seq scan; the index must be usable.
             conn.exec_driver_sql("SET LOCAL enable_seqscan = off")
-            plan = conn.exec_driver_sql("EXPLAIN " + statement, parameters)
-            assert "idx_finding_unrated_sweep" in " ".join(r[0] for r in plan)
+            plan = [
+                r[0] for r in conn.exec_driver_sql("EXPLAIN " + statement, parameters)
+            ]
+        assert "idx_finding_unrated_sweep" in " ".join(plan)
+        if "count(" in statement:
+            # A range on created_at, not a walk over every given-up row.
+            cond = next(line for line in plan if "Index Cond" in line)
+            assert "bulk_imported = ANY" in cond and "created_at" in cond

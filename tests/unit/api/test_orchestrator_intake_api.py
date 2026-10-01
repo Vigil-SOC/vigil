@@ -154,7 +154,11 @@ def _patch_status_orchestrator(monkeypatch):
     monkeypatch.setattr("core.storage.config_service.get_config_service", lambda: cfg)
     monkeypatch.setattr(
         "core.storage.rating.count_unrated",
-        lambda *a, **k: {"waiting_to_be_rated": 0, "never_rated": 0},
+        lambda *a, **k: {
+            "waiting_to_be_rated": 0,
+            "never_rated": 0,
+            "never_rated_capped": False,
+        },
     )
 
 

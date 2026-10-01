@@ -5,6 +5,7 @@ view investigations, read working directory files, and trigger manual
 investigations.
 """
 
+import asyncio
 import io
 import json
 import logging
@@ -71,6 +72,19 @@ class InvestigationCreateRequest(BaseModel):
 # ---- Status & Control ----
 
 
+def _count_queued_and_unrated():
+    from core.storage.connection import get_db_manager
+    from core.storage.models import IntakeTrigger
+    from core.storage.rating import count_unrated
+
+    with get_db_manager().session_scope() as session:
+        queued = session.query(IntakeTrigger).filter_by(state="queued").count()
+        rating = count_unrated(
+            session, get_settings().daemon_enrich_backfill_max_age_hours
+        )
+    return queued, rating
+
+
 @router.get("/status")
 async def get_orchestrator_status():
     """Get orchestrator status: enabled state, active agents, stats, cost."""
@@ -107,16 +121,9 @@ async def get_orchestrator_status():
 
         # Waiting room is intake_triggers. Count it here like GET /intake;
         # swallowing a miss as 0 would look like an empty queue. The same goes
-        # for the Findings waiting to be rated.
-        from core.storage.connection import get_db_manager
-        from core.storage.models import IntakeTrigger
-        from core.storage.rating import count_unrated
-
-        with get_db_manager().session_scope() as session:
-            queued = session.query(IntakeTrigger).filter_by(state="queued").count()
-            rating = count_unrated(
-                session, get_settings().daemon_enrich_backfill_max_age_hours
-            )
+        # for the Findings waiting to be rated. Off the event loop: polled every
+        # 10s per open console.
+        queued, rating = await asyncio.to_thread(_count_queued_and_unrated)
 
         max_agents = 3
         try:
@@ -136,6 +143,7 @@ async def get_orchestrator_status():
             "queued": queued,
             "waiting_to_be_rated": rating["waiting_to_be_rated"],
             "never_rated": rating["never_rated"],
+            "never_rated_capped": rating["never_rated_capped"],
             "completed": len(completed),
             "failed": len(failed),
             "pending_review": len(review),

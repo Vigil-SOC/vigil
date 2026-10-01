@@ -80,7 +80,10 @@ try:
             from opentelemetry.metrics import Observation
 
             counts = _count_unrated_findings()
-            return [Observation(n, {"state": s}) for s, n in counts.items()]
+            return [
+                Observation(counts[s], {"state": s})
+                for s in ("waiting_to_be_rated", "never_rated")
+            ]
         except Exception as e:
             logger.debug("unrated findings observation failed: %s", e)
             return []
