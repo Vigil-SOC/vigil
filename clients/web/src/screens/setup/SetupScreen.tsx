@@ -1,44 +1,48 @@
-import { Fragment, useEffect, useState } from 'react'
-import { Navigate, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import '../../styles.css'
 import { Icon } from '../../shared/icons'
 import { VigilMark } from '../../shared/VigilLogo'
 import { SettingsCard } from '../../shared/ui'
-import SetupProviderStep from './SetupProviderStep'
-import AutonomyDialog from './AutonomyDialog'
-import BudgetDialog from './BudgetDialog'
-import ModelAssignmentDialog from './ModelAssignmentDialog'
-import DataSourceDialog from './DataSourceDialog'
-import useSetupChecklist, { type ChecklistStep } from './useSetupChecklist'
-import type { SetupStepId } from './setupSteps'
 import { useAuth } from '../../contexts/AuthContext'
+import SetupProviderStep from './SetupProviderStep'
+import DataSourceDialog from './DataSourceDialog'
+import SystemChecksStep from './SystemChecksStep'
+import WorkflowsStep from './WorkflowsStep'
+import LimitsStep from './LimitsStep'
+import { markSetupDismissed } from './setupDismissed'
 
-// per-browser "I'm done here"; readiness itself stays live-derived
-const SETUP_DISMISSED_KEY = 'vigil.setupDismissed'
-const readSetupDismissed = (): boolean => {
-  try {
-    return localStorage.getItem(SETUP_DISMISSED_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-const markSetupDismissed = (): void => {
-  try {
-    localStorage.setItem(SETUP_DISMISSED_KEY, '1')
-  } catch {
-    /* empty */
-  }
-}
-const clearSetupDismissed = (): void => {
-  try {
-    localStorage.removeItem(SETUP_DISMISSED_KEY)
-  } catch {
-    /* empty */
-  }
+const STEPS = ['checks', 'data', 'ai', 'workflows', 'limits', 'summary'] as const
+
+type StepId = (typeof STEPS)[number]
+
+const STEP_COPY: Record<StepId, { title: string; desc: string }> = {
+  checks: {
+    title: 'System checks',
+    desc: 'API health, the storage backend, and whether a provider can route.',
+  },
+  data: {
+    title: 'Connect data',
+    desc: 'A SIEM or EDR so Vigil has alerts to triage.',
+  },
+  ai: {
+    title: 'Where AI runs',
+    desc: 'A local model keeps data on site. A hosted one sends it out.',
+  },
+  workflows: {
+    title: 'Workflows',
+    desc: 'Playbooks already on this install. Nothing here is turned on or off.',
+  },
+  limits: {
+    title: 'Limits and autonomy',
+    desc: 'Profiles are the default case limits. Assist or Act is the only setting this step saves.',
+  },
+  summary: {
+    title: 'Summary',
+    desc: 'The console works from here. Reopen this pass from the account menu.',
+  },
 }
 
-// `my-auto`, not items-center: items-center clips the top of an expanded step
-// that overflows the viewport
 const Shell = ({ children }: { children: React.ReactNode }) => (
   <div className="soc-console">
     <div className="absolute inset-0 overflow-auto">
@@ -49,174 +53,66 @@ const Shell = ({ children }: { children: React.ReactNode }) => (
   </div>
 )
 
-const Header = () => (
-  <header className="text-center mb-6">
-    <span className="inline-grid place-items-center w-12 h-12 rounded-lg bg-accent-dim text-accent-2 mb-3">
-      <VigilMark className="w-6 h-6" />
-    </span>
-    <h1 className="text-tx text-xl font-semibold">Welcome to Vigil</h1>
-    <p className="text-tx-3 text-sm mt-1">
-      Just one thing to start: connect an AI provider. Everything else is
-      optional and can wait.
-    </p>
-  </header>
-)
-
-const StepRow = ({
-  step,
-  expanded,
-  onAction,
-}: {
-  step: ChecklistStep
-  expanded: boolean
-  onAction: () => void
-}) => {
-  const required = step.tier === 'required'
-  return (
-    <div className="flex items-center gap-3 py-3">
-      {/* ✓ = done · accent ring = required, still to do · dashed + = optional */}
-      <span
-        className={`grid place-items-center w-6 h-6 shrink-0 rounded-full border transition-colors duration-200 motion-reduce:transition-none ${
-          step.ready
-            ? 'bg-ok-dim border-ok text-ok'
-            : required
-              ? 'border-accent-line text-accent-2'
-              : 'border-dashed border-[#39404d] text-tx-faint'
-        }`}
-      >
-        {step.ready ? (
-          <Icon name="check2" size={13} />
-        ) : (
-          !required && <Icon name="plus" size={12} />
-        )}
-      </span>
-      <div className="flex-1 min-w-0">
-        <div className="text-tx text-sm font-medium">{step.label}</div>
-        <div className="text-tx-3 text-xs mt-0.5">{step.description}</div>
-      </div>
-      {/* Stays interactive when satisfied, so a done step can be reopened.
-          Ready + collapsed shows the done tag beside a "Change" button. */}
-      <div className="shrink-0 flex items-center gap-2">
-        {step.ready && !expanded && (
-          <span className="whitespace-nowrap text-ok text-xs font-medium">{step.doneLabel}</span>
-        )}
-        <button className={`btn ${required && !step.ready ? 'primary' : 'ghost'}`} onClick={onAction}>
-          {expanded ? 'Close' : step.ready ? 'Change' : required ? 'Connect' : 'Configure'}
-          <Icon
-            name="chevD"
-            size={14}
-            className={`transition-transform duration-200 ${expanded ? 'rotate-180' : ''}`}
-          />
-        </button>
-      </div>
-    </div>
-  )
-}
-
-const TIER_LEAD_IN: Record<string, string> = {
-  recommended: 'Recommended',
-  optional: 'Optional',
-}
-
-// grid 0fr→1fr animates to the content's natural height. Children mount only
-// while open, so each panel fetches lazily.
-const Collapse = ({ open, children }: { open: boolean; children: React.ReactNode }) => {
-  const [mounted, setMounted] = useState(open)
-  useEffect(() => {
-    if (open) setMounted(true)
-  }, [open])
-  return (
-    <div
-      className="grid transition-[grid-template-rows] duration-[220ms] ease-[cubic-bezier(0.4,0,0.2,1)] motion-reduce:transition-none"
-      style={{ gridTemplateRows: open ? '1fr' : '0fr' }}
-      onTransitionEnd={(e) => {
-        if (!open && e.propertyName === 'grid-template-rows' && e.target === e.currentTarget) {
-          setMounted(false)
-        }
-      }}
-    >
-      <div
-        className={`overflow-hidden min-h-0 transition-opacity duration-[180ms] ${
-          open ? 'opacity-100' : 'opacity-0'
-        }`}
-      >
-        {open || mounted ? children : null}
-      </div>
-    </div>
-  )
+function stepPanel(id: StepId, onAdvance: () => void) {
+  switch (id) {
+    case 'checks':
+      return <SystemChecksStep />
+    case 'data':
+      return <DataSourceDialog onSaved={onAdvance} />
+    case 'ai':
+      return <SetupProviderStep onSaved={onAdvance} />
+    case 'workflows':
+      return <WorkflowsStep />
+    case 'limits':
+      return <LimitsStep />
+    case 'summary':
+      return (
+        <p className="text-tx-2 text-sm">
+          You can use the console without a provider. Setup stays on the account menu.
+        </p>
+      )
+    default: {
+      const _exhaustive: never = id
+      return _exhaustive
+    }
+  }
 }
 
 const SetupScreen = () => {
   const navigate = useNavigate()
   const { hasPermission } = useAuth()
-  const { steps, loading, refetch } = useSetupChecklist()
-  const [activeStep, setActiveStep] = useState<SetupStepId | null>(null)
+  const [index, setIndex] = useState(0)
+  const step = STEPS[index]
+  const copy = STEP_COPY[step]
+  const last = index === STEPS.length - 1
 
-  const llmReady = steps.find((s) => s.id === 'llm-provider')?.ready ?? false
-
-  // Being on /setup at all is an intent to run setup, so a prior dismissal is
-  // stale on arrival. Clearing it only while the provider was unready made it
-  // permanent once one was configured: SetupGate never sends a configured user
-  // here, so the flag's only surviving effect was to bounce anyone who came
-  // back deliberately — unfixable short of clearing site data.
-  useEffect(() => {
-    clearSetupDismissed()
-  }, [])
-
-  const optionalSteps = steps.filter((s) => s.tier !== 'required')
-  const requiredCount = steps.length - optionalSteps.length
-  const optionalDone = optionalSteps.filter((s) => s.ready).length
-  const checklistSummary = !llmReady
-    ? `${requiredCount} required · ${optionalSteps.length} optional`
-    : `Ready · ${optionalDone} of ${optionalSteps.length} optional done`
-
-  // the llmReady guard avoids a loop with SetupGate sending us back
-  const allReady = steps.length > 0 && steps.every((s) => s.ready)
-  if (!loading && llmReady && (allReady || readSetupDismissed())) {
-    return <Navigate to="/" replace />
+  const dismiss = () => {
+    markSetupDismissed()
+    navigate('/', { replace: true })
   }
 
-  const closeStep = () => setActiveStep(null)
-  const handleSaved = () => {
-    setActiveStep(null)
-    refetch()
-  }
-
-  const handleAction = (step: ChecklistStep) =>
-    setActiveStep((cur) => (cur === step.id ? null : step.id))
-
-  const renderStepPanel = (id: SetupStepId) => {
-    switch (id) {
-      case 'llm-provider':
-        return <SetupProviderStep onSaved={handleSaved} />
-      case 'data-source':
-        return <DataSourceDialog onSaved={handleSaved} />
-      case 'model-assignment':
-        return <ModelAssignmentDialog onClose={closeStep} onSaved={handleSaved} />
-      case 'cost-guardrails':
-        return <BudgetDialog onClose={closeStep} onSaved={handleSaved} />
-      case 'autonomy':
-        return (
-          <AutonomyDialog
-            onClose={closeStep}
-            onSaved={handleSaved}
-            onConfigureBudget={() => setActiveStep('cost-guardrails')}
-          />
-        )
-      default:
-        return null
-    }
+  const advance = () => {
+    if (last) dismiss()
+    else setIndex((current) => current + 1)
   }
 
   if (!hasPermission('settings.write')) {
     return (
       <Shell>
-        <Header />
-        <SettingsCard title="Setup required" desc="Administrator access needed">
+        <header className="text-center mb-6">
+          <h1 className="text-tx text-xl font-semibold">Welcome to Vigil</h1>
+        </header>
+        <SettingsCard title="Setup" desc="Administrator access needed">
           <p className="text-tx-2 text-sm">
-            Vigil isn&apos;t set up yet. Ask an administrator to add an AI provider in
-            Settings → AI Config.
+            Ask an administrator to connect an AI provider and data sources. You can open the
+            console in the meantime.
           </p>
+          <div className="flex justify-end mt-4">
+            <button className="btn primary" onClick={dismiss}>
+              Continue to console
+              <Icon name="arrowR" size={15} />
+            </button>
+          </div>
         </SettingsCard>
       </Shell>
     )
@@ -224,50 +120,27 @@ const SetupScreen = () => {
 
   return (
     <Shell>
-      <Header />
-      <SettingsCard title="Setup checklist" desc={checklistSummary}>
-        {loading ? (
-          <div className="py-8 text-center text-tx-3 text-sm">Checking setup…</div>
-        ) : (
-          <div>
-            {steps.map((step, i) => {
-              const expanded = activeStep === step.id
-              const prevTier = i > 0 ? steps[i - 1].tier : null
-              const leadIn = step.tier !== 'required' && step.tier !== prevTier
-              const hero = step.tier === 'required'
-              return (
-                <Fragment key={step.id}>
-                  {leadIn && (
-                    <div className="border-t border-line-soft pt-3 pb-1.5">
-                      <span className="text-tx-2 text-xs font-medium">{TIER_LEAD_IN[step.tier]}</span>
-                    </div>
-                  )}
-                  <div
-                    className={`${!leadIn && i > 0 ? 'border-t border-line-soft' : ''} ${
-                      hero || expanded ? 'bg-bg-1' : ''
-                    }`}
-                  >
-                    <StepRow step={step} expanded={expanded} onAction={() => handleAction(step)} />
-                    <Collapse open={expanded}>
-                      <div className="pt-1 pb-4 pl-9 pr-2">{renderStepPanel(step.id)}</div>
-                    </Collapse>
-                  </div>
-                </Fragment>
-              )
-            })}
-          </div>
-        )}
+      <header className="text-center mb-6">
+        <span className="inline-grid place-items-center w-12 h-12 rounded-lg bg-accent-dim text-accent-2 mb-3">
+          <VigilMark className="w-6 h-6" />
+        </span>
+        <h1 className="text-tx text-xl font-semibold">Welcome to Vigil</h1>
+        <p className="text-tx-3 text-sm mt-1">
+          One pass over this install. Every step can be skipped.
+        </p>
+        <button className="btn ghost mt-3" onClick={dismiss}>
+          Skip setup
+        </button>
+      </header>
+      <SettingsCard title={copy.title} desc={`${copy.desc} · ${index + 1} of ${STEPS.length}`}>
+        {stepPanel(step, advance)}
       </SettingsCard>
-      <div className="flex justify-end mt-5">
-        <button
-          className="btn primary disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={!llmReady}
-          onClick={() => {
-            markSetupDismissed()
-            navigate('/', { replace: true })
-          }}
-        >
-          Go to dashboard
+      <div className="flex justify-end gap-2 mt-5">
+        <button className="btn ghost" onClick={advance}>
+          Skip
+        </button>
+        <button className="btn primary" onClick={advance}>
+          {last ? 'Go to console' : 'Continue'}
           <Icon name="arrowR" size={15} />
         </button>
       </div>

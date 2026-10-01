@@ -36,6 +36,7 @@ function renderMenu(path = '/cases') {
       <SocThemeProvider>
         <MemoryRouter initialEntries={[path]}>
           <Routes>
+            <Route path="/setup" element={<div>setup-route</div>} />
             <Route path="/:screen" element={<UserMenu />} />
           </Routes>
         </MemoryRouter>
@@ -63,6 +64,13 @@ describe('UserMenu', () => {
     expect(url.searchParams.get('labels')).toBe('console-feedback')
     expect(url.searchParams.get('body')).toContain('Screen: cases')
     expect(url.searchParams.get('body')).toContain('Version: 9.9.9')
+  })
+
+  it('opens setup from the account menu', () => {
+    renderMenu()
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Setup' }))
+    expect(screen.getByText('setup-route')).toBeInTheDocument()
   })
 
   it.each([null, undefined, '', '   '])(

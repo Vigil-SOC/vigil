@@ -128,6 +128,9 @@ export default function UserMenu() {
           <Icon name="sun" size={15} /> Light
         </button>
         <div className="user-pop-sep" />
+        <button role="menuitem" onClick={() => { setOpen(false); navigate('/setup') }}>
+          <Icon name="flow" size={15} /> Setup
+        </button>
         <button role="menuitem" onClick={() => { setOpen(false); navigate('/settings') }}>
           <Icon name="gear" size={15} /> Settings
         </button>

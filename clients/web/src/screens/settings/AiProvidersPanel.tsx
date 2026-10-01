@@ -35,6 +35,7 @@ import {
   type BifrostKeyWrite,
 } from '../../services/bifrostApi'
 import type { SectionProps } from './types'
+import { urlIsLoopback } from '../../shared/loopback'
 
 // Without a verdict, a `list_models_failed` cannot be told from a refusal.
 function KeyStatusChip({ status, description, verdict }: {
@@ -374,9 +375,7 @@ export function KeyDialog({
   // operator typed it on. The field hint says so and gets typed past anyway,
   // which is what a hint under a text box is worth; this says it where the
   // mistake is, and only then.
-  const urlIsLoopback = /^(https?:\/\/)?(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/i.test(
-    url.trim(),
-  )
+  const loopback = urlIsLoopback(url)
   const [projectId, setProjectId] = useState(isMasked(storedProject) ? '' : storedProject)
   const [region, setRegion] = useState(isMasked(storedRegion) ? '' : storedRegion)
   const [weight, setWeight] = useState(existing?.weight ?? 1)
@@ -481,7 +480,7 @@ export function KeyDialog({
                 autoComplete="off"
                 spellCheck={false}
               />
-              {urlIsLoopback && (
+              {loopback && (
                 <p className="text-xs mt-1.5" style={{ color: 'var(--high)' }}>
                   The gateway resolves this, and it runs in a container — so
                   loopback is the container itself, not this machine. Ollama on
