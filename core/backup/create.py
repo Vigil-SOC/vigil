@@ -169,7 +169,7 @@ def _require_pg_dump_version(
     cur = conn.cursor()
     cur.execute("SELECT current_setting('server_version_num')")
     server_major = int(cur.fetchone()[0]) // 10000
-    proc = _run(priority + ["pg_dump", "--version"], env=os.environ.copy())
+    proc = _run(priority + ["pg_dump", "--version"], env=_child_env())
     text = proc.stdout
     marker = "(PostgreSQL)"
     if marker not in text:
@@ -235,7 +235,7 @@ def _export_and_count(
 def _pg_dump(
     cfg: DatabaseConfig, snapshot_id: str, dump_path: Path, priority: list[str]
 ) -> None:
-    env = os.environ.copy()
+    env = _child_env()
     env["PGPASSWORD"] = cfg.password
     proc = _run(
         priority
@@ -461,8 +461,13 @@ def _restic_backup(
     return snapshot_id
 
 
+def _child_env() -> dict[str, str]:
+    # pg_dump and restic need PATH and locale. Config is not read from here.
+    return os.environ.copy()  # noqa: ENV001 - child process env
+
+
 def _restic_env(passphrase: Path) -> dict[str, str]:
-    env = os.environ.copy()
+    env = _child_env()
     env["RESTIC_PASSWORD_FILE"] = str(passphrase)
     return env
 
