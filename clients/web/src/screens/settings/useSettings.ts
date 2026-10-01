@@ -341,6 +341,34 @@ export interface OrchestratorConfig {
   workdir_base: string
 }
 
+export interface InvestigationProfileValues {
+  max_concurrent_agents: number
+  max_iterations_per_agent: number
+  max_runtime_per_investigation: number
+  max_cost_per_investigation: number
+  max_total_hourly_cost: number
+}
+
+export interface InvestigationProfile {
+  label: string
+  recommended: boolean
+  values: InvestigationProfileValues
+}
+
+export type InvestigationProfiles = Record<string, InvestigationProfile>
+
+export interface ForceManualApproval {
+  enabled: boolean
+  environment_wins: boolean
+}
+
+/** GET /config/orchestrator carries profiles for the cards. They are not stored. */
+export function stripOrchestratorProfiles<T>(data: T & { profiles?: unknown }): T {
+  const rest = { ...data }
+  delete rest.profiles
+  return rest
+}
+
 export const ORCHESTRATOR_DEFAULTS: OrchestratorConfig = {
   enabled: true,
   dry_run: false,
@@ -363,6 +391,7 @@ export interface OrchestratorStatus {
 
 export function useOrchestrator() {
   const [config, setConfig] = useState<OrchestratorConfig>(ORCHESTRATOR_DEFAULTS)
+  const [profiles, setProfiles] = useState<InvestigationProfiles>({})
   const [status, setStatus] = useState<OrchestratorStatus | null>(null)
   const [phase, setPhase] = useState<Phase>('loading')
   const [reloadKey, setReloadKey] = useState(0)
@@ -377,7 +406,12 @@ export function useOrchestrator() {
     ])
       .then(([cfgRes, statusRes]) => {
         if (cancelled) return
-        setConfig({ ...ORCHESTRATOR_DEFAULTS, ...(cfgRes.data as Partial<OrchestratorConfig>) })
+        const data = (cfgRes.data ?? {}) as Partial<OrchestratorConfig> & {
+          profiles?: InvestigationProfiles
+        }
+        const { profiles: nextProfiles, ...rest } = data
+        setProfiles(nextProfiles ?? {})
+        setConfig({ ...ORCHESTRATOR_DEFAULTS, ...rest })
         setStatus((statusRes.data as OrchestratorStatus | null) ?? null)
         setPhase('ready')
       })
@@ -395,7 +429,49 @@ export function useOrchestrator() {
     [],
   )
 
-  return { config, setConfig, status, phase, reload, save, purgeAll }
+  return { config, setConfig, profiles, status, phase, reload, save, purgeAll }
+}
+
+export function useForceManualApproval() {
+  const [state, setState] = useState<ForceManualApproval>({
+    enabled: false,
+    environment_wins: false,
+  })
+  const [phase, setPhase] = useState<Phase>('loading')
+
+  useEffect(() => {
+    let cancelled = false
+    configApi
+      .getForceManualApproval()
+      .then(({ data }) => {
+        if (cancelled) return
+        const row = data as Partial<ForceManualApproval>
+        setState({
+          enabled: Boolean(row.enabled),
+          environment_wins: Boolean(row.environment_wins),
+        })
+        setPhase('ready')
+      })
+      .catch(() => {
+        if (!cancelled) setPhase('ready')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const save = useCallback(async (enabled: boolean) => {
+    const { data } = await configApi.setForceManualApproval(enabled)
+    const row = data as Partial<ForceManualApproval>
+    const next = {
+      enabled: Boolean(row.enabled),
+      environment_wins: Boolean(row.environment_wins),
+    }
+    setState(next)
+    return next
+  }, [])
+
+  return { ...state, phase, save }
 }
 
 export interface StorageInfo {

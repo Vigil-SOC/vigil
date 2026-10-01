@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import { Banner, useSaveAction } from '../../shared/formKit'
 import { budgetsApi, configApi } from '../../services/api'
+import { stripOrchestratorProfiles } from '../settings/useSettings'
 
 type OrchestratorConfig = Parameters<typeof configApi.setOrchestrator>[0]
 
@@ -24,7 +25,7 @@ const AutonomyDialog = ({ onClose, onSaved, onConfigureBudget }: Props) => {
     let alive = true
     configApi
       .getOrchestrator()
-      .then(({ data }) => alive && setConfig(data))
+      .then(({ data }) => alive && data && setConfig(stripOrchestratorProfiles(data)))
       .catch(() => alive && setConfig(null))
     budgetsApi
       .get()
@@ -37,7 +38,8 @@ const AutonomyDialog = ({ onClose, onSaved, onConfigureBudget }: Props) => {
 
   const enable = () =>
     run(async () => {
-      const base = config ?? (await configApi.getOrchestrator()).data
+      const loaded = config ?? (await configApi.getOrchestrator()).data
+      const base = stripOrchestratorProfiles(loaded)
       await configApi.setOrchestrator({ ...base, enabled: true })
     }, 'Failed to enable autonomous mode')
 

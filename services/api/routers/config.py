@@ -1274,6 +1274,88 @@ class OrchestratorSettingsConfig(BaseModel):
 ORCHESTRATOR_DEFAULTS = OrchestratorSettingsConfig().model_dump()
 
 
+class InvestigationProfileValues(BaseModel):
+    """The five limits a profile sets in one click."""
+
+    max_concurrent_agents: int
+    max_iterations_per_agent: int
+    max_runtime_per_investigation: int
+    max_cost_per_investigation: float
+    max_total_hourly_cost: float
+
+
+class InvestigationProfile(BaseModel):
+    """One Settings card. The name is not stored on the saved config."""
+
+    label: str
+    recommended: bool = False
+    values: InvestigationProfileValues
+
+
+class InvestigationProfiles(BaseModel):
+    """Keys the Auto Investigate section renders. ``aggressive`` is labelled Broad."""
+
+    conservative: InvestigationProfile
+    balanced: InvestigationProfile
+    aggressive: InvestigationProfile
+
+
+# Same numbers the Settings cards used to hard-code. Balanced matches
+# OrchestratorSettingsConfig's defaults.
+INVESTIGATION_PROFILES = InvestigationProfiles.model_validate(
+    {
+        "conservative": {
+            "label": "Conservative",
+            "values": {
+                "max_concurrent_agents": 2,
+                "max_iterations_per_agent": 25,
+                "max_runtime_per_investigation": 1800,
+                "max_cost_per_investigation": 1.0,
+                "max_total_hourly_cost": 5.0,
+            },
+        },
+        "balanced": {
+            "label": "Balanced",
+            "recommended": True,
+            "values": {
+                "max_concurrent_agents": 3,
+                "max_iterations_per_agent": 50,
+                "max_runtime_per_investigation": 3600,
+                "max_cost_per_investigation": 5.0,
+                "max_total_hourly_cost": 20.0,
+            },
+        },
+        "aggressive": {
+            "label": "Broad",
+            "values": {
+                "max_concurrent_agents": 5,
+                "max_iterations_per_agent": 100,
+                "max_runtime_per_investigation": 7200,
+                "max_cost_per_investigation": 15.0,
+                "max_total_hourly_cost": 60.0,
+            },
+        },
+    }
+)
+
+
+class OrchestratorConfigResponse(OrchestratorSettingsConfig):
+    """Flat saved settings plus the profiles the Settings cards render.
+
+    ``profiles`` is not part of the stored object. POST takes
+    ``OrchestratorSettingsConfig`` and ignores the field.
+    """
+
+    profiles: InvestigationProfiles
+
+
+def _orchestrator_payload(stored: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    merged = {**ORCHESTRATOR_DEFAULTS, **(stored or {})}
+    flat = {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
+    flat["profiles"] = INVESTIGATION_PROFILES.model_dump()
+    return flat
+
+
 class IntentDiffRow(BaseModel):
     """One manifest key beside the value the daemon is running with."""
 
@@ -1319,21 +1401,20 @@ async def get_intent_report() -> IntentReportResponse:
     )
 
 
-@router.get("/orchestrator")
+@router.get("/orchestrator", response_model=OrchestratorConfigResponse)
 async def get_orchestrator_config():
-    """Get orchestrator configuration."""
+    """Get orchestrator configuration.
+
+    ``profiles`` is extra on this body so the Settings cards can render it.
+    It is not read back from storage.
+    """
     try:
         config_service = get_config_service()
         config_value = config_service.get_system_config("orchestrator.settings")
-
-        if config_value:
-            merged = {**ORCHESTRATOR_DEFAULTS, **config_value}
-            return {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
-
-        return ORCHESTRATOR_DEFAULTS
+        return _orchestrator_payload(config_value if config_value else None)
     except Exception as e:
         logger.error(f"Error getting orchestrator config: {e}")
-        return ORCHESTRATOR_DEFAULTS
+        return _orchestrator_payload(None)
 
 
 @router.post("/orchestrator")
@@ -1344,6 +1425,9 @@ async def set_orchestrator_config(
     """Set orchestrator configuration. Persists settings AND syncs the
     runtime enabled flag used by GET /api/orchestrator/status (which
     NavigationRail uses to show/hide the Auto Ops tab).
+
+    A ``profiles`` field on the body is ignored. The stored object stays the
+    flat keys; no profile name is written.
     """
     config_data = config.model_dump()
 
@@ -1378,6 +1462,76 @@ async def set_orchestrator_config(
         logger.debug("In-process orchestrator runtime apply skipped: %s", e)
 
     return {"success": True, "message": "Orchestrator settings saved"}
+
+
+# Assist is the stored flag on; Act is the flag off. Not part of orchestrator.settings.
+APPROVAL_FORCE_MANUAL_KEY = "approval.force_manual_approval"
+
+
+class ForceManualApprovalConfig(BaseModel):
+    """``approval.force_manual_approval``. Assist is true, Act is false."""
+
+    enabled: bool
+
+
+class ForceManualApprovalResponse(ForceManualApprovalConfig):
+    """The stored flag, plus whether daemon env overrides Act."""
+
+    environment_wins: bool
+
+
+def _environment_wins() -> bool:
+    """Force-approval, or auto-response turned off, beats a stored Act."""
+    settings = get_settings()
+    return bool(settings.daemon_force_approval) or not settings.daemon_auto_response
+
+
+def _stored_force_manual(config_service) -> bool:
+    value = config_service.get_system_config(APPROVAL_FORCE_MANUAL_KEY)
+    if isinstance(value, dict):
+        return bool(value.get("enabled", False))
+    return False
+
+
+@router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
+async def get_force_manual_approval():
+    """Read ``approval.force_manual_approval`` without inserting a default row."""
+    try:
+        enabled = _stored_force_manual(get_config_service())
+    except Exception as e:
+        logger.error(f"Error getting force-manual approval: {e}")
+        enabled = False
+    return ForceManualApprovalResponse(
+        enabled=enabled, environment_wins=_environment_wins()
+    )
+
+
+@router.post("/force-manual-approval", response_model=ForceManualApprovalResponse)
+async def set_force_manual_approval(
+    config: ForceManualApprovalConfig,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Persist Assist or Act. Act is refused while the environment wins, so it
+    is not stored for later. Assist may still be stored.
+    """
+    if not config.enabled and _environment_wins():
+        raise HTTPException(
+            status_code=409,
+            detail="The environment wins; Act was not saved.",
+        )
+    config_service = _for_user(current_user)
+    success = config_service.set_system_config(
+        key=APPROVAL_FORCE_MANUAL_KEY,
+        value={"enabled": config.enabled},
+        description="Force manual approval for all actions",
+        config_type="approval",
+        change_reason="Updated via Settings UI",
+    )
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save approval config")
+    return ForceManualApprovalResponse(
+        enabled=config.enabled, environment_wins=_environment_wins()
+    )
 
 
 # ---- Darktrace webhook receiver config ----

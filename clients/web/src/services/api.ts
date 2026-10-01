@@ -596,7 +596,15 @@ export const configApi = {
     loop_interval: number
     stale_threshold: number
     workdir_base: string
-  }) => api.post('/config/orchestrator', data),
+  }) => {
+    const rest = { ...data }
+    delete (rest as { profiles?: unknown }).profiles
+    return api.post('/config/orchestrator', rest)
+  },
+
+  getForceManualApproval: () => api.get('/config/force-manual-approval'),
+  setForceManualApproval: (enabled: boolean) =>
+    api.post('/config/force-manual-approval', { enabled }),
 }
 
 export interface PlatformDatabaseProxyConfig {
