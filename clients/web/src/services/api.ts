@@ -194,6 +194,17 @@ export const findingsApi = {
     }),
 
   deleteAll: () => api.delete('/findings/all'),
+
+  markNoise: (id: string) =>
+    api.post(`/findings/${encodeURIComponent(id)}/noise`),
+
+  clearNoise: (id: string) =>
+    api.delete(`/findings/${encodeURIComponent(id)}/noise`),
+
+  launchIntake: (id: string) =>
+    api.post<{ queued: boolean; already_queued: boolean; trigger_id?: number | null }>(
+      `/findings/${encodeURIComponent(id)}/intake`,
+    ),
 }
 
 export interface IpExclusion {
@@ -1276,6 +1287,8 @@ export interface OverviewFeedItem {
   created_at: string | null
   evidence_links: Array<{ ref?: string }>
   source_evidence: Record<string, unknown> | null
+  source_link: string | null
+  case_id: string | null
 }
 
 export interface OverviewPayload {

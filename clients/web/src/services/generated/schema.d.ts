@@ -3892,6 +3892,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/findings/{finding_id}/intake": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Launch Finding Into Intake
+         * @description Queue this finding for intake. ``already_queued`` when a queued row exists.
+         */
+        post: operations["post_api_findings_finding_id_intake"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/findings/{finding_id}/noise": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Finding Noise
+         * @description Store a noise mark. Does not change ``finding.status`` or scoring.
+         */
+        post: operations["post_api_findings_finding_id_noise"];
+        /**
+         * Clear Finding Noise
+         * @description Clear the noise mark. The actor is the signed-in user; the columns go back to null.
+         */
+        delete: operations["delete_api_findings_finding_id_noise"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -10104,6 +10148,17 @@ export interface components {
             /** Success */
             success: boolean;
         };
+        /** IntakeLaunchResponse */
+        IntakeLaunchResponse: {
+            /** Already Queued */
+            already_queued: boolean;
+            /** Finding Id */
+            finding_id: string;
+            /** Queued */
+            queued: boolean;
+            /** Trigger Id */
+            trigger_id?: number | null;
+        };
         /**
          * IntegrationsConfig
          * @description Integrations configuration.
@@ -10543,6 +10598,17 @@ export interface components {
             trend_data?: {
                 [key: string]: unknown;
             }[];
+        };
+        /** NoiseMarkResponse */
+        NoiseMarkResponse: {
+            /** Finding Id */
+            finding_id: string;
+            /** Noise Marked At */
+            noise_marked_at?: string | null;
+            /** Noise Marked By */
+            noise_marked_by?: string | null;
+            /** Status */
+            status: string;
         };
         /**
          * OrchestratorConfigResponse
@@ -18871,6 +18937,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_findings_finding_id_intake: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                finding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeLaunchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_findings_finding_id_noise: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                finding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoiseMarkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_findings_finding_id_noise: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                finding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NoiseMarkResponse"];
                 };
             };
             /** @description Validation Error */

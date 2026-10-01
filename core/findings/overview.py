@@ -8,11 +8,13 @@ from typing import Optional
 
 from core.findings.alert_outcomes import (
     TERMINAL_LABELS,
+    _cases_for,
     terminal_states_for,
     terminal_states_today,
 )
 from core.findings.arrival_counts import arrivals_today_by_source
 from core.findings.source_evidence import project_finding_source_evidence_for_list
+from core.findings.source_link import resolve_source_link
 from core.storage.connection import get_db_manager
 from core.storage.models import FederationSource, Finding, WorkflowRun, WorkflowRunPhase
 from core.time import utcnow
@@ -194,11 +196,12 @@ def _feed() -> list[dict]:
     with db.session_scope() as session:
         findings = (
             session.query(Finding)
+            .filter(Finding.noise_marked_at.is_(None))
             .order_by(Finding.created_at.desc(), Finding.finding_id.desc())
             .limit(FEED_LIMIT)
             .all()
         )
-        items = []
+        staged = []
         for finding in findings:
             projected = project_finding_source_evidence_for_list(
                 {"entity_context": finding.entity_context}
@@ -208,11 +211,12 @@ def _feed() -> list[dict]:
                 context.get("source_evidence") if isinstance(context, dict) else None
             )
             created = finding.created_at.isoformat() if finding.created_at else None
-            items.append(
+            staged.append(
                 {
                     "finding_id": finding.finding_id,
                     "severity": finding.severity,
                     "data_source": finding.data_source,
+                    "external_id": finding.external_id,
                     "status": finding.status,
                     "description": finding.description,
                     "created_at": created,
@@ -220,6 +224,26 @@ def _feed() -> list[dict]:
                     "source_evidence": evidence,
                 }
             )
+        linked = _cases_for(session, [row["finding_id"] for row in staged])
+    link_configs: dict[str, dict[str, str]] = {}
+    items = []
+    for row in staged:
+        external_id = row.pop("external_id")
+        case = linked.get(row["finding_id"])
+        items.append(
+            {
+                **row,
+                "source_link": resolve_source_link(
+                    {
+                        "evidence_links": row["evidence_links"],
+                        "data_source": row["data_source"],
+                        "external_id": external_id,
+                    },
+                    configs=link_configs,
+                ),
+                "case_id": case.case_id if case else None,
+            }
+        )
     states = terminal_states_for([item["finding_id"] for item in items])
     for item in items:
         state = states[item["finding_id"]]

@@ -112,6 +112,14 @@ def add_findings_description(conn):
         ALTER TABLE findings ADD COLUMN IF NOT EXISTS description TEXT;
     """))
 
+@migration("Add noise mark columns to findings")
+def add_findings_noise_mark(conn):
+    conn.execute(text("""
+        ALTER TABLE findings
+            ADD COLUMN IF NOT EXISTS noise_marked_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS noise_marked_by VARCHAR(50);
+    """))
+
 @migration("Create GIN trigram index on findings.description")
 def create_findings_description_gin_index(conn):
     conn.execute(text("""

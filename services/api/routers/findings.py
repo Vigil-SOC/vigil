@@ -11,9 +11,10 @@ enrichment generation and the destructive wipe. They remain under
 """
 
 import logging
-from typing import Dict, List
+from datetime import datetime
+from typing import Annotated, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from core.api.v1.findings_router import FindingUpdate
@@ -26,6 +27,10 @@ from core.findings.enrichment import (
 )
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
+from core.storage.models import Finding, User
+from core.time import utcnow
+from services.api.middleware.auth import get_current_user
+from services.daemon.orchestrator import insert_intake_trigger, intake_severity_band
 
 router = APIRouter()
 
@@ -45,6 +50,27 @@ class BulkEnrichmentRequest(BaseModel):
 
     finding_ids: List[str]
     enrichment_data: Dict[str, FindingUpdate]
+
+
+class NoiseMarkResponse(BaseModel):
+    finding_id: str
+    noise_marked_at: Optional[datetime] = None
+    noise_marked_by: Optional[str] = None
+    status: str
+
+
+class IntakeLaunchResponse(BaseModel):
+    finding_id: str
+    queued: bool
+    already_queued: bool
+    trigger_id: Optional[int] = None
+
+
+def _finding_or_404(session: UnitOfWorkSession, finding_id: str) -> Finding:
+    finding = session.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status_code=404, detail="Finding not found")
+    return finding
 
 
 @router.post("/bulk-enrich")
@@ -163,8 +189,6 @@ async def get_or_generate_enrichment(
 @router.delete("/all")
 def clear_all_findings(session: UnitOfWorkSession):
     """Delete all findings from the database."""
-    from core.storage.models import Finding
-
     count = session.query(Finding).count()
     session.query(Finding).delete()
 
@@ -172,13 +196,66 @@ def clear_all_findings(session: UnitOfWorkSession):
     return {"success": True, "deleted": count, "message": f"Deleted {count} findings"}
 
 
+@router.post("/{finding_id}/noise", response_model=NoiseMarkResponse)
+def mark_finding_noise(
+    finding_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Store a noise mark. Does not change ``finding.status`` or scoring."""
+    finding = _finding_or_404(session, finding_id)
+    finding.noise_marked_at = utcnow()
+    finding.noise_marked_by = current_user.user_id
+    return NoiseMarkResponse(
+        finding_id=finding.finding_id,
+        noise_marked_at=finding.noise_marked_at,
+        noise_marked_by=finding.noise_marked_by,
+        status=finding.status,
+    )
+
+
+@router.delete("/{finding_id}/noise", response_model=NoiseMarkResponse)
+def clear_finding_noise(
+    finding_id: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    session: UnitOfWorkSession,
+):
+    """Clear the noise mark. The actor is the signed-in user; the columns go back to null."""
+    finding = _finding_or_404(session, finding_id)
+    logger.info("cleared noise mark on %s by %s", finding_id, current_user.user_id)
+    finding.noise_marked_at = None
+    finding.noise_marked_by = None
+    return NoiseMarkResponse(
+        finding_id=finding.finding_id,
+        status=finding.status,
+    )
+
+
+@router.post("/{finding_id}/intake", response_model=IntakeLaunchResponse)
+def launch_finding_into_intake(
+    finding_id: str,
+    session: UnitOfWorkSession,
+):
+    """Queue this finding for intake. ``already_queued`` when a queued row exists."""
+    finding = _finding_or_404(session, finding_id)
+    trigger_id = insert_intake_trigger(
+        kind="detection",
+        finding_id=finding.finding_id,
+        priority=intake_severity_band("detection", finding_severity=finding.severity),
+    )
+    return IntakeLaunchResponse(
+        finding_id=finding.finding_id,
+        queued=trigger_id is not None,
+        already_queued=trigger_id is None,
+        trigger_id=trigger_id,
+    )
+
+
 # Not in the frozen surface: this writes a file on the server and answers with
 # its path, which is nothing an external caller can open. It stays unversioned
 # until it answers with the export itself.
 @router.post("/export")
 def export_findings(output_format: str = "json"):
-    from datetime import datetime
-
     if output_format not in EXPORT_FORMATS:
         raise HTTPException(
             status_code=400,

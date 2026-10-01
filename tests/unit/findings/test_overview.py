@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from core.findings.alert_outcomes import terminal_states_today
 from core.findings.arrival_counts import arrivals_today_by_source
-from core.findings.overview import completion_level, overview_payload
+from core.findings.overview import FEED_LIMIT, completion_level, overview_payload
 from core.response.approval_service import pending_approval_case_ids
 from core.storage.models import (
     ApprovalAction,
@@ -436,6 +436,66 @@ def test_empty_when_no_source_is_enabled_and_nothing_arrived():
                 session.query(FederationSource).filter(
                     FederationSource.source_id.in_(enabled)
                 ).update({FederationSource.enabled: True}, synchronize_session=False)
+
+
+def test_feed_skips_noise_before_the_limit_and_clear_restores_the_row():
+    base = datetime(2999, 1, 1)
+    with unit_of_work() as session:
+        session.add(_finding("ov-keep", base, description="kept"))
+        session.add_all(
+            [
+                _finding(
+                    f"ov-marked-{i:02d}",
+                    base + timedelta(minutes=i + 1),
+                    noise_marked_at=base,
+                    noise_marked_by="user-ov",
+                )
+                for i in range(FEED_LIMIT)
+            ]
+        )
+    hidden = overview_payload(day=base.date(), now=base)
+    ids = [row["finding_id"] for row in hidden["feed"]]
+    assert "ov-keep" in ids
+    assert not any(item.startswith("ov-marked-") for item in ids)
+
+    with unit_of_work() as session:
+        row = session.get(Finding, "ov-marked-00")
+        assert row is not None
+        row.noise_marked_at = None
+        row.noise_marked_by = None
+    restored = overview_payload(day=base.date(), now=base)
+    assert "ov-marked-00" in [row["finding_id"] for row in restored["feed"]]
+
+
+def test_feed_source_link_and_case_follow_the_existing_resolvers():
+    at = datetime(2999, 2, 1)
+    with unit_of_work() as session:
+        session.add_all(
+            [
+                _case("ov-c-link", "open", at),
+                _finding(
+                    "ov-http",
+                    at,
+                    evidence_links=[
+                        {"ref": "note"},
+                        {"ref": "https://console.example/a"},
+                    ],
+                ),
+                _finding(
+                    "ov-nolink",
+                    at + timedelta(seconds=1),
+                    evidence_links=[{"ref": "not a url"}],
+                ),
+            ]
+        )
+        session.flush()
+        _link(session, "ov-c-link", "ov-http")
+    payload = overview_payload(day=at.date(), now=at)
+    by_id = {row["finding_id"]: row for row in payload["feed"]}
+    assert by_id["ov-http"]["source_link"] == "https://console.example/a"
+    assert by_id["ov-http"]["case_id"] == "ov-c-link"
+    assert by_id["ov-nolink"]["source_link"] is None
+    assert by_id["ov-nolink"]["case_id"] is None
 
 
 def test_overview_route_marks_unmeasured_nodes(client):

@@ -1788,6 +1788,14 @@
       "data_type": "character varying(50)",
       "nullable": false
     },
+    "noise_marked_at": {
+      "data_type": "timestamp without time zone",
+      "nullable": true
+    },
+    "noise_marked_by": {
+      "data_type": "character varying(50)",
+      "nullable": true
+    },
     "severity": {
       "data_type": "character varying(20)",
       "nullable": true

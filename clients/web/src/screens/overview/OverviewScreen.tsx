@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { DataTable, sortRows, useTableSort, type ColumnDef } from '../../shared/DataTable'
 import { Icon } from '../../shared/icons'
@@ -6,12 +6,18 @@ import { EmptyState, Popup } from '../../shared/ui'
 import type { ConsoleScreenProps } from '../../shared/types'
 import { parseSourceEvidence } from '../../data/sourceEvidence'
 import { SourceEvidenceSection } from '../dashboard/SourceEvidenceSection'
-import {
+import { jiraReadiness, type JiraReadiness } from '../../shell/commandBar'
+import api, {
+  configApi,
+  findingsApi,
   overviewApi,
   type OverviewAgent,
   type OverviewFeedItem,
   type OverviewPayload,
 } from '../../services/api'
+
+const NOISE_INFO = 'The mark is stored and does not change scoring.'
+const ALREADY_QUEUED = 'This finding is already queued.'
 
 const POLL_MS = 10_000
 
@@ -38,6 +44,14 @@ function levelWord(level: Level): string {
 function fmtRate(rate: number | null): string {
   if (rate === null) return '—'
   return `${(rate * 100).toFixed(1)}%`
+}
+
+function errorText(error: unknown, fallback: string): string {
+  const data = (error as { response?: { data?: { detail?: unknown; error?: unknown } } })?.response?.data
+  if (typeof data?.detail === 'string' && data.detail.trim()) return data.detail
+  if (typeof data?.error === 'string' && data.error.trim()) return data.error
+  const message = (error as { message?: string })?.message
+  return message && message.trim() ? message : fallback
 }
 
 function EvidenceBody({ item }: { item: OverviewFeedItem }) {
@@ -101,6 +115,13 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
   const [data, setData] = useState<OverviewPayload | null>(null)
   const [wall, setWall] = useState(false)
   const [open, setOpen] = useState<OverviewFeedItem | null>(null)
+  const [marked, setMarked] = useState(false)
+  const [launchNote, setLaunchNote] = useState<string | null>(null)
+  const [ticketNote, setTicketNote] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [jira, setJira] = useState<JiraReadiness>({ gap: 'Jira configuration could not be read', projectKey: '' })
+  const openId = useRef<string | null>(null)
+  openId.current = open?.finding_id ?? null
 
   const load = useCallback(() => {
     overviewApi
@@ -121,6 +142,28 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
     const id = setInterval(load, POLL_MS)
     return () => clearInterval(id)
   }, [load])
+
+  useEffect(() => {
+    let live = true
+    configApi
+      .getIntegrations()
+      .then((res) => {
+        if (live) setJira(jiraReadiness(res.data))
+      })
+      .catch(() => {
+        if (live) setJira({ gap: 'Jira configuration could not be read', projectKey: '' })
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+
+  useEffect(() => {
+    setMarked(false)
+    setLaunchNote(null)
+    setTicketNote(null)
+    setActionError(null)
+  }, [open?.finding_id])
 
   useEffect(() => () => setWallMode?.(false), [setWallMode])
 
@@ -160,7 +203,59 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
   const agentSort = useTableSort(agentColumns, { key: 'name', dir: 'asc' })
   const feedSort = useTableSort(feedColumns, { key: 'created_at', dir: 'desc' })
 
-  const refs = (open?.evidence_links ?? []).flatMap((link) => (typeof link.ref === 'string' && link.ref ? [link.ref] : []))
+  const stillOpen = (findingId: string) => openId.current === findingId
+
+  const markNoise = async () => {
+    if (!open) return
+    const findingId = open.finding_id
+    const wasMarked = marked
+    setActionError(null)
+    try {
+      if (wasMarked) await findingsApi.clearNoise(findingId)
+      else await findingsApi.markNoise(findingId)
+      if (stillOpen(findingId)) setMarked(!wasMarked)
+      load()
+    } catch (error) {
+      if (stillOpen(findingId)) {
+        setActionError(errorText(error, wasMarked ? 'Couldn’t clear the noise mark' : 'Couldn’t mark this finding'))
+      }
+    }
+  }
+
+  const launch = async () => {
+    if (!open) return
+    const findingId = open.finding_id
+    setActionError(null)
+    try {
+      const res = await findingsApi.launchIntake(findingId)
+      if (!stillOpen(findingId)) return
+      setLaunchNote(res.data.already_queued ? ALREADY_QUEUED : 'Queued for intake.')
+    } catch (error) {
+      if (stillOpen(findingId)) setActionError(errorText(error, 'Couldn’t launch this finding'))
+    }
+  }
+
+  const createTicket = async () => {
+    if (!open?.case_id) return
+    const findingId = open.finding_id
+    const caseId = open.case_id
+    setActionError(null)
+    setTicketNote(null)
+    try {
+      const res = await api.post<{ success?: boolean; error?: string; issue_key?: string }>(
+        `/cases/${encodeURIComponent(caseId)}/export/jira`,
+        { project_key: jira.projectKey },
+      )
+      if (!stillOpen(findingId)) return
+      if (res.data?.success === false) {
+        setActionError(res.data.error || 'Jira export failed')
+        return
+      }
+      setTicketNote(res.data.issue_key ? `Created ${res.data.issue_key}` : 'Ticket created')
+    } catch (error) {
+      if (stillOpen(findingId)) setActionError(errorText(error, 'Jira export failed'))
+    }
+  }
 
   return (
     <>
@@ -235,9 +330,27 @@ export default function OverviewScreen({ goSettings, setWallMode }: ConsoleScree
             <p className="text-[13px] text-tx-2">{open.description ?? 'No description.'}</p>
             <p className="text-[12px] text-tx-3">{open.status} · <span className="tag">{open.terminal_label}</span></p>
             <EvidenceBody item={open} />
-            {refs.map((ref) => (
-              <p key={ref}><a href={ref}>{ref}</a></p>
-            ))}
+            {open.source_link && (
+              <p><a href={open.source_link}>Open in source</a></p>
+            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button type="button" className="btn ghost" onClick={markNoise}>
+                {marked ? 'Clear noise' : 'Mark as noise'}
+              </button>
+              <button type="button" className="btn ghost icon" aria-label={NOISE_INFO} title={NOISE_INFO}>
+                <Icon name="info" size={14} />
+              </button>
+              <button type="button" className="btn ghost" onClick={launch}>Launch</button>
+              {open.case_id && (
+                <button type="button" className="btn ghost" onClick={createTicket}>Create ticket</button>
+              )}
+              <span title="Coming in a later release">
+                <button type="button" className="btn ghost" disabled>ServiceNow</button>
+              </span>
+            </div>
+            {launchNote && <p>{launchNote}</p>}
+            {ticketNote && <p>{ticketNote}</p>}
+            {actionError && <p role="alert">{actionError}</p>}
           </>
         )}
       </Popup>
