@@ -6,11 +6,12 @@ Operates on a caller-provided ``Session``; it never opens or closes one.
 
 import logging
 from datetime import datetime
-from typing import Iterable, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from sqlalchemy import ColumnElement, DateTime, and_, func, literal, or_, select
 from sqlalchemy.orm import Session, aliased
 
+from core.storage.arrays import text_array
 from core.storage.models import CaseIOC, Investigation, SharedIOC
 from core.time import utcnow
 
@@ -162,11 +163,43 @@ class SharedIOCRepository:
 
     def investigations_for(self, keys: Iterable[str]) -> Set[str]:
         """Investigations that have seen any of ``keys``, open or finished."""
-        return self._investigations(keys, live_only=False)
+        clauses = self._key_clauses(keys)
+        if not clauses:
+            return set()
+        stmt = select(SharedIOC.investigation_id).where(or_(*clauses)).distinct()
+        return set(self.session.execute(stmt).scalars().all())
 
-    def open_investigations_for(self, keys: Iterable[str]) -> Set[str]:
-        """As ``investigations_for``, restricted to investigations still live."""
-        return self._investigations(keys, live_only=True)
+    def open_investigations_by_key(self, keys: Iterable[str]) -> Dict[str, Set[str]]:
+        """Each key's live investigations, in one round trip. Keys with none are absent."""
+        pairs = [pair for pair in (split_key(k) for k in set(keys)) if pair]
+        if not pairs:
+            return {}
+        types, values = zip(*pairs)
+        wanted = (
+            func.unnest(text_array(types), text_array(values))
+            .table_valued("ioc_type", "value")
+            .render_derived(name="wanted")
+        )
+        rows = self.session.execute(
+            select(SharedIOC.ioc_type, SharedIOC.value, SharedIOC.investigation_id)
+            .join(
+                wanted,
+                and_(
+                    SharedIOC.ioc_type == wanted.c.ioc_type,
+                    SharedIOC.value == wanted.c.value,
+                ),
+            )
+            .join(
+                Investigation,
+                Investigation.investigation_id == SharedIOC.investigation_id,
+            )
+            .where(_live_clause(utcnow()))
+            .distinct()
+        ).all()
+        by_key: Dict[str, Set[str]] = {}
+        for ioc_type, value, inv_id in rows:
+            by_key.setdefault(f"{ioc_type}:{value}", set()).add(inv_id)
+        return by_key
 
     def shared_between(self, inv_id_a: str, inv_id_b: str) -> Set[str]:
         other = aliased(SharedIOC)
@@ -188,18 +221,6 @@ class SharedIOCRepository:
         return {f"{t}:{v}" for t, v in rows}
 
     # ---- internals -----------------------------------------------------
-
-    def _investigations(self, keys: Iterable[str], *, live_only: bool) -> Set[str]:
-        clauses = self._key_clauses(keys)
-        if not clauses:
-            return set()
-        stmt = select(SharedIOC.investigation_id).where(or_(*clauses))
-        if live_only:
-            stmt = stmt.join(
-                Investigation,
-                Investigation.investigation_id == SharedIOC.investigation_id,
-            ).where(_live_clause(utcnow()))
-        return set(self.session.execute(stmt.distinct()).scalars().all())
 
     def _pairs_for(self, investigation_id: str) -> Set[Tuple[str, str]]:
         rows = self.session.execute(

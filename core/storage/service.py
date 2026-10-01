@@ -8,10 +8,11 @@ import logging
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, func, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import and_, any_, func, or_, select
+from sqlalchemy.orm import joinedload, noload, selectinload
 
 from core.exceptions import default_on_error
+from core.storage.arrays import text_array
 from core.storage.case_repository import CaseRepository
 from core.storage.connection import get_db_manager
 from core.storage.ip_exclusion_repository import exclusion_view_filter
@@ -194,6 +195,25 @@ class DatabaseService:
                 # Detach from session to avoid lazy loading issues
                 session.expunge(finding)
             return finding
+
+    def get_findings_by_ids(self, finding_ids: List[str]) -> List[Dict[str, Any]]:
+        """Findings for these ids in one round trip, dumped inside the session."""
+        if not finding_ids:
+            return []
+        with self.db_manager.session_scope() as session:
+            findings = (
+                session.execute(
+                    select(Finding)
+                    # cases is selectin on the model, batched per 500 ids; the dump never reads it.
+                    .options(
+                        joinedload(Finding.mitre_prediction_rows), noload(Finding.cases)
+                    ).where(Finding.finding_id == any_(text_array(finding_ids)))
+                )
+                .unique()
+                .scalars()
+                .all()
+            )
+            return FindingSchema.dump_many(findings)
 
     @default_on_error(list)
     def get_findings(

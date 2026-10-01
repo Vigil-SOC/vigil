@@ -1,9 +1,10 @@
 """A finding that overlaps open work attaches to its Case (#921, #1002).
 
-``check_overlap`` names the live investigations sharing an entity. The finding
+The overlap lookup names the live investigations sharing an entity. The finding
 goes into the first one's Case. Overlap with only caseless runs (hunts) is not
 a merge: the row proceeds to Claim. A failed write is not a merge either, and
-neither is an overlapping run that will not read: the row stays queued (#997).
+neither is an overlapping run that will not read, nor a lookup or read that
+fails: the row stays queued (#997).
 ``merged_into`` is always a ``cases.case_id``.
 """
 
@@ -29,9 +30,13 @@ def _orchestrator(overlapping, records, data_service) -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig()
     orch.shared_intel = MagicMock()
-    orch.shared_intel.check_overlap.return_value = overlapping
+    orch.shared_intel.overlaps_by_finding.side_effect = lambda findings: {
+        f["finding_id"]: overlapping for f in findings
+    }
     orch.stats = {"dedup_prevented": 0}
-    orch.get_investigation = MagicMock(side_effect=records.get)
+    orch._overlapping_case_ids = MagicMock(
+        side_effect=lambda ids: {i: records[i]["case_id"] for i in ids if i in records}
+    )
     orch._log_ai_decision = MagicMock()
     orch._create_investigation = AsyncMock()
     orch._decide_trigger = MagicMock()
@@ -105,7 +110,7 @@ async def test_overlap_with_caseless_run_is_not_a_merge():
 
 @pytest.mark.asyncio
 async def test_an_unreadable_overlapping_investigation_holds_the_row(caplog):
-    """``check_overlap`` only names live rows, so a read that comes back empty
+    """The overlap lookup only names live rows, so a read that comes back empty
     is a failed read, not a caseless run. Launching on it would open a second
     run on an entity a Case already covers."""
     data_service = MagicMock()
@@ -149,3 +154,35 @@ async def test_no_data_service_reads_as_a_failed_attach(caplog):
     orch._create_investigation.assert_not_awaited()
     orch._decide_trigger.assert_not_called()
     assert orch.stats["dedup_prevented"] == 0
+
+
+@pytest.mark.asyncio
+async def test_a_failed_overlap_lookup_holds_the_row(caplog):
+    """A failed lookup is not "no overlap": launching on it could open a second run
+    on an entity a Case already covers."""
+    data_service = MagicMock()
+    orch = _orchestrator(None, {}, data_service)
+
+    with caplog.at_level("WARNING"):
+        launched = await orch._create_investigation_for_finding(
+            FINDING, None, trigger_id=9
+        )
+
+    assert launched is None
+    assert any("Overlap lookup failed" in r.message for r in caplog.records)
+    orch._create_investigation.assert_not_awaited()
+    orch._decide_trigger.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_investigation_read_holds_the_row():
+    data_service = MagicMock()
+    orch = _orchestrator(["inv-1"], {"inv-1": {"case_id": "case-1"}}, data_service)
+    orch._overlapping_case_ids = MagicMock(return_value=None)
+
+    launched = await orch._create_investigation_for_finding(FINDING, None, trigger_id=9)
+
+    assert launched is None
+    data_service.add_finding_to_case.assert_not_called()
+    orch._create_investigation.assert_not_awaited()
+    orch._decide_trigger.assert_not_called()

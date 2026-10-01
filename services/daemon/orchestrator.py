@@ -17,9 +17,9 @@ import uuid
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import any_, func, select, update
 
 from core.agents.builtins import ORCHESTRATION_DECISION_ID, ORCHESTRATOR_ACTOR
 from core.config import get_settings
@@ -105,6 +105,7 @@ from core.memory.entity_keys import finding_entity_keys, normalise_keys
 from core.response.approval_service import ApprovalService
 from core.response.checkpoints import raise_for_checkpoint
 from core.response.config import decision_rule
+from core.storage.arrays import text_array
 from core.storage.connection import get_db_manager
 from core.storage.models import (
     IN_FLIGHT_INVESTIGATION_STATUSES,
@@ -164,6 +165,38 @@ def _count_schedule_runs_in_flight() -> int:
             )
             .count()
         )
+
+
+def _count_in_flight() -> int:
+    with get_db_manager().session_scope() as session:
+        return (
+            session.query(Investigation)
+            .filter(Investigation.status.in_(IN_FLIGHT_INVESTIGATION_STATUSES))
+            .count()
+        )
+
+
+def _expire_intake_rows(now: datetime, ttl_seconds: int) -> None:
+    with get_db_manager().session_scope() as session:
+        session.execute(
+            update(IntakeTrigger)
+            .where(
+                IntakeTrigger.state == "queued",
+                IntakeTrigger.created_at <= now - timedelta(seconds=ttl_seconds),
+            )
+            .values(state="expired", reason="ttl_expired", decided_at=utcnow())
+        )
+
+
+def _investigation_case_ids(inv_ids: Iterable[str]) -> Dict[str, Optional[str]]:
+    """Each found investigation's case_id. A missing id did not read; raises on failure."""
+    with get_db_manager().session_scope() as session:
+        rows = session.execute(
+            select(Investigation.investigation_id, Investigation.case_id).where(
+                Investigation.investigation_id == any_(text_array(inv_ids))
+            )
+        ).all()
+    return dict(rows)
 
 
 # related_to: the type the case screen labels and an analyst's link defaults to.
@@ -637,11 +670,8 @@ class Orchestrator:
     async def _drain_intake(self, shutdown_event: asyncio.Event):
         """Merge and expire every queued row, then launch in rank order while a slot is free."""
         now = utcnow()
-        launchable: List[Dict] = []
-        for row in self._queued_intake_triggers():
-            kept = self._resolve_intake_row(row, now)
-            if kept is not None:
-                launchable.append(kept)
+        # Off the event loop (#461), so supervision, review and distil keep running.
+        launchable = await asyncio.to_thread(self._resolve_queue, now)
 
         launchable.sort(
             key=lambda r: rank_intake_row(
@@ -654,21 +684,38 @@ class Orchestrator:
         # Rows stay queued while the hour is at the cap; they launch once old
         # spend rolls out of the window.
         if not self._hourly_budget_exhausted():
+            in_flight = self._in_flight()
             schedule_runs = self._schedule_runs_in_flight()
             for row in launchable:
-                if self._in_flight() >= self.config.max_concurrent_agents:
+                if in_flight >= self.config.max_concurrent_agents:
                     break
                 is_schedule = row.get("kind") == "schedule"
                 # Skipped, not a break: rows behind it may be detections.
                 if is_schedule and schedule_runs >= SCHEDULE_RUN_CEILING:
                     continue
-                await self._process_intake_row(row, shutdown_event)
-                if is_schedule:
-                    schedule_runs += 1
+                if await self._process_intake_row(row, shutdown_event):
+                    in_flight += 1
+                    schedule_runs += is_schedule
 
         depth = self._queued_intake_depth()
         if depth is not None:
             self._record_intake_depth(depth)
+
+    def _expire_queued(self, now: datetime) -> None:
+        try:
+            _expire_intake_rows(now, self.config.intake_ttl_seconds)
+        except Exception as e:
+            logger.error(f"Failed to expire intake rows: {e}")
+
+    def _overlapping_case_ids(
+        self, inv_ids: Iterable[str]
+    ) -> Optional[Dict[str, Optional[str]]]:
+        try:
+            return _investigation_case_ids(inv_ids)
+        except Exception as e:
+            # None, not {}: a failed read holds every row with overlap.
+            logger.error(f"Failed to read overlapping investigations: {e}")
+            return None
 
     def _schedule_runs_in_flight(self) -> int:
         try:
@@ -716,19 +763,51 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"Failed to create intake surge notification: {e}")
 
-    def _resolve_intake_row(self, row: Dict, now: datetime) -> Optional[Dict]:
-        """Expire or merge a queued row. Capacity does not wait on this pass."""
-        if intake_age_seconds(row, now) >= self.config.intake_ttl_seconds:
-            self._decide_trigger(row.get("id"), state="expired", reason="ttl_expired")
-            return None
-        if row.get("kind") == "detection":
-            finding = self._hydrate_detection_finding(row)
-            row["_finding"] = finding
-            if finding is not None and self._merge_if_overlaps(finding, row.get("id")):
-                return None
-        return row
+    def _resolve_queue(self, now: datetime) -> List[Dict]:
+        """Expire, read and merge the queue in a fixed handful of queries.
 
-    def _merge_if_overlaps(self, finding: Dict, trigger_id: Optional[int]) -> bool:
+        Runs in a worker thread. Returns the rows that may launch; a detection
+        carries its Finding as ``_finding``, None when it would not read.
+        """
+        ttl = self.config.intake_ttl_seconds
+        self._expire_queued(now)
+        # Past TTL and still queued means the expiry failed; it waits, never launches.
+        rows = [
+            r
+            for r in self._queued_intake_triggers()
+            if intake_age_seconds(r, now) < ttl
+        ]
+        detections = [r for r in rows if r.get("kind") == "detection"]
+        findings = self._hydrate_detection_findings(detections)
+        plan = self._overlap_plan(list(findings.values())) if findings else ({}, {})
+        launchable = []
+        for row in rows:
+            if row.get("kind") == "detection":
+                row["_finding"] = findings.get(row.get("finding_id"))
+                finding = row["_finding"]
+                if finding is not None and self._merge_if_overlaps(
+                    finding, row.get("id"), plan
+                ):
+                    continue
+            launchable.append(row)
+        return launchable
+
+    def _overlap_plan(
+        self, findings: List[Dict]
+    ) -> Tuple[Dict[str, Optional[List[str]]], Optional[Dict[str, Optional[str]]]]:
+        """One overlap lookup and one investigation read for these findings.
+
+        The read comes back None when it failed: every row with overlap then holds.
+        """
+        overlaps = self.shared_intel.overlaps_by_finding(findings)
+        wanted = {inv for ids in overlaps.values() if ids for inv in ids}
+        if not wanted:
+            return overlaps, {}
+        return overlaps, self._overlapping_case_ids(wanted)
+
+    def _merge_if_overlaps(
+        self, finding: Dict, trigger_id: Optional[int], plan=None
+    ) -> bool:
         """True when this row is not launching this tick (merged, or held).
 
         A failed attach is not a merge: no ``dedup_prevented`` bump, no
@@ -737,12 +816,21 @@ class Orchestrator:
 
         Overlap with only caseless live runs (hunts, legacy) is not a merge:
         False, so the row proceeds to Claim and opens its own Case.
+
+        ``plan`` is the tick's ``_overlap_plan``; without one (the check at
+        launch) this finding gets its own. A failed lookup holds.
         """
-        overlapping = self.shared_intel.check_overlap(finding)
+        finding_id = finding.get("finding_id", "unknown")
+        overlaps, case_ids = plan if plan is not None else self._overlap_plan([finding])
+        overlapping = overlaps.get(finding.get("finding_id"), [])
+        if overlapping is None:
+            logger.warning(f"Overlap lookup failed for {finding_id}; leaving queued")
+            return True
         if not overlapping:
             return False
-        finding_id = finding.get("finding_id", "unknown")
-        outcome, merged_into = self._attach_to_overlapping_case(finding_id, overlapping)
+        outcome, merged_into = self._attach_to_overlapping_case(
+            finding_id, overlapping, case_ids
+        )
         if outcome is _Overlap.LAUNCH:
             return False
         if outcome is _Overlap.HOLD:
@@ -758,21 +846,20 @@ class Orchestrator:
         )
         return True
 
-    async def _process_intake_row(self, row: Dict, shutdown_event: asyncio.Event):
+    async def _process_intake_row(
+        self, row: Dict, shutdown_event: asyncio.Event
+    ) -> Optional[str]:
+        """The launched investigation's id, or None when the row did not launch."""
         kind = row.get("kind")
         trigger_id = row.get("id")
         if kind == "detection":
-            finding = (
-                row["_finding"]
-                if "_finding" in row
-                else self._hydrate_detection_finding(row)
-            )
+            finding = row.get("_finding")
             if finding is None:
                 logger.warning(
                     "intake row %s has no finding to launch; leaving queued", trigger_id
                 )
-                return
-            await self._create_investigation_for_finding(
+                return None
+            return await self._create_investigation_for_finding(
                 finding, shutdown_event, trigger_id=trigger_id
             )
         elif kind in ("schedule", "human_ask"):
@@ -780,11 +867,12 @@ class Orchestrator:
             item["priority"] = row.get("priority") or item.get("priority") or "medium"
             if kind == "schedule":
                 item.setdefault("trigger_type", "scheduled")
-            await self._create_manual_investigation(
+            return await self._create_manual_investigation(
                 item, shutdown_event, trigger_id=trigger_id
             )
         else:
             logger.warning(f"Unknown intake kind: {kind}")
+            return None
 
     async def _create_investigation_for_finding(
         self,
@@ -801,11 +889,11 @@ class Orchestrator:
         )
 
         if self._merge_if_overlaps(finding, trigger_id):
-            return
+            return None
 
         workflow_id = select_workflow(finding)
         finding_id = finding.get("finding_id")
-        await self._create_investigation(
+        return await self._create_investigation(
             workflow_id=workflow_id,
             findings=[finding],
             trigger_type="finding",
@@ -820,7 +908,10 @@ class Orchestrator:
         )
 
     def _attach_to_overlapping_case(
-        self, finding_id: str, overlapping: List[str]
+        self,
+        finding_id: str,
+        overlapping: List[str],
+        case_ids: Optional[Dict[str, Optional[str]]],
     ) -> Tuple[_Overlap, Optional[str]]:
         """Attach a finding to the Case of the first overlapping live run that has one.
 
@@ -830,22 +921,20 @@ class Orchestrator:
         Claim. Anything else is ``HOLD`` — the row stays ``queued`` and the
         next tick retries.
 
-        ``check_overlap`` names only rows that are live, so an investigation
-        that will not read is a failed read rather than a caseless run:
-        ``get_investigation`` answers ``None`` for a database error the same
-        way it does for a row that is gone. Launching on that would open a
-        second run on an entity a Case already covers, so an unreadable row
-        holds.
+        The overlap lookup names only rows that are live, so an investigation
+        missing from ``case_ids`` is a failed read rather than a caseless run,
+        and ``case_ids`` of None is a read that failed outright. Launching on
+        either would open a second run on an entity a Case already covers, so
+        an unreadable row holds.
         """
         for inv_id in overlapping:
-            investigation = self.get_investigation(inv_id)
-            if investigation is None:
+            if case_ids is None or inv_id not in case_ids:
                 logger.warning(
                     f"Finding {finding_id} overlaps investigation {inv_id} "
                     f"but it would not read; leaving queued"
                 )
                 return _Overlap.HOLD, None
-            case_id = investigation.get("case_id")
+            case_id = case_ids[inv_id]
             if not case_id:
                 continue
             # No data service reads as a failed attach: logged, never raised.
@@ -892,7 +981,7 @@ class Orchestrator:
                 priority=item.get("priority") or "medium",
             )
 
-        await self._create_investigation(
+        return await self._create_investigation(
             workflow_id=workflow_id,
             findings=findings,
             # The intake is shared, so what put the item on it is the item's to say.
@@ -1034,7 +1123,7 @@ class Orchestrator:
                 trigger_id,
                 inv_id,
             )
-            return
+            return None
 
         self.shared_intel.register_investigation(inv_id, findings)
         self.stats["investigations_created"] += 1
@@ -1065,6 +1154,7 @@ class Orchestrator:
 
         if not self.config.dry_run and not shutting_down:
             await self._enqueue_investigation(inv_record)
+        return inv_id
 
     async def _pickup_assigned_investigations(self, shutdown_event: asyncio.Event):
         """Re-enqueue assigned investigations after a restart."""
@@ -1215,7 +1305,12 @@ class Orchestrator:
     IN_FLIGHT = IN_FLIGHT_INVESTIGATION_STATUSES
 
     def _in_flight(self) -> int:
-        return sum(len(self._get_investigations_by_status(s)) for s in self.IN_FLIGHT)
+        try:
+            return _count_in_flight()
+        except Exception as e:
+            # Unknown reads as full, as for schedule runs: hold launches rather than overfill.
+            logger.error(f"Failed to count in-flight investigations: {e}")
+            return self.config.max_concurrent_agents
 
     # A run belongs to the worker, so nothing here stops one. The record is marked
     # and the run finishes or hits its ceiling; reaping a stalled worker is #633.
@@ -2188,12 +2283,13 @@ class Orchestrator:
             logger.error(f"Failed to read intake queue: {e}")
             return []
 
-    def _hydrate_detection_finding(self, row: Dict) -> Optional[Dict]:
-        finding_id = row.get("finding_id")
-        if not finding_id or not self._data_service:
-            return None
-        finding = self._data_service.get_finding(finding_id)
-        return lift_ai_enrichment(finding) if finding else None
+    def _hydrate_detection_findings(self, rows: List[Dict]) -> Dict[str, Dict]:
+        """Each detection row's Finding, keyed by finding_id, from one read."""
+        ids = [r["finding_id"] for r in rows if r.get("finding_id")]
+        if not ids or not self._data_service:
+            return {}
+        found = self._data_service.get_findings_by_ids(ids)
+        return {fid: lift_ai_enrichment(f) for fid, f in found.items()}
 
     def _decide_trigger(
         self,

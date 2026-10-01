@@ -1,7 +1,7 @@
 """Cross-investigation IOC correlation over ``shared_iocs``.
 
 Nothing is held in process, so overlap survives a daemon restart. Dedup
-(``check_overlap``) is bounded to live investigations; correlation reads the
+(``overlaps_by_finding``) is bounded to live investigations; correlation reads the
 whole table.
 """
 
@@ -51,20 +51,30 @@ class SharedIntelligence:
             "register", lambda repo: repo.record(investigation_id, keys), None
         )
 
-    def check_overlap(
-        self, finding: Dict[str, Any], exclude_id: Optional[str] = None
-    ) -> List[str]:
-        """Live investigations already covering one of this finding's entities."""
-        keys = _keys_from_finding(finding)
-        if not keys:
-            return []
+    def overlaps_by_finding(
+        self, findings: Iterable[Dict[str, Any]]
+    ) -> Dict[str, Optional[List[str]]]:
+        """Each finding's overlapping live investigations, sorted, from one lookup.
 
-        overlapping = self._with_repo(
-            "overlap lookup", lambda repo: repo.open_investigations_for(keys), set()
-        )
-        if exclude_id:
-            overlapping.discard(exclude_id)
-        return sorted(overlapping)
+        A finding with no entity keys maps to []. None means the lookup failed:
+        a failure is never "no overlap".
+        """
+        keyed = {f.get("finding_id"): _keys_from_finding(f) for f in findings}
+        wanted = set().union(*keyed.values())
+        if not wanted:
+            return {fid: [] for fid in keyed}
+        try:
+            with get_db_manager().session_scope() as session:
+                by_key = SharedIOCRepository(session).open_investigations_by_key(wanted)
+        except Exception as e:
+            logger.error(
+                "shared_iocs batched overlap lookup failed: %s", e, exc_info=True
+            )
+            return {fid: (None if keys else []) for fid, keys in keyed.items()}
+        return {
+            fid: sorted(set().union(*(by_key.get(k, set()) for k in keys)))
+            for fid, keys in keyed.items()
+        }
 
     def get_related_investigations(self, investigation_id: str) -> List[str]:
         """Investigations that share an indicator with the given one, ever."""

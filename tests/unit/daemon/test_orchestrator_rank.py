@@ -62,11 +62,20 @@ def _human_ask(priority, *, age_s=60, **extra):
     return row
 
 
+def _hydrate_each(finding_for_row):
+    """A batched hydrate built from a per-row one."""
+    return lambda rows: {r["finding_id"]: finding_for_row(r) for r in rows}
+
+
 def _orchestrator(**extra) -> Orchestrator:
     orch = object.__new__(Orchestrator)
     orch.config = OrchestratorConfig()
     orch.shared_intel = MagicMock()
-    orch.shared_intel.check_overlap.return_value = None
+    orch.shared_intel.overlaps_by_finding.side_effect = lambda findings: {
+        f["finding_id"]: [] for f in findings
+    }
+    orch._overlapping_case_ids = MagicMock(return_value={})
+    orch._expire_queued = MagicMock()
     orch.stats = {"dedup_prevented": 0, "investigations_created": 0}
     orch._create_investigation = AsyncMock()
     orch._create_manual_investigation = AsyncMock()
@@ -194,6 +203,7 @@ async def test_one_slot_launches_critical_then_older_high():
     async def create(**kwargs):
         launched.append(kwargs["trigger_id"])
         inflight["n"] += 1
+        return f"inv-{kwargs['trigger_id']}"
 
     orch = _orchestrator()
     orch.config.max_concurrent_agents = 1
@@ -217,8 +227,8 @@ async def test_one_slot_launches_critical_then_older_high():
             "entity_context": {},
         },
     }
-    orch._hydrate_detection_finding = MagicMock(
-        side_effect=lambda row: findings[row["finding_id"]]
+    orch._hydrate_detection_findings = _hydrate_each(
+        lambda row: findings[row["finding_id"]]
     )
     rows = [
         _detection("high", age_s=120, finding_id="f-h1", id=1),
@@ -243,6 +253,7 @@ async def test_one_slot_launches_medium_before_low_before_unrated():
     async def create(**kwargs):
         launched.append(kwargs["trigger_id"])
         inflight["n"] += 1
+        return f"inv-{kwargs['trigger_id']}"
 
     orch = _orchestrator()
     orch.config.max_concurrent_agents = 1
@@ -253,8 +264,8 @@ async def test_one_slot_launches_medium_before_low_before_unrated():
         "f-low": {"finding_id": "f-low", "severity": "low", "entity_context": {}},
         "f-med": {"finding_id": "f-med", "severity": "medium", "entity_context": {}},
     }
-    orch._hydrate_detection_finding = MagicMock(
-        side_effect=lambda row: findings[row["finding_id"]]
+    orch._hydrate_detection_findings = _hydrate_each(
+        lambda row: findings[row["finding_id"]]
     )
     rows = [
         _detection(None, age_s=90, finding_id="f-none", id=1),
@@ -284,8 +295,8 @@ async def test_past_ttl_expires_with_a_reason_even_when_no_slot_is_free():
         id=1,
     )
     waiting = _detection("low", age_s=10, finding_id="f-low", id=2)
-    orch._hydrate_detection_finding = MagicMock(
-        side_effect=lambda row: {
+    orch._hydrate_detection_findings = _hydrate_each(
+        lambda row: {
             "finding_id": row["finding_id"],
             "severity": "critical" if row["id"] == 1 else "low",
             "entity_context": {},
@@ -295,9 +306,9 @@ async def test_past_ttl_expires_with_a_reason_even_when_no_slot_is_free():
 
     await orch._drain_intake(None)
 
-    orch._decide_trigger.assert_called_once_with(
-        1, state="expired", reason="ttl_expired"
-    )
+    # One statement expires every row past TTL; the DB tick test checks its state.
+    orch._expire_queued.assert_called_once_with(NOW)
+    orch._decide_trigger.assert_not_called()
     orch._create_investigation.assert_not_awaited()
 
 
@@ -305,14 +316,15 @@ async def test_past_ttl_expires_with_a_reason_even_when_no_slot_is_free():
 async def test_overlap_and_expiry_resolve_when_the_fleet_is_full():
     orch = _orchestrator()
     orch._in_flight = MagicMock(return_value=orch.config.max_concurrent_agents)
-    orch.shared_intel.check_overlap.side_effect = lambda finding: (
-        ["inv-1"] if finding["finding_id"] == "f-overlap" else None
-    )
+    orch.shared_intel.overlaps_by_finding.side_effect = lambda findings: {
+        f["finding_id"]: ["inv-1"] if f["finding_id"] == "f-overlap" else []
+        for f in findings
+    }
     expired = _detection("low", age_s=TTL + 60, finding_id="f-old", id=1)
     overlapping = _detection("high", age_s=10, finding_id="f-overlap", id=2)
     waiting = _detection("medium", age_s=5, finding_id="f-med", id=3)
-    orch._hydrate_detection_finding = MagicMock(
-        side_effect=lambda row: {
+    orch._hydrate_detection_findings = _hydrate_each(
+        lambda row: {
             "finding_id": row["finding_id"],
             "severity": {"f-old": "low", "f-overlap": "high", "f-med": "medium"}[
                 row["finding_id"]
@@ -327,7 +339,8 @@ async def test_overlap_and_expiry_resolve_when_the_fleet_is_full():
     await orch._drain_intake(None)
 
     states = {c.args[0]: c.kwargs["state"] for c in orch._decide_trigger.call_args_list}
-    assert states == {1: "expired", 2: "merged"}
+    assert states == {2: "merged"}
+    orch._expire_queued.assert_called_once_with(NOW)
     orch._create_investigation.assert_not_awaited()
     assert all(
         c.kwargs.get("state") != "shed" for c in orch._decide_trigger.call_args_list
@@ -354,6 +367,7 @@ def _slot_orchestrator(rows, *, inflight=0, schedule_inflight=0):
     async def create(*_args, trigger_id=None, **_kwargs):
         launched.append(trigger_id)
         count["n"] += 1
+        return f"inv-{trigger_id}"
 
     orch = _orchestrator()
     orch.config.max_concurrent_agents = 3
@@ -361,8 +375,8 @@ def _slot_orchestrator(rows, *, inflight=0, schedule_inflight=0):
     orch._create_manual_investigation = create
     orch._in_flight = lambda: count["n"]
     orch._schedule_runs_in_flight = MagicMock(return_value=schedule_inflight)
-    orch._hydrate_detection_finding = MagicMock(
-        side_effect=lambda row: {
+    orch._hydrate_detection_findings = _hydrate_each(
+        lambda row: {
             "finding_id": row["finding_id"],
             "severity": "high",
             "entity_context": {},
@@ -409,10 +423,58 @@ async def test_held_schedule_row_still_expires_on_ttl():
 
     await orch._drain_intake(None)
 
-    orch._decide_trigger.assert_called_once_with(
-        1, state="expired", reason="ttl_expired"
-    )
+    orch._expire_queued.assert_called_once_with(NOW)
     assert launched == []
+
+
+@pytest.mark.asyncio
+async def test_in_flight_is_counted_once_per_tick():
+    rows = [
+        _detection("high", age_s=60 - n, finding_id=f"f-{n}", id=n) for n in range(5)
+    ]
+    orch, launched = _slot_orchestrator(rows)
+    orch._in_flight = MagicMock(return_value=0)
+
+    await orch._drain_intake(None)
+
+    orch._in_flight.assert_called_once()
+    assert launched == [0, 1, 2]
+
+
+@pytest.mark.asyncio
+async def test_a_launch_that_did_not_happen_leaves_its_slot_free():
+    rows = [
+        _detection("critical", age_s=30, finding_id="f-1", id=1),
+        _detection("high", age_s=20, finding_id="f-2", id=2),
+    ]
+    orch, launched = _slot_orchestrator(rows)
+    orch.config.max_concurrent_agents = 1
+
+    async def lost_then_launched(*_args, trigger_id=None, **_kwargs):
+        launched.append(trigger_id)
+        return None if trigger_id == 1 else f"inv-{trigger_id}"
+
+    orch._create_investigation = lost_then_launched
+
+    await orch._drain_intake(None)
+
+    assert launched == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_a_schedule_row_that_did_not_launch_leaves_the_ceiling_free():
+    rows = [_schedule("scheduled", age_s=120, id=1), _schedule("intel", age_s=60, id=2)]
+    orch, launched = _slot_orchestrator(rows)
+
+    async def first_fails(*_args, trigger_id=None, **_kwargs):
+        launched.append(trigger_id)
+        return None if trigger_id == 1 else f"inv-{trigger_id}"
+
+    orch._create_manual_investigation = first_fails
+
+    await orch._drain_intake(None)
+
+    assert launched == [1, 2]
 
 
 @pytest.mark.asyncio
