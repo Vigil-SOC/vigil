@@ -975,6 +975,25 @@ describe('why a finished run ended', () => {
 
     expect(screen.getByRole('heading', { name: 'Error' })).toBeInTheDocument()
   })
+
+  it('badges a budget stop on a run that has no hunt projection', () => {
+    renderPanel({ status: 'completed', outcome: 'budget_exhausted', reason: 'hit the cost ceiling' })
+
+    expect(screen.getByText('stopped at budget')).toHaveAttribute('title', 'hit the cost ceiling')
+    expect(screen.queryByRole('heading', { name: 'Error' })).toBeNull()
+  })
+
+  it('leaves a hunt projection outcome as the projection wrote it', () => {
+    renderPanel({
+      status: 'completed',
+      outcome: 'budget_exhausted',
+      reason: 'hit the cost ceiling',
+      hunt: hunt({ outcome: 'budget_terminated', reason: 'ran out of turns' }),
+    })
+
+    expect(screen.getByText('budget_terminated')).toBeInTheDocument()
+    expect(screen.queryByText('stopped at budget')).toBeNull()
+  })
 })
 
 /* The standings say what the hunt believes and the evidence says what came back;

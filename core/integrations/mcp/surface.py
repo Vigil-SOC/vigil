@@ -61,12 +61,15 @@ def is_enabled() -> bool:
     return bool(stored["enabled"])
 
 
-def set_enabled(enabled: bool) -> bool:
-    """Record the operator's choice. Returns whether it was written."""
+def set_enabled(enabled: bool, updated_by: str) -> bool:
+    """Record the operator's choice. Returns whether it was written.
+
+    ``updated_by`` is the signed-in user, stored on the audit row.
+    """
     from core.storage.config_service import get_config_service
 
     return bool(
-        get_config_service().set_system_config(
+        get_config_service(user_id=updated_by).set_system_config(
             key=CONFIG_KEY,
             value={"enabled": bool(enabled)},
             config_type="mcp",

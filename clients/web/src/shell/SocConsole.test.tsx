@@ -4,7 +4,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { ColorSchemeProvider } from '../contexts/ColorSchemeContext'
 import SocConsole from './SocConsole'
 // these resolve to the mocked implementations (vi.mock below is hoisted)
-import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi } from '../services/api'
+import api, { streamFetch, aiDecisionsApi, approvalsApi, workflowApi, configApi, consoleApi } from '../services/api'
 
 vi.mock('../contexts/AuthContext', () => ({
   useAuth: () => ({
@@ -44,6 +44,13 @@ vi.mock('../services/api', () => ({
         data: { case_id: id, title: 'Defense Evasion: Obfuscated Loader', status: 'open', priority: 'high', assignee: 'j.reyes', finding_ids: ['f-1'], created_at: '2026-06-15T09:14:00Z' },
       }),
     getSummary: () => Promise.resolve({ data: { total: 7, by_status: { open: 5, investigating: 1, closed: 1 } } }),
+    getSLA: () => Promise.resolve({ data: {} }),
+    getRecord: () => Promise.resolve({ data: { rows: [], run_id: null, investigation_id: null } }),
+    getComments: () => Promise.resolve({ data: { comments: [] } }),
+    getTasks: () => Promise.resolve({ data: { tasks: [] } }),
+    getEvidence: () => Promise.resolve({ data: { evidence: [] } }),
+    getIOCs: () => Promise.resolve({ data: { iocs: [] } }),
+    getEscalations: () => Promise.resolve({ data: { escalations: [] } }),
   },
   exclusionsApi: {
     list: () => Promise.resolve({ data: { exclusions: [], total: 0 } }),
@@ -79,7 +86,23 @@ vi.mock('../services/api', () => ({
     getModels: () => Promise.resolve({ data: { models: [{ id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' }] } }),
   },
   mcpApi: {
-    getStatuses: () => Promise.resolve({ data: { statuses: [{ status: 'ok' }, { status: 'ok' }] } }),
+    getStatuses: () => Promise.resolve({
+      data: {
+        statuses: [
+          { name: 'a', status: 'running', enabled: true },
+          { name: 'b', status: 'running', enabled: true },
+        ],
+      },
+    }),
+  },
+  federationApi: {
+    getHealth: () => Promise.resolve({ data: { sources: [] } }),
+  },
+  consoleApi: {
+    getHealth: vi.fn(() => Promise.resolve({
+      data: { status: 'healthy', version: '1.2.3', storage: { database_available: true }, schema: { state: 'current' } },
+    })),
+    getRoutability: vi.fn(() => Promise.resolve({ data: { providers: { gemini: true } } })),
   },
   aiConfigApi: {
     getConfig: () => Promise.resolve({ data: { components: [], assignments: {} } }),
@@ -154,6 +177,10 @@ vi.mock('../services/api', () => ({
     setTheme: () => Promise.resolve({ data: {} }),
     getIntegrations: () => Promise.resolve({ data: { enabled_integrations: [] } }),
     getGeneral: () => Promise.resolve({ data: { show_notifications: false } }),
+    getAutonomy: vi.fn(() => Promise.resolve({
+      data: { auto_response_enabled: true, force_manual_approval: false },
+    })),
+    getDemoMode: vi.fn(() => Promise.resolve({ data: { enabled: false } })),
   },
   orchestratorApi: {
     getStatus: () => Promise.resolve({ data: { enabled: false } }),
@@ -177,6 +204,39 @@ vi.mock('../services/api', () => ({
     getSessionSummary: () => Promise.resolve(null),
     listInteractions: () => Promise.resolve({ interactions: [] }),
     getInteraction: () => Promise.resolve({}),
+  },
+  triageApi: {
+    get: () => Promise.resolve({
+      data: {
+        rows: [],
+        strip: {
+          picked_up: { launched_or_merged: 0, created_today: 0, share: null },
+          waiting: 0,
+          cases_created_today: 0,
+          trust_floor: 'Not measured yet',
+        },
+        sources: [],
+        unmeasured_text: 'Not measured yet',
+      },
+    }),
+  },
+  overviewApi: {
+    get: () => Promise.resolve({
+      data: {
+        day: '2026-10-01',
+        empty: true,
+        arrivals: [],
+        engine: { source_text: '' },
+        outcomes: [],
+        running_source: '',
+        step_source: '',
+        rate_info: '',
+        good_at: 0.95,
+        fair_at: 0.85,
+        agents: [],
+        feed: [],
+      },
+    }),
   },
   conversationsApi: {
     list: () => Promise.resolve({ data: { conversations: [] } }),
@@ -213,15 +273,45 @@ const defaultViewportWidth = window.innerWidth
 afterEach(() => {
   localStorage.clear()
   Object.defineProperty(window, 'innerWidth', { configurable: true, value: defaultViewportWidth })
+  vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
+  vi.mocked(consoleApi.getHealth).mockResolvedValue({
+    data: { status: 'healthy', version: '1.2.3', storage: { database_available: true }, schema: { state: 'current' } },
+  } as never)
+  vi.mocked(consoleApi.getRoutability).mockResolvedValue({ data: { providers: { gemini: true } } } as never)
+  vi.mocked(configApi.getAutonomy).mockResolvedValue({
+    data: { auto_response_enabled: true, force_manual_approval: false },
+  } as never)
+  vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: false } } as never)
 })
 
 const title = () => screen.getByRole('heading', { level: 1 }).textContent
+
+const MORE_LABELS = ['Overview', 'Triage', 'Dashboard', 'Case Metrics', 'Analytics', 'AI Decisions', 'Auto Ops', 'Health']
+
+function clickScreen(name: string) {
+  const inMore = MORE_LABELS.some((label) => name === label || name.startsWith(`${label} (`))
+  if (inMore) {
+    const more = screen.getByRole('button', { name: 'More' })
+    if (more.getAttribute('aria-expanded') !== 'true') fireEvent.click(more)
+  }
+  fireEvent.click(screen.getByRole('button', { name }))
+}
 
 describe('SocConsole', () => {
   it('mounts on the Dashboard', () => {
     renderConsole()
     expect(title()).toBe('Dashboard')
     expect(screen.getByText('Security operations overview')).toBeInTheDocument()
+  })
+
+  it('shows one demo banner only while demo mode is on', async () => {
+    renderConsole()
+    await screen.findByText('Security operations overview')
+    expect(screen.queryByText('The data on screen is demo data.')).not.toBeInTheDocument()
+
+    vi.mocked(configApi.getDemoMode).mockResolvedValue({ data: { enabled: true } } as never)
+    renderConsole()
+    expect(await screen.findByText('The data on screen is demo data.')).toBeInTheDocument()
   })
 
   it('renders the 404 screen for an unknown path and routes home', async () => {
@@ -234,21 +324,38 @@ describe('SocConsole', () => {
     expect(title()).toBe('Dashboard')
   })
 
-  it('navigates across every screen via the nav rail', () => {
+  it('navigates primary screens and the More menu', () => {
     renderConsole()
     const screens: [string, string][] = [
       ['Cases', 'Cases'],
+      ['Agents & workflows', 'Workflows & Skills'],
+      ['Settings', 'Settings'],
+      ['Overview', 'Overview'],
+      ['Triage', 'Triage'],
+      ['Dashboard', 'Dashboard'],
       ['Case Metrics', 'Case Metrics'],
       ['Analytics', 'Analytics Dashboard'],
       ['AI Decisions', 'AI Decisions'],
-      ['Workflows & Skills', 'Workflows & Skills'],
+      ['Auto Ops', 'Auto Ops'],
       ['Health', 'Health'],
-      ['Dashboard', 'Dashboard'],
     ]
     for (const [navLabel, pageTitle] of screens) {
-      fireEvent.click(screen.getByRole('button', { name: navLabel }))
+      clickScreen(navLabel)
       expect(title()).toBe(pageTitle)
     }
+  })
+
+  it('hides the rail and the top bar while Overview is on the wall', async () => {
+    renderConsole('/overview')
+    expect(await screen.findByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
+    fireEvent.click(screen.getByRole('button', { name: 'Wall' }))
+    expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument()
+    expect(document.querySelector('[data-command-slot]')).toBeNull()
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Exit wall' }))
+    expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
   })
 
   it('shows spend, approval depth and recent run outcomes on the Health screen', async () => {
@@ -343,20 +450,18 @@ describe('SocConsole', () => {
 
   it('opens the Cases master-detail and returns to the table', async () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'Cases' }))
+    clickScreen('Cases')
     fireEvent.click(await screen.findByText('Defense Evasion: Obfuscated Loader'))
     const back = screen.getByRole('button', { name: /All cases/ })
     expect(back).toBeInTheDocument()
-    // "Case details" is stable Overview content; "Linked findings" moved to the
-    // Investigation tab
-    expect(screen.getByText('Case details')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Summary/ })).toBeInTheDocument()
     fireEvent.click(back)
     expect(screen.getByRole('button', { name: 'New Case' })).toBeInTheDocument()
   })
 
   it('opens the AI Decisions review queue', async () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'AI Decisions' }))
+    clickScreen('AI Decisions')
     fireEvent.click(await screen.findByText('Cluster merge'))
     expect(screen.getByText('AI recommendation')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /All decisions/ })).toBeInTheDocument()
@@ -364,7 +469,7 @@ describe('SocConsole', () => {
 
   it('switches Workflows tabs and loads a read-only skills list from the API', async () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'Workflows & Skills' }))
+    clickScreen('Agents & workflows')
     fireEvent.click(screen.getByRole('tab', { name: 'Agents' }))
     expect(screen.getByText('SOC Agents')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('tab', { name: 'Skills' }))
@@ -442,8 +547,9 @@ describe('SocConsole', () => {
 
     renderConsole()
 
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
     expect(await screen.findByRole('button', { name: 'AI Decisions (2 waiting)' })).toBeInTheDocument()
-    vi.mocked(approvalsApi.listPending).mockResolvedValue({ data: { actions: [] } } as never)
+    expect(screen.getByRole('button', { name: 'More' })).not.toHaveTextContent('2')
   })
 
   // The badge counts pending approvals, so the click has to land on the tab
@@ -460,6 +566,7 @@ describe('SocConsole', () => {
     } as never)
 
     renderConsole()
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
     fireEvent.click(await screen.findByRole('button', { name: 'AI Decisions (2 waiting)' }))
 
     const approvals = await screen.findByRole('tab', { name: 'Pending Approvals (2)' })
@@ -473,7 +580,7 @@ describe('SocConsole', () => {
   // the screen is for when nothing is parked.
   it('opens the feedback tab when nothing is waiting on approval', async () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'AI Decisions' }))
+    clickScreen('AI Decisions')
 
     expect(await screen.findByRole('tab', { name: /^Pending \(/ })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('tab', { name: 'Pending Approvals (0)' })).toHaveAttribute('aria-selected', 'false')
@@ -488,6 +595,7 @@ describe('SocConsole', () => {
     } as never)
 
     renderConsole()
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
     fireEvent.click(await screen.findByRole('button', { name: 'AI Decisions (1 waiting)' }))
     // open a decision from the feedback queue first
     fireEvent.click(screen.getByRole('tab', { name: /^Pending \(/ }))
@@ -495,7 +603,7 @@ describe('SocConsole', () => {
     expect(screen.getByText('AI recommendation')).toBeInTheDocument()
 
     // now the badge: the approvals queue must actually appear
-    fireEvent.click(screen.getByRole('button', { name: 'AI Decisions (1 waiting)' }))
+    clickScreen('AI Decisions (1 waiting)')
 
     expect(await screen.findByRole('tab', { name: 'Pending Approvals (1)' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('isolate_host: host1')).toBeInTheDocument()
@@ -510,7 +618,7 @@ describe('SocConsole', () => {
     renderConsole('/decisions?tab=approvals')
 
     expect(await screen.findByRole('tab', { name: 'Pending Approvals (0)' })).toHaveAttribute('aria-selected', 'true')
-    fireEvent.click(screen.getByRole('button', { name: 'AI Decisions' }))
+    clickScreen('AI Decisions')
 
     expect(await screen.findByRole('tab', { name: /^Pending \(/ })).toHaveAttribute('aria-selected', 'true')
   })
@@ -550,7 +658,7 @@ describe('SocConsole', () => {
 
   it('submits decision feedback through the inline review pane', async () => {
     renderConsole()
-    fireEvent.click(screen.getByRole('button', { name: 'AI Decisions' }))
+    clickScreen('AI Decisions')
     fireEvent.click(await screen.findByText('Cluster merge'))
     fireEvent.change(screen.getByPlaceholderText('Your name / analyst ID'), {
       target: { value: 'QA Analyst' },
@@ -583,6 +691,71 @@ describe('SocConsole', () => {
     expect(createUrl).toHaveBeenCalledTimes(1)
     expect(captured?.type).toBe('text/csv')
     clickSpy.mockRestore()
+  })
+
+  it('shows Act, and Assist when force-manual is set or auto-response is off', async () => {
+    const { unmount } = renderConsole()
+    expect(await screen.findByText('Autonomy · Act · reversible changes on its own')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'How autonomy is derived' }))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('force_manual_approval')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('auto_response_enabled')
+    unmount()
+
+    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
+      data: { auto_response_enabled: true, force_manual_approval: true },
+    } as never)
+    const forced = renderConsole()
+    expect(await screen.findByText('Autonomy · Assist · asks before changes')).toBeInTheDocument()
+    forced.unmount()
+
+    vi.mocked(configApi.getAutonomy).mockResolvedValueOnce({
+      data: { auto_response_enabled: false, force_manual_approval: false },
+    } as never)
+    renderConsole()
+    expect(await screen.findByText('Autonomy · Assist · asks before changes')).toBeInTheDocument()
+  })
+
+  it('paints vg-dark and vg-light from the profile menu', async () => {
+    const { container } = renderConsole()
+    const root = container.querySelector('.soc-console')
+    expect(root).toHaveClass('vg-dark')
+    await screen.findByText('Autonomy · Act · reversible changes on its own')
+    fireEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Light' }))
+    expect(root).toHaveClass('vg-light')
+    expect(root).not.toHaveClass('vg-dark')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Dark' }))
+    expect(root).toHaveClass('vg-dark')
+  })
+
+  it('reads Good when the checks are clear and Poor when health is not', async () => {
+    const { unmount } = renderConsole()
+    const good = await screen.findByRole('status', { name: 'System status' })
+    expect(good).toHaveTextContent('Good')
+    expect(good).toHaveTextContent('No problems reported.')
+    expect(good).not.toHaveClass('is-poor')
+    unmount()
+
+    vi.mocked(consoleApi.getHealth).mockResolvedValue({
+      data: {
+        status: 'degraded',
+        storage: { database_available: true },
+        schema: { state: 'current' },
+      },
+    } as never)
+    renderConsole()
+    const poor = await screen.findByRole('status', { name: 'System status' })
+    expect(poor).toHaveTextContent('Poor')
+    expect(poor).toHaveTextContent('Health is degraded.')
+    expect(poor).toHaveClass('is-poor')
+  })
+
+  it('omits a failed routability read instead of calling the line Fair', async () => {
+    vi.mocked(consoleApi.getRoutability).mockRejectedValueOnce(new Error('403'))
+    renderConsole()
+    const line = await screen.findByRole('status', { name: 'System status' })
+    expect(line).toHaveTextContent('Good')
+    expect(line).not.toHaveTextContent('No routable provider.')
   })
 
   it('exports the filtered findings as a browser CSV download', async () => {

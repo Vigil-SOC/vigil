@@ -127,9 +127,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      # service_started, not service_healthy: /api/health always returns 200
-      # "healthy" (including on error), so compose treating the backend as
-      # ready is not a schema signal. The wait loop above is the real gate.
+      # service_started, not service_healthy: /api/health always returns 200,
+      # including when the body says "degraded", so compose treating the
+      # backend as ready is not a schema signal. The wait loop above is the
+      # real gate.
       # Started implies postgres/redis/bifrost are already up, which a
       # postgres-only depends_on would not.
       backend:

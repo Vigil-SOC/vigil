@@ -251,7 +251,10 @@ class FederationRunner:
             dedup = self._dedup[source_id]
             if await dedup.is_processed(ext):
                 continue
-            if not await self._enqueue(finding, source_id):
+            if self._output_queue is None:
+                # No queue means the put never happened — leave the key unmarked.
+                continue
+            if not await self._enqueue(finding, source_id, dedup, ext):
                 # Shutdown while the hand-off was full: drop the rest of the
                 # page and keep the cursor, so the next boot fetches it again.
                 logger.info(
@@ -268,12 +271,18 @@ class FederationRunner:
         store.record_success(source_id, cursor=result.cursor or {})
         return result.truncated
 
-    async def _enqueue(self, finding: Dict[str, Any], source_id: str) -> bool:
+    async def _enqueue(
+        self,
+        finding: Dict[str, Any],
+        source_id: str,
+        dedup: RedisDedupSet,
+        dedup_key: str,
+    ) -> bool:
         """Wait for room in the hand-off. False if shutdown came first."""
-        if self._output_queue is None:
-            return True
         return await put_or_shutdown(
-            self._output_queue, envelope(finding, source_id), self._shutdown
+            self._output_queue,
+            envelope(finding, source_id, dedup=dedup, dedup_key=dedup_key),
+            self._shutdown,
         )
 
     # ------------------------------------------------------------------

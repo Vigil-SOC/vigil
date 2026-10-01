@@ -64,6 +64,9 @@ export interface Attempt {
   // never parses what was rendered, and rendering stays in one place.
   result: ToolResult;
   wrapped: Wrapped;
+  // Set by invoke. Absent when the attempt never ran: a refusal, a rejection,
+  // or a result served from an earlier pass of the ledger.
+  duration_ms?: number;
 }
 
 // tool and args are null when the run parked on a checkpoint the harness did not

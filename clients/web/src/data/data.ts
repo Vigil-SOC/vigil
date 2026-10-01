@@ -1,6 +1,8 @@
 import type { IconName } from '../shared/icons'
 
 export type ConsoleScreenKey =
+  | 'overview'
+  | 'triage'
   | 'dashboard'
   | 'cases'
   | 'metrics'
@@ -21,6 +23,8 @@ export interface NavGate {
 /** Nothing is gated today. Auto Ops is deliberately always-visible — gating it
  *  made it vanish confusingly. */
 export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
+  ['graph', 'Overview', 'overview'],
+  ['clock', 'Triage', 'triage'],
   ['grid', 'Dashboard', 'dashboard'],
   ['folder', 'Cases', 'cases'],
   ['bars', 'Case Metrics', 'metrics'],
@@ -63,8 +67,15 @@ export interface CaseRow {
   id: string
   title: string
   desc?: string
-  status: 'open' | 'investigating' | 'closed'
+  /** Combined state when the queue sent one, otherwise the case status. */
+  status: string
   prio: 'critical' | 'high' | 'medium' | 'low' | 'unknown'
+  workflowId?: string
+  iterations?: number | null
+  costUsd?: number | null
+  maxCostUsd?: number | null
+  budgetHealth?: string | null
+  comments?: number
   owner: string
   ownerName: string
   findings: number
@@ -79,6 +90,8 @@ export interface CaseRow {
 }
 
 export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
+  overview: ['Overview', 'What arrived today and where it went'],
+  triage: ['Triage', 'What intake did with what arrived'],
   dashboard: ['Dashboard', 'Security operations overview'],
   cases: ['Cases', 'Manage investigation cases'],
   metrics: ['Case Metrics', 'Real-time SOC performance analytics'],

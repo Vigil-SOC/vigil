@@ -89,6 +89,9 @@ class IntegrationDescriptor:
     category: str
     mcp_server_names: Tuple[str, ...] = ()
     fields: Tuple[IntegrationField, ...] = ()
+    # Optional console URL. ``{external_id}`` and the descriptor's non-secret
+    # field names. No vendor ships one; evidence refs win when they are links.
+    console_link_template: Optional[str] = None
 
     @property
     def secret_fields(self) -> Tuple[str, ...]:

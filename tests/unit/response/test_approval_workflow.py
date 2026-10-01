@@ -102,6 +102,41 @@ class TestConfidenceThresholds:
         )
         assert action.status == ActionStatus.PENDING.value
 
+    def test_stored_flag_change_reaches_a_running_service(self):
+        """Settings writes Assist/Act while the service is up; the next action reads it."""
+        stored = {"enabled": False}
+        store = Mock()
+        store.get_system_config.side_effect = lambda key, default=None: stored
+        with patch(
+            "core.response.approval_service.get_config_service", return_value=store
+        ):
+            svc = ApprovalService(config=ResponseConfig())
+            assert _create(svc, confidence=0.99).status == ActionStatus.APPROVED.value
+            stored["enabled"] = True
+            assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
+
+    def test_a_failed_read_keeps_the_last_stored_flag(self):
+        reads = iter([{"enabled": True}, {"enabled": True}, None])
+        store = Mock()
+        store.get_system_config.side_effect = lambda key, default=None: next(reads)
+        with patch(
+            "core.response.approval_service.get_config_service", return_value=store
+        ):
+            svc = ApprovalService(config=ResponseConfig())
+            assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
+            assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
+
+    def test_forcing_approval_in_process_leaves_the_stored_row(self):
+        store = Mock()
+        store.get_system_config.return_value = {"enabled": False}
+        with patch(
+            "core.response.approval_service.get_config_service", return_value=store
+        ):
+            svc = ApprovalService(config=ResponseConfig())
+            svc.set_force_manual_approval(True)
+            assert _create(svc, confidence=0.99).status == ActionStatus.PENDING.value
+        store.set_system_config.assert_not_called()
+
 
 class TestConfiguredBands:
     """Every other comparison reads the same ResponseConfig (#916)."""

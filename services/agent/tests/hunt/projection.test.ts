@@ -123,6 +123,59 @@ describe("what the evidence actually says", () => {
     const projection = await project(started);
     expect(projection.evidence).toHaveLength(EVIDENCE_SHOWN);
     expect(projection.evidence_count).toBe(EVIDENCE_SHOWN + 3);
+    // The standing counts the links the cap left out.
+    expect(projection.hypotheses[0]?.supports).toBe(EVIDENCE_SHOWN + 3);
+    expect(projection.hypotheses[0]?.weakens).toBe(0);
+  });
+
+  it("counts weakens from the links, and neither as neither", async () => {
+    const started = await newLedger({ hypotheses: ["a host is beaconing to C2"] });
+    const hypothesisId = started.hypothesisIds[0] as string;
+    evidenceOn(started.ledger, hypothesisId, { relation: "weakens" });
+    evidenceOn(started.ledger, hypothesisId, { relation: "neither" });
+
+    const standing = (await project(started)).hypotheses[0];
+    expect(standing?.supports).toBe(0);
+    expect(standing?.weakens).toBe(1);
+  });
+
+  it("lists each call with the question, the tool, and how much came back", async () => {
+    const started = await newLedger();
+    started.ledger.append({
+      kind: "dispatch",
+      payload: {
+        dispatch_id: "dsp-1",
+        iteration: 1,
+        agent_id: "network_analyst",
+        status: "complete",
+        query_intent: "who did it talk to",
+        target_hypothesis_id: null,
+        question_id: null,
+        failure_reason: null,
+        cost_usd: 0.2,
+        calls: [{ tool: "telemetry_search", arguments: "{}", result: "12345", duration_ms: 80 }],
+      },
+    } as never);
+    started.ledger.append({
+      kind: "dispatch",
+      payload: {
+        dispatch_id: "dsp-2",
+        iteration: 2,
+        agent_id: "threat_intel",
+        status: "complete",
+        query_intent: "who owns it",
+        target_hypothesis_id: null,
+        question_id: null,
+        failure_reason: null,
+        cost_usd: 0.1,
+        calls: [{ tool: "whois", arguments: "{}", result: "ab" }],
+      },
+    } as never);
+
+    expect((await project(started)).calls).toEqual([
+      { question: "who did it talk to", tool: "telemetry_search", result_length: 5, cost_usd: 0.2, duration_ms: 80 },
+      { question: "who owns it", tool: "whois", result_length: 2, cost_usd: 0.1 },
+    ]);
   });
 });
 

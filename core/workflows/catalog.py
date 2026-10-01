@@ -12,8 +12,14 @@ preflight (capabilities, pricing, budgets) is about executing a run, so it lives
 in ``core.workflows.hunt_preflight`` behind its own console route.
 """
 
-from typing import Any, Dict, Optional
+from datetime import datetime
+from typing import Any, Dict, Optional, Tuple
 
+from sqlalchemy import func
+
+from core.storage.connection import get_db_manager
+from core.storage.models import WorkflowRun
+from core.time import utcnow
 from core.workflows.workflows_service import WorkflowsService, is_hunt_like
 
 
@@ -28,9 +34,49 @@ def is_hunt(workflows: WorkflowsService, workflow_id: Optional[str]) -> bool:
     return definition is not None and is_hunt_like(definition.run_kind)
 
 
+def _today_run_stats(now: datetime) -> Dict[str, Tuple[int, Optional[float]]]:
+    """Runs started since UTC midnight, and the mean cost of those that finished.
+
+    ``started_at`` is naive UTC, so the bound is too: an aware datetime
+    TypeErrors against the column. A finished run that cost nothing is a real
+    zero; null is only "nothing finished". Deleted rows stay out of both.
+    """
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    db = get_db_manager()
+    with db.session_scope() as session:
+        rows = (
+            session.query(
+                WorkflowRun.workflow_id,
+                func.count(WorkflowRun.run_id),
+                func.avg(WorkflowRun.total_cost_usd).filter(
+                    WorkflowRun.finished_at.isnot(None)
+                ),
+            )
+            .filter(
+                WorkflowRun.started_at >= midnight,
+                WorkflowRun.deleted_at.is_(None),
+            )
+            .group_by(WorkflowRun.workflow_id)
+            .all()
+        )
+    return {
+        str(workflow_id): (int(count), None if mean is None else float(mean))
+        for workflow_id, count, mean in rows
+    }
+
+
 def listing(service: WorkflowsService) -> Dict[str, Any]:
-    """Every available workflow, file-based and database-backed alike."""
+    """Every available workflow, file-based and database-backed alike.
+
+    Each row carries today's run count and the mean cost of the finished
+    ones. Both keys are present when nothing matches (0 and null).
+    """
     workflows = service.list_workflows()
+    stats = _today_run_stats(utcnow())
+    for row in workflows:
+        runs, mean = stats.get(row["id"], (0, None))
+        row["runs_today"] = runs
+        row["mean_cost_usd"] = mean
     return {"workflows": workflows, "count": len(workflows)}
 
 

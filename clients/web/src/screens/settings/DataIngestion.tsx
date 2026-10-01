@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Icon } from '../../shared/icons'
 import {
   ConfirmDialog,
@@ -10,7 +10,7 @@ import {
   TextInput,
   ToggleRow,
 } from '../../shared/ui'
-import { ingestionApi, type IngestionJob } from '../../services/api'
+import { configApi, ingestionApi, type IngestionJob } from '../../services/api'
 import {
   useDarktrace,
   useIngestionJob,
@@ -27,9 +27,63 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
+function DemoDataClear({ notify }: SectionProps) {
+  const [enabled, setEnabled] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [report, setReport] = useState<string | null>(null)
+
+  useEffect(() => {
+    let live = true
+    configApi
+      .getDemoMode()
+      .then((res) => {
+        if (live) setEnabled(Boolean(res.data?.enabled))
+      })
+      .catch(() => {})
+    return () => {
+      live = false
+    }
+  }, [])
+
+  if (!enabled) return null
+
+  const clear = async () => {
+    setBusy(true)
+    try {
+      const res = await configApi.resetDemoData()
+      const data = res.data as { findings_count?: number; cases_count?: number }
+      const text = `Regenerated ${data.findings_count} findings and ${data.cases_count} cases.`
+      setReport(text)
+      notify('ok', text)
+    } catch (e) {
+      notify('err', (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail || 'Could not clear demo data.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <SettingsCard
+      title="Demo data"
+      desc="Findings and cases on screen are generated sample data. Clearing them regenerates that set."
+    >
+      <button className="btn primary" onClick={clear} disabled={busy}>
+        {busy ? 'Clearing…' : 'Clear demo data'}
+      </button>
+      {report && (
+        <div className="settings-banner ok mt-3" role="status">
+          <Icon name="check2" size={13} />
+          <span className="text-xs">{report}</span>
+        </div>
+      )}
+    </SettingsCard>
+  )
+}
+
 export default function DataIngestionPanel({ notify }: SectionProps) {
   return (
     <div className="flex flex-col gap-4" style={{ maxWidth: 920 }}>
+      <DemoDataClear notify={notify} />
       <ManualUploadPanel notify={notify} />
       <S3Panel notify={notify} />
       <KafkaPanel notify={notify} />

@@ -1,5 +1,7 @@
 import type { SpendPayload } from "../../contracts/budget.js";
-import { openCheckpoint, type AgentEvent, type CheckpointPayload, type OpenCheckpoint, type ResolutionPayload, type TerminalPayload } from "../../contracts/events.js";
+import { openCheckpoint, type AgentEvent, type CheckpointPayload, type DispatchPayload, type OpenCheckpoint, type ResolutionPayload, type TerminalPayload } from "../../contracts/events.js";
+import { recalledPayloadOf, type RecallPayload } from "../../contracts/memory.js";
+import { callViews, type CallView } from "../call-view.js";
 import type { DecisionPayload, FindingPayload, LeadKinds } from "./workflow.js";
 
 // What a reader outside this process is told about a run -- deliberately not the
@@ -16,11 +18,26 @@ export interface LeadProjection {
   findings: FindingPayload[];
   // Null while nothing is parked, which is what a supervisor is actually asking.
   open_checkpoint: OpenCheckpoint | null;
+  // Every question a dispatch asked, in ledger order.
+  calls: CallView[];
+  // Dispatches that failed, from the same walk as calls. A visibility gap, not a finding.
+  gaps: LeadGap[];
+  // The opening recall, off the ledger. Null when the run never asked.
+  recall: RecallPayload | null;
+}
+
+export interface LeadGap {
+  dispatch_id: string;
+  agent_id: string;
+  failure_reason: string | null;
+  query_intent?: string;
 }
 
 export function leadProjection(runId: string, events: readonly AgentEvent<LeadKinds>[]): LeadProjection {
   const decisions: DecisionPayload[] = [];
   const findings: FindingPayload[] = [];
+  const dispatches: DispatchPayload[] = [];
+  const gaps: LeadGap[] = [];
   const raised: CheckpointPayload[] = [];
   const answered = new Set<string>();
   let dispatched = 0;
@@ -37,9 +54,20 @@ export function leadProjection(runId: string, events: readonly AgentEvent<LeadKi
       case "finding":
         findings.push(event.payload as FindingPayload);
         break;
-      case "dispatch":
+      case "dispatch": {
+        const payload = event.payload as DispatchPayload;
         dispatched += 1;
+        dispatches.push(payload);
+        if (payload.status === "failed") {
+          gaps.push({
+            dispatch_id: payload.dispatch_id,
+            agent_id: payload.agent_id,
+            failure_reason: payload.failure_reason,
+            ...(payload.query_intent === undefined ? {} : { query_intent: payload.query_intent }),
+          });
+        }
         break;
+      }
       case "checkpoint":
         raised.push(event.payload as CheckpointPayload);
         break;
@@ -69,5 +97,8 @@ export function leadProjection(runId: string, events: readonly AgentEvent<LeadKi
     decisions,
     findings,
     open_checkpoint: open === null ? null : openCheckpoint(open),
+    calls: callViews(dispatches),
+    gaps,
+    recall: recalledPayloadOf(events),
   };
 }

@@ -37,6 +37,10 @@ def _post_payload():
     )
 
 
+class _User:
+    user_id = "user-1"
+
+
 def _invoke_post(payload, *, set_secret=None, config_service=None, tmp_home=None):
     """Run the async handler with patched secrets writer + config service."""
     from services.api.routers import config as config_module
@@ -55,7 +59,9 @@ def _invoke_post(payload, *, set_secret=None, config_service=None, tmp_home=None
     for p in patches:
         p.start()
     try:
-        result = asyncio.run(config_module.set_integrations_config(payload))
+        result = asyncio.run(
+            config_module.set_integrations_config(payload, current_user=_User())
+        )
     finally:
         for p in reversed(patches):
             p.stop()

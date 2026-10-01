@@ -27,10 +27,13 @@ from core.response.config import ResponseConfig, approval_requirement
 from core.storage.config_service import get_config_service
 from core.storage.connection import get_db_manager
 from core.storage.models import ApprovalAction as ApprovalActionRow
+from core.storage.models import Investigation, WorkflowRun
 from core.telemetry import get_meter
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
+
+APPROVAL_CONFIG_KEY = "approval.force_manual_approval"
 
 _pending_gauge: Any = None
 
@@ -179,36 +182,46 @@ class ApprovalService:
         self._load_config()
 
     # ------------------------------------------------------------------
-    # Config (force_manual_approval) — unchanged, still db/config-backed
+    # Config (force_manual_approval) — db/config-backed, read per decision
     # ------------------------------------------------------------------
+    #
+    # ``self.force_manual_approval`` is this process forcing approval on
+    # (the daemon does when DAEMON_FORCE_APPROVAL is set) and is never
+    # written to the row. The row is what Settings writes; it is read at each
+    # decision so a long-lived service sees a change without a restart.
 
     def _load_config(self):
-        """Load approval configuration from database."""
+        """Create the stored flag, off, when no row exists yet."""
+        self.force_manual_approval = False
+        self._last_stored = False
         try:
             config_service = get_config_service()
-            config_value = config_service.get_system_config(
-                "approval.force_manual_approval"
-            )
-            if config_value:
-                self.force_manual_approval = config_value.get("enabled", False)
-                logger.debug(
-                    "Loaded approval config: force_manual_approval=%s",
-                    self.force_manual_approval,
-                )
+            value = config_service.get_system_config(APPROVAL_CONFIG_KEY)
+            if value:
+                self._last_stored = bool(value.get("enabled", False))
             else:
-                self.force_manual_approval = False
-                self._save_config()
+                self._save_default()
         except Exception as e:  # noqa: BLE001
             logger.error("Error loading approval config: %s", e)
-            self.force_manual_approval = False
 
-    def _save_config(self):
-        """Save approval configuration to database."""
+    def _stored_force_manual_approval(self) -> bool:
+        """The stored flag, or the last one read when the read fails."""
         try:
-            config_value = {"enabled": self.force_manual_approval}
+            value = get_config_service().get_system_config(APPROVAL_CONFIG_KEY)
+        except Exception as e:  # noqa: BLE001
+            logger.error("Error reading approval config: %s", e)
+            value = None
+        if value is not None:
+            self._last_stored = bool(value.get("enabled", False))
+        return self._last_stored
+
+    def _save_default(self):
+        """Store the flag off, for an install that has no row yet."""
+        try:
+            config_value = {"enabled": False}
             config_service = get_config_service(user_id="approval_service")
             config_service.set_system_config(
-                key="approval.force_manual_approval",
+                key=APPROVAL_CONFIG_KEY,
                 value=config_value,
                 description="Force manual approval for all actions",
                 config_type="approval",
@@ -218,9 +231,8 @@ class ApprovalService:
             logger.error("Error saving approval config: %s", e)
 
     def set_force_manual_approval(self, force: bool):
-        """Set whether to force manual approval for all actions."""
+        """Force manual approval for this process; the stored row is left as is."""
         self.force_manual_approval = force
-        self._save_config()
         logger.info("Force manual approval set to: %s", force)
 
     # ------------------------------------------------------------------
@@ -294,8 +306,9 @@ class ApprovalService:
 
         # The branch that set requires_approval is appended to the caller's
         # narrative so the row records the rule it was decided by (#917).
+        forced = self.force_manual_approval or self._stored_force_manual_approval()
         requires_approval, rule = approval_requirement(
-            self.force_manual_approval, reversibility, confidence, self.config
+            forced, reversibility, confidence, self.config
         )
         reason = f"{reason}; {rule}" if reason else rule
 
@@ -577,3 +590,76 @@ class ApprovalService:
     def list_pending_approvals(self) -> List[PendingAction]:
         """List all pending actions requiring approval."""
         return self.list_actions(status=ActionStatus.PENDING, requires_approval=True)
+
+
+def _text_id(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    return text or None
+
+
+def _case_id_for_action(
+    action: PendingAction,
+    runs: Dict[str, Any],
+    investigations: Dict[str, Optional[str]],
+) -> Optional[str]:
+    """One case id, in the order #1301 settled. Later sources fill a gap only."""
+    params = action.parameters if isinstance(action.parameters, dict) else {}
+    direct = _text_id(params.get("case_id"))
+    if direct:
+        return direct
+    if action.workflow_run_id:
+        ctx = runs.get(action.workflow_run_id) or {}
+        from_run = _text_id(ctx.get("case_id")) if isinstance(ctx, dict) else None
+        if from_run:
+            return from_run
+    investigation_id = _text_id(params.get("investigation_id"))
+    if investigation_id:
+        return _text_id(investigations.get(investigation_id))
+    return None
+
+
+def pending_approval_case_ids() -> set[str]:
+    """Case ids that currently need a person.
+
+    Calls ``list_pending_approvals()`` and does not query ``approval_actions``.
+    A case id resolves from ``parameters.case_id``, then
+    ``workflow_runs.trigger_context.case_id``, then ``investigations.case_id``.
+    """
+    actions = ApprovalService().list_pending_approvals()
+    if not actions:
+        return set()
+
+    run_ids = {action.workflow_run_id for action in actions if action.workflow_run_id}
+    investigation_ids: set[str] = set()
+    for action in actions:
+        params = action.parameters if isinstance(action.parameters, dict) else {}
+        investigation_id = _text_id(params.get("investigation_id"))
+        if investigation_id:
+            investigation_ids.add(investigation_id)
+    runs: Dict[str, Any] = {}
+    investigations: Dict[str, Optional[str]] = {}
+    if run_ids or investigation_ids:
+        db = get_db_manager()
+        with db.session_scope() as session:
+            if run_ids:
+                rows = session.query(WorkflowRun).filter(
+                    WorkflowRun.run_id.in_(run_ids)
+                )
+                for row in rows:
+                    ctx = row.trigger_context
+                    runs[row.run_id] = ctx if isinstance(ctx, dict) else {}
+            if investigation_ids:
+                rows = session.query(Investigation).filter(
+                    Investigation.investigation_id.in_(investigation_ids)
+                )
+                for row in rows:
+                    investigations[row.investigation_id] = row.case_id
+
+    found: set[str] = set()
+    for action in actions:
+        case_id = _case_id_for_action(action, runs, investigations)
+        if case_id:
+            found.add(case_id)
+    return found

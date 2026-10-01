@@ -7,6 +7,7 @@ import { commitTurn, type Harness, type Outcome, type TurnConfig } from "../../c
 import { drain, streamTurn } from "../../core/stream.js";
 import { SpecError, type RoleSpec, type RunSpec } from "../../core/spec.js";
 import { topologyFor, type Assignment, type Round } from "../../core/topology.js";
+import { callsOf } from "../hunt/adapters.js";
 
 // What every arch's lead emits. Everything past action is arch-specific and read
 // only when the arch declared it, so one loop drives a swarm and a single lead.
@@ -101,9 +102,11 @@ export async function runLead(harness: Harness<LeadKinds>, options: LeadOptions)
     const decision = outcome.value;
     const selection = { worker: named(spec, decision), task: decision.query_intent ?? decision.rationale };
     const assignments = topology.assign(selection, spec);
-    await commitTurn(harness.state, run_id, [
-      event(options, "decision", { action: decision.action, rationale: decision.rationale, worker: selection.worker }),
-    ]);
+    // The lead's own calls are a dispatch too. A single-lead investigation has no
+    // worker, and the questions it asked would otherwise never reach the ledger.
+    const own: Event[] = [event(options, "decision", { action: decision.action, rationale: decision.rationale, worker: selection.worker })];
+    if (outcome.calls.length > 0) own.push(event(options, "dispatch", leadDispatch(options, selection.task, outcome)));
+    await commitTurn(harness.state, run_id, own);
 
     await dispatchAll(harness, options, assignments);
     rounds.push({ assigned: assignments.length });
@@ -144,6 +147,19 @@ interface Dispatched {
   own: Event[];
 }
 
+function leadDispatch(options: LeadOptions, task: string, outcome: Outcome<Decision>): DispatchPayload {
+  return {
+    dispatch_id: `dsp-${digest(`${options.run_id}\nlead\n${task}`)}`,
+    agent_id: "lead",
+    status: "complete",
+    question_id: null,
+    failure_reason: null,
+    query_intent: task,
+    calls: callsOf(outcome.calls),
+    cost_usd: outcome.cost_usd,
+  };
+}
+
 async function turn(harness: Harness<LeadKinds>, options: LeadOptions, assignment: Assignment): Promise<Dispatched> {
   const { role: worker, task: intent } = assignment;
   const role = options.spec.roles.workers[worker] as RoleSpec;
@@ -156,6 +172,9 @@ async function turn(harness: Harness<LeadKinds>, options: LeadOptions, assignmen
     status: complete ? "complete" : "failed",
     question_id: null,
     failure_reason: complete ? null : outcome.reason,
+    query_intent: intent,
+    calls: callsOf(outcome.calls),
+    cost_usd: outcome.cost_usd,
   };
   const own: Event[] = [event(options, "dispatch", payload)];
   if (outcome.value !== null) own.push(event(options, "finding", { agent_id: worker, answer: outcome.value }));

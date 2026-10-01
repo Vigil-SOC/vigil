@@ -13,7 +13,7 @@ from core.config import (
     state_dir_status,
     vigil_path,
 )
-from core.deps import provide_demo_data, provide_integration_bridge
+from core.deps import provide_demo_data, provide_integration_bridge, provide_mcp_client
 from core.integrations.integration_bridge_service import IntegrationBridgeService
 from core.integrations.integration_secrets import (
     redact_secrets,
@@ -22,11 +22,19 @@ from core.integrations.integration_secrets import (
 )
 from core.intent import intent_file
 from core.llm.defaults import DEFAULT_MODEL
+from core.response.approval_service import APPROVAL_CONFIG_KEY
 from core.routing import Auth, RouterMeta
 from core.secrets import get_secret, set_secret
 from core.secrets_manager import get_secrets_manager
 from core.storage.config_service import get_config_service
-from services.daemon.intent import intent_report
+from core.storage.models import User
+from core.time import utcnow
+from services.api.middleware.auth import (
+    get_current_active_user,
+    require_integrations_admin,
+)
+from services.daemon.config import DaemonConfig
+from services.daemon.intent import effective_daemon_config, intent_report
 
 router = APIRouter()
 
@@ -36,6 +44,11 @@ ROUTER_META = RouterMeta(
     auth=Auth.REQUIRED,
 )
 logger = logging.getLogger(__name__)
+
+
+def _for_user(user: User):
+    """Config service stamped with the signed-in user for the audit row."""
+    return get_config_service(user_id=str(user.user_id))
 
 
 def _mirror_to_file(filename: str, config_data: Dict[str, Any]) -> None:
@@ -335,7 +348,10 @@ async def get_s3_config():
 
 
 @router.post("/s3")
-async def set_s3_config(config: S3Config):
+async def set_s3_config(
+    config: S3Config,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set S3 configuration.
 
@@ -370,7 +386,7 @@ async def set_s3_config(config: S3Config):
     }
 
     # Save to database
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_integration_config(
         integration_id="s3",
         config=config_data,
@@ -617,7 +633,10 @@ async def get_theme_config():
 
 
 @router.post("/theme")
-async def set_theme_config(config: ThemeConfig):
+async def set_theme_config(
+    config: ThemeConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set theme configuration.
 
@@ -630,7 +649,7 @@ async def set_theme_config(config: ThemeConfig):
     config_data = {"theme": config.theme}
 
     # Save to database
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="theme.current",
         value=config_data,
@@ -705,6 +724,7 @@ async def get_integrations_config():
 @router.post("/integrations")
 async def set_integrations_config(
     config: IntegrationsConfig,
+    current_user: User = Depends(get_current_active_user),
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
 ):
     """
@@ -715,7 +735,8 @@ async def set_integrations_config(
     from the dict that lands in the DB / JSON file. Empty strings are
     treated as "keep existing secret" (matches the S3 endpoint convention)
     so editing non-secret fields without re-typing the password doesn't
-    clobber stored credentials.
+    clobber stored credentials. A failed secret write or integration-config
+    row is HTTP 500; the detail names the integration and field, never the value.
 
     Args:
         config: Integrations configuration
@@ -723,13 +744,17 @@ async def set_integrations_config(
     Returns:
         Success status
     """
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
 
     # Build a sanitized integrations dict (no secrets) for DB/JSON
     # persistence. Apply secret writes to the encrypted store.
     sanitized_integrations: dict = {}
+    not_stored: list[str] = []
     for integration_id, raw_config in config.integrations.items():
         secrets, non_secrets = split_secrets(integration_id, raw_config)
+        field_by_env = {
+            env: field for field, env in secret_fields_for(integration_id).items()
+        }
 
         # Empty string ⇒ user didn't re-type the secret on edit; leave
         # the existing encrypted value untouched. Non-empty ⇒ overwrite.
@@ -737,9 +762,13 @@ async def set_integrations_config(
             if value == "":
                 continue
             if not set_secret(env_key, value):
+                field = field_by_env.get(env_key, env_key)
                 logger.error(
                     f"Failed to write secret '{env_key}' for "
                     f"integration '{integration_id}'"
+                )
+                not_stored.append(
+                    f"integration '{integration_id}' field '{field}' ({env_key})"
                 )
 
         sanitized_integrations[integration_id] = non_secrets
@@ -753,6 +782,16 @@ async def set_integrations_config(
         )
         if not success:
             logger.error(f"Failed to save integration '{integration_id}'")
+            not_stored.append(f"integration '{integration_id}' config")
+
+    if not_stored:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to save integrations configuration: "
+                + "; ".join(f"{item} was not stored" for item in not_stored)
+            ),
+        )
 
     _mirror_to_file(
         "integrations_config.json",
@@ -798,59 +837,160 @@ async def get_integrations_status(
     return {"success": True, "statuses": statuses}
 
 
+def _connected_session(mcp_client: Any, server_name: str) -> Any:
+    """Live session for a server that is already connected, if any.
+
+    ``connect_to_server`` returns early in that case and does not call
+    ``list_tools``. Anything else (including a MagicMock client) is not a session.
+    """
+    sessions = getattr(mcp_client, "persistent_sessions", None)
+    if not isinstance(sessions, dict):
+        return None
+    holder = sessions.get(server_name)
+    if holder is None or not getattr(holder, "is_connected", False):
+        return None
+    return getattr(holder, "session", None)
+
+
+async def _probe_mcp_server(
+    mcp_client: Any,
+    server_name: str,
+    *,
+    persistent: bool,
+    skip_enabled_check: bool,
+) -> Dict[str, Any]:
+    """Connect and, when a session was already up, list its tools."""
+    already = _connected_session(mcp_client, server_name)
+    error: Optional[str] = None
+    missing: Optional[List[str]] = None
+    try:
+        ok = await mcp_client.connect_to_server(
+            server_name,
+            persistent=persistent,
+            skip_enabled_check=skip_enabled_check,
+        )
+    except Exception as exc:  # noqa: BLE001
+        ok = False
+        error = f"{type(exc).__name__}: {exc}"
+    else:
+        if ok and already is not None:
+            try:
+                await already.list_tools()
+            except Exception as exc:  # noqa: BLE001
+                ok = False
+                error = f"{type(exc).__name__}: {exc}"
+        if not ok and error is None:
+            error = mcp_client.get_last_error(server_name)
+            missing = mcp_client.get_missing_credentials(server_name)
+
+    result: Dict[str, Any] = {"name": server_name, "success": bool(ok)}
+    if not ok:
+        result["error"] = error or "connection failed"
+    if missing:
+        result["missing_credentials"] = missing
+    return result
+
+
+def _probe_error_summary(servers: List[Dict[str, Any]]) -> Optional[str]:
+    parts = []
+    for server in servers:
+        if server["success"]:
+            continue
+        error = server.get("error")
+        parts.append(f"{server['name']}: {error}" if error else server["name"])
+    return "; ".join(parts) or None
+
+
 @router.post("/integrations/{integration_id}/test")
 async def test_integration(
     integration_id: str,
+    current_user: User = Depends(get_current_active_user),
     bridge: IntegrationBridgeService = Depends(provide_integration_bridge),
+    mcp_client=Depends(provide_mcp_client),
 ):
-    """
-    Test an integration connection.
+    """Probe the MCP servers behind an integration.
 
-    Args:
-        integration_id: Integration identifier
-
-    Returns:
-        Test result with success/failure and message
+    Catalog entries have no descriptor, so they are not testable. A stored
+    config of ``{}`` is still configured — secret-only rows keep the secret
+    outside this dict. The integration's enabled flag does not block the
+    probe: enabled MCP servers are contacted, and if none are enabled every
+    declared server is probed with a temporary session.
     """
+    require_integrations_admin(current_user)
+
+    server_names = list(bridge.server_names_for(integration_id))
     status = bridge.get_integration_status(integration_id)
+    if not server_names:
+        return {
+            "success": False,
+            "reason": "not_testable",
+            "message": f"Integration '{integration_id}' is not testable.",
+            "status": status,
+        }
 
+    # Membership, not a non-empty dict. A secret-only row (VirusTotal) is stored
+    # as {} after split_secrets and is still configured.
     if not status["configured"]:
         raise HTTPException(status_code=400, detail="Integration not configured")
 
-    if not status["server_available"]:
+    if mcp_client is None:
         return {
             "success": False,
-            "message": f"Integration server not yet implemented. The '{integration_id}' integration is planned but the backend MCP server needs to be created.",
+            "message": "MCP client is not available.",
             "status": status,
-            "implementation_status": "pending",
+            "server_names": server_names,
+            "servers": [],
         }
 
-    if not status["enabled"]:
-        return {
-            "success": False,
-            "message": "Integration is configured but not enabled. Please enable it in the integrations list.",
-            "status": status,
-        }
+    mcp_service = getattr(mcp_client, "mcp_service", None)
+    if mcp_service is not None:
+        try:
+            mcp_service.reload_server_configs()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("reload_server_configs before test failed: %s", exc)
 
-    # TODO: Implement actual connection test using MCP client
-    # For now, we just verify the configuration is complete
-    integration_config = bridge.get_integration_config(integration_id)
+    enabled = [
+        name
+        for name in server_names
+        if mcp_service is not None and mcp_service.is_server_enabled(name)
+    ]
+    # None enabled: probe every declared server without turning it on.
+    temporary = not enabled
+    targets = server_names if temporary else enabled
 
-    # Check if required fields are present (basic validation)
-    if not integration_config:
-        raise HTTPException(
-            status_code=400, detail="Integration configuration is empty"
+    servers = []
+    for name in targets:
+        servers.append(
+            await _probe_mcp_server(
+                mcp_client,
+                name,
+                persistent=not temporary,
+                skip_enabled_check=temporary,
+            )
         )
+    success = all(server["success"] for server in servers)
+    error_summary = None if success else _probe_error_summary(servers)
 
-    # Prepare environment variables to verify they're being set correctly
-    env_vars = bridge._config_to_env_vars(integration_id, integration_config)
+    recorded = get_config_service(user_id=current_user.user_id).record_integration_test(
+        integration_id,
+        success=success,
+        error=error_summary,
+        tested_at=utcnow(),
+    )
+    if not recorded:
+        logger.warning("Integration '%s' test result was not saved", integration_id)
+
+    if success:
+        message = f"Integration '{integration_id}' connected."
+    else:
+        message = error_summary or f"Integration '{integration_id}' failed to connect."
 
     return {
-        "success": True,
-        "message": f"Integration '{integration_id}' is configured and ready. Configuration will be passed to the MCP server as environment variables.",
+        "success": success,
+        "message": message,
         "status": status,
-        "env_var_count": len(env_vars),
-        "server_name": status.get("server_name", "unknown"),
+        "server_names": server_names,
+        "servers": servers,
     }
 
 
@@ -901,7 +1041,10 @@ async def get_general_config():
 
 
 @router.post("/general")
-async def set_general_config(config: GeneralConfig):
+async def set_general_config(
+    config: GeneralConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """
     Set general application settings.
 
@@ -919,7 +1062,7 @@ async def set_general_config(config: GeneralConfig):
     }
 
     # Save to database
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="general.settings",
         value=config_data,
@@ -1082,10 +1225,13 @@ async def get_ai_operations_config():
 
 
 @router.post("/ai-operations")
-async def set_ai_operations_config(config: AIOperationsSettingsConfig):
+async def set_ai_operations_config(
+    config: AIOperationsSettingsConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Persist the AI-operations toggles and invalidate the in-process cache."""
     config_data = config.model_dump()
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="ai_operations.settings",
         value=config_data,
@@ -1128,6 +1274,88 @@ class OrchestratorSettingsConfig(BaseModel):
 
 
 ORCHESTRATOR_DEFAULTS = OrchestratorSettingsConfig().model_dump()
+
+
+class InvestigationProfileValues(BaseModel):
+    """The five limits a profile sets in one click."""
+
+    max_concurrent_agents: int
+    max_iterations_per_agent: int
+    max_runtime_per_investigation: int
+    max_cost_per_investigation: float
+    max_total_hourly_cost: float
+
+
+class InvestigationProfile(BaseModel):
+    """One Settings card. The name is not stored on the saved config."""
+
+    label: str
+    recommended: bool = False
+    values: InvestigationProfileValues
+
+
+class InvestigationProfiles(BaseModel):
+    """Keys the Auto Investigate section renders. ``aggressive`` is labelled Broad."""
+
+    conservative: InvestigationProfile
+    balanced: InvestigationProfile
+    aggressive: InvestigationProfile
+
+
+# Same numbers the Settings cards used to hard-code. Balanced matches
+# OrchestratorSettingsConfig's defaults.
+INVESTIGATION_PROFILES = InvestigationProfiles.model_validate(
+    {
+        "conservative": {
+            "label": "Conservative",
+            "values": {
+                "max_concurrent_agents": 2,
+                "max_iterations_per_agent": 25,
+                "max_runtime_per_investigation": 1800,
+                "max_cost_per_investigation": 1.0,
+                "max_total_hourly_cost": 5.0,
+            },
+        },
+        "balanced": {
+            "label": "Balanced",
+            "recommended": True,
+            "values": {
+                "max_concurrent_agents": 3,
+                "max_iterations_per_agent": 50,
+                "max_runtime_per_investigation": 3600,
+                "max_cost_per_investigation": 5.0,
+                "max_total_hourly_cost": 20.0,
+            },
+        },
+        "aggressive": {
+            "label": "Broad",
+            "values": {
+                "max_concurrent_agents": 5,
+                "max_iterations_per_agent": 100,
+                "max_runtime_per_investigation": 7200,
+                "max_cost_per_investigation": 15.0,
+                "max_total_hourly_cost": 60.0,
+            },
+        },
+    }
+)
+
+
+class OrchestratorConfigResponse(OrchestratorSettingsConfig):
+    """Flat saved settings plus the profiles the Settings cards render.
+
+    ``profiles`` is not part of the stored object. POST takes
+    ``OrchestratorSettingsConfig`` and ignores the field.
+    """
+
+    profiles: InvestigationProfiles
+
+
+def _orchestrator_payload(stored: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    merged = {**ORCHESTRATOR_DEFAULTS, **(stored or {})}
+    flat = {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
+    flat["profiles"] = INVESTIGATION_PROFILES.model_dump()
+    return flat
 
 
 class IntentDiffRow(BaseModel):
@@ -1175,32 +1403,59 @@ async def get_intent_report() -> IntentReportResponse:
     )
 
 
-@router.get("/orchestrator")
+class AutonomyConfig(BaseModel):
+    """The two flags the console chip folds into Assist or Act.
+
+    Not stored. ``force_manual_approval`` is the env flag OR the
+    ``approval.force_manual_approval`` row. ``auto_response_enabled`` is
+    ``Settings.daemon_auto_response``.
+    """
+
+    auto_response_enabled: bool
+    force_manual_approval: bool
+
+
+@router.get("/autonomy", response_model=AutonomyConfig)
+async def get_autonomy_config() -> AutonomyConfig:
+    """Effective response autonomy for the console chip."""
+    effective = effective_daemon_config(DaemonConfig.from_env())
+    return AutonomyConfig(
+        auto_response_enabled=effective.response.auto_response_enabled,
+        force_manual_approval=effective.response.force_manual_approval,
+    )
+
+
+@router.get("/orchestrator", response_model=OrchestratorConfigResponse)
 async def get_orchestrator_config():
-    """Get orchestrator configuration."""
+    """Get orchestrator configuration.
+
+    ``profiles`` is extra on this body so the Settings cards can render it.
+    It is not read back from storage.
+    """
     try:
         config_service = get_config_service()
         config_value = config_service.get_system_config("orchestrator.settings")
-
-        if config_value:
-            merged = {**ORCHESTRATOR_DEFAULTS, **config_value}
-            return {k: merged[k] for k in ORCHESTRATOR_DEFAULTS}
-
-        return ORCHESTRATOR_DEFAULTS
+        return _orchestrator_payload(config_value if config_value else None)
     except Exception as e:
         logger.error(f"Error getting orchestrator config: {e}")
-        return ORCHESTRATOR_DEFAULTS
+        return _orchestrator_payload(None)
 
 
 @router.post("/orchestrator")
-async def set_orchestrator_config(config: OrchestratorSettingsConfig):
+async def set_orchestrator_config(
+    config: OrchestratorSettingsConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Set orchestrator configuration. Persists settings AND syncs the
     runtime enabled flag used by GET /api/orchestrator/status (which
     NavigationRail uses to show/hide the Auto Ops tab).
+
+    A ``profiles`` field on the body is ignored. The stored object stays the
+    flat keys; no profile name is written.
     """
     config_data = config.model_dump()
 
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     success = config_service.set_system_config(
         key="orchestrator.settings",
         value=config_data,
@@ -1231,6 +1486,78 @@ async def set_orchestrator_config(config: OrchestratorSettingsConfig):
         logger.debug("In-process orchestrator runtime apply skipped: %s", e)
 
     return {"success": True, "message": "Orchestrator settings saved"}
+
+
+class ForceManualApprovalConfig(BaseModel):
+    """``approval.force_manual_approval``. Assist is true, Act is false."""
+
+    enabled: bool
+
+
+class ForceManualApprovalResponse(ForceManualApprovalConfig):
+    """The stored flag, plus whether daemon env overrides Act."""
+
+    environment_wins: bool
+
+
+def _environment_wins() -> bool:
+    """Force-approval, or auto-response turned off, beats a stored Act."""
+    settings = get_settings()
+    return bool(settings.daemon_force_approval) or not settings.daemon_auto_response
+
+
+def _stored_force_manual(config_service) -> bool:
+    value = config_service.get_system_config(APPROVAL_CONFIG_KEY)
+    if isinstance(value, dict):
+        return bool(value.get("enabled", False))
+    return False
+
+
+@router.get("/force-manual-approval", response_model=ForceManualApprovalResponse)
+async def get_force_manual_approval():
+    """Read ``approval.force_manual_approval`` without inserting a default row.
+
+    A failed read is an error, not Act: reporting the default would show
+    approvals as off while the stored flag may be forcing them on.
+    """
+    try:
+        enabled = _stored_force_manual(get_config_service())
+    except Exception as e:
+        logger.error(f"Error getting force-manual approval: {e}")
+        raise HTTPException(
+            status_code=503, detail="Could not read the approval setting"
+        ) from e
+    return ForceManualApprovalResponse(
+        enabled=enabled, environment_wins=_environment_wins()
+    )
+
+
+@router.post("/force-manual-approval", response_model=ForceManualApprovalResponse)
+async def set_force_manual_approval(
+    config: ForceManualApprovalConfig,
+    current_user: User = Depends(get_current_active_user),
+):
+    """Persist Assist or Act. Act is refused while the environment wins, so it
+    is not stored for later. Assist may still be stored.
+    """
+    if not config.enabled and _environment_wins():
+        raise HTTPException(
+            status_code=409,
+            detail="The environment wins; Act was not saved.",
+        )
+    config_service = _for_user(current_user)
+    success = config_service.set_system_config(
+        key=APPROVAL_CONFIG_KEY,
+        value={"enabled": config.enabled},
+        description="Force manual approval for all actions",
+        config_type="approval",
+        change_reason="Updated via Settings UI",
+    )
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to save approval config")
+    return ForceManualApprovalResponse(
+        enabled=config.enabled, environment_wins=_environment_wins()
+    )
 
 
 # ---- Darktrace webhook receiver config ----
@@ -1272,10 +1599,13 @@ async def get_darktrace_config():
 
 
 @router.post("/darktrace")
-async def set_darktrace_config(config: DarktraceConfig):
+async def set_darktrace_config(
+    config: DarktraceConfig,
+    current_user: User = Depends(get_current_active_user),
+):
     """Persist Darktrace config. The webhook_secret is stored separately via the
     secrets manager; if omitted, the existing secret is preserved."""
-    config_service = get_config_service(user_id="web_ui")
+    config_service = _for_user(current_user)
     settings = {
         "enabled": config.enabled,
         "url": config.url,

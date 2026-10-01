@@ -429,6 +429,7 @@ dbInit:
     - 35_ip_exclusions.sql
     - 36_workflow_runs_triggered_by_index.sql
     - 37_findings_bulk_imported.sql
+    - 37_workflow_runs_outcome.sql
   resources:
     requests:
       cpu: 50m

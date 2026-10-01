@@ -1,6 +1,7 @@
 """Splunk API service for data enrichment."""
 
 import logging
+import time
 from typing import Dict, List, Optional
 
 import httpx
@@ -123,6 +124,30 @@ class SplunkService:
             logger.error(f"Error during authentication: {e}")
             return False
 
+    def _drop_session_key(self) -> None:
+        # Drop the header too: the login POST shares this client, and a
+        # stale Authorization would ride along with the new credentials.
+        self.session_key = None
+        self.session.headers.pop("Authorization", None)
+
+    def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        """One authenticated call. A 401 logs in once and retries this call.
+
+        The retry is per request: a 401 while polling a job re-sends that
+        GET, not the job POST. A second 401, or a failed login, is returned
+        as-is. ``authenticate`` posts the login itself and is not retried.
+        """
+        response = self.session.request(method, url, **kwargs)
+        if response.status_code != 401:
+            return response
+        # Clear first so a failed login leaves the key unset and the next
+        # call tries again, instead of keeping the rejected one.
+        self._drop_session_key()
+        logger.info("Splunk session key expired; re-authenticating")
+        if not self.authenticate():
+            return response
+        return self.session.request(method, url, **kwargs)
+
     def test_connection(self) -> tuple[bool, str]:
         """
         Test connection to Splunk server.
@@ -135,7 +160,8 @@ class SplunkService:
                 return False, "Authentication failed"
 
             # Try to get server info
-            response = self.session.get(
+            response = self._request(
+                "GET",
                 f"{self.server_url}/services/server/info",
                 params={"output_mode": "json"},
             )
@@ -186,7 +212,7 @@ class SplunkService:
                 "output_mode": "json",
             }
 
-            response = session.post(search_url, data=search_data)
+            response = self._request("POST", search_url, data=search_data)
 
             if response.status_code not in [200, 201]:
                 logger.error(
@@ -208,7 +234,9 @@ class SplunkService:
             max_attempts = 60  # 60 attempts with 1 second wait = 1 minute max
 
             for attempt in range(max_attempts):
-                status_response = session.get(job_url, params={"output_mode": "json"})
+                status_response = self._request(
+                    "GET", job_url, params={"output_mode": "json"}
+                )
 
                 if status_response.status_code == 200:
                     job_status = status_response.json()
@@ -220,7 +248,8 @@ class SplunkService:
                     if is_done:
                         # Get results
                         results_url = f"{job_url}/results"
-                        results_response = session.get(
+                        results_response = self._request(
+                            "GET",
                             results_url,
                             params={"output_mode": "json", "count": max_count},
                         )
@@ -230,7 +259,9 @@ class SplunkService:
                             results = results_data.get("results", [])
                             logger.info(f"Search completed with {len(results)} results")
 
-                            # Clean up job
+                            # Cleanup ignores status. A 401 here must not
+                            # throw away results already in hand; the next
+                            # call re-authenticates on its own 401.
                             session.delete(job_url)
 
                             return results
@@ -240,9 +271,6 @@ class SplunkService:
                             )
                             return None
 
-                    # Wait before next poll
-                    import time
-
                     time.sleep(1)
                 else:
                     logger.error(
@@ -251,7 +279,8 @@ class SplunkService:
                     return None
 
             logger.error("Search job timed out")
-            # Try to cancel the job
+            # Try to cancel the job. Status is ignored, same as a
+            # successful search's cleanup.
             session.delete(job_url)
             return None
 

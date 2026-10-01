@@ -397,9 +397,11 @@ export default function Chat({
     mcpApi
       .getStatuses()
       .then((r) => {
-        const statuses = (r.data?.statuses || []) as { status?: string }[]
-        const available = statuses.filter((s) => s.status && s.status !== 'error' && s.status !== 'not found').length
-        setMcpStatus({ available, total: statuses.length })
+        const statuses = (r.data?.statuses || []) as { status?: string; enabled?: boolean }[]
+        // Connected sessions over enabled servers. A disabled server is neither number.
+        const enabled = statuses.filter((s) => s.enabled)
+        const available = enabled.filter((s) => s.status === 'running').length
+        setMcpStatus({ available, total: enabled.length })
       })
       .catch(() => {})
   }, [open])

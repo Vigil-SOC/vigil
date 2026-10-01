@@ -18,3 +18,16 @@ repos:
     hooks:
       - id: flake8
         files: ^(services|core)/
+
+  # The committed frontend types are generated from the API's OpenAPI spec, and
+  # CI's Generated API Types check fails when they lag it. A route docstring is
+  # enough: the spec carries it. Regenerate on any backend change instead of
+  # finding out in CI. Same command CI runs.
+  - repo: local
+    hooks:
+      - id: frontend-types
+        name: regenerate frontend API types
+        entry: python scripts/generate_frontend_types.py
+        language: system
+        files: ^(services|core|tools)/.*\.py$
+        pass_filenames: false

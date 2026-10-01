@@ -202,7 +202,14 @@ class DataPoller:
                     try:
                         # Never wait: the sender holds its bookmark and
                         # retries, and the ones already taken dedup then.
-                        self._output_queue.put_nowait(envelope(finding_data, "webhook"))
+                        self._output_queue.put_nowait(
+                            envelope(
+                                finding_data,
+                                "webhook",
+                                dedup=self._webhook_dedup,
+                                dedup_key=finding_id,
+                            )
+                        )
                     except asyncio.QueueFull:
                         self.stats["webhook_findings"] += count
                         self.stats["webhook_busy"] += 1

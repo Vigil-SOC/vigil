@@ -137,6 +137,14 @@ def add_findings_description(conn):
         ALTER TABLE findings ADD COLUMN IF NOT EXISTS description TEXT;
     """))
 
+@migration("Add noise mark columns to findings")
+def add_findings_noise_mark(conn):
+    conn.execute(text("""
+        ALTER TABLE findings
+            ADD COLUMN IF NOT EXISTS noise_marked_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS noise_marked_by VARCHAR(50);
+    """))
+
 @migration("Create GIN trigram index on findings.description")
 def create_findings_description_gin_index(conn):
     conn.execute(text("""
@@ -285,6 +293,22 @@ def create_workflow_runs_triggered_by_index(conn):
     conn.execute(text("""
         CREATE INDEX IF NOT EXISTS idx_workflow_runs_triggered_by
         ON workflow_runs (triggered_by, started_at);
+    """))
+
+
+# The agent-layer terminal beside the three-value status (#1272). create_all
+# adds no column to a table that already exists. On Helm the table belongs to
+# the chart's user, so vigil_app passes here only once the columns exist.
+# 37_workflow_runs_outcome.sql builds them there; this step covers a database
+# that init SQL never reached. No backfill: rows this side finalized stay null.
+@migration("Add outcome and reason to workflow_runs")
+def add_workflow_run_outcome(conn):
+    if not _table_exists(conn, 'workflow_runs'):
+        return
+    conn.execute(text("""
+        ALTER TABLE workflow_runs
+            ADD COLUMN IF NOT EXISTS outcome TEXT,
+            ADD COLUMN IF NOT EXISTS reason TEXT;
     """))
 
 

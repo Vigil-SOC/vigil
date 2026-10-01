@@ -114,7 +114,7 @@ function AddBtn({ on, onClick }: { on: boolean; onClick: () => void }) {
 export const inputCls =
   'bg-bg-2 border border-line rounded-md px-2.5 py-[7px] text-[13px] text-tx outline-none focus:border-accent-line w-full'
 
-export function EvidenceCard({ caseId }: { caseId: string }) {
+export function EvidenceCard({ caseId, title = 'Evidence' }: { caseId: string; title?: string }) {
   const { data, phase, reload } = useResource<Schema<'CaseEvidenceSchema'>[]>(caseId, () =>
     casesApi.getEvidence(caseId).then((r) => r.data.evidence),
   )
@@ -138,7 +138,7 @@ export function EvidenceCard({ caseId }: { caseId: string }) {
 
   return (
     <SectionCard
-      title="Evidence"
+      title={title}
       count={`${items.length} item${items.length === 1 ? '' : 's'}`}
       wide
       action={<AddBtn on={adding} onClick={() => setAdding((v) => !v)} />}
@@ -719,45 +719,6 @@ export function RelatedCasesCard({ caseId, rows, onSelect }: { caseId: string; r
           </div>
           )
         })}
-      </div>
-    </SectionCard>
-  )
-}
-
-interface AuditEntry {
-  id: string
-  user?: string
-  action: string
-  field_name?: string
-  old_value?: string
-  new_value?: string
-  timestamp?: string
-}
-export function AuditLogCard({ caseId }: { caseId: string }) {
-  const { data, phase } = useResource<AuditEntry[]>(caseId, () =>
-    casesApi.getAuditLog(caseId).then((r) => (r.data?.audit_log || []) as AuditEntry[]),
-  )
-  const entries = data || []
-  return (
-    <SectionCard title="Audit log" count={`${entries.length}`} wide>
-      <div className="p-[18px] flex flex-col gap-2.5">
-        {phase === 'loading' && <MiniLoading icon="clock" title="Loading audit log…" />}
-        {phase === 'ready' && entries.length === 0 && <MiniEmpty icon="clock" title="No audit entries yet" body="Status, assignment, and field changes will be recorded here." />}
-        {entries.map((a) => (
-          <div key={a.id} className="flex gap-2.5 text-[13px]">
-            <span className="avatar">{initials(a.user)}</span>
-            <div className="min-w-0 flex-1">
-              <span className="text-tx-2">
-                <b className="text-tx">{a.user || 'system'}</b> {a.action}
-                {a.field_name && <> <span className="tag">{a.field_name}</span></>}
-                {a.field_name && (a.old_value || a.new_value) && (
-                  <> from <span className="text-crit">{a.old_value || '—'}</span> to <span className="text-ok">{a.new_value || '—'}</span></>
-                )}
-              </span>
-              <div className="text-xs text-tx-faint mt-[2px]">{fmtDT(a.timestamp)}</div>
-            </div>
-          </div>
-        ))}
       </div>
     </SectionCard>
   )

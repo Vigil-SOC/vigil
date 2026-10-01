@@ -91,7 +91,9 @@ def test_poisoned_entity_context_flagged(caplog):
 def test_process_finding_increments_counter_and_continues(monkeypatch):
     """The hook must not block downstream processing — detect-only in v1."""
     p = _processor()
-    # Stub out store/update so we don't need a DB.
+    # Stub out store/update so we don't need a DB. A missing data service
+    # is itself a failed store, so the success path needs one present.
+    p._data_service = object()
     p._store_finding = AsyncMock()
     p._update_finding = AsyncMock()
     p._evaluate_for_response = AsyncMock()

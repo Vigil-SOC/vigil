@@ -188,6 +188,195 @@ def test_search_returns_none_when_job_creation_fails():
     assert _service().search("index=notable") is None
 
 
+def _with_stale_key(svc: SplunkService, key: str = "stale-key") -> SplunkService:
+    svc.session_key = key
+    svc.session.headers["Authorization"] = f"Splunk {key}"
+    return svc
+
+
+def _mock_login(key: str = "sk-fresh", status: int = 200):
+    body = {"sessionKey": key} if status == 200 else {"message": "denied"}
+    return respx.post(f"{BASE}/services/auth/login").mock(
+        return_value=httpx.Response(status, json=body)
+    )
+
+
+def _mock_finished_job(sid: str = "sid-1", results=None):
+    """Status is done, results are ready, delete succeeds."""
+    job = f"{BASE}/services/search/jobs/{sid}"
+    respx.get(job).mock(
+        return_value=httpx.Response(
+            200, json={"entry": [{"content": {"isDone": True}}]}
+        )
+    )
+    respx.get(f"{job}/results").mock(
+        return_value=httpx.Response(
+            200, json={"results": [{"_raw": "event-1"}] if results is None else results}
+        )
+    )
+    respx.delete(job).mock(return_value=httpx.Response(200))
+
+
+def _hold_poll(monkeypatch) -> None:
+    monkeypatch.setattr("core.integrations.splunk.client.time.sleep", lambda _s: None)
+
+
+# A session key expires on the Splunk side. The same client is reused for
+# the life of the process, so a 401 has to log in once and retry that
+# request — not the whole search.
+
+
+@respx.mock
+def test_stale_key_on_job_post_logs_in_once_and_returns_results(monkeypatch):
+    _hold_poll(monkeypatch)
+    login = _mock_login()
+    job_url = f"{BASE}/services/search/jobs"
+    create = respx.post(job_url).mock(
+        side_effect=[
+            httpx.Response(401, text="call not properly authenticated"),
+            httpx.Response(201, json={"sid": "sid-1"}),
+        ]
+    )
+    _mock_finished_job()
+
+    results = _with_stale_key(_service()).search("index=notable")
+
+    assert results == [{"_raw": "event-1"}]
+    assert login.call_count == 1
+    assert "Authorization" not in login.calls[0].request.headers
+    assert create.call_count == 2
+    assert create.calls[0].request.headers["Authorization"] == "Splunk stale-key"
+    assert create.calls[1].request.headers["Authorization"] == "Splunk sk-fresh"
+
+
+@respx.mock
+def test_status_401_retries_that_get_without_a_second_job(monkeypatch):
+    _hold_poll(monkeypatch)
+    login = _mock_login()
+    job_url = f"{BASE}/services/search/jobs"
+    create = respx.post(job_url).mock(
+        return_value=httpx.Response(201, json={"sid": "sid-1"})
+    )
+    status = respx.get(f"{job_url}/sid-1").mock(
+        side_effect=[
+            httpx.Response(401, text="call not properly authenticated"),
+            httpx.Response(200, json={"entry": [{"content": {"isDone": True}}]}),
+        ]
+    )
+    respx.get(f"{job_url}/sid-1/results").mock(
+        return_value=httpx.Response(200, json={"results": [{"_raw": "event-1"}]})
+    )
+    respx.delete(f"{job_url}/sid-1").mock(return_value=httpx.Response(200))
+
+    results = _with_stale_key(_service()).search("index=notable")
+
+    assert results == [{"_raw": "event-1"}]
+    assert create.call_count == 1
+    assert status.call_count == 2
+    assert login.call_count == 1
+    assert status.calls[1].request.headers["Authorization"] == "Splunk sk-fresh"
+
+
+@respx.mock
+def test_results_401_retries_that_get_for_the_same_sid(monkeypatch):
+    _hold_poll(monkeypatch)
+    login = _mock_login()
+    job_url = f"{BASE}/services/search/jobs"
+    create = respx.post(job_url).mock(
+        return_value=httpx.Response(201, json={"sid": "sid-1"})
+    )
+    respx.get(f"{job_url}/sid-1").mock(
+        return_value=httpx.Response(
+            200, json={"entry": [{"content": {"isDone": True}}]}
+        )
+    )
+    results_route = respx.get(f"{job_url}/sid-1/results").mock(
+        side_effect=[
+            httpx.Response(401, text="call not properly authenticated"),
+            httpx.Response(200, json={"results": [{"_raw": "event-1"}]}),
+        ]
+    )
+    respx.delete(f"{job_url}/sid-1").mock(return_value=httpx.Response(200))
+
+    results = _with_stale_key(_service()).search("index=notable")
+
+    assert results == [{"_raw": "event-1"}]
+    assert create.call_count == 1
+    assert results_route.call_count == 2
+    assert login.call_count == 1
+
+
+@respx.mock
+def test_login_failure_after_401_returns_none_and_does_not_login_again(monkeypatch):
+    _hold_poll(monkeypatch)
+    login = _mock_login(status=401)
+    create = respx.post(f"{BASE}/services/search/jobs").mock(
+        return_value=httpx.Response(401, text="call not properly authenticated")
+    )
+    svc = _with_stale_key(_service())
+
+    assert svc.search("index=notable") is None
+    assert login.call_count == 1
+    assert create.call_count == 1
+    # Failed login leaves the key unset, so the next call tries again.
+    assert svc.session_key is None
+
+    assert svc.search("index=notable") is None
+    assert login.call_count == 2
+    assert create.call_count == 1
+
+
+@respx.mock
+def test_second_401_after_fresh_login_returns_none_without_another_login(monkeypatch):
+    _hold_poll(monkeypatch)
+    login = _mock_login()
+    create = respx.post(f"{BASE}/services/search/jobs").mock(
+        return_value=httpx.Response(401, text="call not properly authenticated")
+    )
+    svc = _with_stale_key(_service())
+
+    assert svc.search("index=notable") is None
+    assert login.call_count == 1
+    assert create.call_count == 2
+    assert svc.session_key == "sk-fresh"
+
+
+@respx.mock
+def test_server_error_does_not_call_login_again(monkeypatch):
+    _hold_poll(monkeypatch)
+    login = respx.post(f"{BASE}/services/auth/login").mock(
+        return_value=httpx.Response(200, json={"sessionKey": "sk-1"})
+    )
+    respx.post(f"{BASE}/services/search/jobs").mock(
+        return_value=httpx.Response(500, text="boom")
+    )
+
+    assert _service().search("index=notable") is None
+    assert login.call_count == 1
+
+
+@respx.mock
+def test_delete_401_still_returns_results(monkeypatch):
+    _hold_poll(monkeypatch)
+    job_url = f"{BASE}/services/search/jobs"
+    respx.post(job_url).mock(return_value=httpx.Response(201, json={"sid": "sid-1"}))
+    respx.get(f"{job_url}/sid-1").mock(
+        return_value=httpx.Response(
+            200, json={"entry": [{"content": {"isDone": True}}]}
+        )
+    )
+    respx.get(f"{job_url}/sid-1/results").mock(
+        return_value=httpx.Response(200, json={"results": [{"_raw": "event-1"}]})
+    )
+    respx.delete(f"{job_url}/sid-1").mock(
+        return_value=httpx.Response(401, text="call not properly authenticated")
+    )
+
+    results = _with_stale_key(_service()).search("index=notable")
+
+    assert results == [{"_raw": "event-1"}]
+
+
 @pytest.mark.parametrize("trailing", ["", "/"])
 def test_server_url_trailing_slash_is_normalised(trailing):
     assert _service(server_url=BASE + trailing).server_url == BASE

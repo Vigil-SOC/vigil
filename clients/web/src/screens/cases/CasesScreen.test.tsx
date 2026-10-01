@@ -23,6 +23,22 @@ vi.mock('../../services/api', () => ({
       Promise.resolve({ data: testState.cases.find((item) => item.case_id === id) }),
     ),
     delete: vi.fn(),
+    update: vi.fn(() => Promise.resolve({ data: { success: true } })),
+    getSLA: vi.fn(() => Promise.resolve({ data: {} })),
+    getRecord: vi.fn(() => Promise.resolve({ data: { rows: [], run_id: null, investigation_id: null } })),
+    getComments: vi.fn(() => Promise.resolve({ data: { comments: [] } })),
+    getTasks: vi.fn(() => Promise.resolve({ data: { tasks: [] } })),
+    getEvidence: vi.fn(() => Promise.resolve({ data: { evidence: [] } })),
+    getIOCs: vi.fn(() => Promise.resolve({ data: { iocs: [] } })),
+    getEscalations: vi.fn(() => Promise.resolve({ data: { escalations: [] } })),
+  },
+  workflowApi: {
+    getRun: vi.fn(() => Promise.resolve({ data: {} })),
+    replayRun: vi.fn(),
+    verifyRun: vi.fn(),
+  },
+  orchestratorApi: {
+    exportInvestigation: vi.fn(),
   },
   findingsApi: { getById: vi.fn() },
   caseSearchApi: { search: vi.fn() },
@@ -134,6 +150,31 @@ describe('case deletion', () => {
 
     await waitFor(() => expect(casesApi.delete).toHaveBeenCalledWith(CASE.case_id))
     await waitFor(() => expect(screen.getByRole('button', { name: 'New Case' })).toBeInTheDocument())
+  })
+})
+
+describe('server queue', () => {
+  it('asks the server for the first page and opens a row', async () => {
+    renderCases()
+
+    await screen.findByText(CASE.title)
+    expect(casesApi.getAll).toHaveBeenCalledWith(expect.objectContaining({ limit: 100, offset: 0 }))
+    fireEvent.click(screen.getByText(CASE.title))
+    expect(await screen.findByRole('heading', { name: CASE.title })).toBeInTheDocument()
+  })
+
+  it('sends a closed filter to the server', async () => {
+    renderCases()
+    await screen.findByText(CASE.title)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Filters' })).getByRole('button', { name: 'Closed' }),
+    )
+
+    await waitFor(() =>
+      expect(casesApi.getAll).toHaveBeenCalledWith(expect.objectContaining({ closed: true, offset: 0 })),
+    )
   })
 })
 

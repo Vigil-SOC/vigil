@@ -194,6 +194,17 @@ export const findingsApi = {
     }),
 
   deleteAll: () => api.delete('/findings/all'),
+
+  markNoise: (id: string) =>
+    api.post(`/findings/${encodeURIComponent(id)}/noise`),
+
+  clearNoise: (id: string) =>
+    api.delete(`/findings/${encodeURIComponent(id)}/noise`),
+
+  launchIntake: (id: string) =>
+    api.post<{ queued: boolean; already_queued: boolean; trigger_id?: number | null }>(
+      `/findings/${encodeURIComponent(id)}/intake`,
+    ),
 }
 
 export interface IpExclusion {
@@ -227,10 +238,33 @@ export const exclusionsApi = {
     api.post<IpExclusion>(`/exclusions/${encodeURIComponent(id)}/remove`, { reason: reason || null }),
 }
 
+export interface CaseRecordRow {
+  id: string
+  at: string
+  kind: string
+  source: string
+  chained: boolean
+  text: string
+}
+
+export interface CaseRecordResponse {
+  run_id: string | null
+  investigation_id: string | null
+  rows: CaseRecordRow[]
+}
+
 export const casesApi = {
   getAll: (params?: {
-    status?: string
+    state?: string
+    workflow?: string
     priority?: string
+    data_source?: string
+    sla_at_risk?: boolean
+    assignee?: string
+    closed?: boolean
+    query?: string
+    limit?: number
+    offset?: number
   }) => api.get<Schema<'CaseListResponse'>>('/cases', { params }),
 
   getById: (id: string) => api.get<Schema<'CaseSchema'>>(`/cases/${id}`),
@@ -327,8 +361,12 @@ export const casesApi = {
   escalate: (id: string, data: Schema<'EscalationAdd'>) =>
     api.post<Schema<'CaseSuccessResponse'>>(`/cases/${id}/escalate`, data),
 
-  // No /cases/{id}/audit-log route — left untyped on purpose. See #699.
-  getAuditLog: (id: string) => api.get(`/cases/${id}/audit-log`),
+  getEscalations: (id: string) =>
+    api.get<Schema<'CaseEscalationsResponse'>>(`/cases/${id}/escalations`),
+
+  // The merged record. There is no audit-log route; this read replaced it.
+  getRecord: (id: string) =>
+    api.get<CaseRecordResponse>(`/cases/${id}/record`),
 
   merge: (targetCaseId: string, sourceCaseId: string) =>
     api.post<Schema<'CaseMergeResponse'>>(`/cases/${targetCaseId}/merge`, {
@@ -514,6 +552,13 @@ export interface AgentSummary {
   decision_id?: string
 }
 
+/** Reads the shell folds itself. Health is public; routability is admin-only. */
+export const consoleApi = {
+  getHealth: () => api.get('/health'),
+  getRoutability: () =>
+    api.get<{ providers: Record<string, boolean> }>('/bifrost/routability'),
+}
+
 export const configApi = {
   getClaude: () => api.get('/config/claude'),
   setClaude: (api_key: string) => api.post('/config/claude', { api_key }),
@@ -550,6 +595,11 @@ export const configApi = {
   
   getTheme: () => api.get('/config/theme'),
   setTheme: (theme: string) => api.post('/config/theme', { theme }),
+
+  getAutonomy: () =>
+    api.get<{ auto_response_enabled: boolean; force_manual_approval: boolean }>(
+      '/config/autonomy',
+    ),
   
   getPostgreSQL: () => api.get('/config/postgresql'),
   setPostgreSQL: (connection_string: string) => api.post('/config/postgresql', { connection_string }),
@@ -596,7 +646,15 @@ export const configApi = {
     loop_interval: number
     stale_threshold: number
     workdir_base: string
-  }) => api.post('/config/orchestrator', data),
+  }) => {
+    const rest = { ...data }
+    delete (rest as { profiles?: unknown }).profiles
+    return api.post('/config/orchestrator', rest)
+  },
+
+  getForceManualApproval: () => api.get('/config/force-manual-approval'),
+  setForceManualApproval: (enabled: boolean) =>
+    api.post('/config/force-manual-approval', { enabled }),
 }
 
 export interface PlatformDatabaseProxyConfig {
@@ -971,6 +1029,8 @@ export const workflowApi = {
   // the agent side, so it is asked for on a click and never on the getRun poll.
   getReplay: (runId: string, decisionId: string) =>
     api.get<ReplayReport>(`/workflows/runs/${runId}/replay`, { params: { decision_id: decisionId } }),
+  replayRun: (runId: string) => api.get(`/workflows/runs/${runId}/replay`),
+  verifyRun: (runId: string) => api.get(`/workflows/runs/${runId}/verify`),
   // Hides a finished run from History. The row and its ledger stay: what the
   // agents did is still auditable by run_id after an operator tidies the list.
   deleteRun: (runId: string) => api.delete(`/workflows/runs/${runId}`),
@@ -1212,6 +1272,124 @@ export interface BootstrapPayload {
 
 // First-account creation: creating a user otherwise needs an existing admin.
 // Self-closes once any user exists.
+export interface OverviewArrival {
+  data_source: string
+  count: number
+  source_text: string
+}
+
+export interface OverviewOutcome {
+  state: string
+  label: string
+  count: number | null
+  source_text: string
+  info: string | null
+  unmeasured_text: string | null
+}
+
+export interface OverviewAgent {
+  workflow_id: string
+  name: string
+  running: number
+  sample_size: number
+  rate: number | null
+  level: 'good' | 'fair' | 'poor' | null
+  current_step: string | null
+}
+
+export interface OverviewFeedItem {
+  finding_id: string
+  severity: string | null
+  data_source: string
+  status: string
+  terminal_state: string
+  terminal_label: string
+  description: string | null
+  created_at: string | null
+  evidence_links: Array<{ ref?: string }>
+  source_evidence: Record<string, unknown> | null
+  source_link: string | null
+  case_id: string | null
+}
+
+export interface OverviewPayload {
+  day: string
+  empty: boolean
+  arrivals: OverviewArrival[]
+  engine: { source_text: string }
+  outcomes: OverviewOutcome[]
+  running_source: string
+  step_source: string
+  rate_info: string
+  good_at: number
+  fair_at: number
+  agents: OverviewAgent[]
+  feed: OverviewFeedItem[]
+}
+
+export const overviewApi = {
+  get: () => api.get<OverviewPayload>('/overview'),
+}
+
+export interface TriageRow {
+  id: number
+  kind: string
+  kind_label: string
+  state: string
+  state_label: string
+  source: string
+  severity_band: string
+  age_seconds: number
+  ttl_seconds: number
+  last_quarter: boolean
+  score: null
+  trust: null
+  weight: null
+  pickup_seconds: number | null
+  workflow_id: string
+  case_door: string | null
+  document: string | null
+  source_link: string | null
+  source_evidence: Record<string, unknown> | null
+  description: string | null
+  finding_id: string | null
+  created_at: string | null
+  decided_at: string | null
+}
+
+export interface TriageSource {
+  data_source: string
+  arrivals: number
+  lag_seconds: number | null
+  quiet: boolean | null
+}
+
+export interface TriagePayload {
+  rows: TriageRow[]
+  strip: {
+    picked_up: {
+      launched_or_merged: number
+      created_today: number
+      share: number | null
+    }
+    waiting: number
+    cases_created_today: number
+    trust_floor: string
+  }
+  sources: TriageSource[]
+  unmeasured_text: string
+}
+
+export interface TriageQuery {
+  kind?: string
+  source?: string
+  state?: string
+}
+
+export const triageApi = {
+  get: (params: TriageQuery = {}) => api.get<TriagePayload>('/triage', { params }),
+}
+
 export const bootstrapApi = {
   status: () => api.get<BootstrapStatus>('/auth/bootstrap'),
   create: (payload: BootstrapPayload) => api.post('/auth/bootstrap', payload),

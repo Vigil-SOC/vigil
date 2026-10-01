@@ -311,8 +311,8 @@ export async function keyRefusal(keyId: string | undefined): Promise<string | nu
   }
 }
 
-/** Does any Bifrost provider have a routable key? The setup gate's Bifrost-side
-    readiness check — one request, where it used to make one per provider. */
+/** Does any Bifrost provider have a routable key? Setup's system check ORs
+    this with the legacy active+default predicate. */
 export async function anyRoutableBifrostProvider(): Promise<boolean> {
   const { data } = await bifrostApi.routability()
   return Object.values(data.providers || {}).some(Boolean)

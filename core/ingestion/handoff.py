@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
+from core.ingestion.dedup import RedisDedupSet
 from core.time import utcnow
 
 logger = logging.getLogger(__name__)
@@ -16,12 +17,22 @@ full_waits: Dict[str, int] = defaultdict(int)
 _full_counter: Any = None
 
 
-def envelope(finding: Dict[str, Any], source: str) -> Dict[str, Any]:
+def envelope(
+    finding: Dict[str, Any],
+    source: str,
+    *,
+    dedup: Optional[RedisDedupSet] = None,
+    dedup_key: Optional[str] = None,
+) -> Dict[str, Any]:
+    # dedup/dedup_key: the key the producer marks, which the processor forgets
+    # if it gives up on the store (#1341).
     return {
         "type": "finding",
         "source": source,
         "data": finding,
         "timestamp": utcnow().isoformat(),
+        "dedup": dedup,
+        "dedup_key": dedup_key,
     }
 
 

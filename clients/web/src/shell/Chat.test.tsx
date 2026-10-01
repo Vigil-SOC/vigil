@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import Chat from './Chat'
-import { reasoningApi } from '../services/api'
+import { mcpApi, reasoningApi } from '../services/api'
 
 vi.mock('./useConversations', () => ({
   useConversations: () => ({ items: [], phase: 'ready', error: null, reload: vi.fn() }),
@@ -102,6 +102,58 @@ describe('Vigil Assistant resize controls', () => {
 
     expect(onWidthChange).toHaveBeenCalledWith(470)
     expect(onWidthCommit).toHaveBeenCalledWith(470)
+  })
+})
+
+function renderChat() {
+  return render(
+    <Chat
+      open
+      onClose={vi.fn()}
+      width={420}
+      minWidth={360}
+      maxWidth={600}
+      onWidthChange={vi.fn()}
+      onWidthCommit={vi.fn()}
+    />,
+  )
+}
+
+describe('MCP tools chip', () => {
+  it('counts connected sessions over enabled servers', async () => {
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({
+      data: {
+        statuses: [
+          { name: 'github', status: 'running', enabled: true },
+          { name: 'virustotal', status: 'disconnected', enabled: true, error: 'connection refused' },
+          { name: 'slack', status: 'running', enabled: false },
+        ],
+      },
+    } as never)
+
+    renderChat()
+    fireEvent.click(screen.getByTitle('Chat settings'))
+
+    const chip = await screen.findByText('1/2')
+    expect(chip).toHaveClass('ok')
+  })
+
+  it('stays off green when no enabled session is connected', async () => {
+    vi.mocked(mcpApi.getStatuses).mockResolvedValue({
+      data: {
+        statuses: [
+          { name: 'virustotal', status: 'disconnected', enabled: true, error: 'connection refused' },
+          { name: 'slack', status: 'disconnected', enabled: false },
+        ],
+      },
+    } as never)
+
+    renderChat()
+    fireEvent.click(screen.getByTitle('Chat settings'))
+
+    const chip = await screen.findByText('0/1')
+    expect(chip).toHaveClass('danger')
+    expect(chip).not.toHaveClass('ok')
   })
 })
 

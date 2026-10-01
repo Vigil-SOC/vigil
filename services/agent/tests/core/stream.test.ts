@@ -108,6 +108,7 @@ describe("the tool loop", () => {
     expect(outcome.status).toBe("completed");
     expect(outcome.value).toEqual({ verb: "HALT" });
     expect(outcome.calls.map((call) => call.tool)).toEqual(["bump"]);
+    expect(outcome.calls[0]?.duration_ms).toEqual(expect.any(Number));
     expect(outcome.capped).toBe(false);
   });
 
@@ -141,12 +142,14 @@ describe("the tool loop", () => {
       kind: "refused",
       detail: "erase is not granted to counter",
     });
+    expect(outcome.calls[0]?.duration_ms).toBeUndefined();
   });
 
   it("reports arguments that were not JSON as a defect in the call", async () => {
     const harness = harnessOf([{ calls: [{ tool: "bump", args: "not json" }] }, { calls: [] }, HALT]);
     const outcome = await outcomeOf(config(), harness);
     expect(outcome.calls[0]?.wrapped.failure?.kind).toBe("invalid_args");
+    expect(outcome.calls[0]?.duration_ms).toEqual(expect.any(Number));
   });
 
   it("renders recalled memory into the opening turn and recalls once", async () => {
@@ -336,6 +339,7 @@ describe("the approval gate", () => {
     const replayed = await outcomeOf(gated, harnessOf(script, { state, dispatch: refusing }));
 
     expect(replayed.calls[0]?.result).toEqual({ ok: true, rows: [{ n: 1 }], rowCount: 1, capped: false, sourceSystem: "test" });
+    expect(replayed.calls[0]?.duration_ms).toBeUndefined();
     expect(replayed.status).toBe("completed");
   });
 
@@ -347,6 +351,7 @@ describe("the approval gate", () => {
 
     expect(outcome.status).toBe("completed");
     expect(outcome.calls[0]?.wrapped.failure).toEqual({ kind: "refused", detail: "a reviewer rejected this call" });
+    expect(outcome.calls[0]?.duration_ms).toBeUndefined();
   });
 
   // Derived from the call, so an approval for one set of arguments is not an

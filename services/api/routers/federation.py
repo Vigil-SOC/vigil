@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from core.federation import registry as fed_registry
@@ -19,6 +19,8 @@ from core.federation import store as fed_store
 from core.federation.adapters._base import SETTLING_MARGIN
 from core.federation.runner import request_poll_now
 from core.routing import Auth, RouterMeta
+from core.storage.models import User
+from services.api.middleware.auth import get_current_active_user
 
 router = APIRouter()
 
@@ -94,8 +96,14 @@ async def get_settings() -> Dict[str, Any]:
 
 
 @router.put("/settings")
-async def put_settings(payload: FederationGlobalSettings) -> Dict[str, Any]:
-    fed_store.set_global_settings({"enabled": payload.enabled}, updated_by="api")
+async def put_settings(
+    payload: FederationGlobalSettings,
+    current_user: User = Depends(get_current_active_user),
+) -> Dict[str, Any]:
+    fed_store.set_global_settings(
+        {"enabled": payload.enabled},
+        updated_by=str(current_user.user_id),
+    )
     return fed_store.get_global_settings()
 
 

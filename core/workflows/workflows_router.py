@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.agents.projections import read_projection, read_replay
+from core.agents.projections import read_projection, read_replay, read_verify
 from core.deps import (
     provide_approvals,
     provide_custom_workflows,
@@ -426,8 +426,11 @@ async def get_workflow_run(
     if not row:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
     row["phases"] = run_service.list_phases(run_id)
+    folded = await read_projection(run_id)
     if catalog.is_hunt(workflows, row.get("workflow_id")):
-        row["hunt"] = await read_projection(run_id)
+        row["hunt"] = folded
+    else:
+        row["projection"] = folded
     return row
 
 
@@ -580,6 +583,29 @@ async def replay_workflow_run(
             status_code=404, detail=f"Nothing to replay for run: {run_id}"
         )
     return report
+
+
+@router.get("/workflows/runs/{run_id}/verify")
+async def verify_workflow_run(
+    run_id: str,
+    run_service: WorkflowRunService = Depends(provide_workflow_runs),
+):
+    """Walk the hash chain of ``run_id``. The agent layer hashes it.
+
+    Python forwards the result and does not re-check the chain.
+    """
+    if not run_service.get_run(run_id):
+        raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
+    try:
+        result = await read_verify(run_id)
+    except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
+        logger.error("could not verify run %s: %s", run_id, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from None
+    if result is None:
+        raise HTTPException(
+            status_code=404, detail=f"Nothing to verify for run: {run_id}"
+        )
+    return result
 
 
 # result_summary was rendered with the account this rewrite supersedes. The console

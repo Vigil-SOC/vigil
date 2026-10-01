@@ -217,7 +217,14 @@ class KafkaConsumerService:
         finding.setdefault("data_source", f"kafka:{topic}")
 
         if not await put_or_shutdown(
-            self._output_queue, envelope(finding, f"kafka:{topic}"), self._shutdown
+            self._output_queue,
+            envelope(
+                finding,
+                f"kafka:{topic}",
+                dedup=self._dedup,
+                dedup_key=finding_id,
+            ),
+            self._shutdown,
         ):
             return False
         await self._dedup.mark_processed(finding_id)

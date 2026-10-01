@@ -61,6 +61,30 @@ _CASE_OWNED_MODELS = (
 )
 
 
+def list_case_investigations(session: Session, case_id: str) -> List[Investigation]:
+    """Newest first. The audit run is ``run_id_for`` of the first row."""
+    return (
+        session.query(Investigation)
+        .filter(Investigation.case_id == case_id)
+        .order_by(
+            Investigation.created_at.desc(), Investigation.investigation_id.desc()
+        )
+        .all()
+    )
+
+
+def list_case_audit(session: Session, case_id: str) -> List[CaseAuditLog]:
+    """Rows about this case. There is no ``case_id`` column on the table."""
+    return (
+        session.query(CaseAuditLog)
+        .filter(
+            CaseAuditLog.entity_type == "case",
+            CaseAuditLog.entity_id == case_id,
+        )
+        .all()
+    )
+
+
 def add_task(
     session: Session,
     case_id: str,

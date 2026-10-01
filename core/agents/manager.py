@@ -126,6 +126,7 @@ class AgentManager:
                 "color": a.color,
                 "specialization": a.specialization,
                 "decision_id": a.decision_id,
+                "recommended_tools": list(a.recommended_tools),
             }
             for a in self.agents.values()
         ]

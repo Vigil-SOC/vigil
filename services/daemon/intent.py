@@ -35,7 +35,7 @@ from core.intent import (
     intent_file,
     read_intent,
 )
-from core.response.approval_service import Reversibility
+from core.response.approval_service import APPROVAL_CONFIG_KEY, Reversibility
 from core.response.config import (
     ResponseConfig,
     approval_requirement,
@@ -62,7 +62,7 @@ def _overlay_force_manual_approval(
     try/except-and-continue as the orchestrator overlay: no DB, no overlay.
     """
     try:
-        row = get_config_service().get_system_config("approval.force_manual_approval")
+        row = get_config_service().get_system_config(APPROVAL_CONFIG_KEY)
     except Exception as exc:  # noqa: BLE001
         logger.debug("Could not read approval config from DB: %s", exc)
         return

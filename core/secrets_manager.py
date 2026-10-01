@@ -447,11 +447,20 @@ class EncryptedFileBackend(SecretsBackend):
         if not self._crypto_ok:
             logger.error("EncryptedFileBackend unavailable (cryptography missing)")
             return False
+        # _load_cache returns the live dict, and _write_cache returns False
+        # instead of raising. Roll the assignment back or get() serves a
+        # value that never reached disk.
         cache = self._load_cache()
+        had_key = key in cache
+        previous = cache.get(key)
         cache[key] = value
         if self._write_cache():
             logger.info(f"Set secret '{key}' in encrypted store")
             return True
+        if had_key:
+            cache[key] = previous
+        else:
+            cache.pop(key, None)
         return False
 
     def delete(self, key: str) -> bool:

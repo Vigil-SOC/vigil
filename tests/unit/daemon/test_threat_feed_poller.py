@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from core.memory.hunt_coverage import build_proposal
 from core.threat_intel import threat_feed_service as feed
 from core.workflows.workflows_service import WorkflowsService
 from services.daemon import orchestrator
+from services.daemon import threat_feed_poller as poller
 from services.daemon.threat_feed_poller import ThreatFeedPoller, _IntelIntake
 
 pytestmark = pytest.mark.unit
@@ -203,6 +206,55 @@ def test_every_key_already_offered_is_no_row(monkeypatch):
 
     assert captured == []
     assert result == {"inserted": 0, "keys": 0, "skipped_recent": 2}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_fetch_leaves_the_watermark_and_the_next_poll_reasks(
+    monkeypatch,
+):
+    # A raised fetch is the only signal run_once treats as a failed collection.
+    # Returning [] used to look like a clean empty poll and slide added_after
+    # past the outage, so indicators published then were never pulled.
+    watermark = datetime(2026, 9, 29, 12, 0, 0)
+    last_polled = {"cloudforce_one::col-1": watermark}
+    monkeypatch.setattr(poller, "_last_polled", last_polled)
+    failed = {"col-1": True}
+    calls = []
+
+    def _fetch(**kwargs):
+        calls.append(kwargs)
+        if failed.get(kwargs["collection_id"]):
+            raise ConnectionError("503 Service Unavailable")
+        return ["indicator"]
+
+    def _upsert(indicators):
+        return {"inserted": len(indicators), "updated": 0, "skipped": 0}
+
+    monkeypatch.setattr(ThreatFeedPoller, "is_enabled", staticmethod(lambda: True))
+    monkeypatch.setattr("core.config.get_integration_config", lambda _id: CONFIG)
+    monkeypatch.setattr(feed, "fetch_taxii_collection", _fetch)
+    monkeypatch.setattr(feed, "upsert_indicators", _upsert)
+    monkeypatch.setattr(
+        ThreatFeedPoller,
+        "offer_uncovered_indicators_to_intake",
+        lambda self: {"inserted": 0},
+    )
+
+    poller_run = ThreatFeedPoller()
+    summary = await poller_run.run_once()
+
+    assert last_polled["cloudforce_one::col-1"] == watermark
+    assert last_polled["cloudforce_one::col-2"] > watermark
+    assert poller_run.stats["errors"] == 1
+    assert summary["totals"]["errors"] == 1
+    assert summary["collections"]["col-1"] == {"error": "503 Service Unavailable"}
+    assert [call["collection_id"] for call in calls] == ["col-1", "col-2"]
+
+    failed.clear()
+    await poller_run.run_once()
+
+    assert calls[2]["collection_id"] == "col-1"
+    assert calls[2]["since"] == watermark
 
 
 def test_a_refused_insert_is_reported_not_raised(monkeypatch):
