@@ -445,8 +445,9 @@ def test_corrupt_pack_fails_verification(scratch_db, tmp_path: Path):
     target = max(packs, key=lambda path: path.stat().st_size)
     target.chmod(0o644)
     blob = bytearray(target.read_bytes())
-    blob[len(blob) // 2] ^= 0xFF
-    target.write_bytes(blob)
+    # Shorten the pack. A flipped byte in the middle is ciphertext: restic
+    # check does not read it, and the next backup may not reuse that blob.
+    target.write_bytes(blob[:-1])
 
     second = _run_create(env, repo, passphrase)
     assert second.returncode != 0
