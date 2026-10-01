@@ -273,6 +273,9 @@ export interface ApiWorkflow {
   source?: string
   run_kind?: string
   hunt_like?: boolean
+  runs_today?: number
+  mean_cost_usd?: number | null
+  updated_at?: string
 }
 
 /** the backend carries no presentation icon, so derive one from the name */
@@ -304,6 +307,9 @@ export function mapApiWorkflow(w: ApiWorkflow): Workflow {
     // list of which kinds run the hypothesis loop. Falls back to the one kind that
     // did before the flag existed, so an older backend still reads correctly.
     huntLike: w.hunt_like ?? w.run_kind === 'hunt',
+    runsToday: typeof w.runs_today === 'number' ? w.runs_today : 0,
+    meanCostUsd: typeof w.mean_cost_usd === 'number' ? w.mean_cost_usd : null,
+    updatedAt: w.updated_at,
   }
 }
 
