@@ -6,6 +6,7 @@ under ``services/api/routers/`` because every module there must export a
 ``router``.
 """
 
+from datetime import datetime
 from typing import Any, Optional
 
 from pydantic import BaseModel
@@ -29,9 +30,53 @@ class CaseSuccessResponse(BaseModel):
     success: bool
 
 
+class CaseQueueItem(BaseModel):
+    """One row of the case queue.
+
+    ``case_id`` and ``title`` stay so callers that only need a picker
+    (the workflow start dialog) can keep reading the list.
+    """
+
+    case_id: str
+    title: str
+    priority: Optional[str] = None
+    assignee: Optional[str] = None
+    combined_state: str
+    workflow_id: Optional[str] = None
+    findings_count: int = 0
+    iteration_count: Optional[int] = None
+    cost_usd: Optional[float] = None
+    max_cost_usd: Optional[float] = None
+    budget_health: Optional[str] = None
+    comment_count: int = 0
+    last_activity: Optional[datetime] = None
+    age_seconds: float
+    sla_seconds_left: Optional[float] = None
+    health_status: Optional[str] = None
+
+
+class CaseQueueStrip(BaseModel):
+    """Counts for the queue strip. Independent of the page filters."""
+
+    by_state: dict[str, int]
+    sla_at_risk: int
+    closed_today: int
+    agent_closure_share: float
+
+
 class CaseListResponse(BaseModel):
-    cases: list[CaseSchema]
+    cases: list[CaseQueueItem]
     total: int
+    limit: int
+    offset: int
+    has_more: bool
+    strip: CaseQueueStrip
+
+
+class CaseDetailResponse(CaseSchema):
+    """``GET /cases/{id}`` — the case record plus combined state."""
+
+    combined_state: str
 
 
 class CasePurgeResponse(BaseModel):
