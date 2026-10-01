@@ -30,6 +30,7 @@ import AutoOpsScreen from '../screens/autoops/AutoOpsScreen'
 import HealthScreen from '../screens/health/HealthScreen'
 import SettingsScreen from '../screens/settings/SettingsScreen'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
+import OverviewScreen from '../screens/overview/OverviewScreen'
 import { VigilLogo } from '../shared/VigilLogo'
 import {
   foldStatus,
@@ -41,7 +42,7 @@ import {
 } from './statusLine'
 
 const PRIMARY_KEYS = ['cases', 'workflows', 'settings']
-const MORE_KEYS = ['dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
+const MORE_KEYS = ['overview', 'dashboard', 'metrics', 'analytics', 'decisions', 'autoops', 'health']
 
 const AUTONOMY_ACT = 'Autonomy · Act · reversible changes on its own'
 const AUTONOMY_ASSIST = 'Autonomy · Assist · asks before changes'
@@ -53,6 +54,7 @@ const LEVEL_WORD: Record<StatusFold['level'], string> = {
 }
 
 const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Element> = {
+  overview: OverviewScreen,
   dashboard: DashboardScreen,
   cases: CasesScreen,
   metrics: MetricsScreen,
@@ -174,6 +176,7 @@ function SocConsoleInner() {
   const [chatResizing, setChatResizing] = useState(false)
   const [chatSeed, setChatSeed] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
+  const [wallMode, setWallMode] = useState(false)
   // from ExtensionProvider, so a connector configured in Settings reaches the
   // rail without a refresh
   const [orchestratorEnabled, setOrchestratorEnabled] = useState(false)
@@ -231,6 +234,7 @@ function SocConsoleInner() {
   // screens that deep-link a detail re-assert viewFull from their own URL state
   useEffect(() => {
     setViewFull(false)
+    setWallMode(false)
   }, [current])
 
   useEffect(() => {
@@ -390,7 +394,7 @@ function SocConsoleInner() {
     >
       <ToastProvider>
       <div className="shell vg-shell">
-        <header className="vg-header">
+        {!wallMode && <header className="vg-header">
           <div className="vg-brand">
             <VigilLogo className="vg-logo" />
             <DevModeWarning />
@@ -418,8 +422,8 @@ function SocConsoleInner() {
             )}
             <UserMenu />
           </div>
-        </header>
-        <nav className="vg-nav" aria-label="Primary">
+        </header>}
+        {!wallMode && <nav className="vg-nav" aria-label="Primary">
           {primary.map(navButton)}
           {more.length > 0 && (
             <div className="vg-more" ref={moreRef}>
@@ -441,7 +445,7 @@ function SocConsoleInner() {
               )}
             </div>
           )}
-        </nav>
+        </nav>}
         <div
           className={`vg-status${status?.level === 'poor' ? ' is-poor' : ''}`}
           role={status ? 'status' : undefined}
@@ -458,13 +462,15 @@ function SocConsoleInner() {
 
         {/* main */}
         <div className={mainClass}>
-          <header className="topbar">
-            <div className="title">
-              <h1>{title}</h1>
-              <p>{sub}</p>
-            </div>
-            <div className="grow" />
-          </header>
+          {!wallMode && (
+            <header className="topbar">
+              <div className="title">
+                <h1>{title}</h1>
+                <p>{sub}</p>
+              </div>
+              <div className="grow" />
+            </header>
+          )}
           {demoOn && (
             <div className="demo-banner" role="status">
               The data on screen is demo data.
@@ -490,7 +496,7 @@ function SocConsoleInner() {
                     <button className="btn primary" onClick={() => go('dashboard')}>Back to Dashboard</button>
                   </div>
                 ) : (
-                  <Screen openChat={openChat} go={go} goSettings={goSettings} setViewFull={setViewFull} />
+                  <Screen openChat={openChat} go={go} goSettings={goSettings} setViewFull={setViewFull} setWallMode={setWallMode} />
                 )}
               </ErrorBoundary>
             </div>

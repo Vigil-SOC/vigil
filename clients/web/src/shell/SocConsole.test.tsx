@@ -198,6 +198,24 @@ vi.mock('../services/api', () => ({
     listInteractions: () => Promise.resolve({ interactions: [] }),
     getInteraction: () => Promise.resolve({}),
   },
+  overviewApi: {
+    get: () => Promise.resolve({
+      data: {
+        day: '2026-10-01',
+        empty: true,
+        arrivals: [],
+        engine: { source_text: '' },
+        outcomes: [],
+        running_source: '',
+        step_source: '',
+        rate_info: '',
+        good_at: 0.95,
+        fair_at: 0.85,
+        agents: [],
+        feed: [],
+      },
+    }),
+  },
   conversationsApi: {
     list: () => Promise.resolve({ data: { conversations: [] } }),
     get: () => Promise.resolve({ data: { messages: [] } }),
@@ -246,7 +264,7 @@ afterEach(() => {
 
 const title = () => screen.getByRole('heading', { level: 1 }).textContent
 
-const MORE_LABELS = ['Dashboard', 'Case Metrics', 'Analytics', 'AI Decisions', 'Auto Ops', 'Health']
+const MORE_LABELS = ['Overview', 'Dashboard', 'Case Metrics', 'Analytics', 'AI Decisions', 'Auto Ops', 'Health']
 
 function clickScreen(name: string) {
   const inMore = MORE_LABELS.some((label) => name === label || name.startsWith(`${label} (`))
@@ -290,6 +308,7 @@ describe('SocConsole', () => {
       ['Cases', 'Cases'],
       ['Agents & workflows', 'Workflows & Skills'],
       ['Settings', 'Settings'],
+      ['Overview', 'Overview'],
       ['Dashboard', 'Dashboard'],
       ['Case Metrics', 'Case Metrics'],
       ['Analytics', 'Analytics Dashboard'],
@@ -302,6 +321,19 @@ describe('SocConsole', () => {
       expect(title()).toBe(pageTitle)
     }
     expect(document.querySelector('[data-command-slot] input')).toBeNull()
+  })
+
+  it('hides the rail and the top bar while Overview is on the wall', async () => {
+    renderConsole('/overview')
+    expect(await screen.findByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
+    fireEvent.click(screen.getByRole('button', { name: 'Wall' }))
+    expect(screen.queryByRole('navigation', { name: 'Primary' })).not.toBeInTheDocument()
+    expect(document.querySelector('[data-command-slot]')).toBeNull()
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Exit wall' }))
+    expect(screen.getByRole('navigation', { name: 'Primary' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Overview')
   })
 
   it('shows spend, approval depth and recent run outcomes on the Health screen', async () => {

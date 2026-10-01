@@ -949,6 +949,24 @@
       color: var(--high);
    }
 
+   .kpi .k-val.unmeasured {
+      font-size: 14px;
+      font-weight: 600;
+      letter-spacing: 0;
+      color: var(--tx-3);
+   }
+
+   .kpi a.k-val {
+      color: inherit;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+   }
+
+   .kpi .k-label.as-stored {
+      text-transform: none;
+      letter-spacing: 0;
+   }
+
    .kpi .k-unit {
       font-size: 16px;
       color: var(--tx-3);

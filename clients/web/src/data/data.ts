@@ -1,6 +1,7 @@
 import type { IconName } from '../shared/icons'
 
 export type ConsoleScreenKey =
+  | 'overview'
   | 'dashboard'
   | 'cases'
   | 'metrics'
@@ -21,6 +22,7 @@ export interface NavGate {
 /** Nothing is gated today. Auto Ops is deliberately always-visible — gating it
  *  made it vanish confusingly. */
 export const NAV: [IconName, string, ConsoleScreenKey | null, NavGate?][] = [
+  ['graph', 'Overview', 'overview'],
   ['grid', 'Dashboard', 'dashboard'],
   ['folder', 'Cases', 'cases'],
   ['bars', 'Case Metrics', 'metrics'],
@@ -79,6 +81,7 @@ export interface CaseRow {
 }
 
 export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
+  overview: ['Overview', 'What arrived today and where it went'],
   dashboard: ['Dashboard', 'Security operations overview'],
   cases: ['Cases', 'Manage investigation cases'],
   metrics: ['Case Metrics', 'Real-time SOC performance analytics'],

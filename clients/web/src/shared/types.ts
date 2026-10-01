@@ -27,4 +27,6 @@ export interface ConsoleScreenProps {
   goSettings: (section: SettingsSectionKey) => void
   /** full-height, non-scrolling view — the master-detail splits want this */
   setViewFull: (full: boolean) => void
+  /** Overview's wall mode. Hides the rail and the top bar. */
+  setWallMode?: (wall: boolean) => void
 }
