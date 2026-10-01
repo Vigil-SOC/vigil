@@ -301,7 +301,6 @@ describe('SocConsole', () => {
       clickScreen(navLabel)
       expect(title()).toBe(pageTitle)
     }
-    expect(document.querySelector('[data-command-slot] input')).toBeNull()
   })
 
   it('shows spend, approval depth and recent run outcomes on the Health screen', async () => {

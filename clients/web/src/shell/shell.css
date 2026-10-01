@@ -48,6 +48,8 @@
    under the nav bar. */
 .soc-console .chat {
   top: 130px;
+  /* Above the case drawer scrim, so Open in Vigil and /ask stay reachable. */
+  z-index: 46;
 }
 
 .vg-header {
@@ -63,7 +65,7 @@
   color: var(--tx0);
   font-family: var(--font-ui);
   position: relative;
-  z-index: 30;
+  z-index: 50;
 }
 
 .vg-brand {
@@ -90,12 +92,152 @@
   display: none;
 }
 
-/* Empty on purpose: the command bar mounts here later. No input, no keys. */
 .vg-command-slot {
+  position: relative;
   height: 36px;
-  border: 1px dashed var(--ln1);
+  border: 1px solid var(--ln1);
   border-radius: 10px;
   background: var(--bg2);
+  display: flex;
+  align-items: center;
+}
+
+.vg-command-slot input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--tx0);
+  font-family: inherit;
+  font-size: 13px;
+  padding: 0 48px 0 12px;
+  outline: none;
+}
+
+.vg-command-slot input::placeholder {
+  color: var(--tx3);
+}
+
+.vg-command-kbd {
+  position: absolute;
+  right: 10px;
+  color: var(--tx3);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.vg-command-menu {
+  position: absolute;
+  top: 42px;
+  left: 0;
+  right: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 6px;
+  background: var(--bg2);
+  border: 1px solid var(--ln1);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px var(--shadow);
+  z-index: 70;
+}
+
+.vg-command-empty {
+  padding: 10px 12px;
+  color: var(--tx3);
+  font-size: 13px;
+}
+
+.vg-command-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tx0);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.vg-command-row[aria-selected='true'] {
+  background: var(--bg3);
+}
+
+.vg-command-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vg-command-hint {
+  color: var(--tx3);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.vg-command-dest {
+  margin-left: auto;
+  color: var(--tx3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.vg-command-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 10px;
+  border-top: 1px solid var(--ln1);
+}
+
+.vg-command-preview p {
+  flex: 1;
+  margin: 0;
+  color: var(--tx1);
+  font-size: 13px;
+}
+
+.vg-drawer-scrim {
+  position: fixed;
+  top: 52px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 45;
+  display: flex;
+  justify-content: flex-end;
+  background: color-mix(in srgb, var(--bg0) 35%, transparent);
+}
+
+.vg-case-drawer {
+  width: 75%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--bg);
+  box-shadow: -16px 0 40px var(--shadow);
+}
+
+.vg-drawer-tools {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--ln0);
+  background: var(--bg1);
+}
+
+.vg-case-drawer .split {
+  flex: 1;
+  min-height: 0;
 }
 
 .vg-header-end {

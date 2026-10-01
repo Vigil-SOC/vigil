@@ -11,7 +11,9 @@ import { ExtensionProvider, useExtensions } from '../extensions/ExtensionProvide
 import ExtensionHost from '../extensions/ExtensionHost'
 import { accentVars } from '../shared/accent'
 import { bgVars, isDarkBase } from './bg'
+import CaseDrawer from './CaseDrawer'
 import Chat from './Chat'
+import CommandBar from './CommandBar'
 import DevModeWarning from './DevModeWarning'
 import UserMenu from './UserMenu'
 import ErrorBoundary from './ErrorBoundary'
@@ -173,6 +175,7 @@ function SocConsoleInner() {
   )
   const [chatResizing, setChatResizing] = useState(false)
   const [chatSeed, setChatSeed] = useState<string | null>(null)
+  const [drawerCase, setDrawerCase] = useState<string | null>(null)
   const [viewFull, setViewFull] = useState(false)
   // from ExtensionProvider, so a connector configured in Settings reaches the
   // rail without a refresh
@@ -395,7 +398,15 @@ function SocConsoleInner() {
             <VigilLogo className="vg-logo" />
             <DevModeWarning />
           </div>
-          <div className="vg-command-slot" data-command-slot="" aria-hidden="true" />
+          <CommandBar
+            boards={[...primary, ...more].map((item) => {
+              const key = item[2] as string
+              return { key, label: key === 'workflows' ? 'Agents & workflows' : item[1] }
+            })}
+            onOpenChat={openChat}
+            onOpenCase={setDrawerCase}
+            onGo={(next) => go(next)}
+          />
           <div className="vg-header-end">
             {assist !== null && (
               <div className="vg-autonomy" ref={infoRef}>
@@ -510,6 +521,14 @@ function SocConsoleInner() {
           onResizeStateChange={setChatResizing}
           onSeedConsumed={() => setChatSeed(null)}
         />
+        {drawerCase && (
+          <CaseDrawer
+            caseId={drawerCase}
+            onClose={() => setDrawerCase(null)}
+            onSelect={setDrawerCase}
+            openChat={openChat}
+          />
+        )}
       </div>
 
       {/* floating Vigil assistant button — hidden while the chat dock is open

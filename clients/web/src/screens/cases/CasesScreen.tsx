@@ -968,7 +968,7 @@ function MergeCaseDialog({ open, c, rows, onClose, onMerged }: { open: boolean; 
   )
 }
 
-function CasesDetail({
+export function CasesDetail({
   id,
   rows,
   onSelect,
