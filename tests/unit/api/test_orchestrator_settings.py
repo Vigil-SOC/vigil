@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from core.response.approval_service import APPROVAL_CONFIG_KEY
 from services.api.routers.config import (
-    APPROVAL_FORCE_MANUAL_KEY,
     ForceManualApprovalConfig,
     OrchestratorSettingsConfig,
     get_force_manual_approval,
@@ -156,7 +156,7 @@ async def test_assist_and_act_write_only_the_approval_flag():
     assert missing.environment_wins is False
     assert assist.enabled is True
     assert act.enabled is False
-    assert saved[APPROVAL_FORCE_MANUAL_KEY] == {"enabled": False}
+    assert saved[APPROVAL_CONFIG_KEY] == {"enabled": False}
     assert saved["orchestrator.settings"] == {
         "enabled": True,
         "max_concurrent_agents": 3,
@@ -171,7 +171,7 @@ async def test_assist_and_act_write_only_the_approval_flag():
 )
 async def test_act_is_refused_when_the_environment_wins(force, auto):
     saved, svc = _store()
-    saved[APPROVAL_FORCE_MANUAL_KEY] = {"enabled": True}
+    saved[APPROVAL_CONFIG_KEY] = {"enabled": True}
     user = MagicMock()
     with (
         patch("services.api.routers.config.get_config_service", return_value=svc),
@@ -193,6 +193,6 @@ async def test_act_is_refused_when_the_environment_wins(force, auto):
 
     assert seen.environment_wins is True
     assert exc.value.status_code == 409
-    assert saved[APPROVAL_FORCE_MANUAL_KEY] == {"enabled": True}
+    assert saved[APPROVAL_CONFIG_KEY] == {"enabled": True}
     assert "orchestrator.settings" not in saved
     assert assist.enabled is True
