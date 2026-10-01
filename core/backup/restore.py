@@ -1,0 +1,688 @@
+"""Stage a snapshot, check it, and swap it in. ``--test`` discards the stage.
+
+The dump is restored into a new database. ``agent_events_assign_hashes`` is a
+BEFORE INSERT trigger and would re-hash rows if the dump landed in a schema
+that already had it. Checks run before any rename. A failure before the swap
+drops the stage and leaves the live database and files where they were.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import tempfile
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import quote
+
+import psycopg2
+from cryptography.fernet import Fernet
+from psycopg2 import sql
+
+from core.backup.create import (
+    BackupError,
+    _checked,
+    _child_env,
+    _conninfo_value,
+    _output,
+    _priority_prefix,
+    _require_tool,
+    _restic_env,
+    _run,
+)
+from core.config import REPO_ROOT, get_settings, vigil_path
+from core.intent import intent_file
+from core.secrets_manager import EncryptedFileBackend
+from core.storage.connection import (
+    DatabaseConfig,
+    get_db_manager,
+    init_database,
+)
+from core.version import __version__
+
+# The FIRST_BREAK query from services/agent/ledger/verify.ts. The hash stays
+# the database's agent_event_hash; $1 is the whole ledger (NULL run id).
+_LEDGER_BREAK = """
+SELECT run_id, seq,
+       CASE
+         WHEN prev_hash IS DISTINCT FROM expected_prev THEN 'prev_hash'
+         ELSE 'payload'
+       END AS reason
+  FROM (
+    SELECT run_id, seq, prev_hash, event_hash,
+           coalesce(lag(event_hash) OVER (PARTITION BY run_id ORDER BY seq), '') AS expected_prev,
+           agent_event_hash(prev_hash, payload) AS expected_hash
+      FROM agent_events
+     WHERE (%(run_id)s::uuid IS NULL OR run_id = %(run_id)s)
+  ) c
+ WHERE prev_hash IS DISTINCT FROM expected_prev
+    OR event_hash IS DISTINCT FROM expected_hash
+ ORDER BY run_id, seq
+ LIMIT 1
+"""
+
+_APP_NAME = f"vigil-backup-{os.getpid()}"
+
+
+@dataclass
+class _Placed:
+    name: str
+    staged: Path
+    target: Path
+
+
+def restore_snapshot(
+    *,
+    repo: str,
+    passphrase_file: str,
+    snapshot: str,
+    test: bool,
+) -> str:
+    passphrase = Path(passphrase_file)
+    if not passphrase.is_file():
+        raise BackupError(f"passphrase file not found: {passphrase_file}")
+    _require_tool("restic")
+    _require_tool("pg_restore")
+
+    cfg = DatabaseConfig()
+    priority = _priority_prefix()
+    # Real restore only. --test never renames the live database, so other
+    # sessions may stay connected.
+    if not test:
+        _assert_no_other_clients(cfg)
+
+    manifest, dump_in_snapshot = _load_manifest(repo, passphrase, snapshot, priority)
+    _assert_compatible(manifest)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    staged_name = _suffixed(cfg.database, "_stage_", stamp)
+    pre_name = _suffixed(cfg.database, "_pre_restore_", stamp)
+    if staged_name == cfg.database or pre_name == cfg.database:
+        raise BackupError(f"database name {cfg.database} is too long to restore")
+
+    created = False
+    swapped = False
+    placed: list[_Placed] = []
+    created_dirs: list[Path] = []
+    error: BackupError | None = None
+    try:
+        _create_database(cfg, staged_name)
+        created = True
+        with tempfile.TemporaryDirectory(prefix="vigil-restore-") as raw:
+            root = Path(raw)
+            _checked(
+                priority
+                + ["restic", "-r", repo, "restore", snapshot, "--target", str(root)],
+                env=_restic_env(passphrase),
+                what="restic restore",
+            )
+            dump_file = _under_target(root, dump_in_snapshot)
+            if not dump_file.is_file():
+                raise BackupError(f"snapshot has no dump at {dump_in_snapshot}")
+            _pg_restore(cfg, staged_name, dump_file, priority)
+            tables = manifest.get("tables")
+            if not isinstance(tables, dict):
+                raise BackupError("manifest has no table counts")
+            _check_rows(cfg, staged_name, tables)
+            _check_ledger(cfg, staged_name)
+            _stage_locations(root, manifest, stamp, placed, created_dirs)
+            secrets = _check_secrets(placed)
+            _check_schema(cfg, staged_name)
+            lines = [
+                f"rows: ok ({len(tables)} tables)",
+                "ledger: ok",
+                "schema: ok",
+                f"secrets: {secrets}",
+            ]
+            if test:
+                lines.append("discarded staged copies")
+                return "\n".join(lines)
+            lines.append(f"previous database: {pre_name}")
+            lines.extend(_swap(cfg, staged_name, pre_name, placed, stamp))
+            swapped = True
+            created = False
+            return "\n".join(lines)
+    except BackupError as exc:
+        error = exc
+        raise
+    except Exception as exc:
+        error = BackupError(str(exc))
+        raise error from exc
+    finally:
+        # A failed drop must not replace the check error that caused it.
+        if not swapped:
+            cleanup_error: Exception | None = None
+            for item in placed:
+                try:
+                    _remove_path(item.staged)
+                except Exception as exc:  # noqa: BLE001
+                    cleanup_error = exc
+            if created:
+                try:
+                    _drop_database(cfg, staged_name)
+                except Exception as exc:  # noqa: BLE001
+                    cleanup_error = exc
+            for directory in sorted(
+                created_dirs, key=lambda path: len(path.parts), reverse=True
+            ):
+                try:
+                    directory.rmdir()
+                except OSError:
+                    pass
+            if cleanup_error is not None and error is None:
+                raise BackupError(
+                    f"could not remove the staged copies: {cleanup_error}"
+                )
+
+
+def _assert_no_other_clients(cfg: DatabaseConfig) -> None:
+    conn = _connect_as(cfg, database=None, autocommit=True)
+    try:
+        rows = _other_clients(conn, None)
+    finally:
+        conn.close()
+    if rows:
+        raise BackupError(
+            f"refusing restore: {len(rows)} other connection(s) on {cfg.database}"
+        )
+
+
+def _other_clients(
+    conn: psycopg2.extensions.connection, datnames: list[str] | None
+) -> list:
+    # Client backends only. Autovacuum is not another session, and counting it
+    # would refuse a quiet database whenever vacuum is running.
+    cur = conn.cursor()
+    if datnames is None:
+        cur.execute(
+            """
+            SELECT pid
+              FROM pg_stat_activity
+             WHERE datname = current_database()
+               AND backend_type = 'client backend'
+               AND application_name IS DISTINCT FROM %s
+            """,
+            (_APP_NAME,),
+        )
+    else:
+        cur.execute(
+            """
+            SELECT pid
+              FROM pg_stat_activity
+             WHERE datname = ANY(%s)
+               AND backend_type = 'client backend'
+               AND application_name IS DISTINCT FROM %s
+            """,
+            (datnames, _APP_NAME),
+        )
+    return cur.fetchall()
+
+
+def _load_manifest(
+    repo: str, passphrase: Path, snapshot: str, priority: list[str]
+) -> tuple[dict, str]:
+    env = _restic_env(passphrase)
+    listed = _checked(
+        priority + ["restic", "-r", repo, "ls", snapshot],
+        env=env,
+        what="restic ls",
+    )
+    paths = [
+        line
+        for line in listed.stdout.splitlines()
+        if line and not line.startswith("snapshot ")
+    ]
+    present = set(paths)
+    found: list[tuple[str, dict]] = []
+    for dump in paths:
+        if Path(dump).name != "db.dump":
+            continue
+        manifest_path = str(Path(dump).parent / "manifest.json")
+        if manifest_path not in present:
+            continue
+        raw = _checked(
+            priority + ["restic", "-r", repo, "dump", snapshot, manifest_path],
+            env=env,
+            what="manifest",
+        )
+        try:
+            payload = json.loads(raw.stdout)
+        except json.JSONDecodeError:
+            continue
+        locations = payload.get("locations")
+        if not isinstance(locations, list) or not isinstance(
+            payload.get("tables"), dict
+        ):
+            continue
+        database = next(
+            (item for item in locations if item.get("name") == "database"), None
+        )
+        if isinstance(database, dict) and database.get("path") == dump:
+            found.append((dump, payload))
+    if len(found) != 1:
+        raise BackupError("snapshot does not contain one Vigil manifest")
+    return found[0][1], found[0][0]
+
+
+def _assert_compatible(manifest: dict) -> None:
+    version = manifest.get("version")
+    if not isinstance(version, str) or not version.strip():
+        raise BackupError("manifest has no version")
+    theirs = _release_pair(version)
+    ours = _release_pair(__version__)
+    if theirs != ours:
+        raise BackupError(
+            f"backup version {version} does not match this install "
+            f"({__version__}); install {version}"
+        )
+
+
+def _release_pair(version: str) -> tuple[str, str]:
+    core = version.strip().split("+", 1)[0].split("-", 1)[0]
+    parts = core.split(".")
+    if len(parts) < 2 or not parts[0] or not parts[1]:
+        raise BackupError(f"unreadable version {version}")
+    return parts[0], parts[1]
+
+
+def _suffixed(name: str, marker: str, stamp: str) -> str:
+    suffix = f"{marker}{stamp}"
+    if len(name) + len(suffix) <= 63:
+        return name + suffix
+    keep = 63 - len(suffix)
+    if keep < 1:
+        raise BackupError("restore names do not fit in a database identifier")
+    return name[:keep] + suffix
+
+
+def _create_database(cfg: DatabaseConfig, name: str) -> None:
+    conn = _connect_as(cfg, database="postgres", autocommit=True)
+    try:
+        cur = conn.cursor()
+        cur.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+    except psycopg2.Error as exc:
+        raise BackupError(f"could not create the staged database: {exc}") from exc
+    finally:
+        conn.close()
+
+
+def _drop_database(cfg: DatabaseConfig, name: str) -> None:
+    if name == cfg.database:
+        raise BackupError("refusing to drop the live database")
+    conn = _connect_as(cfg, database="postgres", autocommit=True)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(
+                sql.Identifier(name)
+            )
+        )
+    except psycopg2.Error as exc:
+        raise BackupError(f"could not drop the staged database: {exc}") from exc
+    finally:
+        conn.close()
+
+
+def _pg_restore(
+    cfg: DatabaseConfig, database: str, dump_file: Path, priority: list[str]
+) -> None:
+    env = _child_env()
+    env["PGPASSWORD"] = cfg.password
+    proc = _run(
+        priority
+        + [
+            "pg_restore",
+            "--single-transaction",
+            "--exit-on-error",
+            "--no-password",
+            f"--dbname={_conninfo_for(cfg, database)}",
+            str(dump_file),
+        ],
+        env=env,
+        check=False,
+    )
+    if proc.returncode != 0:
+        raise BackupError(f"pg_restore failed: {_output(proc)}")
+
+
+def _check_rows(cfg: DatabaseConfig, database: str, tables: dict) -> None:
+    conn = _connect_as(cfg, database=database, autocommit=True)
+    try:
+        cur = conn.cursor()
+        for key, expected in tables.items():
+            if not isinstance(key, str) or "." not in key:
+                raise BackupError(f"row count check failed: bad table name {key!r}")
+            schema, table = key.split(".", 1)
+            try:
+                cur.execute(
+                    sql.SQL("SELECT count(*) FROM {}.{}").format(
+                        sql.Identifier(schema), sql.Identifier(table)
+                    )
+                )
+                got = int(cur.fetchone()[0])
+            except psycopg2.Error as exc:
+                raise BackupError(f"row count check failed: {key}: {exc}") from exc
+            if got != int(expected):
+                raise BackupError(
+                    f"row count mismatch for {key}: backup {expected}, staged {got}"
+                )
+    finally:
+        conn.close()
+
+
+def _check_ledger(cfg: DatabaseConfig, database: str) -> None:
+    conn = _connect_as(cfg, database=database, autocommit=True)
+    try:
+        cur = conn.cursor()
+        try:
+            cur.execute(_LEDGER_BREAK, {"run_id": None})
+            row = cur.fetchone()
+        except psycopg2.Error as exc:
+            raise BackupError(f"ledger check failed: {exc}") from exc
+    finally:
+        conn.close()
+    if row:
+        raise BackupError(
+            f"ledger check failed: run={row[0]} seq={row[1]} reason={row[2]}"
+        )
+
+
+def _stage_locations(
+    root: Path,
+    manifest: dict,
+    stamp: str,
+    placed: list[_Placed],
+    created_dirs: list[Path],
+) -> None:
+    # Append as each location is moved. A later failure must still see the
+    # siblings already staged, or the caller cannot delete them.
+    settings = get_settings()
+    for item in manifest.get("locations") or []:
+        if not isinstance(item, dict) or item.get("status") != "included":
+            continue
+        name = item.get("name")
+        if name == "database":
+            continue
+        if not isinstance(name, str):
+            raise BackupError("manifest location has no name")
+        original = item.get("path")
+        if not isinstance(original, str) or not original:
+            raise BackupError(f"{name} is included but has no path")
+        src = _under_target(root, original)
+        if not src.exists():
+            raise BackupError(f"{name} is missing from the snapshot")
+        target = _target_for(name, original, settings)
+        _remember_created(target.parent, created_dirs)
+        dest = target.parent / f"{target.name}.vigil-restore-stage-{stamp}"
+        if dest.exists():
+            raise BackupError(f"staging path already exists: {dest}")
+        shutil.move(str(src), str(dest))
+        placed.append(_Placed(name, dest, target))
+
+
+def _remember_created(parent: Path, created: list[Path]) -> None:
+    missing: list[Path] = []
+    cursor = parent
+    while not cursor.exists() and cursor != cursor.parent:
+        missing.append(cursor)
+        cursor = cursor.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    for path in missing:
+        if path not in created:
+            created.append(path)
+
+
+def _target_for(name: str, original: str, settings) -> Path:
+    if name == "state_directory":
+        return vigil_path()
+    if name == "orchestrator_workdir":
+        return Path(settings.orchestrator_workdir).resolve()
+    if name == "skills":
+        raw = settings.vigil_skills_path.strip()
+        if not raw:
+            raise BackupError("skills were backed up but VIGIL_SKILLS_PATH is unset")
+        return Path(raw).resolve()
+    if name == "intent":
+        return intent_file().resolve()
+    if name == "env":
+        return (REPO_ROOT / ".env").resolve()
+    if name == "bifrost":
+        # No setting for this directory. The manifest records where it lived.
+        return Path(original)
+    raise BackupError(f"unknown location {name}")
+
+
+def _under_target(root: Path, original: str) -> Path:
+    path = Path(original)
+    if path.is_absolute():
+        path = Path(*path.parts[1:])
+    return root / path
+
+
+def _check_secrets(placed: list[_Placed]) -> str:
+    state = next((item for item in placed if item.name == "state_directory"), None)
+    if state is None:
+        return "skipped"
+    backend = EncryptedFileBackend(data_dir=state.staged)
+    secrets_path = backend.secrets_path
+    key_path = backend.master_key_path
+    # _load_cache turns a bad blob into {} and _load_or_create_master_key
+    # writes a key when master.key is absent. Neither is a successful check.
+    if not secrets_path.is_file():
+        return "ok"
+    if not key_path.is_file():
+        raise BackupError("secrets check failed: master.key is missing")
+    key_bytes = key_path.read_bytes()
+    try:
+        plaintext = Fernet(key_bytes.strip()).decrypt(secrets_path.read_bytes())
+        payload = json.loads(plaintext.decode("utf-8"))
+    except Exception as exc:
+        detail = str(exc).strip() or exc.__class__.__name__
+        raise BackupError(f"secrets check failed: {detail}") from exc
+    if not isinstance(payload, dict):
+        raise BackupError("secrets check failed: secrets.enc is not a JSON object")
+    if key_path.read_bytes() != key_bytes:
+        raise BackupError("secrets check failed: master.key was rewritten")
+    return "ok"
+
+
+def _check_schema(cfg: DatabaseConfig, database: str) -> None:
+    manager = get_db_manager()
+    if manager.engine is not None:
+        manager.close()
+    # init_database() always uses the process-wide manager. Point it at the
+    # stage first: seeding the live database would change its row counts.
+    manager.config = _config_for(cfg, database)
+    try:
+        init_database()
+        report = get_db_manager().schema_report()
+    except Exception as exc:
+        raise BackupError(f"schema check failed: {exc}") from exc
+    finally:
+        get_db_manager().close()
+    if report["state"] != "ok":
+        raise BackupError(
+            "schema check failed: "
+            + json.dumps(
+                {
+                    "state": report["state"],
+                    "missing_tables": report.get("missing_tables"),
+                    "missing_columns": report.get("missing_columns"),
+                    "not_null_columns": report.get("not_null_columns"),
+                },
+                sort_keys=True,
+            )
+        )
+
+
+def _config_for(cfg: DatabaseConfig, database: str) -> DatabaseConfig:
+    query = dict(cfg.extra_query)
+    query["application_name"] = _APP_NAME
+    if cfg.ssl_mode:
+        query["sslmode"] = cfg.ssl_mode
+    qs = "&".join(
+        f"{key}={quote(str(value), safe='')}" for key, value in sorted(query.items())
+    )
+    user = quote(cfg.user, safe="")
+    password = quote(cfg.password, safe="")
+    host = quote(cfg.host, safe="")
+    db = quote(database, safe="")
+    dsn = f"postgresql://{user}:{password}@{host}:{cfg.port}/{db}?{qs}"
+    return DatabaseConfig(connection_string=dsn)
+
+
+def _swap(
+    cfg: DatabaseConfig,
+    staged_name: str,
+    pre_name: str,
+    placed: list[_Placed],
+    stamp: str,
+) -> list[str]:
+    _close_our_backends(cfg, [cfg.database, staged_name])
+    admin = _connect_as(cfg, database="postgres", autocommit=True)
+    renamed = False
+    try:
+        if _other_clients(admin, [cfg.database, staged_name]):
+            raise BackupError(
+                f"refusing restore: other connection(s) on {cfg.database}"
+            )
+        _rename_database(admin, cfg.database, pre_name)
+        renamed = True
+        _rename_database(admin, staged_name, cfg.database)
+    except BackupError:
+        if renamed:
+            _rename_database(admin, pre_name, cfg.database)
+        raise
+    except psycopg2.Error as exc:
+        if renamed:
+            _rename_database(admin, pre_name, cfg.database)
+        raise BackupError(f"could not swap the database: {exc}") from exc
+    finally:
+        admin.close()
+    try:
+        return _swap_files(placed, stamp)
+    except Exception:
+        try:
+            _rollback_database(cfg, staged_name, pre_name)
+        except Exception as undo:
+            raise BackupError(
+                f"swap failed and the database rollback failed: {undo}"
+            ) from undo
+        raise
+
+
+def _rollback_database(cfg: DatabaseConfig, staged_name: str, pre_name: str) -> None:
+    admin = _connect_as(cfg, database="postgres", autocommit=True)
+    try:
+        _terminate_ours(admin, [cfg.database, staged_name, pre_name])
+        _rename_database(admin, cfg.database, staged_name)
+        _rename_database(admin, pre_name, cfg.database)
+    finally:
+        admin.close()
+
+
+def _swap_files(placed: list[_Placed], stamp: str) -> list[str]:
+    done: list[tuple[_Placed, Path | None]] = []
+    lines: list[str] = []
+    try:
+        for item in placed:
+            previous: Path | None = None
+            moved_aside = False
+            try:
+                if item.target.exists() or item.target.is_symlink():
+                    previous = (
+                        item.target.parent / f"{item.target.name}_pre_restore_{stamp}"
+                    )
+                    if previous.exists():
+                        raise BackupError(f"previous copy already exists: {previous}")
+                    item.target.rename(previous)
+                    moved_aside = True
+                item.staged.rename(item.target)
+            except Exception:
+                if moved_aside and previous is not None and not item.target.exists():
+                    previous.rename(item.target)
+                raise
+            done.append((item, previous))
+            if previous is not None:
+                lines.append(f"previous {item.name}: {previous}")
+            else:
+                lines.append(f"restored {item.name}: {item.target}")
+        return lines
+    except Exception:
+        _undo_files(done)
+        raise
+
+
+def _undo_files(done: list[tuple[_Placed, Path | None]]) -> None:
+    for item, previous in reversed(done):
+        if item.target.exists() and not item.staged.exists():
+            item.target.rename(item.staged)
+        if previous is not None and previous.exists() and not item.target.exists():
+            previous.rename(item.target)
+
+
+def _close_our_backends(cfg: DatabaseConfig, datnames: list[str]) -> None:
+    get_db_manager().close()
+    admin = _connect_as(cfg, database="postgres", autocommit=True)
+    try:
+        _terminate_ours(admin, datnames)
+    finally:
+        admin.close()
+
+
+def _terminate_ours(conn: psycopg2.extensions.connection, datnames: list[str]) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT pg_terminate_backend(pid)
+          FROM pg_stat_activity
+         WHERE datname = ANY(%s)
+           AND application_name = %s
+           AND pid <> pg_backend_pid()
+        """,
+        (datnames, _APP_NAME),
+    )
+
+
+def _rename_database(conn: psycopg2.extensions.connection, old: str, new: str) -> None:
+    cur = conn.cursor()
+    cur.execute(
+        sql.SQL("ALTER DATABASE {} RENAME TO {}").format(
+            sql.Identifier(old), sql.Identifier(new)
+        )
+    )
+
+
+def _connect_as(
+    cfg: DatabaseConfig, *, database: str | None, autocommit: bool
+) -> psycopg2.extensions.connection:
+    try:
+        conn = psycopg2.connect(_conninfo_for(cfg, database), password=cfg.password)
+    except psycopg2.Error as exc:
+        raise BackupError(f"database connection failed: {exc}") from exc
+    conn.autocommit = autocommit
+    return conn
+
+
+def _conninfo_for(cfg: DatabaseConfig, database: str | None) -> str:
+    parts = {
+        "host": cfg.host,
+        "port": str(cfg.port),
+        "user": cfg.user,
+        "dbname": database or cfg.database,
+        "sslmode": cfg.ssl_mode,
+    }
+    parts.update(dict(cfg.extra_query))
+    parts["application_name"] = _APP_NAME
+    parts.setdefault("connect_timeout", "10")
+    return " ".join(
+        f"{key}={_conninfo_value(str(value))}" for key, value in parts.items()
+    )
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.is_symlink() or path.exists():
+        path.unlink()
