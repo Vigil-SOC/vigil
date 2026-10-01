@@ -31,6 +31,9 @@ const NARRATE = /^\/runs\/([0-9a-fA-F-]{36})\/narrate$/;
 const REPLAY = /^\/runs\/([0-9a-fA-F-]{36})\/replay$/;
 // GET /runs/<id>/verify -- the hash chain, walked by verifyLedger. Python forwards it.
 const VERIFY = /^\/runs\/([0-9a-fA-F-]{36})\/verify$/;
+// GET /runs/<id>/events[?snapshots=1] -- the ledger itself. Snapshots stay off
+// unless asked: a decision snapshot is the digest, and the case record does not show it.
+const EVENTS = /^\/runs\/([0-9a-fA-F-]{36})\/events$/;
 // A conversation is prose and a config, not an upload. Anything larger is a
 // mistake or an attack, and either way it is refused before it is parsed.
 const MAX_BODY = 1_000_000;
@@ -214,6 +217,12 @@ async function readReplay(state: State, runId: string, decisionId: string | null
   res.end(JSON.stringify(report));
 }
 
+async function readEvents(state: State, runId: string, snapshots: boolean, res: ServerResponse): Promise<void> {
+  const events = await state.read(runId, snapshots ? { snapshots: true } : {});
+  res.writeHead(200, { "content-type": "application/json" });
+  res.end(JSON.stringify({ events }));
+}
+
 async function readVerify(runId: string, verify: VerifyRun | undefined, res: ServerResponse): Promise<void> {
   if (verify === undefined) return refuse(res, 500, "ledger verify is not wired");
   try {
@@ -278,6 +287,9 @@ export function chatServer(state: State, ready: Ready, build: HarnessFactory = h
 
       const verified = req.method === "GET" ? VERIFY.exec(parsed.pathname) : null;
       if (verified !== null) return readVerify(verified[1] as string, verify, res);
+
+      const logged = req.method === "GET" ? EVENTS.exec(parsed.pathname) : null;
+      if (logged !== null) return readEvents(state, logged[1] as string, parsed.searchParams.get("snapshots") === "1", res);
 
       return refuse(res, 404, `no such route: ${req.method} ${url}`);
     })();

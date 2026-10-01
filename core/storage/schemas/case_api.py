@@ -34,6 +34,55 @@ class CaseListResponse(BaseModel):
     total: int
 
 
+class CaseInvestigationRef(BaseModel):
+    """One investigation on the case page. Newest first on the detail read."""
+
+    investigation_id: str
+    status: str
+    workflow_id: str
+    run_id: str
+    live: bool = False
+    cost_usd: float = 0
+    max_cost_usd: float = 0
+    budget_health: str = "healthy"
+    iteration_count: int = 0
+    created_at: Optional[str] = None
+
+
+class CaseClosureView(BaseModel):
+    """What the closed summary shows. ``verdict`` is the stated reason."""
+
+    closure_category: str
+    closed_by: str
+    closed_by_kind: str
+    verdict: str = ""
+
+
+class CaseDetailSchema(CaseSchema):
+    """``GET /cases/{id}``. The list stays ``CaseSchema``."""
+
+    combined_state: str = ""
+    investigations: list[CaseInvestigationRef] = []
+    closure: Optional[CaseClosureView] = None
+
+
+class CaseRecordRow(BaseModel):
+    id: str
+    at: str
+    kind: str
+    source: str
+    chained: bool
+    text: str
+
+
+class CaseRecordResponse(BaseModel):
+    """The merged record. ``run_id`` is absent when the case has no investigation."""
+
+    run_id: Optional[str] = None
+    investigation_id: Optional[str] = None
+    rows: list[CaseRecordRow] = []
+
+
 class CasePurgeResponse(BaseModel):
     success: bool
     deleted: int

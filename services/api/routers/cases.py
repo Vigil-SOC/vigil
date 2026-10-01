@@ -8,11 +8,13 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
+from core.agents.projections import read_events, run_id_for
 from core.auth.auth_service import AuthService
 from core.cases import case_journal_service, case_records_service
 from core.cases.case_collaboration_service import CaseCollaborationService
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_notification_service import WATCHER_NOTIFICATION_TYPES
+from core.cases.case_record import merge_record
 from core.cases.case_sla_service import CaseSLAService, SlaOutcome
 from core.reporting.report_service import REPORTLAB_AVAILABLE, ReportService
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
@@ -32,6 +34,7 @@ from core.storage.schemas.case_api import (
     CaseCommentsResponse,
     CaseEscalationsResponse,
     CasePurgeResponse,
+    CaseRecordResponse,
     CaseRelationshipsResponse,
     CaseReportResponse,
     CaseSuccessResponse,
@@ -604,6 +607,40 @@ async def get_escalations(case_id: str, session: UnitOfWorkSession):
 
     escalations = case_records_service.list_escalations(session, case_id)
     return {"escalations": CaseEscalationSchema.dump_many(escalations)}
+
+
+@router.get("/{case_id}/record", response_model=CaseRecordResponse)
+async def get_case_record(case_id: str, session: UnitOfWorkSession):
+    """The case record: the latest run's ledger, then this case's audit rows.
+
+    Newest first. The agent returns the ledger with snapshots off. Audit rows
+    are ``entity_type == case`` and ``entity_id`` this case — the table has no
+    ``case_id`` column. The run is ``run_id_for`` of the latest investigation,
+    not the shadow adjudication.
+    """
+    if not data_service.get_case(case_id):
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    investigations = case_records_service.list_case_investigations(session, case_id)
+    latest = investigations[0] if investigations else None
+    events: list = []
+    run_id = None
+    investigation_id = None
+    if latest is not None:
+        investigation_id = latest.investigation_id
+        run_id = run_id_for(investigation_id)
+        try:
+            events = await read_events(run_id) or []
+        except Exception as exc:  # noqa: BLE001 — the operator is owed the reason
+            logger.error("could not read the record for %s: %s", case_id, exc)
+            raise HTTPException(status_code=502, detail=str(exc)) from None
+
+    audits = case_records_service.list_case_audit(session, case_id)
+    return {
+        "run_id": run_id,
+        "investigation_id": investigation_id,
+        "rows": merge_record(events, audits),
+    }
 
 
 # Case Merge

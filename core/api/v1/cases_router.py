@@ -21,13 +21,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from core.auth.current_user import get_current_user
-from core.cases import case_journal_service
+from core.cases import case_journal_service, case_records_service
 from core.cases.case_evidence_service import CaseEvidenceService
 from core.cases.case_ioc_service import CaseIOCService
+from core.cases.case_state import detail_fields
 from core.cases.closure import ClosedByKind, ClosureCategory
 from core.routing import Auth, RouterMeta, UnitOfWorkSession
 from core.storage.database_data_service import DatabaseDataService
-from core.storage.models import User
+from core.storage.models import CaseClosureInfo, User
 from core.storage.schemas import (
     CaseClosureInfoSchema,
     CaseEvidenceSchema,
@@ -36,6 +37,7 @@ from core.storage.schemas import (
 )
 from core.storage.schemas.case_api import (
     CaseCloseResponse,
+    CaseDetailSchema,
     CaseEvidenceListResponse,
     CaseIOCBulkResponse,
     CaseIOCExportResponse,
@@ -263,10 +265,14 @@ async def get_cases(status: Optional[str] = None, priority: Optional[str] = None
     return {"cases": cases, "total": len(cases)}
 
 
-@router.get("/{case_id}", response_model=CaseSchema)
-async def get_case(case_id: str):
+@router.get("/{case_id}", response_model=CaseDetailSchema)
+async def get_case(case_id: str, session: UnitOfWorkSession):
     """
     Get a specific case by ID.
+
+    ``combined_state`` is the one function the header pill reads. Investigations
+    are newest first; the audit run is ``run_id_for`` of the latest, never the
+    shadow adjudication.
 
     Args:
         case_id: The case ID
@@ -274,9 +280,14 @@ async def get_case(case_id: str):
     Returns:
         Case details
     """
-    case = data_service.get_case(case_id)
-    if not case:
+    loaded = data_service.get_case(case_id)
+    if not loaded:
         raise HTTPException(status_code=404, detail="Case not found")
+    # Copy: a demo-mode case is the stored dict, and this read must not write it.
+    case = dict(loaded)
+    investigations = case_records_service.list_case_investigations(session, case_id)
+    closure = session.get(CaseClosureInfo, case_id)
+    case.update(detail_fields(case.get("status"), investigations, closure))
     return case
 
 

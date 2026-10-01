@@ -255,6 +255,35 @@
         "title": "CaseClosureInfoSchema",
         "type": "object"
       },
+      "CaseClosureView": {
+        "description": "What the closed summary shows. ``verdict`` is the stated reason.",
+        "properties": {
+          "closed_by": {
+            "title": "Closed By",
+            "type": "string"
+          },
+          "closed_by_kind": {
+            "title": "Closed By Kind",
+            "type": "string"
+          },
+          "closure_category": {
+            "title": "Closure Category",
+            "type": "string"
+          },
+          "verdict": {
+            "default": "",
+            "title": "Verdict",
+            "type": "string"
+          }
+        },
+        "required": [
+          "closure_category",
+          "closed_by",
+          "closed_by_kind"
+        ],
+        "title": "CaseClosureView",
+        "type": "object"
+      },
       "CaseCreate": {
         "description": "Case creation request.",
         "properties": {
@@ -290,6 +319,171 @@
           "finding_ids"
         ],
         "title": "CaseCreate",
+        "type": "object"
+      },
+      "CaseDetailSchema": {
+        "description": "``GET /cases/{id}``. The list stays ``CaseSchema``.",
+        "properties": {
+          "activities": {
+            "default": [],
+            "items": {},
+            "title": "Activities",
+            "type": "array"
+          },
+          "assignee": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee"
+          },
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "closure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CaseClosureView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "combined_state": {
+            "default": "",
+            "title": "Combined State",
+            "type": "string"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "finding_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Finding Ids",
+            "type": "array"
+          },
+          "investigations": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CaseInvestigationRef"
+            },
+            "title": "Investigations",
+            "type": "array"
+          },
+          "mitre_techniques": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Mitre Techniques",
+            "type": "array"
+          },
+          "notes": {
+            "default": [],
+            "items": {},
+            "title": "Notes",
+            "type": "array"
+          },
+          "priority": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Priority"
+          },
+          "resolution_steps": {
+            "default": [],
+            "items": {},
+            "title": "Resolution Steps",
+            "type": "array"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tags": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "timeline": {
+            "default": [],
+            "items": {},
+            "title": "Timeline",
+            "type": "array"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "title": "CaseDetailSchema",
         "type": "object"
       },
       "CaseEvidenceListResponse": {
@@ -722,6 +916,71 @@
           }
         },
         "title": "CaseIOCSchema",
+        "type": "object"
+      },
+      "CaseInvestigationRef": {
+        "description": "One investigation on the case page. Newest first on the detail read.",
+        "properties": {
+          "budget_health": {
+            "default": "healthy",
+            "title": "Budget Health",
+            "type": "string"
+          },
+          "cost_usd": {
+            "default": 0,
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "investigation_id": {
+            "title": "Investigation Id",
+            "type": "string"
+          },
+          "iteration_count": {
+            "default": 0,
+            "title": "Iteration Count",
+            "type": "integer"
+          },
+          "live": {
+            "default": false,
+            "title": "Live",
+            "type": "boolean"
+          },
+          "max_cost_usd": {
+            "default": 0,
+            "title": "Max Cost Usd",
+            "type": "number"
+          },
+          "run_id": {
+            "title": "Run Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "workflow_id": {
+            "title": "Workflow Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "investigation_id",
+          "status",
+          "workflow_id",
+          "run_id"
+        ],
+        "title": "CaseInvestigationRef",
         "type": "object"
       },
       "CaseListResponse": {
@@ -4250,7 +4509,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/CaseSchema"
+                  "$ref": "#/components/schemas/CaseDetailSchema"
                 }
               }
             },

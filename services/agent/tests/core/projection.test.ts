@@ -63,6 +63,36 @@ describe("what a supervisor is told about a run", () => {
     const projection = await project(opened(), found({ verdict: "benign" }));
     expect(projection.findings).toEqual([{ agent_id: "lead", answer: { verdict: "benign" } }]);
   });
+
+  it("keeps a failed dispatch as a visibility gap, and a completed one off that list", async () => {
+    const failed = event("dispatch", {
+      dispatch_id: "dsp-1",
+      agent_id: "worker",
+      status: "failed",
+      question_id: null,
+      failure_reason: "the tool timed out",
+      query_intent: "who owns the host",
+    });
+    const completed = event("dispatch", {
+      dispatch_id: "dsp-2",
+      agent_id: "lead",
+      status: "complete",
+      question_id: null,
+      failure_reason: null,
+      query_intent: "the lead's own question",
+    });
+    const projection = await project(opened(), failed, completed);
+
+    expect(projection.gaps).toEqual([
+      {
+        dispatch_id: "dsp-1",
+        agent_id: "worker",
+        failure_reason: "the tool timed out",
+        query_intent: "who owns the host",
+      },
+    ]);
+    expect(projection.dispatched).toBe(2);
+  });
 });
 
 describe("cost, as the gateway reported it", () => {

@@ -272,6 +272,33 @@ describe("replaying what the hunt lead was shown", () => {
   });
 });
 
+describe("reading a run's ledger", () => {
+  it("omits snapshots unless the caller asks", async () => {
+    await listen([]);
+    await state.append(RUN, [
+      {
+        run_id: RUN,
+        run_kind: "investigate",
+        kind: "decision",
+        payload: { action: "EXAMINE", rationale: "look", worker: null },
+        snapshot: { digest: "secret" },
+      } as NewEvent<Record<string, unknown>>,
+    ]);
+
+    const plain = await get(`/runs/${RUN}/events`);
+    expect(plain.status).toBe(200);
+    const body = (await plain.json()) as { events: { kind: string; snapshot?: unknown }[] };
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0]?.kind).toBe("decision");
+    expect(body.events[0]?.snapshot).toBeUndefined();
+
+    const full = await get(`/runs/${RUN}/events?snapshots=1`);
+    expect(((await full.json()) as { events: { snapshot?: unknown }[] }).events[0]?.snapshot).toEqual({
+      digest: "secret",
+    });
+  });
+});
+
 describe("verifying a run's chain", () => {
   it("returns the chain walk verifyLedger produced", async () => {
     const asked: string[] = [];

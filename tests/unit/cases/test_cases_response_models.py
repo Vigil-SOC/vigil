@@ -4,6 +4,7 @@ import pytest
 from fastapi.routing import APIRoute
 
 from core.storage.schemas import CaseSchema, CaseWithFindingsSchema
+from core.storage.schemas.case_api import CaseDetailSchema
 from core.api.v1 import cases_router as v1_cases
 from services.api.routers import cases
 
@@ -34,5 +35,6 @@ def test_get_case_documents_ids_not_inlined_findings():
         and "GET" in route.methods
     ]
     assert len(get_case) == 1
-    assert get_case[0].response_model is CaseSchema
+    assert get_case[0].response_model is CaseDetailSchema
+    assert issubclass(get_case[0].response_model, CaseSchema)
     assert get_case[0].response_model is not CaseWithFindingsSchema

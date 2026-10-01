@@ -8,7 +8,7 @@ import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from core.config import get_settings
 from core.secrets import get_secret
@@ -128,6 +128,34 @@ async def read_replay(
         detail = response.text[:400]
         raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
     return response.json()
+
+
+async def read_events(run_id: str) -> Optional[List[Dict[str, Any]]]:
+    """The run's ledger, without snapshots.
+
+    None is serve's 404. Anything else that is not an event list raises,
+    because an operator opened Record and is owed the reason. Snapshots stay
+    off: a decision snapshot is the digest, and this read does not show it.
+    """
+    import httpx
+
+    url = agent_route(f"/runs/{run_id}/events")
+    try:
+        async with httpx.AsyncClient(timeout=READ_TIMEOUT_S) as client:
+            response = await client.get(url, headers=_headers())
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(f"could not reach the agent layer: {exc!r}") from None
+
+    if response.status_code == 404:
+        return None
+    if response.status_code != 200:
+        detail = response.text[:400]
+        raise RuntimeError(f"the agent layer answered {response.status_code}: {detail}")
+    body = response.json()
+    events = body.get("events") if isinstance(body, dict) else None
+    if not isinstance(events, list):
+        raise RuntimeError("the agent layer returned no event list")
+    return events
 
 
 async def read_verify(run_id: str) -> Optional[Dict[str, Any]]:
