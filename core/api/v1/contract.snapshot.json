@@ -2433,6 +2433,75 @@
         "title": "MttrResponse",
         "type": "object"
       },
+      "NeedsYouItem": {
+        "properties": {
+          "case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Case Id"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "reversibility": {
+            "title": "Reversibility",
+            "type": "string"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "source_id",
+          "title",
+          "reason",
+          "created_at",
+          "reversibility"
+        ],
+        "title": "NeedsYouItem",
+        "type": "object"
+      },
+      "NeedsYouResponse": {
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/NeedsYouItem"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "count"
+        ],
+        "title": "NeedsYouResponse",
+        "type": "object"
+      },
       "PendingActionResponse": {
         "description": "Frozen shape of an approval action (mirrors ``_pending_to_dict``).\n\nValue types are permissive where the underlying dataclass carries open JSON\n(evidence, parameters, execution_result); the key set is the promise.",
         "properties": {
@@ -3679,6 +3748,73 @@
           }
         },
         "summary": "List Approvals",
+        "tags": [
+          "approvals"
+        ]
+      }
+    },
+    "/api/v1/approvals/needs-you": {
+      "get": {
+        "operationId": "get_api_v1_approvals_needs-you",
+        "parameters": [
+          {
+            "description": "Only items whose resolved case id is this one.",
+            "in": "query",
+            "name": "case_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only items whose resolved case id is this one.",
+              "title": "Case Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "authorization",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NeedsYouResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Needs You",
         "tags": [
           "approvals"
         ]

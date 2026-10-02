@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from core.deps import provide_approvals
-from core.response.approval_service import ApprovalService
+from core.response.approval_service import ApprovalService, needs_you
 from core.routing import Auth, RouterMeta
 
 router = APIRouter()
@@ -90,6 +90,21 @@ class ApprovalListResponse(BaseModel):
 class ApprovalActionResult(BaseModel):
     action: PendingActionResponse
     resume_result: Optional[Dict[str, Any]] = None
+
+
+class NeedsYouItem(BaseModel):
+    kind: str
+    source_id: str
+    title: str
+    reason: str
+    created_at: str
+    reversibility: str
+    case_id: Optional[str] = None
+
+
+class NeedsYouResponse(BaseModel):
+    count: int
+    items: List[NeedsYouItem] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +189,21 @@ async def list_pending_approvals(
     ``requires_approval=True``. Used by the AI Decisions approvals tab."""
     actions = service.list_pending_approvals()
     return {"actions": [_pending_to_dict(a) for a in actions]}
+
+
+@router.get("/approvals/needs-you", response_model=NeedsYouResponse)
+async def list_needs_you(
+    case_id: Optional[str] = Query(
+        default=None,
+        description="Only items whose resolved case id is this one.",
+    ),
+):
+    """Pending approvals and checkpoints that need a person, oldest first.
+
+    Declared before ``/approvals/{action_id}`` so the literal path is not
+    read as an action id. Uncapped: the decisions list stops at 500.
+    """
+    return needs_you(case_id)
 
 
 @router.get("/approvals/{action_id}", response_model=PendingActionResponse)

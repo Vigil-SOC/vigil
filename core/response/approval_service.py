@@ -620,6 +620,83 @@ def _case_id_for_action(
     return None
 
 
+def _case_lookups(
+    actions: List[PendingAction],
+) -> tuple[Dict[str, Any], Dict[str, Optional[str]]]:
+    """Run trigger contexts and investigation case ids those actions can name."""
+    run_ids = {action.workflow_run_id for action in actions if action.workflow_run_id}
+    investigation_ids: set[str] = set()
+    for action in actions:
+        params = action.parameters if isinstance(action.parameters, dict) else {}
+        investigation_id = _text_id(params.get("investigation_id"))
+        if investigation_id:
+            investigation_ids.add(investigation_id)
+    runs: Dict[str, Any] = {}
+    investigations: Dict[str, Optional[str]] = {}
+    if not run_ids and not investigation_ids:
+        return runs, investigations
+    db = get_db_manager()
+    with db.session_scope() as session:
+        if run_ids:
+            rows = session.query(WorkflowRun).filter(WorkflowRun.run_id.in_(run_ids))
+            for row in rows:
+                ctx = row.trigger_context
+                runs[row.run_id] = ctx if isinstance(ctx, dict) else {}
+        if investigation_ids:
+            rows = session.query(Investigation).filter(
+                Investigation.investigation_id.in_(investigation_ids)
+            )
+            for row in rows:
+                investigations[row.investigation_id] = row.case_id
+    return runs, investigations
+
+
+def _kind_for_action(action: PendingAction) -> str:
+    params = action.parameters if isinstance(action.parameters, dict) else {}
+    checkpoint = params.get("checkpoint_id")
+    if isinstance(checkpoint, str):
+        return "checkpoint" if checkpoint.strip() else "approval"
+    return "checkpoint" if checkpoint else "approval"
+
+
+def needs_you(case_id: Optional[str] = None) -> Dict[str, Any]:
+    """Pending rows that need a person, oldest first, with no cap.
+
+    Not ``list_pending_approvals`` or ``list_actions``: those are newest-first,
+    and ``list_actions`` stops at 500, which hides the oldest asks.
+    """
+    db = get_db_manager()
+    with db.session_scope() as session:
+        stmt = (
+            select(ApprovalActionRow)
+            .where(ApprovalActionRow.status == ActionStatus.PENDING.value)
+            .where(ApprovalActionRow.requires_approval.is_(True))
+            .order_by(ApprovalActionRow.created_at.asc())
+        )
+        actions = [
+            _row_to_pending(row) for row in session.execute(stmt).scalars().all()
+        ]
+    runs, investigations = _case_lookups(actions)
+    wanted = _text_id(case_id)
+    items: List[Dict[str, Any]] = []
+    for action in actions:
+        resolved = _case_id_for_action(action, runs, investigations)
+        if wanted is not None and resolved != wanted:
+            continue
+        items.append(
+            {
+                "kind": _kind_for_action(action),
+                "source_id": action.action_id,
+                "title": action.title,
+                "reason": action.reason,
+                "created_at": action.created_at,
+                "reversibility": action.reversibility,
+                "case_id": resolved,
+            }
+        )
+    return {"count": len(items), "items": items}
+
+
 def pending_approval_case_ids() -> set[str]:
     """Case ids that currently need a person.
 
@@ -630,36 +707,10 @@ def pending_approval_case_ids() -> set[str]:
     actions = ApprovalService().list_pending_approvals()
     if not actions:
         return set()
-
-    run_ids = {action.workflow_run_id for action in actions if action.workflow_run_id}
-    investigation_ids: set[str] = set()
-    for action in actions:
-        params = action.parameters if isinstance(action.parameters, dict) else {}
-        investigation_id = _text_id(params.get("investigation_id"))
-        if investigation_id:
-            investigation_ids.add(investigation_id)
-    runs: Dict[str, Any] = {}
-    investigations: Dict[str, Optional[str]] = {}
-    if run_ids or investigation_ids:
-        db = get_db_manager()
-        with db.session_scope() as session:
-            if run_ids:
-                rows = session.query(WorkflowRun).filter(
-                    WorkflowRun.run_id.in_(run_ids)
-                )
-                for row in rows:
-                    ctx = row.trigger_context
-                    runs[row.run_id] = ctx if isinstance(ctx, dict) else {}
-            if investigation_ids:
-                rows = session.query(Investigation).filter(
-                    Investigation.investigation_id.in_(investigation_ids)
-                )
-                for row in rows:
-                    investigations[row.investigation_id] = row.case_id
-
+    runs, investigations = _case_lookups(actions)
     found: set[str] = set()
     for action in actions:
-        case_id = _case_id_for_action(action, runs, investigations)
-        if case_id:
-            found.add(case_id)
+        resolved = _case_id_for_action(action, runs, investigations)
+        if resolved:
+            found.add(resolved)
     return found
