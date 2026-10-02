@@ -4,6 +4,7 @@ import type { LocalExecutor } from "../../tools/local.js";
 import type { State } from "../../core/seams.js";
 import {
   ceilingsHit,
+  heardFrom,
   isProven,
   latestSteps,
   observationsOf,
@@ -81,11 +82,33 @@ export function finishFrom(
   return async (): Promise<ToolResult> => {
     const events = await state.read(runId);
     const steps = latestSteps(events);
-    const open = openSteps(steps);
-    if ((steps.length === 0 || open.length > 0) && !ceilingsHit(events, limits, now())) {
-      const which = open.length === 0 ? "nothing has been recorded" : open.map((step) => step.step_id).join(", ");
-      return failure(`finish refused; a cause is still open (${which})`);
+    const open = openSteps(steps).map((step) => step.step_id);
+    const finished = ok({ finished: true, open });
+    if (ceilingsHit(events, limits, now()) || (steps.length > 0 && open.length === 0)) return finished;
+
+    // A store that never returned an event leaves nothing to trace, so there is
+    // no open cause to keep working on.
+    const heard = heardFrom(events);
+    if (heard.searches > 0 && !heard.events) {
+      await noteSilence(state, runId, events, heard.error);
+      return finished;
     }
-    return ok({ finished: true, open: open.map((step) => step.step_id) });
+    if (heard.searches === 0) return failure("finish refused; no search has run yet");
+    if (steps.length === 0) return failure("finish refused; nothing has been recorded");
+    return failure(`finish refused; a cause is still open (${open.join(", ")})`);
   };
+}
+
+const SILENT = "No search on this run returned an event, so there was nothing to trace.";
+
+async function noteSilence(
+  state: State<RootCauseKinds>,
+  runId: string,
+  events: readonly { kind: string; payload: unknown }[],
+  error: string,
+): Promise<void> {
+  const noted = events.some((event) => event.kind === "notice" && (event.payload as { text?: string }).text?.startsWith(SILENT));
+  if (noted) return;
+  const text = error === "" ? SILENT : `${SILENT} The last search failed with: ${error}`;
+  await state.append(runId, [{ run_id: runId, run_kind: "root_cause", kind: "notice", payload: { text } }]);
 }

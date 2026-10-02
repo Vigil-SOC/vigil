@@ -194,11 +194,79 @@ describe("a who that is not on a proven step", () => {
 describe("finish", () => {
   const limits = specOf(SPLUNK).budgets;
 
-  it("is an error while a cause is open and the ceilings have not been hit", async () => {
-    const state = new InProcessState<RootCauseKinds>();
-    const result = await finishFrom(state, RUN, limits)({}, { maxRows: 1, timeoutMs: 1 }, new AbortController().signal);
+  const bounds = { maxRows: 1, timeoutMs: 1 };
+  const signal = new AbortController().signal;
+  const DOWN = { error: "Splunk search failed or timed out", query: "| makeresults" };
+  const openStep = {
+    run_id: RUN,
+    run_kind: "root_cause" as const,
+    kind: "step" as const,
+    payload: {
+      step_id: "step-1",
+      event: "FYODOR-L beaconed",
+      who: "",
+      at: AT,
+      link: "",
+      artifact: "",
+      cause_id: null,
+      origin: true,
+      link_status: "none",
+      origin_status: "unproven",
+    } satisfies StepPayload,
+  };
+
+  async function refusalOf(state: InProcessState<RootCauseKinds>): Promise<string> {
+    const result = await finishFrom(state, RUN, limits)({}, bounds, signal);
     expect(result.ok).toBe(false);
-    if (!result.ok && result.failure.kind === "refused") expect(result.failure.detail).toMatch(/nothing has been recorded/);
+    return !result.ok && result.failure.kind === "refused" ? result.failure.detail : "";
+  }
+
+  async function noticesOf(state: InProcessState<RootCauseKinds>): Promise<string[]> {
+    return (await state.read(RUN)).filter((event) => event.kind === "notice").map((event) => (event.payload as { text: string }).text);
+  }
+
+  it("is an error before any search has run", async () => {
+    expect(await refusalOf(new InProcessState<RootCauseKinds>())).toMatch(/no search has run/);
+  });
+
+  it("is an error when a search returned an event and nothing is recorded", async () => {
+    const state = new InProcessState<RootCauseKinds>();
+    await state.append(RUN, [dispatch("d1", PROVER_TOOL, "", [{ file: LINK }])]);
+    expect(await refusalOf(state)).toMatch(/nothing has been recorded/);
+  });
+
+  it("is an error while a step is open and a search has returned an event", async () => {
+    const state = new InProcessState<RootCauseKinds>();
+    await state.append(RUN, [dispatch("d1", PROVER_TOOL, "", [DOWN]), dispatch("d2", PROVER_TOOL, "", [{ file: LINK }]), openStep]);
+    expect(await refusalOf(state)).toMatch(/still open \(step-1\)/);
+  });
+
+  it("treats a row that carries an error field among event fields as an event", async () => {
+    const state = new InProcessState<RootCauseKinds>();
+    await state.append(RUN, [dispatch("d1", PROVER_TOOL, "", [{ host: "web01", error: "disk full" }])]);
+    expect(await refusalOf(state)).toMatch(/nothing has been recorded/);
+  });
+
+  it("succeeds when no search returned an event, even with a step open, and says what the store answered", async () => {
+    const state = new InProcessState<RootCauseKinds>();
+    await state.append(RUN, [dispatch("d1", PROVER_TOOL, "", [DOWN]), dispatch("d2", PROVER_TOOL, "", [DOWN]), openStep]);
+    const result = await finishFrom(state, RUN, limits)({}, bounds, signal);
+    expect(result.ok).toBe(true);
+    const notices = await noticesOf(state);
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatch(/No search on this run returned an event/);
+    expect(notices[0]).toContain("Splunk search failed or timed out");
+    await finishFrom(state, RUN, limits)({}, bounds, signal);
+    expect(await noticesOf(state)).toHaveLength(1);
+  });
+
+  it("succeeds when every search came back empty", async () => {
+    const state = new InProcessState<RootCauseKinds>();
+    const empty = { success: true, query: "index=botsv3 nothing", count: 0, results: [] };
+    await state.append(RUN, [dispatch("d1", PROVER_TOOL, "", [empty])]);
+    const result = await finishFrom(state, RUN, limits)({}, bounds, signal);
+    expect(result.ok).toBe(true);
+    expect((await noticesOf(state))[0]).toMatch(/No search on this run returned an event/);
   });
 
   it("succeeds at the wall ceiling and names the open step", async () => {
@@ -336,6 +404,28 @@ describe("the trace", () => {
     expect(summary).toContain("[unlinked]");
     expect(summary).not.toContain("alice");
     expect(harness.provider.requests).toHaveLength(0);
+  });
+
+  it("completes when every search failed and names the failure in the summary", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const harness = harnessOf(
+      [
+        { calls: [{ tool: PROVER_TOOL, args: "{\"spl_query\":\"| makeresults\"}" }] },
+        { calls: [{ tool: "finish", args: "{}" }] },
+        { content: "Splunk never answered." },
+      ],
+      spec,
+      state,
+    );
+    const report = await runRootCause(harness, { run_id: RUN, spec });
+    expect(report.status).toBe("completed");
+    const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
+    const summary = (terminal?.payload as TerminalPayload).summary ?? "";
+    expect(summary).toMatch(/No search on this run returned an event/);
+    expect(summary).toContain("Splunk never answered.");
+    const seen = harness.provider.requests.map((request) => JSON.stringify(request)).join("\n");
+    expect(seen).not.toContain("finish refused");
   });
 
   it("completes before a model call when telemetry is unbound", async () => {

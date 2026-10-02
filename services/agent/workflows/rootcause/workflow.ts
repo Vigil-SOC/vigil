@@ -230,8 +230,8 @@ function noticeText(events: readonly { kind: string; payload: unknown }[]): stri
 }
 
 function deliver(text: string, steps: readonly StepPayload[], notices: readonly string[]): string {
-  const notice = notices.find((line) => !text.includes(line));
-  return redact([notice, text].filter((part) => part).join("\n\n"), steps);
+  const missing = notices.filter((line) => !text.includes(line));
+  return redact([...missing, text].filter((part) => part).join("\n\n"), steps);
 }
 
 async function open(harness: Harness<RootCauseKinds>, options: RootCauseOptions): Promise<void> {

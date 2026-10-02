@@ -1,7 +1,7 @@
 import type { DispatchPayload } from "../../contracts/events.js";
 import type { BudgetLimits } from "../../contracts/budget.js";
 import { seedFrom, type SpentEvent } from "../../core/budget.js";
-import type { ToolResult } from "../../contracts/tool.js";
+import type { ToolFailure, ToolResult } from "../../contracts/tool.js";
 
 // The only bound id that can express a count before time T. A bare splunk_execute,
 // or any other telemetry tool, is not this one.
@@ -66,7 +66,37 @@ export function latestSteps(events: readonly { kind: string; payload: unknown }[
 }
 
 export function observationsOf(events: readonly { kind: string; payload: unknown }[]): Observation[] {
-  const found: Observation[] = [];
+  return searchesOf(events).map(({ tool, args, result }) => ({ tool, args, rows: result?.ok === true ? result.rows : [] }));
+}
+
+// What the store said back on this run: how many searches ran, whether any of
+// them returned an event, and the last error it gave.
+export interface Heard {
+  searches: number;
+  events: boolean;
+  error: string;
+}
+
+export function heardFrom(events: readonly { kind: string; payload: unknown }[]): Heard {
+  const heard: Heard = { searches: 0, events: false, error: "" };
+  for (const { result } of searchesOf(events)) {
+    heard.searches += 1;
+    if (result === undefined) continue;
+    if (!result.ok) {
+      heard.error = failureText(result.failure);
+      continue;
+    }
+    for (const row of result.rows) {
+      const said = errorOf(row);
+      if (said !== null) heard.error = said;
+      else if (isEvent(row)) heard.events = true;
+    }
+  }
+  return heard;
+}
+
+function searchesOf(events: readonly { kind: string; payload: unknown }[]): { tool: string; args: string; result: ToolResult | undefined }[] {
+  const found: { tool: string; args: string; result: ToolResult | undefined }[] = [];
   for (const event of events) {
     if (event.kind !== "dispatch") continue;
     const payload = event.payload as DispatchPayload;
@@ -75,14 +105,36 @@ export function observationsOf(events: readonly { kind: string; payload: unknown
     const record = call as { tool?: unknown; arguments?: unknown };
     const tool = typeof record.tool === "string" ? record.tool : "";
     if (tool === "" || tool === "record" || tool === "finish") continue;
-    const result = payload.result as ToolResult | undefined;
     found.push({
       tool,
       args: typeof record.arguments === "string" ? record.arguments : "",
-      rows: result?.ok === true ? result.rows : [],
+      result: payload.result as ToolResult | undefined,
     });
   }
   return found;
+}
+
+// A tool that fails can still answer ok, with one row `{error, query}`. That row
+// is the error, not an event. A row with other fields beside `error` is an event.
+const ERROR_ROW_KEYS = new Set(["error", "query", "spl", "success"]);
+
+function errorOf(row: unknown): string | null {
+  if (row === null || typeof row !== "object" || Array.isArray(row)) return null;
+  const record = row as Record<string, unknown>;
+  if (typeof record["error"] !== "string" || record["error"] === "") return null;
+  return Object.keys(record).every((key) => ERROR_ROW_KEYS.has(key)) ? record["error"] : null;
+}
+
+// The splunk envelope, `{count, query, results}`, is an event only when `results`
+// has a row in it.
+function isEvent(row: unknown): boolean {
+  if (row === null || typeof row !== "object" || Array.isArray(row)) return true;
+  const results = (row as Record<string, unknown>)["results"];
+  return Array.isArray(results) ? results.length > 0 : true;
+}
+
+function failureText(failure: ToolFailure): string {
+  return "detail" in failure ? failure.detail : `timed out after ${failure.timeoutMs} ms`;
 }
 
 // The $15 and 90-minute ceilings, off the ledger the same way the pool reads them.
