@@ -103,6 +103,21 @@ describe("a link is a value both events carry", () => {
     expect(proveLink(LINK, [], AT, [hit(LINK), empty, ZERO])).toBe("unproven");
   });
 
+  // Splunk refuses an ISO time in latest=; the count the model can actually run
+  // names the cause time in epoch seconds.
+  it("counts before the cause time when the search names it in epoch seconds", () => {
+    const epoch = observation(PROVER_TOOL, `index=main "${LINK}" latest=1704164400 | stats count`, [{ count: 0 }]);
+    expect(proveLink(LINK, [], AT, [...BOTH, epoch])).toBe("proven");
+    expect(proveOrigin(LINK, [], AT, [epoch])).toBe("proven");
+  });
+
+  it("does not take another moment's epoch, or the digits inside a longer number", () => {
+    const hourLater = observation(PROVER_TOOL, `"${LINK}" latest=1704168000 | stats count`, [{ count: 0 }]);
+    const longer = observation(PROVER_TOOL, `"${LINK}" latest=17041644001 | stats count`, [{ count: 0 }]);
+    expect(proveOrigin(LINK, [], AT, [hourLater])).toBe("unproven");
+    expect(proveOrigin(LINK, [], AT, [longer])).toBe("unproven");
+  });
+
   it("does not let any other telemetry tool prove the count", () => {
     const other = count("splunk_execute", LINK, AT, 0);
     const elastic = count("elastic_search_logs", LINK, AT, 0);
