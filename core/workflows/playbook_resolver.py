@@ -398,6 +398,11 @@ HUNT_BUDGETS = {
     "max_wall_ms": 5_400_000,
 }
 
+# Above the harness defaults (8 turns, 12 calls) so the $15 and 90-minute ceilings
+# are what stop a trace, not the tool-turn cap.
+ROOT_CAUSE_MAX_TURNS = 1024
+ROOT_CAUSE_MAX_CALLS = 1024
+
 # Under thresholds rather than budgets: the agent layer's budget block refuses added
 # keys, and a turn is the hunt's unit rather than the harness's.
 HUNT_THRESHOLDS = {"max_iterations": HUNT_ITERATIONS}
@@ -479,10 +484,57 @@ def resolve_hunt(
         "hypothesis_loop": HUNT_HYPOTHESIS_LOOP,
     }
 
-    # Checkpoint policies a definition declares (e.g. root-cause-analysis sets
-    # hypothesis_approval: ask so it parks for operator go-ahead at start). The
-    # agent merges these over its DEFAULT_CHECKPOINTS, so an unset policy keeps the
-    # default; omit the key entirely when the definition names none.
+    # Checkpoint policies a definition declares. The agent merges these over its
+    # DEFAULT_CHECKPOINTS, so an unset policy keeps the default; omit the key
+    # entirely when the definition names none.
+    checkpoints = _checkpoints(definition)
+    if checkpoints:
+        config["checkpoints"] = checkpoints
+
+    return _dump(playbook), _dump(config)
+
+
+# A root-cause trace is one investigator, not a hunt. The grant is the telemetry
+# tool this deployment already bound, plus the two local tools the trace owns.
+def resolve_root_cause(
+    workflow_id: str,
+    model: Optional[str] = None,
+    workflows: Optional["WorkflowsService"] = None,
+    registry: Optional["MCPRegistry"] = None,
+    provider: Optional[str] = None,
+) -> Tuple[str, str]:
+    from core.workflows.workflows_service import WorkflowsService
+
+    definition = (workflows or WorkflowsService()).get_workflow(workflow_id)
+    if definition is None:
+        raise UnknownPlaybook(f"no such workflow: {workflow_id}")
+
+    playbook = {
+        "name": definition.name,
+        "description": definition.description,
+        "use_case": definition.use_case,
+        "trigger_examples": list(definition.trigger_examples),
+        "objectives": _strings(definition.metadata.get("objectives")),
+        "scope": dict(definition.metadata.get("scope") or {}),
+        "directives": dict(definition.metadata.get("directives") or {}),
+        "narrative": definition.body,
+    }
+
+    config = {
+        "model": model or DEFAULT_MODEL,
+        **({"provider": provider} if provider else {}),
+        "budgets": {
+            "max_calls": ROOT_CAUSE_MAX_CALLS,
+            "max_cost_usd": HUNT_BUDGETS["max_cost_usd"],
+            "max_wall_ms": HUNT_BUDGETS["max_wall_ms"],
+        },
+        "runtime": {**DEFAULT_RUNTIME, "max_turns": ROOT_CAUSE_MAX_TURNS},
+        "tools": _bound_capabilities(["telemetry_search"], _tool_catalogue(registry))
+        + [_record_tool(), _finish_tool()],
+        "approvals": [],
+        "thresholds": {},
+    }
+
     checkpoints = _checkpoints(definition)
     if checkpoints:
         config["checkpoints"] = checkpoints
@@ -527,6 +579,48 @@ def _checkpoints(definition: "WorkflowDefinition") -> Dict[str, Any]:
 
 # Local, because the answer is the run's own ledger. Declared here so the lead's
 # granted expand resolves to something rather than posting to a backend.
+def _record_tool() -> Dict[str, Any]:
+    return {
+        "id": "record",
+        "kind": "local",
+        "description": (
+            "Record one causal step of this trace. A link is proved only against "
+            "telemetry results already journaled on this run."
+        ),
+        "parameters": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["event", "at"],
+            "properties": {
+                "step_id": {"type": "string"},
+                "event": {"type": "string"},
+                "who": {"type": "string"},
+                "at": {"type": "string"},
+                "link": {"type": "string"},
+                "cause_id": {"type": "string"},
+                "origin": {"type": "boolean"},
+                "artifact": {"type": "string"},
+            },
+        },
+    }
+
+
+def _finish_tool() -> Dict[str, Any]:
+    return {
+        "id": "finish",
+        "kind": "local",
+        "description": (
+            "Finish the trace. Refused while a step has no proven cause and the "
+            "cost and wall ceilings have not been hit."
+        ),
+        "parameters": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {},
+        },
+    }
+
+
 def _expand_tool() -> Dict[str, Any]:
     return {
         "id": "expand",

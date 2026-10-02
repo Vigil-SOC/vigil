@@ -811,10 +811,9 @@ export function RunModal({ wf, onStarted, onClose }: { wf: Workflow; onStarted: 
     return () => { cancelled = true }
   }, [wf.id])
 
-  // The backend's own answer, not a list of kinds held here: root-cause runs the
-  // same hypothesis loop a hunt does, and asking by kind is how it ended up with
-  // the phase-walking dialog -- its turn count and cost ceiling dropped on the way
-  // to the server, and nothing warned about an unbound tool before the spend.
+  // The backend's own answer, not a list of kinds held here. A hunt-like kind gets
+  // the ceilings and the unbound-tool warning. Everything else, root-cause included,
+  // gets the finding, case, and context dialog.
   const isHuntLike = wf.huntLike
   const turns = Number(iterations)
   const turnsBad = iterations.trim() !== '' && (!Number.isInteger(turns) || turns < 1 || turns > 40)

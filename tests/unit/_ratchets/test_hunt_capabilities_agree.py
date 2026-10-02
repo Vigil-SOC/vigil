@@ -20,12 +20,11 @@ MCP_CONFIG = ROOT / "mcp-config.json"
 
 # Every arch that drives the hunt loop, with the definition it is resolved for.
 # Both resolve through resolve_hunt and are granted HUNT_CAPABILITIES, so both are
-# what this ratchet is about -- a second arch checked against nothing is a worker
-# free to lose a tool, which is the failure the file exists to catch. Not globbed:
+# what this ratchet is about. rootcause.yaml is not in this list: that trace binds
+# telemetry_search on its own and does not ask the hunt for a roster. Not globbed:
 # investigate, compose and chat are granted something else entirely.
 HUNT_LIKE = [
     ("threathunt.yaml", "threat-hunt"),
-    ("rootcause.yaml", "root-cause-analysis"),
     ("adjudicate.yaml", "shadow-adjudication"),
 ]
 ARCHES = [ROOT / "services" / "agent" / "arch" / name for name, _ in HUNT_LIKE]

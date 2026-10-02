@@ -166,8 +166,8 @@ def record_terminal(
     if origin:
         _record_report(origin, run_id, update)
 
-    # A threat hunt that proved a compromise tees up the backward root-cause run,
-    # parked for the operator's go-ahead. Computed once: an RCA's own handoff
+    # A threat hunt that proved a compromise tees up the backward root-cause run.
+    # Computed once: an RCA's own handoff
     # (run_kind root_cause) returns False, so a root cause never spawns another.
     # The forward hunt files each handoff the moment it lands (see the /handoff
     # route), so by the time its terminal arrives the case and RCA are usually
@@ -378,25 +378,17 @@ def _rca_exists(
 
 
 # A proven hunt hands off; the RCA that traces how it started is teed up here rather
-# than left for someone to remember. It parks at its hypothesis_approval checkpoint
-# (root-cause-analysis declares it "ask"), so it waits in the same approvals inbox a
-# hunt uses for the operator to go ahead. The backward hypothesis is derived from the
-# handoff finding, which already carries the confirmed claim — not the later report.
-# _process_handoff has already guarded on _rca_exists, so this is the sole tee-up.
+# than left for someone to remember. The finding rides in context. There is no
+# hypothesis to approve. _process_handoff has already guarded on _rca_exists, so
+# this is the sole tee-up.
 def _start_root_cause(
     source_run_id: str,
     handoff: TerminalHandoff,
     opened_case: Optional[str],
 ) -> None:
-    # Only what the run actually reads. An "agent_id" sat here naming a worker, which
-    # nothing consumed: the roster and its prompts are rootcause.yaml's, and the lead
-    # dispatches whichever of them a question needs. "source_run_id" was the same --
-    # unread, and already spelled in the triggered_by this is enqueued under.
     params = {
-        "hypothesis": _rca_hypothesis(handoff),
         "context": _rca_context(handoff),
-        # Files the RCA's report back onto the IR case the hunt opened, and lets it
-        # read that case's finding as target context.
+        # Files the RCA's report back onto the IR case the hunt opened.
         "case_id": opened_case or handoff.case_id,
     }
     try:
@@ -446,28 +438,6 @@ async def _enqueue_root_cause(
         await close_run_queue()
 
 
-# Unnamed on purpose. The hypothesis reads better naming the host, but nothing here
-# knows which one it is: the handoff carries a title and a rendered case file, and
-# the case file inlines every linked record's payload as JSON, so any pattern run
-# over it is as likely to name SHA-256, CVE-2024 or US-EAST as a host -- and the
-# subject is the first clause of the claim the whole backward run argues from. The
-# agent layer has no host to state either: entity extraction carries no host pattern
-# and no definition declares a scope entity, so its own focus is an ip or a domain,
-# which for a confirmed C2 is as often the attacker's address as the victim's.
-#
-# Nothing is lost by leaving it generic. _rca_context hands the run the confirmed
-# finding verbatim, so the host is in front of the model on turn 0 either way. A
-# hypothesis that names the wrong machine is the one thing that could not be
-# recovered from.
-def _rca_hypothesis(handoff: TerminalHandoff) -> str:
-    return (
-        "the confirmed-compromised host was compromised via an initial-access vector "
-        f"that led to the confirmed threat escalated as {handoff.case_id}; establish "
-        "how the attacker first got onto this host — the initial-access vector and "
-        "patient zero."
-    )
-
-
 # What a confirmed finding is worth carrying into the backward run's brief. The
 # handoff's markdown is the whole rendered case file, and renderCaseFile inlines
 # every linked record's payload as pretty-printed JSON -- unbounded by anything on
@@ -498,11 +468,9 @@ def _rca_context(handoff: TerminalHandoff) -> str:
         "This run follows a CONFIRMED compromise handed to incident response. The "
         "confirmed finding to work backward from:\n\n"
         f"{finding}\n\n"
-        "Work BACKWARD to the initial-access vector: find the earliest malicious "
-        "activity that PRECEDES the confirmed compromise, what was delivered to the "
-        "user and how, and when. Report the initial-access vector confirmed / "
-        "refuted / inconclusive with the specific artifact, delivery method, and "
-        "timestamp."
+        "Work BACKWARD one event at a time to where it began. Record each step and "
+        "the value that ties it to the step before. Report the origin when nothing "
+        "earlier carries that value, and name what is still unproven when you stop."
     )
 
 

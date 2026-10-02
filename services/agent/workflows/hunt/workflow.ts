@@ -25,8 +25,8 @@ import { grantsOf } from "../lead/workflow.js";
 
 export interface HuntOptions {
   run_id: string;
-  // The kind the run was started as. "hunt" for a forward hunt, "root_cause" for a
-  // backward one: the loop is the same, so this only decides how events are stamped.
+  // The kind the run was started as. "hunt" for a forward hunt, "adjudicate" for a
+  // second opinion: the loop is the same, so this only decides how events are stamped.
   run_kind: RunKind;
   spec: RunSpec;
   actions: readonly string[];

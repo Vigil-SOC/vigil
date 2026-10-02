@@ -57,6 +57,7 @@ describe("the registry resolves a run kind to an arch", () => {
   // names a kind, so a new one reaches its loop without a branch being added.
   it("names the loop that drives each kind, rather than leaving the worker to switch", () => {
     expect(archFor("hunt").workflow).toBe("hunt");
+    expect(archFor("root_cause").workflow).toBe("rootcause");
     expect(archFor("investigate").workflow).toBe("lead");
     expect(archFor("compose").workflow).toBe("compose");
   });
@@ -72,7 +73,7 @@ describe("the registry resolves a run kind to an arch", () => {
   // for a new kind and the next three being found later, one bug at a time.
   it("answers which kinds run the hunt loop from what they were registered with", () => {
     expect(isHuntLike("hunt")).toBe(true);
-    expect(isHuntLike("root_cause")).toBe(true);
+    expect(isHuntLike("root_cause")).toBe(false);
     expect(isHuntLike("adjudicate")).toBe(true);
     expect(isHuntLike("investigate")).toBe(false);
     expect(isHuntLike("compose")).toBe(false);
@@ -109,6 +110,36 @@ describe("the shipped arches", () => {
   });
 
   // The other shape the indirection has to carry: one role, its tools, no fan-out.
+  it("loads rootcause.yaml as one investigator answering in prose", () => {
+    const spec = buildSpec(
+      {
+        arch: archFor("root_cause").arch,
+        playbook: fixture("case.playbook.yaml"),
+        config: scratchFile(
+          "rootcause.config.yaml",
+          [
+            "model: scripted/model",
+            "budgets: { max_calls: 32, max_cost_usd: 15, max_wall_ms: 5400000 }",
+            "runtime: { max_turns: 32, result_cap: 8000, recall_limit: 1 }",
+            "tools:",
+            "  - { id: record, kind: local, description: record a step, parameters: { type: object } }",
+            "  - { id: finish, kind: local, description: finish the trace, parameters: { type: object } }",
+            "approvals: []",
+          ].join("\n"),
+        ),
+      },
+      archFor("root_cause").actions,
+      archFor("root_cause").owned,
+    );
+    expect(spec.arch).toBe("rootcause");
+    expect(spec.dispatch.topology).toBe("single");
+    expect(spec.roles.workers).toEqual({});
+    expect(spec.roles.critic).toBeUndefined();
+    expect(spec.roles.lead?.output_schema).toBeNull();
+    expect(spec.roles.lead?.tools).toEqual(["record", "finish"]);
+    expect(spec.roles.lead?.needs).toEqual(["telemetry_search"]);
+  });
+
   it("loads investigate.yaml as a single lead with no workers and no critic", () => {
     const spec = buildSpec(CASE, archFor("investigate").actions);
     expect(spec.arch).toBe("investigate");

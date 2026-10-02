@@ -19,19 +19,15 @@ COMPOSE_RUN_KIND = "compose"
 HUNT_RUN_KIND = "hunt"
 ROOT_CAUSE_RUN_KIND = "root_cause"
 ADJUDICATE_RUN_KIND = "adjudicate"
-# All three drive the same hypothesis loop and read the same projection: a hunt asks
-# whether a threat is real, a root-cause run works backward from a confirmed one to
-# how it began, an adjudication is a shadow second opinion on a finding intake has
-# already admitted. Everything that gates on "is this the hunt loop?" tests this
-# set, so the kinds stay in lockstep and none silently loses telemetry_search.
-HUNT_LIKE_RUN_KINDS = frozenset(
-    {HUNT_RUN_KIND, ROOT_CAUSE_RUN_KIND, ADJUDICATE_RUN_KIND}
-)
+# hunt and adjudicate drive the hypothesis loop. root_cause does not: it traces
+# backward on its own workflow, so a gate on "is this the hunt loop?" must not
+# catch it. Everything that asks is_hunt_like reads this set.
+HUNT_LIKE_RUN_KINDS = frozenset({HUNT_RUN_KIND, ADJUDICATE_RUN_KIND})
 WORKFLOW_SCHEME = "workflow:"
 
 
 def is_hunt_like(run_kind: Optional[str]) -> bool:
-    """True when a run_kind drives the hunt hypothesis loop (hunt, root-cause, adjudicate)."""
+    """True when a run_kind drives the hunt hypothesis loop (hunt, adjudicate)."""
     return run_kind in HUNT_LIKE_RUN_KINDS
 
 
@@ -143,9 +139,20 @@ def _not_a_claim(statement: str) -> bool:
 
 # A hunt tests what it was given, from the definition or from this caller. Neither
 # must carry one alone; between them one is, or the run tests nothing.
+def _has_trace_target(parameters: Optional[Dict[str, Any]]) -> bool:
+    params = parameters or {}
+    return any(
+        str(params.get(key) or "").strip()
+        for key in ("context", "finding_id", "case_id")
+    )
+
+
 def _nothing_to_run(
     workflow: "WorkflowDefinition", parameters: Optional[Dict[str, Any]] = None
 ) -> str:
+    # A trace has no phases and no hypotheses. The target check is separate.
+    if workflow.run_kind == ROOT_CAUSE_RUN_KIND:
+        return ""
     if is_hunt_like(workflow.run_kind):
         if workflow.metadata.get("hypotheses"):
             return ""
@@ -513,6 +520,16 @@ class WorkflowsService:
             return {
                 "success": False,
                 "error": f"Workflow declares no {missing}: {workflow_id}",
+            }
+        if workflow.run_kind == ROOT_CAUSE_RUN_KIND and not _has_trace_target(
+            parameters
+        ):
+            return {
+                "success": False,
+                "error": (
+                    "A root-cause trace needs a finding to trace. "
+                    "Pass context, finding_id, or case_id."
+                ),
             }
 
         workflow_dict = workflow.to_dict(include_body=False)

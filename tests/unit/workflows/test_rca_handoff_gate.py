@@ -1,16 +1,17 @@
-"""The RCA-on-handoff gate: a proven threat hunt tees up a root-cause-analysis run
-that parks for operator approval; an RCA's own handoff spawns nothing (no loop)."""
+"""The RCA-on-handoff gate: a proven threat hunt tees up one root-cause run with
+the finding as context; an RCA's own handoff spawns nothing."""
 
 from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 
 from core.workflows import run_bridge_router as rbr
 from core.workflows.run_bridge_router import (
     TerminalHandoff,
-    _rca_hypothesis,
     _source_is_hunt,
     _start_root_cause,
 )
-from core.workflows.workflows_service import _not_a_claim
+from core.workflows.workflows_service import WorkflowsService
 
 HANDOFF = TerminalHandoff(
     case_id="case-abc",
@@ -70,15 +71,10 @@ class TestTeeingUpTheRootCause:
         # Only what the run reads. agent_id and source_run_id used to ride along
         # here unconsumed — the roster is rootcause.yaml's, and triggered_by above
         # already carries which run this traces back from.
-        assert set(params) == {"hypothesis", "context", "case_id"}
-        # Ties the backward claim to the escalation it traces back from. The host is
-        # deliberately not named: nothing here knows which one it is, and the finding
-        # travels verbatim in context, where the run reads it on turn 0.
-        assert "case-abc" in params["hypothesis"]
+        assert set(params) == {"context", "case_id"}
+        assert "hypothesis" not in params
         assert "FYODOR-L" in params["context"]
-        # No approve_hypotheses pinned, so the workflow's ask checkpoint governs.
         assert "approve_hypotheses" not in params
-        # Files back onto the IR case the hunt opened.
         assert params["case_id"] == "case-opened"
 
 
@@ -120,22 +116,71 @@ class TestProcessHandoff:
         start_rca.assert_not_called()
 
 
-def test_the_hypothesis_names_the_escalation_and_never_a_host():
-    # The case file is the rendered document, payload JSON and all. Nothing in it is
-    # a subject this side can pick out: a hash algorithm, a CVE or a cloud region
-    # reads exactly like a hostname, and the C2 address reads exactly like the
-    # victim's. So the claim is stated about the compromise, not about a machine.
+def test_the_finding_rides_in_context_and_there_is_no_hypothesis():
     noisy = TerminalHandoff(
         case_id="case-x",
         title="Exploitation of CVE-2024-21412 confirmed",
-        markdown="payload SHA-256: 9f2c… in region US-EAST-1, egress to 45.77.53.176",
+        markdown="payload SHA-256: 9f2c in region US-EAST-1, egress to 45.77.53.176",
     )
-    h = _rca_hypothesis(noisy)
-    assert "case-x" in h
-    assert "patient zero" in h
-    for guess in ("CVE-2024", "SHA-256", "US-EAST", "45.77.53.176"):
-        assert guess not in h
+    enqueue = AsyncMock(return_value={"success": True, "run_id": "r-1"})
+    with patch.object(rbr, "_enqueue_root_cause", enqueue):
+        _start_root_cause("run-1", noisy, "case-opened")
+    params, _triggered = enqueue.await_args.args
+    assert "hypothesis" not in params
+    assert "SHA-256" in params["context"]
+    assert "45.77.53.176" in params["context"]
 
-    # And it is still a claim a run can argue against, which _nothing_to_run checks
-    # before the run is allowed to start.
-    assert not _not_a_claim(h)
+
+@pytest.mark.asyncio
+async def test_a_root_cause_run_without_a_target_is_refused():
+    result = await WorkflowsService().execute_workflow("root-cause-analysis", {})
+    assert result["success"] is False
+    assert "context, finding_id, or case_id" in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_root_cause_run_with_context_is_queued_without_a_hypothesis():
+    captured = {}
+
+    async def _enqueue(job, job_id=None):
+        captured["job"] = job
+        return "job-1"
+
+    with patch(
+        "core.workflows.workflow_run_service.WorkflowRunService.begin_run",
+        return_value="run-1",
+    ), patch("core.agents.queue.enqueue_run", new=AsyncMock(side_effect=_enqueue)):
+        result = await WorkflowsService().execute_workflow(
+            "root-cause-analysis", {"context": "FYODOR-L is beaconing"}
+        )
+
+    assert result["success"] is True
+    assert captured["job"]["run_kind"] == "root_cause"
+    assert captured["job"]["request"].get("hypotheses") in (None, [])
+
+
+def test_root_cause_resolves_off_the_hunt_grant():
+    import yaml
+
+    from core.workflows.playbook_resolver import resolve_root_cause
+    from core.workflows.playbooks_router import _resolver_for
+
+    workflows = WorkflowsService()
+    assert _resolver_for(workflows, "root-cause-analysis").__name__ == "resolve_root_cause"
+    assert _resolver_for(workflows, "threat-hunt").__name__ == "resolve_hunt"
+
+    playbook, config_text = resolve_root_cause("root-cause-analysis", workflows=workflows)
+    document = yaml.safe_load(playbook)
+    config = yaml.safe_load(config_text)
+    assert "hypotheses" not in document
+    assert document.get("phases") in (None, [])
+    assert "checkpoints" not in config
+    ids = [tool["id"] for tool in config["tools"]]
+    assert ids[:2] == ["record", "finish"] or {"record", "finish"} <= set(ids)
+    assert "search_findings" not in ids
+    assert "lookup_indicators" not in ids
+    assert "recall_entity" not in ids
+    assert config["budgets"]["max_cost_usd"] == 15.0
+    assert config["budgets"]["max_wall_ms"] == 5_400_000
+    assert config["budgets"]["max_calls"] > 12
+    assert config["runtime"]["max_turns"] > 8

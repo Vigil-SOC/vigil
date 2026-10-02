@@ -30,6 +30,8 @@ import { runCompose } from "./workflows/compose/workflow.js";
 import type { ComposeKinds } from "./workflows/compose/vocabulary.js";
 import { runLead, type LeadKinds } from "./workflows/lead/workflow.js";
 import { runHunt } from "./workflows/hunt/workflow.js";
+import { runRootCause } from "./workflows/rootcause/workflow.js";
+import type { RootCauseKinds } from "./workflows/rootcause/proof.js";
 import type { HuntKinds } from "./workflows/hunt/ledger.js";
 import type { DirectiveQueue } from "./workflows/hunt/ports.js";
 import { InProcessDirectiveQueue } from "./workflows/hunt/directives.js";
@@ -172,14 +174,15 @@ async function drive(
   const entry = archFor(kind);
   if (entry.workflow === "hunt") {
     const harness = build(kind, spec, as<HuntKinds>(state), undefined, seed);
-    // run_kind threaded so a hunt-loop run started as root-cause journals its own
-    // kind rather than the "hunt" the loop was first written for.
     // Only a forward hunt files its handoffs early: it escalates and keeps hunting,
-    // so its case must not wait on a terminal that may be far off or never come. A
-    // backward root-cause run concludes and stops, so its handoff rides the terminal
-    // as every kind's did -- and firing it early would double-open the same case.
+    // so its case must not wait on a terminal that may be far off or never come.
     const onHandoff = kind === "hunt" ? handoffFor() : undefined;
     await runHunt(harness, { run_id, run_kind: kind, spec, actions: entry.actions, queue: directives, started_by, announce: announceFor(), ...(onHandoff ? { onHandoff } : {}), signal });
+    return;
+  }
+  if (entry.workflow === "rootcause") {
+    const harness = build(kind, spec, as<RootCauseKinds>(state), undefined, seed);
+    await runRootCause(harness, { run_id, spec, started_by, answers: answersFor(), announce: announceFor(), signal });
     return;
   }
   if (kind === "hunt" || kind === "investigate") {

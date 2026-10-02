@@ -5,7 +5,7 @@ import { archFor } from "../../arch/registry.js";
 import type { AgentEvent } from "../../contracts/events.js";
 import { buildSpec } from "../../core/spec.js";
 import { InProcessState } from "../../core/state.js";
-import { BACKWARD_NULL_HYPOTHESIS, BASE_RATE_PROVENANCE, startHunt } from "../../workflows/hunt/controller.js";
+import { BASE_RATE_PROVENANCE, startHunt } from "../../workflows/hunt/controller.js";
 import { InProcessDirectiveQueue } from "../../workflows/hunt/directives.js";
 import { newId } from "../../workflows/hunt/ids.js";
 import type { HuntKinds } from "../../workflows/hunt/journal.js";
@@ -54,7 +54,7 @@ async function adjudication() {
 
 describe("what the adjudicate lead may emit", () => {
   // Escalation is refused at the schema, not by the loop: HUNT_LOOP still handles
-  // HANDOFF_IR for hunt and root_cause, so this arch's enum is the one guard.
+  // HANDOFF_IR for a hunt, so this arch's enum is the one guard.
   it("carries proposed_workflow on CONCLUDE and refuses HANDOFF_IR", () => {
     const valid = leadSchema();
     expect(valid({ ...ADJUDICATED, evidence_citations: [] })).toBe(true);
@@ -75,7 +75,7 @@ describe("a scripted adjudication runs the hunt loop end to end", () => {
     // so "this has a legitimate explanation" is the account the intent must beat.
     const [seeded] = [...ledger.projection.hypotheses.values()].filter((h) => h.provenance === BASE_RATE_PROVENANCE);
     expect(seeded?.statement).toContain(`"${INTAKE_LINE}" has a legitimate explanation`);
-    expect(seeded?.statement).not.toBe(BACKWARD_NULL_HYPOTHESIS);
+    expect(seeded?.statement).not.toMatch(/initial-access vector/);
   });
 
   it("reaches CONCLUDE carrying proposed_workflow, and projects and replays unchanged", async () => {

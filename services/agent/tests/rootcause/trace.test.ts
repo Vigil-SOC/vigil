@@ -1,0 +1,390 @@
+import { describe, expect, it } from "vitest";
+import { archFor } from "../../arch/registry.js";
+import type { CheckpointPayload, DispatchPayload, TerminalPayload } from "../../contracts/events.js";
+import { budgetOf, unmeteredQuota } from "../../core/budget.js";
+import { localDispatch } from "../../core/dispatch.js";
+import type { Harness } from "../../core/loop.js";
+import { nullMemory } from "../../core/memory.js";
+import { registryOf } from "../../core/registry.js";
+import { assembleSpec, loadArch, parseConfig, parsePlaybook, type RunSpec } from "../../core/spec.js";
+import { InProcessState } from "../../core/state.js";
+import { PROVER_TOOL, proveLink, proveOrigin, redact, type Observation, type StepPayload } from "../../workflows/rootcause/proof.js";
+import { finishFrom, recordFrom } from "../../workflows/rootcause/tools.js";
+import { runRootCause, type RootCauseKinds } from "../../workflows/rootcause/workflow.js";
+import { scriptedProvider, type ScriptedTurn } from "../support/scripted-provider.js";
+
+const RUN = "5a2c2d3e-0000-4000-8000-000000000c38";
+const AT = "2024-01-02T03:00:00Z";
+const LINK = "invoice.lnk";
+
+const LOCALS = [
+  "  - { id: record, kind: local, description: record a step, parameters: { type: object } }",
+  "  - { id: finish, kind: local, description: finish the trace, parameters: { type: object } }",
+].join("\n");
+
+function specOf(extra = "", checkpoints = ""): RunSpec {
+  const entry = archFor("root_cause");
+  const text = [
+    "model: scripted/model",
+    "budgets: { max_calls: 40, max_cost_usd: 15, max_wall_ms: 5400000 }",
+    "runtime: { max_turns: 8, result_cap: 8000, recall_limit: 1 }",
+    "tools:",
+    LOCALS,
+    extra,
+    checkpoints,
+    "approvals: []",
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
+  return assembleSpec({
+    arch: loadArch(entry.arch, entry.actions),
+    playbook: parsePlaybook("name: root-cause\n"),
+    config: parseConfig(text, entry.owned),
+    prompt: "FYODOR-L is beaconing to 203.0.113.5",
+  });
+}
+
+const SPLUNK = `  - { id: ${PROVER_TOOL}, kind: remote, provides: telemetry_search, description: run SPL, parameters: { type: object } }`;
+const ELASTIC = "  - { id: elastic_search_logs, kind: remote, provides: telemetry_search, description: search logs, parameters: { type: object } }";
+
+function harnessOf(
+  script: readonly ScriptedTurn[],
+  spec: RunSpec,
+  state = new InProcessState<RootCauseKinds>(),
+  budget = budgetOf(spec.budgets, unmeteredQuota),
+): Harness<RootCauseKinds> & { provider: ReturnType<typeof scriptedProvider> } {
+  const provider = scriptedProvider(script);
+  return {
+    provider,
+    registry: registryOf([], {}),
+    dispatch: localDispatch,
+    budget,
+    memory: nullMemory,
+    state,
+  };
+}
+
+function observation(tool: string, args: string, rows: readonly unknown[]): Observation {
+  return { tool, args, rows };
+}
+
+function count(tool: string, value: string, at: string, n: number): Observation {
+  return observation(tool, `search ${value} before ${at}`, [{ count: n }]);
+}
+
+function hit(value: string): Observation {
+  return observation(PROVER_TOOL, "", [{ file: value }]);
+}
+
+const BOTH = [hit(LINK), hit(LINK)];
+const ZERO = count(PROVER_TOOL, LINK, AT, 0);
+
+describe("a link is a value both events carry", () => {
+  it("is proved only by two results and a zero count before the cause", () => {
+    expect(proveLink(LINK, [], AT, [...BOTH, ZERO])).toBe("proven");
+  });
+
+  it("rejects an IP, a timestamp, or the step's who", () => {
+    expect(proveLink("203.0.113.5", [], AT, [...BOTH, ZERO])).toBe("rejected");
+    expect(proveLink("2001:db8::1", [], AT, [...BOTH, ZERO])).toBe("rejected");
+    expect(proveLink(AT, [], AT, [...BOTH, ZERO])).toBe("rejected");
+    expect(proveLink("10:01:39", [], AT, [...BOTH, ZERO])).toBe("rejected");
+    expect(proveLink("alice", ["alice"], AT, [...BOTH, ZERO])).toBe("rejected");
+  });
+
+  it("rejects a value counted before the cause and leaves a missing count unproven", () => {
+    expect(proveLink(LINK, [], AT, [...BOTH, count(PROVER_TOOL, LINK, AT, 4)])).toBe("rejected");
+    expect(proveLink(LINK, [], AT, BOTH)).toBe("unproven");
+  });
+
+  it("treats an empty hit list as nothing", () => {
+    const empty = observation(PROVER_TOOL, `search ${LINK} before ${AT}`, []);
+    expect(proveLink(LINK, [], AT, [empty, empty, ZERO])).toBe("unproven");
+    expect(proveLink(LINK, [], AT, [hit(LINK), empty, ZERO])).toBe("unproven");
+  });
+
+  it("does not let any other telemetry tool prove the count", () => {
+    const other = count("splunk_execute", LINK, AT, 0);
+    const elastic = count("elastic_search_logs", LINK, AT, 0);
+    expect(proveLink(LINK, [], AT, [...BOTH, other])).toBe("unproven");
+    expect(proveLink(LINK, [], AT, [...BOTH, elastic])).toBe("unproven");
+  });
+});
+
+describe("an origin is the same count, one step further", () => {
+  it("is proved by a zero count of the link, or of the starting artifact", () => {
+    expect(proveOrigin(LINK, [], AT, [ZERO])).toBe("proven");
+    expect(proveOrigin("payload.exe", [], AT, [count(PROVER_TOOL, "payload.exe", AT, 0)])).toBe("proven");
+  });
+
+  it("is rejected when earlier events carry the value", () => {
+    expect(proveOrigin(LINK, [], AT, [count(PROVER_TOOL, LINK, AT, 2)])).toBe("rejected");
+  });
+
+  it("is not proved by a count of the actor", () => {
+    expect(proveOrigin("alice", ["alice"], AT, [count(PROVER_TOOL, "alice", AT, 0)])).toBe("rejected");
+  });
+});
+
+describe("a who that is not on a proven step", () => {
+  const proven: StepPayload = {
+    step_id: "step-1",
+    event: "file landed",
+    who: "alice",
+    at: AT,
+    link: LINK,
+    artifact: "",
+    cause_id: null,
+    origin: true,
+    link_status: "none",
+    origin_status: "proven",
+  };
+  const open: StepPayload = { ...proven, step_id: "step-2", who: "mallory", origin: false, origin_status: "none" };
+
+  it("is replaced with [unlinked]", () => {
+    expect(redact("alice delivered it; mallory was nearby", [proven, open])).toBe(
+      "alice delivered it; [unlinked] was nearby",
+    );
+  });
+});
+
+describe("finish", () => {
+  const limits = specOf(SPLUNK).budgets;
+
+  it("is an error while a cause is open and the ceilings have not been hit", async () => {
+    const state = new InProcessState<RootCauseKinds>();
+    const result = await finishFrom(state, RUN, limits)({}, { maxRows: 1, timeoutMs: 1 }, new AbortController().signal);
+    expect(result.ok).toBe(false);
+    if (!result.ok && result.failure.kind === "refused") expect(result.failure.detail).toMatch(/nothing has been recorded/);
+  });
+
+  it("succeeds at the wall ceiling and names the open step", async () => {
+    const state = new InProcessState<RootCauseKinds>();
+    await state.append(RUN, [
+      {
+        run_id: RUN,
+        run_kind: "root_cause",
+        kind: "run",
+        payload: {
+          run_kind: "root_cause",
+          spec: {},
+          budgets: limits,
+          seed: RUN,
+          tenant_id: null,
+          started_by: "test",
+        },
+      },
+    ]);
+    const later = Date.now() + limits.max_wall_ms + 1_000;
+    const result = await finishFrom(state, RUN, limits, () => later)({}, { maxRows: 1, timeoutMs: 1 }, new AbortController().signal);
+    expect(result.ok).toBe(true);
+  });
+});
+
+describe("record wires the proof to the cause step", () => {
+  it("proves the link against the cause time, not the later event", async () => {
+    const state = new InProcessState<RootCauseKinds>();
+    const causeAt = "2024-01-02T01:00:00Z";
+    await state.append(RUN, [
+      dispatch("d1", PROVER_TOOL, `search ${LINK} before ${causeAt}`, [{ count: 0 }]),
+      dispatch("d2", PROVER_TOOL, "", [{ file: LINK, at: causeAt }]),
+      dispatch("d3", PROVER_TOOL, "", [{ file: LINK, at: AT }]),
+    ]);
+    const bounds = { maxRows: 5, timeoutMs: 1_000 };
+    const signal = new AbortController().signal;
+    const origin = await recordFrom(state, RUN)(
+      { event: "file written", who: "alice", at: causeAt, link: LINK, origin: true },
+      bounds,
+      signal,
+    );
+    expect(origin.ok).toBe(true);
+    const later = await recordFrom(state, RUN)(
+      { event: "process started", who: "svc", at: AT, link: LINK, cause_id: "step-1" },
+      bounds,
+      signal,
+    );
+    expect(later.ok).toBe(true);
+    if (later.ok) expect(later.rows[0]).toMatchObject({ link_status: "proven", proven: true });
+  });
+});
+
+describe("the trace", () => {
+  it("proves a step from journaled splunk results and redacts an unlinked who", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    await state.append(RUN, [
+      runEvent(spec),
+      dispatch("d1", PROVER_TOOL, `search ${LINK} before ${AT}`, [{ count: 0 }]),
+    ]);
+    const harness = harnessOf(
+      [
+        {
+          calls: [
+            {
+              tool: "record",
+              args: JSON.stringify({ event: "file landed", who: "alice", at: AT, link: LINK, origin: true, artifact: LINK }),
+            },
+          ],
+        },
+        { calls: [{ tool: "record", args: JSON.stringify({ event: "name on the alert", who: "mallory", at: AT }) }] },
+        { calls: [{ tool: "finish", args: "{}" }] },
+        { content: "alice delivered invoice.lnk; mallory was nearby" },
+      ],
+      spec,
+      state,
+    );
+
+    const report = await runRootCause(harness, { run_id: RUN, spec });
+    expect(report.status).toBe("completed");
+    const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
+    expect((terminal?.payload as TerminalPayload).summary).toBe("alice delivered invoice.lnk; [unlinked] was nearby");
+    const steps = (await state.read(RUN)).filter((event) => event.kind === "step").map((event) => event.payload as StepPayload);
+    expect(steps[0]?.origin_status).toBe("proven");
+    const seen = harness.provider.requests.map((request) => JSON.stringify(request)).join("\n");
+    expect(seen).toContain("finish refused");
+    expect(seen).toContain("step-1");
+  });
+
+  it("journals a remote result and does not prove from a paraphrase", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    const harness = harnessOf(
+      [{ calls: [{ tool: PROVER_TOOL, args: "{\"spl\":\"search\"}" }] }, { content: "done" }],
+      spec,
+      state,
+    );
+    await runRootCause(harness, { run_id: RUN, spec });
+    const dispatches = (await state.read(RUN)).filter((event) => event.kind === "dispatch");
+    expect(dispatches).toHaveLength(1);
+    const call = ((dispatches[0]!.payload as DispatchPayload).calls as { tool: string }[])[0];
+    expect(call?.tool).toBe(PROVER_TOOL);
+  });
+
+  it("completes at the cost ceiling and names the open step", async () => {
+    const spec = specOf(SPLUNK);
+    const state = new InProcessState<RootCauseKinds>();
+    await state.append(RUN, [
+      runEvent(spec),
+      {
+        run_id: RUN,
+        run_kind: "root_cause",
+        kind: "step",
+        payload: {
+          step_id: "step-1",
+          event: "alice ran the beacon",
+          who: "alice",
+          at: AT,
+          link: "",
+          artifact: "",
+          cause_id: null,
+          origin: false,
+          link_status: "none",
+          origin_status: "none",
+        } satisfies StepPayload,
+      },
+    ]);
+    const harness = harnessOf([], spec, state, budgetOf(spec.budgets, { spent: async () => ({ used_usd: 20, limit_usd: 15 }) }));
+    const report = await runRootCause(harness, { run_id: RUN, spec });
+    expect(report.status).toBe("completed");
+    expect(report.reason).toMatch(/ceiling/);
+    const terminal = (await state.read(RUN)).find((event) => event.kind === "terminal");
+    const summary = (terminal?.payload as TerminalPayload).summary ?? "";
+    expect(summary).toContain("step-1");
+    expect(summary).toContain("[unlinked]");
+    expect(summary).not.toContain("alice");
+    expect(harness.provider.requests).toHaveLength(0);
+  });
+
+  it("completes before a model call when telemetry is unbound", async () => {
+    const spec = specOf();
+    const harness = harnessOf([], spec);
+    const report = await runRootCause(harness, { run_id: RUN, spec });
+    expect(report.status).toBe("completed");
+    expect(report.reason).toMatch(/No telemetry_search/);
+    expect(harness.provider.requests).toHaveLength(0);
+  });
+
+  it("says once that a non-splunk source cannot prove a link", async () => {
+    const spec = specOf(ELASTIC);
+    const state = new InProcessState<RootCauseKinds>();
+    const harness = harnessOf([{ content: "I looked" }], spec, state);
+    const report = await runRootCause(harness, { run_id: RUN, spec });
+    expect(report.status).toBe("completed");
+    const notices = (await state.read(RUN)).filter((event) => event.kind === "notice");
+    expect(notices).toHaveLength(1);
+    expect((await state.read(RUN)).find((event) => event.kind === "terminal")?.payload).toMatchObject({
+      summary: expect.stringContaining("cannot be proved"),
+    });
+    const again = harnessOf([{ content: "again" }], spec, state);
+    await runRootCause(again, { run_id: RUN, spec });
+    expect((await state.read(RUN)).filter((event) => event.kind === "notice")).toHaveLength(1);
+    expect(again.provider.requests).toHaveLength(0);
+  });
+
+  it("parks before any model call, then permits or rejects", async () => {
+    const spec = specOf(SPLUNK, "checkpoints:\n  hypothesis_approval: ask");
+    const state = new InProcessState<RootCauseKinds>();
+    const announced: string[] = [];
+    const parked = await runRootCause(harnessOf([], spec, state), {
+      run_id: RUN,
+      spec,
+      announce: async (_run, _kind, payload) => {
+        announced.push(payload.question);
+      },
+    });
+    expect(parked.status).toBe("waiting_approval");
+    expect(announced[0]).toContain("Permit a root-cause trace of this finding?");
+    expect(announced[0]).toContain("FYODOR-L is beaconing");
+    const checkpoint = (await state.read(RUN)).find((event) => event.kind === "checkpoint");
+    expect((checkpoint?.payload as CheckpointPayload).checkpoint_class).toBe("hypothesis_approval");
+
+    const rejected = new InProcessState<RootCauseKinds>();
+    await runRootCause(harnessOf([], spec, rejected), { run_id: RUN, spec });
+    const refusal = await runRootCause(harnessOf([], spec, rejected), {
+      run_id: RUN,
+      spec,
+      answers: async () => [
+        { checkpoint_id: "cp-root-cause-permit", actor: "sam", answer: "reject", text: "not this finding", resolved_at: AT },
+      ],
+    });
+    expect(refusal.status).toBe("failed");
+    expect(refusal.reason).toBe("not this finding");
+
+    const permitted = harnessOf([{ content: "tracing" }], spec, state);
+    const report = await runRootCause(permitted, {
+      run_id: RUN,
+      spec,
+      answers: async () => [
+        { checkpoint_id: "cp-root-cause-permit", actor: "sam", answer: "approve", text: "go", resolved_at: AT },
+      ],
+    });
+    expect(report.status).toBe("completed");
+    expect(permitted.provider.requests).toHaveLength(1);
+  });
+});
+
+function runEvent(spec: RunSpec) {
+  return {
+    run_id: RUN,
+    run_kind: "root_cause" as const,
+    kind: "run" as const,
+    payload: { run_kind: "root_cause" as const, spec, budgets: spec.budgets, seed: RUN, tenant_id: null, started_by: "test" },
+  };
+}
+
+function dispatch(id: string, tool: string, args: string, rows: unknown[]) {
+  return {
+    run_id: RUN,
+    run_kind: "root_cause" as const,
+    kind: "dispatch" as const,
+    payload: {
+      dispatch_id: id,
+      agent_id: "lead",
+      status: "complete" as const,
+      question_id: null,
+      failure_reason: null,
+      result: { ok: true as const, rows, rowCount: rows.length, capped: false, sourceSystem: "splunk" },
+      calls: [{ tool, arguments: args }],
+    },
+  };
+}
