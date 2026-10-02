@@ -218,9 +218,9 @@ def _contained(root: Path, path: Path) -> bool:
 def _direct_child(root: Path, name: str) -> Path:
     """``root/name`` as a real path, refused when it would leave ``root``.
 
-    ``realpath`` then ``startswith`` is the containment check: a name with a
-    separator or ``..`` cannot land outside ``root``. A symlink is refused
-    before that, so a link named ``alias`` cannot overwrite another skill.
+    The name is normalized and required to stay under ``root`` before any
+    filesystem access, so a separator or ``..`` cannot choose another path.
+    A symlink is refused after that check and before ``realpath`` follows it.
     """
     if (
         not name
@@ -230,12 +230,15 @@ def _direct_child(root: Path, name: str) -> Path:
         or len(name) > _NAME_MAX
     ):
         raise SkillError(f"invalid skill name {name!r}")
-    link = root / name
+    base = os.path.realpath(os.fspath(root))
+    joined = os.path.normpath(os.path.join(base, name))
+    prefix = base + os.sep if not base.endswith(os.sep) else base
+    if not joined.startswith(prefix):
+        raise SkillError("resolved path leaves the operator skills root")
+    link = Path(joined)
     if link.is_symlink():
         raise SkillError("refusing to follow a symlink")
-    base = os.path.realpath(root)
-    candidate = os.path.realpath(os.path.join(base, name))
-    prefix = base if base.endswith(os.sep) else base + os.sep
+    candidate = os.path.realpath(joined)
     if not candidate.startswith(prefix):
         raise SkillError("resolved path leaves the operator skills root")
     path = Path(candidate)
