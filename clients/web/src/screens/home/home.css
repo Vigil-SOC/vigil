@@ -64,31 +64,6 @@
   flex: 1;
 }
 
-.home-hold {
-  position: relative;
-  overflow: hidden;
-}
-
-.home-hold .fill {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 0;
-  background: var(--crit);
-  opacity: 0.35;
-  pointer-events: none;
-}
-
-.home-hold.holding .fill {
-  width: 100%;
-  transition: width 1.6s linear;
-}
-
-.home-hold .label {
-  position: relative;
-}
-
 .home-screen .home-steps {
   list-style: none;
   margin: 14px 0 0;
