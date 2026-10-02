@@ -42,14 +42,29 @@ vi.mock('../services/api', () => ({
   findingsApi: {
     getById: (id: string) => getFinding(id),
   },
-  workflowApi: {
-    execute: (id: string, params: unknown) => execute(id, params),
-  },
   configApi: {
     getIntegrations: () => getIntegrations(),
   },
   timelineApi: {},
   caseSearchApi: { search: vi.fn() },
+  agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
+  conversationsApi: {
+    list: vi.fn(() => Promise.resolve({ data: { conversations: [] } })),
+    get: vi.fn(() => Promise.resolve({ data: { messages: [] } })),
+    update: vi.fn(() => Promise.resolve({ data: {} })),
+    delete: vi.fn(),
+    importHistory: vi.fn(() => Promise.resolve({ data: {} })),
+  },
+  reasoningApi: {
+    getSessionSummary: vi.fn(() => Promise.resolve(null)),
+    listInteractions: vi.fn(() => Promise.resolve({ interactions: [] })),
+    getInteraction: vi.fn(),
+  },
+  streamFetch: vi.fn(),
+  workflowApi: {
+    execute: (id: string, params: unknown) => execute(id, params),
+    getRun: vi.fn(() => Promise.resolve({ data: {} })),
+  },
   default: {
     get: (path: string, config?: unknown) => apiGet(path, config),
     post: vi.fn(),
@@ -83,7 +98,7 @@ function Shell() {
       <div>Dashboard page</div>
       <CommandBar boards={BOARDS} onOpenChat={vi.fn()} onOpenCase={setCaseId} onGo={vi.fn()} />
       {caseId && (
-        <CaseDrawer caseId={caseId} onClose={() => setCaseId(null)} onSelect={setCaseId} openChat={vi.fn()} />
+        <CaseDrawer caseId={caseId} onClose={() => setCaseId(null)} onSelect={setCaseId} pageKey="dashboard" />
       )}
     </>
   )

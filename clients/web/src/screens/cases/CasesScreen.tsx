@@ -62,7 +62,7 @@ function stripStates(by: Record<string, number>): string {
 }
 
 
-export default function CasesScreen({ openChat, setViewFull }: ConsoleScreenProps) {
+export default function CasesScreen({ setViewFull }: ConsoleScreenProps) {
   // the open case is a ?case=<id> param, so a detail view is deep-linkable
   const [searchParams, setSearchParams] = useSearchParams()
   const selected = searchParams.get('case')
@@ -85,7 +85,7 @@ export default function CasesScreen({ openChat, setViewFull }: ConsoleScreenProp
       rows={rows}
       onSelect={selectCase}
       onBack={backToList}
-      openChat={openChat}
+      pageKey="cases"
       reloadList={reload}
     />
   ) : (
@@ -863,14 +863,14 @@ export function CasesDetail({
   rows,
   onSelect,
   onBack,
-  openChat,
+  pageKey,
   reloadList,
 }: {
   id: string
   rows: CaseRow[]
   onSelect: (id: string) => void
   onBack: () => void
-  openChat: (prompt?: string) => void
+  pageKey: string
   reloadList: () => void
 }) {
   const { row, created, combinedState, investigations, closure, linkedFindings, phase, error, reload: reloadDetail } =
@@ -943,7 +943,7 @@ export function CasesDetail({
         linkedFindings={linkedFindings}
         phase={phase}
         error={error}
-        openChat={openChat}
+        pageKey={pageKey}
         onBack={onBack}
         onEdit={() => setAction('edit')}
         onMerge={() => setAction('merge')}

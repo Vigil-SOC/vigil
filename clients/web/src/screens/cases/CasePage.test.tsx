@@ -3,12 +3,14 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import CasesScreen from './CasesScreen'
 import { ToastProvider } from '../../shell/toast'
-import { casesApi, workflowApi } from '../../services/api'
+import { casesApi, streamFetch, workflowApi } from '../../services/api'
 
 const testState = vi.hoisted(() => ({
   cases: [] as Array<Record<string, unknown>>,
   runs: {} as Record<string, unknown>,
   recordError: null as string | null,
+  recordRows: [] as Array<Record<string, unknown>>,
+  convos: [] as Array<{ id: string; case_id: string; messages: Array<{ role: string; content: string }> }>,
 }))
 
 vi.mock('../../contexts/AuthContext', () => ({
@@ -26,7 +28,7 @@ vi.mock('../../services/api', () => ({
     getSLA: vi.fn(() => Promise.resolve({ data: { resolution_due: '2026-06-20T12:00:00Z', health_status: 'warning' } })),
     getRecord: vi.fn(() => {
       if (testState.recordError) return Promise.reject({ response: { data: { detail: testState.recordError } } })
-      return Promise.resolve({ data: { rows: [], run_id: null, investigation_id: null } })
+      return Promise.resolve({ data: { rows: testState.recordRows, run_id: null, investigation_id: null } })
     }),
     getComments: vi.fn(() => Promise.resolve({ data: { comments: [] } })),
     getTasks: vi.fn(() => Promise.resolve({ data: { tasks: [] } })),
@@ -43,6 +45,32 @@ vi.mock('../../services/api', () => ({
   findingsApi: { getById: vi.fn() },
   caseSearchApi: { search: vi.fn() },
   timelineApi: { getCaseTimeline: vi.fn() },
+  default: { get: vi.fn(() => Promise.resolve({ data: {} })) },
+  agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
+  conversationsApi: {
+    list: vi.fn((params?: { q?: string }) => {
+      const q = params?.q
+      const conversations = testState.convos.filter((row) => !q || row.case_id === q)
+      return Promise.resolve({ data: { conversations } })
+    }),
+    get: vi.fn((id: string) => {
+      const row = testState.convos.find((item) => item.id === id)
+      return Promise.resolve({ data: row ?? { id, case_id: null, messages: [] } })
+    }),
+    update: vi.fn(() => Promise.resolve({ data: {} })),
+    delete: vi.fn(),
+    importHistory: vi.fn(() => Promise.resolve({ data: {} })),
+  },
+  reasoningApi: {
+    getSessionSummary: vi.fn(() => Promise.resolve(null)),
+    listInteractions: vi.fn(() => Promise.resolve({ interactions: [] })),
+    getInteraction: vi.fn(),
+  },
+  streamFetch: vi.fn(() => Promise.resolve({
+    ok: true,
+    status: 200,
+    body: { getReader: () => ({ read: () => Promise.resolve({ done: true, value: undefined }) }) },
+  })),
 }))
 
 const HUNT = {
@@ -93,7 +121,10 @@ beforeEach(() => {
   testState.cases = []
   testState.runs = {}
   testState.recordError = null
+  testState.recordRows = []
+  testState.convos = []
   vi.mocked(workflowApi.getRun).mockClear()
+  vi.mocked(streamFetch).mockClear()
 })
 
 describe('case page', () => {
@@ -261,5 +292,108 @@ describe('case page', () => {
     renderCase('case-record')
     fireEvent.click(await screen.findByRole('tab', { name: /Record/ }))
     expect(await screen.findByText('the agent layer answered 502')).toBeInTheDocument()
+  })
+
+  it('pins Ask on the case and keeps Tell and Do from posting', async () => {
+    testState.cases = [{
+      case_id: 'case-hunt',
+      title: 'Hunt case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: ['f1'],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'open',
+      investigations: [],
+    }]
+    renderCase('case-hunt')
+    expect(await screen.findByText('Private to you · Ask only')).toBeInTheDocument()
+    expect(document.querySelector('.case-ask')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Tell' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Do' }))
+    expect(screen.getByRole('button', { name: 'Tell' })).toHaveAttribute('type', 'button')
+    expect(screen.getByRole('button', { name: 'Tell' })).toHaveAttribute('title', 'Coming in a later release')
+    expect(screen.getByRole('button', { name: 'Do' })).toHaveAttribute('type', 'button')
+    expect(screen.getByRole('button', { name: 'Do' })).toHaveAttribute('title', 'Coming in a later release')
+    expect(streamFetch).not.toHaveBeenCalled()
+  })
+
+  it('sends Why? on this case with promptFor and no model', async () => {
+    testState.cases = [{
+      case_id: 'case-hunt',
+      title: 'Hunt case',
+      status: 'open',
+      priority: 'high',
+      finding_ids: ['f1', 'f2'],
+      created_at: '2026-06-15T09:14:00Z',
+      combined_state: 'executing',
+      investigations: [investigation('executing', true, 'run-hunt')],
+    }]
+    testState.runs['run-hunt'] = { hunt: HUNT }
+    testState.recordRows = [{
+      id: 'row-1',
+      at: '2026-06-15T10:00:00Z',
+      kind: 'agent',
+      source: 'run',
+      chained: true,
+      text: 'because the login failed',
+    }]
+    renderCase('case-hunt')
+    const header = (await screen.findByRole('heading', { name: 'Hunt case' })).closest('.detail-head') as HTMLElement
+    expect(within(header).getByText('executing')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('tab', { name: /Record/ }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Why?' }))
+    await waitFor(() => expect(streamFetch).toHaveBeenCalled())
+    const body = JSON.parse((vi.mocked(streamFetch).mock.calls[0][1] as { body: string }).body)
+    expect(body.case_id).toBe('case-hunt')
+    expect(body.model).toBeUndefined()
+    expect(body.page_context).toBe('cases')
+    expect(body.messages.at(-1)).toEqual({
+      role: 'user',
+      content: 'Investigate case case-hunt: "Hunt case" — high priority, status executing, 2 linked findings.\n\nWhy?\nbecause the login failed',
+    })
+  })
+
+  it('chips a hunt evidence id and opens that row, and drops the thread when the case changes', async () => {
+    testState.cases = [
+      {
+        case_id: 'case-hunt',
+        title: 'Hunt case',
+        status: 'open',
+        priority: 'high',
+        finding_ids: ['f1'],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'executing',
+        investigations: [investigation('executing', true, 'run-hunt')],
+      },
+      {
+        case_id: 'case-next',
+        title: 'Next case',
+        status: 'open',
+        priority: 'low',
+        finding_ids: [],
+        created_at: '2026-06-15T09:14:00Z',
+        combined_state: 'open',
+        investigations: [],
+      },
+    ]
+    testState.runs['run-hunt'] = { hunt: HUNT }
+    testState.convos = [{
+      id: 'conv-hunt',
+      case_id: 'case-hunt',
+      messages: [{ role: 'assistant', content: 'The row e1 matters; ghost-9 does not.' }],
+    }]
+    renderCase('case-hunt')
+
+    expect(await screen.findByRole('button', { name: 'e1' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'ghost-9' })).not.toBeInTheDocument()
+    expect(screen.queryByText('no login')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'e1' }))
+    expect(screen.getByRole('tab', { name: /^Evidence/ })).toHaveAttribute('aria-selected', 'true')
+    const row = (await screen.findByText('no login')).closest('tr')
+    expect(row).toHaveAttribute('data-evidence-id', 'e1')
+
+    fireEvent.click(screen.getByText('Next case'))
+    expect(await screen.findByRole('heading', { name: 'Next case' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText(/The row e1 matters/)).not.toBeInTheDocument())
   })
 })

@@ -8,12 +8,13 @@ export default function CaseDrawer({
   caseId,
   onClose,
   onSelect,
-  openChat,
+  pageKey,
 }: {
   caseId: string
   onClose: () => void
   onSelect: (caseId: string) => void
-  openChat: (prompt?: string) => void
+  /** SocConsole's current route key, stored on the pinned thread as page_context. */
+  pageKey: string
 }) {
   const navigate = useNavigate()
   const { rows, reload } = useCases(INITIAL_CASE_FILTERS)
@@ -54,7 +55,7 @@ export default function CaseDrawer({
           rows={rows}
           onSelect={onSelect}
           onBack={onClose}
-          openChat={openChat}
+          pageKey={pageKey}
           reloadList={reload}
         />
       </aside>

@@ -484,15 +484,15 @@ function SocConsoleInner() {
             caseId={drawerCase}
             onClose={() => setDrawerCase(null)}
             onSelect={setDrawerCase}
-            openChat={openChat}
+            pageKey={current}
           />
         )}
       </div>
 
       {/* floating Vigil assistant button — hidden while the chat dock is open
           (the dock has its own close control, so showing both is redundant) and
-          while a full-bleed detail view is open (e.g. a case detail, which has
-          its own "Open in Vigil" action — two Vigil buttons would be redundant) */}
+          while a full-bleed detail view is open (a case detail pins its own
+          Ask composer, so a second Vigil button would be redundant) */}
       {!chatOpen && !viewFull && (
         <button
           className="chat-fab"

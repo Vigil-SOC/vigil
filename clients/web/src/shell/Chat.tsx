@@ -201,10 +201,51 @@ function safeJson(v: unknown): string {
   }
 }
 
-function VigilMessage({ text }: { text: string; ms?: number }) {
+function citedIds(text: string, ids: readonly string[]): string[] {
+  return ids.filter((id) => id.length > 0 && hasId(text, id))
+}
+
+function hasId(text: string, id: string): boolean {
+  const needle = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`(?:^|[^A-Za-z0-9_-])${needle}(?![A-Za-z0-9_-])`).test(text)
+}
+
+function CiteRow({
+  text,
+  ids,
+  onCite,
+}: {
+  text: string
+  ids: readonly string[]
+  onCite?: (id: string) => void
+}) {
+  const hits = citedIds(text, ids)
+  if (hits.length === 0) return null
+  return (
+    <div className="cite-row">
+      {hits.map((id) => (
+        <button key={id} type="button" className="cite-chip" onClick={() => onCite?.(id)}>
+          {id}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function VigilMessage({
+  text,
+  evidenceIds,
+  onCite,
+}: {
+  text: string
+  ms?: number
+  evidenceIds?: readonly string[]
+  onCite?: (id: string) => void
+}) {
   return (
     <div className="msg vigil">
       <div className="body"><Markdown>{text}</Markdown></div>
+      {evidenceIds && <CiteRow text={text} ids={evidenceIds} onCite={onCite} />}
       <div className="msg-actions">
         <button title="Copy" onClick={() => navigator.clipboard?.writeText(text)}><Icon name="copy" size={15} /></button>
         <button title="More"><Icon name="more" size={15} /></button>
@@ -220,6 +261,10 @@ export default function Chat({
   pageKey,
   pageTitle,
   onSeedConsumed,
+  pinned = false,
+  lockedCaseId,
+  evidenceIds = [],
+  onCite,
 }: {
   open: boolean
   onClose: () => void
@@ -228,6 +273,13 @@ export default function Chat({
   pageKey?: string
   pageTitle?: string
   onSeedConsumed?: () => void
+  /** In-flow case composer. Omits the dock frame and header. */
+  pinned?: boolean
+  /** Sent on every turn. Hides @ and the remove-case control. */
+  lockedCaseId?: string
+  /** Hunt evidence ids. A chip is drawn only when an assistant message contains one. */
+  evidenceIds?: readonly string[]
+  onCite?: (id: string) => void
 }) {
   const [messages, setMessages] = useState<ChatMsg[]>([])
   const [draft, setDraft] = useState('')
@@ -250,7 +302,8 @@ export default function Chat({
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [renameDraft, setRenameDraft] = useState('')
   // null: the field is omitted. "" clears a case already stored on the row.
-  const [caseId, setCaseId] = useState<string | null>(null)
+  const [caseId, setCaseId] = useState<string | null>(lockedCaseId ?? null)
+  const [threadOpen, setThreadOpen] = useState(false)
   const [mentionHits, setMentionHits] = useState<CaseHit[] | null>(null)
   const [traceOpen, setTraceOpen] = useState(false)
   const [traceLoading, setTraceLoading] = useState(false)
@@ -265,11 +318,25 @@ export default function Chat({
   const openerRef = useRef<HTMLElement | null>(null)
   const panelRef = useRef<HTMLElement>(null)
   const currentKeyRef = useRef<string | null>(null)
-  const caseIdRef = useRef<string | null>(null)
+  const caseIdRef = useRef<string | null>(lockedCaseId ?? null)
+  const loadGen = useRef(0)
+  const turnGen = useRef(0)
+  const localTurn = useRef(false)
+  const messagesRef = useRef<ChatMsg[]>([])
+  messagesRef.current = messages
+  // false until the locked case's conversation list has settled
+  const caseReady = useRef(!lockedCaseId)
+  const pendingSend = useRef<string | null>(null)
+  if (lockedCaseId) caseIdRef.current = lockedCaseId
+  const putMessages = (next: ChatMsg[]) => {
+    messagesRef.current = next
+    setMessages(next)
+  }
   // true once this session id has a conversation row, so an @ attach can PATCH
   const persistedRef = useRef(false)
 
   useEffect(() => {
+    if (pinned) return
     if (open) {
       openerRef.current = document.activeElement as HTMLElement | null
       taRef.current?.focus()
@@ -277,7 +344,7 @@ export default function Chat({
       openerRef.current?.focus?.()
       openerRef.current = null
     }
-  }, [open])
+  }, [open, pinned])
 
   // any of the dock's own dialogs (they own their Esc + focus handling)
   const anyPopupOpen = historyOpen || agentsInfoOpen || traceOpen
@@ -285,7 +352,7 @@ export default function Chat({
   // never while a Popup is open: it handles its own Esc, and closing the dock
   // too would dismiss both at once
   useEffect(() => {
-    if (!open) return
+    if (!open || pinned) return
     const onKey = (e: globalThis.KeyboardEvent) => {
       if (e.key !== 'Escape' || anyPopupOpen) return
       if (mentionHits) setMentionHits(null)
@@ -293,11 +360,11 @@ export default function Chat({
     }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
-  }, [open, mentionHits, onClose, anyPopupOpen])
+  }, [open, pinned, mentionHits, onClose, anyPopupOpen])
 
   // unless a Popup is up, which traps focus itself
   const onPanelKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key !== 'Tab' || !open || anyPopupOpen) return
+    if (pinned || e.key !== 'Tab' || !open || anyPopupOpen) return
     const root = panelRef.current
     if (!root) return
     const f = Array.from(
@@ -340,7 +407,7 @@ export default function Chat({
     ta.style.height = Math.min(ta.scrollHeight, 130) + 'px'
   }, [draft])
 
-  const token = mentionToken(draft)
+  const token = lockedCaseId ? null : mentionToken(draft)
   useEffect(() => {
     if (token == null || !token.trim()) {
       setMentionHits(token == null ? null : [])
@@ -384,11 +451,25 @@ export default function Chat({
 
   const send = async (override?: string, opts?: { fresh?: boolean }) => {
     const text = (override ?? draft).trim()
-    if (!text || loading) return
+    if (!text) return
+    // Hold the turn until the locked thread is the one on screen.
+    if (lockedCaseId && !caseReady.current) {
+      pendingSend.current = text
+      setDraft('')
+      return
+    }
+    if (loading) return
+    const gen = turnGen.current
+    localTurn.current = true
+    if (lockedCaseId) {
+      caseIdRef.current = lockedCaseId
+      setCaseId(lockedCaseId)
+      setThreadOpen(true)
+    }
     // `fresh` keeps a new investigation's seed off an unrelated conversation
-    const base = opts?.fresh ? [] : messages.filter((m) => m.role !== 'error')
+    const base = opts?.fresh ? [] : messagesRef.current.filter((m) => m.role !== 'error')
     const next: ChatMsg[] = [...base, { role: 'user', text }]
-    setMessages(next)
+    putMessages(next)
     setDraft('')
     setLoading(true)
     setStreamText('')
@@ -468,7 +549,14 @@ export default function Chat({
         }
       }
       const ms = Date.now() - start
-      setMessages((m) => [...m, { role: 'vigil', text: curText || '_(no response)_', ms }])
+      if (gen === turnGen.current) {
+        setMessages((m) => {
+          const vigil: ChatMsg = { role: 'vigil', text: curText || '_(no response)_', ms }
+          const next = [...m, vigil]
+          messagesRef.current = next
+          return next
+        })
+      }
       // gated inside notificationService by the setting + browser permission
       if (currentKeyRef.current && curText) {
         const summary = curText.replace(/[#*`_>[\]]/g, '').replace(/\s+/g, ' ').trim().slice(0, 140)
@@ -486,21 +574,27 @@ export default function Chat({
         .catch(() => {})
     } catch (e) {
       const err = e as { name?: string; message?: string }
-      if (err?.name !== 'AbortError') {
-        setMessages((m) => [...m, { role: 'error', text: `Could not reach Vigil: ${err?.message || e}. Is the backend running?` }])
+      if (err?.name !== 'AbortError' && gen === turnGen.current) {
+        setMessages((m) => {
+          const next: ChatMsg[] = [...m, { role: 'error', text: `Could not reach Vigil: ${err?.message || e}. Is the backend running?` }]
+          messagesRef.current = next
+          return next
+        })
       }
     } finally {
-      if (accepted) {
-        const latest = caseIdRef.current
-        persistedRef.current = true
-        if (latest !== sentCase && latest !== null) {
-          conversationsApi.update(sessionRef.current, { case_id: latest }).catch(() => {})
+      if (gen === turnGen.current) {
+        if (accepted) {
+          const latest = caseIdRef.current
+          persistedRef.current = true
+          if (latest !== sentCase && latest !== null) {
+            conversationsApi.update(sessionRef.current, { case_id: latest }).catch(() => {})
+          }
         }
+        setLoading(false)
+        setStreamText('')
+        setIsProcessingTools(false)
+        abortRef.current = null
       }
-      setLoading(false)
-      setStreamText('')
-      setIsProcessingTools(false)
-      abortRef.current = null
     }
   }
 
@@ -527,7 +621,7 @@ export default function Chat({
   const reset = () => {
     if (loading) return
     archiveCurrent()
-    setMessages([])
+    putMessages([])
     sessionRef.current = newSessionId()
     currentKeyRef.current = null
     persistedRef.current = false
@@ -537,28 +631,35 @@ export default function Chat({
   }
 
   // continues the same session_id, so new turns append to it
-  const openConversation = async (id: string, key?: string | null): Promise<boolean> => {
-    if (loading) return false
+  const openConversation = async (id: string, key?: string | null, force = false): Promise<boolean> => {
+    if (loading && !force) return false
+    const gen = loadGen.current
     archiveCurrent()
     setHistoryOpen(false)
     try {
       const res = await conversationsApi.get(id)
+      // A turn started on this locked session while the row was loading.
+      if (gen !== loadGen.current || (lockedCaseId && localTurn.current)) return false
       const detail = res.data as ConversationDetail
-      setMessages(toChatMsgs(detail.messages || []))
+      const msgs = toChatMsgs(detail.messages || [])
+      putMessages(msgs)
+      if (lockedCaseId) setThreadOpen(msgs.length > 0)
       sessionRef.current = id
       currentKeyRef.current = key ?? null
       persistedRef.current = true
-      rememberCase(detail.case_id ?? null)
+      rememberCase(lockedCaseId ?? detail.case_id ?? null)
       setSessionSummary(null)
       return true
     } catch {
+      if (gen !== loadGen.current || (lockedCaseId && localTurn.current)) return false
       const cached = loadHistory().find((c) => c.id === id)
       if (cached) {
-        setMessages(cached.messages)
+        putMessages(cached.messages)
+        if (lockedCaseId) setThreadOpen(cached.messages.length > 0)
         sessionRef.current = id
         currentKeyRef.current = cached.key || key || null
         persistedRef.current = false
-        rememberCase(null)
+        rememberCase(lockedCaseId ?? null)
         setSessionSummary(null)
         return true
       }
@@ -649,7 +750,7 @@ export default function Chat({
   // the marker is only set on success, so a failed import retries next mount
   const migratedRef = useRef(false)
   useEffect(() => {
-    if (migratedRef.current) return
+    if (lockedCaseId || migratedRef.current) return
     migratedRef.current = true
     try {
       if (localStorage.getItem(IMPORT_MARKER_KEY)) return
@@ -683,7 +784,64 @@ export default function Chat({
     } catch {
       /* empty */
     }
-  }, [reloadHistory])
+  }, [reloadHistory, lockedCaseId])
+
+  // Newest conversation whose case_id is exactly the locked id. `q` is a substring match.
+  useEffect(() => {
+    if (!lockedCaseId) return
+    const gen = ++loadGen.current
+    turnGen.current += 1
+    localTurn.current = false
+    caseReady.current = false
+    pendingSend.current = null
+    abortRef.current?.abort()
+    abortRef.current = null
+    setLoading(false)
+    setStreamText('')
+    setDraft('')
+    putMessages([])
+    setThreadOpen(false)
+    currentKeyRef.current = null
+    persistedRef.current = false
+    rememberCase(lockedCaseId)
+    let live = true
+    const settle = () => {
+      if (!live || gen !== loadGen.current) return
+      caseReady.current = true
+      const queued = pendingSend.current
+      pendingSend.current = null
+      if (queued) void send(queued)
+    }
+    conversationsApi
+      .list({ q: lockedCaseId })
+      .then(async (res) => {
+        if (!live || gen !== loadGen.current) return
+        const rows = (res.data?.conversations || []) as Array<{ id: string; case_id?: string | null }>
+        const match = rows.find((row) => row.case_id === lockedCaseId)
+        if (match) {
+          await openConversation(match.id, null, true)
+          if (!live || gen !== loadGen.current) return
+          rememberCase(lockedCaseId)
+        } else {
+          sessionRef.current = newSessionId()
+          persistedRef.current = false
+        }
+        settle()
+      })
+      .catch(() => {
+        if (!live || gen !== loadGen.current) return
+        sessionRef.current = newSessionId()
+        persistedRef.current = false
+        settle()
+      })
+    return () => {
+      live = false
+      loadGen.current += 1
+      turnGen.current += 1
+    }
+    // openConversation closes over the render that starts the load
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockedCaseId])
 
   const seedRef = useRef<string | null>(null)
   useEffect(() => {
@@ -693,15 +851,24 @@ export default function Chat({
       seedRef.current = null
       return
     }
-    // guard against StrictMode's double-invoke firing the same seed twice
-    if (open && seed !== seedRef.current && !loading) {
-      seedRef.current = seed
+    // guard against StrictMode's double-invoke firing the same seed twice.
+    // While a stream is in flight, leave the seed set so it sends when loading drops.
+    if (!open || seed === seedRef.current) return
+    if (loading && (!lockedCaseId || caseReady.current)) return
+    seedRef.current = seed
+    if (lockedCaseId) {
+      // append on this session; do not open a keymap investigation or clear the case
+      caseIdRef.current = lockedCaseId
+      setCaseId(lockedCaseId)
+      send(seed)
+    } else {
       openInvestigation(seed)
-      onSeedConsumed?.()
     }
-    // send/loading intentionally omitted: we fire once per new seed
+    onSeedConsumed?.()
+    // send intentionally omitted: we fire once per new seed, and again when a
+    // stream that blocked it finishes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, seed])
+  }, [open, seed, lockedCaseId, loading])
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -709,8 +876,109 @@ export default function Chat({
     }
   }
 
+  const transcript = (
+    <div className="chat-body" ref={bodyRef}>
+      {messages.length === 0 && !loading && (
+        <div className="chat-empty">Ask Vigil to investigate a finding, correlate activity, or summarize a case.</div>
+      )}
+      {messages.map((m, i) =>
+        m.role === 'user' ? (
+          <div className="msg user" key={i}><div className="body">{m.text}</div></div>
+        ) : m.role === 'error' ? (
+          <div className="msg vigil err" key={i}><div className="body">{m.text}</div></div>
+        ) : (
+          <VigilMessage key={i} text={m.text} ms={m.ms} evidenceIds={evidenceIds} onCite={onCite} />
+        )
+      )}
+      {loading && (
+        <div className="msg vigil">
+          {/* always-on processing indicator so the user knows Vigil is still
+              working — the phase label tracks reasoning → responding */}
+          <div className="vigil-status" aria-live="polite">
+            <span className="vs-dots" aria-hidden="true"><i /><i /><i /></span>
+            <span className="vs-label">
+              {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : 'Vigil is working on it'}
+              …
+            </span>
+          </div>
+          {streamText && (
+            <>
+              <div className="body"><Markdown>{streamText}</Markdown></div>
+              <CiteRow text={streamText} ids={evidenceIds} onCite={onCite} />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+
+  const foot = (
+    <div className="chat-foot">
+      <div className="chat-input">
+        {!lockedCaseId && mentionHits && (
+          <div className="chat-mention" role="listbox" aria-label="Matching cases">
+            {mentionHits.length === 0 ? (
+              <div className="cm-empty">No matching cases</div>
+            ) : (
+              mentionHits.map((hit) => (
+                <button key={hit.id} type="button" role="option" onMouseDown={(e) => e.preventDefault()} onClick={() => attachCase(hit)}>
+                  <span>{hit.title}</span>
+                  <span className="cm-id">{hit.id}</span>
+                </button>
+              ))
+            )}
+          </div>
+        )}
+        <textarea
+          ref={taRef}
+          rows={1}
+          placeholder={lockedCaseId ? 'Ask about this case' : 'Ask Vigil, / for commands, @ for context'}
+          aria-label={lockedCaseId ? 'Ask about this case' : 'Ask Vigil'}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={onKeyDown}
+        />
+        <div className="ci-row">
+          {caseId ? (
+            <span className="chat-case" data-testid="attached-case">
+              <span>{caseId}</span>
+              {lockedCaseId ? null : (
+                <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
+              )}
+            </span>
+          ) : null}
+          <div className="ci-grow" />
+          {loading ? (
+            <button className="ci-send busy" title="Stop" onClick={stop}><Icon name="x2" size={15} /></button>
+          ) : (
+            <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim()}><Icon name="send" /></button>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <>
+    {pinned ? (
+      <section className="case-composer" aria-label="Ask Vigil">
+        <div className="composer-modes" role="group" aria-label="Composer mode">
+          <button type="button" className="on" aria-pressed="true">Ask</button>
+          <button type="button" disabled title="Coming in a later release">Tell</button>
+          <button type="button" disabled title="Coming in a later release">Do</button>
+        </div>
+        <div className="chat-note">
+          <span>Private to you · Ask only</span>
+        </div>
+        {messages.length > 0 && (
+          <button type="button" className="composer-fold" onClick={() => setThreadOpen((openThread) => !openThread)}>
+            {messages.length} message{messages.length === 1 ? '' : 's'} · {threadOpen ? 'hide' : 'show'}
+          </button>
+        )}
+        {threadOpen && transcript}
+        {foot}
+      </section>
+    ) : (
     <aside
       ref={panelRef}
       className={`chat${open ? ' open' : ''}`}
@@ -734,77 +1002,10 @@ export default function Chat({
         <span>Private to you</span>
         {pageTitle ? <span>Using {pageTitle}</span> : null}
       </div>
-
-      <div className="chat-body" ref={bodyRef}>
-        {messages.length === 0 && !loading && (
-          <div className="chat-empty">Ask Vigil to investigate a finding, correlate activity, or summarize a case.</div>
-        )}
-        {messages.map((m, i) =>
-          m.role === 'user' ? (
-            <div className="msg user" key={i}><div className="body">{m.text}</div></div>
-          ) : m.role === 'error' ? (
-            <div className="msg vigil err" key={i}><div className="body">{m.text}</div></div>
-          ) : (
-            <VigilMessage key={i} text={m.text} ms={m.ms} />
-          )
-        )}
-        {loading && (
-          <div className="msg vigil">
-            {/* always-on processing indicator so the user knows Vigil is still
-                working — the phase label tracks reasoning → responding */}
-            <div className="vigil-status" aria-live="polite">
-              <span className="vs-dots" aria-hidden="true"><i /><i /><i /></span>
-              <span className="vs-label">
-                {isProcessingTools ? 'Vigil is running tools' : streamText ? 'Vigil is responding' : 'Vigil is working on it'}
-                …
-              </span>
-            </div>
-            {streamText && <div className="body"><Markdown>{streamText}</Markdown></div>}
-          </div>
-        )}
-      </div>
-
-      <div className="chat-foot">
-        <div className="chat-input">
-          {mentionHits && (
-            <div className="chat-mention" role="listbox" aria-label="Matching cases">
-              {mentionHits.length === 0 ? (
-                <div className="cm-empty">No matching cases</div>
-              ) : (
-                mentionHits.map((hit) => (
-                  <button key={hit.id} type="button" role="option" onMouseDown={(e) => e.preventDefault()} onClick={() => attachCase(hit)}>
-                    <span>{hit.title}</span>
-                    <span className="cm-id">{hit.id}</span>
-                  </button>
-                ))
-              )}
-            </div>
-          )}
-          <textarea
-            ref={taRef}
-            rows={1}
-            placeholder="Ask Vigil, / for commands, @ for context"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={onKeyDown}
-          />
-          <div className="ci-row">
-            {caseId ? (
-              <span className="chat-case" data-testid="attached-case">
-                <span>{caseId}</span>
-                <button type="button" aria-label="Remove attached case" onClick={() => applyCase('')}>×</button>
-              </span>
-            ) : null}
-            <div className="ci-grow" />
-            {loading ? (
-              <button className="ci-send busy" title="Stop" onClick={stop}><Icon name="x2" size={15} /></button>
-            ) : (
-              <button className="ci-send" title="Send" onClick={() => send()} disabled={!draft.trim()}><Icon name="send" /></button>
-            )}
-          </div>
-        </div>
-      </div>
+      {transcript}
+      {foot}
     </aside>
+    )}
 
     {/* Conversation history — server-backed (cross-device); falls back to the
         localStorage cache when the server can't be reached. */}

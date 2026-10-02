@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import { casesApi, orchestratorApi, workflowApi, type CaseRecordRow } from '../../services/api'
 import { Icon } from '../../shared/icons'
 import { EmptyState } from '../../shared/ui'
 import type { CaseRow } from '../../data/data'
-import { CommentsCard, EvidenceCard, IOCsCard, TasksCard, inputCls } from './CaseSections'
+import Chat from '../../shell/Chat'
+import { CommentsCard, EvidenceCard, IOCsCard, TasksCard } from './CaseSections'
 import {
   explanationWord,
   honestLine,
@@ -102,7 +103,7 @@ export function CasePage({
   linkedFindings,
   phase,
   error,
-  openChat,
+  pageKey,
   onBack,
   onEdit,
   onMerge,
@@ -119,7 +120,8 @@ export function CasePage({
   linkedFindings: CaseLinkedFinding[]
   phase: Phase
   error: string | null
-  openChat: (prompt?: string) => void
+  /** Route key stored as page_context. Cases passes `cases`; the drawer passes SocConsole's current. */
+  pageKey: string
   onBack: () => void
   onEdit: () => void
   onMerge: () => void
@@ -136,13 +138,15 @@ export function CasePage({
   const [recordError, setRecordError] = useState<string | null>(null)
   const [recordKey, setRecordKey] = useState(0)
   const [chip, setChip] = useState<RecordChip | 'all'>('all')
-  const [ask, setAsk] = useState('')
+  const [askSeed, setAskSeed] = useState<{ id: string; text: string } | null>(null)
+  const [focusEvidence, setFocusEvidence] = useState<string | null>(null)
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     setTab('Summary')
-    setAsk('')
+    setAskSeed(null)
+    setFocusEvidence(null)
     setNote('')
     setChip('all')
   }, [id])
@@ -459,6 +463,7 @@ export function CasePage({
                 <EmptyState compact icon="shield" title="No evidence yet" />
               ) : (
                 <EvidenceTable
+                  focusId={focusEvidence}
                   rows={fold.evidence.map((row) => ({
                     id: row.evidence_id,
                     step: String(row.iteration),
@@ -572,7 +577,7 @@ export function CasePage({
                     <div>{row.text || row.kind}</div>
                     <div className="muted">{when(row.at)}{row.chained ? ' · chained' : ''}</div>
                   </div>
-                  <button className="btn ghost" onClick={() => openChat(promptFor(row.text))}>Why?</button>
+                  <button type="button" className="btn ghost" onClick={() => setAskSeed({ id, text: promptFor(row.text) })}>Why?</button>
                 </div>
               ))}
               <div className="case-actions">
@@ -630,22 +635,20 @@ export function CasePage({
         </aside>
       </div>
 
-      <form
-        className="case-ask"
-        onSubmit={(event) => {
-          event.preventDefault()
-          openChat(promptFor(ask.trim() || undefined))
+      <Chat
+        pinned
+        open
+        onClose={() => undefined}
+        pageKey={pageKey}
+        lockedCaseId={id}
+        seed={askSeed?.id === id ? askSeed.text : null}
+        onSeedConsumed={() => setAskSeed(null)}
+        evidenceIds={fold?.kind === 'hunt' ? fold.evidence.map((row) => row.evidence_id) : []}
+        onCite={(evidenceId) => {
+          setTab('Evidence')
+          setFocusEvidence(evidenceId)
         }}
-      >
-        <input
-          className={inputCls}
-          value={ask}
-          onChange={(event) => setAsk(event.target.value)}
-          placeholder="Ask Vigil about this case"
-          aria-label="Ask Vigil about this case"
-        />
-        <button className="btn primary" type="submit"><Icon name="brain" /> Ask</button>
-      </form>
+      />
     </div>
   )
 }
@@ -685,14 +688,30 @@ function FindingList({ fold }: { fold: RunFold | null }) {
   )
 }
 
-function EvidenceTable({ rows }: { rows: { id: string; step: string; observation: string; source: string; bears: string }[] }) {
+function EvidenceTable({
+  rows,
+  focusId,
+}: {
+  rows: { id: string; step: string; observation: string; source: string; bears: string }[]
+  focusId?: string | null
+}) {
+  const focusRef = useRef<HTMLTableRowElement>(null)
+  useEffect(() => {
+    const node = focusRef.current
+    if (node && typeof node.scrollIntoView === 'function') node.scrollIntoView({ block: 'nearest' })
+  }, [focusId, rows])
   return (
     <div className="table-wrap">
       <table className="tbl">
         <thead><tr><th>Step</th><th>Observation</th><th>Source</th><th>Bears on</th></tr></thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id}>
+            <tr
+              key={row.id}
+              ref={row.id === focusId ? focusRef : undefined}
+              className={row.id === focusId ? 'cite-target' : undefined}
+              data-evidence-id={row.id}
+            >
               <td>{row.step}</td>
               <td>{row.observation || '—'}</td>
               <td>{row.source || '—'}</td>

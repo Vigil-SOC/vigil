@@ -43,6 +43,21 @@ vi.mock('../../services/api', () => ({
   findingsApi: { getById: vi.fn() },
   caseSearchApi: { search: vi.fn() },
   timelineApi: { getCaseTimeline: vi.fn(() => Promise.resolve({ data: { events: [] } })) },
+  default: { get: vi.fn(() => Promise.resolve({ data: {} })) },
+  agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
+  conversationsApi: {
+    list: vi.fn(() => Promise.resolve({ data: { conversations: [] } })),
+    get: vi.fn(() => Promise.resolve({ data: { messages: [] } })),
+    update: vi.fn(() => Promise.resolve({ data: {} })),
+    delete: vi.fn(),
+    importHistory: vi.fn(() => Promise.resolve({ data: {} })),
+  },
+  reasoningApi: {
+    getSessionSummary: vi.fn(() => Promise.resolve(null)),
+    listInteractions: vi.fn(() => Promise.resolve({ interactions: [] })),
+    getInteraction: vi.fn(),
+  },
+  streamFetch: vi.fn(),
 }))
 
 const CASE = {
