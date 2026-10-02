@@ -27,6 +27,7 @@ import psycopg2
 from cryptography.fernet import Fernet
 from psycopg2 import sql
 
+from core.backup.connection import backup_database_config
 from core.backup.create import (
     BackupError,
     _checked,
@@ -98,7 +99,7 @@ def restore_snapshot(
     _require_tool("restic")
     _require_tool("pg_restore")
 
-    cfg = DatabaseConfig()
+    cfg = backup_database_config()
     priority = _priority_prefix()
     # Real restore only. --test never renames the live database, so other
     # sessions may stay connected.

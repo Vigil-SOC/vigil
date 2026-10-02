@@ -20,6 +20,7 @@ from pathlib import Path
 import psycopg2
 from psycopg2 import sql
 
+from core.backup.connection import backup_database_config
 from core.config import REPO_ROOT, get_settings, vigil_path
 from core.intent import intent_file
 from core.storage.connection import DatabaseConfig
@@ -77,7 +78,7 @@ def create_snapshot(
     _require_tool("pg_dump")
     _require_tool("pg_restore")
 
-    cfg = DatabaseConfig()
+    cfg = backup_database_config()
     priority = _priority_prefix()
     lock = _connect(cfg, autocommit=True)
     try:
@@ -109,9 +110,65 @@ def create_snapshot(
         lock.close()
 
 
+_PG_MIN_MAJOR = 16
+
+
 def _require_tool(name: str) -> None:
-    if shutil.which(name) is None:
+    if name in ("pg_dump", "pg_restore"):
+        resolved = _prefer_pg_client(name)
+    else:
+        resolved = shutil.which(name)
+    if resolved is None:
         raise BackupError(f"{name} is not installed")
+
+
+def _prefer_pg_client(name: str) -> str | None:
+    """A pg_dump/pg_restore whose major is at least 16.
+
+    postgresql-client-16 installs under /usr/lib/postgresql/16/bin, which is
+    not on PATH. That client wins over an older one already on PATH, and its
+    directory is prepended so later ``shutil.which`` calls find it.
+    """
+    found = shutil.which(name)
+    found_major = _binary_major(found) if found else None
+    best_path = (
+        found if found_major is not None and found_major >= _PG_MIN_MAJOR else None
+    )
+    best_major = found_major if best_path else -1
+    root = Path("/usr/lib/postgresql")
+    if root.is_dir():
+        for path in root.glob(f"*/bin/{name}"):
+            if not os.access(path, os.X_OK):
+                continue
+            major = _binary_major(str(path))
+            if major is None or major < _PG_MIN_MAJOR or major <= best_major:
+                continue
+            best_path = str(path)
+            best_major = major
+    if best_path is None:
+        return None
+    bindir = str(Path(best_path).parent)
+    parts = os.environ.get("PATH", "").split(os.pathsep)
+    if bindir not in parts:
+        os.environ["PATH"] = bindir + os.pathsep + os.environ.get("PATH", "")
+    return best_path
+
+
+def _pg_major(text: str) -> int | None:
+    marker = "(PostgreSQL)"
+    if marker not in text:
+        return None
+    head = text.split(marker, 1)[1].strip().split(".", 1)[0]
+    if not head.isdigit():
+        return None
+    return int(head)
+
+
+def _binary_major(path: str) -> int | None:
+    proc = subprocess.run([path, "--version"], capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    return _pg_major(proc.stdout)
 
 
 def _priority_prefix() -> list[str]:
@@ -171,10 +228,9 @@ def _require_pg_dump_version(
     server_major = int(cur.fetchone()[0]) // 10000
     proc = _run(priority + ["pg_dump", "--version"], env=_child_env())
     text = proc.stdout
-    marker = "(PostgreSQL)"
-    if marker not in text:
+    major = _pg_major(text)
+    if major is None:
         raise BackupError(f"could not read pg_dump version: {text.strip()}")
-    major = int(text.split(marker, 1)[1].strip().split(".", 1)[0])
     if major < server_major:
         raise BackupError(f"pg_dump {major} is older than the server ({server_major})")
 

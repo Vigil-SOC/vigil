@@ -29,22 +29,47 @@ def _compose() -> dict:
     return yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8")) or {}
 
 
+def _compose_default(source: str) -> str:
+    # ${VIGIL_BACKUP_STATE_DIR:-vigil_home} is the named volume unless overridden.
+    if source.startswith("${") and source.endswith("}") and ":-" in source:
+        return source.split(":-", 1)[1][:-1]
+    return source
+
+
+def _split_volume(entry: str) -> tuple[str, str] | None:
+    # ${VAR:-name}:/container/path. The default may contain a colon, so split
+    # the container path from the right.
+    body = entry
+    if body.endswith(":ro") or body.endswith(":rw"):
+        body = body.rsplit(":", 1)[0]
+    if ":" not in body:
+        return None
+    source, target = body.rsplit(":", 1)
+    if not target.startswith("/"):
+        return None
+    return source, target
+
+
 def _named_volume_at(compose: dict, service: str, target: str) -> str | None:
+    volumes = compose.get("volumes") or {}
     for entry in compose["services"][service].get("volumes") or []:
         if isinstance(entry, str):
-            source, _, rest = entry.partition(":")
-            if rest.split(":")[0] == target:
-                return source if source in (compose.get("volumes") or {}) else None
+            split = _split_volume(entry)
+            if split is None or split[1] != target:
+                continue
+            source = _compose_default(split[0])
+            return source if source in volumes else None
         elif entry.get("target") == target and entry.get("type", "volume") == "volume":
-            return entry.get("source")
+            source = _compose_default(str(entry.get("source") or ""))
+            return source if source in volumes else None
     return None
 
 
 @pytest.mark.parametrize(
     ("target", "services"),
     [
-        (STATE_DIR, ("backend", "soc-daemon", "llm-worker")),
-        (INVESTIGATIONS_DIR, ("backend", "soc-daemon")),
+        (STATE_DIR, ("backend", "soc-daemon", "llm-worker", "backup")),
+        (INVESTIGATIONS_DIR, ("backend", "soc-daemon", "backup")),
     ],
 )
 def test_services_share_one_named_volume(target: str, services: tuple) -> None:

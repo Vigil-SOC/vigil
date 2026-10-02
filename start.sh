@@ -9,16 +9,80 @@ VERSION="$(cat "$(dirname "$0")/VERSION" 2>/dev/null || echo "dev")"
 usage() {
     cat <<EOF
 Usage: $0 [--daemon|-d] [--with <profile>] [--all]
+       $0 backup --repo PATH --passphrase-file PATH
 
   -d, --daemon      Run in the background (logs/ + pidfiles)
       --with NAME   Also start a profiled service (splunk, kafka, pgadmin,
                     jaeger, prometheus, grafana, otel-collector). Repeatable.
       --all         Also start every profiled service
+      backup        Run one snapshot in the backend image and exit. Does not
+                    start the API, frontend, or agent layer.
 
 Core services come from .vigil-autostart (or \$AUTOSTART_SERVICES, else
 postgres redis bifrost ollama). --with/--all are additive to that list.
 EOF
 }
+
+# One shot of the compose `backup` service. Mounts the host State Directory,
+# investigation workdir, and (when present) repo-root .env into that image.
+# Skills and intent stay unset so a missing path is skipped.
+run_backup() {
+    local repo="" passfile=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --repo)
+                [ -n "${2:-}" ] || { echo "backup: --repo requires a path" >&2; exit 1; }
+                repo="$2"; shift 2 ;;
+            --passphrase-file)
+                [ -n "${2:-}" ] || { echo "backup: --passphrase-file requires a path" >&2; exit 1; }
+                passfile="$2"; shift 2 ;;
+            -h|--help) usage; exit 0 ;;
+            *) echo "Unknown argument: $1" >&2; usage >&2; exit 1 ;;
+        esac
+    done
+    if [ -z "$repo" ] || [ -z "$passfile" ]; then
+        echo "backup requires --repo and --passphrase-file" >&2
+        usage >&2
+        exit 1
+    fi
+    [ -f "$passfile" ] || { echo "passphrase file not found: $passfile" >&2; exit 1; }
+    ensure_docker || exit 1
+    if [ -f "$REPO_ROOT/.env" ]; then
+        set -a
+        # shellcheck disable=SC1091
+        source "$REPO_ROOT/.env"
+        set +a
+    fi
+    mkdir -p "$repo"
+    repo="$(cd "$repo" && pwd)"
+    passfile="$(cd "$(dirname "$passfile")" && pwd)/$(basename "$passfile")"
+    local state="${VIGIL_DIR:-$HOME/.vigil}"
+    mkdir -p "$state"
+    state="$(cd "$state" && pwd)"
+    local investigations="${ORCHESTRATOR_WORKDIR:-$REPO_ROOT/data/investigations}"
+    case "$investigations" in
+        /*) ;;
+        *) investigations="$REPO_ROOT/$investigations" ;;
+    esac
+    mkdir -p "$investigations"
+    investigations="$(cd "$investigations" && pwd)"
+    export VIGIL_BACKUP_REPO="$repo"
+    export VIGIL_BACKUP_PASSPHRASE_FILE="$passfile"
+    export VIGIL_BACKUP_STATE_DIR="$state"
+    export VIGIL_BACKUP_INVESTIGATIONS_DIR="$investigations"
+    local -a args=(run --rm --user "$(id -u):$(id -g)")
+    if [ -f "$REPO_ROOT/.env" ]; then
+        args+=(-v "$REPO_ROOT/.env:/app/.env:ro")
+    fi
+    args+=(backup)
+    dc "${args[@]}"
+}
+
+if [ "${1:-}" = "backup" ]; then
+    shift
+    run_backup "$@"
+    exit $?
+fi
 
 DAEMON=0
 EXTRA_SERVICES=""

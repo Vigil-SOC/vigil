@@ -55,6 +55,14 @@ x-intent-env: &intent-env
   ORCHESTRATOR_MAX_HOURLY_COST: ${ORCHESTRATOR_MAX_HOURLY_COST:-20.0}
   ORCHESTRATOR_MAX_RUNTIME: ${ORCHESTRATOR_MAX_RUNTIME:-3600}
 
+# One build for the API and the backup one-shot. A second image tag would
+# compile this Dockerfile twice on the first `up`.
+x-backend-build: &backend-build
+  context: ../..
+  dockerfile: infra/docker/Dockerfile.backend
+  args:
+    PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+
 services:
   postgres:
     # Stock Postgres, matching db-seed and the desktop stack. The schema only
@@ -162,11 +170,8 @@ services:
 
   # SOC Backend API
   backend:
-    build:
-      context: ../..
-      dockerfile: infra/docker/Dockerfile.backend
-      args:
-        PYTHON_VERSION: ${PYTHON_VERSION:-3.12}
+    image: vigil-backend:local
+    build: *backend-build
     container_name: deeptempo-backend
     environment:
       <<: *intent-env
@@ -225,12 +230,58 @@ services:
     networks:
       - deeptempo-network
 
+  # One-shot `python -m core.backup create`. No profile, so it is part of the
+  # default project; `restart: "no"` and the command exits 0 when no repository
+  # or passphrase is configured, so `up` does not take a backup. #1352 replaces
+  # the command with the schedule loop. `start.sh backup` runs this service
+  # once and overrides the state/workdir/repo mounts for the host.
+  backup:
+    image: vigil-backend:local
+    build: *backend-build
+    environment:
+      HOME: /home/vigil
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: deeptempo_soc
+      POSTGRES_USER: deeptempo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-deeptempo_secure_password_change_me}
+      VIGIL_BACKUP_OWNER_CONNECTION: "1"
+      RESTIC_CACHE_DIR: /tmp/restic-cache
+      # Container paths. Empty unless the host paths are set, so the command
+      # below exits 0 instead of failing interpolation at parse time.
+      BACKUP_REPO: ${VIGIL_BACKUP_REPO:+/backup/repo}
+      BACKUP_PASSPHRASE_FILE: ${VIGIL_BACKUP_PASSPHRASE_FILE:+/backup/passphrase}
+    volumes:
+      - ${VIGIL_BACKUP_STATE_DIR:-vigil_home}:/home/vigil/.vigil
+      - ${VIGIL_BACKUP_INVESTIGATIONS_DIR:-vigil_investigations}:/app/data/investigations
+      - bifrost_data:/var/lib/vigil/bifrost
+      - ${VIGIL_BACKUP_REPO:-backup_repo}:/backup/repo
+      - ${VIGIL_BACKUP_PASSPHRASE_FILE:-/etc/hostname}:/backup/passphrase:ro
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        if [ -z "$${BACKUP_REPO:-}" ] || [ -z "$${BACKUP_PASSPHRASE_FILE:-}" ]; then
+          exit 0
+        fi
+        exec python -m core.backup create \
+          --repo "$$BACKUP_REPO" \
+          --passphrase-file "$$BACKUP_PASSPHRASE_FILE" \
+          --bifrost-data /var/lib/vigil/bifrost
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    networks:
+      - deeptempo-network
+
   # ─── Daemon layer (--profile daemon) ──────────────────────────────────────
   # Default `up` is the investigation set: postgres, db-seed, redis, bifrost,
-  # backend, agent-worker, agent-serve. Incident response never touches these
-  # two: workflows enqueue BullMQ `agent-runs` to agent-worker and AGENT_URL is
-  # agent-serve. soc-daemon (federation + auto-enrich) and llm-worker (ARQ
-  # drain) share one profile because the daemon's processor is the ARQ
+  # backend, agent-worker, agent-serve, plus the one-shot backup above.
+  # Incident response never touches soc-daemon or llm-worker: workflows
+  # enqueue BullMQ `agent-runs` to agent-worker and AGENT_URL is agent-serve.
+  # Those two share one profile because the daemon's processor is the ARQ
   # producer that matters (#902).
   #
   # Known default-set side effect: services/api/routers/analytics.py ->
@@ -829,6 +880,10 @@ volumes:
   prometheus_data:
     driver: local
   bifrost_data:
+    driver: local
+  # Placeholder repository for an unconfigured backup service. A host path in
+  # VIGIL_BACKUP_REPO replaces it with a bind mount.
+  backup_repo:
     driver: local
   vigil_home:
     driver: local

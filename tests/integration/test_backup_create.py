@@ -12,10 +12,13 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, text
 
+from core.backup.connection import OWNER_CONNECTION_ENV
 from core.backup.create import LOCK_CLASSID, LOCK_OBJID, SKIPPED_MESSAGE
 from core.version import __version__
 
@@ -492,6 +495,134 @@ def test_database_failure_writes_no_repository(scratch_db, tmp_path: Path):
     assert proc.returncode != 0
     assert proc.stdout == ""
     assert not (repo / "config").exists()
+
+
+OWNER_ROLE = "vigil_backup_owner"
+DECOY_ROLE = "vigil_backup_decoy"
+OWNER_DB = "vigil_backup_owner_db"
+DECOY_DB = "vigil_backup_decoy_db"
+OWNER_PASSWORD = "owner-secret"
+DECOY_PASSWORD = "decoy-secret"
+
+
+def _role_url(user: str, password: str, database: str) -> str:
+    part = _parts()
+    return (
+        f"postgresql://{quote(user)}:{quote(password)}"
+        f"@{part['host']}:{part['port']}/{database}"
+    )
+
+
+def _write_decoy_secret(state: Path) -> None:
+    # The stored DSN is the decoy role. DatabaseConfig prefers it over POSTGRES_*.
+    dsn = _role_url(DECOY_ROLE, DECOY_PASSWORD, DECOY_DB)
+    key = Fernet.generate_key()
+    (state / "master.key").write_bytes(key)
+    blob = json.dumps({"POSTGRESQL_CONNECTION_STRING": dsn}).encode()
+    (state / "secrets.enc").write_bytes(Fernet(key).encrypt(blob))
+
+
+def _manifest_tables(
+    env: dict[str, str],
+    repo: Path,
+    passphrase: Path,
+    proc: subprocess.CompletedProcess[str],
+) -> dict:
+    assert proc.returncode == 0, proc.stderr
+    snap = proc.stdout.strip()
+    listing = _listing(env, repo, passphrase, snap)
+    manifest_path = next(
+        line for line in listing.splitlines() if line.endswith("/manifest.json")
+    )
+    return _dump_json(env, repo, passphrase, snap, manifest_path)["tables"]
+
+
+def test_owner_override_skips_stored_dsn(tmp_path: Path):
+    """A stored vigil-app-style DSN loses to the owner override and wins without it."""
+    admin = create_engine(_url("postgres"), isolation_level="AUTOCOMMIT")
+    with admin.connect() as conn:
+        conn.execute(text(f"DROP DATABASE IF EXISTS {OWNER_DB} WITH (FORCE)"))
+        conn.execute(text(f"DROP DATABASE IF EXISTS {DECOY_DB} WITH (FORCE)"))
+        for role, password in (
+            (OWNER_ROLE, OWNER_PASSWORD),
+            (DECOY_ROLE, DECOY_PASSWORD),
+        ):
+            conn.execute(
+                text(
+                    f"DO $$ BEGIN "
+                    f"IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN "
+                    f"CREATE ROLE {role} NOSUPERUSER LOGIN PASSWORD '{password}'; "
+                    f"END IF; END $$"
+                )
+            )
+            conn.execute(
+                text(f"ALTER ROLE {role} NOSUPERUSER LOGIN PASSWORD '{password}'")
+            )
+        conn.execute(text(f"CREATE DATABASE {OWNER_DB} OWNER {OWNER_ROLE}"))
+        conn.execute(text(f"CREATE DATABASE {DECOY_DB} OWNER {DECOY_ROLE}"))
+        owner_name = conn.execute(
+            text(
+                "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = :name"
+            ),
+            {"name": OWNER_DB},
+        ).scalar_one()
+    assert owner_name == OWNER_ROLE
+    assert owner_name != "vigil_app"
+
+    owner_engine = create_engine(_role_url(OWNER_ROLE, OWNER_PASSWORD, OWNER_DB))
+    decoy_engine = create_engine(_role_url(DECOY_ROLE, DECOY_PASSWORD, DECOY_DB))
+    with owner_engine.connect() as conn:
+        conn.execute(text("CREATE TABLE owner_marker (id integer)"))
+        conn.execute(text("INSERT INTO owner_marker VALUES (1)"))
+        conn.commit()
+    with decoy_engine.connect() as conn:
+        conn.execute(text("CREATE TABLE decoy_marker (id integer)"))
+        conn.execute(text("INSERT INTO decoy_marker VALUES (1)"))
+        conn.commit()
+
+    root = tmp_path / "override"
+    state = root / "state"
+    state.mkdir(parents=True)
+    (root / "cache").mkdir()
+    _write_decoy_secret(state)
+    base = _child_env(
+        root, skills=None, workdir=root / "missing-work", intent=root / "missing.md"
+    )
+    base["POSTGRES_USER"] = OWNER_ROLE
+    base["POSTGRES_PASSWORD"] = OWNER_PASSWORD
+    base["POSTGRES_DB"] = OWNER_DB
+    base.pop(OWNER_CONNECTION_ENV, None)
+
+    try:
+        unset = base.copy()
+        unset_repo = root / "unset-repo"
+        passphrase = _passphrase(root / "pass", "correct-horse")
+        unset_tables = _manifest_tables(
+            unset, unset_repo, passphrase, _run_create(unset, unset_repo, passphrase)
+        )
+        assert "public.decoy_marker" in unset_tables
+        assert "public.owner_marker" not in unset_tables
+
+        overridden = base.copy()
+        overridden[OWNER_CONNECTION_ENV] = "1"
+        set_repo = root / "set-repo"
+        set_tables = _manifest_tables(
+            overridden,
+            set_repo,
+            passphrase,
+            _run_create(overridden, set_repo, passphrase),
+        )
+        assert "public.owner_marker" in set_tables
+        assert "public.decoy_marker" not in set_tables
+    finally:
+        owner_engine.dispose()
+        decoy_engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(text(f"DROP DATABASE IF EXISTS {OWNER_DB} WITH (FORCE)"))
+            conn.execute(text(f"DROP DATABASE IF EXISTS {DECOY_DB} WITH (FORCE)"))
+            conn.execute(text(f"DROP ROLE IF EXISTS {OWNER_ROLE}"))
+            conn.execute(text(f"DROP ROLE IF EXISTS {DECOY_ROLE}"))
+        admin.dispose()
 
 
 def _lock_held() -> bool:
