@@ -25,6 +25,9 @@ COPY clients/web/package*.json ./
 RUN npm ci --prefer-offline
 
 COPY clients/web/ .
+# SocConsole imports this from the repo's docs tree, outside clients/web.
+# From /build/web/src/shell the relative path is /docs/design/...
+COPY docs/design/console/tokens/tokens.css /docs/design/console/tokens/tokens.css
 RUN npm run build
 # Output: /build/web/build
 

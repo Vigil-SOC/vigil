@@ -41,7 +41,13 @@ tests/
 *.md
 # The API and the daemon both read this file for the Settings intent card.
 !INTENT.md
-docs/
+docs/**
+# SocConsole imports this file from outside clients/web. Re-include the
+# parents or the exception does not apply.
+!docs/design/
+!docs/design/console/
+!docs/design/console/tokens/
+!docs/design/console/tokens/tokens.css
 archive/
 *.txt
 LICENSE
