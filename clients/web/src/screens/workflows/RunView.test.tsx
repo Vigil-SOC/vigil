@@ -11,6 +11,7 @@ vi.mock('../../services/api', () => ({
   workflowApi: {
     listAll: vi.fn(() => Promise.resolve({ data: { workflows: [{ id: 'wf-1', name: 'Beacon hunt', description: 'd', steps: [] }] } })),
     getRun: vi.fn(),
+    replayRun: vi.fn(() => Promise.reject({ response: { status: 404 } })),
   },
   agentsApi: { listAgents: vi.fn(() => Promise.resolve({ data: { agents: [] } })) },
 }))
