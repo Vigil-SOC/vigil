@@ -4,6 +4,7 @@ export type ConsoleScreenKey =
   | 'overview'
   | 'triage'
   | 'dashboard'
+  | 'home'
   | 'cases'
   | 'metrics'
   | 'analytics'
@@ -93,6 +94,7 @@ export const TITLES: Record<ConsoleScreenKey, [string, string]> = {
   overview: ['Overview', 'What arrived today and where it went'],
   triage: ['Triage', 'What intake did with what arrived'],
   dashboard: ['Dashboard', 'Security operations overview'],
+  home: ['Home', 'What needs a person'],
   cases: ['Cases', 'Manage investigation cases'],
   metrics: ['Case Metrics', 'Real-time SOC performance analytics'],
   analytics: ['Analytics Dashboard', 'Security operations analytics'],

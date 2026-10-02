@@ -30,6 +30,7 @@ import DecisionsScreen from '../screens/decisions/DecisionsScreen'
 import WorkflowsScreen from '../screens/workflows/WorkflowsScreen'
 import AutoOpsScreen from '../screens/autoops/AutoOpsScreen'
 import HealthScreen from '../screens/health/HealthScreen'
+import HomeScreen from '../screens/home/HomeScreen'
 import SettingsScreen from '../screens/settings/SettingsScreen'
 import NotFoundScreen from '../screens/notfound/NotFoundScreen'
 import OverviewScreen from '../screens/overview/OverviewScreen'
@@ -60,6 +61,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
   overview: OverviewScreen,
   triage: TriageScreen,
   dashboard: DashboardScreen,
+  home: HomeScreen,
   cases: CasesScreen,
   metrics: MetricsScreen,
   analytics: AnalyticsScreen,
@@ -75,6 +77,7 @@ const SCREENS: Record<ConsoleScreenKey, (props: ConsoleScreenProps) => JSX.Eleme
 const SCREEN_PERMS: Partial<Record<ConsoleScreenKey, string>> = {
   cases: 'cases.read',
   decisions: 'ai_decisions.approve',
+  home: 'ai_decisions.approve',
   settings: 'settings.read',
 }
 

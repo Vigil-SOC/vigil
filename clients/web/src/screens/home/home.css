@@ -1,0 +1,83 @@
+.home-screen .home-headline {
+  margin: 0;
+  padding: 22px 22px 0;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.home-screen .home-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.home-screen .home-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.home-screen .home-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.home-screen .home-meta {
+  margin: 6px 0 0;
+  color: var(--tx-3);
+  font-size: 12px;
+}
+
+.home-screen .home-reason {
+  margin: 8px 0 0;
+  color: var(--tx-2);
+  font-size: 13px;
+}
+
+.home-screen .home-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+.home-screen .home-reject {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.home-screen .home-reject textarea {
+  min-width: 220px;
+  flex: 1;
+}
+
+.home-hold {
+  position: relative;
+  overflow: hidden;
+}
+
+.home-hold .fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  background: var(--crit);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.home-hold.holding .fill {
+  width: 100%;
+  transition: width 1.6s linear;
+}
+
+.home-hold .label {
+  position: relative;
+}

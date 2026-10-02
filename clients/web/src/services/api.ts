@@ -141,6 +141,16 @@ export const aiDecisionsApi = {
     api.get('/ai/decisions/pending-feedback', { params: { limit } }),
 }
 
+export interface NeedsYouItem {
+  kind: 'checkpoint' | 'approval'
+  source_id: string
+  title: string
+  reason: string
+  created_at: string
+  reversibility: string
+  case_id: string | null
+}
+
 export const approvalsApi = {
   list: (params?: {
     status?: string
@@ -149,6 +159,11 @@ export const approvalsApi = {
   }) => api.get('/approvals', { params }),
 
   listPending: () => api.get('/approvals/pending'),
+
+  needsYou: (caseId?: string) =>
+    api.get<{ count: number; items: NeedsYouItem[] }>('/approvals/needs-you', {
+      params: caseId ? { case_id: caseId } : undefined,
+    }),
 
   getById: (actionId: string) => api.get(`/approvals/${actionId}`),
 
