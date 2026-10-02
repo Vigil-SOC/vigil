@@ -591,16 +591,19 @@ async def get_cases_summary():
 async def add_evidence(case_id: str, data: EvidenceAdd):
     """Add evidence to case."""
     evidence_service = CaseEvidenceService()
-    evidence = evidence_service.add_evidence(
-        case_id=case_id,
-        evidence_type=data.evidence_type,
-        name=data.name,
-        collected_by=data.collected_by,
-        description=data.description,
-        file_path=data.file_path,
-        source=data.source,
-        tags=data.tags,
-    )
+    try:
+        evidence = evidence_service.add_evidence(
+            case_id=case_id,
+            evidence_type=data.evidence_type,
+            name=data.name,
+            collected_by=data.collected_by,
+            description=data.description,
+            file_path=data.file_path,
+            source=data.source,
+            tags=data.tags,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     if not evidence:
         raise HTTPException(status_code=500, detail="Failed to add evidence")
     return CaseEvidenceSchema.dump(evidence)
