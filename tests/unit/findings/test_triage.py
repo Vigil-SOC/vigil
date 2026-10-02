@@ -16,7 +16,7 @@ from core.storage.models import (
     Investigation,
 )
 from core.storage.unit_of_work import unit_of_work
-from services.api.triage_read import triage_payload
+from services.api.triage_read import ROW_CAP, triage_payload
 
 pytestmark = [pytest.mark.unit, pytest.mark.external_service, pytest.mark.database]
 
@@ -212,6 +212,7 @@ def test_five_state_words_and_an_investigation_id_with_no_door():
     assert rows[ghost]["workflow_id"] == "incident-response"
 
     assert rows[expired]["state_label"] == "Expired"
+    assert rows[expired]["pickup_seconds"] is None
 
     assert payload["strip"]["cases_created_today"] == 1
     assert payload["strip"]["trust_floor"] == "Not measured yet"
@@ -304,7 +305,52 @@ def test_zero_arrival_day_leaves_the_pickup_share_empty():
     assert payload["strip"]["picked_up"]["share"] is None
 
 
+def test_source_filter_keeps_an_older_row_the_cap_would_drop():
+    """``?source=`` applies before the 200 cap."""
+    _finding("tr-kept-f", "low", data_source="tr-kept", created_at=NOW - timedelta(days=2))
+    kept = _trigger(
+        state="expired",
+        finding_id="tr-kept-f",
+        created_at=NOW - timedelta(days=2),
+        decided_at=NOW - timedelta(days=1),
+    )
+    _finding("tr-other-f", "low", data_source="tr-other")
+    with unit_of_work() as session:
+        session.add_all(
+            IntakeTrigger(
+                kind="detection",
+                state="expired",
+                finding_id="tr-other-f",
+                priority="low",
+                payload={},
+                created_at=NOW,
+                decided_at=NOW,
+            )
+            for _ in range(ROW_CAP)
+        )
+
+    unfiltered = [row["id"] for row in triage_payload(now=NOW, day=DAY)["rows"]]
+    assert kept not in unfiltered
+    assert len(unfiltered) == ROW_CAP
+    filtered = triage_payload(now=NOW, day=DAY, source="tr-kept")
+    assert [row["id"] for row in filtered["rows"]] == [kept]
+
+
+def test_finding_only_source_has_null_lag_and_is_not_quiet():
+    _finding("tr-hook-f", "low", data_source="tr-hook", created_at=NOW)
+    sources = {
+        row["data_source"]: row for row in triage_payload(now=NOW, day=DAY)["sources"]
+    }
+    assert sources["tr-hook"]["arrivals"] == 1
+    assert sources["tr-hook"]["lag_seconds"] is None
+    assert sources["tr-hook"]["quiet"] is None
+
+
 def test_route_returns_the_strip(client):
     response = client.get("/api/triage")
     assert response.status_code == 200
-    assert response.json()["strip"]["trust_floor"] == "Not measured yet"
+    body = response.json()
+    assert body["strip"]["trust_floor"] == "Not measured yet"
+    assert body["arrival_info"] == (
+        "Arrivals count every finding stored today. The list is the intake rows."
+    )

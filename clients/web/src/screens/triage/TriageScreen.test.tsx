@@ -79,6 +79,7 @@ function payload(overrides: Partial<TriagePayload> = {}): TriagePayload {
       { data_source: 'splunk', arrivals: 2, lag_seconds: 90, quiet: true },
       { data_source: 'never', arrivals: 0, lag_seconds: null, quiet: true },
     ],
+    arrival_info: 'Arrivals count every finding stored today. The list is the intake rows.',
     unmeasured_text: 'Not measured yet',
     ...overrides,
   }
@@ -106,6 +107,10 @@ describe('TriageScreen', () => {
     expect(picked).not.toHaveTextContent('%')
     expect(within(strip).getByLabelText('splunk')).toHaveTextContent('Quiet')
     expect(within(strip).getByLabelText('never')).toHaveTextContent('Quiet')
+    const info = payload().arrival_info
+    expect(within(within(strip).getByLabelText('splunk')).getByRole('button', { name: info })).toHaveAttribute('title', info)
+    expect(within(within(strip).getByLabelText('never')).getByRole('button', { name: info })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: info })).toHaveLength(3)
     expect(triageApi.get).toHaveBeenCalledWith({ source: 'splunk' })
 
     fireEvent.click(screen.getByText('Alert'))

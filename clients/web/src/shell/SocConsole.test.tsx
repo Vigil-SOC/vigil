@@ -216,6 +216,7 @@ vi.mock('../services/api', () => ({
           trust_floor: 'Not measured yet',
         },
         sources: [],
+        arrival_info: 'Arrivals count every finding stored today. The list is the intake rows.',
         unmeasured_text: 'Not measured yet',
       },
     }),

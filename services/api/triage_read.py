@@ -26,6 +26,8 @@ from services.daemon.orchestrator import (
 
 ROW_CAP = 200
 UNMEASURED = "Not measured yet"
+ARRIVAL_INFO = "Arrivals count every finding stored today. The list is the intake rows."
+_PICKUP_STATES = ("launched", "merged")
 
 _KIND_LABELS = {
     "detection": "Alert",
@@ -227,7 +229,7 @@ def _present(
     decided = row.get("decided_at")
     pickup = None
     if (
-        row["state"] != "queued"
+        row["state"] in _PICKUP_STATES
         and isinstance(created, datetime)
         and isinstance(decided, datetime)
     ):
@@ -354,5 +356,6 @@ def triage_payload(
         "rows": presented,
         "strip": strip,
         "sources": _sources(day, now),
+        "arrival_info": ARRIVAL_INFO,
         "unmeasured_text": UNMEASURED,
     }

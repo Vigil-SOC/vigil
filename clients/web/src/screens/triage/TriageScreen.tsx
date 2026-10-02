@@ -98,6 +98,9 @@ function Strip({ data }: { data: TriagePayload }) {
               <div className="k-label as-stored">{source.data_source}</div>
               <div className="k-val">{source.arrivals}</div>
               <div className="k-note">{lagNote(source)}</div>
+              <button type="button" className="btn ghost icon" aria-label={data.arrival_info} title={data.arrival_info}>
+                <Icon name="info" size={14} />
+              </button>
             </div>
           ))}
         </div>
@@ -229,6 +232,11 @@ const TriageScreen: (props: ConsoleScreenProps) => JSX.Element = () => {
           <FilterGroup label="Source" value={source} onSelect={(value) => setFilter('source', value)} options={sourceOptions} />
           <FilterGroup label="State" value={state} onSelect={(value) => setFilter('state', value)} options={STATES} />
         </FilterButton>
+        {source && data && (
+          <button type="button" className="btn ghost icon" aria-label={data.arrival_info} title={data.arrival_info}>
+            <Icon name="info" size={14} />
+          </button>
+        )}
         <div className="flex-1" />
         <button type="button" className="btn ghost icon" title="Refresh" aria-label="Refresh" onClick={load}>
           <Icon name="refresh" />

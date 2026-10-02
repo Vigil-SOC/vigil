@@ -1401,6 +1401,7 @@ export interface TriagePayload {
     trust_floor: string
   }
   sources: TriageSource[]
+  arrival_info: string
   unmeasured_text: string
 }
 
