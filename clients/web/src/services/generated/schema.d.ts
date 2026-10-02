@@ -5939,8 +5939,36 @@ export interface paths {
          */
         get: operations["get_api_skills"];
         put?: never;
-        post?: never;
+        /**
+         * Save Skill
+         * @description Write ``<vigil_skills_path>/<name>/SKILL.md``. An existing operator skill is overwritten.
+         */
+        post: operations["post_api_skills"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/skills/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Skill
+         * @description One skill, including the Markdown body the drawer edits.
+         */
+        get: operations["get_api_skills_name"];
+        put?: never;
+        post?: never;
+        /**
+         * Remove Skill
+         * @description Delete an operator skill directory. A bundled skill is refused.
+         */
+        delete: operations["delete_api_skills_name"];
         options?: never;
         head?: never;
         patch?: never;
@@ -11487,14 +11515,40 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /** SkillDetail */
+        SkillDetail: {
+            /** Body */
+            body: string;
+            /** Bundled */
+            bundled: boolean;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
+            /** Operator Root Set */
+            operator_root_set: boolean;
+            /** Source Path */
+            source_path: string;
+        };
         /** SkillResponse */
         SkillResponse: {
+            /** Bundled */
+            bundled: boolean;
             /** Description */
             description: string;
             /** Name */
             name: string;
             /** Source Path */
             source_path: string;
+        };
+        /** SkillWriteRequest */
+        SkillWriteRequest: {
+            /** Body */
+            body: string;
+            /** Description */
+            description: string;
+            /** Name */
+            name: string;
         };
         /**
          * SourceEvidence
@@ -22699,6 +22753,107 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    post_api_skills: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillWriteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_api_skills_name: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_api_skills_name: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

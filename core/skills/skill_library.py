@@ -14,10 +14,15 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Dict, Iterable, List, Optional
+
+import yaml
 
 from core.config import Settings, get_settings
 from core.frontmatter import FrontmatterError, split_frontmatter
@@ -44,7 +49,11 @@ class Skill:
 
 
 class SkillError(ValueError):
-    """The directory is not a spec-conformant skill."""
+    """The directory is not a spec-conformant skill, or a write was refused."""
+
+
+class SkillNotFound(SkillError):
+    """No loaded skill has this name."""
 
 
 def _require_str(frontmatter: Dict[str, Any], key: str, limit: int) -> str:
@@ -147,9 +156,182 @@ def skill_roots(settings: Optional[Settings] = None) -> List[Path]:
     """The bundled library, then the optional ``VIGIL_SKILLS_PATH`` root."""
     settings = settings or get_settings()
     roots = [LIBRARY_ROOT]
-    if settings.vigil_skills_path:
-        roots.append(Path(settings.vigil_skills_path).expanduser())
+    operator = operator_skills_root(settings)
+    if operator is not None:
+        roots.append(operator)
     return roots
+
+
+def operator_skills_root(settings: Optional[Settings] = None) -> Optional[Path]:
+    """The operator skills directory, or None when ``VIGIL_SKILLS_PATH`` is unset.
+
+    An unset path is not created.
+    """
+    settings = settings or get_settings()
+    raw = (settings.vigil_skills_path or "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
+def is_bundled(skill: Skill) -> bool:
+    """True when the skill directory lives under the bundled library."""
+    try:
+        return skill.path.resolve().is_relative_to(LIBRARY_ROOT.resolve())
+    except OSError:
+        return False
+
+
+def skill_body(skill: Skill) -> str:
+    """The Markdown under the frontmatter, which is what the drawer edits."""
+    content = (skill.path / SKILL_FILE).read_text(encoding="utf-8-sig")
+    _, offset = split_frontmatter(content)
+    return content[offset:].lstrip("\n")
+
+
+def render_skill_markdown(name: str, description: str, body: str) -> str:
+    """``SKILL.md`` with only ``name`` and ``description`` in the frontmatter."""
+    dumped = yaml.safe_dump(
+        {"name": name, "description": description},
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=False,
+    )
+    text = f"---\n{dumped}---\n"
+    if body:
+        if not body.startswith("\n"):
+            text += "\n"
+        text += body
+        if not text.endswith("\n"):
+            text += "\n"
+    return text
+
+
+def _library_names() -> set[str]:
+    return {skill.name for skill in load_skills([LIBRARY_ROOT])}
+
+
+def _contained(root: Path, path: Path) -> bool:
+    return path != root and path.is_relative_to(root)
+
+
+def _skill_dir(root: Path, name: str) -> Path:
+    """``root/name`` resolved, or a refusal when it would leave the operator root.
+
+    A symlink is refused before anything is written. Resolving it would let a
+    link named ``alias`` overwrite another skill, or a link that points outside
+    the root.
+    """
+    if not name or name != Path(name).name or name in {".", ".."}:
+        raise SkillError(f"invalid skill name {name!r}")
+    link = root / name
+    if link.is_symlink():
+        raise SkillError("refusing to follow a symlink")
+    candidate = link.resolve()
+    if (
+        candidate.parent != root
+        or candidate.name != name
+        or not _contained(root, candidate)
+    ):
+        raise SkillError("resolved path leaves the operator skills root")
+    library = LIBRARY_ROOT.resolve()
+    if candidate == library or candidate.is_relative_to(library):
+        raise SkillError("refusing to write into the bundled library")
+    return candidate
+
+
+def _write_new_file(path: Path, data: bytes) -> None:
+    """Create ``path`` as a new regular file. A symlink is left untouched."""
+    if path.is_symlink():
+        raise SkillError("refusing to follow a symlink")
+    if path.exists():
+        path.unlink()
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(path, flags, 0o644)
+    except OSError as exc:
+        raise SkillError("refusing to follow a symlink") from exc
+    try:
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+
+
+def _require_operator_root(settings: Optional[Settings]) -> Path:
+    root = operator_skills_root(settings)
+    if root is None:
+        raise SkillError("The skills path is unset")
+    if not root.is_dir():
+        raise SkillError(f"{root} is not a directory")
+    return root.resolve()
+
+
+def _accepts_skill(name: str, content: str) -> None:
+    """Parse a rendered file in a throwaway directory before touching the root."""
+    with tempfile.TemporaryDirectory() as tmp:
+        skill_dir = Path(tmp) / name
+        try:
+            skill_dir.mkdir()
+        except OSError as exc:
+            raise SkillError(f"invalid skill name {name!r}") from exc
+        (skill_dir / SKILL_FILE).write_text(content, encoding="utf-8")
+        parse_skill(skill_dir)
+
+
+def write_operator_skill(
+    name: str,
+    description: str,
+    body: str,
+    settings: Optional[Settings] = None,
+) -> Skill:
+    """Write ``<vigil_skills_path>/<name>/SKILL.md`` that ``parse_skill`` accepts.
+
+    A name the bundled library already owns is refused: ``load_skills`` would
+    skip the operator copy, so the file would be invisible. An existing
+    operator directory of the same name is overwritten in place.
+    """
+    root = _require_operator_root(settings)
+    skill_dir = _skill_dir(root, name)
+    if name in _library_names():
+        raise SkillError(
+            f"name {name!r} belongs to the bundled library; save it under a new name"
+        )
+    content = render_skill_markdown(name, description, body)
+    _accepts_skill(name, content)
+    try:
+        skill_dir.mkdir(exist_ok=True)
+    except OSError as exc:
+        raise SkillError(f"could not create {skill_dir}: {exc}") from exc
+    target = skill_dir / SKILL_FILE
+    tmp = skill_dir / ".SKILL.md.write"
+    _write_new_file(tmp, content.encode("utf-8"))
+    os.replace(tmp, target)
+    return parse_skill(skill_dir)
+
+
+def delete_operator_skill(name: str, settings: Optional[Settings] = None) -> None:
+    """Remove an operator skill directory. Bundled skills are refused."""
+    root = _require_operator_root(settings)
+    skill = {item.name: item for item in load_skills(skill_roots(settings))}.get(name)
+    if skill is None:
+        raise SkillNotFound(f"No skill named {name!r}")
+    if is_bundled(skill):
+        raise SkillError("bundled skills cannot be deleted")
+    if skill.path.is_symlink():
+        raise SkillError("refusing to follow a symlink")
+    target = skill.path.resolve()
+    if (
+        target.parent != root
+        or target.name != skill.name
+        or not _contained(root, target)
+    ):
+        raise SkillError("refusing to delete a skill outside the operator root")
+    library = LIBRARY_ROOT.resolve()
+    if target == library or target.is_relative_to(library):
+        raise SkillError("refusing to delete a bundled skill")
+    shutil.rmtree(target)
 
 
 def _confined(skill_dir: Path, file: str) -> Optional[Path]:
